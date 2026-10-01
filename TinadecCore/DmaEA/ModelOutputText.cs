@@ -10,9 +10,9 @@ namespace TinadecCore.DmaEA;
 /// <c>&lt;think&gt;</c> / <c>&lt;thinking&gt;</c> blocks, leak orphan close tags,
 /// embed the real JSON inside prose and markdown fences, or interleave reasoning
 /// with the payload. The OpenAI-compatible <c>/chat/completions</c> connector also
-/// drops the non-standard <c>reasoning_content</c> field, so reasoning arrives
-/// INLINE in message content (the separate-channel case is already excluded from
-/// <c>ChatResponse.Text</c> by Microsoft.Extensions.AI).
+/// excludes non-standard <c>reasoning_content</c> from <c>ChatResponse.Text</c>.
+/// ModelOutputStream projects the SDK-retained extension separately for the UI;
+/// inline think blocks still need removing from persisted answers/protocol parsing.
 ///
 /// Every model-output consumption point in DmaEA (planning, supervision, lane
 /// gating, capability advice, curation, context compression, the meeting answer,

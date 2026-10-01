@@ -21,6 +21,7 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell 
 const path = require('node:path');
 const { loadAppConfig, resetGatewayUrl, saveGatewayUrl } = require('./appConfig.cjs');
 const { discoverServices } = require('./serviceDiscovery.cjs');
+const { ensureLocalServices, stopLocalServices } = require('./serviceManager.cjs');
 const layoutStore = require('./layoutStore.cjs');
 const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
 const {
@@ -418,13 +419,29 @@ registerTerminalIpc({
 
 // Persist panel states before quit and clean up terminals
 app.on('before-quit', () => {
+  void stopLocalServices().catch(() => {});
   destroyAllTerminals();
   persistPanelStatesForQuit();
   closeAllPetWindows();
 });
 
 app.whenReady().then(async () => {
-  process.env.TINADEC_RESOLVED_GATEWAY_URL = loadAppConfig(appConfigFile()).gateway_url;
+  const gatewayUrl = loadAppConfig(appConfigFile()).gateway_url;
+  process.env.TINADEC_RESOLVED_GATEWAY_URL = gatewayUrl;
+  try {
+    await ensureLocalServices({
+      isPackaged: app.isPackaged,
+      gatewayUrl,
+      resourcesPath: process.resourcesPath,
+      localAppDataPath: process.env.LOCALAPPDATA,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[tinadec] packaged service startup failed:', message);
+    if (app.isPackaged) {
+      dialog.showErrorBox('TinadecOffice', `本地服务启动失败：${message}`);
+    }
+  }
   protocol.handle('tinadec-pet-preview', async (request) => {
     try {
       const url = new URL(request.url);

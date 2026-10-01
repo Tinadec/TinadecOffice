@@ -57,6 +57,17 @@ export type SupervisionFindingDto = Schemas['SupervisionFinding']
 export type ContextVersionDto = Schemas['ContextVersion']
 export type OrchestrationSnapshotDto = Schemas['OrchestrationSnapshot']
 export type PreAuthorizationDto = Schemas['PreAuthorization']
+/**
+ * Aliased rather than re-typed in api.ts: this one is new, and the contract already
+ * carries it, so there is no reason to add a second hand-written copy that can drift.
+ */
+export type MessageAttachmentDto = Schemas['MessageAttachment']
+/**
+ * The narrower row Core nests inside a Message (no session_id/message_id: the
+ * parent already carries both). Aliased for the same reason as above, and
+ * `MessageDto.attachments` in api.ts points here.
+ */
+export type MessageAttachmentSummaryDto = Schemas['MessageAttachmentSummary']
 
 export type LifecycleStatus = ProjectDto['lifecycle_status']
 

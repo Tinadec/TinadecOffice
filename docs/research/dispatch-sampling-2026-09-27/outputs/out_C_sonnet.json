@@ -1,0 +1,270 @@
+{
+  "answers": [
+    {
+      "scenario": 1,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "小林",
+            "title": "检索 useUiePage 全部引用",
+            "objective": "在仓库全文检索 useUiePage 的所有引用位置(包括调用、导入、类型声明等),对每处说明其用途和上下文,并给出文件路径与行号作为出处。",
+            "success_criteria": [
+              "列出所有引用 useUiePage 的文件路径及行号",
+              "每处引用都附带用途说明",
+              "结果附带可核对的出处(文件+行号)"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 2,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "阿哲",
+            "title": "翻译 ensureProductionUie 英文注释为中文",
+            "objective": "打开 apps/desktop/src/lib/uiEngine.ts,定位 ensureProductionUie 函数,将其英文注释翻译为准确、通顺的中文,保持代码逻辑不变,不改动其他内容。",
+            "success_criteria": [
+              "ensureProductionUie 相关的英文注释全部替换为中文",
+              "未改动任何可执行代码逻辑",
+              "文件其余部分未受影响"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 3,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "米娅",
+            "title": "编写 showPage 使用说明文档",
+            "objective": "阅读 TinadecUI 中新增的 showPage 相关源码以理解其用法,撰写一份使用说明文档,保存为 docs/uie-show-page.md,涵盖用途、调用方式、参数与示例。",
+            "success_criteria": [
+              "docs/uie-show-page.md 文件已创建并包含 showPage 的用途说明",
+              "文档包含调用方式与参数说明",
+              "文档包含至少一个使用示例"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 4,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "苏晴",
+            "title": "审阅工作区未提交改动的风险",
+            "objective": "查看当前工作区的未提交改动(git diff),逐项审阅代码变更,识别潜在的缺陷、风险与安全隐患。",
+            "success_criteria": [
+              "覆盖所有未提交改动的文件",
+              "列出发现的风险/缺陷,并说明影响与位置",
+              "对无明显风险的部分也给出说明"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 5,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "老周",
+            "title": "提交并推送当前改动到 main",
+            "objective": "将当前工作区的改动提交(附合适的提交信息),并推送到远程 main 分支。",
+            "success_criteria": [
+              "改动已提交,提交信息清晰描述改动内容",
+              "提交已成功推送到远程 main 分支",
+              "推送后 git 状态确认与远程一致"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 6,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "小林",
+            "title": "总结 Vue Vapor 模式限制",
+            "objective": "读取 https://vuejs.org/guide/extras/vapor.html 页面内容,总结 Vapor 模式当前存在的限制与注意事项。",
+            "success_criteria": [
+              "已实际读取该网页内容",
+              "给出 Vapor 模式限制的要点列表",
+              "结论附带出处链接"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 7,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "阿哲",
+            "title": "运行并修复 desktop 单元测试",
+            "objective": "运行 desktop 的单元测试(如 npm run test -w @tinadec/desktop),定位失败用例的原因并修复相关代码,直至测试全部通过。",
+            "success_criteria": [
+              "已执行 desktop 单元测试并记录结果",
+              "所有失败用例已定位原因并修复",
+              "复跑测试确认全部通过"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 8,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "小林",
+            "title": "查询最近 5 次提交内容",
+            "objective": "查看仓库最近 5 次提交(git log 及对应 git diff),分别说明每次提交改了什么。",
+            "success_criteria": [
+              "列出最近 5 次提交的提交号/信息",
+              "每次提交附带改动内容摘要",
+              "结果基于实际 git log/diff 输出"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 9,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "小林",
+            "title": "统计 styles.css 中 !important 数量",
+            "objective": "在 apps/desktop/src/styles.css 中统计当前还剩多少处 !important 声明。",
+            "success_criteria": [
+              "给出 !important 出现的准确次数",
+              "结果基于对该文件的实际检索"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "阿哲",
+            "title": "修改 README 端口号为 48740",
+            "objective": "在 README.md 中将端口号 48730 修改为 48740,确保替换准确且不影响其他内容。",
+            "success_criteria": [
+              "README.md 中的 48730 已替换为 48740",
+              "未误改其他无关内容",
+              "修改后文件可正常保存"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 10,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "阿哲",
+            "title": "补齐 i18n 缺失的 key",
+            "objective": "检查项目 i18n 文件,找出缺失的翻译 key 并补齐,保证各语言文件 key 集合一致。",
+            "success_criteria": [
+              "找出所有缺失的 i18n key",
+              "已在相应语言文件中补齐这些 key",
+              "补齐后各语言文件 key 集合一致"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "老周",
+            "title": "提交 i18n 补齐修改",
+            "objective": "将补齐 i18n 缺失 key 的改动提交到当前分支,提交信息需说明改动内容。",
+            "success_criteria": [
+              "改动已提交",
+              "提交信息准确描述本次 i18n 补齐内容"
+            ],
+            "depends_on": ["补齐 i18n 缺失的 key"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 11,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "苏晴",
+            "title": "对当前分支相对 main 的 diff 做安全审查",
+            "objective": "获取当前分支相对 main 分支的 diff,进行安全审查,重点关注敏感信息泄露、权限校验、审批门机制等安全相关问题。",
+            "success_criteria": [
+              "已对比当前分支与 main 的完整 diff",
+              "列出发现的安全风险及具体位置",
+              "给出总体安全评估结论"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 12,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "小林",
+            "title": "收集 UIE 重构相关改动事实",
+            "objective": "通过 git log/git diff 梳理本次 UIE 重构涉及的提交与改动内容,整理出改动要点供撰写 CHANGELOG 使用。",
+            "success_criteria": [
+              "列出与 UIE 重构相关的提交及改动摘要",
+              "整理出可直接用于 CHANGELOG 的要点列表"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "米娅",
+            "title": "更新 CHANGELOG 记录 UIE 重构",
+            "objective": "根据本次 UIE 重构的改动要点,在 CHANGELOG.md 中新增一条记录,描述本次重构内容。",
+            "success_criteria": [
+              "CHANGELOG.md 已新增本次 UIE 重构的条目",
+              "条目内容准确反映改动要点",
+              "格式与现有 CHANGELOG 条目风格一致"
+            ],
+            "depends_on": ["收集 UIE 重构相关改动事实"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 13,
+      "calls": [
+        {
+          "tool": "task_followup",
+          "args": {
+            "handle": "小林#1",
+            "instruction": "补充统计范围:除了 apps/desktop/src/styles.css,请继续统计 apps/desktop/src 目录下其它 .css 文件中还剩多少处 !important,并给出各文件的统计结果与总计。"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -9,5 +9,7 @@ const c = homeController
   <OrchestrationTab
     :snapshot="c.orchestration.value"
     :tool-executions="c.toolExecutions.value"
+    :session-id="c.selectedSessionId.value"
+    @execute-tool="c.executeCatalogTool($event)"
   />
 </template>

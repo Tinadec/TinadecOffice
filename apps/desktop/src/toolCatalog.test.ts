@@ -101,7 +101,7 @@ describe('tool catalog helpers', () => {
           worktree_isolation: true,
           approval_required: true,
           agent_types: ['code-writer'],
-          tool_ids: ['apply_patch']
+          tool_ids: ['write_file']
         },
         {
           layer: 'planning',

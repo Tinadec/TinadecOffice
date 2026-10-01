@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Diagnostics;
 
 namespace TinadecTools.Runtime.Sandbox;
 
@@ -47,6 +48,14 @@ internal sealed class SandboxRunnerResponse
     [JsonPropertyName("stderr_truncated")] public bool StderrTruncated { get; set; }
 }
 
+/// <summary>A provider-owned process whose lifetime remains under sandbox cleanup.</summary>
+internal sealed class SandboxStreamingProcess(Process process, IDisposable cleanup) : IDisposable
+{
+    public Process Process { get; } = process;
+    public IDisposable Cleanup { get; } = cleanup;
+    public void Dispose() => Cleanup.Dispose();
+}
+
 // ── backend interface ────────────────────────────────────────────────────────
 
 internal interface ISandboxBackend
@@ -59,6 +68,18 @@ internal interface ISandboxBackend
         SandboxPermissions permissions,
         bool persistGrants,
         CancellationToken ct);
+
+    /// <summary>
+    /// Starts a process without waiting for exit. Backends that cannot keep ACLs,
+    /// process groups and credentials alive for the session fail closed through
+    /// this default implementation.
+    /// </summary>
+    Task<SandboxStreamingProcess> StartStreamingAsync(
+        SandboxRunnerRequest request,
+        SandboxPermissions permissions,
+        CancellationToken ct) =>
+        throw new PlatformNotSupportedException("A streaming sandbox backend is not configured on this platform.");
+
     Task ResetAsync(SandboxResetScope scope, CancellationToken ct);
 }
 

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.DmaEA;
@@ -22,6 +23,11 @@ public interface IFullDuplexRunCoordinator
         CancellationToken cancellationToken = default);
 }
 
+/// <param name="QueueBehindActiveRun">
+/// The <c>queued</c> delivery (todo D1): a new task never runs next to another unfinished run of the
+/// session — admission refuses with <c>SESSION_BUSY</c> and the caller queues the message behind the
+/// run that is working. <c>parallel</c> leaves it false and is bounded only by the active-run limit.
+/// </param>
 public sealed record FullDuplexInvocation(
     Guid SessionId,
     string Content,
@@ -29,7 +35,12 @@ public sealed record FullDuplexInvocation(
     string? PermissionMode,
     Guid? TargetRunId,
     long? ExpectedContextRevision,
-    SessionModelOverride? MeetingModelOverride = null);
+    SessionModelOverride? MeetingModelOverride = null,
+    Guid? ModeVersionId = null,
+    bool QueueBehindActiveRun = false,
+    Guid? ParentRunId = null,
+    Guid? ParentTaskId = null,
+    string RunKind = "root");
 
 public sealed record RunSubmission(
     Guid RunId,
@@ -76,19 +87,25 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
     private readonly IAgentRuntimeConfigurationResolver _configurationResolver;
     private readonly IToolManifestSnapshotResolver _toolManifestResolver;
     private readonly IFullDuplexRunEngine _engine;
+    private readonly IReadOnlyList<IRunInFlightToolCancellation> _runToolCancellations;
+    private readonly ITinaChatRunInput? _chatInputs;
 
     public FullDuplexRunCoordinator(
         IConversationStore conversations,
         ILifecycleManager lifecycle,
         IAgentRuntimeConfigurationResolver configurationResolver,
         IToolManifestSnapshotResolver toolManifestResolver,
-        IFullDuplexRunEngine engine)
+        IFullDuplexRunEngine engine,
+        IEnumerable<IRunInFlightToolCancellation> runToolCancellations,
+        ITinaChatRunInput? chatInputs = null)
     {
         _conversations = conversations;
         _lifecycle = lifecycle;
         _configurationResolver = configurationResolver;
         _toolManifestResolver = toolManifestResolver;
         _engine = engine;
+        _runToolCancellations = runToolCancellations.ToArray();
+        _chatInputs = chatInputs;
     }
 
     public async Task<RunSubmission> SubmitAsync(FullDuplexInvocation invocation, CancellationToken cancellationToken = default)
@@ -96,6 +113,18 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         if (string.IsNullOrWhiteSpace(invocation.Content))
         {
             throw new RunAdmissionException("INVALID_MESSAGE", "Message content is required.");
+        }
+
+        var chatInput = _chatInputs is null ? null : await _chatInputs.GetForSessionAsync(invocation.SessionId, cancellationToken).ConfigureAwait(false);
+        if (chatInput is not null)
+        {
+            if (!string.Equals(invocation.Content, chatInput.Content, StringComparison.Ordinal)
+                || invocation.ClientMessageId != chatInput.ClientMessageId || invocation.TargetRunId.HasValue
+                || invocation.MeetingModelOverride is not null
+                || (invocation.ModeVersionId.HasValue && invocation.ModeVersionId != chatInput.ModeVersionId)
+                || (invocation.PermissionMode is not null && invocation.PermissionMode != "ask"))
+                throw new TinaChatException(403, "tina_chat_input_locked", "This isolated execution session accepts only its authorized intent handoff. Use the chat to propose a new intent revision.");
+            invocation = invocation with { ModeVersionId = chatInput.ModeVersionId, PermissionMode = "ask" };
         }
 
         // A repeated client message must return the original run. Do this before
@@ -156,11 +185,10 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             statusTarget = await GetTargetRunAsync(invocation.SessionId, targetRunId, allowTerminal: true, cancellationToken).ConfigureAwait(false);
         }
 
-        var configuration = await _configurationResolver.ResolveAsync(
-            invocation.SessionId,
-            invocation.PermissionMode,
-            invocation.MeetingModelOverride,
-            cancellationToken).ConfigureAwait(false);
+        var configuration = await ResolveConfigurationAsync(invocation, cancellationToken).ConfigureAwait(false);
+        if (chatInput is not null)
+            configuration = configuration with { TinaChatInput = new TinaChatInputBinding(
+                chatInput.Execution.Id, chatInput.Execution.ParticipantId, chatInput.Execution.IntentId) };
 
         var active = await _lifecycle.CountActiveRunsAsync(invocation.SessionId.ToString(), cancellationToken).ConfigureAwait(false);
         if (turnKind is not ("status_query" or "clarification") && active >= configuration.Scheduling.MaxActiveRunsPerSession)
@@ -168,6 +196,17 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             throw new RunAdmissionException(
                 "ACTIVE_RUN_LIMIT",
                 $"This session already has {active} active runs; its limit is {configuration.Scheduling.MaxActiveRunsPerSession}.");
+        }
+        // Queued means "after what the session is doing now", not "alongside it while there is room".
+        // A run parked on a decision counts here although the capacity limit above does not count it:
+        // the message waits for that decision too. A replay of an already admitted message is not a
+        // new task and was answered above.
+        if (invocation.QueueBehindActiveRun && turnKind == "new_task"
+            && (await _lifecycle.ListActiveRunsAsync(invocation.SessionId, cancellationToken).ConfigureAwait(false)).Count > 0)
+        {
+            throw new RunAdmissionException(
+                "SESSION_BUSY",
+                "This session is still working on a run; the message waits behind it (queued).");
         }
 
         var userMessage = await _conversations.AppendMessageAsync(
@@ -207,7 +246,10 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             configuration.BaselineVersion,
             configuration.ContentHash,
             configuration.PermissionMode,
-            configuration.RuntimeProfileId), cancellationToken).ConfigureAwait(false);
+            configuration.RuntimeProfileId,
+            ParentRunId: invocation.ParentRunId?.ToString(),
+            ParentTaskId: invocation.ParentTaskId?.ToString(),
+            RunKind: invocation.RunKind), cancellationToken).ConfigureAwait(false);
         var runId = Guid.Parse(started.RunId);
         await _conversations.AttachRunAsync(turn.Id, runId, cancellationToken).ConfigureAwait(false);
 
@@ -260,11 +302,25 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         FrozenRunConfigurationV1 configuration,
         CancellationToken cancellationToken)
     {
-        // The run-frozen manifest is the execution ceiling.  The governance layer never
-        // contributes to it: an operation-layer declaration must not be able to widen what
-        // execution workers may reach. Spawnable worker templates (graph tiers) contribute
-        // their tool scope too — a free-form director mode has an empty execution roster,
-        // so without this the manifest would authorize nothing for its spawned workers.
+        // The run-frozen manifest is the run's TOOL CEILING. This list is the request's
+        // hint; the AUTHORITATIVE set is the mode version's effective-tool union, which
+        // ToolManifestSnapshotResolver reads back through IFormalModeResolver and prefers.
+        //
+        // That union spans ALL nodes regardless of layer, and it must: a solo_dispatch
+        // mode arms its conversation identity with tools, and the master's surface is
+        // exactly what the master's instance resolves its catalog from. Do NOT "fix" this
+        // by excluding operation agents downstream — doing so silently leaves the solo
+        // master holding a tool_scope it can never see.
+        //
+        // The security property the old comment here described still holds, just at a
+        // different level: a declaration cannot widen what a WORKER reaches, because each
+        // instance's declaration surface is its own grant ∩ this manifest
+        // (IFrozenToolManifestCatalog.ListAuthorizedAsync). The ceiling being a union does
+        // not hand one agent another's tools.
+        //
+        // Spawnable worker templates (graph tiers) contribute their tool scope too — a
+        // free-form director mode has an empty execution roster, so without this the
+        // manifest would authorize nothing for its spawned workers.
         var definitions = configuration.ExecutionAgents.ToArray();
         var spawnable = configuration.Graph?.SpawnableTemplates ?? [];
         var allowedToolIds = definitions
@@ -283,7 +339,8 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                     sessionId,
                     allowedToolIds,
                     allowAll,
-                    SpawnableToolIds: spawnable.SelectMany(template => template.ToolCeiling).ToList()), cancellationToken).ConfigureAwait(false);
+                    SpawnableToolIds: spawnable.SelectMany(template => template.ToolCeiling).ToList(),
+                    ModeVersionId: configuration.ModeVersionId), cancellationToken).ConfigureAwait(false);
             if (snapshot.ProtocolVersion != 2 || string.IsNullOrWhiteSpace(snapshot.ManifestHash))
             {
                 throw new ToolManifestSnapshotException(
@@ -321,13 +378,16 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 }
             }
 
-            return configuration with
+            var finalized = configuration with
             {
                 ToolManifestHash = snapshot.ManifestHash,
                 ToolManifestProtocolVersion = snapshot.ProtocolVersion,
                 ToolManifest = snapshot.AuthorizedTools,
                 Graph = configuration.Graph is null ? null : configuration.Graph with { SpawnableTemplates = frozenSpawnable }
             };
+            // Frozen last, from the finished roster and ceilings: the list the coordinator
+            // dispatches against must be exactly what the engine will then honor.
+            return finalized with { DispatchRoster = FullDuplexRunEngine.ComputeDispatchRoster(finalized) };
         }
         catch (ToolManifestSnapshotException ex)
         {
@@ -520,6 +580,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
 
         var cursor = afterSequence;
         DateTimeOffset? terminalObservedAt = null;
+        var terminalRepairAttempts = 0;
         var lastEmitAt = DateTimeOffset.UtcNow;
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -536,13 +597,49 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             if (IsTerminal(state.Status))
             {
                 // The stream write and terminal run update use independent durable
-                // transactions. Keep polling briefly so a reader never loses a
-                // terminal delta/done pair in that commit window. A legacy terminal
-                // run with no journal still closes eventually.
+                // transactions. Actively repair the idempotent terminal tail before
+                // giving up; a terminal status must never make the current SSE reader
+                // disappear without done/error.
                 terminalObservedAt ??= DateTimeOffset.UtcNow;
-                if (DateTimeOffset.UtcNow - terminalObservedAt >= TimeSpan.FromSeconds(2)) yield break;
+                if (terminalRepairAttempts < 3)
+                {
+                    terminalRepairAttempts++;
+                    try
+                    {
+                        await _engine.ReconcileTerminalRunAsync(runId, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                    {
+                        // The hosted repair loop will retry the durable tail. Keep the
+                        // live reader open and, after a bounded grace period, emit an
+                        // authoritative in-memory terminal fallback instead of EOF.
+                    }
+                    continue;
+                }
+                if (DateTimeOffset.UtcNow - terminalObservedAt >= TimeSpan.FromSeconds(2))
+                {
+                    yield return state.Status switch
+                    {
+                        RunStatus.Cancelled => new RunStreamChunk(
+                            runId, turnId ?? Guid.Empty, null, cursor, "done",
+                            FinishReason: "cancelled", OccurredAt: DateTimeOffset.UtcNow),
+                        RunStatus.Failed => new RunStreamChunk(
+                            runId, turnId ?? Guid.Empty, null, cursor, "error",
+                            ErrorCategory: state.TerminalErrorCategory ?? RunErrorTaxonomy.Runtime,
+                            SafeErrorMessage: state.Summary ?? "The run failed before producing a final response.",
+                            OccurredAt: DateTimeOffset.UtcNow),
+                        _ => new RunStreamChunk(
+                            runId, turnId ?? Guid.Empty, null, cursor, "done",
+                            FinishReason: "completed", OccurredAt: DateTimeOffset.UtcNow)
+                    };
+                    yield break;
+                }
             }
-            else terminalObservedAt = null;
+            else
+            {
+                terminalObservedAt = null;
+                terminalRepairAttempts = 0;
+            }
 
             if (DateTimeOffset.UtcNow - lastEmitAt >= HeartbeatInterval)
             {
@@ -571,11 +668,29 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
         if (await HasRecordedControlAsync(state, runId, action, command.ClientControlId, cancellationToken).ConfigureAwait(false))
         {
+            if (action == "cancel" && state.Status == RunStatus.Cancelled)
+            {
+                CancelInFlightTools(runId);
+                await _engine.FinalizeCancelledRunAsync(runId, CancellationToken.None).ConfigureAwait(false);
+            }
             return new RunControlResult(runId, state.Status.ToString().ToLowerInvariant(), action, Accepted: true);
+        }
+        if (action == "cancel" && state.Status == RunStatus.Cancelled)
+        {
+            // A prior caller may have committed the terminal status and then lost
+            // its response before the event/turn/stream finalization completed.
+            // Cancellation finalization is idempotent, so retries repair the tail.
+            CancelInFlightTools(runId);
+            await _engine.FinalizeCancelledRunAsync(runId, CancellationToken.None).ConfigureAwait(false);
+            return new RunControlResult(runId, "cancelled", action, Accepted: true);
         }
         if (IsTerminal(state.Status))
         {
             throw new RunAdmissionException("RUN_NOT_ACTIVE", "The run is already terminal.");
+        }
+        if (state.CompletedAt is not null)
+        {
+            throw new RunAdmissionException("RUN_NOT_ACTIVE", "The run has already claimed successful completion and is durably finalizing it.");
         }
 
         if (command.ExpectedContextRevision is { } expected)
@@ -593,13 +708,56 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             "resume" => "executing",
             _ => "cancelled"
         };
-        await _lifecycle.SetRunStatusAsync(runId.ToString(), status, $"Run {action} requested.", cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _lifecycle.SetRunStatusAsync(runId.ToString(), status, $"Run {action} requested.", cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException)
+        {
+            var winner = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (action == "cancel" && winner.Status == RunStatus.Cancelled)
+            {
+                CancelInFlightTools(runId);
+                await _engine.FinalizeCancelledRunAsync(runId, CancellationToken.None).ConfigureAwait(false);
+                return new RunControlResult(runId, "cancelled", action, Accepted: true);
+            }
+            if (IsTerminal(winner.Status))
+            {
+                throw new RunAdmissionException("RUN_NOT_ACTIVE", $"The run already ended as '{winner.Status.ToString().ToLowerInvariant()}'.");
+            }
+            if (winner.CompletedAt is not null)
+            {
+                throw new RunAdmissionException("RUN_NOT_ACTIVE", "The run has already claimed successful completion and is durably finalizing it.");
+            }
+            throw;
+        }
+        // From this point onward the state transition is durable. A client closing
+        // the HTTP request must not interrupt the terminal event/stream/turn tail;
+        // startup recovery repairs the same idempotent closure after a host crash.
+        var durableToken = action == "cancel" ? CancellationToken.None : cancellationToken;
+        if (action == "cancel")
+        {
+            // The terminal status is already durable. Signal process-local tool
+            // calls before writing the terminal stream/turn tail so a provider
+            // cannot keep running through the cancellation-finalization window.
+            CancelInFlightTools(runId);
+            // Terminal closure is the required product behavior; optional control
+            // telemetry must never stand between the committed cancellation and its
+            // done(cancelled) frame.
+            await _engine.FinalizeCancelledRunAsync(runId, CancellationToken.None).ConfigureAwait(false);
+            return new RunControlResult(runId, status, action, Accepted: true);
+        }
         await _lifecycle.AppendEventAsync(runId, action == "cancel" ? "task.cancelled" : $"run.{action}d", new
         {
             run_id = runId,
             action,
             client_control_id = command.ClientControlId
-        }, $"Run {action}.", cancellationToken: cancellationToken).ConfigureAwait(false);
+        }, $"Run {action}.", cancellationToken: durableToken,
+            idempotencyKey: action == "cancel"
+                ? $"run:{runId}:event:task.cancelled"
+                : string.IsNullOrWhiteSpace(command.ClientControlId)
+                    ? null
+                    : $"run:{runId}:control:{command.ClientControlId.Trim()}:event").ConfigureAwait(false);
 
         var streamTurnId = command.TurnId ?? (Guid.TryParse(state.TurnId, out var parsedTurnId) ? parsedTurnId : null);
         if (streamTurnId is { } turnId)
@@ -610,11 +768,31 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 FinishReason: action,
                 IdempotencyKey: string.IsNullOrWhiteSpace(command.ClientControlId)
                     ? null
-                    : $"run:{runId}:control:{command.ClientControlId.Trim()}"), cancellationToken).ConfigureAwait(false);
+                    : $"run:{runId}:control:{command.ClientControlId.Trim()}"), durableToken).ConfigureAwait(false);
         }
 
-        if (action == "resume") await _engine.EnqueueAsync(runId, cancellationToken).ConfigureAwait(false);
+        if (action == "resume")
+        {
+            await _engine.EnqueueAsync(runId, cancellationToken).ConfigureAwait(false);
+        }
         return new RunControlResult(runId, status, action, Accepted: true);
+    }
+
+    private void CancelInFlightTools(Guid runId)
+    {
+        foreach (var cancellation in _runToolCancellations)
+        {
+            try
+            {
+                cancellation.CancelForRun(runId);
+            }
+            catch
+            {
+                // The durable run status is already authoritative. Tool-process
+                // cancellation is best-effort here; TerminalSessionControl and
+                // execution recovery retain their own idempotent repair paths.
+            }
+        }
     }
 
     private async Task<bool> HasRecordedControlAsync(
@@ -639,16 +817,28 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
     private async Task VerifyRequestedModeAsync(FullDuplexInvocation invocation, RunState run, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(invocation.PermissionMode)) return;
-        var requested = await _configurationResolver.ResolveAsync(
-            invocation.SessionId,
-            invocation.PermissionMode,
-            invocation.MeetingModelOverride,
-            cancellationToken).ConfigureAwait(false);
+        var requested = await ResolveConfigurationAsync(invocation, cancellationToken).ConfigureAwait(false);
         if (!ModeMatches(requested, run))
         {
             throw new RunAdmissionException("IDEMPOTENCY_KEY_REUSE", "The client message id was already used with a different request mode.");
         }
     }
+
+    private Task<FrozenRunConfigurationV1> ResolveConfigurationAsync(
+        FullDuplexInvocation invocation,
+        CancellationToken cancellationToken) =>
+        invocation.ModeVersionId is { } modeVersionId
+            ? _configurationResolver.ResolveForModeAsync(
+                invocation.SessionId,
+                modeVersionId,
+                invocation.PermissionMode,
+                invocation.MeetingModelOverride,
+                cancellationToken)
+            : _configurationResolver.ResolveAsync(
+                invocation.SessionId,
+                invocation.PermissionMode,
+                invocation.MeetingModelOverride,
+                cancellationToken);
 
     private static bool ModeMatches(FrozenRunConfigurationV1 configuration, RunState run) =>
         string.Equals(configuration.PermissionMode, run.PermissionMode, StringComparison.OrdinalIgnoreCase)

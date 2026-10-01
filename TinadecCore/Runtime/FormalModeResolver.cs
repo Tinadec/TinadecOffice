@@ -24,21 +24,36 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         _logger = logger;
     }
 
-    public async Task<HashSet<string>?> GetEffectiveToolsForSessionAsync(Guid sessionId, CancellationToken ct = default)
+    public Task<HashSet<string>?> GetEffectiveToolsForSessionAsync(Guid sessionId, CancellationToken ct = default) =>
+        GetEffectiveToolsAsync(sessionId, modeVersionIdOverride: null, ct);
+
+    public Task<HashSet<string>?> GetEffectiveToolsForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        CancellationToken ct = default) =>
+        GetEffectiveToolsAsync(sessionId, modeVersionId, ct);
+
+    private async Task<HashSet<string>?> GetEffectiveToolsAsync(
+        Guid sessionId,
+        Guid? modeVersionIdOverride,
+        CancellationToken ct)
     {
         SessionReference? session = null;
+        Guid? effectiveModeVersionId = null;
         try
         {
             session = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
-            if (session?.ModeVersionId is null) return null;
+            if (session is null) return null;
+            effectiveModeVersionId = modeVersionIdOverride ?? session.ModeVersionId;
+            if (effectiveModeVersionId is null) return null;
             await using var cfg = await _cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
             var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
-                x.Id == session.ModeVersionId.Value
+                x.Id == effectiveModeVersionId.Value
                 && x.TenantId == session.TenantId
                 && x.WorkspaceId == session.WorkspaceId, ct).ConfigureAwait(false)
-                ?? throw new InvalidDataException($"Agent mode version '{session.ModeVersionId}' was not found.");
+                ?? throw new InvalidDataException($"Agent mode version '{effectiveModeVersionId}' was not found.");
             if (!string.Equals(mv.Status, "published", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"Agent mode version '{session.ModeVersionId}' is not published.");
+                throw new InvalidDataException($"Agent mode version '{effectiveModeVersionId}' is not published.");
             var nodes = ParseModeSnapshot(mv);
             var union = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var hasWildcard = false;
@@ -54,19 +69,33 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             _logger.LogDebug(ex, "GetEffectiveToolsForSession failed for {SessionId}", sessionId);
             // A formal mode that cannot be verified is an empty grant, never a
             // signal to fall back to the broader legacy TOML authorization set.
-            return session?.ModeVersionId is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return effectiveModeVersionId is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
     }
 
-    public async Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken ct = default)
+    public Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken ct = default) =>
+        ResolveRosterAsync(sessionId, modeVersionIdOverride: null, ct);
+
+    public Task<FormalModeRoster?> ResolveRosterForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        CancellationToken ct = default) =>
+        ResolveRosterAsync(sessionId, modeVersionId, ct);
+
+    private async Task<FormalModeRoster?> ResolveRosterAsync(
+        Guid sessionId,
+        Guid? modeVersionIdOverride,
+        CancellationToken ct)
     {
         var sess = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
-        if (sess?.ModeVersionId is not { } modeVersionId) return null;
+        if (sess is null) return null;
+        var modeVersionId = modeVersionIdOverride ?? sess.ModeVersionId;
+        if (modeVersionId is null) return null;
         try
         {
             await using var cfg = await _cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
             var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
-                x.Id == modeVersionId
+                x.Id == modeVersionId.Value
                 && x.TenantId == sess.TenantId
                 && x.WorkspaceId == sess.WorkspaceId, ct).ConfigureAwait(false)
                 ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' was not found.");
@@ -175,6 +204,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     ReadStringArray(agent, "capabilities"))
                 {
                     SystemPrompt = systemPrompt,
+                    Description = OptionalString(agent, "description"),
                     Enabled = enabled,
                     Order = order
                 });
@@ -226,6 +256,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     item.Node.AgentVersionHash)
                 {
                     SystemPrompt = item.SystemPrompt,
+                    Description = item.Description,
+                    Triggers = item.Node.RelationshipSubscriptions is { Count: > 0 } subscriptions ? subscriptions : null,
+                    AllowedDispatchTargets = item.Node.RelationshipDispatchTargets,
                     ModelStrategyJson = item.ModelStrategyJson,
                     ModelStrategySource = item.ModelStrategySource,
                     Enabled = item.Enabled,
@@ -340,7 +373,10 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 toolScope,
                 ReadStringArray(agent, "capabilities"))
             {
-                ResourceGrants = envelopes.TemplateGrants.TryGetValue(slug, out var grants) ? grants : []
+                ResourceGrants = envelopes.TemplateGrants.TryGetValue(slug, out var grants) ? grants : [],
+                Description = OptionalString(agent, "description"),
+                SystemPrompt = OptionalString(agent, "system_prompt"),
+                AllowedDispatchTargets = ReadStringArray(agent, "allowed_dispatch_targets") is { Count: > 0 } targets ? targets : null
             });
         }
         return result.OrderBy(item => item.Slug, StringComparer.Ordinal).ToArray();
@@ -489,10 +525,32 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             // Relationship files are optional per node; when present, the
             // structured `agent_types` whitelist is the spawnable-template source.
             List<string> relationshipAgentTypes = [];
-            if (node.TryGetProperty("relationship", out var relationship) && relationship.ValueKind == JsonValueKind.Object
-                && relationship.TryGetProperty("agent_types", out var agentTypes))
+            List<string> relationshipSubscriptions = [];
+            // Null (not empty) when the relationship file does not say: "may dispatch to nobody" and
+            // "did not declare" are different statements, and only the second keeps the tier's roster.
+            List<string>? relationshipDispatchTargets = null;
+            if (node.TryGetProperty("relationship", out var relationship) && relationship.ValueKind == JsonValueKind.Object)
             {
-                relationshipAgentTypes = ReadStringArray(relationship, "agent_types").ToList();
+                if (relationship.TryGetProperty("agent_types", out _))
+                    relationshipAgentTypes = ReadStringArray(relationship, "agent_types").ToList();
+                if (relationship.TryGetProperty("allowed_dispatch_targets", out var targetsElement) && targetsElement.ValueKind == JsonValueKind.Array)
+                    relationshipDispatchTargets = ReadStringArray(relationship, "allowed_dispatch_targets")
+                        .Select(target => target.Trim())
+                        .Where(target => target.Length > 0)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                // Optional: the facts this role wakes on. Publishing already rejected unknown topics,
+                // so a snapshot that carries one is corrupt rather than merely newer.
+                if (relationship.TryGetProperty("subscriptions", out _))
+                {
+                    relationshipSubscriptions = ReadStringArray(relationship, "subscriptions")
+                        .Select(topic => topic.Trim().ToLowerInvariant())
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+                    var unknown = relationshipSubscriptions.Where(topic => !GovernanceTopics.IsKnown(topic)).ToArray();
+                    if (unknown.Length > 0)
+                        throw new InvalidDataException($"Mode node '{RequiredString(node, "node_key")}' subscribes to unknown topic(s): {string.Join(", ", unknown)}.");
+                }
             }
             result.Add(new ModeNodeSnapshot(
                 RequiredString(node, "node_key"),
@@ -507,7 +565,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 RawNullableJson(node, "model_strategy_override"),
                 OptionalString(node, "label"),
                 config,
-                relationshipAgentTypes));
+                relationshipAgentTypes,
+                relationshipSubscriptions,
+                relationshipDispatchTargets));
         }
         if (result.Count == 0) throw new InvalidDataException($"ModeVersion '{version.Id}' snapshot contains no nodes.");
         if (result.Select(item => item.NodeKey).Distinct(StringComparer.Ordinal).Count() != result.Count)
@@ -645,6 +705,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         IReadOnlyList<string> Capabilities)
     {
         public string SystemPrompt { get; init; } = string.Empty;
+        public string? Description { get; init; }
         public bool Enabled { get; init; } = true;
         public int Order { get; init; }
     }
@@ -662,7 +723,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         string? ModelStrategyOverrideJson,
         string? Label = null,
         JsonElement? Config = null,
-        IReadOnlyList<string>? RelationshipAgentTypes = null);
+        IReadOnlyList<string>? RelationshipAgentTypes = null,
+        IReadOnlyList<string>? RelationshipSubscriptions = null,
+        IReadOnlyList<string>? RelationshipDispatchTargets = null);
 
     /// <summary>Per-mode binding envelope narrowing parsed from the snapshot.</summary>
     private sealed record BindingEnvelopes(

@@ -20,7 +20,7 @@
  * `ref`/`reactive` store hands out Proxies that still pass `Array.isArray`.
  */
 
-import { computed, getCurrentInstance, onUnmounted, ref, shallowRef } from 'vue'
+import { computed, getCurrentInstance, markRaw, onUnmounted, ref, shallowRef } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import type { ITheme as XtermTheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -304,8 +304,11 @@ function attachTerminal(
   if (ipcCleanup.has(id)) detachTerminal(id)
 
   // Store references
-  instance.term = term
-  instance.fitAddon = fitAddon
+  // xterm and its addons own mutable private object graphs. Vue must never proxy
+  // them: proxying breaks identity/ownership checks and can interfere with xterm's
+  // renderer lifecycle.
+  instance.term = markRaw(term)
+  instance.fitAddon = markRaw(fitAddon)
 
   // Apply current theme
   term.options.theme = buildXtermTheme()
@@ -415,9 +418,13 @@ function attachTerminal(
  *
  * @param id - Terminal ID
  */
-function detachTerminal(id: string): void {
+function detachTerminal(id: string, expectedTerm?: Terminal | null): void {
   const instance = terminalInstances.value.find((entry) => entry.id === id)
   if (!instance) return
+  // A stale TerminalView can unmount after a newer view has already taken ownership
+  // of this terminal ID. Never let that stale view dispose the newer xterm renderer
+  // or tear down its IPC listeners.
+  if (expectedTerm && instance.term !== expectedTerm) return
 
   // Run cleanup functions
   const cleanups = ipcCleanup.get(id)

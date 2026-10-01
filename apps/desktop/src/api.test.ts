@@ -1,7 +1,15 @@
 // @vitest-environment happy-dom
 // api.ts reads `window.tinadec?.gatewayUrl?.()` at module top level, so tests need a DOM-ish global.
-import { describe, expect, it, vi } from 'vitest'
-import { api, normalizeEventEnvelope, type EventEnvelope } from './api'
+import { describe, expect, it, afterEach, vi } from 'vitest'
+import { api, normalizeEventEnvelope, type EventEnvelope, type ModelStreamChunkDto } from './api'
+import type {
+  ApprovalGateDto, ApprovalGatesDto, EvidenceHitDto, EvidenceRecallDto,
+  EnvironmentDto, EnvironmentHolderDto, EnvironmentRegisterInput, EnvironmentUpdateInput,
+  OrganizationDto, OrganizationMemberDto, OrganizationMessageDto, OrganizationMessagePageDto, OrganizationReportDecisionInput,
+  OrganizationReportDto, OrganizationReportPageDto, OrganizationRoomDto, OrganizationSubjectStateDto, PostOrganizationMessageInput,
+  SessionTopologyDto, TopologyInstanceDto, TopologyLeaseDto, TopologyMemberDto, TopologyRunDto, TopologyTaskDto,
+} from './api'
+import type { components } from './generated/schema'
 
 describe('normalizeEventEnvelope', () => {
   it('maps the Core wire shape (event_type/timestamp/version + payload.sequence)', () => {
@@ -23,6 +31,35 @@ describe('normalizeEventEnvelope', () => {
     // Core-only fields pass through untouched.
     expect((event as unknown as Record<string, unknown>).event_id).toBe('e1')
     expect((event as unknown as Record<string, unknown>).run_id).toBe('r-1')
+  })
+
+  it('unwraps the durable replay business payload while retaining journal metadata', () => {
+    const event = normalizeEventEnvelope({
+      version: '1.0',
+      event_type: 'task_graph.created',
+      timestamp: '2026-09-18T00:00:00Z',
+      payload: {
+        sequence: 6,
+        summary: '1 task(s) planned.',
+        severity: 'info',
+        payload: {
+          run_id: 'r-1',
+          plan_revision: 1,
+          task_count: 1,
+          task_keys: ['responses-write-proof'],
+        },
+      },
+    })
+
+    expect(event.seq).toBe(6)
+    expect(event.payload).toMatchObject({
+      sequence: 6,
+      summary: '1 task(s) planned.',
+      severity: 'info',
+      run_id: 'r-1',
+      task_count: 1,
+      task_keys: ['responses-write-proof'],
+    })
   })
 
   it('passes the legacy/mock top-level shape (type/seq/ts) through unchanged', () => {
@@ -84,7 +121,7 @@ describe('connectEvents normalization', () => {
     }
   }
 
-  it('delivers normalized envelopes for named Core events and swallows malformed frames', () => {
+  it('delivers normalized envelopes for the real Core event names and swallows malformed frames', () => {
     FakeEventSource.instances = []
     vi.stubGlobal('EventSource', FakeEventSource)
     try {
@@ -93,21 +130,330 @@ describe('connectEvents normalization', () => {
       const source = FakeEventSource.instances[0]
       expect(source.url).toContain('/api/v1/events?session_id=s-1')
 
-      // Core wire shape on a named event the UI subscribes to.
-      source.emit('message.created', JSON.stringify({
-        version: '1.0', event_id: 'e1', event_type: 'message.created',
+      // Core emits NAMED frames; the browser drops any named frame with no listener
+      // of that name. These are the names that were missing, which is why tool
+      // outcomes, approval decisions, and run failures never reached the UI.
+      for (const name of [
+        'tool.execution.requested',
+        'tool.execution.completed',
+        'tool.execution.failed',
+        'tool.execution.outcome_unknown',
+        'worker.assigned',
+        'worker.failed',
+        'approval.decided',
+        'run.failed',
+      ]) {
+        expect(source.listeners.has(name), `missing listener for ${name}`).toBe(true)
+      }
+      // A name Core has never produced must not be subscribed to: a dead listener is
+      // what hides the fact that a real fact has no rendering.
+      expect(source.listeners.has('project.created')).toBe(false)
+
+      // Core wire shape on a real named event.
+      source.emit('tool.execution.failed', JSON.stringify({
+        version: '1.0', event_id: 'e1', event_type: 'tool.execution.failed',
         timestamp: '2026-08-27T00:00:00Z', session_id: 's-1', run_id: 'r-1',
-        payload: { sequence: 12 },
+        payload: { sequence: 12, tool_id: 'write_file', error_category: 'not_approved' },
       }), '12')
       // Malformed JSON must not throw (would trip the renderer crash overlay).
-      expect(() => source.emit('run.started', '{not json')).not.toThrow()
+      expect(() => source.emit('run.failed', '{not json')).not.toThrow()
 
       expect(received).toHaveLength(1)
-      expect(received[0].type).toBe('message.created')
+      expect(received[0].type).toBe('tool.execution.failed')
       expect(received[0].seq).toBe(12)
       expect(received[0].ts).toBe('2026-08-27T00:00:00Z')
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+
+describe('invokeStream compat', () => {
+  interface Call {
+    url: string
+    init?: RequestInit
+  }
+
+  const calls: Call[] = []
+
+  function sseBody(frames: string): Response {
+    return new Response(frames, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+  }
+
+  /**
+   * The admission receipt, then a run stream written the way Core writes it: a
+   * comment heartbeat, one CRLF-framed delta whose text sits next to `kind`, and a
+   * terminal frame with no trailing blank line because the response ends there.
+   */
+  function stubGateway(frames: string) {
+    calls.length = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, init })
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ run_id: 'r-1', stream_cursor: 3 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return sseBody(frames)
+    }))
+  }
+
+  async function until(predicate: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 200 && !predicate(); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    if (!predicate()) throw new Error('the stream never reached the expected state')
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('carries the admission cursor into the stream request', async () => {
+    stubGateway('id: 4\nevent: done\ndata: {"run_id":"r-1","kind":"done","seq":4}')
+    const chunks: Array<{ kind: string }> = []
+    const controller = api.invokeStreamWithAdmission(
+      's-1',
+      { content: '写个提交信息', client_message_id: 'c-1', permission_mode: 'default' },
+      (chunk) => chunks.push(chunk as unknown as { kind: string }),
+    )
+    await until(() => chunks.length > 0)
+    expect(calls.map((call) => call.url)).toEqual([
+      expect.stringContaining('/api/v1/sessions/s-1/interactions'),
+      expect.stringContaining('/api/v1/runs/r-1/stream?after_seq=3'),
+    ])
+    controller.abort()
+  })
+
+  it('delivers the delta text the panel actually reads', async () => {
+    // Core puts the text beside `kind`; parseRunSseBlock keeps the frame in
+    // `payload`; ModelStreamChunkDto spells it at the top level. Before the readers were
+    // merged this compat path built a chunk without that field, so the AI commit-message
+    // panel streamed a full reply into `chunk.delta === undefined` and showed nothing.
+    stubGateway(
+      ': heartbeat\n\n'
+        + 'id: 4\r\nevent: delta\r\ndata: {"run_id":"r-1","kind":"delta","seq":4,"delta":"feat: 一条"}\r\n\r\n',
+    )
+    const chunks: ModelStreamChunkDto[] = []
+    const controller = api.invokeStream('s-1', '写个提交信息', (chunk) => chunks.push(chunk))
+    await until(() => chunks.some((chunk) => chunk.delta))
+    const delta = chunks.find((chunk) => chunk.kind === 'delta')
+    expect(delta?.delta).toBe('feat: 一条')
+    // Heartbeats are transport noise and never reach a consumer.
+    expect(chunks.map((chunk) => chunk.kind)).toEqual(['delta'])
+    controller.abort()
+  })
+
+  it('does not lose the last frame when the response ends without a blank line', async () => {
+    stubGateway('id: 7\nevent: done\ndata: {"run_id":"r-1","kind":"done","seq":7,"finish_reason":"stop"}')
+    const chunks: ModelStreamChunkDto[] = []
+    const errors: Error[] = []
+    const controller = api.invokeStream('s-1', '内容', (chunk) => chunks.push(chunk), (error) => errors.push(error))
+    await until(() => chunks.length > 0)
+    expect(chunks[0].kind).toBe('done')
+    expect(chunks[0].finish_reason).toBe('stop')
+    controller.abort()
+  })
+
+  it('stops the durable reader when the caller aborts', async () => {
+    stubGateway('id: 4\nevent: delta\ndata: {"run_id":"r-1","kind":"delta","seq":4,"delta":"x"}\n\n')
+    const chunks: ModelStreamChunkDto[] = []
+    const controller = api.invokeStream('s-1', '内容', (chunk) => chunks.push(chunk))
+    await until(() => chunks.length > 0)
+    const streamCall = calls[calls.length - 1]
+    expect(streamCall.init?.signal?.aborted).toBe(false)
+    controller.abort()
+    expect(streamCall.init?.signal?.aborted).toBe(true)
+  })
+
+  it('sends the identity the durable endpoint accepts, and none it rejects', async () => {
+    stubGateway('id: 4\nevent: done\ndata: {"run_id":"r-1","kind":"done","seq":4}')
+    const controller = api.invokeStreamWithAdmission(
+      's-1',
+      { content: 'x', client_message_id: 'c-9', mode_version_id: 'm-1', permission_mode: 'default', expected_context_revision: 2 },
+      () => {},
+    )
+    await until(() => calls.length >= 2)
+    const sent = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>
+    expect(sent).toEqual({
+      content: 'x',
+      client_message_id: 'c-9',
+      dispatch_mode: 'parallel',
+      mode_version_id: 'm-1',
+      expected_context_revision: 2,
+    })
+    // agent_mode is the retired six-value enum: Core answers 400 unknown_field for it.
+    expect(sent.agent_mode).toBeUndefined()
+    controller.abort()
+  })
+})
+
+
+describe('market catalog query string', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /**
+   * The catalog used to be requested as `?query=`, a parameter neither Core nor the gateway
+   * reads, so the search box narrowed nothing end-to-end while every mocked test passed. The
+   * name is the whole assertion; the envelope is the other half of the same fix.
+   */
+  it('sends the search term under the name Core reads, and unwraps the page', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      return new Response(JSON.stringify({
+        items: [],
+        total_available: 0,
+        has_more: false,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }))
+
+    const page = await api.listMarketCatalog({ kind: 'all', q: 'git hub', source_id: 'src-1', offset: 50 })
+
+    const url = urls[0]!
+    expect(url).toContain('q=git+hub')
+    expect(url).toContain('source_id=src-1')
+    expect(url).toContain('offset=50')
+    expect(url).not.toContain('query=')
+    // kind=all is the UI's "no filter", not a kind Core stores.
+    expect(url).not.toContain('kind=')
+    expect(page.items).toEqual([])
+    expect(page.total_available).toBe(0)
+  })
+
+  it('asks for nothing when there is nothing to filter by', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      return new Response(JSON.stringify({ items: [], total_available: 0, has_more: false }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }))
+
+    await api.listMarketCatalog()
+    expect(urls[0]).not.toContain('?')
+  })
+})
+
+
+describe('session organization requests', () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+
+  /** The Gateway forwards Core's status and problem details verbatim, so a stub that answers like Core is enough. */
+  function answer(status: number, body: unknown) {
+    calls.length = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+    }))
+  }
+
+  const sentBody = () => JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads a session whose first run has not happened as "no organization", and nothing else', async () => {
+    answer(404, { code: 'organization_not_started', detail: 'This session has no organization yet.' })
+    await expect(api.getOrganization('s 1')).resolves.toBeNull()
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s%201\/organization$/)
+
+    // Any other 404 — a session or room this principal cannot see — is an error, not an empty state.
+    answer(404, { code: 'tina_chat_not_found', detail: 'The requested resource is not available in this scope.' })
+    await expect(api.getOrganization('s-1')).rejects.toMatchObject({ status: 404, code: 'tina_chat_not_found' })
+  })
+
+  it('pages a room by the cursor Core hands back', async () => {
+    answer(200, { items: [], next_cursor: 62 })
+    const page = await api.readOrganizationRoom('s-1', 'room/1', 12, 50)
+    expect(calls[0].url).toContain('/api/v1/sessions/s-1/organization/rooms/room%2F1/messages?after_sequence=12&limit=50')
+    expect(page.next_cursor).toBe(62)
+
+    // Sequence 0 is a real cursor (the start of the room), not an absent one.
+    answer(200, { items: [], next_cursor: 0 })
+    await api.readOrganizationRoom('s-1', 'room-1', 0)
+    expect(calls[0].url).toMatch(/\/messages\?after_sequence=0$/)
+  })
+
+  it('posts only the fields Core accepts (its request type refuses unknown members)', async () => {
+    answer(200, { id: 'm-1' })
+    const body: PostOrganizationMessageInput = { content: '先串行', client_message_id: 'c-1', mention: ['reviewer'] }
+    await api.postOrganizationMessage('s-1', 'room-1', body)
+    expect(calls[0].init?.method).toBe('POST')
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s-1\/organization\/rooms\/room-1\/messages$/)
+    expect(sentBody()).toEqual({ content: '先串行', client_message_id: 'c-1', mention: ['reviewer'] })
+  })
+
+  it('decides a report at the revision it was read at, and keeps the conflict code for the caller', async () => {
+    answer(200, { id: 'r-1', status: 'acted', revision: 4 })
+    await api.decideOrganizationReport('s-1', 'r-1', { decision: 'acted', expected_revision: 3, note: '已串行' })
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s-1\/organization\/reports\/r-1\/decision$/)
+    expect(sentBody()).toEqual({ decision: 'acted', expected_revision: 3, note: '已串行' })
+
+    answer(412, { code: 'tina_chat_revision_conflict', detail: 'Expected revision 3; current revision is 4.' })
+    await expect(api.decideOrganizationReport('s-1', 'r-1', { decision: 'dismissed', expected_revision: 3 }))
+      .rejects.toMatchObject({ status: 412, code: 'tina_chat_revision_conflict' })
+    answer(409, { code: 'report_closed', detail: 'The report is already acted.' })
+    await expect(api.decideOrganizationReport('s-1', 'r-1', { decision: 'dismissed', expected_revision: 4 }))
+      .rejects.toMatchObject({ status: 409, code: 'report_closed' })
+  })
+
+  it('filters reports and bounds the topology exactly as asked', async () => {
+    answer(200, { items: [], truncated: false })
+    await api.listOrganizationReports('s-1', 'open', 100)
+    expect(calls[0].url).toMatch(/\/organization\/reports\?status=open&limit=100$/)
+    await api.listOrganizationReports('s-1')
+    expect(calls.at(-1)?.url).toMatch(/\/organization\/reports$/)
+
+    answer(200, { session_id: 's-1', runs: [], leases: [], members: [] })
+    await api.getSessionTopology('s-1', { include_finished: false, max_runs: 3 })
+    // `false` is a value Core reads (hide finished runs), so it must not be dropped like an absent one.
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s-1\/topology\?include_finished=false&max_runs=3$/)
+    await api.getSessionTopology('s-1')
+    expect(calls.at(-1)?.url).toMatch(/\/topology$/)
+  })
+
+  it('mirrors the generated contract field for field (the teeth are in the typecheck)', () => {
+    // A mirror that invents a field (`proposed_args` for `proposed_args_json`) or drops one fails
+    // `vue-tsc`: `true` is not assignable to `false`. The runtime assertion only keeps the list honest.
+    type C = components['schemas']
+    type SameKeys<A, B> = [Exclude<keyof A, keyof B>, Exclude<keyof B, keyof A>] extends [never, never] ? true : false
+    const mirrors: true[] = [
+      true satisfies SameKeys<OrganizationDto, C['OrganizationDto']>,
+      true satisfies SameKeys<OrganizationMemberDto, C['OrganizationMemberDto']>,
+      true satisfies SameKeys<OrganizationRoomDto, C['OrganizationRoomDto']>,
+      true satisfies SameKeys<OrganizationMessageDto, C['OrganizationMessageDto']>,
+      true satisfies SameKeys<OrganizationMessagePageDto, C['OrganizationMessagePage']>,
+      true satisfies SameKeys<OrganizationReportDto, C['OrganizationReportDto']>,
+      true satisfies SameKeys<OrganizationSubjectStateDto, C['OrganizationSubjectStateDto']>,
+      true satisfies SameKeys<OrganizationReportPageDto, C['OrganizationReportPage']>,
+      true satisfies SameKeys<PostOrganizationMessageInput, C['OrganizationPostRequest']>,
+      true satisfies SameKeys<OrganizationReportDecisionInput, C['OrganizationReportDecisionRequest']>,
+      true satisfies SameKeys<SessionTopologyDto, C['SessionTopologyDto']>,
+      true satisfies SameKeys<TopologyRunDto, C['SessionTopologyRunDto']>,
+      true satisfies SameKeys<TopologyTaskDto, C['SessionTopologyTaskDto']>,
+      true satisfies SameKeys<TopologyInstanceDto, C['SessionTopologyInstanceDto']>,
+      true satisfies SameKeys<TopologyLeaseDto, C['SessionTopologyLeaseDto']>,
+      true satisfies SameKeys<TopologyMemberDto, C['SessionTopologyMemberDto']>,
+      true satisfies SameKeys<ApprovalGatesDto, C['ApprovalGatesDto']>,
+      true satisfies SameKeys<ApprovalGateDto, C['ApprovalGateDto']>,
+      true satisfies SameKeys<EvidenceRecallDto, C['EvidenceRecallDto']>,
+      true satisfies SameKeys<EvidenceHitDto, C['EvidenceHitDto']>,
+      true satisfies SameKeys<EnvironmentDto, C['EnvironmentDto']>,
+      true satisfies SameKeys<EnvironmentHolderDto, C['EnvironmentHolderDto']>,
+      true satisfies SameKeys<EnvironmentRegisterInput, C['EnvironmentRegisterRequest']>,
+      true satisfies SameKeys<EnvironmentUpdateInput, C['EnvironmentUpdateRequest']>,
+    ]
+    expect(mirrors).toHaveLength(24)
   })
 })

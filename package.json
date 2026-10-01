@@ -7,8 +7,9 @@
     "apps/*"
   ],
   "scripts": {
-    "predev": "node scripts/dev-port-guard.mjs && node scripts/setup-shadcn-ai.mjs",
+    "predev": "node scripts/dev-port-guard.mjs && node scripts/setup-shadcn-ai.mjs && node scripts/setup-ripgrep.mjs && npm run dev:tools",
     "dev": "concurrently --kill-others -n core,gateway,desktop -c blue,magenta,green \"npm run dev:core\" \"npm run dev:gateway\" \"npm run dev:desktop\"",
+    "dev:tools": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 build TinadecTools/TinadecTools.csproj",
     "dev:core": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731",
     "dev:gateway": "cd TinadecGateway && bun run dev",
     "dev:desktop": "npm run dev -w @tinadec/desktop",
@@ -18,6 +19,7 @@
     "build": "npm run build --workspaces --if-present && cd TinadecGateway && bun run build && cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 build TinadecOffice.slnx --no-restore",
     "test": "npm run test --workspaces --if-present && cd TinadecGateway && bun test && cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 test TinadecOffice.slnx --no-build",
     "postinstall": "node scripts/setup-shadcn-ai.mjs",
+    "setup:rg": "node scripts/setup-ripgrep.mjs --force",
     "restore:dotnet": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 restore TinadecCore/TinadecCore.slnx && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 restore TinadecOffice.slnx",
     "ai:codegraph:init": "codegraph init",
     "ai:codegraph:sync": "codegraph sync",

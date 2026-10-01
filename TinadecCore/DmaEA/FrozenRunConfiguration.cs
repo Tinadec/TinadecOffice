@@ -18,6 +18,17 @@ public interface IAgentRuntimeConfigurationResolver
         string? permissionMode,
         SessionModelOverride? meetingModelOverride = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves one explicitly selected mode version without consulting a later
+    /// mutable session binding. Used by durable queued interactions.
+    /// </summary>
+    Task<FrozenRunConfigurationV1> ResolveForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        string? permissionMode,
+        SessionModelOverride? meetingModelOverride = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -51,6 +62,15 @@ public sealed record FrozenRunConfigurationV1(
     /// from it and may never expand a wildcard against a later manifest.
     /// </summary>
     public IReadOnlyList<FrozenToolManifestEntry> ToolManifest { get; init; } = [];
+
+    /// <summary>
+    /// The executors the conversation identity may dispatch to in this run, with the
+    /// responsibility text it chooses by — frozen once at admission so the planner's roster,
+    /// the solo master's roster section and <c>task_dispatch</c>'s call-time validation read one
+    /// list. Null on bodies frozen before it existed; readers then compute it from the roster.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<FrozenDispatchTarget>? DispatchRoster { get; init; }
 
     /// <summary>Protocol version of <see cref="ToolManifest"/> (zero for legacy bodies).</summary>
     public int ToolManifestProtocolVersion { get; init; }
@@ -101,6 +121,10 @@ public sealed record FrozenRunConfigurationV1(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public FrozenWorkspaceBinding? Workspace { get; init; }
 
+    /// <summary>Optional trusted communication binding. Absent on ordinary runs; never caller-supplied HTTP data.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public TinaChatInputBinding? TinaChatInput { get; init; }
+
     /// <summary>
     /// The frozen-body schema this Core writes and reads. v2 introduced the
     /// always-present Graph section (free_form tier on disk) and spawnable
@@ -137,6 +161,21 @@ public static class FrozenGraphTiers
 
     /// <summary>No declared dispatch edges — single-director free-form orchestration; the director spawns workers from the frozen spawnable-template set and edges are prompt material only.</summary>
     public const string FreeForm = "free_form";
+
+    /// <summary>
+    /// The conversation identity holds a TOOL SURFACE OF ITS OWN: the master does the
+    /// work itself (read/write/exec in one continuous tool loop, the classic
+    /// single-agent CLI shape) while keeping full spawn authority to hand work to
+    /// sub-agents.
+    ///
+    /// Outranks every other branch. "The master executes" is a statement about WHO
+    /// works, not about topology, so it holds whether or not the mode declares
+    /// dispatch edges — a solo mode may keep a declared graph (dispatch along it) or
+    /// none (dispatch freely). Derived from the frozen operation roster's declared
+    /// tool_scope, never from a bespoke marker field, so no pack has to opt in
+    /// explicitly and no digest can drift silently.
+    /// </summary>
+    public const string SoloDispatch = "solo_dispatch";
 }
 
 /// <summary>
@@ -165,6 +204,12 @@ public sealed record FrozenGraphNode(string NodeKey, string AgentSlug, string La
     public IReadOnlyList<FrozenResourceGrant> ResourceGrants { get; init; } = [];
 }
 
+/// <summary>
+/// One dispatchable executor: its fixed id (the agent slug — the value a coordinator names in
+/// <c>assignee</c> / <c>task_dispatch.agent</c>), its responsibility description and its tool face.
+/// </summary>
+public sealed record FrozenDispatchTarget(string Id, string Description, IReadOnlyList<string> Tools);
+
 /// <summary>A worker template the conversation identity may spawn, with its frozen tool ceiling.</summary>
 public sealed record FrozenSpawnableTemplate(
     string Slug,
@@ -177,6 +222,23 @@ public sealed record FrozenSpawnableTemplate(
 {
     /// <summary>Workspace-relative path grants frozen from the template's binding envelope resources (empty = no workspace authorization).</summary>
     public IReadOnlyList<FrozenResourceGrant> ResourceGrants { get; init; } = [];
+
+    /// <summary>
+    /// The agent's published responsibility description ("what it is for / when to use it /
+    /// what it cannot do"). It is what the coordinator reads to choose a dispatch target, so it
+    /// travels into the frozen roster verbatim. Null-suppressed so bodies frozen before it
+    /// existed serialize to identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; init; }
+
+    /// <summary>Published role instructions carried with the frozen spawnable template.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SystemPrompt { get; init; }
+
+    /// <summary>Targets this frozen execution template may itself dispatch to.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
 }
 
 internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigurationResolver
@@ -201,15 +263,32 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         _policySnapshots = policySnapshots;
     }
 
-    public async Task<FrozenRunConfigurationV1> ResolveAsync(
+    public Task<FrozenRunConfigurationV1> ResolveAsync(
         Guid sessionId,
         string? permissionMode,
         SessionModelOverride? meetingModelOverride = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(sessionId, modeVersionIdOverride: null, permissionMode, meetingModelOverride, cancellationToken);
+
+    public Task<FrozenRunConfigurationV1> ResolveForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        string? permissionMode,
+        SessionModelOverride? meetingModelOverride = null,
+        CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(sessionId, modeVersionId, permissionMode, meetingModelOverride, cancellationToken);
+
+    private async Task<FrozenRunConfigurationV1> ResolveCoreAsync(
+        Guid sessionId,
+        Guid? modeVersionIdOverride,
+        string? permissionMode,
+        SessionModelOverride? meetingModelOverride,
+        CancellationToken cancellationToken)
     {
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Session was not found.");
-        if (session.ModeVersionId is null)
+        var modeVersionId = modeVersionIdOverride ?? session.ModeVersionId;
+        if (modeVersionId is null)
             throw new RunAdmissionException("agent_mode_not_configured", "A published default Agent Mode must be configured before creating a run.");
         // The workspace is resolved exactly once, here, from Core-owned records and
         // a cheap filesystem probe. Everything downstream (prompt, tool boundary,
@@ -228,13 +307,12 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             // makes it visible to lifecycle audit without inventing a mutable record.
             new("agent_runtime_baseline", DeterministicGuid(snapshot.ContentHash), DeterministicGuid(snapshot.ContentHash + ":" + snapshot.Version), snapshot.ContentHash)
         };
-        var modeVersionId = session.ModeVersionId.Value;
-        var relational = await _formal.ResolveRosterAsync(sessionId, cancellationToken).ConfigureAwait(false)
+        var relational = await _formal.ResolveRosterForModeAsync(sessionId, modeVersionId.Value, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
         var operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
         var execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
-        operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
-        execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId.Value, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId.Value, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
 
         // Workspace baseline: a bound workspace gives every agent that holds a
         // provider tool face the whole-root read level, so read-only work never
@@ -282,7 +360,10 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
                 template.ToolScope,
                 template.Capabilities)
             {
-                ResourceGrants = WorkspaceGrantDefaults.Resolve(workspace, template.ResourceGrants, template.ToolScope)
+                ResourceGrants = WorkspaceGrantDefaults.Resolve(workspace, template.ResourceGrants, template.ToolScope),
+                Description = template.Description,
+                SystemPrompt = template.SystemPrompt,
+                AllowedDispatchTargets = template.AllowedDispatchTargets
             }).ToArray()
         };
 
@@ -343,20 +424,26 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     }
 
     /// <summary>
-    /// Three-branch tier derivation, decided only from frozen inputs:
-    /// no declared dispatch edges → free_form (the director builds its own
-    /// workers); declared edges + a conversation identity holding a
-    /// dispatchable-worker spawn authority (agent.create_temporary, or the
-    /// agent.spawn alias) → self_dispatch; declared edges without spawn
-    /// authority (including create_persistent-only, which mints candidates not
-    /// dispatchable workers) → deterministic.
+    /// Four-branch tier derivation, decided only from frozen inputs, first match wins:
+    /// the conversation identity declares a tool surface → solo_dispatch (the master
+    /// executes; topology-independent); no declared dispatch edges → free_form (the
+    /// director builds its own workers); declared edges + a conversation identity
+    /// holding a dispatchable-worker spawn authority (agent.create_temporary, or the
+    /// agent.spawn alias) → self_dispatch; declared edges without spawn authority
+    /// (including create_persistent-only, which mints candidates not dispatchable
+    /// workers) → deterministic.
     /// </summary>
     internal static string DeriveGraphTier(IReadOnlyList<RuntimeAgentDefinition> operation, bool hasDeclaredEdges, string? conversationSlug)
     {
-        if (!hasDeclaredEdges) return FrozenGraphTiers.FreeForm;
         var conversation = conversationSlug is { } slug
             ? operation.FirstOrDefault(agent => string.Equals(agent.Id, slug, StringComparison.OrdinalIgnoreCase))
             : null;
+        // First branch: the conversation identity holds tools. Placed first because it
+        // answers a different question than the two that follow — who EXECUTES, not how
+        // dispatch is shaped. The three modes that predate it declare an empty meeting
+        // tool_scope and therefore land on their original branches unchanged.
+        if (conversation is { AllowedTools.Count: > 0 }) return FrozenGraphTiers.SoloDispatch;
+        if (!hasDeclaredEdges) return FrozenGraphTiers.FreeForm;
         var capabilities = conversation?.Capabilities ?? [];
         return capabilities.Any(capability =>
             string.Equals(capability, ThreeNamespaceMap.SpawnTemporaryCapability, StringComparison.OrdinalIgnoreCase)
@@ -412,6 +499,9 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         ResourceGrants = e.ResourceGrants,
         PromptProfile = e.PromptProfile,
         SystemPrompt = e.SystemPrompt,
+        Description = e.Description,
+        Triggers = e.Triggers ?? [],
+        AllowedDispatchTargets = e.AllowedDispatchTargets,
         ModelStrategyJson = e.ModelStrategyJson,
         ModelStrategySource = e.ModelStrategySource,
         Enabled = e.Enabled,
@@ -432,6 +522,11 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         "deny" => "deny",
         "auto-approve" => "auto-approve",
         "full-access" => "full-access",
+        // Delegated approval (architecture §7.2): an approval gate is decided by the conversation
+        // identity, a reviewer, or both instead of a human click. Frozen verbatim like the others.
+        ApprovalDelegationModes.Conversation => ApprovalDelegationModes.Conversation,
+        ApprovalDelegationModes.Reviewer => ApprovalDelegationModes.Reviewer,
+        ApprovalDelegationModes.Both => ApprovalDelegationModes.Both,
         "default" or "ask" or null or "" => "ask",
         _ => "ask"
     };

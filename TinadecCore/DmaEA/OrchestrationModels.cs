@@ -11,6 +11,8 @@ public sealed class AgentDefinition
     public string AgentType { get; init; } = string.Empty;
     public string? ModelRoutePurpose { get; init; }
     public string? SystemPrompt { get; init; }
+    /// <summary>Responsibility description a coordinator chooses this agent by.</summary>
+    public string? Description { get; init; }
     public IReadOnlyList<string> Capabilities { get; init; } = [];
     public IReadOnlyList<string> AllowedTools { get; init; } = [];
     public bool Enabled { get; init; }
@@ -38,6 +40,19 @@ public sealed class PlannedTask
     public string[] RequiredCapabilities { get; init; } = [];
     [JsonPropertyName("required_tools")]
     public string[] RequiredTools { get; init; } = [];
+    /// <summary>
+    /// The executor the coordinator hands this task to: a fixed id from the run's dispatch
+    /// roster, chosen by responsibility. Empty falls back to tool/capability matching.
+    /// </summary>
+    [JsonPropertyName("assignee")]
+    public string? Assignee { get; init; }
+    /// <summary>
+    /// Paths (inside the workspace) the task will write. Optional; when declared, the task leases them
+    /// exclusively when it starts, so a run that would write the same place is refused before either
+    /// runs a command, and what the task really changed is checked against it afterwards.
+    /// </summary>
+    [JsonPropertyName("write_scope")]
+    public string[] WriteScope { get; init; } = [];
     [JsonPropertyName("priority")]
     public int Priority { get; init; } = 1;
     [JsonPropertyName("risk")]
@@ -62,6 +77,7 @@ public sealed class StepResult
     public string Status { get; init; } = "completed";
     public string Summary { get; init; } = string.Empty;
     public IReadOnlyList<string> Evidence { get; init; } = [];
+    public IReadOnlyList<LaneCriterionVerdict> CriterionVerdicts { get; init; } = [];
 
     /// <summary>
     /// Optional context patch proposed by the worker. The engine applies it

@@ -11,6 +11,8 @@ export interface AgentPackNodeRelationship {
   success_criteria: string[]
   /** Spawn whitelist: the only agent slugs a node may create at runtime. */
   agent_types: string[]
+  /** Governance topics a standing member is woken by (e.g. `lease_conflict`); absent on dispatch nodes. */
+  subscriptions?: string[]
 }
 
 export interface AgentPackAgentResource {
@@ -76,6 +78,15 @@ export interface AgentPackModeResource {
   slug: string
   display_name: string
   description: string | null
+  /**
+   * Mode-level prompt pipeline (source priority: mode > agent > workspace default).
+   * A prompt pipeline is otherwise bound per AGENT, so without this every mode shares
+   * one set of instructions. When declared it wins for the WHOLE mode — the pipeline
+   * describes how that mode collaborates, so it reaches the conversation identity and
+   * the execution-layer workers alike. Per-agent role wording inside one mode stays on
+   * each agent's `system_prompt`.
+   */
+  prompt_pipeline_ref?: AgentPackReference<'prompt'> | null
   nodes: AgentPackModeNodeResource[]
   edges: AgentPackModeEdgeResource[]
   bindings?: AgentPackModeBindingResource[]
@@ -121,7 +132,7 @@ export interface AgentPackEnvelope {
 }
 
 export const GRAPH_SEED_PACK_ID = 'tinadec.graph.seed-pack'
-export const GRAPH_SEED_PACK_VERSION = '2.1.0'
+export const GRAPH_SEED_PACK_VERSION = '3.0.1'
 
 export const graphSeedPackManifest = manifestJson as AgentPackManifest
 
@@ -134,7 +145,7 @@ export const graphSeedPackManifest = manifestJson as AgentPackManifest
 // The digest must be computed over the DTO-closed manifest, i.e. the raw file as
 // written — Core canonicalizes its DTO round-trip of this same body. See
 // packIntegrity.ts for the invariant and the gates that enforce it.
-export const GRAPH_SEED_PACK_DIGEST = '044b76b6d8f3c873465adcb72748581dd6c51ab7a7b29627e858ea522eb6d8dc'
+export const GRAPH_SEED_PACK_DIGEST = '25d64d688a663243701f168137d74d2f87d20059730b4d9969dd4beca14932ce'
 
 export const graphSeedPackEnvelope: AgentPackEnvelope = {
   manifest: graphSeedPackManifest,

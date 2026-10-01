@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TinadecCore.Abstractions;
@@ -13,6 +14,8 @@ using TinadecCore.Models;
 using TinadecCore.Prompts;
 using TinadecCore.Skills;
 using TinadecCore.Tenancy;
+using TinadecCore.AgentGraph;
+using TinadecCore.TinaChat;
 using TinadecCore.Tools;
 using TinadecCore.VectorStore;
 
@@ -46,6 +49,37 @@ public static class TinadecCoreServiceCollectionExtensions
         new LoopGuardModuleRegistrar().Register(builder);
         new ToolsModuleRegistrar().Register(builder);
         new DmaEAModuleRegistrar().Register(builder);
+
+        new AgentGraphModuleRegistrar().Register(builder);
+        new TinaChatModuleRegistrar().Register(builder);
+        services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
+        services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
+        services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
+        services.AddSingleton<IExecutorMessageWakeSink, ExecutorMessageWakeSink>();
+        // Governance reports use one runtime action port. The adapter checks the
+        // target run's tenant/workspace/session before it reaches run control.
+        services.AddSingleton<IGovernanceRunController, GovernanceRunController>();
+        services.AddSingleton<IOrganizationReportActionExecutor, OrganizationReportActionExecutor>();
+        // The handoff tool needs the mode catalog and the coordinator, so the composition root wraps
+        // the module's gateway rather than giving the communication module a dependency that would
+        // point back at itself.
+        services.Replace(ServiceDescriptor.Singleton<ITinaChatToolGateway>(sp => new TinaChatHandoffGateway(
+            sp.GetRequiredService<TinaChatService>(),
+            sp.GetRequiredService<ITinaChatRunService>(),
+            sp.GetRequiredService<ITenantContextAccessor>(),
+            sp.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>())));
+        // The session as a graph (runs, instances, tasks, leases, organization members): composed here
+        // because only the host reads across those modules. Serves graph_view and the topology endpoint.
+        services.AddSingleton<ISessionTopology, SessionTopologyService>();
+        // TinaChat turns are owed by durable rows, not by this process: one singleton scheduler drains them.
+        services.AddSingleton<TinaChatWakeService>();
+        services.AddHostedService(sp => sp.GetRequiredService<TinaChatWakeService>());
+        // Delegated approval gates (the delegate-* permission modes): one singleton asks each approval's
+        // gates in order and applies the outcome; the same instance serves the gates' read side.
+        services.AddOptions<ApprovalGateOptions>().BindConfiguration(ApprovalGateOptions.SectionName);
+        services.AddSingleton<ApprovalGateService>();
+        services.AddSingleton<IApprovalGateLedger>(sp => sp.GetRequiredService<ApprovalGateService>());
+        services.AddHostedService(sp => sp.GetRequiredService<ApprovalGateService>());
 
         // Governance is registered before DmaEA so it can remain independently
         // packageable. The composition root replaces its fail-closed placeholder

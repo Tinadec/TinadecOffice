@@ -1,6 +1,9 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-09-09
+**Last Updated:** 2026-09-27
+**Last Updated By:** 单一布局系统清理：删除旧面板体系残留、`wb`→`uie` 命名统一、`showPage` 保留用户布局、分离窗口携带会话上下文。
+**Last Verified Commit:** aa6140d 基线工作树，本轮顺序实测：Desktop vitest 762 passed / 14 skipped（82 文件通过 / 1 跳过），Electron 24/24，TYPECHECK_EXIT=0、BUILD_EXIT=0、DRIFT_EXIT=0。浏览器连接不可用，未做真实 Electron/像素级验收。
+**Branch:** Everything-changed
 
 TinadecUI is the UI-engineering home inside TinadecOffice. Consumers (`apps/desktop`, `apps/web`) import it as `@tinadec/ui` — a registered alias in both packages' `vite.config.ts` and `tsconfig.json` that resolves to `apps/TinadecUI/src/index.ts`. Both consumers also map `@` → `apps/desktop/src`, so TinadecUI files may reference app code via `@/` and it resolves under every consumer. The boundary is a module home + public barrel, not a build-isolated library.
 
@@ -21,17 +24,37 @@ apps/TinadecUI/
     └── components/   # the Components module — the Vue UI library
 ```
 
+## Single layout system (2026-09-27)
+
+UIE is the **only** layout system. The legacy panel system (`ContextPanel`/`PanelHome`/`usePanelTabs`, `.float-panel`/`.workspace`/`--chat-*` CSS, `uie-card-fill.css` neutralizers, the PanelType migration and the `browser`↔`preview` alias) is deleted — do not reintroduce a parallel host, tab model or positioning layer.
+
+- **Naming**: everything UIE uses the `uie` prefix — CSS classes `uie-*`, injection keys `uie:*`, instance ids `uie-*`, store variable `const uie = useUie()`. "Workbench" now only means the `/workbench` run page (`WorkbenchPage.vue` + `stores/workbench.ts`), unrelated to UIE.
+- **Route entry**: a UIE route calls `useUiePage(pageId)` (`apps/desktop/src/lib/uiEngine.ts`) — init once + `showPage(pageId)` on mount, which restores that page's persisted layout or falls back to its preset. `applyPreset` is a layout *reset*; never call it on navigation. Hydration resolves the page shown *now*, so cold deep links (`#/market`, `#/chatroom`) keep their own layout.
+- **Per-project layouts**: `ensureProductionUie` binds `homeController.selectedProjectId` → `uie.setActiveProjectId` once. Pages in `PROJECT_SCOPED_PAGES` (`engine/scope.ts`, currently only `home`) read/write `workspace-page(project, page)`; a project with no layout of its own inherits the page-wide layout (the one used with no workspace selected) → global → preset, and forks only on its first edit. `market`/`chatroom` stay page-wide. Context swaps (page, project, hydration) go through `bus.loadSnapshot`: not persisted back and undo/redo history cleared, so an inherited layout is never silently copied and undo never crosses page/project. Only commands/undo/redo/`applyPreset` persist.
+- **Card content** (`AppSidebar` `.sidebar`, `ChatPanel` `.conversation`) is normal-flow content that fills its card; the stack owns position, size and material.
+- **Detached windows**: the window `type` is the UIE descriptor id; `useDetachedTabs` adds `sessionId`/`projectPath` on detach and strips them on reattach.
+- **Feature icons** come only from `cards/home/featureCatalog.ts` (`featureIconFor`).
+
 ## The three modules
+
+### STREAMING OUTPUT（2026-09-23）
+
+Home `ChatCard.vue` 将 `homeController.agentTurnActivities` 透传给 Desktop `ChatPanel`；活动的 run 分桶与消息归属由 Desktop 呈现层负责，UIE Engine 不接触模型输出或业务状态。验证：随桌面组件与类型门禁。
+
 
 TinadecUI organizes UI engineering into three modules (the user's framing):
 
 | Module | Role | Location |
 |--------|------|----------|
 | **Engine (TinadecUIE)** | Deterministic layout authority — the pure-TS, DOM-free layout engine (types/commands/reducer/undoStack/scope/registry/presets/repair/constraints/commandBus/instancePool/dockDrop) + versioned persistence (layerStore/migrate). Owns layout state; all mutations go through `commandBus.dispatch`. | `src/engine/` |
-| **Components** | The Vue UI library: render components (`UieShell`/`UieCanvas`/`UieColumn`/`UieStack`/`UieDock`/`UieCardHost`/`UieCardFrame` + `uie-card-fill.css`), the reactive store (`useUie`/`initUie`), and the card registry (`src/components/cards/`). Depends on the engine **one-way**. | `src/components/` |
+| **Components** | The Vue UI library: render components (`UieShell`/`UieCanvas`/`UieColumn`/`UieStack`/`UieDock`/`UieCardHost`/`UieCardFrame`), the reactive store (`useUie`/`initUie`), and the card registry (`src/components/cards/`). Depends on the engine **one-way**. | `src/components/` |
 | **Rendering** | Page/surface rendering & transitions that compose the engine. | future: `src/rendering/` |
 
 ## Dock (multi-pane split)
+
+Chatroom（2026-09-18）：新增 `chatroom` pageId/preset，保留左侧 `nav`，中栏 `ChatroomCard` 承载 Desktop 只读观察面板，右栏为空。descriptor不可关闭/拖动，复用现有command bus和版式序列化；repair识别新pageId，无snapshot形状变化。NavCard的会话选择/新建需返回首页，聊天室入口跳 `/chatroom`；Vapor卡片已登记。权限与网络均不进入纯TS Engine。
+
+Terminal layout invariant（2026-09-18）：`terminal` descriptor 必须是 singleton。多 shell 会话由 Desktop `TerminalPanel` 内部 tabs 管理；允许多个 Uie TerminalCard 会让它们争用同一个全局 terminal attachment，最终可释放仍在使用的 xterm renderer。现有 `repairLayout` 的 singleton 去重同时承担旧持久快照修复：若历史布局含多个 terminal card，只保留第一个并正规化 active tab。不要为“多终端”把 descriptor 改回 non-singleton。
 
 The feature/right column supports **dock splits** — recursive binary split trees of panes (`UieColumn.dock`, mutually exclusive with `primary/secondary`). Users drag a tab to a pane edge to split (row/column) or to a pane center to merge; a single collapsed rail collects every pane's feature icons.
 
@@ -39,17 +62,17 @@ The feature/right column supports **dock splits** — recursive binary split tre
 - Components: `components/UieDock.vue` (flat pane/divider/overlay rendering), `UieStack.vue` (`paneId`/`paneMain` + split-pane minimal tab bar + merge button), `BrowserTabBar.vue` (shared drag source via `@/composables/useDockDrag`), `UieColumn.vue` (virtual main-pane drop rect before the first split; collapsed rail collects all dock panes' icons).
 - Invariants: exactly one `main` pane hosting `homePicker`; non-main panes are never empty; collapsing to a single main pane normalizes `dock` back to `null` (stacks restored).
 - **Window-stacking overlay**: a float right feature column (hosts `homePicker`) wider than the center's comfort width (`MIN_CHAT_COMFORT_WIDTH`, the composer no-wrap threshold) floats over the chat instead of squeezing it — `computeGeometry` marks `degraded.overlayRight` + `ColumnGeometry.overlay`, clamps the panel so `MIN_OVERLAY_STRIP` of chat stays visible, and `UieColumn` renders it at a higher z-index. Drag ceiling is `maxOverlayColumnWidth`. Visual-only, never written back.
-- `snapshot.version` stays **1**: `dock` is an optional additive field; old persisted snapshots (no `dock`) load unchanged via `repairLayout`, so no `migrate.ts` bump is required.
+- `snapshot.version` stays **1**: `dock` is an optional additive field; old persisted snapshots (no `dock`) load unchanged via `repairLayout`, so no `version` bump is required.
 
 ## Module boundary rules
 
 - **Engine core is pure TS and DOM-free.** Do not add Vue/DOM imports to `engine/types/commands/reducer/undoStack/scope/registry/presets/repair/constraints/commandBus/instancePool`.
 - **Dependency direction is Components → Engine (one-way).** Components read `useUie()`/types and dispatch commands; the engine never imports Vue components or `useUie`.
-- **Persistence** (`engine/persistence/`) is part of the Engine module (storage logic, not UI); it stays DOM-free and writes through Electron `layoutStore.cjs` → `userData/workbench-layout.json`.
+- **Persistence** (`engine/persistence/`) is part of the Engine module (storage logic, not UI); it stays DOM-free and writes through Electron `layoutStore.cjs` → `userData/uie-layout.json`.
 - All layout mutations go through `commandBus.dispatch({ command, source, expectedRevision })`; `ai` source is reserved/rejected.
-- Persistence format is versioned; changing snapshot shape requires a `migrate.ts` bump.
+- Persistence format is versioned; a breaking snapshot-shape change bumps `snapshot.version` and is handled in `repairLayout`. No legacy-format migration shims are kept (the old PanelType migration was removed 2026-09-27).
 - Vapor: Components-module SFCs are `<template vapor>`; keep `apps/desktop/src/vapor/` registries in sync when adding/renaming components or cards.
-- **Card context injections are reactive contracts.** `UieCardHost` provides `wb:instanceId` (stable value), `wb:cardState` (stable object identity) and `wb:active` (a `ComputedRef`). A Vapor SFC's setup runs once, so providing `props.x` directly freezes it at mount time — which is what made a card mounted behind the active tab report itself hidden forever. Consumers read `wb:active` through `inject<MaybeRefOrGetter<boolean>>` + `toValue`, which also tolerates a host that supplies a plain boolean.
+- **Card context injections are reactive contracts.** `UieCardHost` provides `uie:instanceId` (stable value), `uie:cardState` (stable object identity) and `uie:active` (a `ComputedRef`). A Vapor SFC's setup runs once, so providing `props.x` directly freezes it at mount time — which is what made a card mounted behind the active tab report itself hidden forever. Consumers read `uie:active` through `inject<MaybeRefOrGetter<boolean>>` + `toValue`, which also tolerates a host that supplies a plain boolean.
 
 ## Adding a new module
 1. Create `apps/TinadecUI/src/<module>/`.

@@ -13,6 +13,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
     {
         endpoints.MapCoreDiagnosticsEndpoints();
         endpoints.MapStorageEndpoints();
+        endpoints.MapAttachmentEndpoints();
         endpoints.MapDmaeaEndpoints();
         endpoints.MapAgentConfigurationEndpoints();
         endpoints.MapModelAgentControlEndpoints();
@@ -27,6 +28,13 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapUserToolActionEndpoints();
         endpoints.MapDirectToolEndpoints();
         endpoints.MapTerminalEndpoints();
+        endpoints.MapMcpEndpoints();
+        endpoints.MapMarketEndpoints();
+        endpoints.MapTinaChatEndpoints();
+        endpoints.MapOrganizationEndpoints();
+        endpoints.MapEnvironmentEndpoints();
+        endpoints.MapApprovalRuleEndpoints();
+        endpoints.MapProjectOverviewEndpoints();
         endpoints.MapStubEndpoints();
         return endpoints;
     }

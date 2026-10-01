@@ -4,6 +4,7 @@ import type { CardRegistry } from '../engine/registry'
 import { buildPreset } from '../engine/presets'
 import { repairLayout, type RepairContext } from '../engine/repair'
 import { computeGeometry } from '../engine/constraints'
+import { PROJECT_SCOPED_PAGES, writeScopeFor } from '../engine/scope'
 import { createInstancePool, type InstancePool } from '../engine/instancePool'
 import type {
   LayoutScope,
@@ -38,9 +39,14 @@ export interface UieStore {
   containerSize: Ref<UieContainerSize>
   focusedCardId: Ref<string | null>
   dispatch(envelope: UieCommandEnvelope, options?: { gestureId?: string }): boolean
-  /** Apply a page preset (source: route) — keeps layout but swaps page content. */
+  /**
+   * Route entry: switch to `pageId`, restoring that page's persisted layout when
+   * one exists and falling back to its built-in preset. No-op when already on it.
+   */
+  showPage(pageId: UiePageId): void
+  /** Replace the current layout with `pageId`'s built-in preset (a layout reset). */
   applyPreset(pageId: UiePageId): void
-  /** Restore a snapshot (used for persistence hydration). */
+  /** Show a stored snapshot (repaired; not persisted back, history cleared). */
   restoreSnapshot(snapshot: UieLayoutSnapshot): void
   /** Update the container size (observed by the canvas). */
   setContainerSize(size: UieContainerSize): void
@@ -49,6 +55,11 @@ export interface UieStore {
   canUndo: Ref<boolean>
   canRedo: Ref<boolean>
   componentFor(descriptorId: string): Component | undefined
+  /**
+   * Bind the active workspace. Project-scoped pages (see `PROJECT_SCOPED_PAGES`)
+   * switch to that project's layout — its own, else the page-wide one, else the
+   * preset — and later edits are saved per project.
+   */
   setActiveProjectId(projectId: string | null): void
   activeProjectId: Ref<string | null>
 }
@@ -69,7 +80,7 @@ export interface UieStoreOptions {
 
 let instanceCounter = 0
 export function createUieInstanceId(): string {
-  return `wb-${++instanceCounter}-${Math.random().toString(36).slice(2, 7)}`
+  return `uie-${++instanceCounter}-${Math.random().toString(36).slice(2, 7)}`
 }
 
 export function createUie(options: UieStoreOptions): UieStore {
@@ -85,11 +96,7 @@ export function createUie(options: UieStoreOptions): UieStore {
     buildPreset(initialPage, { nextInstanceId: createUieInstanceId })
 
   const activeProjectId = ref<string | null>(options.activeProjectId ?? null)
-  const scope = ref<LayoutScope>(
-    activeProjectId.value
-      ? { kind: 'workspace-page', projectId: activeProjectId.value, pageId: initialPage }
-      : { kind: 'page', pageId: initialPage },
-  )
+  const scope = ref<LayoutScope>(writeScopeFor(initialPage, activeProjectId.value))
 
   const snapshot = shallowRef<UieLayoutSnapshot>(initial)
   const containerSize = ref<UieContainerSize>({ width: 1440, height: 920 })
@@ -104,13 +111,15 @@ export function createUie(options: UieStoreOptions): UieStore {
     registry,
     nextInstanceId: createUieInstanceId,
     lockedSlots: options.lockedSlots,
-    onChanged: (next) => {
+    onChanged: (next, { persist }) => {
       snapshot.value = next
       geometry.value = computeGeometry(containerSize.value, next)
       canUndoRef.value = bus.canUndo()
       canRedoRef.value = bus.canRedo()
-      // Auto-save to the current write scope (project-scoped when a project is active).
-      options.persistence?.store.saveSnapshot(next, activeProjectId.value)
+      // Auto-save edits to the current write scope (per project on project-scoped
+      // pages). Loaded layouts are not written back, so a project that has never
+      // been customised keeps following the page-wide layout.
+      if (persist) options.persistence?.store.saveSnapshot(next, activeProjectId.value)
     },
   })
 
@@ -125,7 +134,9 @@ export function createUie(options: UieStoreOptions): UieStore {
       .hydrate()
       .then((loaded) => {
         if (!loaded) return
-        const stored = layerStore.resolveSnapshot(initialPage, activeProjectId.value)
+        // Resolve for the page shown *now*: a cold deep link may already have
+        // switched away from the initial page before the disk read resolved.
+        const stored = layerStore.resolveSnapshot(snapshot.value.pageId, activeProjectId.value)
         if (stored) {
           restoreSnapshot(stored)
         }
@@ -154,7 +165,15 @@ export function createUie(options: UieStoreOptions): UieStore {
       registry,
       preset: { nextInstanceId: createUieInstanceId },
     })
-    bus.setSnapshot(repaired)
+    bus.loadSnapshot(repaired)
+  }
+
+  /** Show `page`'s effective layout for the active project (stored, else preset). */
+  function loadLayout(page: UiePageId) {
+    const stored = options.persistence?.store.resolveSnapshot(page, activeProjectId.value)
+    if (stored) restoreSnapshot(stored)
+    else bus.loadSnapshot(buildPreset(page, { nextInstanceId: createUieInstanceId }))
+    scope.value = writeScopeFor(page, activeProjectId.value)
   }
 
   return {
@@ -171,12 +190,13 @@ export function createUie(options: UieStoreOptions): UieStore {
       const ok = bus.dispatch(envelope, opts)
       return ok
     },
+    showPage(nextPage) {
+      if (snapshot.value.pageId === nextPage) return
+      loadLayout(nextPage)
+    },
     applyPreset(nextPage) {
-      const next = buildPreset(nextPage, { nextInstanceId: createUieInstanceId })
-      bus.setSnapshot(next)
-      scope.value = activeProjectId.value
-        ? { kind: 'workspace-page', projectId: activeProjectId.value, pageId: nextPage }
-        : { kind: 'page', pageId: nextPage }
+      bus.setSnapshot(buildPreset(nextPage, { nextInstanceId: createUieInstanceId }))
+      scope.value = writeScopeFor(nextPage, activeProjectId.value)
     },
     restoreSnapshot,
     setContainerSize(size) {
@@ -205,10 +225,11 @@ export function createUie(options: UieStoreOptions): UieStore {
     canRedo: canRedoRef,
     componentFor,
     setActiveProjectId(id) {
+      if (activeProjectId.value === id) return
       activeProjectId.value = id
-      scope.value = id
-        ? { kind: 'workspace-page', projectId: id, pageId: snapshot.value.pageId }
-        : { kind: 'page', pageId: snapshot.value.pageId }
+      const page = snapshot.value.pageId
+      if (PROJECT_SCOPED_PAGES.has(page)) loadLayout(page)
+      else scope.value = writeScopeFor(page, id)
     },
     activeProjectId,
   }

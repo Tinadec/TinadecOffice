@@ -1,4 +1,26 @@
 import type { AgentPackEnvelope } from '@/agentPacks/GraphSeedPack'
+import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
+import type { components } from '@/generated/schema'
+import type { MessageAttachmentDto, MessageDto, SseChunk } from '@/generated/client'
+import { createRunStream, runStreamDelta, type RunStreamHandle } from '@/lib/runStream'
+
+export type { MessageDto }
+
+export type TinaChatObserverAccess = components['schemas']['TinaChatObserverAccessDto']
+export type TinaChatObservedConversation = components['schemas']['TinaChatObservedConversationDto']
+export type TinaChatObservedConversationPage = components['schemas']['TinaChatObservedConversationPage']
+export type TinaChatObservedDetail = components['schemas']['TinaChatObservedConversationDetail']
+export type TinaChatObservedMessage = components['schemas']['TinaChatObservedMessageDto']
+export type TinaChatObservedMessagePage = components['schemas']['TinaChatObservedMessagePage']
+export type TinaChatParticipant = components['schemas']['TinaChatParticipantDto']
+export type TinaChatConversation = components['schemas']['TinaChatConversationDto']
+export type TinaChatMember = components['schemas']['TinaChatMemberDto']
+export type TinaChatMessage = components['schemas']['TinaChatMessageDto']
+export type TinaChatInboxPage = components['schemas']['TinaChatInboxPage']
+export type TinaChatIntent = components['schemas']['TinaChatIntentDto']
+export type TinaChatIntentContent = components['schemas']['TinaChatIntentContent']
+export type TinaChatExecution = components['schemas']['TinaChatExecutionDto']
+export type TinaChatWorkspacePolicy = components['schemas']['TinaChatWorkspacePolicyDto']
 
 export interface ProjectDto {
   id: string;
@@ -23,21 +45,30 @@ export interface SessionDto {
   trashed_at?: string | null;
 }
 
-export interface MessageDto {
-  id: string;
-  session_id: string;
-  role: 'user' | 'assistant' | string;
-  content: string;
-  created_at: string;
+/** Hand-written: the revert endpoint returns a bare object, so no generated type exists. */
+export interface SessionHistoryRevertDto {
+  from_message_id: string;
+  from_sequence: number;
+  removed_count: number;
+  history_revision: number;
 }
 
 export interface ApprovalDto {
   id: string;
   session_id?: string | null;
   kind: string;
+  tool_id?: string | null;
+  risk?: string | null;
   summary: string;
+  /**
+   * Redacted, bounded projection of the tool parameters, minted with the approval.
+   * Bulk values (file bodies, patches, MCP payloads) arrive as size plus hash and
+   * secret-shaped keys never leave Core, so this is safe to render verbatim.
+   */
+  arguments?: string | null;
   command?: string | null;
   cwd?: string | null;
+  resource_path?: string | null;
   status: string;
   /** Core user-action state kept separate from the approval projection. */
   governance_status?: string | null;
@@ -592,6 +623,7 @@ export interface ToolLayerReadinessReceiptDto {
  * not part of the Core contract and default to ''/[].
  */
 export interface EventEnvelope {
+  run_id?: string | null;
   v: string;
   type: string;
   request_id: string;
@@ -604,84 +636,200 @@ export interface EventEnvelope {
   error?: { code: string; message: string; detail?: string | null } | null;
 }
 
+/**
+ * A market source as Core stores it. There is no `created_at`: the row has one, the route does
+ * not send it, and this interface used to promise it — which is how a UI ends up rendering a
+ * field that is undefined on every machine.
+ */
 export interface ExtensionSourceDto {
   id: string;
   name: string;
   kind: string;
   location: string;
   enabled: boolean;
-  last_refreshed_at?: string | null;
-  created_at: string;
+  revision: number;
+  last_refreshed_at?: string;
+  /** Why the last refresh did not land. Present alongside the row so an empty catalog can be read as an outage. */
+  last_error?: string;
+  entry_count: number;
 }
 
+/** The list is an envelope because `supported_kinds` decides what the picker may offer at all. */
+export interface MarketSourceListDto {
+  sources: ExtensionSourceDto[];
+  supported_kinds: string[];
+}
+
+/** One refresh's answer. `outcome` is the field to branch on, not `fetched_rows`. */
+export interface MarketRefreshDto {
+  source_id: string;
+  outcome: 'fetched' | 'blocked' | 'unavailable' | string;
+  fetched_rows: number;
+  refused_rows: number;
+  removed_rows: number;
+  /** Rows a running install still references, so a dropped listing kept them instead of deleting. */
+  retained_rows: number;
+  pages_fetched: number;
+  truncated_pages: boolean;
+  reason?: string;
+  refreshed_at?: string;
+}
+
+/**
+ * One catalog row: what a source claimed, not what is installed. `publisher`, `capabilities`,
+ * `permissions`, `status`, and `installed_extension_id` used to be declared here and sent by
+ * nobody — the registry publishes no such fields, and an install surface that does will carry them
+ * with its own source.
+ */
 export interface MarketCatalogItemDto {
   catalog_id: string;
   source_id: string;
+  source_name: string;
   extension_id: string;
-  kind: 'skill' | 'mcp-server' | 'acp-adapter' | 'tool-pack' | string;
+  kind: 'mcp-server' | 'skill' | 'acp-adapter' | 'tool-pack' | string;
   version: string;
-  publisher: string;
   display_name: string;
-  description: string;
-  source_kind: string;
-  source_location: string;
-  capabilities: string[];
-  permissions: string[];
-  status: string;
-  installed_extension_id?: string | null;
+  description?: string;
+  homepage?: string;
+  registry_type?: string;
+  transports: string[];
+  manifest_hash: string;
+  refreshed_at: string;
+  expires_at: string;
+  /** False is not a defect in the entry — `install_blocker` says which case this is. */
+  installable: boolean;
+  install_blocker?: string;
 }
 
-export interface InstalledExtensionDto {
+export interface MarketCatalogPageDto {
+  items: MarketCatalogItemDto[];
+  total_available: number;
+  has_more: boolean;
+  /** Newest refresh among the matching rows; absent means nothing matched. */
+  as_of?: string;
+}
+
+/** One environment variable a package asks for. Core's shape carries names and flags, never values. */
+export interface MarketEnvironmentRequestDto {
+  name: string;
+  required: boolean;
+  secret: boolean;
+  description?: string;
+}
+
+/**
+ * What a human says yes or no to: the command, the file, the exact bytes, and the instant after
+ * which Core refuses to act. Nothing here is recomputed at apply time, so what was reviewed is
+ * what lands. Field list is `MarketInstallProposalDto` in Core, keyed to the wire.
+ */
+export interface MarketInstallProposalDto {
   id: string;
+  action: string;
+  project_id: string;
   catalog_id?: string | null;
+  installation_id?: string | null;
+  source_name: string;
+  extension_id: string;
+  kind: string;
+  /** The exact version pinned. Never a range, never `latest`. */
+  version: string;
+  server_id: string;
+  /** The command line this write overwrites, when the config already named this server. */
+  replaces_command?: string | null;
+  command?: string | null;
+  args: string[];
+  environment: MarketEnvironmentRequestDto[];
+  target_path: string;
+  content: string;
+  /** Absent when the file could not be read as well as when it does not exist: create, never clobber. */
+  expected_file_hash?: string | null;
+  digest: string;
+  expires_at: string;
+  /** What this phase cannot guarantee, stated for the reader of the approval. */
+  warnings: string[];
+}
+
+/**
+ * An entry this workspace approved, and where the write for it stands. The status is read live from
+ * the linked user tool action rather than copied into Core's row, so a failed or still-pending
+ * approval can never be reported as an install.
+ */
+export interface MarketInstallationDto {
+  id: string;
+  project_id: string;
+  catalog_id: string;
+  source_name: string;
   extension_id: string;
   kind: string;
   version: string;
-  publisher: string;
-  display_name: string;
-  description: string;
-  source_kind: string;
-  source_location: string;
-  capabilities: string[];
-  permissions: string[];
-  enabled: boolean;
-  status: string;
-  status_message: string;
-  installed_at: string;
+  server_id: string;
+  config_path: string;
+  /** `installing` or `removing`; a removal that finished is reported as gone. */
+  state: string;
+  install_action_id: string;
+  uninstall_action_id?: string | null;
+  /** Live status of whichever action is in front of the user; absent means none is running. */
+  action_status?: string | null;
+  created_at: string;
   updated_at: string;
 }
 
-export interface ExtensionInstallPreviewDto {
-  extension_id: string;
-  kind: string;
-  version: string;
-  publisher: string;
-  display_name: string;
-  description: string;
-  source_kind: string;
-  source_location: string;
-  capabilities: string[];
-  permissions: string[];
-  risks: string[];
-  requires_approval: boolean;
-  approval_summary: string;
+/** Vocabulary for `MarketInstallProposalDto.action`; Core owns the words, this mirrors them. */
+export const MARKET_INSTALL_ACTION_INSTALL = 'install'
+export const MARKET_INSTALL_ACTION_UNINSTALL = 'uninstall'
+
+/** An envelope, not a bare array: the row count alone cannot say the surface was never used. */
+export interface MarketInstallationListDto {
+  installations: MarketInstallationDto[];
 }
 
-export interface ExtensionInstallResultDto {
-  approval_required: boolean;
-  approval?: ApprovalDto | null;
-  extension?: InstalledExtensionDto | null;
-  preview: ExtensionInstallPreviewDto;
+/**
+ * The two answers `source` can carry. Kept as constants because the whole point of the field is
+ * that a page must branch on it: an empty `servers` list under `tool_provider` means nothing is
+ * configured, and under `tool_provider_unavailable` means Core could not ask the Tool Provider.
+ * Typed as a string on the DTO — Core owns the vocabulary and may extend it, and this renderer
+ * would rather show an unknown source honestly than fail a type assertion at a boundary.
+ */
+export const MCP_SOURCE_PROVIDER = 'tool_provider';
+export const MCP_SOURCE_UNAVAILABLE = 'tool_provider_unavailable';
+
+export interface McpToolDto {
+  id: string;
+  name: string;
+  description?: string | null;
+  /** Absent on the inventory route, which deliberately does not ask for schemas. */
+  input_schema?: unknown;
 }
 
 export interface McpServerDto {
   id: string;
-  extension_id: string;
   name: string;
-  transport: string;
+  /** Passed through from the provider (`connected` / `error`); never upgraded by Core. */
   status: string;
-  tools: string[];
-  updated_at: string;
+  /** The provider's own failure text for this server. Absent when it answered. */
+  error?: string | null;
+  tools: McpToolDto[];
+}
+
+export interface McpInventoryDto {
+  source: string;
+  reason?: string | null;
+  workspace_root?: string | null;
+  /** The file the Tool Provider read, as it reported it. */
+  config_path?: string | null;
+  /** Rows Core could not identify. Present only when something was dropped. */
+  dropped_rows?: number | null;
+  servers: McpServerDto[];
+}
+
+export interface McpServerToolsDto {
+  source: string;
+  reason?: string | null;
+  workspace_root?: string | null;
+  config_path?: string | null;
+  server_id: string;
+  /** Present only when the inventory read completed and the id matched. */
+  server?: McpServerDto | null;
 }
 
 export interface AcpAdapterDto {
@@ -1179,12 +1327,13 @@ export interface AgentModeTopologyWriteDto {
 
 export interface AgentModeTopologyDto {
   id: string;
+  /** Stable mode id (for a pack mode, its manifest resource_key); keys the icon in modePresentation.ts. */
+  slug?: string | null;
   display_name: string;
   /** 该 mode 最新已发布版本的 id —— 提交 interaction 时作为 mode_version_id 使用。 */
   latest_published_mode_version_id?: string | null;
-  /** conversation.* 模式推导出的对话模式名（plan/spec/…）；工作区默认模式为 null。 */
-  application_mode?: string | null;
-  summary?: string | null;
+  /** User-facing one-liner: what the mode does and when to pick it. */
+  description?: string | null;
   nodes: AgentModeNodeDto[];
   edges: AgentModeEdgeDto[];
   canvas_layout?: Record<string, unknown> | null;
@@ -1252,22 +1401,47 @@ export interface AgentRuntimeInstanceDto {
   updated_at?: string | null;
 }
 
+/**
+ * Receipt of `POST /sessions/{id}/interactions`. Core writes this body and the gateway
+ * forwards it untouched, so these are the wire keys — not an idealised interaction record.
+ * One type covers four outcomes and `status` is what tells them apart: a started run
+ * (`run_id` + `turn_id`), a queued turn (`run_id`, no `turn_id`… `status: 'queued'`), a
+ * steering insert (`status: 'steering_injected'`, the only branch that echoes `content`),
+ * and an attachment-only message (`status: 'message_only'`, no run at all). Absence is the
+ * wire representation of null: this host drops nulls on write, which is why the send path
+ * tests `if (resp.run_id)` rather than comparing it to null.
+ */
 export interface SessionInteractionDto {
-  id: string;
+  interaction_id: string;
   session_id: string;
-  run_id?: string | null;
-  turn_id?: string | null;
-  content: string;
-  client_message_id: string;
-  mode_version_id?: string | null;
-  dispatch_mode: 'queued' | 'insert' | 'parallel' | string;
-  target_run_id?: string | null;
-  meeting_model_override?: MeetingModelOverrideDto | null;
-  permission_mode?: string | null;
+  status: 'queued' | 'steering_injected' | 'message_only' | string;
+  run_id?: string;
+  turn_id?: string;
+  message_id?: string;
+  dispatch_mode?: DispatchMode;
+  mode_version_id?: string;
+  meeting_model_override?: MeetingModelOverrideDto;
+  client_message_id?: string;
+  correlation_id?: string;
+  content?: string;
+  attachment_ids?: string[];
+  context_revision?: number;
+  stream_cursor?: number;
+  reason?: string;
+  /** Hard insert (steering only): the run's work in progress was cut off, not just steered. */
+  interrupt?: boolean;
+  /** How many model calls of the run Core cut off on this host. */
+  interrupted_model_calls?: number;
+}
+
+/** `.../interactions/{id}/reassign` and `.../cancel` answer about the acted-on run only. */
+export interface InteractionActionDto {
+  interaction_id: string;
+  run_id: string;
   status: string;
-  error?: { code?: string; message?: string; detail?: string | null } | null;
-  created_at: string;
-  updated_at?: string | null;
+  dispatch_mode?: DispatchMode;
+  target_run_id?: string;
+  action?: string;
 }
 
 export type DispatchMode = 'queued' | 'insert' | 'parallel';
@@ -1353,7 +1527,20 @@ export interface ModelStreamChunkDto {
     tool_id: string;
     arguments: Record<string, unknown>;
   } | null;
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+  /**
+   * Core's `ModelUsage` on the wire: `input_tokens` / `output_tokens` / `total_tokens`, every one of
+   * which Core may omit rather than send as null, because a provider can complete a call without
+   * reporting usage at all. This declaration used to name `prompt_tokens` / `completion_tokens`,
+   * which no Core build ever emitted — the field was unreadable rather than zero.
+   */
+  usage?: {
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    cached_input_tokens?: number | null;
+    reasoning_tokens?: number | null;
+    additional_counts?: Record<string, number> | null;
+  } | null;
   finish_reason?: string | null;
   error_category?: string | null;
   is_retryable?: boolean;
@@ -1494,16 +1681,122 @@ export interface ToolExecutionTimelineItemDto {
   checkpoint_summary: string;
 }
 
+/** One evidence item in a context pack and the estimated tokens it cost. */
+export interface ContextBudgetShareDto {
+  source: string;
+  tokens: number;
+}
+
+/**
+ * One `context.packed` event of a run: what that run was actually told.
+ *
+ * The field list is the projection in Core's `DmaeaEndpoints` (`context_packs`), which reads the
+ * payload the planner and lane assembly steps write — and nothing more. There is no summary text on
+ * the wire: the sentence the engine passes to `AppendEventAsync` never reaches `EventEnvelope`, so a
+ * `summary` field here would be a promise Core cannot keep. `lane_key` is the one optional member:
+ * the orchestration projection serialises a main-planner pack as an explicit null, while the durable
+ * event payload this host writes drops null keys entirely, so a reader must survive absent and null
+ * as the same fact.
+ */
 export interface ContextPackDto {
   id: string;
   run_id: string;
-  session_id: string;
-  created_by_agent_id: string;
-  summary: string;
+  lane_key?: string | null;
+  evidence_count: number;
+  estimated_tokens: number;
   token_budget: number;
-  compression_ratio: number;
-  evidence_map: string[];
+  /** Evidence sources that survived the budget, in pack order. Empty for events written before this field existed. */
+  sources: string[];
+  /**
+   * What each surviving item cost, one row per item and in the same order as `sources`, so a reader
+   * can pair a name with a price by index. One source can contribute several rows (`reviewed_memory`
+   * adds one per promoted entry), which is why the panel sums by name before showing it.
+   */
+  source_tokens?: ContextBudgetShareDto[];
+  /**
+   * Items the token budget crowded out, priced the same way. Absent on events written before either
+   * key existed, and this host cannot tell that apart from an empty list — so the reader pairs
+   * against `source_tokens`: a pack that names its evidence without pricing it has no budget data,
+   * while empty rows beside a priced pack is the real answer that nothing was cut.
+   */
+  dropped_sources?: ContextBudgetShareDto[];
   created_at: string;
+}
+
+/**
+ * One entry of the memory review queue, as Core's `ToMemoryCandidate` projects it.
+ *
+ * `evidence`, `applicability` and `expiry_condition` are what make the card reviewable: the
+ * curator recorded why it believes the sentence and when the sentence stops being true, and a
+ * queue that showed only the sentence asks the reviewer to rule on a claim with no grounds.
+ * Absent for candidates proposed before those fields travelled.
+ */
+export interface MemoryCandidateDto {
+  id: string;
+  source_run_id: string;
+  generated_by_instance_id: string;
+  scope: string;
+  kind: string;
+  status: string;
+  confidence: number;
+  content: string;
+  evidence?: string | null;
+  applicability?: string | null;
+  expiry_condition?: string | null;
+  decision_reason?: string | null;
+  promoted_memory_item_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Promoted (or revoked) long-term memory as Core's item listing projects it. */
+export interface MemoryItemDto {
+  id: string;
+  scope: string;
+  kind: string;
+  status: string;
+  version: number;
+  content: string;
+  applicability?: string | null;
+  expiry_condition?: string | null;
+  created_at: string;
+  updated_at: string;
+  revoked_at?: string | null;
+}
+
+/**
+ * The revoke response is a narrower projection than the listing: it answers with the
+ * revocation, not the row. Declaring the listing's fields here would let a caller read a
+ * `content` the endpoint never sent.
+ */
+export interface MemoryRevocationDto {
+  id: string;
+  scope: string;
+  kind: string;
+  status: string;
+  version: number;
+  applicability?: string | null;
+  expiry_condition?: string | null;
+  revoked_at?: string | null;
+}
+
+/** Queue narrowing. Unknown status or scope values are refused by Core, not answered with nothing. */
+export interface MemoryQueueQuery {
+  status?: string;
+  scope?: string;
+  kind?: string;
+  run_id?: string;
+  project_id?: string;
+  limit?: number;
+}
+
+function memoryQueryString(query: MemoryQueueQuery, honoured: string[]): string {
+  const search = new URLSearchParams();
+  for (const key of honoured) {
+    const value = (query as Record<string, unknown>)[key];
+    if (value !== undefined && value !== '') search.set(key, String(value));
+  }
+  return search.toString() ? `?${search.toString()}` : '';
 }
 
 export interface SupervisionFindingDto {
@@ -1686,6 +1979,38 @@ export interface SnapshotDto {
   created_at: string;
 }
 
+/**
+ * One row of a snapshot's per-file review. `restorable` is Core's answer to "can this row be
+ * undone": a file over the snapshot's content ceiling is reportable but not reversible, so the
+ * page must not draw a button for it.
+ */
+export interface WorkspaceFileChangeDto {
+  path: string;
+  status: 'added' | 'deleted' | 'modified' | 'unchanged' | string;
+  before_sha256?: string | null;
+  after_sha256?: string | null;
+  before_length?: number | null;
+  after_length?: number | null;
+  restorable: boolean;
+}
+
+export interface WorkspaceFileSideDto {
+  present: boolean;
+  length?: number | null;
+  sha256?: string | null;
+  binary: boolean;
+  truncated: boolean;
+  text?: string | null;
+}
+
+export interface WorkspaceFileDiffDto {
+  path: string;
+  status: string;
+  restorable: boolean;
+  before: WorkspaceFileSideDto;
+  after: WorkspaceFileSideDto;
+}
+
 export interface AgentLineageEntryDto {
   id: string;
   run_id: string;
@@ -1741,10 +2066,15 @@ export interface DeclaredModeGraphDto {
 
 /** Observed data flow projected from the durable task graph (dispatch through the conversation identity). */
 export interface OrchestrationFlowDto {
+  /** Conversation template slug for a planned task; the dispatching instance's handle for a task_dispatch hand-off. */
   from: string;
   to: string;
+  /** Run-scoped instance name (search#2), once a worker is assigned. */
+  handle?: string | null;
   task_key: string;
   kind: string;
+  /** 'plan' (planner task array) or 'task_dispatch' (handed off from inside a tool loop). */
+  via?: 'plan' | 'task_dispatch';
   status: string;
 }
 
@@ -1758,6 +2088,311 @@ export interface OrchestrationSnapshotDto {
   step_results: StepResultDto[];
   context_packs: ContextPackDto[];
   supervision_findings: SupervisionFindingDto[];
+}
+
+// --- Session topology (GET /api/v1/sessions/{id}/topology) ---
+// Mirrors of Core's SessionTopologyDtos.cs / OrganizationDtos.cs. The generated schema has the same
+// bodies, but types every int64 as `number | string` and every nullable field as present; Core drops
+// null keys, so absent-or-null is spelled `?: T | null` here. api.test.ts pins the key sets against
+// the generated contract, so a field invented or dropped on either side fails the typecheck.
+
+export interface TopologyTaskDto {
+  task_id: string;
+  task_key: string;
+  title: string;
+  status: string;
+  handle?: string | null;
+  agent_slug?: string | null;
+  worker_instance_id?: string | null;
+  dispatched_by_task_id?: string | null;
+  dependencies: string[];
+  write_scope: string[];
+  result_summary?: string | null;
+}
+
+export interface TopologyInstanceDto {
+  instance_id: string;
+  agent_slug?: string | null;
+  layer: string;
+  role: string;
+  status: string;
+  parent_instance_id?: string | null;
+  task_id?: string | null;
+  depth: number;
+}
+
+export interface TopologyRunDto {
+  run_id: string;
+  parent_run_id?: string | null;
+  parent_task_id?: string | null;
+  run_kind?: string;
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  tier?: string | null;
+  phase?: string | null;
+  tasks: TopologyTaskDto[];
+  instances: TopologyInstanceDto[];
+  tasks_truncated: boolean;
+  instances_truncated: boolean;
+}
+
+export interface TopologyLeaseDto {
+  lease_id: string;
+  kind: string;
+  resource_key: string;
+  purpose?: string | null;
+  exclusive: boolean;
+  run_id?: string | null;
+  task_id?: string | null;
+  agent_instance_id?: string | null;
+}
+
+export interface TopologyMemberDto {
+  participant_id: string;
+  handle: string;
+  display_name: string;
+  role: string;
+  presence: string;
+  agent_slug?: string | null;
+  parent_participant_id?: string | null;
+  run_id?: string | null;
+  agent_instance_id?: string | null;
+}
+
+export interface SessionTopologyDto {
+  session_id: string;
+  runs: TopologyRunDto[];
+  leases: TopologyLeaseDto[];
+  members: TopologyMemberDto[];
+  runs_truncated: boolean;
+  leases_truncated: boolean;
+  members_truncated: boolean;
+  generated_at: string;
+}
+
+export interface SessionTopologyQuery {
+  run_id?: string;
+  include_finished?: boolean;
+  max_runs?: number;
+  max_tasks?: number;
+}
+
+// --- Delegated approval gates (GET /api/v1/approvals/{id}/gates) ---
+
+/** One gate of a delegated approval: who was asked, what they decided, and exactly what they were shown. */
+export interface ApprovalGateDto {
+  gate_index: number;
+  /** `reviewer_agent` (independent context) or `conversation_identity` (knows the user's goal). */
+  gate_kind: string;
+  /** pending · evaluating · approved · rejected · escalated · skipped · superseded */
+  status: string;
+  decider_agent: string | null;
+  reason: string | null;
+  /** The facts the gate saw — for the reviewer the call and the task, never the conversation. */
+  evidence: Record<string, unknown> | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+/** A delegated approval's gates. `status`: evaluating · approved · rejected · escalated (back to you) · superseded (you decided first). */
+export interface ApprovalGatesDto {
+  approval_id: string;
+  run_id: string | null;
+  status: string;
+  gates: ApprovalGateDto[];
+}
+
+// --- Session evidence archive (GET /api/v1/sessions/{id}/evidence) ---
+
+/** One piece of archived evidence that matched; `matched_by`: semantic · keyword · both. */
+export interface EvidenceHitDto {
+  evidence_id: string;
+  /** task_result · report · member_turn · summary */
+  kind: string;
+  title: string;
+  author: string | null;
+  run_id: string | null;
+  task_id: string | null;
+  snippet: string;
+  score: number;
+  matched_by: string;
+  created_at: string;
+}
+
+/** `mode`: hybrid when the semantic index answered, keyword when it could not; `note` says why. */
+export interface EvidenceRecallDto {
+  mode: string;
+  note: string | null;
+  hits: EvidenceHitDto[];
+}
+
+// --- Environment registry (GET/POST /api/v1/environments, PATCH /api/v1/environments/{id}) ---
+
+export type EnvironmentKind = 'local' | 'cloud' | 'remote' | 'terminal' | 'test';
+
+/** One slot of an environment and the run holding it. */
+export interface EnvironmentHolderDto {
+  slot: number;
+  lease_id: string;
+  session_id: string | null;
+  run_id: string | null;
+  task_id: string | null;
+  reason: string;
+}
+
+/** A registered environment and who holds its slots; `connection` never carries a credential (only `secret_ref`). */
+export interface EnvironmentDto {
+  id: string;
+  key: string;
+  kind: EnvironmentKind | string;
+  display_name: string;
+  description: string | null;
+  connection: Record<string, unknown>;
+  capacity: number;
+  free_slots: number;
+  status: 'available' | 'disabled' | string;
+  holders: EnvironmentHolderDto[];
+  updated_at: string;
+}
+
+export interface EnvironmentRegisterInput {
+  key: string;
+  kind: EnvironmentKind;
+  display_name: string;
+  description?: string | null;
+  connection?: Record<string, unknown> | null;
+  capacity?: number | null;
+}
+
+/** Omitted fields are left as they are. */
+export interface EnvironmentUpdateInput {
+  display_name?: string | null;
+  description?: string | null;
+  connection?: Record<string, unknown> | null;
+  capacity?: number | null;
+  status?: 'available' | 'disabled' | null;
+}
+
+// --- Session organization (GET /api/v1/sessions/{id}/organization/*) ---
+
+export type OrganizationMemberRole = 'human' | 'conversation' | 'governance' | 'executor';
+
+export interface OrganizationMemberDto {
+  id: string;
+  handle: string;
+  display_name: string;
+  role: OrganizationMemberRole;
+  presence: 'online' | 'offline';
+  agent_slug?: string | null;
+  parent_id?: string | null;
+  run_id?: string | null;
+  /** Per-member visibility into run internals: "own" restricts to its own run; absent = unrestricted ("down"). */
+  visibility_scope?: 'down' | 'own' | null;
+}
+
+export interface OrganizationRoomDto {
+  id: string;
+  kind: 'lobby' | 'board' | 'plan' | 'adhoc';
+  title: string;
+  last_sequence: number;
+  member_count: number;
+  is_member: boolean;
+  plan_owner_id?: string | null;
+}
+
+export interface OrganizationDto {
+  id: string;
+  session_id: string;
+  status: 'active' | 'archived';
+  you_participant_id: string;
+  members: OrganizationMemberDto[];
+  rooms: OrganizationRoomDto[];
+  open_reports: number;
+  members_truncated: boolean;
+  rooms_truncated: boolean;
+}
+
+/** The live state of a report's subject, resolved by Core at read time; `status` is absent when Core cannot tell. */
+export interface OrganizationSubjectStateDto {
+  kind: string;
+  id: string;
+  status?: string | null;
+  label?: string | null;
+}
+
+export interface OrganizationReportDto {
+  id: string;
+  room_id: string;
+  author_id: string;
+  author_display_name: string;
+  report_kind: 'conflict' | 'risk' | 'drift' | 'budget' | 'progress';
+  severity: 'info' | 'warning' | 'blocking';
+  status: 'open' | 'acted' | 'dismissed' | 'superseded';
+  subject_kind?: string | null;
+  subject_id?: string | null;
+  proposed_verb?: string | null;
+  proposed_args_json?: string | null;
+  finding: string;
+  evidence: string[];
+  revision: number;
+  created_at: string;
+  decided_by_id?: string | null;
+  decision_note?: string | null;
+  decided_at?: string | null;
+  supersedes_report_id?: string | null;
+  subject_state?: OrganizationSubjectStateDto | null;
+}
+
+export interface OrganizationMessageDto {
+  id: string;
+  room_id: string;
+  sender_id: string;
+  sender_display_name: string;
+  sender_role: string;
+  sequence: number;
+  kind: 'message' | 'report' | 'notice';
+  content: string;
+  sensitivity?: string | null;
+  created_at: string;
+  report?: OrganizationReportDto | null;
+}
+
+export interface OrganizationMessagePageDto {
+  items: OrganizationMessageDto[];
+  /** Sequence of the last row Core scanned (readable or not); read on with `after_sequence = next_cursor`. */
+  next_cursor: number;
+}
+
+export interface OrganizationReportPageDto {
+  items: OrganizationReportDto[];
+  truncated: boolean;
+}
+
+export interface PostOrganizationMessageInput {
+  content: string;
+  client_message_id: string;
+  reply_to_message_id?: string;
+  mention?: string[];
+}
+
+export interface OrganizationReportDecisionInput {
+  decision: 'acted' | 'dismissed';
+  expected_revision: number;
+  note?: string;
+}
+
+function organizationPath(sessionId: string, suffix = ''): string {
+  return `/api/v1/sessions/${encodeURIComponent(sessionId)}/organization${suffix}`;
+}
+
+function querySuffix(params: Record<string, string | number | boolean | undefined | null>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : '';
 }
 
 const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730';
@@ -1880,11 +2515,21 @@ export function normalizeEventEnvelope(
   raw: Record<string, unknown>,
   lastEventId?: string | null,
 ): EventEnvelope {
-  const payload =
+  const wirePayload =
     raw.payload && typeof raw.payload === 'object' && !Array.isArray(raw.payload)
       ? (raw.payload as Record<string, unknown>)
       : {};
-  const seqFromPayload = Number(payload.sequence)
+  // StorageLifecycleService materializes durable journal rows as
+  // payload={ sequence, summary, severity, payload: <business payload> }.
+  // Consumers should not need to know whether an event arrived live or via
+  // durable replay, so flatten that business payload here while retaining the
+  // journal metadata used by the renderer (especially sequence/summary/severity).
+  const durablePayload =
+    wirePayload.payload && typeof wirePayload.payload === 'object' && !Array.isArray(wirePayload.payload)
+      ? (wirePayload.payload as Record<string, unknown>)
+      : null;
+  const payload = durablePayload ? { ...wirePayload, ...durablePayload } : wirePayload;
+  const seqFromPayload = Number(wirePayload.sequence)
   const seqFromId = Number(lastEventId)
   const seqCandidate =
     typeof raw.seq === 'number' && Number.isFinite(raw.seq)
@@ -1907,8 +2552,166 @@ export function normalizeEventEnvelope(
   };
 }
 
+/** Body the durable admission endpoint takes on the compat streaming path. */
+interface InvokeStreamBody {
+  content: string
+  client_message_id: string
+  mode_version_id?: string | null
+  permission_mode: string
+  target_run_id?: string | null
+  expected_context_revision?: number | null
+}
+
+function newClientMessageId(): string {
+  return (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/**
+ * The durable frame carries its business fields next to `kind`, and `parseRunSseBlock`
+ * keeps them in `payload` when the frame has no nested payload of its own.
+ * `ModelStreamChunkDto` spells them at the top level, which is what its consumers read,
+ * so the lift happens here rather than in every caller. It used to not happen at all:
+ * the compat path built a chunk without `delta`, and the AI commit-message and
+ * change-analysis panels streamed a whole reply into a field that stayed undefined.
+ */
+function modelStreamChunkOf(chunk: SseChunk): ModelStreamChunkDto {
+  const payload = chunk.payload as Record<string, unknown>
+  const text = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+  return {
+    run_id: chunk.run_id,
+    session_id: text(payload.session_id) ?? '',
+    purpose: text(payload.purpose) ?? 'dual_layer',
+    provider_instance_id: text(payload.provider_instance_id) ?? '',
+    effective_model: text(payload.effective_model),
+    kind: chunk.kind as ModelStreamChunkDto['kind'],
+    delta: runStreamDelta(chunk) || null,
+    tool_call_delta: (payload.tool_call_delta as ModelStreamChunkDto['tool_call_delta']) ?? null,
+    usage: (payload.usage as ModelStreamChunkDto['usage']) ?? null,
+    finish_reason: text(payload.finish_reason),
+    error_category: text(payload.error_category),
+    is_retryable: payload.is_retryable === true,
+    safe_error_message: text(payload.safe_error_message),
+    fallback_provider_selected: payload.fallback_provider_selected === true,
+    error_provider_id: text(payload.error_provider_id),
+  }
+}
+
+/**
+ * Admit an interaction, then follow its run with the durable reader.
+ *
+ * This used to be a second hand-written SSE parser over the same endpoint the chat
+ * already reads through `createRunStream`. Duplicating the reader cost three things it
+ * never noticed: a CRLF-framed stream never split into blocks, a final frame that
+ * arrived without a trailing blank line was dropped on the floor, and a connection that
+ * died before the terminal event was not retried.
+ */
+function streamAdmittedInteraction(
+  sessionId: string,
+  body: InvokeStreamBody,
+  onChunk: (chunk: ModelStreamChunkDto) => void,
+  onError?: (error: Error) => void,
+): AbortController {
+  const controller = new AbortController()
+  let handle: RunStreamHandle | null = null
+  controller.signal.addEventListener('abort', () => handle?.disconnect())
+  void (async () => {
+    try {
+      // 模式身份 = 已发布的 ModeVersion；六值 agent_mode 不再发送（Core 收到会 400 unknown_field）。
+      const interactionBody: Record<string, unknown> = {
+        content: body.content,
+        client_message_id: body.client_message_id,
+        dispatch_mode: 'parallel',
+      }
+      if (body.mode_version_id) interactionBody.mode_version_id = body.mode_version_id
+      if (body.target_run_id) interactionBody.target_run_id = body.target_run_id
+      if (body.expected_context_revision != null) interactionBody.expected_context_revision = body.expected_context_revision
+      const receipt = await request<{ run_id?: string; stream_cursor?: number }>(
+        `/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`,
+        { method: 'POST', body: JSON.stringify(interactionBody), signal: controller.signal },
+      )
+      const runId = receipt.run_id
+      if (!runId) throw new Error('Interaction admission did not return a run_id.')
+      handle = createRunStream({
+        runId,
+        cursor: receipt.stream_cursor ?? 0,
+        // One-shot on purpose: these callers generate a commit message, and a
+        // backoff-retry loop is not what a cancelled generation should become.
+        autoReconnect: false,
+        onChunk: (chunk) => onChunk(modelStreamChunkOf(chunk)),
+        onError,
+      })
+      if (controller.signal.aborted) {
+        handle.disconnect()
+        return
+      }
+      handle.connect()
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      onError?.(error instanceof Error ? error : new Error(String(error)))
+    }
+  })()
+  return controller
+}
+
 export const api = {
   gatewayUrl,
+  tinaChatObserverAccess: (signal?: AbortSignal) => request<TinaChatObserverAccess>('/api/v1/tina-chat/observer/access', { signal, cache: 'no-store' }),
+  tinaChatObserverConversations: (params: { query?: string; kind?: string; workspace_id?: string; offset?: number; limit?: number } = {}, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '') search.set(key, String(value))
+    return request<TinaChatObservedConversationPage>(`/api/v1/tina-chat/observer/conversations?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatObserverConversation: (id: string, signal?: AbortSignal) => request<TinaChatObservedDetail>(`/api/v1/tina-chat/observer/conversations/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }),
+  tinaChatObserverMessages: (id: string, params: { before_sequence?: number; after_sequence?: number; limit?: number } = {}, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value !== undefined) search.set(key, String(value))
+    return request<TinaChatObservedMessagePage>(`/api/v1/tina-chat/observer/conversations/${encodeURIComponent(id)}/messages?${search}`, { signal, cache: 'no-store' })
+  },
+  // Participant and conversation writes below are actor-scoped: Core re-verifies the authenticated
+  // principal against every actor_id on each call, so a stale local identity fails closed here.
+  tinaChatParticipants: (query?: string, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    if (query) search.set('query', query)
+    return request<TinaChatParticipant[]>(`/api/v1/tina-chat/participants?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatRegisterParticipant: (body: components['schemas']['TinaChatRegisterParticipantRequest']) =>
+    request<TinaChatParticipant>('/api/v1/tina-chat/participants', { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatUpdateParticipant: (id: string, body: components['schemas']['TinaChatUpdateParticipantRequest']) =>
+    request<TinaChatParticipant>(`/api/v1/tina-chat/participants/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  tinaChatInbox: (id: string, params: { after_sequence?: number; limit?: number } = {}, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value !== undefined) search.set(key, String(value))
+    return request<TinaChatInboxPage>(`/api/v1/tina-chat/participants/${encodeURIComponent(id)}/inbox?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatAcknowledge: (id: string, messageId: string) =>
+    request<void>(`/api/v1/tina-chat/participants/${encodeURIComponent(id)}/inbox/${encodeURIComponent(messageId)}/ack`, { method: 'POST' }),
+  tinaChatConversations: (actorId: string, signal?: AbortSignal) =>
+    request<TinaChatConversation[]>(`/api/v1/tina-chat/conversations?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatCreateConversation: (body: components['schemas']['TinaChatCreateConversationRequest']) =>
+    request<TinaChatConversation>('/api/v1/tina-chat/conversations', { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatConversation: (id: string, actorId: string, signal?: AbortSignal) =>
+    request<TinaChatConversation>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatMembers: (id: string, actorId: string, signal?: AbortSignal) =>
+    request<TinaChatMember[]>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/members?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatChangeMember: (id: string, body: components['schemas']['TinaChatMemberRequest']) =>
+    request<TinaChatConversation>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/members`, { method: 'PUT', body: JSON.stringify(body) }),
+  tinaChatMessages: (id: string, params: { actor_id: string; after_sequence?: number; limit?: number }, signal?: AbortSignal) => {
+    const search = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))
+    return request<components['schemas']['TinaChatMessagePage']>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/messages?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatSendMessage: (id: string, body: components['schemas']['TinaChatSendMessageRequest']) =>
+    request<TinaChatMessage>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatPolicy: (signal?: AbortSignal) => request<TinaChatWorkspacePolicy>('/api/v1/tina-chat/workspace-policy', { signal, cache: 'no-store' }),
+  tinaChatSetPolicy: (body: components['schemas']['TinaChatWorkspacePolicyRequest']) =>
+    request<TinaChatWorkspacePolicy>('/api/v1/tina-chat/workspace-policy', { method: 'PUT', body: JSON.stringify(body) }),
+  tinaChatIntents: (id: string, actorId: string, signal?: AbortSignal) =>
+    request<TinaChatIntent[]>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatGenerateIntent: (id: string, body: components['schemas']['TinaChatGenerateIntentRequest']) =>
+    request<TinaChatIntent>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents/generate`, { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatDecideIntent: (id: string, intentId: string, body: components['schemas']['TinaChatIntentDecisionRequest']) =>
+    request<TinaChatIntent>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents/${encodeURIComponent(intentId)}/decision`, { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatExecuteIntent: (id: string, intentId: string, body: components['schemas']['TinaChatExecuteIntentRequest']) =>
+    request<TinaChatExecution>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents/${encodeURIComponent(intentId)}/execute`, { method: 'POST', body: JSON.stringify(body) }),
   health: () => request<Record<string, unknown>>('/api/v1/health'),
   doctor: () => request<DoctorReportDto>('/api/v1/doctor'),
   readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),
@@ -1919,9 +2722,10 @@ export const api = {
     body: JSON.stringify({ name, path })
   }),
   listSessions: (projectId?: string) => request<SessionDto[]>(`/api/v1/sessions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
-  createSession: (projectId?: string | null, title?: string) => request<SessionDto>('/api/v1/sessions', {
+  // mode_version_id decides which agent holds the conversation. Omitted = the workspace default.
+  createSession: (projectId?: string | null, title?: string, modeVersionId?: string | null) => request<SessionDto>('/api/v1/sessions', {
     method: 'POST',
-    body: JSON.stringify({ project_id: projectId ?? undefined, title })
+    body: JSON.stringify({ project_id: projectId ?? undefined, title, mode_version_id: modeVersionId ?? undefined })
   }),
   migrateSession: (sessionId: string, payload: { target_project_id?: string; project_name?: string; project_path?: string }) => request<SessionDto>(`/api/v1/sessions/${sessionId}/migrate`, {
     method: 'POST',
@@ -1936,7 +2740,47 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ content })
   }),
+  revertSessionMessage: (sessionId: string, messageId: string) => request<SessionHistoryRevertDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/revert`, { method: 'POST' }),
   getOrchestrationSnapshot: (sessionId: string) => request<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`),
+  // Session organization + graph (Core OrganizationEndpoints, proxied verbatim by the Gateway).
+  /** The session's organization, or null before its first run creates one (404 `organization_not_started`). */
+  getOrganization: async (sessionId: string): Promise<OrganizationDto | null> => {
+    try {
+      return await request<OrganizationDto>(organizationPath(sessionId), { cache: 'no-store' })
+    } catch (error) {
+      const { status, code } = error as { status?: number; code?: string | null }
+      if (status === 404 && code === 'organization_not_started') return null
+      throw error
+    }
+  },
+  readOrganizationRoom: (sessionId: string, roomId: string, afterSequence?: number, limit?: number) =>
+    request<OrganizationMessagePageDto>(organizationPath(sessionId, `/rooms/${encodeURIComponent(roomId)}/messages${querySuffix({ after_sequence: afterSequence, limit })}`), { cache: 'no-store' }),
+  postOrganizationMessage: (sessionId: string, roomId: string, body: PostOrganizationMessageInput) =>
+    request<OrganizationMessageDto>(organizationPath(sessionId, `/rooms/${encodeURIComponent(roomId)}/messages`), { method: 'POST', body: JSON.stringify(body) }),
+  listOrganizationReports: (sessionId: string, status?: OrganizationReportDto['status'], limit?: number) =>
+    request<OrganizationReportPageDto>(organizationPath(sessionId, `/reports${querySuffix({ status, limit })}`), { cache: 'no-store' }),
+  /** Recorded against the revision the report was read at: 412 = stale revision, 409 `report_closed` = already decided. */
+  decideOrganizationReport: (sessionId: string, reportId: string, body: OrganizationReportDecisionInput) =>
+    request<OrganizationReportDto>(organizationPath(sessionId, `/reports/${encodeURIComponent(reportId)}/decision`), { method: 'POST', body: JSON.stringify(body) }),
+  /** The owner narrows (or restores) one machine member's visibility into run internals. */
+  setOrganizationMemberVisibility: (sessionId: string, participantId: string, visibilityScope: 'down' | 'own' | null) =>
+    request<OrganizationMemberDto>(organizationPath(sessionId, `/members/${encodeURIComponent(participantId)}`), { method: 'PATCH', body: JSON.stringify({ visibility_scope: visibilityScope }) }),
+  /** Search the session's evidence archive (verbatim task results, reports, member conclusions, summaries). */
+  recallEvidence: (sessionId: string, q: string, params: { kinds?: string[]; run_id?: string; limit?: number } = {}) =>
+    request<EvidenceRecallDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/evidence${querySuffix({
+      q, kinds: params.kinds?.join(','), run_id: params.run_id, limit: params.limit,
+    })}`, { cache: 'no-store' }),
+  /** The workspace's environments (what the environment steward hands out) and who holds each slot. */
+  listEnvironments: () => request<EnvironmentDto[]>('/api/v1/environments', { cache: 'no-store' }),
+  /** 409 `environment_exists`; 400 `environment_connection_invalid` when the connection carries a credential. */
+  registerEnvironment: (body: EnvironmentRegisterInput) =>
+    request<EnvironmentDto>('/api/v1/environments', { method: 'POST', body: JSON.stringify(body) }),
+  updateEnvironment: (environmentId: string, body: EnvironmentUpdateInput) =>
+    request<EnvironmentDto>(`/api/v1/environments/${encodeURIComponent(environmentId)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  getSessionTopology: (sessionId: string, params: SessionTopologyQuery = {}) =>
+    request<SessionTopologyDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/topology${querySuffix({
+      run_id: params.run_id, include_finished: params.include_finished, max_runs: params.max_runs, max_tasks: params.max_tasks,
+    })}`, { cache: 'no-store' }),
   listToolExecutions: (sessionId: string, params: { run_id?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();
     if (params.run_id) search.set('run_id', params.run_id);
@@ -1954,6 +2798,15 @@ export const api = {
     if (sessionId) search.set('session_id', sessionId);
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<ApprovalDto[]>(`/api/v1/approvals${suffix}`);
+  },
+  /** The delegated gates of one approval, or null when it was never delegated (404). */
+  getApprovalGates: async (approvalId: string): Promise<ApprovalGatesDto | null> => {
+    try {
+      return await request<ApprovalGatesDto>(`/api/v1/approvals/${encodeURIComponent(approvalId)}/gates`, { cache: 'no-store' })
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return null
+      throw error
+    }
   },
   listPermissionRequests: (params: { status?: string; run_id?: string; task_id?: string } = {}) => {
     const search = new URLSearchParams();
@@ -1992,9 +2845,36 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null) => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
+  /**
+   * Per-file review of one snapshot: what moved, what each path held before, and
+   * undoing a single row. Absent keys mean null — this host drops nulls on write —
+   * which is why the optional fields below are `| null` *and* optional.
+   */
+  listWorkspaceSnapshotFiles: (snapshotId: string) => request<WorkspaceFileChangeDto[]>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/files`),
+  getWorkspaceSnapshotFileDiff: (snapshotId: string, path: string) =>
+    request<WorkspaceFileDiffDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/files/diff?path=${encodeURIComponent(path)}`),
+  /**
+   * `expectedSha256` is required and must be the value the reviewer was just shown; pass the empty
+   * string to assert "this file was absent", which is a different fact from not knowing.
+   */
+  restoreWorkspaceSnapshotFile: (snapshotId: string, path: string, expectedSha256: string) =>
+    request<WorkspaceFileChangeDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/files/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ path, expected_sha256: expectedSha256 }),
+    }),
+  /**
+   * Decide a pending approval. `scope: 'run'` is "always allow this tool for this
+   * session": Core mints a run-scoped pre-authorization plus a run-scoped capability
+   * grant, and releases the run's other pending requests for the same tool. Without
+   * a scope the decision stays a one-shot.
+   */
+  decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null, scope?: 'once' | 'run') => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
     method: 'POST',
-    body: JSON.stringify(reason ? { decision, reason } : { decision })
+    body: JSON.stringify({
+      decision,
+      ...(reason ? { reason } : {}),
+      ...(scope ? { scope } : {}),
+    })
   }),
   createPreAuthorization: (input: CreatePreAuthorizationInput) => request<PreAuthorizationDto>('/api/v1/approvals/pre-authorizations', {
     method: 'POST',
@@ -2061,39 +2941,52 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(settings)
   }),
-  listExtensionSources: () => request<ExtensionSourceDto[]>('/api/v1/market/sources'),
+  listExtensionSources: () => request<MarketSourceListDto>('/api/v1/market/sources'),
   createExtensionSource: (source: { name: string; kind: string; location: string; enabled?: boolean }) => request<ExtensionSourceDto>('/api/v1/market/sources', {
     method: 'POST',
     body: JSON.stringify(source)
   }),
-  refreshExtensionSource: (sourceId: string) => request<ExtensionSourceDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}/refresh`, {
+  setExtensionSourceEnabled: (sourceId: string, enabled: boolean) => request<ExtensionSourceDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled })
+  }),
+  deleteExtensionSource: (sourceId: string) => request<void>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'DELETE'
+  }),
+  refreshExtensionSource: (sourceId: string) => request<MarketRefreshDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}/refresh`, {
     method: 'POST'
   }),
-  listMarketCatalog: (params: { kind?: string; query?: string; source_id?: string } = {}) => {
+  // `q`, not `query`: this used to send a parameter name Core has never read, so the search box
+  // narrowed nothing over the wire while every mocked test passed.
+  listMarketCatalog: (params: { kind?: string; q?: string; source_id?: string; limit?: number; offset?: number } = {}) => {
     const search = new URLSearchParams();
     if (params.kind && params.kind !== 'all') search.set('kind', params.kind);
-    if (params.query) search.set('query', params.query);
+    if (params.q) search.set('q', params.q);
     if (params.source_id) search.set('source_id', params.source_id);
+    if (params.limit !== undefined) search.set('limit', String(params.limit));
+    if (params.offset) search.set('offset', String(params.offset));
     const suffix = search.toString() ? `?${search.toString()}` : '';
-    return request<MarketCatalogItemDto[]>(`/api/v1/market/catalog${suffix}`);
+    return request<MarketCatalogPageDto>(`/api/v1/market/catalog${suffix}`);
   },
   getMarketCatalogItem: (catalogId: string) => request<MarketCatalogItemDto>(`/api/v1/market/catalog/${encodeURIComponent(catalogId)}`),
-  previewExtensionInstall: (input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null }) => request<ExtensionInstallPreviewDto>('/api/v1/extensions/install-preview', {
+  // A market install is always for one project: the config file written is that project's tool
+  // workspace, which is also what decides which Tool Provider process performs the write.
+  previewMarketInstall: (catalogId: string, projectId: string) => request<MarketInstallProposalDto>(`/api/v1/market/catalog/${encodeURIComponent(catalogId)}/install-preview`, {
     method: 'POST',
-    body: JSON.stringify(input)
+    body: JSON.stringify({ project_id: projectId })
   }),
-  installExtension: (input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null; approval_id?: string | null }) => request<ExtensionInstallResultDto>('/api/v1/extensions/install', {
-    method: 'POST',
-    body: JSON.stringify(input)
+  previewMarketUninstall: (installationId: string) => request<MarketInstallProposalDto>(`/api/v1/market/installations/${encodeURIComponent(installationId)}/uninstall-preview`, {
+    method: 'POST'
   }),
-  listInstalledExtensions: () => request<InstalledExtensionDto[]>('/api/v1/extensions/installed'),
-  enableExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/enable`, { method: 'POST' }),
-  disableExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/disable`, { method: 'POST' }),
-  updateExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/update`, { method: 'POST' }),
-  deleteExtension: (extensionId: string) => request<void>(`/api/v1/extensions/${encodeURIComponent(extensionId)}`, { method: 'DELETE' }),
-  listMcpServers: () => request<McpServerDto[]>('/api/v1/mcp/servers'),
-  reloadMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/reload`, { method: 'POST' }),
-  connectMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: 'POST' }),
+  // Queues the governed write and nothing more. The bytes land when a human approves the user tool
+  // action this returns, on the approval surface — never here.
+  applyMarketInstallProposal: (proposalId: string) => request<MarketInstallationDto>(`/api/v1/market/install-proposals/${encodeURIComponent(proposalId)}/apply`, {
+    method: 'POST'
+  }),
+  listMarketInstallations: () => request<MarketInstallationListDto>('/api/v1/market/installations'),
+  listMcpServers: () => request<McpInventoryDto>('/api/v1/mcp/servers'),
+  listMcpServerTools: (serverId: string) =>
+    request<McpServerToolsDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools`),
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),
@@ -2170,9 +3063,41 @@ export const api = {
     return request<AgentRuntimeInstanceDto[]>(`/api/v1/agent-runtime-instances${qs}`);
   },
   // interactions (queued/insert/parallel)
-  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
-  reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
-  cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; attachment_ids?: string[]; interrupt?: boolean }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
+  cancelInteraction: (sessionId: string, interactionId: string) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
+  // --- Attachments ---
+  // Bytes never travel as JSON here: Core stores the file and returns a row of references,
+  // so an upload is a raw body with its name and type in the query string. The ceiling is
+  // enforced in Core, and a refusal arrives as a coded error ({ code: 'attachment_too_large' })
+  // that requestResult() already turns into a branchable `err.code`.
+  uploadAttachment: (
+    sessionId: string,
+    bytes: Blob | ArrayBuffer | Uint8Array,
+    fileName: string,
+    mediaType?: string,
+  ) => {
+    const search = new URLSearchParams({ filename: fileName });
+    if (mediaType) search.set('media_type', mediaType);
+    return request<MessageAttachmentDto>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments?${search.toString()}`,
+      { method: 'POST', body: bytes as BodyInit, headers: { 'content-type': 'application/octet-stream' } },
+    );
+  },
+  listAttachments: (sessionId: string) =>
+    request<MessageAttachmentDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments`),
+  getAttachment: (attachmentId: string) =>
+    request<MessageAttachmentDto>(`/api/v1/attachments/${encodeURIComponent(attachmentId)}`),
+  deleteAttachment: (attachmentId: string) =>
+    request<void>(`/api/v1/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' }),
+  /**
+   * Direct URL for <img> and download links. It is deliberately a Gateway path, not a
+   * fetch-then-objectURL: Core decides inline vs attachment per media type, and a browser
+   * navigating this URL inherits that decision. Never build a filesystem path here.
+   */
+  attachmentContentUrl: (attachmentId: string) =>
+    `${gatewayUrl}/api/v1/attachments/${encodeURIComponent(attachmentId)}/content`,
+
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),
   searchTools: (params: { query?: string; domain?: string; source?: string; risk?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();
@@ -2223,30 +3148,45 @@ export const api = {
     body: JSON.stringify(payload)
   }),
 
-  // Semantic wrappers for code tools
-  readFile: (cwd: string, filePath: string, options?: { start_line?: number; end_line?: number }) =>
-    api.executeCodeTool('read_file', { cwd, arguments: { path: filePath, ...options } }),
+  // Semantic wrappers for code tools. The ids and argument keys below must match the
+  // TinadecTools manifest, not an aspiration: Core answers 404 tool_not_found for an
+  // unknown id and the tool rejects unknown argument keys, so a wrong string here is a
+  // silently broken feature rather than a type error. Verified against
+  // TinadecTools/Tools/FileRW/FileReader.cs:59 (read_file → filepath),
+  // FileSystemTools.cs:69 (ls → path) and Tools/Search/FileSearch.cs:118
+  // (file_search → pattern/path/glob/type/case_sensitive/fixed_strings/context_lines/
+  // max_results, FileSearch.cs:8-38).
+  readFile: (cwd: string, filePath: string, options?: { start_row?: number; end_row?: number }) =>
+    api.executeCodeTool('read_file', { cwd, arguments: { filepath: filePath, ...options } }),
   listDirectory: (cwd: string, dirPath: string) =>
-    api.executeCodeTool('list_directory', { cwd, arguments: { path: dirPath } }),
-  globSearch: (cwd: string, pattern: string) =>
-    api.executeCodeTool('glob_search', { cwd, arguments: { pattern } }),
-  grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number }) =>
-    api.executeCodeTool('grep_content', { cwd, arguments: { pattern, ...options } }),
-  applyPatch: (cwd: string, patch: string, approvalId?: string) =>
-    api.executeCodeTool('apply_patch', { cwd, approval_id: approvalId, arguments: { patch } }),
-  codeEditorOpen: (cwd: string, filePath: string) =>
-    api.executeCodeTool('code_editor', { cwd, arguments: { action: 'open', path: filePath } }),
-  codeEditorSave: (cwd: string, filePath: string, content: string, approvalId: string) =>
-    api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'save', path: filePath, content } }),
-  codeEditorDiff: (cwd: string, filePath: string) =>
-    api.executeCodeTool('code_editor', { cwd, arguments: { action: 'diff', path: filePath } }),
-  codeEditorPatch: (cwd: string, filePath: string, patch: string, approvalId: string) =>
-    api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'patch', path: filePath, patch } }),
+    api.executeCodeTool('ls', { cwd, arguments: { path: dirPath } }),
+  /** stat is the only tool that reports an entry's size and mtime; its envelope is
+   * `{ success, error, entry }` with `entry.type` in directory|file|link. */
+  statEntry: (cwd: string, filePath: string) =>
+    api.executeCodeTool('stat', { cwd, arguments: { path: filePath } }),
+  grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number; glob?: string; fixed_strings?: boolean }) =>
+    api.executeCodeTool('file_search', { cwd, arguments: { pattern, ...options } }),
+  // There is deliberately no apply_patch / code_editor wrapper here: neither tool id
+  // exists in the TinadecTools manifest, and the governed write path is
+  // createUserToolActionForPath(cwd, 'write_file', { filepath, content, file_hash }).
   gitDiffCompare: (cwd: string, baseRef: string, headRef: string, paths?: string[]) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
   gitLog: (cwd: string, limit?: number, ref?: string) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
   listAgentCandidates: () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'),
+
+  // --- Memory review (candidates are never retrieval-visible; only promoted items are) ---
+  listMemoryCandidates: (query: MemoryQueueQuery = {}) =>
+    request<MemoryCandidateDto[]>(`/api/v1/memory-candidates${memoryQueryString(query, ['status', 'scope', 'kind', 'run_id', 'project_id', 'limit'])}`),
+  promoteMemoryCandidate: (candidateId: string, reason?: string) =>
+    request<MemoryCandidateDto>(`/api/v1/memory-candidates/${encodeURIComponent(candidateId)}/promote`, { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) }),
+  rejectMemoryCandidate: (candidateId: string, reason?: string) =>
+    request<MemoryCandidateDto>(`/api/v1/memory-candidates/${encodeURIComponent(candidateId)}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) }),
+  listMemoryItems: (query: MemoryQueueQuery = {}) =>
+    request<MemoryItemDto[]>(`/api/v1/memory-items${memoryQueryString(query, ['status', 'scope', 'kind', 'project_id', 'limit'])}`),
+  // A revocation has nowhere to record a reason, so this sends none.
+  revokeMemoryItem: (itemId: string) =>
+    request<MemoryRevocationDto>(`/api/v1/memory-items/${encodeURIComponent(itemId)}/revoke`, { method: 'POST', body: JSON.stringify({}) }),
 
   // --- Agent Evolution ---
   listEvolutionProposals: () => request<AgentEvolutionProposalDto[]>('/api/v1/agent-evolution/proposals'),
@@ -2287,107 +3227,31 @@ export const api = {
     body: JSON.stringify({ version_a: versionA, version_b: versionB })
   }),
 
-  // --- Streaming Invoke (SSE) — external contract: 5 required + 2 optional, 8 kinds, fixed fields ---
-  // Canonical DTO lives in src/generated/client.ts (openapi-typescript target); this file remains compat alias only.
-  // --- Streaming Invoke — compat adapter over the durable protocol (plan §4.3-4):
-  // POST /sessions/{id}/interactions (durable admission receipt) then GET
-  // /runs/{runId}/stream (id=seq, event=kind, occurred_at). Call sites keep their
-  // old signature; the legacy POST /sessions/{id}/invoke-stream wire is retired.
+  // --- Streaming Invoke (SSE) — compat adapter over the durable protocol (plan §4.3-4):
+  // POST /sessions/{id}/interactions for the admission receipt, then the one durable
+  // reader in src/lib/runStream.ts follows /runs/{runId}/stream. Call sites keep their
+  // old signature; the legacy POST /sessions/{id}/invoke-stream wire is retired, and so
+  // is the second SSE parser that used to live in this file.
+
   invokeStreamWithAdmission: (
     sessionId: string,
-    body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode: string; target_run_id?: string | null; expected_context_revision?: number | null },
-    onChunk: (chunk: { run_id: string; turn_id: string | null; message_id: string | null; seq: number; kind: string; occurred_at: string; payload: Record<string, unknown> }) => void,
+    body: InvokeStreamBody,
+    onChunk: (chunk: ModelStreamChunkDto) => void,
     onError?: (error: Error) => void,
-  ): AbortController => {
-    const controller = new AbortController()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    // 模式身份 = 已发布的 ModeVersion；六值 agent_mode 不再发送（Core 收到会 400 unknown_field）。
-    const interactionBody: Record<string, unknown> = {
-      content: body.content,
-      client_message_id: body.client_message_id,
-      dispatch_mode: 'parallel',
-    }
-    if (body.mode_version_id) interactionBody.mode_version_id = body.mode_version_id
-    if (body.target_run_id) interactionBody.target_run_id = body.target_run_id
-    if (body.expected_context_revision != null) interactionBody.expected_context_revision = body.expected_context_revision
-    ;(async () => {
-      try {
-        const admissionResponse = await fetch(`${gatewayUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(interactionBody),
-          signal: controller.signal,
-        })
-        if (!admissionResponse.ok) {
-          const text = await admissionResponse.text()
-          let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
-          throw new Error(extractErrorMessage(parsed, admissionResponse.statusText) || text || `HTTP ${admissionResponse.status}`)
-        }
-        const receipt = (await admissionResponse.json()) as { run_id?: string; stream_cursor?: number }
-        if (!receipt.run_id) throw new Error('Interaction admission did not return a run_id.')
-        const cursor = receipt.stream_cursor ?? 0
+  ): AbortController => streamAdmittedInteraction(sessionId, body, onChunk, onError),
 
-        const streamResponse = await fetch(`${gatewayUrl}/api/v1/runs/${encodeURIComponent(receipt.run_id)}/stream?after_seq=${encodeURIComponent(String(cursor))}`, {
-          headers: { accept: 'text/event-stream' },
-          signal: controller.signal,
-        })
-        if (!streamResponse.ok) {
-          const text = await streamResponse.text()
-          let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
-          throw new Error(extractErrorMessage(parsed, streamResponse.statusText) || text || `HTTP ${streamResponse.status}`)
-        }
-        const reader = streamResponse.body?.getReader()
-        if (!reader) throw new Error('No response body for streaming')
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          let idx: number
-          while ((idx = buffer.indexOf('\n\n')) !== -1) {
-            const block = buffer.slice(0, idx); buffer = buffer.slice(idx + 2)
-            if (!block.trim() || block.startsWith(':')) continue
-            let id: string | null = null, ev: string | null = null, data = ''
-            for (const line of block.split('\n')) {
-              if (line.startsWith('id:')) id = line.slice(3).trim()
-              else if (line.startsWith('event:')) ev = line.slice(7).trim()
-              else if (line.startsWith('data:')) data += line.slice(5).trim()
-            }
-            if (!data) continue
-            try {
-              const obj = JSON.parse(data) as Record<string, unknown>
-              const chunk = {
-                run_id: String((obj.run_id as string) ?? receipt.run_id),
-                turn_id: (obj.turn_id as string) ?? (obj.turnId as string) ?? null,
-                message_id: (obj.message_id as string) ?? (obj.messageId as string) ?? null,
-                seq: Number((obj.seq as number) ?? id ?? 0),
-                kind: String((obj.kind as string) ?? ev ?? 'delta'),
-                occurred_at: (obj.occurred_at as string) ?? (obj.occurredAt as string) ?? new Date().toISOString(),
-                payload: (obj.payload as Record<string, unknown>) ?? obj,
-              }
-              if (chunk.kind === 'heartbeat') continue
-              onChunk(chunk as never)
-              if (chunk.kind === 'done' || chunk.kind === 'error') return
-            } catch {}
-          }
-        }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        onError?.(err instanceof Error ? err : new Error(String(err)))
-      }
-    })()
-    return controller
-  },
-  // compat: old single-arg signature delegates to admission variant
-  invokeStream: (sessionId: string, content: string, onChunk: (chunk: ModelStreamChunkDto) => void, onError?: (error: Error) => void): AbortController => {
-    const clientMessageId = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    return (api as unknown as { invokeStreamWithAdmission: typeof api.invokeStreamWithAdmission }).invokeStreamWithAdmission(
-      sessionId,
-      { content, client_message_id: clientMessageId, mode_version_id: null, permission_mode: 'default' },
-      onChunk as unknown as never,
-      onError,
-    )
-  },
+  // compat: the old four-argument signature delegates to the admission variant
+  invokeStream: (
+    sessionId: string,
+    content: string,
+    onChunk: (chunk: ModelStreamChunkDto) => void,
+    onError?: (error: Error) => void,
+  ): AbortController => streamAdmittedInteraction(
+    sessionId,
+    { content, client_message_id: newClientMessageId(), mode_version_id: null, permission_mode: 'default' },
+    onChunk,
+    onError,
+  ),
 
   connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void): EventSource {
     const params = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
@@ -2400,25 +3264,13 @@ export const api = {
       }
     };
     source.onmessage = handle;
-    source.addEventListener('project.created', handle as EventListener);
-    source.addEventListener('session.created', handle as EventListener);
-    source.addEventListener('message.created', handle as EventListener);
-    source.addEventListener('approval.requested', handle as EventListener);
-    source.addEventListener('approval.approved', handle as EventListener);
-    source.addEventListener('approval.rejected', handle as EventListener);
-    source.addEventListener('tool.shell.approval_required', handle as EventListener);
-    source.addEventListener('run.started', handle as EventListener);
-    source.addEventListener('task_graph.created', handle as EventListener);
-    source.addEventListener('task.assigned', handle as EventListener);
-    source.addEventListener('step.result.created', handle as EventListener);
-    source.addEventListener('supervision.checked', handle as EventListener);
-    source.addEventListener('context.pack.created', handle as EventListener);
-    // Agent terminal stream (shell tool → tool-core-gateway → run event journal).
-    source.addEventListener('terminal.command', handle as EventListener);
-    source.addEventListener('terminal.stdout', handle as EventListener);
-    source.addEventListener('terminal.exit', handle as EventListener);
-    source.addEventListener('terminal.stdin', handle as EventListener);
-    source.addEventListener('terminal.session.killed', handle as EventListener);
+    // Core writes NAMED SSE frames, and the browser drops any named frame with no
+    // listener of the same name — so the subscription list has to be the real event
+    // vocabulary, not a hand-maintained guess. See events/coreEventTypes.ts for why
+    // the previous list left tools, approvals, and run failures permanently invisible.
+    for (const eventType of CORE_EVENT_TYPES) {
+      source.addEventListener(eventType, handle as EventListener);
+    }
     return source;
   },
 

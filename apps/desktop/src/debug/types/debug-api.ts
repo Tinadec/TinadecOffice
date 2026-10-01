@@ -28,19 +28,3 @@ export interface GetMetricsRequest {
   bucket_ms?: number
   group_by?: string[]
 }
-
-// WebSocket message types
-export interface WsMessage {
-  type: string
-  data: unknown
-  timestamp: number
-}
-
-export type WsEventType =
-  | 'trace.span.started'
-  | 'trace.span.ended'
-  | 'trace.metric.sampled'
-  | 'agent.state.changed'
-  | 'breakpoint.hit'
-  | 'simulation.paused'
-  | 'event.*'

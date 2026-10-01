@@ -1,0 +1,273 @@
+{
+  "answers": [
+    {
+      "scenario": 1,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-3f9k",
+            "title": "查找 useUiePage 引用",
+            "objective": "在仓库中搜索所有引用标识符 useUiePage 的文件和代码位置（覆盖 apps/TinadecUI、apps/desktop 等目录下的 .ts/.vue 文件），对每处引用说明其用途（例如：组合式函数定义、页面注册、路由入口调用等）。",
+            "success_criteria": [
+              "列出所有包含 useUiePage 的文件路径及行号",
+              "对每个引用给出用途说明",
+              "结果基于 file_search/read_file 的实际检索结果，不可臆测"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 2,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-q71m",
+            "title": "翻译 ensureProductionUie 注释为中文",
+            "objective": "打开 apps/desktop/src/lib/uiEngine.ts，定位函数 ensureProductionUie，将其现有的英文注释翻译为准确的中文，保持代码逻辑与格式不变，仅修改注释文本。",
+            "success_criteria": [
+              "ensureProductionUie 函数相关的英文注释已替换为中文翻译",
+              "未改动任何可执行代码逻辑",
+              "文件可正常通过语法/类型检查"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 3,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-m5ta",
+            "title": "编写 showPage 使用说明文档",
+            "objective": "阅读 TinadecUI 引擎中 showPage 的相关源码（apps/TinadecUI/src/engine 及其调用处）以理解其用法，然后撰写一份使用说明文档，保存为 docs/uie-show-page.md，说明 showPage 的作用、参数、典型调用方式与示例代码。",
+            "success_criteria": [
+              "docs/uie-show-page.md 已创建",
+              "文档准确描述 showPage 的用途、参数与用法，并附示例代码",
+              "未修改任何非文档文件"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 4,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-8h2p",
+            "title": "审阅未提交改动的风险",
+            "objective": "使用 git_status/git_diff 查看当前工作区所有未提交的改动，逐项审阅代码质量、潜在缺陷、是否符合三层架构边界（Desktop/Gateway/Core）以及安全隐患，输出风险清单。",
+            "success_criteria": [
+              "覆盖所有未提交改动的文件",
+              "每类风险给出具体文件/行号依据",
+              "给出风险等级（高/中/低）划分"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 5,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-x0de",
+            "title": "提交并推送当前改动到 main",
+            "objective": "对当前工作区的改动执行 git 提交（撰写清晰描述改动内容的 commit message），然后推送到远程 main 分支。",
+            "success_criteria": [
+              "改动已提交，commit message 清晰描述改动",
+              "已成功推送到远程 main 分支",
+              "推送后工作区与远程同步、无残留未提交内容"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 6,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-3f9k",
+            "title": "总结 Vue Vapor 模式限制",
+            "objective": "通过 web_fetch 读取 https://vuejs.org/guide/extras/vapor.html 页面内容，总结 Vapor 模式当前存在的限制与已知问题。",
+            "success_criteria": [
+              "已实际抓取该网页内容作为依据",
+              "总结覆盖页面中提到的主要限制点",
+              "标注信息来源为该链接"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 7,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-q71m",
+            "title": "修复 desktop 单元测试失败用例",
+            "objective": "运行 desktop 包的单元测试（如 npm run test -w @tinadec/desktop），定位失败用例，修改相关源码或测试代码使其通过，并重新运行测试自验。",
+            "success_criteria": [
+              "已执行测试并记录初始失败用例列表",
+              "修复后重新运行测试，全部用例通过",
+              "改动范围仅限于修复所必需的代码/测试文件"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 8,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-3f9k",
+            "title": "查看最近 5 次提交内容",
+            "objective": "使用 git_log 获取最近 5 次提交记录，并结合 git_diff 等只读方式查看每次提交具体改动了哪些文件及内容概要。",
+            "success_criteria": [
+              "列出最近 5 次提交的 hash、作者、message",
+              "对每次提交给出改动文件列表及简要说明"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 9,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-3f9k",
+            "title": "统计 styles.css 中 !important 数量",
+            "objective": "在 apps/desktop/src/styles.css 文件中统计还剩多少处使用了 !important，给出具体数量及各自所在行号/选择器。",
+            "success_criteria": [
+              "给出 !important 出现的总次数",
+              "列出每处出现的行号"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-q71m",
+            "title": "修改 README 端口号",
+            "objective": "在 README.md 中，把 Gateway 端口号 48730 改为 48740，仅在 README.md 范围内检查并同步所有引用该端口的位置。",
+            "success_criteria": [
+              "README.md 中所有 48730 已替换为 48740",
+              "文件其余内容保持不变"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 10,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-q71m",
+            "title": "补齐 i18n 缺失的 key",
+            "objective": "检查项目中的 i18n 语言文件，找出各语言文件之间缺失的翻译 key 并补齐（保持各语言文件 key 集合一致），补齐后运行相关检查/测试自验。",
+            "success_criteria": [
+              "列出补齐前缺失的 key 清单",
+              "补齐后所有语言文件 key 集合一致",
+              "新增翻译内容准确合理"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-x0de",
+            "title": "提交 i18n 修改",
+            "objective": "将补齐 i18n 缺失 key 的改动提交到本地仓库，撰写清晰说明本次为补齐 i18n 缺失 key 的 commit message，无需推送远程。",
+            "success_criteria": [
+              "改动已提交",
+              "commit message 准确说明本次改动内容"
+            ],
+            "depends_on": [
+              "补齐 i18n 缺失的 key"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 11,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-8h2p",
+            "title": "对当前分支相对 main 的 diff 做安全审查",
+            "objective": "使用 git_diff 获取当前分支相对 main 分支的完整差异，逐项审查是否存在安全隐患（如敏感信息泄露、权限校验缺失、审批门被绕过等），并结合项目审批门/权限控制规范给出评估。",
+            "success_criteria": [
+              "覆盖当前分支相对 main 的全部差异文件",
+              "明确指出发现的安全风险及具体位置",
+              "给出总体安全评级"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 12,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-3f9k",
+            "title": "收集 UIE 重构改动信息",
+            "objective": "通过 git_log/git_diff 查看与本次 UIE（TinadecUI Engine）重构相关的提交与改动内容，梳理改动范围、涉及文件与主要行为变化点，作为撰写 CHANGELOG 的依据。",
+            "success_criteria": [
+              "列出与 UIE 重构相关的关键提交",
+              "总结改动涉及的主要模块/文件",
+              "总结主要行为变化点"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "ag-m5ta",
+            "title": "更新 CHANGELOG 记录 UIE 重构",
+            "objective": "根据已收集的 UIE 重构改动信息，在 CHANGELOG.md 中新增一条记录，说明本次 UIE 重构的主要内容与影响。",
+            "success_criteria": [
+              "CHANGELOG.md 已新增对应条目",
+              "条目内容准确反映 UIE 重构的主要变化",
+              "格式与既有 CHANGELOG 条目风格一致"
+            ],
+            "depends_on": [
+              "收集 UIE 重构改动信息"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 13,
+      "calls": [
+        {
+          "tool": "task_followup",
+          "args": {
+            "handle": "ag-3f9k#1",
+            "instruction": "刚才统计 apps/desktop/src/styles.css 中 !important 的结果不完整，请继续扩大范围，把 apps/desktop/src 目录下其它 .css 文件中的 !important 出现次数也一并统计进去，并给出每个文件的数量明细与总计。"
+          }
+        }
+      ]
+    }
+  ]
+}

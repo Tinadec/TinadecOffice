@@ -31,6 +31,16 @@ public sealed class ContextPack
     public int TokenBudget { get; init; }
     public int EstimatedTokens { get; init; }
     public IReadOnlyList<ContextEvidence> Evidence { get; init; } = [];
+
+    /// <summary>
+    /// Candidates the token budget removed. Kept as evidence rather than as names because "the pack
+    /// has 4 items" and "nothing was missing" are the same visible fact, and the second one is a
+    /// lie the surface can only avoid by reading this list. The content stays off the wire; only
+    /// name and price are projected, so keeping it costs a dropped item's text for the lifetime of
+    /// a pack that is about to be discarded anyway.
+    /// </summary>
+    public IReadOnlyList<ContextEvidence> Dropped { get; init; } = [];
+
     public IReadOnlyDictionary<string, string> Metadata { get; init; } = new Dictionary<string, string>();
 }
 
@@ -50,4 +60,14 @@ public sealed record ContextBuildRequest(
     string? TaskContext = null,
     int? TokenBudget = null,
     int? RecentMessageLimit = null,
-    int? ReviewedMemoryLimit = null);
+    int? ReviewedMemoryLimit = null,
+    TinaChatInputBinding? TinaChatInput = null)
+{
+    /// <summary>
+    /// The run's frozen workspace, when one is bound. Carried in rather than looked up, exactly like
+    /// <see cref="FrozenPromptAssemblyRequest.Workspace"/>: admission already proved this root belongs
+    /// to this session's tenant and workspace, and a context builder that re-resolved a root from the
+    /// store could read a directory the run was never granted.
+    /// </summary>
+    public FrozenWorkspaceBinding? Workspace { get; init; }
+}

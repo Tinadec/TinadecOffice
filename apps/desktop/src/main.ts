@@ -12,8 +12,6 @@ import { setNotificationFallbackText } from './composables/useNotifications'
 import { installPreviewShimIfNeeded } from './lib/previewShim'
 import { installRendererErrorFallback } from './lib/rendererErrorFallback'
 import './styles.css'
-// Overrides so legacy page components (AppSidebar/ChatPanel) fill their card frame.
-import '@/../../TinadecUI/src/components/uie-card-fill.css'
 
 // Install a minimal `window.tinadec` when running without the Electron preload
 // (bare-vite preview / MCP pane) so pages render instead of crashing.

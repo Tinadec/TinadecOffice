@@ -78,6 +78,35 @@ describe('repairLayout', () => {
     expect(out.columns.left.primary.tabIds).toEqual(['a'])
   })
 
+  it('repairs legacy layouts that persisted more than one terminal panel', () => {
+    const ctx = makeCtx()
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columnOrder: ['left', 'center', 'right'],
+        columns: {
+          left: { width: 260, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          center: { width: 600, collapsed: false, surfaceMode: 'immersive', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          right: { width: 420, collapsed: false, surfaceMode: 'float', topInset: 48, primary: { stackId: 'primary', tabIds: ['terminal-a', 'terminal-b'], activeTabId: 'terminal-b' }, secondary: null, splitRatio: null },
+        },
+        cards: {
+          'terminal-a': { id: 'terminal-a', descriptorId: 'terminal', title: '终端 A' },
+          'terminal-b': { id: 'terminal-b', descriptorId: 'terminal', title: '终端 B' },
+        },
+        focusedCardId: 'terminal-b',
+        gap: 8,
+        edgeInset: 8,
+      },
+      ctx,
+    )
+
+    const terminals = Object.values(out.cards).filter((c) => c.descriptorId === 'terminal')
+    expect(terminals).toHaveLength(1)
+    expect(out.columns.right.primary.tabIds).toEqual(['terminal-a'])
+    expect(out.columns.right.primary.activeTabId).toBe('terminal-a')
+  })
+
   it('clamps illegal sizes', () => {
     const ctx = makeCtx()
     const out = repairLayout(

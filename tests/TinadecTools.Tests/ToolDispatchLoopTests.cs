@@ -10,7 +10,7 @@ public sealed class ToolDispatchLoopTests
 
     private static long NextCallId() => Interlocked.Increment(ref _nextCallId);
 
-    private static string RequestLine(long callId, string toolId) =>
+    private static string RequestLine(long callId, string toolId, JsonElement? parameters = null) =>
         JsonSerializer.Serialize(new ToolCallRequest<JsonElement>
         {
             ToolId = toolId,
@@ -19,7 +19,7 @@ public sealed class ToolDispatchLoopTests
             Approved = true,
             // notnull-constrained TParams? is a plain JsonElement here; a default
             // (undefined) JsonElement cannot be serialized.
-            Params = JsonDocument.Parse("{}").RootElement.Clone()
+            Params = parameters ?? JsonDocument.Parse("{}").RootElement.Clone()
         }, ToolCallJsonContext.Default.ToolCallRequestJsonElement);
 
     private static ToolCallResponse<JsonElement> OkResponse(long callId) => new()
@@ -47,10 +47,12 @@ public sealed class ToolDispatchLoopTests
             blockingStarted.TrySetResult();
             await releaseBlocking.Task;
             return OkResponse(req.ToolCallId);
-        }, requiresApproval: false, mutatesWorkspace: true);
+        }, requiresApproval: false, mutatesWorkspace: true,
+            description: "Test fixture: block a workspace mutation until the test releases it.");
         ToolRegistry.Register("#test.loop-control",
             (req, _) => ValueTask.FromResult(OkResponse(req.ToolCallId)),
-            requiresApproval: false, mutatesWorkspace: false);
+            requiresApproval: false, mutatesWorkspace: false,
+            description: "Test fixture: respond immediately to a reserved control-plane call.");
 
         var blockingId = NextCallId();
         var controlId = NextCallId();
@@ -93,12 +95,14 @@ public sealed class ToolDispatchLoopTests
             firstStarted.TrySetResult();
             await releaseFirst.Task;
             return OkResponse(req.ToolCallId);
-        }, requiresApproval: false, mutatesWorkspace: true);
+        }, requiresApproval: false, mutatesWorkspace: true,
+            description: "Test fixture: hold the first mutation to verify mutation serialization.");
         ToolRegistry.Register("test.loop-mut-b", (req, _) =>
         {
             Interlocked.Increment(ref secondEntered);
             return ValueTask.FromResult(OkResponse(req.ToolCallId));
-        }, requiresApproval: false, mutatesWorkspace: true);
+        }, requiresApproval: false, mutatesWorkspace: true,
+            description: "Test fixture: record when the second serialized mutation starts.");
 
         var firstId = NextCallId();
         var secondId = NextCallId();
@@ -123,11 +127,38 @@ public sealed class ToolDispatchLoopTests
     }
 
     [Fact]
+    public async Task RunAsync_MutatingCallsInDifferentWorktreesCanProceedTogether()
+    {
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ToolRegistry.Register("test.loop-mut-worktree", async (req, _) =>
+        {
+            var cwd = req.Params.TryGetProperty("cwd", out var value) ? value.GetString() : null;
+            (cwd == "wt-a" ? firstStarted : secondStarted).TrySetResult();
+            await release.Task;
+            return OkResponse(req.ToolCallId);
+        }, requiresApproval: false, mutatesWorkspace: true,
+            description: "Test fixture: allow independent worktree mutations to overlap.");
+
+        var input = new StringReader(
+            RequestLine(NextCallId(), "test.loop-mut-worktree", JsonSerializer.SerializeToElement(new { cwd = "wt-a" })) + "\n" +
+            RequestLine(NextCallId(), "test.loop-mut-worktree", JsonSerializer.SerializeToElement(new { cwd = "wt-b" })) + "\n");
+        var output = new StringWriter();
+        var loop = ToolDispatchLoop.RunAsync(input, output);
+
+        await Task.WhenAll(firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(10)), secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        release.TrySetResult();
+        await loop.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
     public async Task RunAsync_WritesOneResponseLinePerRequest_IncludingErrors()
     {
         ToolRegistry.Register("test.loop-fast-read",
             (req, _) => ValueTask.FromResult(OkResponse(req.ToolCallId)),
-            requiresApproval: false, mutatesWorkspace: false);
+            requiresApproval: false, mutatesWorkspace: false,
+            description: "Test fixture: return an immediate read-only response.");
 
         var unknownId = NextCallId();
         var fastId = NextCallId();

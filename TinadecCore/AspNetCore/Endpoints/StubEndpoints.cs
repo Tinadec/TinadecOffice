@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
@@ -154,13 +155,15 @@ public static class StubEndpoints
             });
         });
 
-        app.MapGet("/api/v1/tool-layer-readiness", async (IToolRegistry registry, IAgentRuntimeConfiguration runtime, CancellationToken ct) =>
+        app.MapGet("/api/v1/tool-layer-readiness", async (IToolRegistry registry, IAgentRuntimeConfiguration runtime, IConfiguration configuration, CancellationToken ct) =>
         {
             IReadOnlyList<ToolManifestEntryDto> tools = [];
             string[] notes = [];
             try
             {
-                tools = await registry.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false);
+                var workspaceRoot = configuration["TinadecTools:DefaultWorkspaceRoot"];
+                if (string.IsNullOrWhiteSpace(workspaceRoot)) workspaceRoot = Directory.GetCurrentDirectory();
+                tools = await registry.ListToolsAsync(workspaceRoot, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -323,12 +326,10 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapMarketExtensionStubs(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/market/sources", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/market/sources", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/market/sources/{sourceId}/refresh", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapGet("/api/v1/market/catalog", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/market/catalog/{catalogId}", () => Results.NotFound(new { code = "NOT_FOUND", message = "Catalog item not found." }));
-
+        // The five market routes are mapped by MarketEndpoints: sources and catalog entries are
+        // durable Core rows now, refreshed through the Tool Provider's #fetch control tool.
+        // The extension lifecycle below is still unimplemented — an install that writes no files
+        // would be a worse lie than a 501.
         app.MapPost("/api/v1/extensions/install-preview", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
         app.MapPost("/api/v1/extensions/install", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
         app.MapGet("/api/v1/extensions/installed", () => Results.Ok(Array.Empty<object>()));
@@ -339,14 +340,10 @@ public static class StubEndpoints
     }
 
     // ──────────────────────────────────────────────────────────
-    // MCP / ACP
+    // ACP (MCP reads live in McpEndpoints: the inventory belongs to the Tool Provider)
     // ──────────────────────────────────────────────────────────
     private static void MapMcpAcpStubs(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/mcp/servers", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/mcp/servers/{serverId}/tools", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/mcp/servers/{serverId}/reload", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-
         app.MapGet("/api/v1/acp/adapters", () => Results.Ok(Array.Empty<object>()));
         app.MapPost("/api/v1/acp/adapters/{adapterId}/probe", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
     }

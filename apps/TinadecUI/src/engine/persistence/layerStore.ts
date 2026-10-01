@@ -1,7 +1,7 @@
 import type { UieLayoutSnapshot, UiePageId } from '../types'
 import type { LayoutAdapter, LayoutStorageBlob } from './types'
 import { pageKey, workspaceKey } from './types'
-import { writeScopeFor } from '../scope'
+import { layoutProjectFor, writeScopeFor } from '../scope'
 import type { LayoutScope } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -60,8 +60,9 @@ export function createLayerStore(adapter: LayoutAdapter): LayerStore {
 
   function resolveSnapshot(pageId: UiePageId, activeProjectId: string | null): UieLayoutSnapshot | null {
     // Most specific valid wins: workspace-page > page > global (per-page) > null.
-    if (activeProjectId) {
-      const ws = blob.workspaceByKey?.[workspaceKey(activeProjectId, pageId)]
+    const projectId = layoutProjectFor(pageId, activeProjectId)
+    if (projectId) {
+      const ws = blob.workspaceByKey?.[workspaceKey(projectId, pageId)]
       if (ws) return ws
     }
     const page = blob.pageByPageId?.[pageId]

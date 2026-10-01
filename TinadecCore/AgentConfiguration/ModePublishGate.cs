@@ -11,17 +11,22 @@ namespace TinadecCore.AgentConfiguration;
 /// authoritative fail-closed comparison runs again at run freeze.
 ///
 /// Rules:
-/// ① operation_tool_floor_violation — the effective tool surface of an
-///    operation-layer node (template scope − envelope narrowing − tool_switches
-///    removals) must be empty. The deny floor is not relaxable.
-/// ② envelope_exceeds_boundary — envelope.capabilities ⊆ template capabilities,
+/// ① envelope_exceeds_boundary — envelope.capabilities ⊆ template capabilities,
 ///    envelope.tools ⊆ template tool scope (narrowing only, never widening), and
 ///    envelope.spawn numbers must sit inside the runtime ceilings when supplied.
-/// ③ mutating_tool_without_write_grant — a binding whose EFFECTIVE tool surface
+/// ② mutating_tool_without_write_grant — a binding whose EFFECTIVE tool surface
 ///    still holds a workspace-mutating tool must declare a write-level resource
 ///    grant. Otherwise the run freezes a mutating tool face and then denies every
 ///    call of it before the approval gate is ever consulted — the contradiction
 ///    that made a denied tool look like "the tool returned nothing".
+///
+/// The operation-layer tool floor (ex-rule ① "operation_tool_floor_violation") is
+/// REMOVED BY DESIGN (2026-09-17): a mode may arm its conversation identity with
+/// tools so the agent that talks to the user also edits the workspace (the
+/// solo/master-slave shape). Rule ② is what applies to an operation binding now —
+/// operation bindings used to `continue` past it, so removing the floor without
+/// removing that skip would have let a conversation identity keep write_file while
+/// declaring no write authorization at all.
 /// </summary>
 public static class ModePublishGate
 {
@@ -76,22 +81,23 @@ public static class ModePublishGate
                 }
             }
 
-            // ① operation deny floor over the EFFECTIVE surface (template scope −
-            // envelope − switches) — enforced regardless of whether the binding
-            // carries an envelope: an operation template that declares tools is
-            // already a violation a binding cannot repair (it may only remove).
+            // The operation-layer tool floor is REMOVED BY DESIGN (2026-09-17). A mode may
+            // now give its conversation identity a tool surface of its own — the
+            // solo/master-slave shape, where the agent that talks to the user also edits
+            // the workspace. An operation layer holding tools is therefore a supported
+            // configuration, not a publish violation.
+            //
+            // What replaces the floor is not a weaker gate but a SHARPER one: operation
+            // bindings no longer `continue` past the check below, so a mutating tool on
+            // the conversation identity must declare an explicit write grant exactly like
+            // any execution-layer worker's. The resource envelope and per-write human
+            // approval are what still stand between the governance layer and the
+            // workspace; layer membership is no longer one of the defences.
             var effective = (envelopeTools ?? binding.TemplateTools.ToHashSet(StringComparer.OrdinalIgnoreCase))
                 .Where(tool => !IsSwitchedOff(binding.ToolSwitches, tool))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (string.Equals(binding.Layer, "operation", StringComparison.Ordinal))
-            {
-                if (effective.Count > 0)
-                    throw Fail("operation_tool_floor_violation",
-                        $"mode '{modeKey}' operation node '{binding.NodeKey}' has an effective tool surface ({string.Join(", ", effective.OrderBy(t => t, StringComparer.Ordinal))}); operation-layer agents cannot invoke tools.");
-                continue;
-            }
 
-            // ③ A kept mutating tool needs a write-level grant to be reachable.
+            // A kept mutating tool needs a write-level grant to be reachable.
             var mutating = WorkspaceToolCatalog.MutatingMembers(effective);
             if (mutating.Count > 0 && !DeclaresWriteGrant(binding.Envelope))
             {

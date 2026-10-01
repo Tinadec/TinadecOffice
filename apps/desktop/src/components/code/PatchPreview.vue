@@ -124,8 +124,9 @@ async function renderDiff(): Promise<void> {
   const monaco = await getMonaco()
 
   // Monaco invariant: detach the widget's current models BEFORE disposing
-  // them ("TextModel got disposed before DiffEditorWidget model got reset").
-  if (diffEditor) diffEditor.setModel({ original: null, modified: null })
+  // them ("TextModel got disposed before DiffEditorWidget model got reset");
+  // `setModel(null)` is the detach its own declaration documents.
+  if (diffEditor) diffEditor.setModel(null)
   if (originalModel) originalModel.dispose()
   if (modifiedModel) modifiedModel.dispose()
 

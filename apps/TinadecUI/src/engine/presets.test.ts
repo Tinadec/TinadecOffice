@@ -64,7 +64,7 @@ describe('built-in presets', () => {
   })
 
   it('every page has a non-empty preset', () => {
-    for (const pageId of ['home', 'settings', 'market', 'code', 'debug'] as const) {
+    for (const pageId of ['home', 'settings', 'market', 'code', 'debug', 'chatroom'] as const) {
       const preset = buildPreset(pageId, { nextInstanceId: nextId() })
       expect(preset.pageId).toBe(pageId)
       expect(Object.keys(preset.cards).length).toBeGreaterThan(0)
@@ -74,6 +74,6 @@ describe('built-in presets', () => {
   })
 
   it('PRESET_BUILDERS covers every UiePageId', () => {
-    expect(Object.keys(PRESET_BUILDERS).sort()).toEqual(['code', 'debug', 'home', 'market', 'settings'])
+    expect(Object.keys(PRESET_BUILDERS).sort()).toEqual(['chatroom', 'code', 'debug', 'home', 'market', 'settings'])
   })
 })

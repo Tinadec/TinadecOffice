@@ -1,35 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import {
-  UieShell,
-  initUie,
-  useUie,
-  buildUieRegistry,
-  createComponentLookup,
-  createElectronLayoutAdapter,
-  createLayerStore,
-} from '@tinadec/ui'
+import { UieShell } from '@tinadec/ui'
 import { homeController } from '@/controllers/HomeController'
+import { useUiePage } from '@/lib/uiEngine'
 
-// Initialize the Uie store once (module singleton). Subsequent mounts
-// reuse the existing store so layout state survives route changes.
-if (typeof window !== 'undefined') {
-  const registry = buildUieRegistry()
-  const layerStore = createLayerStore(createElectronLayoutAdapter())
-  initUie({
-    registry,
-    componentFor: createComponentLookup(registry),
-    persistence: { store: layerStore },
-  })
-}
-
-// The store is a module singleton, so its snapshot survives route changes.
-// Entering a page must switch it to that page's layout — mirror MarketPage's
-// `if (wb.pageId.value !== 'market') wb.applyPreset('market')`. Without this
-// symmetric reset, returning from market leaves the snapshot on the market
-// layout and the home shell keeps rendering the market columns.
-const wb = useUie()
+// The UIE store is a module singleton shared by every UIE route; entering Home
+// switches it back to the home layout (restoring the user's saved home layout).
+useUiePage('home')
 
 // Spatial transition state — declarative, class-driven.
 // Same mechanism as the Settings page: toggling container classes
@@ -42,7 +20,7 @@ const wb = useUie()
 // commit 46a5988). We keep the classic wrapper and toggle classes on it.
 //
 // Entry animation: the container is always visible (never display:none), so
-// UieCanvas.measure() reads the real .wb-canvas size on the first frame
+// UieCanvas.measure() reads the real .uie-canvas size on the first frame
 // and the columns get correct geometry. The .home-entering class then plays
 // the rise-from-below keyframes on the freshly mounted stacks — on both
 // initial load and when returning from settings (fresh stacks replay the
@@ -61,12 +39,6 @@ const EXIT_DURATION_MS = 300
 
 onMounted(() => {
   homeController.start()
-  // Mirror MarketPage: switch the singleton store back to the home layout when
-  // this page was entered from another page (cold-start already has pageId
-  // 'home', so the persisted home layout survives).
-  if (wb.pageId.value !== 'home') {
-    wb.applyPreset('home')
-  }
   homeEntering.value = true
   window.setTimeout(() => {
     homeEntering.value = false

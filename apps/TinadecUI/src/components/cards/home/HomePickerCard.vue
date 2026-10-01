@@ -7,10 +7,21 @@ import { homeController } from '@/controllers/HomeController'
 import { FEATURE_CATALOG } from './featureCatalog'
 
 const { t } = useI18n()
-const wb = useUie()
+const uie = useUie()
 const c = homeController
+const currentContext = computed(() => {
+  const project = c.currentProject.value
+  const session = c.currentSession.value
+  if (!project || !session) {
+    return { ready: false, label: t('context.homeContextMissing') }
+  }
+  return {
+    ready: true,
+    label: t('context.homeContextReady', { project: project.name, session: session.title }),
+  }
+})
 
-// Compact mode mirrors the legacy PanelHome behavior: when the feature panel
+// Compact mode keeps the feature panel usable at narrow widths: when the panel
 // is narrower than 420px the grid becomes single-column with row-aligned cards
 // and the subtitle/descriptions/footer are hidden. The width is measured on a
 // no-padding wrapper so the threshold matches the stack width (the legacy code
@@ -29,10 +40,10 @@ const features = computed(() =>
 )
 
 function openCard(descriptorId: string) {
-  wb.dispatch({
-    command: { type: 'openCard', scope: wb.scope.value, descriptorId },
+  uie.dispatch({
+    command: { type: 'openCard', scope: uie.scope.value, descriptorId },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 </script>
@@ -43,6 +54,9 @@ function openCard(descriptorId: string) {
       <div class="panel-home-header">
         <h2>{{ t('context.homeTitle') }}</h2>
         <p v-if="!isCompact">{{ t('context.homeSubtitle') }}</p>
+        <span class="panel-home-context" :class="{ ready: currentContext.ready }">
+          {{ currentContext.label }}
+        </span>
       </div>
 
       <div class="panel-home-grid">
@@ -90,9 +104,11 @@ function openCard(descriptorId: string) {
 .panel-home-header { display: flex; flex-direction: column; gap: 4px; }
 .panel-home-header h2 { margin: 0; font-size: 15px; font-weight: 700; color: var(--text-primary); }
 .panel-home-header p { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+.panel-home-context { font-size: 11px; color: var(--text-muted); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-home-context.ready { color: var(--text-secondary); }
 .panel-home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
-/* Compact mode: single column, reduced padding (legacy PanelHome parity) */
+/* Compact mode: single column, reduced padding. */
 .panel-home-compact {
   padding: 12px 10px;
   gap: 10px;

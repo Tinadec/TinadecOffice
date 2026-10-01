@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
@@ -24,15 +25,18 @@ public sealed class ProjectSessionLifecycleService
     private readonly ProjectSessionStore _store;
     private readonly IDbContextFactory<LifecycleDbContext> _lifecycleFactory;
     private readonly StoragePaths _paths;
+    private readonly ISessionOrganization? _organization;
 
     public ProjectSessionLifecycleService(
         ProjectSessionStore store,
         IDbContextFactory<LifecycleDbContext> lifecycleFactory,
-        StoragePaths paths)
+        StoragePaths paths,
+        ISessionOrganization? organization = null)
     {
         _store = store;
         _lifecycleFactory = lifecycleFactory;
         _paths = paths;
+        _organization = organization;
     }
 
     public Task<ProjectRecord> ArchiveProjectAsync(Guid projectId, CancellationToken ct = default) =>
@@ -53,6 +57,18 @@ public sealed class ProjectSessionLifecycleService
     public Task<SessionRecord> RestoreSessionAsync(Guid sessionId, CancellationToken ct = default) =>
         TransitionSessionAsync(sessionId, LifecycleStatuses.Active, ct);
 
+    /// <summary>
+    /// Edit-and-resend support: cut the conversation at a message so the corrected turn
+    /// can be sent again. Refused while any run of that session is still active, for the
+    /// same reason a lifecycle transition is — the live run's checkpoint references the
+    /// messages that would leave the history.
+    /// </summary>
+    public async Task<SessionHistoryRevert> RevertSessionHistoryAsync(Guid sessionId, Guid fromMessageId, CancellationToken ct = default)
+    {
+        await ThrowIfAnyActiveRunAsync([sessionId], ct).ConfigureAwait(false);
+        return await _store.RevertHistoryAsync(sessionId, fromMessageId, ct).ConfigureAwait(false);
+    }
+
     private async Task<ProjectRecord> TransitionProjectAsync(Guid projectId, string target, CancellationToken ct)
     {
         var sessions = await _store.ListAllSessionsForProjectAsync(projectId, ct).ConfigureAwait(false);
@@ -63,7 +79,12 @@ public sealed class ProjectSessionLifecycleService
     private async Task<SessionRecord> TransitionSessionAsync(Guid sessionId, string target, CancellationToken ct)
     {
         await ThrowIfAnyActiveRunAsync([sessionId], ct).ConfigureAwait(false);
-        return await _store.SetSessionLifecycleAsync(sessionId, target, ct).ConfigureAwait(false);
+        var record = await _store.SetSessionLifecycleAsync(sessionId, target, ct).ConfigureAwait(false);
+        // An archived or trashed session keeps its organization readable and refuses writes to it;
+        // restoring it reopens it. Nothing in the organization is ever deleted by a transition.
+        if (_organization is not null)
+            await _organization.SetArchivedAsync(sessionId, target != LifecycleStatuses.Active, ct).ConfigureAwait(false);
+        return record;
     }
 
     /// <summary>Permanently deletes a trashed session: lifecycle rows, memory rows, and Core-owned run files.</summary>

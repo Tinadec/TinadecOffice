@@ -3,15 +3,17 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
-import { api, createUserToolActionForPath, type ApprovalDto, type EventEnvelope, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto } from '@/api'
+import { api, createUserToolActionForPath, type ApprovalDto, type DoctorReportDto, type EventEnvelope, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
+import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useNotifications } from '@/composables/useNotifications'
 import GitPanel from '@/components/GitPanel.vue'
 import ApprovalTab from '@/components/ApprovalTab.vue'
 import EventsTab from '@/components/EventsTab.vue'
 import DoctorTab from '@/components/DoctorTab.vue'
 import OrchestrationTab from '@/components/OrchestrationTab.vue'
+import OrganizationPanel from '@/components/organization/OrganizationPanel.vue'
 import PreviewBrowserPanel from '@/components/PreviewBrowserPanel.vue'
 import AgentActivityPanel from '@/components/AgentActivityPanel.vue'
 import TerminalPanel from '@/components/TerminalPanel.vue'
@@ -47,6 +49,8 @@ const approvals = ref<ApprovalDto[]>([])
 const events = ref<EventEnvelope[]>([])
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)
 const toolExecutions = ref<ToolExecutionTimelineItemDto[]>([])
+const doctor = ref<DoctorReportDto | null>(null)
+const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
 const shellCommand = ref('npm test')
 const busy = ref(false)
 
@@ -58,9 +62,18 @@ const {
   progressEvents: agentProgressEvents,
 } = useAgentActivity(sessionIdRef, orchestration)
 
-let eventSource: EventSource | null = null
+let unsubscribeEvents: (() => void) | null = null
 
 async function loadData() {
+  // Doctor/readiness are runtime-wide, not session-scoped.
+  if (tabType.value === 'doctor') {
+    const [report, receipt] = await Promise.all([
+      api.doctor().catch(() => null),
+      api.readiness().catch(() => null),
+    ])
+    doctor.value = report
+    readiness.value = receipt
+  }
   if (!sessionId.value) {
     loading.value = false
     return
@@ -91,29 +104,29 @@ async function loadData() {
 }
 
 function connectSSE() {
-  eventSource?.close()
+  unsubscribeEvents?.()
+  unsubscribeEvents = null
+  // The detached window follows its own session; useAgentActivity subscribes to the
+  // same bus underneath, so this page used to be the second of two connections here.
+  followSession(sessionId.value)
   if (!sessionId.value) return
 
-  try {
-    eventSource = api.connectEvents(sessionId.value, async (event) => {
-      events.value = [...events.value.slice(-79), event].sort((a, b) => a.seq - b.seq)
+  unsubscribeEvents = subscribeToSessionEvents(async (event) => {
+    events.value = [...events.value.slice(-79), event].sort((a, b) => a.seq - b.seq)
 
-      if (
-        event.type.startsWith('message.') ||
-        event.type.startsWith('approval.') ||
-        event.type.startsWith('tool.') ||
-        event.type.startsWith('run.') ||
-        event.type.startsWith('task') ||
-        event.type.startsWith('supervision.') ||
-        event.type.startsWith('context.') ||
-        event.type.startsWith('step.')
-      ) {
-        await loadData()
-      }
-    })
-  } catch {
-    // SSE connection failure is non-fatal; data was loaded via REST
-  }
+    if (
+      event.type.startsWith('message.') ||
+      event.type.startsWith('approval.') ||
+      event.type.startsWith('tool.') ||
+      event.type.startsWith('run.') ||
+      event.type.startsWith('task') ||
+      event.type.startsWith('supervision.') ||
+      event.type.startsWith('context.') ||
+      event.type.startsWith('step.')
+    ) {
+      await loadData()
+    }
+  }, { scope: sessionId })
 }
 
 // ---- Window controls ----
@@ -197,7 +210,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  eventSource?.close()
+  unsubscribeEvents?.()
   removeThemeListener?.()
 })
 
@@ -272,6 +285,12 @@ watch(sessionId, () => {
           :tool-executions="toolExecutions"
         />
 
+        <!-- Loads and polls its own data; the window only hands it the session. -->
+        <OrganizationPanel
+          v-else-if="tabType === 'organization'"
+          :session-id="sessionId"
+        />
+
         <EventsTab
           v-else-if="tabType === 'events'"
           :events="events"
@@ -279,12 +298,12 @@ watch(sessionId, () => {
 
         <DoctorTab
           v-else-if="tabType === 'doctor'"
-          :doctor="null"
-          :readiness="null"
+          :doctor="doctor"
+          :readiness="readiness"
         />
 
         <PreviewBrowserPanel
-          v-else-if="tabType === 'preview'"
+          v-else-if="tabType === 'browser'"
           :initial-url="(tabState.url as string) ?? ''"
         />
 

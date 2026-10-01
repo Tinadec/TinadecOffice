@@ -120,7 +120,7 @@ public static class FileSystemTools
         }
     }
 
-    [ToolFunction("write_file", RequiresApproval = true, Description = "Create or overwrite a file in the run workspace. filepath must be an absolute path inside the workspace; overwriting an existing file requires its current file_hash. Approval-gated.")]
+    [ToolFunction("write_file", RequiresApproval = true, Description = "Create or overwrite a file in the run workspace. filepath must be an absolute path inside the workspace; missing parent directories inside the workspace are created. Overwriting an existing file requires its current file_hash. Approval-gated.")]
     public static async ValueTask<FileMutationResponse> WriteAsync(
         WriteFileParams args,
         CancellationToken cancellationToken)
@@ -129,8 +129,20 @@ public static class FileSystemTools
         {
             var path = FileToolRuntime.ResolvePath(args.FilePath, writable: true);
             var parent = Path.GetDirectoryName(path);
-            if (string.IsNullOrEmpty(parent) || !Directory.Exists(parent))
-                throw new DirectoryNotFoundException("The parent directory must already exist.");
+            if (string.IsNullOrEmpty(parent))
+                throw new InvalidOperationException("The target path has no parent directory inside the workspace.");
+
+            if (!Directory.Exists(parent))
+            {
+                // The chain is created because an install is one file in a folder that is not there
+                // yet: a workspace that never held a skill has no `skills/` either, and a second
+                // "create the directory" tool would turn every install into two approvals for one
+                // change. This widens nothing — ResolvePath bounded the path to the workspace and
+                // walked the ancestors that exist for links, and a caller that can write any file in
+                // the workspace can already address a path whose parents exist. A parent that exists
+                // as a *file* still fails, from CreateDirectory, as it did before.
+                Directory.CreateDirectory(parent);
+            }
 
             var slot = FileToolRuntime.GetFileHandle(path);
             using (await slot.RwLock.WriteLockAsync(cancellationToken).ConfigureAwait(false))

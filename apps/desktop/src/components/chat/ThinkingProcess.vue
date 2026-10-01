@@ -10,14 +10,25 @@ import {
   ChevronRight,
   ChevronDown,
   Clock,
+  Send,
+  Hourglass,
+  ListChecks,
 } from '@lucide/vue'
 import type { ThinkingStep } from '@/composables/useAgentActivity'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   steps: ThinkingStep[]
 }>()
 
 const expanded = ref(false)
+const isReasoning = computed(() => props.steps[0]?.type === 'reasoning')
+const isThinking = computed(() => props.steps.some((step) => step.status === 'running'))
+const reasoningLabel = computed(() => props.steps.some((step) => step.status === 'failed')
+  ? t('agent.reasoningInterrupted') : isThinking.value ? t('agent.reasoningActive')
+    : props.steps.some((step) => step.description) ? t('agent.reasoning') : t('agent.modelCall'))
 
 const stepConfig = computed(() => {
   return (type: ThinkingStep['type']) => {
@@ -34,6 +45,12 @@ const stepConfig = computed(() => {
         return { icon: Package, color: 'step-context' }
       case 'step_result':
         return { icon: CheckCircle2, color: 'step-result' }
+      case 'dispatch':
+        return { icon: Send, color: 'step-assign' }
+      case 'wait':
+        return { icon: Hourglass, color: 'step-graph' }
+      case 'plan':
+        return { icon: ListChecks, color: 'step-graph' }
       default:
         return { icon: Brain, color: 'step-default' }
     }
@@ -42,7 +59,9 @@ const stepConfig = computed(() => {
 
 function formatTime(ts: string): string {
   try {
-    return new Date(ts).toLocaleTimeString('zh-CN', {
+    // No locale argument: the label above is translated, and a timestamp pinned to `zh-CN`
+    // rendered Chinese AM/PM conventions for every other locale too.
+    return new Date(ts).toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -73,7 +92,7 @@ const lastStepKey = computed(() => lastStep.value?.id ?? 'none')
 const lastPreview = computed(() => {
   const step = lastStep.value
   if (!step) return ''
-  return step.description || step.title || ''
+  return (step.description || step.title || '').slice(-160)
 })
 
 /* Shimmer only while steps keep advancing; settles back to static muted. */
@@ -101,19 +120,19 @@ function stepMetaSuffix(step: ThinkingStep): string {
 
 <template>
   <section v-if="hasSteps" class="thinking-process">
-    <button class="thinking-row" type="button" @click="expanded = !expanded">
+    <button class="thinking-row" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
       <Brain :size="14" class="thinking-icon" />
-      <span class="thinking-title">已思考 · {{ stepCount }} 步</span>
+      <span class="thinking-title">{{ isReasoning ? reasoningLabel : t('agent.activitySteps', { count: stepCount }) }}</span>
       <span v-if="lastPreview" class="thinking-sep" aria-hidden="true" />
       <!-- Rise plays on the keyed outer span; shimmer lives on an inner span so
            the two `animation` declarations never fight for the property. -->
       <span :key="lastStepKey" class="thinking-preview chat-status-rise">
-        <span :class="{ 'chat-shimmer': advancing }">{{ lastPreview }}</span>
+        <span :class="{ 'chat-shimmer': advancing || isThinking }">{{ lastPreview }}</span>
       </span>
       <component :is="expanded ? ChevronDown : ChevronRight" :size="13" class="thinking-chevron" />
     </button>
 
-    <div class="thinking-collapse chat-collapse" :class="{ open: expanded }">
+    <div class="thinking-collapse chat-collapse" :class="{ open: expanded }" :inert="!expanded">
       <div>
         <div class="thinking-steps">
           <div
@@ -133,7 +152,7 @@ function stepMetaSuffix(step: ThinkingStep): string {
                 <strong>{{ step.title }}</strong>
                 <span class="thinking-step-suffix">{{ stepMetaSuffix(step) }}</span>
               </div>
-              <p v-if="step.description" class="thinking-step-desc">{{ step.description }}</p>
+              <p v-if="step.description" class="thinking-step-desc" :class="{ 'is-plan': step.type === 'plan' }">{{ step.description }}</p>
             </div>
           </div>
         </div>
@@ -144,7 +163,7 @@ function stepMetaSuffix(step: ThinkingStep): string {
 
 <style scoped>
 .thinking-process {
-  margin-bottom: 8px;
+  margin-bottom: 2px;
 }
 
 .thinking-row {
@@ -168,7 +187,7 @@ function stepMetaSuffix(step: ThinkingStep): string {
 
 .thinking-icon {
   flex-shrink: 0;
-  color: #bc8cff;
+  color: var(--accent-primary);
 }
 
 .thinking-title {
@@ -317,5 +336,10 @@ function stepMetaSuffix(step: ThinkingStep): string {
   line-height: 1.4;
   color: var(--text-chat-muted);
   word-break: break-word;
+}
+
+/* A plan is one step per line (✓ / → / ○). */
+.thinking-step-desc.is-plan {
+  white-space: pre-line;
 }
 </style>

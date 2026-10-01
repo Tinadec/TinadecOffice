@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 
 const h = vi.hoisted(() => ({
@@ -8,12 +8,41 @@ const h = vi.hoisted(() => ({
   listSessions: vi.fn(async () => []),
   createSession: vi.fn(),
   listMessages: vi.fn(async () => []),
+  revertSessionMessage: vi.fn(),
   listApprovals: vi.fn(async () => []),
   getOrchestrationSnapshot: vi.fn(async () => null),
   listToolExecutions: vi.fn(async () => []),
   listRuns: vi.fn(async () => []),
   connectEvents: vi.fn(() => ({ close: vi.fn(), disconnect: vi.fn() })),
+  createInteraction: vi.fn(async (_sessionId: string, _body: Record<string, unknown>) => ({ run_id: null, status: 'accepted' })),
+  cancelInteraction: vi.fn(async () => ({ status: 'cancelled' })),
+  updateSessionTitle: vi.fn(async () => ({ id: 'session-1' })),
   notifyError: vi.fn(),
+}))
+
+// The strip's own behaviour is pinned in pendingAttachments.test.ts; here it is only
+// the source of "what a send carries", so the controller's three decisions (forward,
+// clear, refuse) can be read off one call.
+const attach = vi.hoisted(() => {
+  const forSend = vi.fn(() => ({
+    clientIds: [] as string[],
+    attachmentIds: [] as string[],
+    summaries: [] as Record<string, unknown>[],
+  }))
+  return {
+    forSend,
+    // Derived from the same stub the controller forwards, so a case that hands over two ready
+    // rows also moves the count: two independent stubs could disagree and hide a real
+    // disagreement between the two rules inside the double.
+    readyCount: vi.fn(() => forSend().attachmentIds.length),
+    settle: vi.fn(),
+  }
+})
+
+vi.mock('@/lib/pendingAttachments', () => ({
+  attachmentsForSend: attach.forSend,
+  readyAttachmentCount: attach.readyCount,
+  settleSentAttachments: attach.settle,
 }))
 
 vi.mock('@/api', () => ({
@@ -21,11 +50,15 @@ vi.mock('@/api', () => ({
     listSessions: h.listSessions,
     createSession: h.createSession,
     listMessages: h.listMessages,
+    revertSessionMessage: h.revertSessionMessage,
     listApprovals: h.listApprovals,
     getOrchestrationSnapshot: h.getOrchestrationSnapshot,
     listToolExecutions: h.listToolExecutions,
     listRuns: h.listRuns,
     connectEvents: h.connectEvents,
+    createInteraction: h.createInteraction,
+    cancelInteraction: h.cancelInteraction,
+    updateSessionTitle: h.updateSessionTitle,
   },
   createUserToolActionForPath: h.createUserToolActionForPath,
 }))
@@ -68,6 +101,22 @@ function seedProject(): void {
 
 afterEach(() => {
   vi.clearAllMocks()
+})
+
+describe('HomeController session read ownership', () => {
+  it('cannot restore an old conversation after its read resolves late', async () => {
+    let resolve!: (value: never[]) => void
+    h.listMessages.mockImplementationOnce(() => new Promise<never[]>((done) => { resolve = done }))
+    homeController.setSelectedSession('slow-session')
+    await nextTick()
+    h.listMessages.mockResolvedValue([{ id: 'new-message', session_id: 'new-session', role: 'user', content: 'new' }] as never[])
+    homeController.setSelectedSession('new-session')
+    await flushPromises()
+    resolve([{ id: 'old-message', session_id: 'slow-session', role: 'user', content: 'old' }] as never[])
+    await flushPromises()
+    expect(homeController.messages.value.map((message) => message.id)).toEqual(['new-message'])
+    h.listMessages.mockResolvedValue([])
+  })
 })
 
 describe('HomeController.requestShellApproval', () => {
@@ -135,5 +184,230 @@ describe('HomeController.createSession free-conversation dedup', () => {
 
     expect(h.createSession).toHaveBeenCalledTimes(1)
     expect(homeController.selectedSessionId.value).toBe('free-1')
+  })
+})
+
+describe('HomeController.editAndResend', () => {
+  async function selectSession(): Promise<void> {
+    homeController.projects.value = []
+    homeController.setSelectedProject(null)
+    await flushPromises()
+    homeController.selectedSessionId.value = 'session-1'
+    homeController.draft.value = ''
+    // The selected-session watcher reloads the transcript; settle it before asserting.
+    await flushPromises()
+  }
+
+  it('cuts the conversation at the edited message and hands the correction to the composer', async () => {
+    await selectSession()
+    h.revertSessionMessage.mockResolvedValue({ from_message_id: 'm2', from_sequence: 2, removed_count: 2, history_revision: 4 })
+
+    await homeController.editAndResend({ id: 'm2', content: '改过的那条' })
+
+    expect(h.revertSessionMessage).toHaveBeenCalledWith('session-1', 'm2')
+    expect(homeController.draft.value).toBe('改过的那条')
+    expect(homeController.invokeError.value).toBeNull()
+  })
+
+  it('keeps the corrected text when Core refuses the cut because a run still holds it', async () => {
+    await selectSession()
+    const readsBefore = h.listMessages.mock.calls.length
+    h.revertSessionMessage.mockRejectedValue(Object.assign(new Error('run in flight'), { code: 'active_run_conflict' }))
+
+    await homeController.editAndResend({ id: 'm2', content: '改过的那条' })
+
+    expect(homeController.draft.value).toBe('改过的那条')
+    expect(homeController.invokeError.value).toContain('停止它')
+    // Nothing was cut, so the transcript must not be re-read as though it had been.
+    expect(h.listMessages.mock.calls.length).toBe(readsBefore)
+  })
+
+  it('refuses to start while the composer holds unsent text', async () => {
+    await selectSession()
+    homeController.draft.value = '还没发的那句'
+
+    await homeController.editAndResend({ id: 'm2', content: '改过的那条' })
+
+    expect(h.revertSessionMessage).not.toHaveBeenCalled()
+    expect(homeController.draft.value).toBe('还没发的那句')
+    expect(homeController.invokeError.value).toContain('输入框')
+  })
+})
+
+describe('HomeController.sendMessage attachment hand-off', () => {
+  async function readySession(): Promise<void> {
+    homeController.projects.value = []
+    homeController.setSelectedProject(null)
+    await flushPromises()
+    homeController.selectedSessionId.value = 'session-1'
+    homeController.updateDraft('看这个文件')
+    await flushPromises()
+    h.createInteraction.mockClear()
+    attach.forSend.mockClear()
+    attach.settle.mockClear()
+  }
+
+  const outgoing = {
+    clientIds: ['c-1', 'c-2'],
+    attachmentIds: ['att-1', 'att-2'],
+    summaries: [
+      { id: 'att-1', file_name: 'notes.txt', media_type: 'text/plain', content_hash: 'h1', content_length: 12, created_at: null, bound_at: null },
+      { id: 'att-2', file_name: 'shot.png', media_type: 'image/png', content_hash: 'h2', content_length: 2048, created_at: null, bound_at: null },
+    ],
+  }
+
+  it('names the ready rows in the interaction and clears the strip after Core answers', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+
+    await homeController.sendMessage({ dispatch_mode: 'parallel' })
+
+    expect(h.createInteraction).toHaveBeenCalledTimes(1)
+    expect(h.createInteraction.mock.calls[0]![1]).toMatchObject({ attachment_ids: ['att-1', 'att-2'] })
+    expect(attach.settle).toHaveBeenCalledWith(outgoing)
+  })
+
+  it('keeps the selection when Core refuses the send', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+    h.createInteraction.mockRejectedValueOnce(new Error('attachment_already_bound'))
+
+    await homeController.sendMessage({ dispatch_mode: 'parallel' })
+
+    // A chip that vanished on a failed send is an upload the user cannot retry, and
+    // Core never bound the rows, so they are still the only copy of those bytes.
+    expect(attach.settle).not.toHaveBeenCalled()
+    expect(h.notifyError).toHaveBeenCalled()
+  })
+
+  it('refuses to steer a message that carries files, because steering appends nothing', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+
+    await homeController.sendMessage({ dispatch_mode: 'insert', target_run_id: 'run-1' })
+
+    // Sending without the files would be the silent failure; sending them would be an
+    // orphan row, since insert never creates a message to own them. The refusal goes
+    // through the same channel as the other pre-flight guard (run() notifies).
+    expect(h.createInteraction).not.toHaveBeenCalled()
+    expect(attach.settle).not.toHaveBeenCalled()
+    expect(String(h.notifyError.mock.calls[0]?.[0])).toContain('附件')
+  })
+
+  it('omits the field entirely when nothing is attached', async () => {
+    await readySession()
+    const empty = { clientIds: [], attachmentIds: [], summaries: [] }
+    attach.forSend.mockReturnValue(empty)
+
+    await homeController.sendMessage({ dispatch_mode: 'parallel' })
+
+    const body = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect('attachment_ids' in body).toBe(false)
+    // The clear runs but claims nothing: an empty bundle must not drop any chip.
+    expect(attach.settle).toHaveBeenCalledWith(empty)
+  })
+
+  /**
+   * The pair below is what gives the send guard its meaning: an empty draft with a finished
+   * upload must go out, and an empty draft with nothing to send must not. Either one alone
+   * passes if the guard is deleted (the first) or if it was never relaxed (the second).
+   */
+  it('sends an empty draft when an upload is there to speak for the turn', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+    homeController.updateDraft('')
+    await flushPromises()
+    h.createInteraction.mockResolvedValueOnce({ run_id: null, status: 'message_only' })
+
+    await homeController.sendMessage({ dispatch_mode: 'queued' })
+
+    const body = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(body.content).toBe('')
+    expect(body.attachment_ids).toEqual(['att-1', 'att-2'])
+    expect(attach.settle).toHaveBeenCalledWith(outgoing)
+    // No run means no queued card: the turn is already in the transcript, nothing is waiting.
+    expect(homeController.queuedMessages.value).toEqual([])
+  })
+
+  it('refuses an empty draft with only an in-flight upload, because it names no row', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue({ clientIds: [], attachmentIds: [], summaries: [] })
+    homeController.updateDraft('   ')
+    await flushPromises()
+
+    await homeController.sendMessage({ dispatch_mode: 'queued' })
+
+    expect(h.createInteraction).not.toHaveBeenCalled()
+    expect(attach.settle).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Queued delivery waits behind the unfinished run (Core todo D1). Core answers with the run the
+ * message waits behind and no turn of its own; the card is Core's queue entry, so acting on it
+ * takes it out of that queue first — sending it again without that would post the words twice.
+ */
+describe('HomeController queued messages Core holds', () => {
+  async function queuedBehind(): Promise<void> {
+    homeController.projects.value = []
+    homeController.setSelectedProject(null)
+    await flushPromises()
+    homeController.selectedSessionId.value = 'session-q'
+    homeController.updateDraft('完成后再跑一遍测试')
+    await flushPromises()
+    h.createInteraction.mockResolvedValueOnce({ interaction_id: 'directive-1', run_id: 'run-busy', status: 'queued', reason: 'busy' } as never)
+    await homeController.sendMessage({ dispatch_mode: 'queued' })
+    await flushPromises()
+  }
+
+  it('shows a waiting message as a queued card and leaves the busy run alone', async () => {
+    await queuedBehind()
+    expect(homeController.queuedMessages.value).toEqual([
+      expect.objectContaining({ content: '完成后再跑一遍测试', interactionId: 'directive-1' }),
+    ])
+    expect(homeController.runs.value.find((run) => run.id === 'run-busy')?.status).not.toBe('queued')
+    homeController.queuedMessages.value = []
+  })
+
+  it('dequeues in Core before dismissing, and keeps the card when Core says it already left', async () => {
+    await queuedBehind()
+    const card = homeController.queuedMessages.value[0]!
+    h.cancelInteraction.mockRejectedValueOnce(Object.assign(new Error('conflict'), { status: 409 }))
+    await homeController.dismissQueued(card.id)
+    expect(h.cancelInteraction).toHaveBeenCalledWith('session-q', 'directive-1')
+    expect(homeController.queuedMessages.value).toHaveLength(1)
+
+    await homeController.dismissQueued(card.id)
+    expect(homeController.queuedMessages.value).toEqual([])
+  })
+
+  it('runs a promoted waiting message under its original id instead of posting it twice', async () => {
+    await queuedBehind()
+    const card = homeController.queuedMessages.value[0]!
+    h.createInteraction.mockClear()
+    await homeController.promoteQueued(card.id)
+    expect(h.cancelInteraction).toHaveBeenCalledWith('session-q', 'directive-1')
+    const body = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(body.dispatch_mode).toBe('parallel')
+    expect(body.client_message_id).toBe(card.id)
+    expect(homeController.queuedMessages.value).toEqual([])
+  })
+
+  it('asks Core to interrupt only when the user chose to interrupt (hard insert)', async () => {
+    await queuedBehind()
+    h.createInteraction.mockClear()
+    h.createInteraction.mockResolvedValue({ interaction_id: 'i', session_id: 'session-q', status: 'steering_injected' } as never)
+    await homeController.steerQueued(homeController.queuedMessages.value[0]!.id, 'run-busy', true)
+    const hard = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(hard).toMatchObject({ dispatch_mode: 'insert', target_run_id: 'run-busy', interrupt: true })
+
+    await queuedBehind()
+    h.createInteraction.mockClear()
+    await homeController.steerQueued(homeController.queuedMessages.value[0]!.id, 'run-busy')
+    const soft = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(soft.dispatch_mode).toBe('insert')
+    expect(soft).not.toHaveProperty('interrupt')
+    expect(homeController.queuedMessages.value).toEqual([])
+    h.createInteraction.mockReset()
   })
 })

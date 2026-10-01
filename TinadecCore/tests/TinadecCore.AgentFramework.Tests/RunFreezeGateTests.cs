@@ -6,10 +6,14 @@ namespace TinadecCore.AgentFramework.Tests;
 /// Gate 3 (run freeze) pinning: a frozen conversation identity must be present
 /// in the operation roster and hold a conversation capability; topology must
 /// retain an execution layer; pool shapes must be internally consistent — with
-/// the absent/empty pool tolerated as the legacy singleton shape. The
-/// operation-layer tool floor is enforced at dispatch (resolver deny boundary)
-/// and at binding level (ModePublishGate), deliberately NOT against template
-/// tool_scope (a declared ceiling, not authority).
+/// the absent/empty pool tolerated as the legacy singleton shape. Tool surfaces
+/// are deliberately NOT a subject here: template tool_scope is a declared ceiling,
+/// not authority.
+///
+/// The operation-layer tool floor (dispatch-time deny boundary plus
+/// ModePublishGate's publish-time rule) was REMOVED BY DESIGN (2026-09-17) so a
+/// mode can arm its conversation identity with tools. Do not re-add an assertion
+/// expecting an operation instance to be refused on the basis of its layer.
 /// </summary>
 public sealed class RunFreezeGateTests
 {

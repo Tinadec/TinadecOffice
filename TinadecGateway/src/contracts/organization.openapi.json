@@ -1,0 +1,1867 @@
+{
+  "components": {
+    "schemas": {
+      "ApprovalGateDto": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "decider_agent": {
+            "nullable": true,
+            "type": "string"
+          },
+          "evidence": {
+            "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationJsonElement"
+              }
+            ]
+          },
+          "gate_index": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "gate_kind": {
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gate_index",
+          "gate_kind",
+          "status",
+          "decider_agent",
+          "reason",
+          "evidence",
+          "created_at",
+          "decided_at"
+        ],
+        "type": "object"
+      },
+      "ApprovalGatesDto": {
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalGateDto"
+            },
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "run_id",
+          "status",
+          "gates"
+        ],
+        "type": "object"
+      },
+      "EnvironmentDto": {
+        "properties": {
+          "capacity": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "connection": {
+            "$ref": "#/components/schemas/OrganizationJsonElement"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "free_slots": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "holders": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentHolderDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "kind",
+          "display_name",
+          "description",
+          "connection",
+          "capacity",
+          "free_slots",
+          "status",
+          "holders",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "EnvironmentHolderDto": {
+        "properties": {
+          "lease_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "slot": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot",
+          "lease_id",
+          "session_id",
+          "run_id",
+          "task_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisterRequest": {
+        "properties": {
+          "capacity": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "nullable": true,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "connection": {},
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "EnvironmentUpdateRequest": {
+        "properties": {
+          "capacity": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "nullable": true,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "connection": {},
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "EvidenceHitDto": {
+        "properties": {
+          "author": {
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "evidence_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "matched_by": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "score": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "kind",
+          "title",
+          "author",
+          "run_id",
+          "task_id",
+          "snippet",
+          "score",
+          "matched_by",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "EvidenceRecallDto": {
+        "properties": {
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceHitDto"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "note": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "note",
+          "hits"
+        ],
+        "type": "object"
+      },
+      "OrganizationDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationMemberDto"
+            },
+            "type": "array"
+          },
+          "members_truncated": {
+            "type": "boolean"
+          },
+          "open_reports": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "rooms": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationRoomDto"
+            },
+            "type": "array"
+          },
+          "rooms_truncated": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "you_participant_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "status",
+          "you_participant_id",
+          "members",
+          "rooms",
+          "open_reports",
+          "members_truncated",
+          "rooms_truncated"
+        ],
+        "type": "object"
+      },
+      "OrganizationJsonElement": {},
+      "OrganizationMemberDto": {
+        "properties": {
+          "agent_slug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "parent_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "presence": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "visibility_scope": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "handle",
+          "display_name",
+          "role",
+          "presence",
+          "agent_slug",
+          "parent_id",
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationMemberVisibilityRequest": {
+        "properties": {
+          "visibility_scope": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "visibility_scope"
+        ],
+        "type": "object"
+      },
+      "OrganizationMessageDto": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "report": {
+            "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationReportDto"
+              }
+            ]
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sender_display_name": {
+            "type": "string"
+          },
+          "sender_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sender_role": {
+            "type": "string"
+          },
+          "sensitivity": {
+            "type": "string"
+          },
+          "sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "id",
+          "room_id",
+          "sender_id",
+          "sender_display_name",
+          "sender_role",
+          "sequence",
+          "kind",
+          "content",
+          "sensitivity",
+          "created_at",
+          "report"
+        ],
+        "type": "object"
+      },
+      "OrganizationMessagePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationMessageDto"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "OrganizationPostRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_message_id": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "mention": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "reply_to_message_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "client_message_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationReportDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "note": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "OrganizationReportDto": {
+        "properties": {
+          "author_display_name": {
+            "type": "string"
+          },
+          "author_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "decided_by_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "decision_note": {
+            "nullable": true,
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "finding": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "proposed_args_json": {
+            "nullable": true,
+            "type": "string"
+          },
+          "proposed_verb": {
+            "nullable": true,
+            "type": "string"
+          },
+          "report_kind": {
+            "type": "string"
+          },
+          "revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subject_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "subject_kind": {
+            "nullable": true,
+            "type": "string"
+          },
+          "subject_state": {
+            "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationSubjectStateDto"
+              }
+            ]
+          },
+          "supersedes_report_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "room_id",
+          "author_id",
+          "author_display_name",
+          "report_kind",
+          "severity",
+          "status",
+          "subject_kind",
+          "subject_id",
+          "proposed_verb",
+          "proposed_args_json",
+          "finding",
+          "evidence",
+          "revision",
+          "created_at",
+          "decided_by_id",
+          "decision_note",
+          "decided_at",
+          "supersedes_report_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationReportPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationReportDto"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "OrganizationRoomDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_member": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "member_count": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "plan_owner_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "last_sequence",
+          "member_count",
+          "is_member",
+          "plan_owner_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationSubjectStateDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "status",
+          "label"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyDto": {
+        "properties": {
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "leases": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyLeaseDto"
+            },
+            "type": "array"
+          },
+          "leases_truncated": {
+            "type": "boolean"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyMemberDto"
+            },
+            "type": "array"
+          },
+          "members_truncated": {
+            "type": "boolean"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyRunDto"
+            },
+            "type": "array"
+          },
+          "runs_truncated": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "runs",
+          "leases",
+          "members",
+          "runs_truncated",
+          "leases_truncated",
+          "members_truncated",
+          "generated_at"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyInstanceDto": {
+        "properties": {
+          "agent_slug": {
+            "type": "string"
+          },
+          "depth": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "instance_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "layer": {
+            "type": "string"
+          },
+          "parent_instance_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "agent_slug",
+          "layer",
+          "role",
+          "status",
+          "parent_instance_id",
+          "task_id",
+          "depth"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyLeaseDto": {
+        "properties": {
+          "agent_instance_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "exclusive": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lease_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "resource_key": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "lease_id",
+          "kind",
+          "resource_key",
+          "purpose",
+          "exclusive",
+          "run_id",
+          "task_id",
+          "agent_instance_id"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyMemberDto": {
+        "properties": {
+          "agent_instance_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "agent_slug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "parent_participant_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "presence": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "participant_id",
+          "handle",
+          "display_name",
+          "role",
+          "presence",
+          "agent_slug",
+          "parent_participant_id",
+          "run_id",
+          "agent_instance_id"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyRunDto": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyInstanceDto"
+            },
+            "type": "array"
+          },
+          "instances_truncated": {
+            "type": "boolean"
+          },
+          "parent_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "phase": {
+            "nullable": true,
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_kind": {
+            "default": "root",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyTaskDto"
+            },
+            "type": "array"
+          },
+          "tasks_truncated": {
+            "type": "boolean"
+          },
+          "tier": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "started_at",
+          "completed_at",
+          "tier",
+          "phase",
+          "tasks",
+          "instances",
+          "tasks_truncated",
+          "instances_truncated"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyTaskDto": {
+        "properties": {
+          "agent_slug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dispatched_by_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "handle": {
+            "nullable": true,
+            "type": "string"
+          },
+          "result_summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "task_key": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "worker_instance_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "write_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "task_id",
+          "task_key",
+          "title",
+          "status",
+          "handle",
+          "agent_slug",
+          "worker_instance_id",
+          "dispatched_by_task_id",
+          "dependencies",
+          "write_scope",
+          "result_summary"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/approvals/{approvalId}/gates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approvalId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalGatesDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/environments": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EnvironmentDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Environments"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentRegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDto"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "Environments"
+        ]
+      }
+    },
+    "/api/v1/environments/{environmentId}": {
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Environments"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/evidence": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kinds",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceRecallDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/members/{participantId}": {
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "participantId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationMemberVisibilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMemberDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/reports": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationReportPage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/reports/{reportId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reportId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationReportDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationReportDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/rooms/{roomId}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "roomId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMessagePage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "roomId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationPostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMessageDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/topology": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_finished",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_runs",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_tasks",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionTopologyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    }
+  }
+}

@@ -23,12 +23,37 @@ public interface IToolManifestSnapshotResolver
 /// no tools. <paramref name="SpawnableToolIds"/> carries the graph-tier spawnable
 /// templates' tool ceilings: they join the frozen manifest even though they are
 /// not part of any roster node's effective tool surface.
+///
+/// <para>
+/// <paramref name="AllowedToolIds"/> is a HINT, not the authority: when the session
+/// is governed by a published mode version, the resolver prefers that mode's
+/// effective-tool union (IFormalModeResolver), which spans every node of every layer.
+/// That union is how a solo_dispatch mode's tool-holding conversation identity gets
+/// its tools into the frozen manifest — see ToolManifestSnapshotResolver for the
+/// precedence and for how declared Core-owned virtual tools survive a live-manifest
+/// filter they are absent from by construction.
+/// </para>
 /// </summary>
 public sealed record ToolManifestSnapshotRequest(
     Guid SessionId,
     IReadOnlyList<string> AllowedToolIds,
     bool AllowAllTools,
-    IReadOnlyList<string>? SpawnableToolIds = null);
+    IReadOnlyList<string>? SpawnableToolIds = null,
+    Guid? ModeVersionId = null)
+{
+    /// <summary>
+    /// Preserves the pre-ModeVersionId constructor signature for already compiled
+    /// host integrations. New admission code should pass the explicit frozen mode.
+    /// </summary>
+    public ToolManifestSnapshotRequest(
+        Guid sessionId,
+        IReadOnlyList<string> allowedToolIds,
+        bool allowAllTools,
+        IReadOnlyList<string>? spawnableToolIds)
+        : this(sessionId, allowedToolIds, allowAllTools, spawnableToolIds, null)
+    {
+    }
+}
 
 /// <summary>
 /// Immutable v2 tool metadata retained in the run's frozen configuration.  It is
@@ -100,8 +125,25 @@ public static class ToolManifestHasher
         && string.Equals(GetRawSchema(live.InputSchema), GetRawSchema(frozen.InputSchema), StringComparison.Ordinal)
         && live.ConfirmationFields.SequenceEqual(frozen.ConfirmationFields, StringComparer.Ordinal);
 
-    public static string GetRawSchema(JsonElement schema) =>
-        schema.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? string.Empty : schema.GetRawText();
+    /// <summary>
+    /// The schema text both processes hash. It is CANONICALIZED, not taken raw: the
+    /// tools process hashes the element it parsed from its own literal while Core hashes
+    /// the element it parsed off the wire, and those two texts legitimately differ in
+    /// escaping (a description carrying an apostrophe or a quote is written literally on
+    /// one side and \u-escaped on the other) and in whitespace. Hashing raw text made a
+    /// byte-different but semantically identical manifest look tampered, so admission
+    /// refused every call with TOOL_MANIFEST_HASH_MISMATCH. Re-writing the element with a
+    /// fixed writer gives both sides ONE representation of the same schema — the tools
+    /// side uses the identical helper because its process has reflection serialization
+    /// disabled.
+    /// </summary>
+    public static string GetRawSchema(JsonElement schema)
+    {
+        if (schema.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return string.Empty;
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer)) schema.WriteTo(writer);
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
 
     private static void Append(
         StringBuilder builder,

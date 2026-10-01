@@ -15,6 +15,18 @@ public static class RunErrorTaxonomy
     public const string Config = "config";
     /// <summary>Model invocation failed after the route resolved successfully.</summary>
     public const string Model = "model";
+    /// <summary>The model provider rate limit was reached after bounded retries.</summary>
+    public const string RateLimited = "rate_limited";
+    /// <summary>The model provider returned a 5xx response after bounded retries.</summary>
+    public const string ProviderServerError = "provider_server_error";
+    /// <summary>The model provider could not be reached.</summary>
+    public const string ConnectionFailed = "connection_failed";
+    /// <summary>The provider failed without a more specific HTTP classification.</summary>
+    public const string ProviderError = "provider_error";
+    /// <summary>The model request was rejected or malformed.</summary>
+    public const string RequestError = "request_error";
+    /// <summary>The provider rejected credentials or authorization.</summary>
+    public const string AuthenticationOrAuthorization = "authentication_or_authorization";
     /// <summary>Contract violation between Core and an adapter (unexpected payload/stream shape).</summary>
     public const string Protocol = "protocol";
 
@@ -28,6 +40,12 @@ public static class RunErrorTaxonomy
     // vocabulary of record could not classify them (events and UI key off it).
     /// <summary>The worker's authorized declaration surface could not be resolved.</summary>
     public const string ToolManifestUnavailable = "tool_manifest_unavailable";
+    /// <summary>
+    /// Another run in this workspace holds the resource this call would touch. Correctable: the model
+    /// can wait, work in another worktree, or pick a different file — so it is fed back as a tool
+    /// result rather than failing the task.
+    /// </summary>
+    public const string ResourceConflict = "resource_conflict";
     /// <summary>Worker resolution/creation failed against the frozen configuration.</summary>
     public const string WorkerAssignmentInvalid = "worker_assignment_invalid";
     /// <summary>The model produced tool arguments that do not match the declaration.</summary>
@@ -57,6 +75,8 @@ public static class RunErrorTaxonomy
     public const string DuplicateToolCall = "duplicate_tool_call";
     /// <summary>Authorization refused the call without a more specific PDP reason code.</summary>
     public const string NotAuthorized = "not_authorized";
+    /// <summary>An approver explicitly rejected the request, so the call never ran.</summary>
+    public const string ApproverRejected = "approver_rejected";
 
     // ── Tools ──
     public const string ToolError = "tool_error";
@@ -78,6 +98,8 @@ public static class RunErrorTaxonomy
 
     // ── Recovery ──
     public const string RecoveryFailed = "recovery_failed";
+    /// <summary>A stale run owner attempted to start a tool after losing its lease epoch.</summary>
+    public const string RunLeaseLost = "run_lease_lost";
     public const string OutcomeUnknown = "outcome_unknown";
     public const string SnapshotFailed = "snapshot_failed";
     public const string SnapshotOverride = "snapshot_override";
@@ -97,13 +119,14 @@ public static class RunErrorTaxonomy
 
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
-        Config, Model, Protocol, Runtime, WorkerUnavailable, Cancelled,
+        Config, Model, RateLimited, ProviderServerError, ConnectionFailed, ProviderError,
+        RequestError, AuthenticationOrAuthorization, Protocol, Runtime, WorkerUnavailable, Cancelled,
         ToolManifestUnavailable, WorkerAssignmentInvalid, InvalidToolArguments, ModelUnavailable,
         ToolRoundLimit, ToolLoopDetected, TokenBudgetExhausted, RunTokenBudgetExhausted,
-        TooManyConsecutiveErrors, EmptyResponseLimit, ToolCallCeiling, DuplicateToolCall, NotAuthorized,
+        TooManyConsecutiveErrors, EmptyResponseLimit, ToolCallCeiling, DuplicateToolCall, NotAuthorized, ApproverRejected,
         ToolError, ToolTimeout, ToolProcessExit, ToolPrepareFailed, ToolManifestChanged, ToolBlocked, ToolAlreadyRunning, ToolRuntimeUnavailable,
         ApprovalMissing, ApprovalExpired, ApprovalBindingMismatch, NotApproved, ApprovalConsumedWithoutOutcome,
-        RecoveryFailed, OutcomeUnknown, SnapshotFailed, SnapshotOverride, RecoveryMarkedFailed,
+        RecoveryFailed, RunLeaseLost, OutcomeUnknown, SnapshotFailed, SnapshotOverride, RecoveryMarkedFailed,
         ExplicitDeny, BoundaryNotAllowed, MissingAuthorizationBoundary
     };
 

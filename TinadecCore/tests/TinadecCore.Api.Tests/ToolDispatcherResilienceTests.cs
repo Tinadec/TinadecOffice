@@ -130,6 +130,28 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ResumeAsync_UsesTheBoundExecutionRoot_WhenAWorktreeOrEnvironmentSelectsOne()
+    {
+        var tools = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("execution-target");
+        var run = await InsertRunAsync(sessionId, "executing");
+        var taskId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var executionRoot = Path.Combine(_root, "bound-target");
+        Directory.CreateDirectory(executionRoot);
+        var scope = ScopeFor(tools, run, projectId, sessionId, taskId, agentId) with { ExecutionRootOverride = executionRoot };
+        var dispatcher = CreateDispatcher(provider, scope);
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, taskId, agentId,
+            "disp:execution-target", "read_file", risk: "low", mutatesWorkspace: false, requiresApproval: false, Parameters);
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Completed, result.Status);
+        Assert.Equal(executionRoot, Assert.Single(provider.CapturedCallRoots));
+    }
+
+    [Fact]
     public async Task ResumeAsync_ProviderStartupTimeout_FailsExecution_RunSurvives()
     {
         var tools = new[] { Tool("read_file") };
@@ -248,6 +270,122 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Assert.Equal("cancelled", row.Status);
     }
 
+    [Fact]
+    public async Task ResumeAsync_StaleRunLeaseOwner_NeverCallsProvider()
+    {
+        var tools = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareReadOnlyExecutionAsync(
+            tools, provider, "disp:stale-owner:0:0");
+        var storage = _factory!.Services.GetRequiredService<StorageLifecycleService>();
+        var first = await storage.TryAcquireRunLeaseAsync(run.Id, "tool-owner-a", TimeSpan.FromMinutes(1));
+        Assert.True(first.Acquired);
+        await storage.ReleaseRunLeaseAsync(run.Id, first.OwnerId);
+        var second = await storage.TryAcquireRunLeaseAsync(run.Id, "tool-owner-b", TimeSpan.FromMinutes(1));
+        Assert.True(second.Acquired);
+        Assert.True(second.RecoveryCount > first.RecoveryCount);
+
+        var fenced = Assert.IsAssignableFrom<ILeaseFencedToolDispatcher>(dispatcher);
+        var result = await fenced.ResumeAsync(
+            execution.Id.ToString(),
+            new RunExecutionAuthority(first.OwnerId, first.RecoveryCount));
+
+        Assert.Equal(ToolDispatchStatus.Blocked, result.Status);
+        Assert.Equal(RunErrorTaxonomy.RunLeaseLost, result.ErrorCategory);
+        Assert.Equal(0, provider.CallCount);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.Equal("requested", row.Status);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_StaleRunLeaseOwner_DoesNotConsumeApprovedWrite()
+    {
+        var tools = new[] { Tool("write_file", "medium", mutates: true, requiresApproval: true, retrySafety: "unsafe") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareApprovedMutatingExecutionAsync(
+            tools, provider, "disp:stale-owner-write:0:0");
+        var storage = _factory!.Services.GetRequiredService<StorageLifecycleService>();
+        var first = await storage.TryAcquireRunLeaseAsync(run.Id, "write-owner-a", TimeSpan.FromMinutes(1));
+        Assert.True(first.Acquired);
+        await storage.ReleaseRunLeaseAsync(run.Id, first.OwnerId);
+        var second = await storage.TryAcquireRunLeaseAsync(run.Id, "write-owner-b", TimeSpan.FromMinutes(1));
+        Assert.True(second.Acquired);
+
+        var fenced = Assert.IsAssignableFrom<ILeaseFencedToolDispatcher>(dispatcher);
+        var result = await fenced.ResumeAsync(
+            execution.Id.ToString(),
+            new RunExecutionAuthority(first.OwnerId, first.RecoveryCount));
+
+        Assert.Equal(ToolDispatchStatus.Blocked, result.Status);
+        Assert.Equal(RunErrorTaxonomy.RunLeaseLost, result.ErrorCategory);
+        Assert.Equal(0, provider.CallCount);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var approval = await verify.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == execution.ApprovalId);
+        Assert.Equal("approved", approval.Status);
+        Assert.Null(approval.ConsumedByExecutionId);
+        Assert.Null(approval.ConsumedAt);
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.NotEqual("running", row.Status);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_CancelAfterExecutionClaim_BeforeProvider_NeverCallsProvider()
+    {
+        var tools = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (_, projectId, sessionId, run, execution) = await PrepareReadOnlyExecutionAsync(
+            tools, provider, "disp:cancel-before-provider:0:0");
+        var storage = _factory!.Services.GetRequiredService<StorageLifecycleService>();
+        var lease = await storage.TryAcquireRunLeaseAsync(run.Id, "tool-cancel-owner", TimeSpan.FromMinutes(1));
+        Assert.True(lease.Acquired);
+
+        var inner = Assert.IsAssignableFrom<ILeaseFencedToolExecutionCoordinator>(ExecutionCoordinator());
+        var gated = new GatedLeaseExecutionCoordinator(inner);
+        var dispatcher = CreateDispatcher(
+            provider,
+            ScopeFor(tools, run, projectId, sessionId, execution.TaskId, execution.AgentInstanceId),
+            gated);
+        var fenced = Assert.IsAssignableFrom<ILeaseFencedToolDispatcher>(dispatcher);
+        var resumeTask = fenced.ResumeAsync(
+            execution.Id.ToString(),
+            new RunExecutionAuthority(lease.OwnerId, lease.RecoveryCount));
+
+        var reachedStart = await Task.WhenAny(
+            gated.Started.Task,
+            resumeTask,
+            Task.Delay(TimeSpan.FromSeconds(15)));
+        if (reachedStart == resumeTask)
+        {
+            var early = await resumeTask;
+            Assert.Fail($"Fenced resume exited before the start gate: status={early.Status}, category={early.ErrorCategory}, message={early.Message}");
+        }
+        Assert.Same(gated.Started.Task, reachedStart);
+        var signalled = 0;
+        try
+        {
+            // The execution is durably running at this point, but the dispatcher
+            // has not yet reached the provider. This was the old cancellation gap.
+            await LifecycleManager().SetRunStatusAsync(run.Id.ToString(), "cancelled", "cancel in claim/provider gap");
+            signalled = _factory.Services.GetRequiredService<IRunInFlightToolCancellation>().CancelForRun(run.Id);
+        }
+        finally
+        {
+            gated.Continue.TrySetResult();
+        }
+
+        var result = await resumeTask.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(1, signalled);
+        Assert.Equal(ToolDispatchStatus.Blocked, result.Status);
+        Assert.Equal(RunErrorTaxonomy.Cancelled, result.ErrorCategory);
+        Assert.Equal(0, provider.CallCount);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.Equal("cancelled", row.Status);
+        var runRow = await verify.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+        Assert.Equal("cancelled", runRow.Status);
+    }
+
     // ── B4: wire timeout covers the tool's own budget ──────────────────────
 
     [Theory]
@@ -274,8 +412,12 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     [Fact]
     public void ResolveWireTimeout_UnitLevels()
     {
-        Assert.Equal(TimeSpan.FromSeconds(120), ToolDispatcher.ResolveWireTimeout(null, TimeSpan.FromSeconds(120)));
-        Assert.Equal(TimeSpan.FromSeconds(120), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{}").RootElement, TimeSpan.FromSeconds(120)));
+        // The margin is unconditional: even a call that declares no timeout_ms gets
+        // a wire budget strictly above the tool's own deadline, so the tool always
+        // reports its timeout as a result instead of Core severing the call.
+        Assert.Equal(TimeSpan.FromSeconds(150), ToolDispatcher.ResolveWireTimeout(null, TimeSpan.FromSeconds(120)));
+        Assert.Equal(TimeSpan.FromSeconds(150), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{}").RootElement, TimeSpan.FromSeconds(120)));
+        Assert.Equal(TimeSpan.FromSeconds(630), ToolDispatcher.ResolveWireTimeout(null, TimeSpan.FromSeconds(600)));
         Assert.Equal(TimeSpan.FromSeconds(630), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{\"timeout_ms\":600000}").RootElement, TimeSpan.FromSeconds(120)));
         Assert.Equal(TimeSpan.FromSeconds(1830), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{\"timeout_ms\":1800000}").RootElement, TimeSpan.FromSeconds(120)));
         Assert.Equal(TimeSpan.FromSeconds(1830), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{\"timeout_ms\":99999999}").RootElement, TimeSpan.FromSeconds(120)));
@@ -335,14 +477,14 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ResumeAsync_NonShellTool_DoesNotReadEmbeddedSuccess()
+    public async Task ResumeAsync_NonShellTool_RecordsEmbeddedSuccessFalse()
     {
         var tools = new[] { Tool("read_file") };
         var provider = new ConfigurableToolProvider(tools, (request, _, _) => Task.FromResult(new ToolWireResponseDto
         {
             CallId = request.ToolCallId,
             IsSuccess = true,
-            Result = JsonSerializer.SerializeToElement(new { success = false, note = "not a shell-shaped payload we honour" })
+            Result = JsonSerializer.SerializeToElement(new { success = false, note = "business-level tool failure" })
         }));
         var (dispatcher, _, sessionId, _, execution) = await PrepareReadOnlyExecutionAsync(
             tools, provider, "disp:nonshell:0:0");
@@ -352,14 +494,149 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Assert.Equal(ToolDispatchStatus.Completed, result.Status);
         await using var verify = await DbFactory().CreateDbContextAsync();
         var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
-        Assert.Null(row.ToolSuccess);
+        Assert.False(row.ToolSuccess);
         var events = await LifecycleManager().ReplayEventsAsync(sessionId, 0);
         var completedEvent = Assert.Single(events, e => e.EventType == "tool.execution.completed");
         var payload = Assert.IsType<JsonElement>(completedEvent.Payload["payload"]);
-        Assert.Equal(JsonValueKind.Null, payload.GetProperty("tool_success").ValueKind);
+        Assert.False(payload.GetProperty("tool_success").GetBoolean());
+        Assert.Equal("warning", Assert.IsType<string>(completedEvent.Payload["severity"]));
+    }
+
+    // ── Core-owned virtual tools inside a PROJECT-backed session ───────────
+
+    [Fact]
+    public async Task ResumeAsync_ProjectScope_DeclaredCoreVirtualTool_ReachesCoresExecutor()
+    {
+        // What a project freeze actually looks like: the child process offers read_file, while the
+        // frozen entry list additionally carries the declared Core virtual tool, and the hash covers
+        // the CHILD entries only (the freezer's `computedHash`). So a call-time gate that demands a
+        // live entry for a virtual tool can never be satisfied by any install - which is what this
+        // test was written to measure.
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:virtual-dispatch:0:0");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Completed, result.Status);
+        // Core intercepted it: the child process was never asked.
+        Assert.Equal(0, provider.CallCount);
+        // The durable side effect is the witness that Core EXECUTED the tool, not that some gate
+        // waved the call through - a blocked dispatch would have no directive behind it.
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var directive = Assert.Single(await db.RunDirectives.AsNoTracking()
+            .Where(x => x.RunId == run.Id && x.Kind == "task_dispatch")
+            .ToListAsync());
+        Assert.Equal("check the fixtures",
+            JsonDocument.Parse(directive.PayloadJson).RootElement.GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public async Task TaskDispatch_UnknownAgent_IsRefusedWithTheValidChoices()
+    {
+        // Validated at the call, while the caller can still correct it next turn - a name found to be
+        // wrong only at worker assignment would fail the sub-task after the caller believed it queued.
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:dispatch-unknown-agent:0:0",
+            [new DispatchRosterEntry("search", "只读检索与取证"), new DispatchRosterEntry("global_engineering", "工程修改")],
+            "{\"agent\":\"coder\",\"title\":\"fix it\",\"description\":\"fix\"}");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        Assert.Contains("'coder' is not a dispatchable executor", result.Message);
+        Assert.Contains("search — 只读检索与取证", result.Message);
+        await using var db = await DbFactory().CreateDbContextAsync();
+        Assert.Empty(await db.RunDirectives.AsNoTracking().Where(x => x.RunId == run.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task TaskDispatch_NamedAgent_IsCanonicalizedIntoTheQueuedPayload()
+    {
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:dispatch-named-agent:0:0",
+            [new DispatchRosterEntry("search", "只读检索与取证")],
+            "{\"agent\":\"Search\",\"title\":\"find usages\",\"description\":\"find useUiePage\"}");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Completed, result.Status);
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var directive = Assert.Single(await db.RunDirectives.AsNoTracking()
+            .Where(x => x.RunId == run.Id && x.Kind == "task_dispatch").ToListAsync());
+        Assert.Equal("search", JsonDocument.Parse(directive.PayloadJson).RootElement.GetProperty("agent").GetString());
+    }
+
+    [Fact]
+    public async Task TaskDispatch_UsesTheCallingAgentsNarrowerTargetEnvelope()
+    {
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:dispatch-child-envelope:0:0",
+            [new DispatchRosterEntry("search", "只读检索与取证"), new DispatchRosterEntry("global_engineering", "工程修改")],
+            "{\"agent\":\"global_engineering\",\"title\":\"edit\",\"description\":\"edit\"}",
+            ["search"]);
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        Assert.Contains("not a dispatchable executor", result.Message);
+        await using var db = await DbFactory().CreateDbContextAsync();
+        Assert.Empty(await db.RunDirectives.AsNoTracking().Where(x => x.RunId == run.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task ResumeAsync_ProjectScope_UndeclaredCoreVirtualTool_IsStillRefused()
+    {
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        // Frozen WITHOUT the entry: the exemption is "the run declared this Core-owned tool", not
+        // "the caller typed an id Core happens to know", so naming a virtual tool cannot mint a grant.
+        var (dispatcher, _, _, _, execution) = await PrepareVirtualExecutionAsync(
+            live, [], provider, "disp:virtual-undeclared:0:0");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        Assert.Contains("frozen authorized manifest", result.Message);
+        Assert.Equal(0, provider.CallCount);
     }
 
     // ── helpers ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Prepares a `task_dispatch` execution in a project-backed session whose frozen manifest was
+    /// built the way <c>ToolManifestSnapshotResolver</c> builds one: child entries plus the declared
+    /// virtual entries, hashed over the child entries alone.
+    /// </summary>
+    private async Task<(ToolDispatcher Dispatcher, Guid ProjectId, Guid SessionId, RunRecord Run, ToolExecutionSnapshot Execution)>
+        PrepareVirtualExecutionAsync(
+            IReadOnlyList<ToolManifestEntryDto> live,
+            IReadOnlyList<ToolManifestEntryDto> declaredVirtual,
+            ConfigurableToolProvider provider,
+            string toolCallKey,
+            IReadOnlyList<DispatchRosterEntry>? dispatchRoster = null,
+            string parameters = "{\"title\":\"check the fixtures\"}",
+            IReadOnlyList<string>? dispatchTargets = null)
+    {
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("disp-" + Guid.NewGuid().ToString("N")[..6]);
+        var run = await InsertRunAsync(sessionId, "executing");
+        var taskId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+            var dispatcher = CreateDispatcher(provider,
+            ScopeFor([.. live, .. declaredVirtual], run, projectId, sessionId, taskId, agentId, liveManifest: live)
+                with { DispatchRoster = dispatchRoster, DispatchTargets = dispatchTargets });
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, taskId, agentId,
+            toolCallKey, CoreTaskDispatchTool.ToolId, risk: "low", mutatesWorkspace: false, requiresApproval: false,
+            parameters);
+        return (dispatcher, projectId, sessionId, run, execution);
+    }
 
     private async Task<(ToolDispatcher Dispatcher, Guid ProjectId, Guid SessionId, RunRecord Run, ToolExecutionSnapshot Execution)>
         PrepareReadOnlyExecutionAsync(
@@ -418,10 +695,13 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
-    private ToolDispatcher CreateDispatcher(IToolProvider provider, ToolInvocationScope scope) => new(
+    private ToolDispatcher CreateDispatcher(
+        IToolProvider provider,
+        ToolInvocationScope scope,
+        IToolExecutionCoordinator? executions = null) => new(
         provider,
         new FakeScopeResolver(scope),
-        ExecutionCoordinator(),
+        executions ?? ExecutionCoordinator(),
         new FakeAuthorization(),
         _factory!.Services.GetRequiredService<IWorkspaceSnapshotService>(),
         LifecycleManager(),
@@ -437,7 +717,8 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Guid sessionId,
         Guid taskId,
         Guid agentId,
-        int timeoutSeconds = 120)
+        int timeoutSeconds = 120,
+        IReadOnlyList<ToolManifestEntryDto>? liveManifest = null)
     {
         var tenant = TenantAccessor().Current;
         var frozen = tools
@@ -460,7 +741,7 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
             0,
             false,
             frozen,
-            ToolManifestHasher.Compute(tools),
+            ToolManifestHasher.Compute(liveManifest ?? tools),
             null);
     }
 
@@ -582,6 +863,73 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
             Task.FromResult(scope);
     }
 
+    /// <summary>
+    /// Test seam that pauses only after Lifecycle has atomically committed the
+    /// execution-start claim. It recreates the exact old gap between "running"
+    /// and the first provider byte without weakening production synchronization.
+    /// </summary>
+    private sealed class GatedLeaseExecutionCoordinator(ILeaseFencedToolExecutionCoordinator inner)
+        : ILeaseFencedToolExecutionCoordinator
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Continue { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<ToolExecutionPreparation> PrepareAsync(ToolExecutionPrepareRequest request, CancellationToken cancellationToken = default) =>
+            inner.PrepareAsync(request, cancellationToken);
+
+        public Task<ToolExecutionSnapshot?> FindAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.FindAsync(executionId, cancellationToken);
+
+        public Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, bool allowStaleRunningReset = false, CancellationToken cancellationToken = default) =>
+            inner.TryStartAsync(executionId, allowStaleRunningReset, cancellationToken);
+
+        public async Task<ToolExecutionStartDecision> TryStartUnderRunLeaseAsync(
+            Guid executionId,
+            RunExecutionAuthority authority,
+            bool allowStaleRunningReset = false,
+            CancellationToken cancellationToken = default)
+        {
+            var decision = await inner.TryStartUnderRunLeaseAsync(
+                executionId, authority, allowStaleRunningReset, cancellationToken);
+            if (decision.Status == "running")
+            {
+                Started.TrySetResult();
+                await Continue.Task.WaitAsync(cancellationToken);
+            }
+            return decision;
+        }
+
+        public Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, bool? toolSuccess = null, CancellationToken cancellationToken = default) =>
+            inner.CompleteAsync(executionId, resultJson, toolSuccess, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> FailAsync(Guid executionId, string status, string errorCategory, string safeMessage, CancellationToken cancellationToken = default) =>
+            inner.FailAsync(executionId, status, errorCategory, safeMessage, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> BindAuthorizationAsync(Guid executionId, Guid? permissionRequestId, Guid? authorizationDecisionId, Guid? capabilityLeaseId, string status, CancellationToken cancellationToken = default) =>
+            inner.BindAuthorizationAsync(executionId, permissionRequestId, authorizationDecisionId, capabilityLeaseId, status, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> BindWorkspaceSnapshotAsync(Guid executionId, Guid snapshotId, string snapshotHash, CancellationToken cancellationToken = default) =>
+            inner.BindWorkspaceSnapshotAsync(executionId, snapshotId, snapshotHash, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.EnsureApprovalAsync(executionId, cancellationToken);
+
+        public Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.TryMintPreAuthorizedApprovalAsync(executionId, cancellationToken);
+
+        public Task<PreAuthorizationMintResult?> MintApprovalFromRuleAsync(Guid executionId, Guid ruleId, CancellationToken cancellationToken = default) =>
+            inner.MintApprovalFromRuleAsync(executionId, ruleId, cancellationToken);
+
+        public Task<bool> TryConsumeApprovalAsync(Guid approvalId, string executionId, string expectedRequestHash, CancellationToken cancellationToken = default) =>
+            inner.TryConsumeApprovalAsync(approvalId, executionId, expectedRequestHash, cancellationToken);
+
+        public Task<ToolExecutionRecoveryResult> ApplyRecoveryDecisionAsync(Guid executionId, string decision, CancellationToken cancellationToken = default) =>
+            inner.ApplyRecoveryDecisionAsync(executionId, decision, cancellationToken);
+
+        public Task CancelPendingForRunAsync(Guid runId, CancellationToken cancellationToken = default) =>
+            inner.CancelPendingForRunAsync(runId, cancellationToken);
+    }
+
     private sealed class ConfigurableToolProvider : IToolProvider
     {
         private readonly IReadOnlyList<ToolManifestEntryDto> _tools;
@@ -597,14 +945,19 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
 
         public int CallCount { get; private set; }
         public List<TimeSpan?> CapturedTimeouts { get; } = [];
+        public List<string> CapturedRoots { get; } = [];
+        public List<string> CapturedCallRoots { get; } = [];
         /// <summary>When set, manifest reads throw this (handshake failure).</summary>
         public Exception? ManifestFailure { get; init; }
 
         public Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
             Manifest();
 
-        public Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
-            Manifest();
+        public Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default)
+        {
+            CapturedRoots.Add(workspaceRoot);
+            return Manifest();
+        }
 
         private Task<ToolManifestDto> Manifest()
         {
@@ -623,6 +976,8 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
             TimeSpan? timeout = null,
             CancellationToken cancellationToken = default)
         {
+            CapturedRoots.Add(workspaceRoot);
+            CapturedCallRoots.Add(workspaceRoot);
             CapturedTimeouts.Add(timeout);
             CallCount++;
             return await _handler(request, timeout, cancellationToken);

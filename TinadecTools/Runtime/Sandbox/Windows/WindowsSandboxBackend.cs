@@ -52,6 +52,60 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
         }
     }
 
+    public Task<SandboxStreamingProcess> StartStreamingAsync(
+        SandboxRunnerRequest request,
+        SandboxPermissions permissions,
+        CancellationToken ct)
+    {
+        if (!IsInitialized)
+            throw new InvalidOperationException("Sandbox not initialized. Call EnsureSetupAsync first.");
+        ct.ThrowIfCancellationRequested();
+
+        var aclManager = new AclManager(SandboxAccountManager.AccountName);
+        JobObjectManager? job = null;
+        try
+        {
+            ApplyAcls(aclManager, permissions);
+            request.Environment = SandboxEnvironment.Build(
+                new Dictionary<string, string>
+                {
+                    ["Profile"] = SandboxAccountManager.GetSandboxProfileDir(),
+                    ["Cache"] = SandboxAccountManager.GetSandboxCacheDir()
+                },
+                permissions.EnvironmentVariableNames);
+
+            var psi = new ProcessStartInfo(request.Executable)
+            {
+                WorkingDirectory = request.WorkingDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                CreateNoWindow = true,
+                UserName = SandboxAccountManager.AccountName,
+                Domain = SandboxAccountManager.AccountDomain,
+                PasswordInClearText = DpapiCredentialStore.LoadPassword(),
+                LoadUserProfile = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8
+            };
+            foreach (var argument in request.Arguments) psi.ArgumentList.Add(argument);
+            psi.Environment.Clear();
+            foreach (var pair in request.Environment) psi.Environment[pair.Key] = pair.Value;
+
+            var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start sandboxed streaming process.");
+            job = new JobObjectManager();
+            job.Assign(process.Handle);
+            return Task.FromResult(new SandboxStreamingProcess(process, new StreamingCleanup(aclManager, job)));
+        }
+        catch
+        {
+            job?.Dispose();
+            aclManager.Dispose();
+            throw;
+        }
+    }
+
     public Task ResetAsync(SandboxResetScope scope, CancellationToken ct)
     {
         SandboxPolicyStore.Delete();
@@ -160,5 +214,14 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
     {
         if (Directory.Exists(path))
             Directory.Delete(path, recursive: true);
+    }
+
+    private sealed class StreamingCleanup(AclManager aclManager, JobObjectManager job) : IDisposable
+    {
+        public void Dispose()
+        {
+            job.Dispose();
+            aclManager.Dispose();
+        }
     }
 }

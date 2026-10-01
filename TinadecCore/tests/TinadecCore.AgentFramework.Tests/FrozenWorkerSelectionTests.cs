@@ -87,6 +87,27 @@ public sealed class FrozenWorkerSelectionTests
         Assert.Equal("general_unavailable_fallback", selection.Reason);
     }
 
+    /// <summary>
+    /// An open-ended task declares nothing to narrow against, so the old "fewest extra
+    /// tools" tie-break handed it to the NARROWEST worker. That is how a real request
+    /// to write a file landed on a read-only executor which then reported it had no
+    /// way to do the job while the run closed as completed. A task that DOES declare
+    /// requirements keeps least-privilege selection.
+    /// </summary>
+    [Fact]
+    public void SelectWorker_OpenEndedTask_PrefersTheWidestWorker()
+    {
+        var narrow = Agent("worker.read", "execution", "task_executor", ["tool.read"], ["read_file"], 1);
+        var wide = Agent("worker.eng", "execution", "task_executor", ["tool.code", "tool.file"], ["read_file", "write_file", "shell"], 2);
+
+        var openEnded = FullDuplexRunEngine.SelectWorker(Configuration([narrow, wide]), Task());
+        Assert.Equal("worker.eng", openEnded.Agent.Id);
+
+        // Declared requirements: the narrow worker covers them exactly and wins.
+        var declared = FullDuplexRunEngine.SelectWorker(Configuration([narrow, wide]), Task(tools: ["read_file"]));
+        Assert.Equal("worker.read", declared.Agent.Id);
+    }
+
     [Fact]
     public void SelectWorker_FailsClosedForUnsupportedCapabilityOrTool()
     {

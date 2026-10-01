@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import router from './router'
 import { useBackground } from '@/composables/useBackground'
 import {
   useConnection,
@@ -15,6 +14,8 @@ import AppSplash from '@/components/AppSplash.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
 import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
 import SelectionContextMenu from '@/components/SelectionContextMenu.vue'
+import CommandPalette from '@/components/CommandPalette.vue'
+import { installPaletteKeybinding } from '@/composables/useCommandPalette'
 
 // ---- Background layer (global, outside page transitions) ----
 // The background layer is ALWAYS rendered here — outside the <Transition> —
@@ -42,6 +43,7 @@ setGraphSeedPackTranslator((key, params) => String(t(key, params ?? {})))
 const { connectionState, start: startConnection } = useConnection()
 const { status, dismissByKey } = useNotifications()
 let unsubscribeStatusSync: (() => void) | undefined
+let uninstallPaletteKeys: (() => void) | undefined
 const isConnecting = computed(() => !isChildWindow && connectionState.value === 'connecting')
 
 watch(connectionState, (state) => {
@@ -76,34 +78,14 @@ onMounted(() => {
   if (!isPetWindow && !isChildWindow) startConnection()
   if (!isPetWindow) {
     unsubscribeStatusSync = startStatusSync()
+    // The palette is the window's command surface, and a pet has no commands to run.
+    uninstallPaletteKeys = installPaletteKeybinding()
   }
 })
 
 onBeforeUnmount(() => {
   unsubscribeStatusSync?.()
-})
-
-// Track navigation direction for directional page transitions.
-// Settings is "deeper" than home, so navigating to settings slides left,
-// and returning slides right — following wayfinding design principles.
-const transitionName = ref('page-slide-left')
-
-const navOrder: Record<string, number> = {
-  home: 0,
-  market: 1,
-  settings: 2,
-  'debug-studio': 3,
-  'code-editor': 4,
-  'detached-panel': 5,
-}
-
-// Set transition direction before navigation completes so the
-// <Transition> component picks up the correct name.
-router.beforeEach((to, from, next) => {
-  const toOrder = navOrder[String(to.name)] ?? 0
-  const fromOrder = navOrder[String(from.name)] ?? 0
-  transitionName.value = toOrder >= fromOrder ? 'page-slide-left' : 'page-slide-right'
-  next()
+  uninstallPaletteKeys?.()
 })
 </script>
 
@@ -169,7 +151,7 @@ router.beforeEach((to, from, next) => {
   </div>
 
   <!-- Main content shell.
-       main-rise 入场动画由各页面（如 HomePage）内部 <Transition> 触发，
+       页面入场动画由各页面（如 HomePage）内部触发，
        而非在此处包裹 RouterView —— 因为路由组件是懒加载的，外层 Transition
        会在子元素挂载前就移除 enter-active 类，导致动画失效。 -->
   <div v-if="!isConnecting" class="main-content">
@@ -184,5 +166,6 @@ router.beforeEach((to, from, next) => {
   <NotificationIslandHost v-if="!isConnecting" />
   <NotificationDetailDialog v-if="!isConnecting" />
   <SelectionContextMenu />
+  <CommandPalette />
   </template>
 </template>

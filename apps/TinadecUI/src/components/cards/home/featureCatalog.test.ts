@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { FEATURE_CATALOG } from './featureCatalog'
 
 describe('FEATURE_CATALOG', () => {
-  it('lists all eight openable feature pages', () => {
-    expect(FEATURE_CATALOG).toHaveLength(8)
+  it('lists all nine openable feature pages', () => {
+    expect(FEATURE_CATALOG).toHaveLength(9)
   })
 
   it('keys every entry by a known UIE card descriptor id', () => {
@@ -14,6 +14,7 @@ describe('FEATURE_CATALOG', () => {
       'git',
       'approval',
       'orchestration',
+      'organization',
       'browser',
       'events',
       'doctor',

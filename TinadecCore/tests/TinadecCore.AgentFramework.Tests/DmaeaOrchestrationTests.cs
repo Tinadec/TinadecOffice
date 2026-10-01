@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.Extensions.AI;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.DmaEA;
 
@@ -44,6 +46,29 @@ public sealed class DmaeaOrchestrationTests
         Assert.Equal("Task is complete when the goal is satisfied", task.SuccessCriteria[0]);
         // 缺口①修复 C：回落任务必须可被引擎识别，声明边模式下拒绝静默派发。
         Assert.True(task.IsFallback);
+        Assert.False(planner.LastPlanWasParsed);
+    }
+
+    /// <summary>
+    /// 「你好」这类目标，模型会**正确地**返回空数组：没有要执行的子任务，会议智能体直接
+    /// 从对话作答。空数组曾被当成解析失败（`Length > 0` 才算解析成功），于是注入回落目标
+    /// 任务，而声明边模式拒绝派发回落任务——于是一句问候在任何模型、任何 provider 下都必然
+    /// 把 run 打成 plan_parse_failed。空计划是结果，不是错误。
+    /// </summary>
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("```json\n[]\n```")]
+    [InlineData("<think>没有需要执行的子任务。</think>\n[]")]
+    [InlineData("好的，这个目标不需要执行任何子任务：\n[]\n以上。")]
+    public async Task PlanningAgent_TreatsParsedEmptyArrayAsNoWorkRatherThanParseFailure(string modelOutput)
+    {
+        var client = new StubChatClient(modelOutput);
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("你好"), [Planner()], CancellationToken.None);
+
+        Assert.Empty(tasks);
+        Assert.True(planner.LastPlanWasParsed);
     }
 
     [Fact]
@@ -83,10 +108,10 @@ public sealed class DmaeaOrchestrationTests
 
         Assert.NotNull(client.LastInstructions);
         Assert.Contains("frozen-prompt:task_planner", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("Frozen specialist roster", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("\"slug\":\"worker.code\"", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("\"tool.code\"", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("\"write_file\"", client.LastInstructions, StringComparison.Ordinal);
+        // One responsibility line per executor; the planner names it in `assignee`.
+        Assert.Contains("可派发执行者（assignee 取值", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("- worker.code: task_executor | 工具: read_file, write_file | 能力: tool.code, tool.file", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("每个任务必须用 assignee 指定执行者", client.LastInstructions, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -117,6 +142,113 @@ public sealed class DmaeaOrchestrationTests
     }
 
     // ──────────────────────────────────────────────────────────
+    // Planner output leniency (2026-09-17 plan_parse_failed cluster)
+    // ──────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("success_criteria")]
+    [InlineData("dependencies")]
+    [InlineData("required_capabilities")]
+    [InlineData("required_tools")]
+    public async Task PlanningAgent_RepairsScalarArrayFieldsInsteadOfFailing(string field)
+    {
+        // Live failure shape (runs feb146e4/05a89fc3, qwen3.8-27b): the JSON is
+        // well-formed but an array-typed field carries a single scalar string.
+        // System.Text.Json does not coerce scalar → array, so the whole plan used
+        // to die as plan_parse_failed even though the intent was fully readable.
+        var scalarValue = field == "dependencies" ? "" : "列出关键目录";
+        var shape = $$"""
+            [{"task_key":"t1","title":"任务A","description":"读取 README",
+              "success_criteria":{{(field == "success_criteria" ? $"\"{scalarValue}\"" : "[\"列出关键目录\"]")}},
+              "dependencies":{{(field == "dependencies" ? $"\"{scalarValue}\"" : "[]")}},
+              "required_capabilities":{{(field == "required_capabilities" ? $"\"{scalarValue}\"" : "[]")}},
+              "required_tools":{{(field == "required_tools" ? $"\"{scalarValue}\"" : "[]")}},
+              "priority":1,"risk":"low"}]
+            """;
+        var client = new StubChatClient(shape);
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("介绍项目"), [Planner()], CancellationToken.None);
+
+        var task = Assert.Single(tasks);
+        Assert.True(planner.LastPlanWasParsed, shape);
+        Assert.Equal("任务A", task.Title);
+        var repaired = field switch
+        {
+            "success_criteria" => task.SuccessCriteria,
+            "dependencies" => task.Dependencies,
+            "required_capabilities" => task.RequiredCapabilities,
+            _ => task.RequiredTools
+        };
+        var expected = field == "dependencies" ? Array.Empty<string>() : new[] { "列出关键目录" };
+        Assert.Equal(expected, repaired);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_DropsNullAndNonStringArrayEntries()
+    {
+        // Array form with junk entries: nulls, empties, and nested junk are dropped
+        // instead of throwing the whole plan away.
+        var client = new StubChatClient("""[{"task_key":"t1","title":"任务A","description":"","success_criteria":["判据",null,"","完成",["嵌套"]],"dependencies":[null,""],"required_capabilities":[42],"priority":1,"risk":"low"}]""");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
+
+        var task = Assert.Single(tasks);
+        Assert.True(planner.LastPlanWasParsed);
+        Assert.Equal(new[] { "判据", "完成" }, task.SuccessCriteria);
+        Assert.Empty(task.Dependencies);
+        Assert.Empty(task.RequiredCapabilities);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_CapturesParseErrorDetailForDiagnostics()
+    {
+        // An unrecoverable shape must carry the JSON-level reason, not just
+        // "not a task array": the retry hint and plan_diagnostic consume it.
+        var client = new StubChatClient("""[{"task_key":"t1","title":"任务A","description":"","success_criteria":42,"dependencies":[],"required_capabilities":[],"required_tools":[],"priority":1,"risk":"low"}]""");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
+
+        Assert.False(planner.LastPlanWasParsed);
+        // The converter-level detail names the shape it rejected (the property name
+        // itself is only available at the object layer, so the JSON path is not
+        // reproduced here — the response_head still carries the full shape).
+        Assert.Contains("expected a string array or a string", planner.LastParseErrorDetail, StringComparison.Ordinal);
+        Assert.Single(tasks);
+        Assert.True(tasks[0].IsFallback);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_ReportsNoArrayCandidateWhenAnswerCarriesNoJson()
+    {
+        var client = new StubChatClient("你好！很高兴见到你。");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("你好"), [Planner()], CancellationToken.None);
+
+        Assert.False(planner.LastPlanWasParsed);
+        Assert.Contains("no balanced JSON array candidate", planner.LastParseErrorDetail, StringComparison.Ordinal);
+        Assert.Single(tasks);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_InstructionsPinArrayFieldTypesAndEmptyPlanContract()
+    {
+        // The 2026-09-17 cluster also exposed two prompt gaps: no type constraint on
+        // the four array fields, and no "greeting → []" contract.
+        var client = new StubChatClient("[]");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        _ = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
+
+        Assert.NotNull(client.LastInstructions);
+        Assert.Contains("四个字段必须是字符串数组", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("直接输出 []", client.LastInstructions, StringComparison.Ordinal);
+    }
+
+    // ──────────────────────────────────────────────────────────
     // Execution layer
     // ──────────────────────────────────────────────────────────
 
@@ -134,7 +266,7 @@ public sealed class DmaeaOrchestrationTests
         Assert.Equal(nodeId, result.TaskNodeId);
         Assert.Equal("completed", result.Status);
         Assert.Equal("任务A 完成", result.Summary);
-        Assert.Equal(new[] { "任务A 完成" }, result.Evidence);
+        Assert.Equal(new[] { "任务A 完成", "worker_outcome:completed:legacy" }, result.Evidence);
     }
 
     [Fact]
@@ -165,6 +297,287 @@ public sealed class DmaeaOrchestrationTests
         Assert.Contains("任务A 已完成。", result.Summary, StringComparison.Ordinal);
         Assert.DoesNotContain("先读取文件再说", result.Summary, StringComparison.Ordinal);
         Assert.DoesNotContain("<think>", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void WorkerOutcomeProtocol_RequiresAnExplicitOutcomeForFullDuplexCompletion()
+    {
+        var parsed = WorkerOutcomeProtocol.Parse("实现已经完成。", requireExplicit: true);
+
+        Assert.Equal("blocked", parsed.Status);
+        Assert.True(parsed.MissingRequiredMarker);
+        Assert.False(parsed.Explicit);
+    }
+
+    [Theory]
+    [InlineData("Task not completed: unable to invoke write_file.")]
+    [InlineData("任务未完成：当前执行者没有 write_file。")]
+    public void WorkerOutcomeProtocol_RecognizesHistoricalFalseCompletionReports(string output)
+    {
+        var parsed = WorkerOutcomeProtocol.Parse(output, requireExplicit: true);
+
+        Assert.Equal("blocked", parsed.Status);
+        Assert.False(parsed.MissingRequiredMarker);
+        Assert.True(
+            parsed.Summary.Contains("not completed", StringComparison.OrdinalIgnoreCase)
+            || parsed.Summary.Contains("未完成", StringComparison.Ordinal),
+            parsed.Summary);
+    }
+
+    [Fact]
+    public void WorkerOutcomeProtocol_ParsesAndRemovesTheExplicitMarker()
+    {
+        var parsed = WorkerOutcomeProtocol.Parse("已写入文件并通过测试。\nTASK_OUTCOME: completed", requireExplicit: true);
+
+        Assert.Equal("completed", parsed.Status);
+        Assert.Equal("已写入文件并通过测试。", parsed.Summary);
+        Assert.True(parsed.Explicit);
+        Assert.False(parsed.MissingRequiredMarker);
+    }
+
+    [Fact]
+    public void TaskOutcomeFacts_OverrideASyntheticPassAndEventuallyEscalate()
+    {
+        var task = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            Status = "blocked",
+            ResultStatus = "blocked",
+            ResultSummary = "Task not completed: write_file was unavailable."
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, ["no supervisor"], []);
+
+        var revise = FullDuplexRunEngine.EnforceTaskOutcomeFacts([task], pass, revisionRound: 0, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Revise, revise.Decision);
+        Assert.Equal([0], revise.ReviseTaskIndexes);
+        Assert.Contains(revise.Reasons, reason => reason.Contains("task_outcome:write:blocked", StringComparison.Ordinal));
+
+        var escalate = FullDuplexRunEngine.EnforceTaskOutcomeFacts([task], pass, revisionRound: 2, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Escalate, escalate.Decision);
+        Assert.Empty(escalate.ReviseTaskIndexes);
+        Assert.Contains(escalate.Reasons, reason => reason.Contains("require user review", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A task the execution loop closed as failed already has an answer: reopening it
+    /// re-dispatches the same demand and fails identically every round, so the revision
+    /// budget would end with the whole run parked on user review instead of finishing
+    /// with the failure visible.
+    /// </summary>
+    [Fact]
+    public void TaskOutcomeFacts_ReportAFailedTaskWithoutReopeningIt()
+    {
+        var failed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "ghost",
+            Title = "需要不存在的工具",
+            Status = "failed",
+            ResultStatus = "failed",
+            ResultSummary = "Task 'ghost' requires tool 'ghost_tool', which is not in the frozen run manifest."
+        };
+        var completed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "probe",
+            Title = "写探针",
+            Status = "completed",
+            ResultStatus = "completed",
+            ResultSummary = "已写入 probe.txt"
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+
+        var enforced = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed, completed], pass, revisionRound: 2, maxRevisionRounds: 2);
+
+        Assert.Equal(SupervisionDecision.Pass, enforced.Decision);
+        Assert.Empty(enforced.ReviseTaskIndexes);
+        Assert.Contains(enforced.Reasons, reason =>
+            reason.Contains("task_outcome:ghost:failed", StringComparison.Ordinal)
+            && reason.Contains("ghost_tool", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The exemption stops exactly where "success" would become a claim with nothing
+    /// behind it: with no completed task in the graph the closed failures go straight to
+    /// the user instead of burning revision rounds on a demand that cannot be met.
+    /// </summary>
+    [Fact]
+    public void TaskOutcomeFacts_EscalateWhenNoTaskCompletedAtAll()
+    {
+        var failed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "probe",
+            Title = "写探针",
+            Status = "failed",
+            ResultStatus = "failed",
+            ResultSummary = "the deterministic tier denies spawn (graph_tier_spawn_denied)"
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, ["no supervisor"], []);
+
+        var enforced = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed], pass, revisionRound: 0, maxRevisionRounds: 2);
+
+        Assert.Equal(SupervisionDecision.Escalate, enforced.Decision);
+        Assert.Empty(enforced.ReviseTaskIndexes);
+        Assert.Contains(enforced.Reasons, reason => reason.Contains("requires user review", StringComparison.Ordinal));
+        Assert.Contains(enforced.Reasons, reason => reason.Contains("task_outcome:probe:failed", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Only a closed failure is exempt. An open outcome in the same graph still drives
+    /// the revision ladder, so the escape hatch cannot quietly disable escalation.
+    /// </summary>
+    [Fact]
+    public void TaskOutcomeFacts_ABlockedTaskStillEscalatesBesideAFailedOne()
+    {
+        var failed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "ghost",
+            Title = "需要不存在的工具",
+            Status = "failed",
+            ResultStatus = "failed",
+            ResultSummary = "not in the frozen run manifest"
+        };
+        var blocked = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            Status = "blocked",
+            ResultStatus = "blocked",
+            ResultSummary = "Task not completed: write_file was unavailable."
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+
+        var revise = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed, blocked], pass, revisionRound: 0, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Revise, revise.Decision);
+        Assert.Equal([1], revise.ReviseTaskIndexes);
+
+        var escalate = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed, blocked], pass, revisionRound: 2, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Escalate, escalate.Decision);
+        Assert.Contains(escalate.Reasons, reason => reason.Contains("task_outcome:ghost:failed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ToolOutcomeFacts_RejectCompletedImmediatelyAfterEmbeddedFailure()
+    {
+        var task = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            ToolTurns =
+            [
+                new WorkerToolTurn
+                {
+                    CallId = "call-1",
+                    ToolId = "write_file",
+                    ResultJson = "{\"success\":false,\"error\":\"invalid path\"}",
+                    DispatchStatus = ToolDispatchStatus.Completed,
+                    ErrorCategory = RunErrorTaxonomy.ToolError,
+                    ToolSuccess = false
+                }
+            ]
+        };
+
+        Assert.False(FullDuplexRunEngine.LatestEmbeddedToolOutcome(task));
+        Assert.Equal("failed", FullDuplexRunEngine.EnforceLatestToolOutcomeFact(task, "completed"));
+    }
+
+    [Fact]
+    public void ToolOutcomeFacts_LaterExplicitSuccessClearsEmbeddedFailureFence()
+    {
+        var task = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            ToolTurns =
+            [
+                new WorkerToolTurn
+                {
+                    CallId = "call-1",
+                    ToolId = "write_file",
+                    ToolSuccess = false
+                },
+                new WorkerToolTurn
+                {
+                    CallId = "call-2",
+                    ToolId = "write_file",
+                    ToolSuccess = true
+                }
+            ]
+        };
+
+        Assert.True(FullDuplexRunEngine.LatestEmbeddedToolOutcome(task));
+        Assert.Equal("completed", FullDuplexRunEngine.EnforceLatestToolOutcomeFact(task, "completed"));
+    }
+
+    [Fact]
+    public void MeetingEvidenceFallback_OnlyActivatesAfterCompletedWorkAndRetryExhaustion()
+    {
+        var checkpoint = new FullDuplexCheckpointV1
+        {
+            UserGoal = "介绍项目",
+            TransientModelRetryCount = FullDuplexRunEngine.MaxDurableModelRetries,
+            Tasks =
+            [
+                new DurableTaskNode
+                {
+                    TaskId = Guid.NewGuid(),
+                    TaskKey = "inspect",
+                    Title = "检查项目",
+                    Status = "completed",
+                    ResultStatus = "completed",
+                    ResultSummary = "已读取 README 并完成介绍。"
+                }
+            ]
+        };
+        var failure = new ModelInvocationExhaustedException(
+            "provider_server_error",
+            "The model provider returned a server error.",
+            new HttpRequestException());
+
+        Assert.True(FullDuplexRunEngine.CanUseMeetingEvidenceFallback(checkpoint, failure));
+        var response = FullDuplexRunEngine.BuildMeetingEvidenceFallback(checkpoint, failure.Category);
+        Assert.Contains("已读取 README", response, StringComparison.Ordinal);
+        Assert.Contains("provider_server_error", response, StringComparison.Ordinal);
+
+        checkpoint.TransientModelRetryCount--;
+        Assert.False(FullDuplexRunEngine.CanUseMeetingEvidenceFallback(checkpoint, failure));
+        checkpoint.Tasks[0].Status = "blocked";
+        checkpoint.TransientModelRetryCount = FullDuplexRunEngine.MaxDurableModelRetries;
+        Assert.False(FullDuplexRunEngine.CanUseMeetingEvidenceFallback(checkpoint, failure));
+    }
+
+    [Fact]
+    public void QueuedInteractionPayload_PreservesFrozenModePermissionAndMeetingOverride()
+    {
+        var modeVersionId = Guid.NewGuid();
+        var providerInstanceId = Guid.NewGuid();
+        var payload = FullDuplexRunEngine.ParseQueuedInteractionPayload(JsonSerializer.Serialize(new
+        {
+            content = "继续执行",
+            client_message_id = "queued-1",
+            permission_mode = "full-access",
+            mode_version_id = modeVersionId,
+            meeting_model_override = new
+            {
+                provider_instance_id = providerInstanceId,
+                model = "qwen-test"
+            }
+        }));
+
+        Assert.NotNull(payload);
+        Assert.Equal("继续执行", payload!.Content);
+        Assert.Equal("queued-1", payload.ClientMessageId);
+        Assert.Equal("full-access", payload.PermissionMode);
+        Assert.Equal(modeVersionId, payload.ModeVersionId);
+        Assert.Equal(providerInstanceId, payload.MeetingModelOverride?.ProviderInstanceId);
+        Assert.Equal("qwen-test", payload.MeetingModelOverride?.Model);
     }
 
     // ──────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
@@ -35,9 +36,11 @@ public sealed class ExecutionAgent
         {
             return Failed(taskNodeId, agent, "The legacy execution runtime does not support tool calls.");
         }
-        return string.IsNullOrWhiteSpace(turn.Text)
-            ? Failed(taskNodeId, agent, "Execution returned no output.")
-            : Completed(taskNodeId, agent, turn.Text);
+        if (string.IsNullOrWhiteSpace(turn.Text))
+        {
+            return Failed(taskNodeId, agent, "Execution returned no output.");
+        }
+        return Result(taskNodeId, agent, WorkerOutcomeProtocol.Parse(turn.Text));
     }
 
     /// <summary>
@@ -54,7 +57,8 @@ public sealed class ExecutionAgent
         IReadOnlyList<WorkerToolDescriptor> tools,
         string? assembledInstructions,
         int maxHistoryMessages,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<WorkerInterruption>? interruptions = null)
     {
         var resolved = await _chatClients.ResolveChatAsync(agent.ModelRoutePurpose ?? "chat", ct).ConfigureAwait(false);
         if (!resolved.IsAvailable)
@@ -63,7 +67,20 @@ public sealed class ExecutionAgent
             return WorkerModelTurn.Unavailable(resolved.Error ?? "Chat route unavailable.");
         }
 
-        var taskInstructions = $"你是执行层 agent（{agent.Name}）。执行以下任务：\n标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n只输出完成摘要。";
+        // The solo master executes its own task in this very loop, so the framing has to
+        // say which one it is: a worker summarises work someone else assigned, while the
+        // master owns the goal end to end — it may do the work itself AND hand parts off,
+        // which is the whole point of that mode. Same loop, same governance, different
+        // instruction.
+        var taskInstructions = string.Equals(agent.Layer, "operation", StringComparison.Ordinal)
+            ? $"你是会话智能体（{agent.Name}），正在亲自执行用户的这个目标。你可以直接调用工具把它做掉；"
+                + "遇到可并行拆分或需要专项能力的部分，就派给子智能体去做。\n"
+                + $"标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n"
+                + "完成后简要说明你实际做了什么、以及有什么没做到。\n"
+                + WorkerOutcomeProtocol.Instructions
+            : $"你是执行层 agent（{agent.Name}）。执行以下任务：\n标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n"
+                + "只输出完成摘要。\n"
+                + WorkerOutcomeProtocol.Instructions;
         var instructions = string.IsNullOrWhiteSpace(assembledInstructions)
             ? taskInstructions
             : assembledInstructions.Trim() + "\n\n" + taskInstructions;
@@ -71,7 +88,10 @@ public sealed class ExecutionAgent
         {
             Instructions = instructions,
             ToolMode = ChatToolMode.Auto,
-            AllowMultipleToolCalls = true
+            AllowMultipleToolCalls = true,
+            // A worker turn carries both its tool calls and its summary text; the
+            // provider default truncated them the same way it truncated the planner.
+            MaxOutputTokens = Maf18RuntimeAdapter.DefaultMaxOutputTokens
         };
         if (tools.Count != 0)
         {
@@ -80,7 +100,7 @@ public sealed class ExecutionAgent
                 .ToList();
         }
 
-        var conversation = await BuildConversationAsync(ctx.UserGoal, history, maxHistoryMessages, ct).ConfigureAwait(false);
+        var conversation = await BuildConversationAsync(ctx.UserGoal, history, interruptions ?? [], maxHistoryMessages, ct).ConfigureAwait(false);
         var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
             .GetResponseAsync(conversation, options, ct)
             .ConfigureAwait(false);
@@ -94,7 +114,13 @@ public sealed class ExecutionAgent
             if (call.InformationalOnly) continue;
             if (call.Exception is not null)
             {
-                return WorkerModelTurn.Invalid("The model returned an invalid tool call mapping.");
+                // The framework surfaces an unmappable call as an Exception on the content instead of
+                // throwing. Without carrying it, the only trace left is "invalid mapping" and nobody can
+                // tell whether the model invented a tool or the host failed to declare one.
+                var reason = call.Exception.Message.ReplaceLineEndings(" ");
+                if (reason.Length > 300) reason = string.Concat(reason.AsSpan(0, 300), "…");
+                return WorkerModelTurn.Invalid(
+                    $"The model returned an invalid tool call mapping for '{call.Name ?? "(unnamed)"}': {reason}");
             }
             if (string.IsNullOrWhiteSpace(call.CallId) || string.IsNullOrWhiteSpace(call.Name))
             {
@@ -126,10 +152,27 @@ public sealed class ExecutionAgent
     private static async Task<IReadOnlyList<ChatMessage>> BuildConversationAsync(
         string goal,
         IReadOnlyList<WorkerToolTurn> history,
+        IReadOnlyList<WorkerInterruption> interruptions,
         int maxHistoryMessages,
         CancellationToken cancellationToken)
     {
         var messages = new List<ChatMessage>();
+        // A round the user cut off sits in the transcript where it happened: what the worker had
+        // said so far, then what the user sent. Only ever between whole tool rounds, never between a
+        // call and its result.
+        var next = 0;
+        void AddInterruptions(int afterTurns)
+        {
+            for (; next < interruptions.Count && interruptions[next].AfterTurns <= afterTurns; next++)
+            {
+                var interruption = interruptions[next];
+                if (!string.IsNullOrWhiteSpace(interruption.PartialText))
+                    messages.Add(new ChatMessage(ChatRole.Assistant, interruption.PartialText));
+                messages.Add(new ChatMessage(ChatRole.User, InterruptionNote(interruption)));
+            }
+        }
+        AddInterruptions(0);
+        var index = 0;
         foreach (var turn in history)
         {
             var assistantContents = new List<AIContent>();
@@ -140,16 +183,27 @@ public sealed class ExecutionAgent
             {
                 messages.Add(new ChatMessage(ChatRole.Tool,
                 [
-                    new FunctionResultContent(turn.CallId, ParseJsonValue(turn.ResultJson))
+                    new FunctionResultContent(turn.CallId, ModelFacingResult(turn.ResultJson))
                 ]));
             }
+            AddInterruptions(++index);
         }
+        AddInterruptions(int.MaxValue);
         return await Maf18RuntimeAdapter.CompactWorkerConversationAsync(
             new ChatMessage(ChatRole.User, goal),
             messages,
             maxHistoryMessages,
             cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>What the worker reads after a round the user cut off (hard insert, todo D2).</summary>
+    internal static string InterruptionNote(WorkerInterruption interruption) =>
+        "[用户打断] 你上一轮的工作在完成前被用户打断了。用户发来的新指示：\n"
+        + interruption.Steering
+        + (interruption.SkippedCalls > 0
+            ? $"\n打断时你已请求、但尚未开始的 {interruption.SkippedCalls} 个工具调用没有执行（结果里标为 not_run）。"
+            : string.Empty)
+        + "\n这是用户对目标和约束的最新意见：据此重新决定下一步，与先前要求冲突时以它为准。";
 
     private static IDictionary<string, object?> ParseArguments(string json)
     {
@@ -166,12 +220,32 @@ public sealed class ExecutionAgent
         }
     }
 
-    private static object? ParseJsonValue(string json)
+    private static readonly JsonWriterOptions ModelFacingWriterOptions = new()
+    {
+        Indented = false,
+        // Model input, never HTML: escaping only costs tokens. A default-encoded result turns every
+        // CJK character into a six-character \uXXXX sequence.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    /// <summary>
+    /// The tool result exactly as the model should read it: compact JSON with non-ASCII text left
+    /// readable. Handed over as a string because provider adapters pass a string through verbatim,
+    /// whereas a JsonElement is re-serialized with AIJsonUtilities.DefaultOptions — indented — and
+    /// keeps whatever escaping the producer wrote (TinadecTools writes \uXXXX for all non-ASCII).
+    /// Non-JSON results pass through unchanged.
+    /// </summary>
+    internal static string ModelFacingResult(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
-            return document.RootElement.Clone();
+            var buffer = new System.Buffers.ArrayBufferWriter<byte>(json.Length);
+            using (var writer = new Utf8JsonWriter(buffer, ModelFacingWriterOptions))
+            {
+                document.RootElement.WriteTo(writer);
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
         }
         catch (JsonException)
         {
@@ -181,13 +255,13 @@ public sealed class ExecutionAgent
 
     private static string SerializeArguments(IDictionary<string, object?>? arguments) => JsonSerializer.Serialize(arguments ?? new Dictionary<string, object?>(), JsonOptions);
 
-    private static StepResult Completed(Guid taskNodeId, AgentDefinition agent, string text) => new()
+    private static StepResult Result(Guid taskNodeId, AgentDefinition agent, WorkerOutcomeProtocol.Parsed outcome) => new()
     {
         TaskNodeId = taskNodeId,
         AgentId = agent.Id.ToString("N"),
-        Status = "completed",
-        Summary = text,
-        Evidence = [text]
+        Status = outcome.Status,
+        Summary = outcome.Summary,
+        Evidence = [outcome.Summary, $"worker_outcome:{outcome.Status}:{(outcome.Explicit ? "explicit" : "legacy")}"]
     };
 
     private static StepResult Failed(Guid taskNodeId, AgentDefinition agent, string message) => new()
@@ -199,6 +273,18 @@ public sealed class ExecutionAgent
         Evidence = []
     };
 }
+
+/// <summary>
+/// A worker round the user cut off with a hard insert (todo D2), kept on the task so the worker is
+/// told where it happened: after <see cref="AfterTurns"/> tool turns, what it had said so far, what
+/// the user sent, and how many calls it had asked for that were not run.
+/// </summary>
+public sealed record WorkerInterruption(
+    int AfterTurns,
+    string Steering,
+    string? PartialText,
+    int SkippedCalls,
+    DateTimeOffset At);
 
 /// <summary>Manifest-backed declaration supplied to one worker model turn.</summary>
 public sealed record WorkerToolDescriptor(string ToolId, string Description, JsonElement InputSchema);
@@ -233,4 +319,12 @@ public sealed class WorkerToolTurn
     public string? DispatchStatus { get; set; }
     public string? ResultJson { get; set; }
     public string? ErrorCategory { get; set; }
+
+    /// <summary>
+    /// Business-level outcome reported inside a successful provider result. Null
+    /// means the tool has no explicit embedded success flag. Default suppression
+    /// preserves the canonical bytes of pre-field checkpoints.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ToolSuccess { get; set; }
 }

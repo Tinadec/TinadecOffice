@@ -70,6 +70,22 @@ function mountPanel(messages: MessageDto[] = []) {
 }
 
 describe('ChatPanel persistent composer', () => {
+  it('anchors each run to its own answer instead of moving old activity into the next turn', async () => {
+    const w = mount(ChatPanel, {
+      props: { ...baseProps, messages: [msg('user-1'), { ...msg('answer-1'), role: 'assistant', run_id: 'run-1' }, msg('user-2')] },
+      global: { stubs: { transition: false, ComposerBar: true, ChatHeader: true, MessageList: {
+        props: ['activityByMessage', 'liveTurns'],
+        template: '<div data-testid="activity-probe">{{ JSON.stringify({ activityByMessage, liveTurns }) }}</div>',
+      } } },
+    })
+    const old = { runId: 'run-1', thinkingSteps: [], toolCalls: [] }
+    const current = { runId: 'run-2', thinkingSteps: [], toolCalls: [] }
+    await w.setProps({ busy: true, turnActivities: { 'run-1': old, 'run-2': current } })
+    const projection = JSON.parse(w.get('[data-testid="activity-probe"]').text())
+    expect(projection.activityByMessage).toEqual({ 'answer-1': old })
+    expect(projection.liveTurns).toEqual([current])
+    w.unmount()
+  })
   it('keeps the same composer element when the first message docks the panel', async () => {
     const wrapper = mountPanel([])
     await nextTick()

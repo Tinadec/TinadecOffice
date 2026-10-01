@@ -58,6 +58,10 @@ const message = t.Object({
   role: t.String(),
   content: t.String(),
   created_at: nullableString(),
+  // Files the user sent with this message. An empty array means "none", never
+  // "unknown": Core groups the whole page from one listing, so the field is
+  // always present.
+  attachments: t.Array(componentRef('MessageAttachmentSummary')),
 }, { additionalProperties: true });
 
 const run = t.Object({
@@ -163,6 +167,38 @@ const health = t.Object({
   tool_runtime_url: t.String(),
 }, { additionalProperties: true, description: 'Gateway health fingerprint with forwarded Core health fields.' });
 
+/**
+ * Mirrors Core's MessageAttachmentDto. No content path: Core keeps the storage
+ * reference to itself, and the Gateway has no reason to learn it.
+ */
+const attachment = t.Object({
+  id: t.String(),
+  session_id: t.String(),
+  message_id: nullableString(),
+  file_name: t.String(),
+  media_type: t.String(),
+  content_hash: t.String(),
+  content_length: t.Unsafe({ type: 'integer' }),
+  created_at: nullableString(),
+  bound_at: nullableString(),
+}, { additionalProperties: true });
+
+/**
+ * The narrower shape Core projects inside a Message. session_id and message_id
+ * are absent because the parent row already carries both — restating them per
+ * attachment would only create a second place where the two can disagree.
+ * content_reference never leaves Core at any level.
+ */
+const messageAttachmentSummary = t.Object({
+  id: t.String(),
+  file_name: t.String(),
+  media_type: t.String(),
+  content_hash: t.String(),
+  content_length: t.Unsafe({ type: 'integer' }),
+  created_at: nullableString(),
+  bound_at: nullableString(),
+}, { additionalProperties: true });
+
 const preAuthorization = t.Object({
   id: t.String({ format: 'uuid' }),
   run_id: t.String({ format: 'uuid' }),
@@ -176,6 +212,180 @@ const preAuthorization = t.Object({
   revoked: t.Unsafe({ type: 'boolean' }),
 }, { additionalProperties: true });
 
+/**
+ * Core's ModelInvocationPageDto, deliberately shallow. Core drops null keys when it
+ * writes, so a field-by-field mirror would declare `input_tokens: number | null` for
+ * rows where the key is simply absent — and "absent" is the one thing this page needs
+ * to say: it means the provider reported no usage, not that the call cost nothing.
+ */
+const modelInvocationPage = t.Object({
+  items: t.Array(t.Unknown()),
+  next_cursor: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+/**
+ * The MCP inventory envelope. Typed at the envelope level for one reason: `source` is the field
+ * that separates "no MCP server is configured" from "Core could not ask the Tool Provider", and
+ * those two used to arrive as the same empty array. Per-server and per-tool rows stay opaque
+ * because the gateway forwards them verbatim — mirroring them here would put a second copy of
+ * Core's DTOs in a layer that cannot enforce either one.
+ */
+const mcpInventory = t.Object({
+  source: t.String(),
+  reason: t.Optional(t.String()),
+  workspace_root: t.Optional(t.String()),
+  config_path: t.Optional(t.String()),
+  dropped_rows: t.Optional(t.Number()),
+  servers: t.Array(t.Unknown()),
+}, { additionalProperties: true });
+
+const mcpServerTools = t.Object({
+  source: t.String(),
+  reason: t.Optional(t.String()),
+  workspace_root: t.Optional(t.String()),
+  config_path: t.Optional(t.String()),
+  server_id: t.String(),
+  server: t.Optional(t.Unknown()),
+}, { additionalProperties: true });
+
+/**
+ * The market source list. Typed at the envelope because `supported_kinds` is the field a picker
+ * must read: the kinds an install can be pointed at are decided by which adapters this build has,
+ * and a client that guesses gets a 400 it cannot predict.
+ */
+const marketSourceList = t.Object({
+  sources: t.Array(t.Unknown()),
+  supported_kinds: t.Array(t.String()),
+}, { additionalProperties: true });
+
+const marketSource = t.Object({
+  id: t.String(),
+  name: t.String(),
+  kind: t.String(),
+  location: t.String(),
+  enabled: t.Boolean(),
+  revision: t.Number(),
+  last_refreshed_at: t.Optional(t.String()),
+  last_error: t.Optional(t.String()),
+  entry_count: t.Number(),
+}, { additionalProperties: true });
+
+/**
+ * One refresh's answer. `outcome` is the whole point: fetched / blocked / unavailable are three
+ * facts about the same unchanged-looking catalog, and only the first one entitles a reader to
+ * treat an entry count as the state of the market.
+ */
+const marketRefresh = t.Object({
+  source_id: t.String(),
+  outcome: t.String(),
+  fetched_rows: t.Number(),
+  refused_rows: t.Number(),
+  removed_rows: t.Number(),
+  // A row an installation still references is kept and aged rather than deleted, and this is the
+  // only way the two counts add up: without it a listing that dropped a row shows neither a
+  // removal nor a reason.
+  retained_rows: t.Number(),
+  pages_fetched: t.Number(),
+  truncated_pages: t.Boolean(),
+  reason: t.Optional(t.String()),
+  refreshed_at: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+/** Rows stay opaque per the standing convention; the paging and freshness keys do not. */
+const marketCatalogPage = t.Object({
+  items: t.Array(t.Unknown()),
+  total_available: t.Number(),
+  has_more: t.Boolean(),
+  as_of: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+/**
+ * One catalog row, typed on purpose: `manifest_hash` and `version` are what a later install must
+ * be pinned to, so the field names have to be part of the contract rather than a client's guess
+ * at Core's DTO.
+ */
+const marketCatalogEntry = t.Object({
+  catalog_id: t.String(),
+  source_id: t.String(),
+  source_name: t.String(),
+  extension_id: t.String(),
+  kind: t.String(),
+  version: t.String(),
+  display_name: t.String(),
+  description: t.Optional(t.String()),
+  homepage: t.Optional(t.String()),
+  registry_type: t.Optional(t.String()),
+  transports: t.Array(t.String()),
+  manifest_hash: t.String(),
+  refreshed_at: t.String(),
+  expires_at: t.String(),
+  installable: t.Boolean(),
+  install_blocker: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+/**
+ * The frozen review surface: what a person is being asked to approve, before anything is written.
+ * Typed field by field rather than opaque, because the whole safety claim of the two-step install
+ * is that these exact values are what get written — a client that has to guess the key names
+ * cannot show them, and a person who is not shown them is not approving anything.
+ */
+const marketInstallEnvironmentRequest = t.Object({
+  name: t.String(),
+  required: t.Boolean(),
+  secret: t.Boolean(),
+  description: t.Optional(t.String()),
+}, { additionalProperties: false });
+
+const marketInstallProposal = t.Object({
+  id: t.String(),
+  action: t.String(),
+  project_id: t.String(),
+  catalog_id: t.Optional(t.String()),
+  installation_id: t.Optional(t.String()),
+  source_name: t.String(),
+  extension_id: t.String(),
+  kind: t.String(),
+  version: t.String(),
+  server_id: t.String(),
+  replaces_command: t.Optional(t.String()),
+  command: t.Optional(t.String()),
+  args: t.Array(t.String()),
+  environment: t.Array(marketInstallEnvironmentRequest),
+  target_path: t.String(),
+  content: t.String(),
+  expected_file_hash: t.Optional(t.String()),
+  digest: t.String(),
+  expires_at: t.String(),
+  warnings: t.Array(t.String()),
+}, { additionalProperties: true });
+
+/**
+ * One approved install and the action that carries it. `action_status` is read live from the user
+ * tool action rather than copied, so a refused or failed approval can never be displayed as an
+ * installed server.
+ */
+const marketInstallation = t.Object({
+  id: t.String(),
+  project_id: t.String(),
+  catalog_id: t.String(),
+  source_name: t.String(),
+  extension_id: t.String(),
+  kind: t.String(),
+  version: t.String(),
+  server_id: t.String(),
+  config_path: t.String(),
+  state: t.String(),
+  install_action_id: t.String(),
+  uninstall_action_id: t.Optional(t.String()),
+  action_status: t.Optional(t.String()),
+  created_at: t.String(),
+  updated_at: t.String(),
+}, { additionalProperties: true });
+
+const marketInstallationList = t.Object({
+  installations: t.Array(componentRef('MarketInstallation')),
+}, { additionalProperties: true });
+
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
   Project: project,
@@ -184,6 +394,9 @@ export const externalDtoSchemas = {
   SessionList: t.Array(componentRef('Session')),
   Message: message,
   MessageList: t.Array(componentRef('Message')),
+  MessageAttachment: attachment,
+  MessageAttachmentSummary: messageAttachmentSummary,
+  MessageAttachmentList: t.Array(componentRef('MessageAttachment')),
   Run: run,
   RunList: t.Array(componentRef('Run')),
   TaskNode: taskNode,
@@ -196,6 +409,17 @@ export const externalDtoSchemas = {
   ContextVersionList: t.Array(componentRef('ContextVersion')),
   Assignment: assignment,
   OrchestrationSnapshot: orchestrationSnapshot,
+  ModelInvocationPage: modelInvocationPage,
+  McpInventory: mcpInventory,
+  McpServerTools: mcpServerTools,
+  MarketSourceList: marketSourceList,
+  MarketSource: marketSource,
+  MarketRefresh: marketRefresh,
+  MarketCatalogPage: marketCatalogPage,
+  MarketCatalogEntry: marketCatalogEntry,
+  MarketInstallProposal: marketInstallProposal,
+  MarketInstallation: marketInstallation,
+  MarketInstallationList: marketInstallationList,
   Health: health,
   PreAuthorization: preAuthorization,
 };

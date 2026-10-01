@@ -441,14 +441,7 @@ public sealed class GitLogToolsTests
         try
         {
             File.WriteAllText(Path.Combine(external, "secret.txt"), "secret\n");
-            try
-            {
-                Directory.CreateSymbolicLink(link, external);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return;
-            }
+            if (!LinkPrerequisite.TryCreateDirectoryLink(link, external)) return;
 
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                 GitFileHistoryTool.HandleAsync(

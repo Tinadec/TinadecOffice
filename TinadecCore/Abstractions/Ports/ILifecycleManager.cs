@@ -33,11 +33,45 @@ public interface ILifecycleManager
         string runId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Atomically claims the successful terminal outcome while keeping the run in
+    /// a lease-eligible non-terminal status until its user-visible artifacts are
+    /// durable. False means another terminal outcome or an earlier completion
+    /// claim already won.
+    /// </summary>
+    Task<bool> TryClaimRunCompletionAsync(
+        string runId,
+        string expectedStatus,
+        string? expectedLeaseOwner,
+        int? expectedRecoveryCount,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
     Task SetRunStatusAsync(
         string runId,
         string status,
         string? summary = null,
         CancellationToken cancellationToken = default);
+
+    Task SetRunStatusUnderLeaseAsync(
+        string runId,
+        string status,
+        string? summary,
+        string expectedLeaseOwner,
+        int expectedRecoveryCount,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException(
+            "This lifecycle implementation does not support lease-fenced run status transitions."));
+
+    Task SetRunFailedUnderLeaseAsync(
+        string runId,
+        string summary,
+        string errorCategory,
+        string expectedLeaseOwner,
+        int expectedRecoveryCount,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException(
+            "This lifecycle implementation does not support lease-fenced terminal transitions."));
 
     Task<int> CountActiveRunsAsync(string sessionId, CancellationToken cancellationToken = default);
 
@@ -84,6 +118,14 @@ public interface ILifecycleManager
     Task<IReadOnlyList<RunState>> ListNonTerminalRunsAsync(
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// One session's unfinished runs, newest first — including runs parked on a decision, which
+    /// the admission limit does not count but a queued message still waits behind.
+    /// </summary>
+    Task<IReadOnlyList<RunState>> ListActiveRunsAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Lists non-terminal runs that are not held by a live execution lease.</summary>
     Task<IReadOnlyList<RunState>> ListLeaseEligibleRunsAsync(
         DateTimeOffset now,
@@ -123,6 +165,17 @@ public interface ILifecycleManager
         Guid runId,
         IReadOnlyList<Guid> directiveIds,
         string drainedStatus,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Moves still-pending directives from one run to another run of the same session, keeping
+    /// their creation order: how a queue of messages waits behind whichever run the session is
+    /// working on now. Returns how many moved.
+    /// </summary>
+    Task<int> RequeueRunDirectivesAsync(
+        Guid fromRunId,
+        IReadOnlyList<Guid> directiveIds,
+        Guid toRunId,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -186,6 +239,9 @@ public sealed record RunState
     public string RuntimeProfileId { get; init; } = string.Empty;
     public string? TenantId { get; init; }
     public string? WorkspaceId { get; init; }
+    public string? ParentRunId { get; init; }
+    public string? ParentTaskId { get; init; }
+    public string RunKind { get; init; } = "root";
     /// <summary>Immutable principal that admitted the run. Empty means legacy runs cannot authorize tools.</summary>
     public string? InitiatedByPrincipalId { get; init; }
     public long CheckpointRevision { get; init; }
@@ -195,6 +251,7 @@ public sealed record RunState
     public DateTimeOffset? LeaseHeartbeatAt { get; init; }
     public int RecoveryCount { get; init; }
     public string? Summary { get; init; }
+    public string? TerminalErrorCategory { get; init; }
     public DateTimeOffset StartedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAt { get; init; }
 }
@@ -229,7 +286,10 @@ public sealed record RunStartRequest(
     string ConfigurationHash = "",
     string PermissionMode = "default",
     string RuntimeProfileId = "",
-    string? InitiatedByPrincipalId = null);
+    string? InitiatedByPrincipalId = null,
+    string? ParentRunId = null,
+    string? ParentTaskId = null,
+    string RunKind = "root");
 
 /// <summary>Values captured when a tool call is dispatched to the tool layer.</summary>
 public sealed record ToolExecutionStart(

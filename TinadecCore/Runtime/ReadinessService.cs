@@ -468,7 +468,11 @@ public sealed class ReadinessService
         ReadinessItem manifestHash;
         if (ProbeExecutablePath(_configuration) is null)
         {
-            const string action = "dotnet build TinadecTools/TinadecTools（或在配置 TinadecTools:ExecutablePath 指定已构建的可执行文件）。";
+            // Name the one command that fixes it, and say that `npm run dev` already
+            // runs it — a bare "build the tools project" left a developer guessing
+            // which of the three symptoms (zero tools / TOOL_MANIFEST_UNAVAILABLE /
+            // process_exit) they were looking at.
+            const string action = "运行 npm run dev:tools（或 dotnet build TinadecTools/TinadecTools）；npm run dev 已自动先构建工具子进程。也可在 TinadecTools:ExecutablePath 指定已构建的可执行文件。";
             toolProvider = new ReadinessItem
             {
                 Id = "tool_provider",

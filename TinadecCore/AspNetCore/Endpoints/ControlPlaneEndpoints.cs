@@ -70,6 +70,15 @@ public static class ControlPlaneEndpoints
         app.MapGet("/api/v1/approvals", (string? status, string? session_id, string? run_id, ControlPlaneService service, CancellationToken ct) => service.ListApprovals(status, session_id, run_id, ct));
         app.MapGet("/api/v1/approvals/{id:guid}", (Guid id, ControlPlaneService service, CancellationToken ct) => service.GetApproval(id, ct));
         app.MapPost("/api/v1/approvals/{id:guid}/decision", (Guid id, ApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.DecideApproval(id, input, ct));
+        // The delegated gates of one approval (delegate-* permission modes): who was asked, what each
+        // decided and what each was shown. 404 when the approval was never delegated.
+        // (Named approvalId, not id: the Gateway's approval routes already bind that segment by this name.)
+        app.MapGet("/api/v1/approvals/{approvalId:guid}/gates", async (Guid approvalId, IServiceProvider services, CancellationToken ct) =>
+            services.GetService<TinadecCore.Abstractions.Ports.IApprovalGateLedger>() is { } ledger
+                && await ledger.GetAsync(approvalId, ct) is { } gates
+                ? Results.Ok(gates)
+                : Results.NotFound(new { code = "NOT_FOUND", message = "This approval has no delegated gates." }))
+            .Produces<ApprovalGatesDto>();
         return app;
     }
 

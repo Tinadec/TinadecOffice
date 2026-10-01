@@ -8,7 +8,7 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn(async () => true) }))
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn(async (..._args: unknown[]) => true) }))
 vi.mock('@/composables/useNotifications', () => ({
   useNotifications: () => ({
     confirm: (...args: unknown[]) => confirmMock(...args),
@@ -56,6 +56,16 @@ async function expandProject(wrapper: ReturnType<typeof factory>) {
 }
 
 describe('AppSidebar lifecycle management', () => {
+  it('opens the chatroom while a run is busy and exposes the selected observer page', async () => {
+    const wrapper = factory({ busy: true, collapsed: true, chatroomActive: true })
+    const button = wrapper.get('[data-testid="sidebar-chatroom"]')
+    expect(button.attributes('aria-current')).toBe('page')
+    expect(button.attributes('title')).toBe('sidebar.chatroom')
+    await button.trigger('click')
+    expect(wrapper.emitted('go-chatroom')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     confirmMock.mockClear()
     document.body.querySelectorAll('.row-context-menu').forEach((node) => node.remove())

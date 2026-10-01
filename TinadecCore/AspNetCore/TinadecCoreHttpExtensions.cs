@@ -25,6 +25,7 @@ public static class TinadecCoreHttpExtensions
             options.SerializerOptions.DefaultIgnoreCondition =
                 System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         });
+        services.AddSingleton<ServerFailureJournal>();
         services.Configure<ApiBehaviorOptions>(options =>
         {
             options.InvalidModelStateResponseFactory = context =>
@@ -48,7 +49,44 @@ public static class TinadecCoreHttpExtensions
         {
             options.CustomizeProblemDetails = context =>
             {
-                context.ProblemDetails.Extensions["trace_id"] = context.HttpContext.TraceIdentifier;
+                var problem = context.ProblemDetails;
+                // A request the framework rejects before any handler runs — a missing or
+                // unparseable required route/query value, a 404/405 with no matching endpoint —
+                // reaches this service as a bare RFC 9110 problem. Every other error body here
+                // carries `code` and clients branch on it, so these must not be the one family
+                // that says "no" without saying which rule refused.
+                if (!problem.Extensions.ContainsKey("code"))
+                {
+                    var code = problem.Status switch
+                    {
+                        StatusCodes.Status400BadRequest or StatusCodes.Status422UnprocessableEntity => "invalid_request",
+                        StatusCodes.Status401Unauthorized => "unauthorized",
+                        StatusCodes.Status403Forbidden => "forbidden",
+                        StatusCodes.Status404NotFound => "not_found",
+                        StatusCodes.Status405MethodNotAllowed => "method_not_allowed",
+                        StatusCodes.Status409Conflict => "conflict",
+                        StatusCodes.Status413PayloadTooLarge => "payload_too_large",
+                        StatusCodes.Status415UnsupportedMediaType => "unsupported_media_type",
+                        StatusCodes.Status429TooManyRequests => "rate_limited",
+                        >= StatusCodes.Status500InternalServerError => "internal_error",
+                        _ => "request_failed",
+                    };
+                    problem.Extensions["code"] = code;
+                    problem.Type = $"https://tinadec.dev/errors/{code}";
+                    problem.Title = code;
+                    problem.Detail ??= code switch
+                    {
+                        "invalid_request" => "A required route or query parameter is missing or cannot be parsed.",
+                        "not_found" => "No endpoint matches this request.",
+                        "method_not_allowed" => "This endpoint does not accept that HTTP method.",
+                        "payload_too_large" => "The request body exceeds the configured limit.",
+                        "unsupported_media_type" => "Send the body as application/json.",
+                        "rate_limited" => "Too many requests; retry later.",
+                        "internal_error" => "An unexpected error occurred.",
+                        _ => "The request was rejected.",
+                    };
+                }
+                problem.Extensions["trace_id"] = context.HttpContext.TraceIdentifier;
             };
         });
 
@@ -73,11 +111,16 @@ public static class TinadecCoreHttpExtensions
                 // invalid_request, context_conflict, model_not_configured, run_not_found, forbidden, conflict
                 var (status, code, detail) = exception switch
                 {
+                    TinadecCore.Abstractions.Ports.TinaChatException chat => (chat.StatusCode, chat.Code, chat.Message),
                     TinadecCore.AgentConfiguration.AgentPackDomainException ape => (ape.StatusCode, ape.Code, ape.Message),
                     TinadecCore.DmaEA.RunAdmissionException rae when rae.Code == "CONTEXT_REVISION_CONFLICT" => (StatusCodes.Status409Conflict, "context_conflict", rae.Message),
                     TinadecCore.DmaEA.RunAdmissionException rae => (StatusCodes.Status409Conflict, "conflict", rae.Message),
                     UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "forbidden", exception.Message),
                     ArgumentException => (StatusCodes.Status400BadRequest, "invalid_request", exception.Message),
+                    // Minimal-API throws this before the handler ever runs when a required route or
+                    // query parameter is missing or unparseable. It carries its own 4xx status, so
+                    // letting it fall through to the catch-all turned "you forgot actor_id" into a 500.
+                    Microsoft.AspNetCore.Http.BadHttpRequestException binding => (binding.StatusCode, "invalid_request", binding.Message),
                     KeyNotFoundException => (StatusCodes.Status404NotFound, "run_not_found", exception.Message),
                     InvalidOperationException ioe when ioe.Message.Contains("model", StringComparison.OrdinalIgnoreCase) || ioe.Message.Contains("Provider", StringComparison.OrdinalIgnoreCase) => (StatusCodes.Status400BadRequest, "model_not_configured", ioe.Message),
                     InvalidOperationException => (StatusCodes.Status409Conflict, "conflict", exception.Message),
@@ -91,6 +134,12 @@ public static class TinadecCoreHttpExtensions
                     Status = status,
                     Instance = context.Request.Path
                 };
+                // A 5xx means the handler had nothing true to say about the cause, so keep the cause
+                // somewhere. Resolved optionally on purpose: this middleware is composable without
+                // AddTinadecCoreHttp, and a diagnostic must never be the second failure.
+                if (status >= StatusCodes.Status500InternalServerError)
+                    context.RequestServices.GetService<ServerFailureJournal>()?
+                        .Record(context, exception, status, code);
                 problem.Extensions["code"] = code;
                 problem.Extensions["trace_id"] = context.TraceIdentifier;
                 context.Response.StatusCode = status;

@@ -80,7 +80,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 | `/code-editor` | Code | 文件读写、patch、工具结果 | 部分实现 | 所有写操作统一 UserToolAction store |
 | `/agent-center` | Agent Center | Agent/Mode/Prompt/Evolution/实例 | 部分实现 | 版本、ETag、双泳道和候选流水线状态 |
 | `/settings` | Settings | model provider/route、工具诊断、系统健康 | 部分实现 | 明确占位端点，禁止把 readiness 当连接成功 |
-| `/market` | Market | extension/MCP/ACP 市场入口 | 占位/部分实现 | 等 Core extension 和 provider 契约后再开放写操作 |
+| `/market` | Market | extension/MCP/ACP 市场入口 | 读面已落地（sources/catalog 2026-09-23；MCP 清单 2026-09-22）；install 仍占位 | 安装类写操作属 #37/#38，需审批 + 固定版本 |
 | `/debug-studio` | Debug Studio | 诊断、事件、模拟和 trace | 占位/部分实现 | 所有模拟接口按 501 显示，不写入生产事实 |
 | `/panel` | Detached Panel | Git、Approval、Events、Doctor、Orchestration、Terminal | 已实现 | 与主窗口共享 Core 投影，不复制审批状态 |
 | `/pet` | Desktop Pet | 纯客户端体验 | 已实现 | 不与 Core 治理耦合 |
@@ -107,6 +107,8 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `GET /api/v1/sessions/{sessionId}/messages`
 - `GET /api/v1/sessions/{sessionId}/runs`
 - `GET /api/v1/sessions/{sessionId}/orchestration`
+- `GET /api/v1/sessions/{sessionId}/attachments`（本会话已上传、含已绑定与未绑定的行）
+- `GET /api/v1/attachments/{attachmentId}`、`GET /api/v1/attachments/{attachmentId}/content`（按 id 寻址，内联还是下载由 Core 决定）
 - `GET /api/v1/approvals?session_id=...`（仅投影）
 - `GET /api/v1/events?session_id=...&after_seq=...`
 - `GET /api/v1/application-modes`、`GET /api/v1/agent-modes`
@@ -117,6 +119,8 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `POST /api/v1/sessions`
 - `PATCH /api/v1/sessions/{sessionId}`
 - `POST /api/v1/sessions/{sessionId}/interactions`
+- `POST /api/v1/sessions/{sessionId}/attachments`（原始字节走 body，`filename`/`media_type` 在 query；上限与机器码由 Core 给）
+- `DELETE /api/v1/attachments/{attachmentId}`
 - `POST /api/v1/sessions/{sessionId}/interactions/{interactionId}/cancel`
 - `POST /api/v1/sessions/{sessionId}/interactions/{interactionId}/reassign`
 - `POST /api/v1/runs/{runId}/control`（pause/resume/cancel）
@@ -129,6 +133,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 4. `insert` 返回 `context_conflict` 时显示当前 revision 与用户输入，要求用户重新读取后再发。
 5. run 控制只显示适用于当前状态的按钮；控制结果必须以 Core 投影为准。
 6. assistant 正式答复只接受 meeting 的 `delta/done` 或持久消息；worker 输出显示为证据/进度，不能冒充正式答复。
+7. 附件先 `POST .../attachments` 拿到 id，再随 `interactions` 的 `attachment_ids` 一起送出（一条消息最多 8 个，`insert` 不接受附件，因为它不追加消息）。正文为空但带附件是合法的一轮：Core 回 `status: "message_only"` 且**没有** `run_id`。这一条不适用第 3 点——它不是排队，不要显示成队列项，也不要去等一条永不出现的 run 流；文件已经进历史，下一轮的上下文会带上它。
 
 **已修复（2026-09-06）**：`HomeController.ts:429-432` 的注释确认 legacy `invoke-stream` / `POST messages` 回退**已删除**，`POST /interactions` 是唯一准入契约，失败会显式呈现（不再降级成一条没有 run 的普通消息）。`api.ts:2229` 的 `invokeStreamWithAdmission` 只是 interactions+run-stream 的内部适配器，不是旧路由客户端。
 
@@ -150,6 +155,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `GET /api/v1/sessions/{sessionId}/context-versions?run_id=...`
 - `GET /api/v1/sessions/{sessionId}/context-packs`（恒空占位）
 - `GET /api/v1/sessions/{sessionId}/supervision-findings`（恒空占位）
+- `GET /api/v1/model-invocations?run_id=...&limit=200&cursor=...`（Core 的模型调用审计分页；一个 run 的合计是桌面按游标走完的客户端汇总，Core 不做分组）
 
 **必须展示**：
 
@@ -159,10 +165,12 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - task 节点状态、依赖、风险、成功标准和 step result；
 - supervision 的 pass/revise/escalate、原因、revision round；
 - context version、base revision、冲突和压缩事件；
-- tool execution 的 prepare/authorized/approval/running/completed/blocked/outcome_unknown。
+- tool execution 的 prepare/authorized/approval/running/completed/blocked/outcome_unknown；
+- 这个 run 的模型用量：按 `model × provider` 分组的 token 与调用次数（同名的不同 provider 才附 provider 标识）。provider 没上报用量的行要显示"未上报"并给出条数，不能计成 0；游标走到上限时要说明这是下限而不是合计。
 
 **不可做**：
 
+- 不把"没有单价配置面"做成金额：本仓没有任何每模型单价，用量面只说 tokens。
 - 不把“模型返回了 JSON”显示成授权或监督通过。
 - 不在 Desktop 生成或修改 run frozen configuration。
 - 不把 `completed_with_escalation` 当成合法终态；监督 escalate 必须停在 `awaiting_user`，等待用户继续、修正或取消。
@@ -188,7 +196,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `blocked` 显示 reason code；`outcome_unknown` 进入只读恢复页面，不显示“再次执行”。
 - 同一 action 的 permission 和 action approval 可串联展示，但不能合并为一个本地 approval 对象。
 
-### 4.4 Git Changes / CommitPanel
+### 4.4 Git Changes（GitChangesView）
 
 **只读查询**：`git_status`、`git_diff`、`git_log`、branch、worktree、conflict preview 使用用户直连工具传输面。
 
@@ -208,7 +216,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - 所有 Git mutation 参数都包含规范化 `repository_path`。
 - `confirm_commit`、`confirm_push` 等确认值必须是 manifest schema 声明的非空字符串，不能发送布尔值。
 - `git_push` 持续显示 `non_reversible=true` 和 Core 提供的补偿建议；本地快照不能被描述为远程 push 的回滚。
-- CommitPanel 和 `useGitOperation` 不得调用 `createApproval`、`createShellApproval` 或直接调用工具写路由。
+- `GitChangesView` 和 `useGitOperation` 不得调用 `createApproval`、`createShellApproval` 或直接调用工具写路由。
 
 Git mutation 的当前参数基线如下；实际字段和确认语义仍以本次 run 冻结的 manifest 为准：
 
@@ -384,8 +392,49 @@ PromptPipeline 是 DmaEA 正式提示词配置。旧 `prompt-fragments` 页面�
 
 这些页面必须按 Core 实际状态显示：
 
-- Market extension source/catalog/install 当前有占位端点，501 显示“未启用”，不创建本地安装记录。
-- MCP server/tool/reload 当前是占位；不在 Gateway 或 Desktop 自行连接 MCP。
+- Market **source 与 catalog 自 2026-09-23 起是真数据**（Core `MarketEndpoints.cs`）：
+  `GET /api/v1/market/sources` 返回 `{sources[], supported_kinds[]}`，`POST /api/v1/market/sources` 建源
+  （只接受 `name`/`kind`/`https location`；`kind` 必须在 `supported_kinds` 里，否则 400 `unsupported_market_source_kind`），
+  `PATCH /api/v1/market/sources/{id}` 只改 `enabled`（必填，缺字段是 400 而不是"顺手关掉"），
+  `DELETE` 成功回 204，`POST .../refresh` 回 `{outcome, fetched_rows, refused_rows, removed_rows, pages_fetched, truncated_pages, reason?}`。
+  `GET /api/v1/market/catalog` 查询串**必须用 Core 的拼写**：`kind`/`q`/`source_id`/`limit`/`offset`（`query`、`sourceId` 无人读取，
+  静默返回全量），响应是 `{items[], total_available, has_more, as_of?}`——`as_of` 缺失表示"一条都没匹配上"，
+  与"匹配到但很久没刷新"是两句话，UI 不得把两者都画成"市场为空"。
+  `outcome` 是必读字段：`blocked`/`unavailable` 意味着**旧清单原样留着**且 `last_error` 已写在源行上，
+  此时报失败并把原因给人，不得当成"刷新成功、市场里 0 条"。
+  目录行只有 `catalog_id`/`source_id`/`source_name`/`extension_id`/`kind`/`version`/`display_name`/`description?`/
+  `homepage?`/`registry_type?`/`transports[]`/`manifest_hash`/`refreshed_at`/`expires_at`。
+  **没有** `publisher`/`capabilities`/`permissions`/`status`/`installed_extension_id`：registry 不发布这些，
+  卡片曾按它们渲染，于是真机上永远空白而预览画廊里是满的。清单正文是外部主张，不是指令，也不是授权。
+- Market **install 自 2026-09-23（#37 / M2）起是四条真路由**，且安装永远是"一份被冻结的提案 ＋ 一次人工裁决"，不是一次下载：
+  `POST /api/v1/market/catalog/{id}/install-preview`（body 只有 `project_id`）与
+  `POST /api/v1/market/installations/{id}/uninstall-preview` 返回同一份提案 DTO
+  `{id, action, project_id, catalog_id?, installation_id?, source_name, extension_id, kind, version, server_id, replaces_command?, command?, args[], environment[], target_path, content, expected_file_hash?, digest, expires_at, warnings[]}`；
+  `POST /api/v1/market/install-proposals/{id}/apply` 返回台账行
+  `{id, project_id, catalog_id, source_name, extension_id, kind, version, server_id, config_path, state, install_action_id, uninstall_action_id?, action_status?, created_at, updated_at}`；
+  `GET /api/v1/market/installations` 返回 `{installations[]}`。
+  口径：**提案里的 `environment[]` 只有名字与 `required`/`secret` 标记，永远没有值**（值属 `ISecretStore`）；
+  `content` 是将要写入的确切字节，UI 要能展开给人看，不得只给一个 hash；`warnings[]` 是本构建不能保证的部分，
+  必须原样上屏而不是折叠成"有风险"。
+  错误口径：`market_install_not_expressible` 与 `market_install_target_unresolved` 是 **409**（世界状态不允许，不是请求写错），
+`market_install_proposal_stale` 是 **412 → 唯一正确的后续动作是重新预览**，`market_install_proposal_not_found`/`market_installation_not_found`/`market_install_project_not_found` 是 404，
+  `market_source_in_use` 是 409（来源还撑着安装行，删了就没有溯源）。
+  渲染纪律：排队 ≠ 已安装——徽章只能由 `state` 与该行动作自己的 `action_status` 推导（受治理的写先停在
+  `awaiting_user` 的权限请求，批准后才进 `awaiting_approval` 的审批信封），桌面**从不代替用户裁决**；
+  安装目标工作区只有一个 owner（首页当前选中的项目），市场面板不得自带第二份选择；换行或换工作区之后旧提案不得再被提供。
+  `/api/v1/extensions/*` 七条仍 501，桌面曾经打它们的那七个包装已全部删除。
+- Market 的**可读源类型自 2026-09-23（#38 / M3）起是两种**：`mcp_registry` 与 `skill_repository`，
+  `supported_kinds` 由 Core 报、桌面选择器照它渲染（不得在客户端写死一份清单）。技能源的口径：
+  索引正文只贡献 `name`/`description`/`version`/`homepage` 四个字段，**它的 `url` 只是给人看的链接，Core 永远不拨它**——
+  要取的技能文档地址由 Core 用源的 https location 所在目录 ＋ 已过技能命名规则（`^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$`）
+  的名字拼成 `<index dir>/<name>/SKILL.md>`；名字不合规则的行**不落库**，只进 `refused_rows`。
+  安装目标因此不来自 provider 的 `config_path` 而是 Core 自己拼的 `skills/<name>/SKILL.md`（工作区技能加载器读的就是这一层），
+  文档正文**只在预览时取一次**并冻结进 `content`，apply 不再出网；正文还要过 `WorkspaceSkillPolicy`（名字必须等于目录名、
+  描述长度合规、不能被自己的 `disabled:` 关掉），否则 409 `market_install_not_expressible` —— 一次"装上了但工作区永远不播"的安装在市场里最难被发现。
+  `uninstall-preview` 对 `kind=skill` 一律 409：工具层没有 delete/rename，能用的开关是文档自己的 `disabled: true`，
+  拒绝语必须把这条说出来。目录行没有安装描述时的 `install_blocker` 与 `installable` 同 M2 口径。
+- MCP 只有两条读路由，且**读数来自 Tool Provider 而不是 Core 自己**：`GET /api/v1/mcp/servers` 返回 `{source, reason?, workspace_root?, config_path?, dropped_rows?, servers[]}`，`GET /api/v1/mcp/servers/{serverId}/tools` 返回 `{source, reason?, config_path?, server_id, server?}`。`source` 是必读字段：`tool_provider` 才是"看过了"，`tool_provider_unavailable` 要显示 `reason` 而**不能**显示"没有配置任何服务器"。`status:"error"` 的服务器仍在清单里并带 provider 原文，UI 不得把它画成"已停用"。
+- MCP **没有**连接、断开、状态、reload、直接调用工具这些端点，Gateway/Desktop 也不得自行连接或缓存 MCP：配置与连接都归工具进程，清单每次现读。要"刷新"就是重新发一次 GET。
 - ACP `permission.request` 本阶段继续 fail-closed；不能把 ACP 请求当成已授权。
 - Debug traces/spans/metrics/processes/simulate/breakpoints 当前多为占位；只允许测试环境使用，生产页面不得伪造 trace 或 tool result。
 
@@ -627,7 +676,7 @@ create action
 - [ ] 新增 recovery decision client；按 `action.id` 建立 Pinia/store 单一身份。
 - [ ] 统一 create/list/detail/poll/permission-decision/approval-decision/resume 流程。
 - [ ] 修复 PermissionRequest -> ActionApproval 两阶段刷新；处理 approval 包装响应。
-- [ ] CommitPanel、`useGitOperation`、CodeEditor、PatchPreview、FileTree、shell 全部移除生产 `createApproval` 写路径。
+- [ ] `GitChangesView`、`useGitOperation`、CodeEditor、PatchPreview、FileTree、shell 全部移除生产 `createApproval` 写路径。
 - [ ] 所有 Git mutation 使用当前 `project_id`、`repository_path`、manifest 确认字段和稳定幂等 key。
 - [ ] rebase start/continue/skip/abort 分成独立 action。
 - [ ] 实现 snapshot_required、awaiting_user、awaiting_approval、running、completed、blocked、outcome_unknown、failed 的状态组件。

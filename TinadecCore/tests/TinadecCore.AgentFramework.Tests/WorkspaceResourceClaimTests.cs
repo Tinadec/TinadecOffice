@@ -90,29 +90,52 @@ public sealed class WorkspaceResourceClaimTests
             ToolResourceAllowList.Evaluate([], target, mutating: false), [], "read_file", Root, target);
         Assert.Contains("holds no workspace resource grant", noGrant, StringComparison.Ordinal);
 
-        var missingWrite = ResourceDenialExplanation.Describe(
-            ToolResourceAllowList.Evaluate(readOnly, target, mutating: true), readOnly, "write_file", Root, target);
-        Assert.Contains("changes", missingWrite, StringComparison.Ordinal);
-        Assert.Contains("write:<prefix>", missingWrite, StringComparison.Ordinal);
-        Assert.Contains("read:", missingWrite, StringComparison.Ordinal);
-        Assert.Contains(Root, missingWrite, StringComparison.Ordinal);
-
         var outsidePrefix = ResourceDenialExplanation.Describe(
             ToolResourceAllowList.Evaluate(["read:docs"], target, mutating: false), ["read:docs"], "read_file", Root, target);
         Assert.Contains(target, outsidePrefix, StringComparison.Ordinal);
         Assert.Contains("read:docs", outsidePrefix, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A write against a read-only envelope is not a denial any more: it is an
+    /// upgrade, so the text the operator sees must be the upgrade explanation (what
+    /// the envelope is missing, and that approving issues the write) rather than the
+    /// denial text — that text belongs only to the variants that really refuse.
+    /// </summary>
+    [Fact]
+    public void MissingWriteLevel_ExplainsTheUpgrade_NotADenial()
+    {
+        var readOnly = new[] { "read:" };
+        var target = "src/app.ts";
+        var decision = ToolResourceAllowList.Evaluate(readOnly, target, mutating: true);
+        Assert.True(decision.RequiresApproval);
+
+        var upgrade = ResourceDenialExplanation.DescribeUpgrade(readOnly, "write_file", Root, target);
+        Assert.Contains("needs approval", upgrade, StringComparison.Ordinal);
+        Assert.Contains("write-level grant", upgrade, StringComparison.Ordinal);
+        Assert.Contains("read:", upgrade, StringComparison.Ordinal);
+        Assert.Contains(Root, upgrade, StringComparison.Ordinal);
+        Assert.Contains(target, upgrade, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void GrantLevels_DecideReadAndWriteClaims()
     {
         Assert.True(ToolResourceAllowList.Evaluate(["read:"], "src/app.ts", mutating: false).Allowed);
-        Assert.False(ToolResourceAllowList.Evaluate(["read:"], "src/app.ts", mutating: true).Allowed);
+        // A read-only envelope never authorizes a mutation outright; it upgrades it.
+        var upgrade = ToolResourceAllowList.Evaluate(["read:"], "src/app.ts", mutating: true);
+        Assert.False(upgrade.Allowed);
+        Assert.True(upgrade.RequiresApproval);
         Assert.True(ToolResourceAllowList.Evaluate(["write:"], "src/app.ts", mutating: true).Allowed);
         Assert.True(ToolResourceAllowList.Evaluate(["write:src"], "src/app.ts", mutating: true).Allowed);
-        Assert.False(ToolResourceAllowList.Evaluate(["write:docs"], "src/app.ts", mutating: true).Allowed);
+        // A write grant that does not cover the target is an escape, not an upgrade.
+        var outside = ToolResourceAllowList.Evaluate(["write:docs"], "src/app.ts", mutating: true);
+        Assert.False(outside.Allowed);
+        Assert.False(outside.RequiresApproval);
         // Level-only tools (no path claim) pass on any grant of the right level.
         Assert.True(ToolResourceAllowList.Evaluate(["read:"], null, mutating: false).Allowed);
-        Assert.False(ToolResourceAllowList.Evaluate(["read:"], null, mutating: true).Allowed);
+        var pathlessUpgrade = ToolResourceAllowList.Evaluate(["read:"], null, mutating: true);
+        Assert.False(pathlessUpgrade.Allowed);
+        Assert.True(pathlessUpgrade.RequiresApproval);
     }
 }

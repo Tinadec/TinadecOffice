@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 using TinadecTools.Tools.Command;
@@ -11,8 +12,11 @@ public sealed class GitRemoteMutationArgs
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("set_upstream")] public bool SetUpstream { get; set; }
     [JsonPropertyName("prune")] public bool Prune { get; set; } = true;
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_fetch")] public string? ConfirmFetch { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_push")] public string? ConfirmPush { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_pull")] public string? ConfirmPull { get; set; }
 }
 
@@ -40,7 +44,7 @@ internal partial class GitRemoteMutationToolsJsonContext : JsonSerializerContext
 
 internal static class GitRemoteMutationTools
 {
-    [ToolFunction("git_fetch", RequiresApproval = true, ConfirmationFields = ["confirm_fetch"])]
+    [ToolFunction("git_fetch", RequiresApproval = true, ConfirmationFields = ["confirm_fetch"], Description = "Fetch from a remote (default origin), optionally one branch; prune=true (default) removes deleted remote branches. Does not change the working tree. confirm_fetch must be a short non-empty note naming the remote. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitRemoteMutationResult> FetchAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmFetch, nameof(args.ConfirmFetch));
@@ -58,7 +62,7 @@ internal static class GitRemoteMutationTools
         return new GitRemoteMutationResult { Success = true, Action = "fetch", Remote = remote ?? "--all", Changed = true, Output = JoinOutput(execution), Status = status, Branch = status.Branch, Branches = branches.Branches };
     }
 
-    [ToolFunction("git_push", RequiresApproval = true, ConfirmationFields = ["confirm_push"])]
+    [ToolFunction("git_push", RequiresApproval = true, ConfirmationFields = ["confirm_push"], Description = "Push the current branch to a remote (remote defaults to origin). Refused when HEAD is detached, the working tree has uncommitted changes, or the branch is behind its upstream - commit or pull first. set_upstream=true creates the upstream. A push cannot be undone by a local snapshot. confirm_push must be a short non-empty note naming the remote and branch; the user still approves the push. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitRemoteMutationResult> PushAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmPush, nameof(args.ConfirmPush));
@@ -90,7 +94,7 @@ internal static class GitRemoteMutationTools
         return new GitRemoteMutationResult { Success = true, Action = "push", Remote = remote, Branch = branch, Changed = true, SetUpstream = string.IsNullOrWhiteSpace(status.Upstream), Output = JoinOutput(execution), Status = after };
     }
 
-    [ToolFunction("git_pull", RequiresApproval = true, ConfirmationFields = ["confirm_pull"])]
+    [ToolFunction("git_pull", RequiresApproval = true, ConfirmationFields = ["confirm_pull"], Description = "Pull the current branch from a remote (default origin). Refused on a detached HEAD or with uncommitted changes - commit or discard first. confirm_pull must be a short non-empty note naming the remote and branch. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitRemoteMutationResult> PullAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmPull, nameof(args.ConfirmPull));

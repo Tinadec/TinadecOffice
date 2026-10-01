@@ -25,8 +25,12 @@ import type {
   PromptFragmentDto,
   ExtensionSourceDto,
   MarketCatalogItemDto,
-  InstalledExtensionDto,
-  McpServerDto,
+  MarketRefreshDto,
+  MarketInstallationDto,
+  MarketInstallProposalDto,
+  MarketInstallationListDto,
+  McpInventoryDto,
+  McpServerToolsDto,
   AcpAdapterDto,
   CodeToolExecuteResultDto,
   CodeToolExecuteRequestDto,
@@ -44,8 +48,6 @@ import type {
   TaskNodeDto,
   ContextPackDto,
   SupervisionFindingDto,
-  ExtensionInstallPreviewDto,
-  ExtensionInstallResultDto,
   ModelProviderTemplateDto,
   ProjectDto as _ProjectDto,
 } from '@/api'
@@ -287,7 +289,7 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         scenario.value,
       ),
 
-    listExtensionSources: () => delay(data().extensionSources as ExtensionSourceDto[], scenario.value),
+    listExtensionSources: () => delay(data().extensionSources, scenario.value),
     createExtensionSource: (source: { name: string; kind: string; location: string; enabled?: boolean }) =>
       delay(
         {
@@ -296,75 +298,119 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           kind: source.kind,
           location: source.location,
           enabled: source.enabled ?? true,
-          last_refreshed_at: null,
-          created_at: new Date().toISOString(),
+          revision: 1,
+          entry_count: 0,
         } as ExtensionSourceDto,
         scenario.value,
       ),
-    refreshExtensionSource: (sourceId: string) =>
+    setExtensionSourceEnabled: (sourceId: string, enabled: boolean) =>
       delay(
-        { ...data().extensionSources[0], id: sourceId, last_refreshed_at: new Date().toISOString() } as ExtensionSourceDto,
+        { ...data().extensionSources.sources.find((s) => s.id === sourceId)!, enabled } as ExtensionSourceDto,
         scenario.value,
       ),
-    listMarketCatalog: (_params: { kind?: string; query?: string; source_id?: string } = {}) =>
-      delay(data().marketCatalog as MarketCatalogItemDto[], scenario.value),
+    deleteExtensionSource: () => delay(undefined as void, scenario.value),
+    refreshExtensionSource: (sourceId: string) => {
+      // A source whose fixture row carries a `last_error` must not answer "fetched": that is the
+      // one case where the panel's failure branch — a refresh that left the catalog standing —
+      // was unreachable in the preview no matter what was clicked.
+      const source = data().extensionSources.sources.find((s) => s.id === sourceId)
+      const empty = {
+        source_id: sourceId,
+        fetched_rows: 0,
+        refused_rows: 0,
+        removed_rows: 0,
+        retained_rows: 0,
+        pages_fetched: 0,
+        truncated_pages: false,
+        refreshed_at: new Date().toISOString(),
+      }
+      if (source?.last_error) {
+        return delay(
+          { ...empty, outcome: 'blocked', reason: source.last_error } as MarketRefreshDto,
+          scenario.value,
+        )
+      }
+      return delay(
+        {
+          ...empty,
+          outcome: 'fetched',
+          fetched_rows: data().marketCatalog.items.length,
+          pages_fetched: 1,
+        } as MarketRefreshDto,
+        scenario.value,
+      )
+    },
+    // Core filters server-side, so the preview has to or the search box and the kind rail look
+    // finished here and broken there.
+    listMarketCatalog: (params: { kind?: string; q?: string; source_id?: string; limit?: number; offset?: number } = {}) => {
+      const page = data().marketCatalog
+      const needle = params.q?.trim().toLowerCase() ?? ''
+      const items = page.items.filter((item) => {
+        if (params.kind && params.kind !== 'all' && item.kind !== params.kind) return false
+        if (params.source_id && item.source_id !== params.source_id) return false
+        if (!needle) return true
+        return [item.display_name, item.extension_id, item.description ?? '']
+          .some((field) => field.toLowerCase().includes(needle))
+      })
+      return delay({ ...page, items, total_available: items.length }, scenario.value)
+    },
     getMarketCatalogItem: (catalogId: string) =>
-      delay(data().marketCatalog.find((c) => c.catalog_id === catalogId) ?? data().marketCatalog[0] as MarketCatalogItemDto, scenario.value),
-    previewExtensionInstall: (_input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null }) =>
       delay(
-        {
-          extension_id: 'preview-ext',
-          kind: 'tool-pack',
-          version: '1.0.0',
-          publisher: 'Preview',
-          display_name: '预览扩展',
-          description: '安装预览',
-          source_kind: 'marketplace-url',
-          source_location: 'https://example.com',
-          capabilities: ['preview.cap'],
-          permissions: ['fs:read'],
-          risks: ['预览风险'],
-          requires_approval: true,
-          approval_summary: '需要审批',
-        } as ExtensionInstallPreviewDto,
+        (data().marketCatalog.items.find((c) => c.catalog_id === catalogId) ?? data().marketCatalog.items[0]) as MarketCatalogItemDto,
         scenario.value,
       ),
-    installExtension: (_input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null; approval_id?: string | null }) =>
+    previewMarketInstall: (catalogId: string, projectId: string) =>
       delay(
         {
-          approval_required: false,
-          approval: null,
-          extension: data().installedExtensions[0],
-          preview: {
-            extension_id: 'preview-ext',
-            kind: 'tool-pack',
-            version: '1.0.0',
-            publisher: 'Preview',
-            display_name: '预览扩展',
-            description: '安装预览',
-            source_kind: 'marketplace-url',
-            source_location: 'https://example.com',
-            capabilities: ['preview.cap'],
-            permissions: ['fs:read'],
-            risks: [],
-            requires_approval: false,
-            approval_summary: '',
-          },
-        } as ExtensionInstallResultDto,
+          ...data().installProposal,
+          id: `prop-${catalogId}`,
+          project_id: projectId,
+          catalog_id: catalogId,
+        } as MarketInstallProposalDto,
         scenario.value,
       ),
-    listInstalledExtensions: () => delay(data().installedExtensions as InstalledExtensionDto[], scenario.value),
-    enableExtension: (extensionId: string) =>
-      delay({ ...data().installedExtensions[0], id: extensionId, enabled: true } as InstalledExtensionDto, scenario.value),
-    disableExtension: (extensionId: string) =>
-      delay({ ...data().installedExtensions[0], id: extensionId, enabled: false } as InstalledExtensionDto, scenario.value),
-    updateExtension: (extensionId: string) =>
-      delay({ ...data().installedExtensions[0], id: extensionId } as InstalledExtensionDto, scenario.value),
-    deleteExtension: (_extensionId: string) => emptyDelay(undefined as unknown as void, scenario.value),
+    previewMarketUninstall: (installationId: string) => {
+      const row = data().installations.find((item) => item.id === installationId) ?? data().installations[0]
+      return delay(
+        {
+          ...data().installProposal,
+          id: `prop-${installationId}`,
+          action: 'uninstall',
+          installation_id: installationId,
+          catalog_id: null,
+          project_id: row.project_id,
+          extension_id: row.extension_id,
+          server_id: row.server_id,
+          version: row.version,
+          args: [],
+          command: null,
+          environment: [],
+        } as MarketInstallProposalDto,
+        scenario.value,
+      )
+    },
+    // Apply mirrors Core: it hands back the ledger row and the action a human still has to decide,
+    // and it never reports the file as written.
+    applyMarketInstallProposal: (proposalId: string) => {
+      const row = data().installations.find((item) => item.install_action_id === proposalId.replace(/^prop-/, 'act-'))
+        ?? data().installations[0]
+      return delay({ ...row, action_status: 'awaiting_user' } as MarketInstallationDto, scenario.value)
+    },
+    listMarketInstallations: () =>
+      delay({ installations: data().installations } as MarketInstallationListDto, scenario.value),
 
-    listMcpServers: () => delay(data().mcpServers as McpServerDto[], scenario.value),
-    reloadMcpServer: (serverId: string) =>
-      delay({ ...data().mcpServers[0], id: serverId, status: 'connected' } as McpServerDto, scenario.value),
+    listMcpServers: () => delay(data().mcpInventory as McpInventoryDto, scenario.value),
+    listMcpServerTools: (serverId: string) => {
+      const server = data().mcpInventory.servers.find((item) => item.id === serverId)
+        ?? data().mcpInventory.servers[0]
+      return delay({
+        source: data().mcpInventory.source,
+        workspace_root: data().mcpInventory.workspace_root,
+        config_path: data().mcpInventory.config_path,
+        server_id: server?.id ?? serverId,
+        server,
+      } as McpServerToolsDto, scenario.value)
+    },
     listAcpAdapters: () => delay(data().acpAdapters as AcpAdapterDto[], scenario.value),
     probeAcpAdapter: (adapterId: string) =>
       delay({ ...data().acpAdapters[0], id: adapterId, status: 'active', status_message: '探测成功' } as AcpAdapterDto, scenario.value),
@@ -477,7 +523,7 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         }
         return delay(mockGitDiffPreview(), scenario.value) as Promise<CodeToolExecuteResultDto>
       }
-      if (toolId === 'list_directory') {
+      if (toolId === 'ls') {
         const args = payload.arguments as Record<string, unknown> | null
         const path = (args?.path as string) ?? '.'
         const tree = path === '.' || path === './' ? mockFileTree() : path === 'src' || path === './src' ? mockFileTreeSrc() : mockFileTree()
@@ -496,18 +542,24 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       }
       if (toolId === 'read_file') {
         const args = payload.arguments as Record<string, unknown> | null
-        const filePath = (args?.path as string) ?? 'src/orchestrator.ts'
+        const filePath = (args?.filepath as string) ?? 'src/orchestrator.ts'
+        const text = mockCodeContent(filePath)
         return delay(
           {
             tool_id: toolId,
             status: 'ok',
             summary: `读取 ${filePath}`,
             evidence: [filePath],
+            // Real envelope: file_hash plus one entry per line, where the nested line
+            // keeps the provider's C# member names.
             data: {
-              path: filePath,
-              content: mockCodeContent(filePath),
-              size_bytes: mockCodeContent(filePath).length,
-              modified_at: new Date().toISOString(),
+              success: true,
+              error: null,
+              file_hash: 'ZZWQ',
+              all_contents: text.split('\n').map((line, index) => ({
+                content: { Content: line, LineNumber: index + 1, StartOffset: 0, EndOffset: line.length },
+                line_hash: `${index + 1}|${line.slice(0, 2)}`,
+              })),
             },
             requires_approval: false,
             approval_summary: null,
@@ -515,55 +567,60 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           scenario.value,
         )
       }
-      if (toolId === 'code_editor') {
+      if (toolId === 'stat') {
         const args = payload.arguments as Record<string, unknown> | null
-        const action = args?.action as string
         const filePath = (args?.path as string) ?? 'src/orchestrator.ts'
-        if (action === 'open' || action === 'diff') {
-          return delay(
-            {
-              tool_id: toolId,
-              status: 'ok',
-              summary: `${action} ${filePath}`,
-              evidence: [filePath],
-              data: {
-                path: filePath,
-                content: mockCodeContent(filePath),
-                original: action === 'diff' ? mockCodeContent(filePath) : null,
-                modified: action === 'diff' ? mockCodeContent(filePath) + '\n// modified' : null,
-              },
-              requires_approval: false,
-              approval_summary: null,
-            } as CodeToolExecuteResultDto,
-            scenario.value,
-          )
-        }
         return delay(
           {
             tool_id: toolId,
             status: 'ok',
-            summary: `${action} ${filePath}`,
+            summary: `stat ${filePath}`,
             evidence: [filePath],
-            data: { path: filePath },
+            data: {
+              success: true,
+              error: null,
+              entry: {
+                name: filePath.split(/[\\/]/).pop() ?? filePath,
+                path: filePath,
+                type: 'file',
+                size: mockCodeContent(filePath).length,
+                modified_at: new Date().toISOString(),
+                is_readonly: false,
+                is_hidden: false,
+                link_target: null,
+              },
+            },
             requires_approval: false,
             approval_summary: null,
           } as CodeToolExecuteResultDto,
           scenario.value,
         )
       }
-      if (toolId === 'glob_search' || toolId === 'grep_content') {
+      if (toolId === 'file_search') {
         return delay(
           {
             tool_id: toolId,
             status: 'ok',
             summary: `搜索完成，命中 3 个结果`,
             evidence: ['src/orchestrator.ts', 'src/graph.ts', 'src/types.ts'],
+            // Shape of TinadecTools' file_search response (FileSearch.cs:79): one flat
+            // row per line plus a per-hit-file hash map.
             data: {
-              matches: [
-                { path: 'src/orchestrator.ts', line: 42, content: 'buildTaskGraph' },
-                { path: 'src/graph.ts', line: 1, content: 'export class TaskGraph' },
-                { path: 'src/types.ts', line: 12, content: 'TaskGraphDto' },
+              success: true,
+              error: null,
+              lines: [
+                { filepath: './src/orchestrator.ts', line_number: 42, content: 'buildTaskGraph(nodes)', is_match: true },
+                { filepath: './src/graph.ts', line_number: 1, content: 'export class TaskGraph', is_match: true },
+                { filepath: './src/types.ts', line_number: 11, content: '// graph node shapes', is_match: false },
+                { filepath: './src/types.ts', line_number: 12, content: 'export interface TaskGraphDto', is_match: true },
               ],
+              file_hashes: {
+                './src/orchestrator.ts': 'sha256:1a2b',
+                './src/graph.ts': 'sha256:3c4d',
+                './src/types.ts': 'sha256:5e6f',
+              },
+              truncated: false,
+              total_match_count: 3,
             },
             requires_approval: false,
             approval_summary: null,
@@ -586,25 +643,13 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       )
     },
 
-    // 语义包装器
-    readFile: (cwd: string, filePath: string, options?: { start_line?: number; end_line?: number }) =>
-      api.executeCodeTool('read_file', { cwd, arguments: { path: filePath, ...options } }),
+    // 语义包装器：与 src/api.ts 保持同一套工具 id 和参数键
+    readFile: (cwd: string, filePath: string, options?: { start_row?: number; end_row?: number }) =>
+      api.executeCodeTool('read_file', { cwd, arguments: { filepath: filePath, ...options } }),
     listDirectory: (cwd: string, dirPath: string) =>
-      api.executeCodeTool('list_directory', { cwd, arguments: { path: dirPath } }),
-    globSearch: (cwd: string, pattern: string) =>
-      api.executeCodeTool('glob_search', { cwd, arguments: { pattern } }),
-    grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number }) =>
-      api.executeCodeTool('grep_content', { cwd, arguments: { pattern, ...options } }),
-    applyPatch: (cwd: string, patch: string, approvalId?: string) =>
-      api.executeCodeTool('apply_patch', { cwd, approval_id: approvalId, arguments: { patch } }),
-    codeEditorOpen: (cwd: string, filePath: string) =>
-      api.executeCodeTool('code_editor', { cwd, arguments: { action: 'open', path: filePath } }),
-    codeEditorSave: (cwd: string, filePath: string, content: string, approvalId: string) =>
-      api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'save', path: filePath, content } }),
-    codeEditorDiff: (cwd: string, filePath: string) =>
-      api.executeCodeTool('code_editor', { cwd, arguments: { action: 'diff', path: filePath } }),
-    codeEditorPatch: (cwd: string, filePath: string, patch: string, approvalId: string) =>
-      api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'patch', path: filePath, patch } }),
+      api.executeCodeTool('ls', { cwd, arguments: { path: dirPath } }),
+    grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number; glob?: string; fixed_strings?: boolean }) =>
+      api.executeCodeTool('file_search', { cwd, arguments: { pattern, ...options } }),
     gitDiffCompare: (cwd: string, baseRef: string, headRef: string, paths?: string[]) =>
       api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
     gitLog: (cwd: string, limit?: number, ref?: string) =>

@@ -1,10 +1,11 @@
-import { ref, watch, onUnmounted, type Ref } from 'vue'
+import { computed, ref, watch, onScopeDispose, type Ref } from 'vue'
 import {
   api,
   type EventEnvelope,
   type OrchestrationSnapshotDto,
   type ToolExecutionTimelineItemDto,
 } from '@/api'
+import { subscribeToSessionEvents } from '@/lib/sessionEventBus'
 
 export type AgentRunStatus =
   | 'idle'
@@ -41,6 +42,7 @@ export interface AgentActivity {
 }
 
 export interface ToolCall {
+  runId?: string
   id: string
   toolId: string
   toolName: string
@@ -58,6 +60,8 @@ export interface ToolCall {
 }
 
 export interface ThinkingStep {
+  seq?: number
+  status?: 'running' | 'completed' | 'failed'
   id: string
   type:
     | 'run_started'
@@ -66,6 +70,18 @@ export interface ThinkingStep {
     | 'supervision'
     | 'context_pack'
     | 'step_result'
+    // A tool dispatch that failed or came back with an unknown outcome. It is a
+    // step of its own because it is fed back to the worker as a result — the model
+    // reads it and decides — so it belongs in the visible reasoning trail.
+    | 'tool'
+    // A terminal run failure.
+    | 'run'
+    | 'reasoning'
+    // The coordinator handing a sub-task off (task_dispatch) and pausing for results (task_wait).
+    | 'dispatch'
+    | 'wait'
+    // An agent's plan_update plan. One step per agent instance, replaced in place on each update.
+    | 'plan'
   title: string
   description: string
   timestamp: string
@@ -73,6 +89,21 @@ export interface ThinkingStep {
   severity?: string
   category?: string
   details?: Record<string, unknown>
+}
+
+export interface TurnActivity {
+  runId?: string
+  thinkingSteps?: ThinkingStep[]
+  toolCalls?: ToolCall[]
+  supervisionReview?: SupervisionReview | null
+}
+
+export type SupervisionDecisionOption = 'continue' | 'correct' | 'cancel'
+
+export interface SupervisionReview {
+  runId: string
+  reasons: string[]
+  options: SupervisionDecisionOption[]
 }
 
 export interface AgentState {
@@ -127,6 +158,10 @@ function extractArray(value: unknown, key: string): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
+function extractStringArray(value: unknown, key: string): string[] {
+  return extractArray(value, key).filter((item): item is string => typeof item === 'string')
+}
+
 function agentRoleLabel(agentType: string): string {
   const labels: Record<string, string> = {
     meeting: '会议智能体',
@@ -153,22 +188,77 @@ export function useAgentActivity(
   orchestration?: Ref<OrchestrationSnapshotDto | null>,
 ) {
   const activity = ref<AgentActivity>({ ...DEFAULT_ACTIVITY })
+  const supervisionReview = ref<SupervisionReview | null>(null)
   const toolCalls = ref<ToolCall[]>([])
   const thinkingSteps = ref<ThinkingStep[]>([])
   const agentStates = ref<Record<string, AgentState>>({})
   const progressEvents = ref<ProgressEvent[]>([])
 
-  let eventSource: EventSource | null = null
+  let unsubscribe: (() => void) | null = null
   let cleanupTimer: ReturnType<typeof setTimeout> | null = null
   let lastRunStartedAt: string | null = null
+  // Reactive on purpose: `turnActivities` is a computed over these two stores, and a
+  // plain object/Map mutates without notifying anyone — the computed kept serving the
+  // snapshot from its first evaluation, so a delayed event for an earlier run was
+  // saved but never rendered. `ref` gives both the object and the Map deep reactivity.
+  const turns = ref<Record<string, {
+    activity: AgentActivity
+    thinkingSteps: ThinkingStep[]
+    toolCalls: ToolCall[]
+    agentStates: Record<string, AgentState>
+    progressEvents: ProgressEvent[]
+  }>>({})
+  let generation = 0
+  const toolReads = new Map<string, number>()
+  const supervisionReviews = ref(new Map<string, SupervisionReview>())
+  const seenEvents = new Set<string>()
+  let latestSelectedSequence = 0
+
+  function saveTurn() {
+    const id = activity.value.runId
+    if (!id) return
+    turns.value[id] = {
+      activity: { ...activity.value }, thinkingSteps: thinkingSteps.value,
+      toolCalls: toolCalls.value, agentStates: agentStates.value, progressEvents: progressEvents.value,
+    }
+  }
+
+  function selectTurn(id: string) {
+    if (cleanupTimer) clearTimeout(cleanupTimer)
+    cleanupTimer = null
+    const saved = turns.value[id]
+    activity.value = saved ? { ...saved.activity } : { ...DEFAULT_ACTIVITY, runId: id }
+    thinkingSteps.value = saved?.thinkingSteps ?? []
+    toolCalls.value = saved?.toolCalls ?? []
+    supervisionReview.value = supervisionReviews.value.get(id) ?? null
+    agentStates.value = saved?.agentStates ?? {}
+    progressEvents.value = saved?.progressEvents ?? []
+    lastRunStartedAt = activity.value.runStartedAt
+  }
+
+  const turnActivities = computed<Record<string, TurnActivity>>(() => Object.fromEntries(
+    Object.entries(turns.value).map(([runId, turn]) => [runId, {
+      runId, thinkingSteps: turn.thinkingSteps, toolCalls: turn.toolCalls,
+      supervisionReview: supervisionReviews.value.get(runId) ?? null,
+    }]),
+  ))
 
   function reset() {
+    generation++
+    turns.value = {}
+    // A review belongs to the session that raised it: leaving the map behind would
+    // resurrect a stale decision gate if the same run id ever reappeared here.
+    supervisionReviews.value.clear()
+    toolReads.clear()
+    seenEvents.clear()
+    latestSelectedSequence = 0
     activity.value = { ...DEFAULT_ACTIVITY }
     toolCalls.value = []
     thinkingSteps.value = []
     agentStates.value = {}
     progressEvents.value = []
     lastRunStartedAt = null
+    supervisionReview.value = null
     if (cleanupTimer) {
       clearTimeout(cleanupTimer)
       cleanupTimer = null
@@ -213,7 +303,9 @@ export function useAgentActivity(
   }
 
   function processRunStarted(event: EventEnvelope) {
-    const runId = extractString(event.payload, 'id')
+    const runId = event.run_id ?? extractString(event.payload, 'run_id') ?? activity.value.runId
+    // Admission and queue receipts describe the same run, not extra thinking steps.
+    if (activity.value.runStartedAt) return
     const summary = extractString(event.payload, 'summary')
     lastRunStartedAt = event.ts
     activity.value = {
@@ -243,7 +335,11 @@ export function useAgentActivity(
   function processTaskGraphCreated(event: EventEnvelope) {
     const title = extractString(event.payload, 'title')
     const nodes = extractArray(event.payload, 'nodes')
-    const nodeCount = nodes.length
+    // Core's durable task_graph.created contract carries task_count/task_keys;
+    // older preview fixtures carried an inline nodes array. Prefer the explicit
+    // count so a real one-task run never renders as "0 个任务节点" merely because
+    // the event intentionally avoids duplicating the whole graph.
+    const nodeCount = extractNumber(event.payload, 'task_count') ?? nodes.length
     activity.value = {
       ...activity.value,
       status: 'thinking',
@@ -337,9 +433,17 @@ export function useAgentActivity(
   }
 
   function processSupervision(event: EventEnvelope) {
-    const severity = extractString(event.payload, 'severity') ?? 'info'
-    const category = extractString(event.payload, 'category') ?? ''
-    const summary = extractString(event.payload, 'summary') ?? ''
+    // Core's supervision payload carries the decision and its reasons; the
+    // severity/category/summary shape only ever existed in preview fixtures. Reading
+    // just the fixture fields rendered every real review as a blank
+    // "监督发现 · info" row — the user could see a review happened, never what it
+    // decided or why, and the escalation gate below is what needs the reasons.
+    const decision = extractString(event.payload, 'decision') ?? ''
+    const reasons = extractStringArray(event.payload, 'reasons')
+    const severity = extractString(event.payload, 'severity')
+      ?? (decision === 'escalate' || decision === 'revise' ? 'warning' : 'info')
+    const category = extractString(event.payload, 'category') ?? decision
+    const summary = extractString(event.payload, 'summary') ?? reasons.join('；')
     const recommendation = extractString(event.payload, 'recommendation') ?? ''
 
     thinkingSteps.value = [
@@ -347,16 +451,42 @@ export function useAgentActivity(
       {
         id: `${event.seq}-supervision`,
         type: 'supervision',
-        title: `监督发现 · ${severity}`,
+        title: decision ? `监督发现 · ${decision}` : `监督发现 · ${severity}`,
         description: summary || recommendation || category,
         timestamp: event.ts,
         durationMs: null,
         severity,
         category,
-        details: { recommendation },
+        details: { recommendation, decision, reasons },
       },
     ]
     addProgressEvent(event.seq, event.type, 'shield', `监督检查：${category || severity}`)
+  }
+
+  function processSupervisionUserReview(event: EventEnvelope) {
+    const runId = event.run_id ?? extractString(event.payload, 'run_id') ?? activity.value.runId
+    if (!runId) return
+    const reasons = extractStringArray(event.payload, 'reasons')
+    const options = extractStringArray(event.payload, 'options')
+    // Keep only the options this UI can act on; an unrecognised vocabulary must not
+    // produce a button whose click has no defined meaning. Nothing recognised means
+    // the payload predates the vocabulary, so fall back to the documented trio.
+    const recognised = options.filter((option): option is SupervisionDecisionOption =>
+      option === 'continue' || option === 'correct' || option === 'cancel')
+    supervisionReviews.value.set(runId, {
+      runId,
+      reasons,
+      options: recognised.length > 0 ? recognised : ['continue', 'correct', 'cancel'],
+    })
+    if (activity.value.runId === runId) supervisionReview.value = supervisionReviews.value.get(runId) ?? null
+  }
+
+  function clearSupervisionReview(runId: string) {
+    if (!runId) return
+    // Overwrite instead of delete: the entry is the "this gate was answered" marker,
+    // and a live binding to it must re-evaluate rather than vanish from the map.
+    supervisionReviews.value.set(runId, { runId, reasons: [], options: [] })
+    if (activity.value.runId === runId) supervisionReview.value = supervisionReviews.value.get(runId) ?? null
   }
 
   function processContextPack(event: EventEnvelope) {
@@ -383,8 +513,12 @@ export function useAgentActivity(
   }
 
   function processApprovalRequested(event: EventEnvelope) {
-    const approvalId = extractString(event.payload, 'id')
-    const summary = extractString(event.payload, 'summary') ?? '需要审批'
+    // Core publishes the id under approval_id; older shapes used id. Reading only
+    // 'id' meant the pending call was never marked, so the chat could not offer the
+    // approve/reject buttons it already had markup for.
+    const approvalId = extractString(event.payload, 'approval_id') ?? extractString(event.payload, 'id')
+    const toolId = extractString(event.payload, 'tool_id')
+    const summary = extractString(event.payload, 'summary') ?? (toolId ? `工具 ${toolId} 需要审批` : '需要审批')
 
     activity.value = {
       ...activity.value,
@@ -394,17 +528,19 @@ export function useAgentActivity(
 
     if (approvalId) {
       toolCalls.value = toolCalls.value.map((call) =>
-        call.approvalId === approvalId
-          ? { ...call, status: 'waiting_approval' as ToolCallStatus }
+        call.approvalId === approvalId || (toolId != null && call.toolId === toolId)
+          ? { ...call, status: 'waiting_approval' as ToolCallStatus, approvalId }
           : call,
       )
     }
+
+    // handleSessionEvent refreshes the authoritative timeline once after projection.
 
     addProgressEvent(event.seq, event.type, 'alert-circle', `等待审批：${summary}`)
   }
 
   function processApprovalDecided(event: EventEnvelope, decision: 'approved' | 'rejected') {
-    const approvalId = extractString(event.payload, 'id')
+    const approvalId = extractString(event.payload, 'approval_id') ?? extractString(event.payload, 'id')
 
     activity.value = {
       ...activity.value,
@@ -429,6 +565,258 @@ export function useAgentActivity(
       decision === 'approved' ? 'check' : 'x',
       decision === 'approved' ? '审批已通过' : '审批已拒绝',
     )
+  }
+
+  /**
+   * One delegated gate decided (delegate-* permission modes). Only a progress note: the call
+   * itself moves on approval.decided, which follows once every gate has approved (or one refused).
+   * An escalation hands the approval back, so the pending card stays the user's to decide.
+   */
+  function processGateDecided(event: EventEnvelope) {
+    const decision = extractString(event.payload, 'decision')
+    const rationale = extractString(event.payload, 'rationale')
+    const who = extractString(event.payload, 'gate_kind') === 'conversation_identity' ? '对话身份' : '审查员'
+    const text = decision === 'approved' ? `${who}已批准` : decision === 'rejected' ? `${who}已驳回` : `${who}交还给你决定`
+    addProgressEvent(
+      event.seq,
+      event.type,
+      decision === 'approved' ? 'check' : decision === 'rejected' ? 'x' : 'alert-circle',
+      rationale ? `${text}：${rationale}` : text,
+    )
+  }
+
+  /**
+   * A tool dispatch outcome. Every one of these used to be unsubscribed, so the
+   * timeline only ever moved when the whole run finished — a call could fail, be
+   * fed back to the model, and be retried with nothing shown in between.
+   */
+  function processToolExecution(event: EventEnvelope) {
+    const toolId = extractString(event.payload, 'tool_id') ?? ''
+    const category = extractString(event.payload, 'error_category')
+    const embeddedFailure = event.payload?.['tool_success'] === false
+
+    if (event.type === 'tool.execution.requested') {
+      addProgressEvent(event.seq, event.type, 'wrench', `调用工具 ${toolId}`)
+    } else if (event.type === 'tool.execution.completed') {
+      addProgressEvent(
+        event.seq,
+        event.type,
+        embeddedFailure ? 'alert-triangle' : 'check',
+        embeddedFailure ? `工具 ${toolId} 返回失败结果` : `工具 ${toolId} 完成`,
+      )
+    } else {
+      // failed / outcome_unknown: name the category, because "the tool failed" gives
+      // a reader nothing to act on and the category is what the model acted on.
+      const label = category ? `${toolId} 失败（${category}）` : `${toolId} 失败`
+      thinkingSteps.value = [
+        ...thinkingSteps.value,
+        {
+          id: `${event.seq}-tool-${event.type}`,
+          type: 'tool',
+          title: event.type === 'tool.execution.outcome_unknown' ? '工具结果未知' : '工具执行失败',
+          description: label,
+          timestamp: event.ts,
+          durationMs: null,
+          severity: 'warning',
+          details: { toolId, category },
+        },
+      ]
+      addProgressEvent(event.seq, event.type, 'alert-triangle', label)
+    }
+
+  }
+
+  /** A terminal run failure — previously invisible, so a failed run just stopped. */
+  function processRunFailed(event: EventEnvelope) {
+    const category = extractString(event.payload, 'error_category') ?? ''
+    const message = extractString(event.payload, 'message') ?? extractString(event.payload, 'summary') ?? ''
+
+    activity.value = {
+      ...activity.value,
+      status: 'error',
+      lastUpdated: event.ts,
+    }
+    thinkingSteps.value = [
+      ...thinkingSteps.value,
+      {
+        id: `${event.seq}-run-failed`,
+        type: 'run',
+        title: '运行失败',
+        description: [category, message].filter(Boolean).join(' · ') || '运行失败',
+        timestamp: event.ts,
+        durationMs: null,
+        severity: 'error',
+        details: { category },
+      },
+    ]
+    addProgressEvent(event.seq, event.type, 'x', `运行失败${category ? `：${category}` : ''}`)
+  }
+
+  function processMeetingFallback(event: EventEnvelope) {
+    const category = extractString(event.payload, 'error_category') ?? ''
+    thinkingSteps.value = [
+      ...thinkingSteps.value,
+      {
+        id: `${event.seq}-meeting-fallback`,
+        type: 'run',
+        title: '最终汇总已降级',
+        description: category
+          ? `汇总模型不可用（${category}），已直接返回持久化的执行证据。`
+          : '汇总模型不可用，已直接返回持久化的执行证据。',
+        timestamp: event.ts,
+        durationMs: null,
+        severity: 'warning',
+        category,
+      },
+    ]
+    addProgressEvent(event.seq, event.type, 'alert-triangle', '最终汇总模型不可用，已返回执行证据')
+  }
+
+  /**
+   * Execution-layer instance events: who got the task, who finished or failed, and
+   * where the tool loop stands. Insufficient on its own to drive the icons, but the
+   * activity line and the progress list are what tell a watching user that work is
+   * still moving.
+   */
+  function processWorkerEvent(event: EventEnvelope) {
+    const slug = extractString(event.payload, 'agent_slug') ?? extractString(event.payload, 'worker_agent_id') ?? 'worker'
+    const reason = extractString(event.payload, 'reason')
+    const category = extractString(event.payload, 'error_category')
+    const message = extractString(event.payload, 'summary') ?? extractString(event.payload, 'message') ?? ''
+
+    activity.value = {
+      ...activity.value,
+      status: event.type === 'worker.failed' ? 'error' : 'working',
+      activeAgentName: slug,
+      lastUpdated: event.ts,
+    }
+
+    if (event.type === 'worker.assigned') {
+      // Core names each assignment with a run-scoped handle (search#2): the only way to tell
+      // two instances of one role apart in the list.
+      const who = extractString(event.payload, 'handle') ?? slug
+      const why = reason === 'coordinator_assigned' ? '协调者点名' : reason
+      addProgressEvent(event.seq, event.type, 'user-check', `${who} 接单${why ? `（${why}）` : ''}`)
+      return
+    }
+    if (event.type === 'worker.tool_failed') {
+      // A fed-back tool failure is not a dead end any more: it is an iteration.
+      const label = category ? `${slug} 的调用失败（${category}），已交回模型` : `${slug} 的调用失败，已交回模型`
+      addProgressEvent(event.seq, event.type, 'alert-triangle', label)
+      return
+    }
+    if (event.type === 'worker.budget_exhausted') {
+      addProgressEvent(event.seq, event.type, 'hourglass', `${slug} 收敛收尾：${message || category || '预算耗尽'}`)
+      return
+    }
+    if (event.type === 'worker.blocked') {
+      updateAgentState(slug, slug, 'execution', slug, 'waiting')
+      thinkingSteps.value = [
+        ...thinkingSteps.value,
+        {
+          id: `${event.seq}-worker-blocked`,
+          type: 'step_result',
+          title: `${slug} 未完成任务`,
+          description: message || '执行者报告任务受阻，系统将重新规划或请求用户处理。',
+          timestamp: event.ts,
+          durationMs: null,
+          severity: 'warning',
+          category: 'blocked',
+          details: { slug },
+        },
+      ]
+      addProgressEvent(event.seq, event.type, 'alert-triangle', message || `${slug} 的任务受阻`)
+      return
+    }
+    addProgressEvent(
+      event.seq,
+      event.type,
+      event.type === 'worker.failed' ? 'x' : 'check-circle',
+      message || (event.type === 'worker.failed' ? `${slug} 失败` : `${slug} 完成`),
+    )
+  }
+
+  /**
+   * The coordinator's dispatch and wait moves. They are reasoning-trail steps, not just
+   * progress lines: they are the only visible answer to "why did search#2 start" and
+   * "why has the coordinator gone quiet".
+   */
+  function processCoordinatorEvent(event: EventEnvelope) {
+    const payload = event.payload
+    const awaited = extractArray(payload, 'awaited')
+      .map((item) => extractString(item, 'handle') ?? extractString(item, 'title') ?? extractString(item, 'task_key'))
+      .filter((item): item is string => Boolean(item))
+    const waiter = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? '协调者'
+    let step: Pick<ThinkingStep, 'type' | 'title' | 'description'> & { severity?: string }
+    let icon: string
+    switch (event.type) {
+      case 'task.dispatched': {
+        const agent = extractString(payload, 'agent') ?? '执行者'
+        const followUp = extractString(payload, 'follow_up_of')
+        const by = extractString(payload, 'dispatched_by') ?? '协调者'
+        step = {
+          type: 'dispatch',
+          title: `${by} 派发给 ${agent}`,
+          description: (extractString(payload, 'title') ?? '') + (followUp ? `（接续 ${followUp}）` : ''),
+        }
+        icon = 'send'
+        break
+      }
+      case 'task.dispatch_rejected':
+        step = {
+          type: 'dispatch',
+          title: '子任务派发被拒绝',
+          description: extractString(payload, 'code') ?? '',
+          severity: 'warning',
+        }
+        icon = 'alert-triangle'
+        break
+      case 'task.wait_started':
+        step = { type: 'wait', title: `${waiter} 等待子任务结果`, description: awaited.join('、') }
+        icon = 'hourglass'
+        break
+      default:
+        step = { type: 'wait', title: `${waiter} 收到子任务结果`, description: awaited.join('、') }
+        icon = 'check-circle'
+    }
+    activity.value = { ...activity.value, lastUpdated: event.ts }
+    thinkingSteps.value = [
+      ...thinkingSteps.value,
+      { id: `${event.seq}-${event.type}`, timestamp: event.ts, durationMs: null, ...step },
+    ]
+    addProgressEvent(event.seq, event.type, icon, step.description ? `${step.title}：${step.description}` : step.title)
+  }
+
+  /**
+   * An agent's working plan. Every update carries the whole plan, so the step is keyed by
+   * the task and replaced in place: the trail shows the plan's current state, not a pile
+   * of stale copies.
+   */
+  function processPlanUpdated(event: EventEnvelope) {
+    const payload = event.payload
+    const taskId = extractString(payload, 'task_id') ?? extractString(payload, 'task_key') ?? String(event.seq)
+    const who = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? '智能体'
+    const steps = extractArray(payload, 'steps')
+      .map((item) => ({ step: extractString(item, 'step') ?? '', status: extractString(item, 'status') ?? 'pending' }))
+      .filter((item) => item.step)
+    const done = steps.filter((item) => item.status === 'completed').length
+    const marker: Record<string, string> = { completed: '✓', in_progress: '→', pending: '○' }
+    const id = `plan-${taskId}`
+    const step: ThinkingStep = {
+      id,
+      type: 'plan',
+      title: `${who} 的计划（${done}/${steps.length}）`,
+      description: steps.map((item) => `${marker[item.status] ?? '○'} ${item.step}`).join('\n'),
+      timestamp: event.ts,
+      durationMs: null,
+      details: { steps, explanation: extractString(payload, 'explanation') },
+    }
+    thinkingSteps.value = thinkingSteps.value.some((item) => item.id === id)
+      ? thinkingSteps.value.map((item) => item.id === id ? step : item)
+      : [...thinkingSteps.value, step]
+    activity.value = { ...activity.value, lastUpdated: event.ts }
+    const current = steps.find((item) => item.status === 'in_progress')
+    addProgressEvent(event.seq, event.type, 'list-checks', current ? `${who}：${current.step}` : `${who} 更新了计划`)
   }
 
   function processShellApprovalRequired(event: EventEnvelope) {
@@ -489,7 +877,38 @@ export function useAgentActivity(
 
   function processEvent(event: EventEnvelope) {
     switch (event.type) {
+      case 'model.output.started':
+      case 'model.output.delta':
+      case 'model.output.completed':
+      case 'model.output.failed':
+      case 'model.output.interrupted': {
+        const id = extractString(event.payload, 'response_id')
+        if (!id) break
+        const existing = thinkingSteps.value.find((step) => step.id === id)
+        const delta = extractString(event.payload, 'delta') ?? ''
+        // A thought the user cut off ended; it did not fail.
+        const status = event.type === 'model.output.completed' || event.type === 'model.output.interrupted' ? 'completed'
+          : event.type === 'model.output.failed' ? 'failed' : 'running'
+        const step: ThinkingStep = existing ? { ...existing, status } : {
+          // The run handle (search#2) names the instance; parallel workers of one role
+          // share agent_name and would otherwise render as identical "search" thoughts.
+          id, type: 'reasoning', title: extractString(event.payload, 'handle') ?? extractString(event.payload, 'agent_name') ?? 'Model',
+          description: '', timestamp: event.ts, seq: event.seq, durationMs: null, status,
+        }
+        // Only the provider's explicit reasoning channel is a reasoning text. Internal
+        // planning JSON, prompts and tool arguments never become a "thought" here.
+        if (event.payload?.channel === 'reasoning') step.description += delta
+        thinkingSteps.value = existing
+          ? thinkingSteps.value.map((item) => item.id === id ? step : item)
+          : [...thinkingSteps.value, step]
+        break
+      }
+      // Lifecycle. The real Core names come first; run.started is kept because the
+      // envelope mapper still produces it for older frames.
       case 'run.started':
+      case 'task.accepted':
+      case 'interaction.created':
+      case 'run.queued':
         processRunStarted(event)
         break
       case 'task_graph.created':
@@ -498,14 +917,56 @@ export function useAgentActivity(
       case 'task.assigned':
         processTaskAssigned(event)
         break
+      case 'worker.assigned':
+      case 'worker.completed':
+      case 'worker.blocked':
+      case 'worker.failed':
+      case 'worker.tool_failed':
+      case 'worker.budget_exhausted':
+        processWorkerEvent(event)
+        break
       case 'step.result.created':
         processStepResult(event)
         break
+      case 'worker.interrupted':
+      case 'run.interrupted':
+        addProgressEvent(event.seq, event.type, 'hand', event.type === 'worker.interrupted'
+          ? `${extractString(event.payload, 'handle') ?? '执行者'} 被打断，按新的指示继续`
+          : '运行被打断，正在按新的指示重做当前一步')
+        break
+      case 'task.dispatched':
+      case 'task.dispatch_rejected':
+      case 'task.wait_started':
+      case 'task.wait_resolved':
+        processCoordinatorEvent(event)
+        break
+      case 'plan.updated':
+        processPlanUpdated(event)
+        break
       case 'supervision.checked':
+      case 'supervision.requested':
+      case 'supervision.completed':
+      case 'supervision.skipped':
         processSupervision(event)
         break
+      case 'supervision.user_review.requested':
+        processSupervisionUserReview(event)
+        break
+      case 'supervision.user_decision':
+      case 'context.goal_adjusted':
+        clearSupervisionReview(event.run_id ?? extractString(event.payload, 'run_id') ?? activity.value.runId ?? '')
+        break
       case 'context.pack.created':
+      case 'context.packed':
         processContextPack(event)
+        break
+      // Tool outcomes: subscribed to but never handled before, so the timeline only
+      // moved at the end of the run.
+      case 'tool.execution.requested':
+      case 'tool.execution.completed':
+      case 'tool.execution.failed':
+      case 'tool.execution.outcome_unknown':
+        processToolExecution(event)
         break
       case 'approval.requested':
       case 'tool.shell.approval_required':
@@ -521,6 +982,23 @@ export function useAgentActivity(
       case 'approval.rejected':
         processApprovalDecided(event, 'rejected')
         break
+      case 'approval.gate_decided':
+        processGateDecided(event)
+        break
+      case 'approval.decided':
+      case 'governance.permission_decided': {
+        // Core's real names for a decision; the outcome vocabulary differs between
+        // the approval layer (approved/rejected) and the PDP (allowed/denied).
+        const outcome = extractString(event.payload, 'outcome') ?? extractString(event.payload, 'decision') ?? ''
+        processApprovalDecided(event, outcome === 'approved' || outcome === 'allowed' ? 'approved' : 'rejected')
+        break
+      }
+      case 'run.failed':
+        processRunFailed(event)
+        break
+      case 'meeting.response_fallback':
+        processMeetingFallback(event)
+        break
       case 'message.created':
         processMessageCreated(event)
         break
@@ -532,17 +1010,24 @@ export function useAgentActivity(
   function scheduleCleanup() {
     if (cleanupTimer) clearTimeout(cleanupTimer)
     cleanupTimer = setTimeout(() => {
-      activity.value = { ...DEFAULT_ACTIVITY }
+      activity.value = { ...activity.value, status: 'idle' }
       cleanupTimer = null
     }, 30000)
   }
 
   async function refreshToolExecutions() {
-    if (!sessionId.value) return
+    const session = sessionId.value
+    const runId = activity.value.runId
+    if (!session || !runId) return
+    const epoch = generation
+    const read = (toolReads.get(runId) ?? 0) + 1
+    toolReads.set(runId, read)
     try {
-      const items = await api.listToolExecutions(sessionId.value, { limit: 20 })
-      toolCalls.value = items
+      const items = await api.listToolExecutions(session, { run_id: runId, limit: 200 })
+      if (epoch !== generation || session !== sessionId.value || toolReads.get(runId) !== read) return
+      const calls = items.filter((item) => item.run_id === runId)
         .map((item: ToolExecutionTimelineItemDto): ToolCall => ({
+          runId,
           id: item.id,
           toolId: item.tool_id,
           toolName: item.tool_display_name || item.tool_id,
@@ -559,6 +1044,10 @@ export function useAgentActivity(
           risk: item.risk,
         }))
         .sort((a, b) => a.seq - b.seq)
+      if (activity.value.runId === runId) {
+        toolCalls.value = calls
+        saveTurn()
+      } else if (turns.value[runId]) turns.value[runId].toolCalls = calls
     } catch {
       // ignore fetch errors
     }
@@ -584,6 +1073,14 @@ export function useAgentActivity(
 
   function enrichFromOrchestration(snapshot: OrchestrationSnapshotDto | null) {
     if (!snapshot) return
+    if (snapshot.run?.session_id && snapshot.run.session_id !== sessionId.value) return
+
+    if (snapshot.run && snapshot.run.id !== activity.value.runId) {
+      // A late snapshot for an already seen run must not replace the current turn.
+      if (turns.value[snapshot.run.id]) return
+      saveTurn()
+      selectTurn(snapshot.run.id)
+    }
 
     if (snapshot.run) {
       const isComplete =
@@ -635,29 +1132,52 @@ export function useAgentActivity(
         existing?.currentTask ?? null,
       )
     }
+    saveTurn()
+  }
+
+  function handleSessionEvent(event: EventEnvelope) {
+    const runId = event.run_id ?? extractString(event.payload, 'run_id')
+    const key = `${runId}:${event.seq}:${event.type}`
+    if (seenEvents.has(key)) return
+    seenEvents.add(key)
+    const previous = activity.value.runId
+    const known = runId ? !!turns.value[runId] : false
+    const historical = event.seq < latestSelectedSequence
+    if (runId && previous !== runId) {
+      saveTurn()
+      selectTurn(runId)
+    }
+    processEvent(event)
+    if (['task.cancelled', 'run.failed', 'user.response'].includes(event.type)) {
+      thinkingSteps.value = thinkingSteps.value.map((step) => step.status === 'running'
+        ? { ...step, status: event.type === 'user.response' ? 'completed' : 'failed' } : step)
+    }
+    thinkingSteps.value = thinkingSteps.value.map((step) => step.seq == null ? { ...step, seq: event.seq } : step)
+    saveTurn()
+    if (
+      event.type.startsWith('tool.') ||
+      event.type.startsWith('approval.') ||
+      event.type === 'governance.permission_decided' ||
+      event.type.startsWith('step.') ||
+      event.type.startsWith('task')
+    ) {
+      void refreshToolExecutions()
+    }
+    if ((known || historical) && previous && previous !== runId) selectTurn(previous)
+    else latestSelectedSequence = Math.max(latestSelectedSequence, event.seq)
   }
 
   function connect() {
     disconnect()
     if (!sessionId.value) return
-    eventSource = api.connectEvents(sessionId.value, (event) => {
-      processEvent(event)
-      if (
-        event.type.startsWith('tool.') ||
-        event.type.startsWith('approval.') ||
-        event.type.startsWith('step.') ||
-        event.type.startsWith('task')
-      ) {
-        void refreshToolExecutions()
-      }
-    })
+    // The window's one session stream is owned by sessionEventBus; scoping the
+    // subscription is what keeps this view on the session it was built for.
+    unsubscribe = subscribeToSessionEvents(handleSessionEvent, { scope: sessionId })
   }
 
   function disconnect() {
-    if (eventSource) {
-      eventSource.close()
-      eventSource = null
-    }
+    unsubscribe?.()
+    unsubscribe = null
   }
 
   watch(
@@ -679,7 +1199,12 @@ export function useAgentActivity(
     { immediate: true, deep: true },
   )
 
-  onUnmounted(() => {
+  // onScopeDispose, not onUnmounted: the subscription is now into a window-wide bus, so
+  // a view that is torn down outside a component (an effect scope, a detached panel that
+  // is closed and recreated) would otherwise leave its handler registered and keep the
+  // connection alive for a panel that no longer exists.
+  onScopeDispose(() => {
+    generation++
     disconnect()
     if (cleanupTimer) clearTimeout(cleanupTimer)
   })
@@ -688,6 +1213,8 @@ export function useAgentActivity(
     activity,
     toolCalls,
     thinkingSteps,
+    supervisionReview,
+    turnActivities,
     agentStates,
     progressEvents,
     reset,

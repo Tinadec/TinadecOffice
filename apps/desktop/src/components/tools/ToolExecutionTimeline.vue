@@ -5,18 +5,12 @@ import {
   ArrowUpWideNarrow,
   CheckCircle2,
   Clock,
-  FileCode2,
-  FileText,
-  Folder,
-  GitBranch,
   ListFilter,
-  Search,
   Shield,
-  Terminal,
-  Wrench,
   XCircle
 } from '@lucide/vue'
 import type { ToolExecutionTimelineItemDto } from '@/api'
+import { toolIconOf } from '@/lib/toolPresentation'
 import ToolInvocationCard from './ToolInvocationCard.vue'
 
 const props = defineProps<{
@@ -42,16 +36,6 @@ const filterOptions: Array<{ key: StatusFilter; label: string; icon: typeof List
   { key: 'approval', label: 'Approval', icon: Shield },
   { key: 'running', label: 'Running', icon: Clock }
 ]
-
-function toolIcon(toolId: string) {
-  if (toolId === 'read_file') return FileText
-  if (toolId === 'list_directory') return Folder
-  if (toolId === 'glob_search' || toolId === 'grep_content') return Search
-  if (toolId === 'apply_patch' || toolId === 'code_editor') return FileCode2
-  if (toolId === 'git_worktree_manager' || toolId.startsWith('git_')) return GitBranch
-  if (toolId === 'sandbox_exec') return Terminal
-  return Wrench
-}
 
 function sourceClass(source: string) {
   if (source === 'core') return 'source-core'
@@ -209,7 +193,7 @@ function onViewDetails(exec: ToolExecutionTimelineItemDto) {
         <div class="tool-timeline-content" @click="toggleExpanded(execution.id)">
           <div class="tool-timeline-summary">
             <div class="tool-timeline-icon">
-              <component :is="toolIcon(execution.tool_id)" :size="13" />
+              <component :is="toolIconOf(execution.tool_id)" :size="13" />
             </div>
             <div class="tool-timeline-info">
               <div class="tool-timeline-title-row">

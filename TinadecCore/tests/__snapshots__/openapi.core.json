@@ -700,6 +700,12 @@
             },
             "type": "array"
           },
+          "prompt_pipeline_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "resource_key": {
             "type": [
               "null",
@@ -1053,8 +1059,189 @@
               "null",
               "string"
             ]
+          },
+          "scope": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
+        "type": "object"
+      },
+      "ApprovalGateDto": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decider_agent": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "evidence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "gate_index": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "gate_kind": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gate_index",
+          "gate_kind",
+          "status",
+          "decider_agent",
+          "reason",
+          "evidence",
+          "created_at",
+          "decided_at"
+        ],
+        "type": "object"
+      },
+      "ApprovalGatesDto": {
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalGateDto"
+            },
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "run_id",
+          "status",
+          "gates"
+        ],
+        "type": "object"
+      },
+      "ApprovalRuleCreateRequest": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "tool_id"
+        ],
+        "type": "object"
+      },
+      "ApprovalRuleDto": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by_principal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "use_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "tool_id",
+          "pattern",
+          "session_id",
+          "created_by_principal_id",
+          "created_at",
+          "use_count"
+        ],
         "type": "object"
       },
       "CapabilityRuleDto": {
@@ -1136,6 +1323,35 @@
           },
           "run_id": {
             "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CreateMarketSourceRequestDto": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "kind": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "location": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
             "type": [
               "null",
               "string"
@@ -1232,6 +1448,282 @@
         },
         "type": "object"
       },
+      "EnvironmentDto": {
+        "properties": {
+          "capacity": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "connection": {
+            "$ref": "#/components/schemas/JsonElement"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "free_slots": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "holders": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentHolderDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "kind",
+          "display_name",
+          "description",
+          "connection",
+          "capacity",
+          "free_slots",
+          "status",
+          "holders",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "EnvironmentHolderDto": {
+        "properties": {
+          "lease_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "slot": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "slot",
+          "lease_id",
+          "session_id",
+          "run_id",
+          "task_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisterRequest": {
+        "properties": {
+          "capacity": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "connection": {},
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "EnvironmentUpdateRequest": {
+        "properties": {
+          "capacity": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "connection": {},
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EvidenceHitDto": {
+        "properties": {
+          "author": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "evidence_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "matched_by": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "score": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?(?:[eE][\u002B-]?\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ]
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "kind",
+          "title",
+          "author",
+          "run_id",
+          "task_id",
+          "snippet",
+          "score",
+          "matched_by",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "EvidenceRecallDto": {
+        "properties": {
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceHitDto"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "note",
+          "hits"
+        ],
+        "type": "object"
+      },
       "GrantCapabilityRequestDto": {
         "properties": {
           "action": {
@@ -1309,6 +1801,572 @@
         "type": "object"
       },
       "JsonElement": {},
+      "MarketCatalogEntryDto": {
+        "properties": {
+          "catalog_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "homepage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "install_blocker": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "installable": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "manifest_hash": {
+            "type": "string"
+          },
+          "refreshed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "registry_type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "transports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MarketCatalogPageDto": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MarketCatalogEntryDto"
+            },
+            "type": "array"
+          },
+          "total_available": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MarketEnvironmentRequestDto": {
+        "properties": {
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secret": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallProposalDto": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "catalog_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "command": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "environment": {
+            "items": {
+              "$ref": "#/components/schemas/MarketEnvironmentRequestDto"
+            },
+            "type": "array"
+          },
+          "expected_file_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "installation_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "replaces_command": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "target_path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallRequestDto": {
+        "properties": {
+          "project_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallationDto": {
+        "properties": {
+          "action_status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "catalog_id": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "install_action_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "uninstall_action_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallationListDto": {
+        "properties": {
+          "installations": {
+            "items": {
+              "$ref": "#/components/schemas/MarketInstallationDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MarketRefreshDto": {
+        "properties": {
+          "fetched_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "pages_fetched": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "refreshed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "refused_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "removed_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "retained_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "truncated_pages": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "MarketSourceDto": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "entry_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "last_refreshed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "location": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MarketSourceListDto": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/MarketSourceDto"
+            },
+            "type": "array"
+          },
+          "supported_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MarketSourceStateRequestDto": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "McpInventoryDto": {
+        "properties": {
+          "config_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dropped_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerDto"
+            },
+            "type": "array"
+          },
+          "source": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "McpServerDto": {
+        "properties": {
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "McpServerToolsDto": {
+        "properties": {
+          "config_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "server": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpServerDto"
+              }
+            ]
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "McpToolDto": {
+        "properties": {
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "input_schema": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "MeetingModelOverrideDto": {
         "properties": {
           "model": {
@@ -1319,6 +2377,51 @@
           },
           "provider_instance_id": {
             "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MessageAttachmentDto": {
+        "properties": {
+          "bound_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "content_length": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "session_id": {
             "type": "string"
           }
         },
@@ -1339,6 +2442,173 @@
             ]
           },
           "target_project_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ModelInvocationDto": {
+        "properties": {
+          "agent_definition_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "agent_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "agent_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "attempt": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "call_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "error_category": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "fallback_position": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "input_tokens": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "output_tokens": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "provider_instance_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "route_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "route_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "safe_error_message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "strategy_source": {
+            "type": "string"
+          },
+          "total_tokens": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "turn_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ModelInvocationPageDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ModelInvocationDto"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
             "type": [
               "null",
               "string"
@@ -1465,6 +2735,512 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "OrganizationDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationMemberDto"
+            },
+            "type": "array"
+          },
+          "members_truncated": {
+            "type": "boolean"
+          },
+          "open_reports": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "rooms": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationRoomDto"
+            },
+            "type": "array"
+          },
+          "rooms_truncated": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "you_participant_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "status",
+          "you_participant_id",
+          "members",
+          "rooms",
+          "open_reports",
+          "members_truncated",
+          "rooms_truncated"
+        ],
+        "type": "object"
+      },
+      "OrganizationMemberDto": {
+        "properties": {
+          "agent_slug": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "parent_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "presence": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "visibility_scope": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "handle",
+          "display_name",
+          "role",
+          "presence",
+          "agent_slug",
+          "parent_id",
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationMemberVisibilityRequest": {
+        "properties": {
+          "visibility_scope": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "visibility_scope"
+        ],
+        "type": "object"
+      },
+      "OrganizationMessageDto": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "report": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationReportDto"
+              }
+            ]
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sender_display_name": {
+            "type": "string"
+          },
+          "sender_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sender_role": {
+            "type": "string"
+          },
+          "sensitivity": {
+            "type": "string"
+          },
+          "sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "room_id",
+          "sender_id",
+          "sender_display_name",
+          "sender_role",
+          "sequence",
+          "kind",
+          "content",
+          "sensitivity",
+          "created_at",
+          "report"
+        ],
+        "type": "object"
+      },
+      "OrganizationMessagePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationMessageDto"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "OrganizationPostRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_message_id": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "mention": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "reply_to_message_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "content",
+          "client_message_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationReportDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "decision",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "OrganizationReportDto": {
+        "properties": {
+          "author_display_name": {
+            "type": "string"
+          },
+          "author_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decided_by_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decision_note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "finding": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "proposed_args_json": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "proposed_verb": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "report_kind": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subject_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "subject_kind": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "subject_state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationSubjectStateDto"
+              }
+            ]
+          },
+          "supersedes_report_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "room_id",
+          "author_id",
+          "author_display_name",
+          "report_kind",
+          "severity",
+          "status",
+          "subject_kind",
+          "subject_id",
+          "proposed_verb",
+          "proposed_args_json",
+          "finding",
+          "evidence",
+          "revision",
+          "created_at",
+          "decided_by_id",
+          "decision_note",
+          "decided_at",
+          "supersedes_report_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationReportPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationReportDto"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "OrganizationRoomDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_member": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "member_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "plan_owner_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "last_sequence",
+          "member_count",
+          "is_member",
+          "plan_owner_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationSubjectStateDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "status",
+          "label"
+        ],
         "type": "object"
       },
       "PermissionDecisionRequestDto": {
@@ -1600,6 +3376,166 @@
         },
         "type": "object"
       },
+      "ProjectOverviewDto": {
+        "properties": {
+          "active_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectOverviewRunDto"
+            },
+            "type": "array"
+          },
+          "held_resources": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectOverviewLeaseDto"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_reports": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectOverviewReportDto"
+            },
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reports_truncated": {
+            "type": "boolean"
+          },
+          "sessions": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "project_id",
+          "name",
+          "sessions",
+          "active_runs",
+          "open_reports",
+          "held_resources",
+          "reports_truncated"
+        ],
+        "type": "object"
+      },
+      "ProjectOverviewLeaseDto": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "lease_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resource_key": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "lease_id",
+          "kind",
+          "resource_key",
+          "purpose",
+          "run_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ProjectOverviewReportDto": {
+        "properties": {
+          "author_display_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finding": {
+            "type": "string"
+          },
+          "report_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "report_kind": {
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "report_id",
+          "author_display_name",
+          "report_kind",
+          "severity",
+          "finding",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ProjectOverviewRunDto": {
+        "properties": {
+          "phase": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "session_id",
+          "status",
+          "phase",
+          "started_at"
+        ],
+        "type": "object"
+      },
       "PublishPolicyVersionRequestDto": {
         "properties": {
           "rules": {
@@ -1659,12 +3595,1552 @@
         },
         "type": "object"
       },
+      "SessionTopologyDto": {
+        "properties": {
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "leases": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyLeaseDto"
+            },
+            "type": "array"
+          },
+          "leases_truncated": {
+            "type": "boolean"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyMemberDto"
+            },
+            "type": "array"
+          },
+          "members_truncated": {
+            "type": "boolean"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyRunDto"
+            },
+            "type": "array"
+          },
+          "runs_truncated": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "runs",
+          "leases",
+          "members",
+          "runs_truncated",
+          "leases_truncated",
+          "members_truncated",
+          "generated_at"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyInstanceDto": {
+        "properties": {
+          "agent_slug": {
+            "type": "string"
+          },
+          "depth": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "instance_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "layer": {
+            "type": "string"
+          },
+          "parent_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "instance_id",
+          "agent_slug",
+          "layer",
+          "role",
+          "status",
+          "parent_instance_id",
+          "task_id",
+          "depth"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyLeaseDto": {
+        "properties": {
+          "agent_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "exclusive": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lease_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "resource_key": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "lease_id",
+          "kind",
+          "resource_key",
+          "purpose",
+          "exclusive",
+          "run_id",
+          "task_id",
+          "agent_instance_id"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyMemberDto": {
+        "properties": {
+          "agent_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "agent_slug": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "parent_participant_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "presence": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "participant_id",
+          "handle",
+          "display_name",
+          "role",
+          "presence",
+          "agent_slug",
+          "parent_participant_id",
+          "run_id",
+          "agent_instance_id"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyRunDto": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyInstanceDto"
+            },
+            "type": "array"
+          },
+          "instances_truncated": {
+            "type": "boolean"
+          },
+          "parent_run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "phase": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_kind": {
+            "default": "root",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTopologyTaskDto"
+            },
+            "type": "array"
+          },
+          "tasks_truncated": {
+            "type": "boolean"
+          },
+          "tier": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "started_at",
+          "completed_at",
+          "tier",
+          "phase",
+          "tasks",
+          "instances",
+          "tasks_truncated",
+          "instances_truncated"
+        ],
+        "type": "object"
+      },
+      "SessionTopologyTaskDto": {
+        "properties": {
+          "agent_slug": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dependencies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dispatched_by_task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "handle": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "result_summary": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "task_key": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "worker_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "write_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "task_id",
+          "task_key",
+          "title",
+          "status",
+          "handle",
+          "agent_slug",
+          "worker_instance_id",
+          "dispatched_by_task_id",
+          "dependencies",
+          "write_scope",
+          "result_summary"
+        ],
+        "type": "object"
+      },
       "TerminalStdinRequest": {
         "properties": {
           "data": {
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "TinaChatConversationDto": {
+        "properties": {
+          "accepted_intent_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "allow_cross_workspace": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "membership_status": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "title",
+          "kind",
+          "allow_cross_workspace",
+          "revision",
+          "last_sequence",
+          "accepted_intent_id",
+          "membership_status"
+        ],
+        "type": "object"
+      },
+      "TinaChatCreateConversationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "allow_cross_workspace": {
+            "default": false,
+            "type": "boolean"
+          },
+          "client_request_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "default": "group",
+            "type": "string"
+          },
+          "participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "title",
+          "participant_ids"
+        ],
+        "type": "object"
+      },
+      "TinaChatExecuteIntentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "actor_id",
+          "mode_version_id"
+        ],
+        "type": "object"
+      },
+      "TinaChatExecutionDto": {
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "intent_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "intent_id",
+          "participant_id",
+          "session_id",
+          "run_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "TinaChatGenerateIntentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "audience_participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "client_request_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actor_id",
+          "client_request_id",
+          "expected_revision",
+          "source_message_ids",
+          "audience_participant_ids"
+        ],
+        "type": "object"
+      },
+      "TinaChatInboxItem": {
+        "properties": {
+          "acknowledged": {
+            "type": "boolean"
+          },
+          "message": {
+            "$ref": "#/components/schemas/TinaChatMessageDto"
+          }
+        },
+        "required": [
+          "message",
+          "acknowledged"
+        ],
+        "type": "object"
+      },
+      "TinaChatInboxPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatInboxItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "TinaChatIntentContent": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "blocking_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "constraints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "open_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "user_statements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "goal",
+          "user_statements",
+          "constraints",
+          "assumptions",
+          "open_questions",
+          "blocking_questions",
+          "acceptance_criteria"
+        ],
+        "type": "object"
+      },
+      "TinaChatIntentDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "actor_id",
+          "decision",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "TinaChatIntentDto": {
+        "properties": {
+          "author_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/TinaChatIntentContent"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_by_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "author_id",
+          "revision",
+          "status",
+          "content",
+          "source_message_ids",
+          "decided_by_id",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "TinaChatMemberDto": {
+        "properties": {
+          "joined_after_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "participant_id",
+          "role",
+          "status",
+          "joined_after_sequence"
+        ],
+        "type": "object"
+      },
+      "TinaChatMemberRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "default": "member",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "participant_id",
+          "action",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "TinaChatMessageDto": {
+        "properties": {
+          "allow_derived_sharing": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "reply_to_message_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sender_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sender_kind": {
+            "type": "string"
+          },
+          "sensitivity": {
+            "type": "string"
+          },
+          "sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "sender_id",
+          "sender_kind",
+          "sequence",
+          "kind",
+          "content",
+          "sensitivity",
+          "allow_derived_sharing",
+          "reply_to_message_id",
+          "source_message_ids",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "TinaChatMessagePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatMessageDto"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedAudienceDto": {
+        "properties": {
+          "acknowledged": {
+            "type": "boolean"
+          },
+          "can_read_original": {
+            "type": "boolean"
+          },
+          "can_receive_derived": {
+            "type": "boolean"
+          },
+          "participant": {
+            "$ref": "#/components/schemas/TinaChatParticipantDto"
+          }
+        },
+        "required": [
+          "participant",
+          "can_read_original",
+          "can_receive_derived",
+          "acknowledged"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedConversationDetail": {
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/TinaChatObservedConversationDto"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedMemberDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversation",
+          "members"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedConversationDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_message_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "last_message_preview": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "last_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "member_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "participant_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "workspace_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "workspace_name",
+          "title",
+          "kind",
+          "revision",
+          "last_sequence",
+          "member_count",
+          "participant_names",
+          "last_message_preview",
+          "last_message_at"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedConversationPage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedConversationDto"
+            },
+            "type": "array"
+          },
+          "next_offset": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "total": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "next_offset",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedMemberDto": {
+        "properties": {
+          "joined_after_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "participant": {
+            "$ref": "#/components/schemas/TinaChatParticipantDto"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "participant",
+          "role",
+          "status",
+          "joined_after_sequence"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedMessageDto": {
+        "properties": {
+          "audience": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedAudienceDto"
+            },
+            "type": "array"
+          },
+          "intent_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "intent_status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "message": {
+            "$ref": "#/components/schemas/TinaChatMessageDto"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/TinaChatParticipantDto"
+          }
+        },
+        "required": [
+          "message",
+          "sender",
+          "audience",
+          "intent_id",
+          "intent_status"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedMessagePage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedMessageDto"
+            },
+            "type": "array"
+          },
+          "newest_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "oldest_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "oldest_sequence",
+          "newest_sequence",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "TinaChatObserverAccessDto": {
+        "properties": {
+          "level": {
+            "type": "string"
+          },
+          "workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObserverWorkspaceDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "level",
+          "workspaces"
+        ],
+        "type": "object"
+      },
+      "TinaChatObserverWorkspaceDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "TinaChatParticipantDto": {
+        "properties": {
+          "agent_definition_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "can_interpret_intent": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "discoverable": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "job_title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "receive_human_messages": {
+            "type": "boolean"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "handle",
+          "display_name",
+          "kind",
+          "job_title",
+          "description",
+          "agent_definition_id",
+          "receive_human_messages",
+          "can_interpret_intent",
+          "discoverable",
+          "status",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "TinaChatProposeIntentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "audience_participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "client_request_id": {
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/TinaChatIntentContent"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actor_id",
+          "client_request_id",
+          "expected_revision",
+          "source_message_ids",
+          "audience_participant_ids",
+          "content"
+        ],
+        "type": "object"
+      },
+      "TinaChatRegisterParticipantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "can_interpret_intent": {
+            "default": false,
+            "type": "boolean"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "discoverable": {
+            "default": true,
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "job_title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "default": "agent",
+            "type": "string"
+          },
+          "receive_human_messages": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "handle",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "TinaChatSendMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "allow_derived_sharing": {
+            "default": false,
+            "type": "boolean"
+          },
+          "audience_participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "client_message_id": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "reply_to_message_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sensitivity": {
+            "default": "normal",
+            "type": "string"
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "actor_id",
+          "content",
+          "client_message_id"
+        ],
+        "type": "object"
+      },
+      "TinaChatUpdateParticipantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "can_interpret_intent": {
+            "default": false,
+            "type": "boolean"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "discoverable": {
+            "default": true,
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "job_title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "receive_human_messages": {
+            "default": false,
+            "type": "boolean"
+          },
+          "status": {
+            "default": "active",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "TinaChatWorkspacePolicyDto": {
+        "properties": {
+          "allow_cross_workspace_discovery": {
+            "type": "boolean"
+          },
+          "allow_cross_workspace_messaging": {
+            "type": "boolean"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "revision",
+          "allow_cross_workspace_discovery",
+          "allow_cross_workspace_messaging"
+        ],
+        "type": "object"
+      },
+      "TinaChatWorkspacePolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_cross_workspace_discovery": {
+            "default": false,
+            "type": "boolean"
+          },
+          "allow_cross_workspace_messaging": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
         "type": "object"
       },
       "ToolDirectExecuteRequestDto": {
@@ -2006,6 +5482,20 @@
               "null",
               "string"
             ]
+          }
+        },
+        "type": "object"
+      },
+      "WorkspaceFileRestoreRequestDto": {
+        "properties": {
+          "expected_sha256": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "path": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -3242,6 +6732,88 @@
         ]
       }
     },
+    "/api/v1/approval-rules": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sessionId",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalRuleDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "ApprovalRules"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRuleCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalRuleDto"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "ApprovalRules"
+        ]
+      }
+    },
+    "/api/v1/approval-rules/{ruleId}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ruleId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "ApprovalRules"
+        ]
+      }
+    },
     "/api/v1/approvals": {
       "get": {
         "parameters": [
@@ -3291,6 +6863,36 @@
         },
         "responses": {
           "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/approvals/{approvalId}/gates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approvalId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalGatesDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
@@ -3352,6 +6954,110 @@
         },
         "tags": [
           "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/attachments/{attachmentId}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Attachments"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageAttachmentDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Attachments"
+        ]
+      }
+    },
+    "/api/v1/attachments/{attachmentId}/content": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Attachments"
         ]
       }
     },
@@ -3553,6 +7259,95 @@
         },
         "tags": [
           "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/environments": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EnvironmentDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Environments"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentRegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDto"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "Environments"
+        ]
+      }
+    },
+    "/api/v1/environments/{environmentId}": {
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Environments"
         ]
       }
     },
@@ -4099,23 +7894,286 @@
       "get": {
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketCatalogPageDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
         ]
       }
     },
     "/api/v1/market/catalog/{catalogId}": {
       "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalogId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketCatalogEntryDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/catalog/{catalogId}/install-preview": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalogId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketInstallRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallProposalDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/install-proposals/{proposalId}/apply": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallationDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "description": "Precondition Failed"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/installations": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallationListDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/installations/{installationId}/uninstall-preview": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallProposalDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "Market"
         ]
       }
     },
@@ -4123,33 +8181,223 @@
       "get": {
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSourceListDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
         ]
       },
       "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMarketSourceRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSourceDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{sourceId}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketSourceStateRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSourceDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Market"
         ]
       }
     },
     "/api/v1/market/sources/{sourceId}/refresh": {
       "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketRefreshDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
         ]
       }
     },
@@ -4157,18 +8405,13 @@
       "get": {
         "responses": {
           "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
-        ]
-      }
-    },
-    "/api/v1/mcp/servers/{serverId}/reload": {
-      "post": {
-        "responses": {
-          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpInventoryDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
@@ -4179,9 +8422,36 @@
     },
     "/api/v1/mcp/servers/{serverId}/tools": {
       "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerToolsDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
           }
         },
         "tags": [
@@ -4195,6 +8465,41 @@
           {
             "in": "query",
             "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
             "schema": {
               "type": "string"
             }
@@ -4290,6 +8595,43 @@
     },
     "/api/v1/memory-items": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -4355,6 +8697,13 @@
       "get": {
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelInvocationPageDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
@@ -4737,6 +9086,36 @@
         ],
         "responses": {
           "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/overview": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOverviewDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
@@ -5565,6 +9944,97 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/attachments": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MessageAttachmentDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Attachments"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageAttachmentDto"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Payload Too Large"
+          }
+        },
+        "tags": [
+          "Attachments"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/context-packs": {
       "get": {
         "responses": {
@@ -5622,6 +10092,70 @@
         },
         "tags": [
           "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/evidence": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kinds",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceRecallDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
         ]
       }
     },
@@ -5785,6 +10319,36 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/messages/{messageId}/revert": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/migrate": {
       "post": {
         "parameters": [
@@ -5836,6 +10400,293 @@
         },
         "tags": [
           "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/members/{participantId}": {
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "participantId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationMemberVisibilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMemberDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/reports": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationReportPage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/reports/{reportId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reportId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationReportDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationReportDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/rooms/{roomId}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "roomId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMessagePage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "roomId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationPostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMessageDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
         ]
       }
     },
@@ -5939,6 +10790,75 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/topology": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_finished",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_runs",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_tasks",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionTopologyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/trash": {
       "post": {
         "parameters": [
@@ -6039,6 +10959,944 @@
         },
         "tags": [
           "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatConversationDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatCreateConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatConversationDto"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatConversationDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatIntentDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatProposeIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatIntentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents/generate": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatGenerateIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatIntentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents/{intentId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "intentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatIntentDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatIntentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents/{intentId}/execute": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "intentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatExecuteIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatExecutionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/members": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatMemberDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatMemberRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatConversationDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatMessagePage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatSendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatMessageDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/access": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObserverAccessDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/conversations": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObservedConversationPage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/conversations/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObservedConversationDetail"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/conversations/{id}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_sequence",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObservedMessagePage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatParticipantDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatRegisterParticipantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatParticipantDto"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatParticipantDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatUpdateParticipantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatParticipantDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants/{id}/inbox": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatInboxPage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants/{id}/inbox/{messageId}/ack": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/workspace-policy": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatWorkspacePolicyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatWorkspacePolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatWorkspacePolicyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
         ]
       }
     },
@@ -6522,6 +12380,99 @@
         ]
       }
     },
+    "/api/v1/workspace-snapshots/{snapshotId}/files": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/files/diff": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/files/restore": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkspaceFileRestoreRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/workspace-snapshots/{snapshotId}/restore": {
       "post": {
         "parameters": [
@@ -6582,6 +12533,24 @@
     },
     {
       "name": "InteractionsEndpoints"
+    },
+    {
+      "name": "Attachments"
+    },
+    {
+      "name": "Market"
+    },
+    {
+      "name": "TinaChat"
+    },
+    {
+      "name": "Organization"
+    },
+    {
+      "name": "Environments"
+    },
+    {
+      "name": "ApprovalRules"
     }
   ]
 }

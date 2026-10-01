@@ -14,7 +14,6 @@ import {
   isPublicPath,
   type AuthContext,
 } from './auth.js';
-import { mcpRoutes } from './mcp/mcpRoutes.js';
 import { findWsRoute, buildTargetWsUrl } from './websocket.js';
 import { proxyStream, setStreamHeaders } from './streaming.js';
 import { ensureRequestId, PRINCIPAL_VALUE } from './headers.js';
@@ -38,6 +37,8 @@ import {
   agentPackProblemResponse,
 } from './agentPackOpenApi.js';
 import { externalDtoSchemas, externalJsonResponse } from './externalDtoOpenApi.js';
+import { registerTinaChatRoutes, tinaChatSchemas } from './tinaChatRoutes.js';
+import { registerOrganizationRoutes, organizationSchemas } from './organizationRoutes.js';
 
 const config = getConfig();
 const requestAuthContexts = new WeakMap<Request, AuthContext>();
@@ -126,7 +127,7 @@ const app = new Elysia()
       ],
       // TypeBox emits valid OpenAPI schemas, but its union types are not structurally
       // assignable to openapi-types' narrower SchemaObject declaration.
-      components: { schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas } as never },
+      components: { schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...tinaChatSchemas, ...organizationSchemas } as never },
     }
   }))
   .onError(({ code, error, set, request }) => {
@@ -184,7 +185,6 @@ const app = new Elysia()
     }
     if (authResult.context) requestAuthContexts.set(request, authResult.context);
   })
-  .use(mcpRoutes)
   .get('/api/v1/health', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/health', { headers });
@@ -356,6 +356,20 @@ const app = new Elysia()
       max_bytes: t.Optional(t.Number()),
     }, { additionalProperties: true }),
   })
+  // The project commander's desk (todo E4): the rollup a project-level chairman reads.
+  .get('/api/v1/projects/:projectId/overview', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/overview`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Project overview rollup', tags: ['Projects'] } })
   .get('/api/v1/projects/:projectId/snapshots', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/snapshots`;
@@ -400,6 +414,59 @@ const app = new Elysia()
       idempotency_key: t.Optional(t.String()),
       expected_workspace_hash: t.Optional(t.String()),
       allow_conflicts: t.Optional(t.Boolean()),
+    }, { additionalProperties: true }),
+  })
+  // Per-file review of one snapshot: which paths moved, what each one looked like before, and how
+  // to undo exactly one of them. Core owns the comparison; these routes only forward it, so the
+  // gateway cannot become a second place that decides whether a file changed.
+  .get('/api/v1/workspace-snapshots/:snapshotId/files', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}/files`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'List per-file changes of a workspace snapshot', tags: ['Projects'] } })
+  .get('/api/v1/workspace-snapshots/:snapshotId/files/diff', async ({ params, query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}/files/diff?path=${encodeURIComponent(query.path)}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: { summary: 'Read the two bodies behind one file change', tags: ['Projects'] },
+    query: t.Object({ path: t.String() }),
+  })
+  .post('/api/v1/workspace-snapshots/:snapshotId/files/restore', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}/files/restore`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: { summary: 'Restore one file from a workspace snapshot', tags: ['Projects'] },
+    body: t.Object({
+      path: t.String(),
+      // Present-and-empty asserts "the file was absent"; omitting it is refused by Core, and that
+      // distinction is the whole guard, so the schema must not rewrite one into the other.
+      expected_sha256: t.Nullable(t.String()),
     }, { additionalProperties: true }),
   })
   .get('/api/v1/workspace-defaults', async ({ set, request }) => {
@@ -549,6 +616,18 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Create message (compat)', tags: ['Messages'] }, body: t.Object({ content: t.String() }) })
+  // Edit-and-resend: Core reverts the session's history to one of its messages
+  // (rows stay durable; they simply stop being history). Pure pass-through — the
+  // active-run refusal and the tenant check are Core's, not the Gateway's.
+  .post('/api/v1/sessions/:sessionId/messages/:messageId/revert', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${params.sessionId}/messages/${params.messageId}/revert`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Revert conversation history to a message', tags: ['Messages'] } })
   // POST /api/v1/sessions/:sessionId/invoke-stream retired (plan §4.3 item 4):
   // Desktop now submits via POST /sessions/{id}/interactions and follows
   // GET /runs/{runId}/stream. The Gateway proxy is removed with the Core route.
@@ -988,7 +1067,11 @@ const app = new Elysia()
   .get('/api/v1/memory-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
-    for (const key of ['status', 'scope', 'kind', 'session_id', 'run_id', 'project_id', 'limit']) {
+    // Only filters Core answers. A candidate has no session (it names the run that
+    // proposed it), so session_id is not forwarded: a knob the wire advertises but
+    // Core ignores is worse than no knob, because the caller cannot tell a filtered
+    // empty queue from an unfiltered one.
+    for (const key of ['status', 'scope', 'kind', 'run_id', 'project_id', 'limit']) {
       const value = (query as Record<string,unknown>)[key];
       if (value !== undefined && value !== '') search.set(key, String(value));
     }
@@ -1015,6 +1098,28 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Reject memory candidate', tags: ['System'] } })
+  .get('/api/v1/memory-items', async ({ query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URLSearchParams();
+    for (const key of ['status', 'scope', 'kind', 'project_id', 'limit']) {
+      const value = (query as Record<string,unknown>)[key];
+      if (value !== undefined && value !== '') search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const result = await proxyJson(`/api/v1/memory-items${suffix}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/memory-items'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List promoted memory items', tags: ['System'] } })
+  .post('/api/v1/memory-items/:itemId/revoke', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/memory-items/${params.itemId}/revoke`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/memory-items/${params.itemId}/revoke`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Revoke a memory item', tags: ['System'] } })
   .post('/api/v1/tools/shell', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/tools/shell', { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -1249,7 +1354,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/model-invocations'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Page model invocation audit records', tags: ['ModelCenter'] } })
+  }, { detail: { summary: 'Page model invocation audit records', tags: ['ModelCenter'], responses: { 200: externalJsonResponse('ModelInvocationPage', 'Page of Core model invocation audit records; the query string is forwarded to Core untouched.') } } })
   .get('/api/v1/model-settings', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/model-settings', { headers });
@@ -1273,7 +1378,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/sources'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'List market sources', tags: ['System'] } })
+  }, { detail: { summary: 'List market sources', tags: ['System'], responses: { 200: externalJsonResponse('MarketSourceList', 'Durable sources plus the kinds this build has an adapter for; an empty list here really does mean nothing is configured, because these are Core rows.') } } })
   .post('/api/v1/market/sources', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/market/sources', { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -1281,7 +1386,23 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/sources'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Create market source', tags: ['System'] } })
+  }, { detail: { summary: 'Create market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketSource', 'The stored source. Core builds the request from kind+location; a url, command, or path in this body is not read.') } } })
+  .patch('/api/v1/market/sources/:sourceId', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}`, { method: 'PATCH', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Enable or disable a market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketSource', 'The only editable field is enabled; name, kind, and location are not, so a source cannot be re-pointed under existing rows.') } } })
+  .delete('/api/v1/market/sources/:sourceId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}`, { method: 'DELETE', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Delete a market source', tags: ['System'] } })
   .post('/api/v1/market/sources/:sourceId/refresh', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}/refresh`, { method: 'POST', headers });
@@ -1289,20 +1410,26 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}/refresh`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Refresh market source', tags: ['System'] } })
+  }, { detail: { summary: 'Refresh market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketRefresh', '`outcome` separates a completed read from a blocked or unreachable one; only the first changed the catalog.') } } })
   .get('/api/v1/market/catalog', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
+    // Names as Core reads them. This proxy used to send `query` and `sourceId`, which Core has
+    // never looked at, so a search box and a source filter both answered "the whole catalog"
+    // through the gateway while every unit test mocked the request and passed.
     const params = new URLSearchParams();
     const q = query as Record<string,unknown>;
     if (q.kind) params.set('kind', String(q.kind));
-    if (q.query) params.set('query', String(q.query));
-    if (q.source_id) params.set('sourceId', String(q.source_id));
-    const result = await proxyJson(`/api/v1/market/catalog?${params.toString()}`, { headers });
+    if (q.q) params.set('q', String(q.q));
+    if (q.source_id) params.set('source_id', String(q.source_id));
+    if (q.limit) params.set('limit', String(q.limit));
+    if (q.offset) params.set('offset', String(q.offset));
+    const suffix = params.toString();
+    const result = await proxyJson(`/api/v1/market/catalog${suffix ? `?${suffix}` : ''}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/catalog'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Get market catalog', tags: ['System'] } })
+  }, { detail: { summary: 'Get market catalog', tags: ['System'], responses: { 200: externalJsonResponse('MarketCatalogPage', 'A page of stored claims, with total_available and as_of so a short page cannot be read as a small market.') } } })
   .get('/api/v1/market/catalog/:catalogId', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/market/catalog/${params.catalogId}`, { headers });
@@ -1310,7 +1437,42 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/catalog/${params.catalogId}`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Get catalog item', tags: ['System'] } })
+  }, { detail: { summary: 'Get catalog item', tags: ['System'], responses: { 200: externalJsonResponse('MarketCatalogEntry', 'One entry as its source described it, including the metadata digest Core computed over that description.') } } })
+  .post('/api/v1/market/catalog/:catalogId/install-preview', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/market/catalog/${params.catalogId}/install-preview`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Preview a market install', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallProposal', 'The frozen proposal: pinned command, exact file, exact bytes, and the moment it stops being applyable. Nothing was written by asking.') } } })
+  .post('/api/v1/market/installations/:installationId/uninstall-preview', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/market/installations/${params.installationId}/uninstall-preview`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Preview removing an installed market entry', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallProposal', 'The same config file with this one entry taken back out; downloaded package bytes are not touched.') } } })
+  .post('/api/v1/market/install-proposals/:proposalId/apply', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/market/install-proposals/${params.proposalId}/apply`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Queue an approved market write', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallation', 'The installation and the user tool action awaiting a human. The write happens when that action is approved, never here.') } } })
+  .get('/api/v1/market/installations', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/market/installations', { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/installations'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List installed market entries', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallationList', 'What this workspace approved, with the live status of the action that writes it.') } } })
   .post('/api/v1/extensions/install-preview', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/extensions/install-preview', { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -1374,7 +1536,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/mcp/servers'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'List MCP servers (Core-owned)', tags: ['System'] } })
+  }, { detail: { summary: 'List MCP servers (Core-owned)', tags: ['System'], responses: { 200: externalJsonResponse('McpInventory', 'Inventory read through the Tool Provider; `source` says whether the empty list means "nothing configured" or "could not look".') } } })
   .get('/api/v1/mcp/servers/:serverId/tools', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/mcp/servers/${params.serverId}/tools`, { headers });
@@ -1382,15 +1544,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/mcp/servers/${params.serverId}/tools`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'List MCP server tools', tags: ['System'] } })
-  .post('/api/v1/mcp/servers/:serverId/reload', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/mcp/servers/${params.serverId}/reload`, { method: 'POST', headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/mcp/servers/${params.serverId}/reload`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Reload MCP server', tags: ['System'] } })
+  }, { detail: { summary: 'List MCP server tools', tags: ['System'], responses: { 200: externalJsonResponse('McpServerTools', 'One named server with its tools and schemas; 404 mcp_server_not_found only after Core actually read the inventory.') } } })
   .get('/api/v1/acp/adapters', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/acp/adapters', { headers });
@@ -2176,20 +2330,82 @@ const app = new Elysia()
       ws.unsubscribe('collaboration-proxy');
     },
   })
-  .get('/api/v1/files/:sessionId/*', async ({ params, set, request }) => {
+  /**
+   * Session attachments. This block used to be a single
+   * `GET /api/v1/files/:sessionId/*` that forwarded to a Core path which has never
+   * existed, so every request to it round-tripped as a 404 from Core while looking like
+   * a working feature in this file.
+   *
+   * The upload forwards `request.body` unread rather than buffering it. That is both the
+   * point of a thin proxy and what makes Core's per-request size ceiling meaningful: if
+   * the Gateway buffered first, the ceiling would only ever be hit after an unbounded
+   * amount of data had already been accepted from the client.
+   */
+  .post('/api/v1/sessions/:sessionId/attachments', async ({ params, query, request, set }) => {
     const headers = forwardHeaders(request);
-    const filePath = `/${(params as Record<string,string>)['*']}`;
+    const search = new URLSearchParams();
+    const rawQuery = query as Record<string, unknown>;
+    if (rawQuery.filename) search.set('filename', String(rawQuery.filename));
+    if (rawQuery.media_type) search.set('media_type', String(rawQuery.media_type));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/attachments${suffix}`;
     const response = await proxyStream({
       target: 'core',
-      path: `/api/v1/files/${params.sessionId}/${filePath}`,
+      path,
+      method: 'POST',
+      headers: { ...Object.fromEntries(new Headers(headers).entries()), 'content-type': 'application/octet-stream' },
+      body: request.body,
+    });
+    setStatus(set, response.status);
+    set.headers['content-type'] = 'application/json';
+    return await response.json();
+  }, {
+    detail: {
+      summary: 'Upload a session attachment',
+      tags: ['Attachments'],
+      description: 'Raw request body is the file; filename and media type travel as query parameters. The stored bytes are user-supplied and are served back from the origin the renderer trusts, so Core decides inline vs attachment per type and this route forwards that decision rather than re-deciding it.',
+      responses: { 201: externalJsonResponse('MessageAttachment', 'Stored attachment metadata, without any storage path.') },
+    },
+  })
+  .get('/api/v1/sessions/:sessionId/attachments', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/attachments`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/json'; return result.data; }
+    return result.data;
+  }, { detail: { summary: 'List session attachments', tags: ['Attachments'], responses: { 200: externalJsonResponse('MessageAttachmentList', 'Attachments parked on the session.') } } })
+  .get('/api/v1/attachments/:attachmentId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/attachments/${encodeURIComponent(params.attachmentId)}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    return result.data;
+  }, { detail: { summary: 'Read attachment metadata', tags: ['Attachments'], responses: { 200: externalJsonResponse('MessageAttachment', 'Attachment metadata.') } } })
+  .get('/api/v1/attachments/:attachmentId/content', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/attachments/${encodeURIComponent(params.attachmentId)}/content`;
+    const response = await proxyStream({
+      target: 'core',
+      path,
       headers: Object.fromEntries(new Headers(headers).entries()),
     });
     setStreamHeaders(set, response);
     setStatus(set, response.status);
-    set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
-    set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
+    // setStreamHeaders copies content-type only. Without forwarding the disposition too,
+    // Core's "this type is not safe to render inline" decision would be dropped here, and
+    // the security boundary would exist in Core but not on the path clients actually use.
+    const disposition = response.headers.get('content-disposition');
+    if (disposition) set.headers['content-disposition'] = disposition;
     return response.body;
-  }, { detail: { summary: 'Stream file', tags: ['System'] } })
+  }, { detail: { summary: 'Download attachment bytes', tags: ['Attachments'] } })
+  .delete('/api/v1/attachments/:attachmentId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/attachments/${encodeURIComponent(params.attachmentId)}`;
+    const result = await proxyJson(path, { method: 'DELETE', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) return result.data;
+  }, { detail: { summary: 'Discard an attachment row', tags: ['Attachments'] } })
   .get('/api/v1/sessions/:sessionId/logs', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const response = await proxyStream({
@@ -2274,6 +2490,9 @@ const app = new Elysia()
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result;
   }, { detail: { summary: 'Execute user tool (Core-owned)', tags: ['Tools'], description: 'Core resolves the registered workspace root and invokes the Tool Provider.' } });
+
+registerTinaChatRoutes(app, forwardHeaders);
+registerOrganizationRoutes(app, forwardHeaders);
 
 export { app };
 

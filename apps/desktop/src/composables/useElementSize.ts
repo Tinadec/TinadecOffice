@@ -134,7 +134,7 @@ export function useTabLabelMode(
  * Responsive mode for the **conversation / chat** area (not the narrow sidebar).
  *
  * The chat area is the space between the left sidebar (260px) and the right
- * float-panel. Its effective width can vary dramatically depending on window
+ * feature panel. Its effective width can vary dramatically depending on window
  * size and right-panel state, so we use different breakpoints than the panel.
  *
  * Breakpoint strategy:

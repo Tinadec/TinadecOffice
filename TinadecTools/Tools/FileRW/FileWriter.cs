@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using System.Text.Json.Serialization;
 using NLog;
@@ -5,43 +6,83 @@ using TinadecTools.Abstractions;
 
 namespace TinadecTools.Tools.FileRW;
 
+/// <summary>
+/// One replacement line plus the anchor that proves the caller is editing the file
+/// it thinks it is. Both members are required: the hash is checked before anything
+/// is written, so a stale anchor is rejected instead of corrupting the file.
+/// </summary>
 public sealed class HashedLineContent
 {
+    [Description("The full replacement line text.")]
     [JsonPropertyName("content")] public string Content { get; set; } = string.Empty;
+
+    [Description("The line_hash read_file returned for the line currently at this position, copied verbatim.")]
     [JsonPropertyName("hash")] public string Hash { get; set; } = string.Empty;
 }
 
 public sealed class ReplaceLinesParams
 {
+    [Description("Absolute path of the file to edit, inside the workspace.")]
     [JsonPropertyName("filepath")] public string FilePath { get; set; } = string.Empty;
+
+    [Description("1-based first line to replace.")]
     [JsonPropertyName("start_row")] public int StartRow { get; set; }
+
+    [Description("1-based last line to replace (inclusive). Equals start_row for a single line.")]
     [JsonPropertyName("end_row")] public int EndRow { get; set; }
+
+    [Description("Replacement lines, each carrying the anchor hash of the line it replaces. The count must match the replaced range.")]
     [JsonPropertyName("content")] public List<HashedLineContent> Content { get; set; } = new();
 }
 
 public sealed class FileHashMutationParams
 {
+    [Description("Absolute path of the file to edit, inside the workspace.")]
     [JsonPropertyName("filepath")] public string FilePath { get; set; } = string.Empty;
+
+    [Description("0-based byte offset the mutation starts at.")]
     [JsonPropertyName("start_offset")] public long StartOffset { get; set; }
+
+    [Description("Number of bytes to replace or delete.")]
     [JsonPropertyName("length")] public long Length { get; set; }
+
+    [Description("Replacement text (UTF-8).")]
     [JsonPropertyName("content")] public string Content { get; set; } = string.Empty;
+
+    [Description("Current whole-file hash, as returned by a previous read or edit of this file.")]
     [JsonPropertyName("file_hash")] public string FileHash { get; set; } = string.Empty;
 }
 
 public sealed class InsertLineParams
 {
+    [Description("Absolute path of the file to edit, inside the workspace.")]
     [JsonPropertyName("filepath")] public string FilePath { get; set; } = string.Empty;
+
+    [Description("1-based line number the insertion is anchored to.")]
     [JsonPropertyName("line_number")] public int LineNumber { get; set; }
+
+    [Description("Insert before or after the anchor line: \"before\" or \"after\".")]
     [JsonPropertyName("position")] public string Position { get; set; } = "after";
+
+    [Description("Lines to insert.")]
     [JsonPropertyName("content")] public List<string> Content { get; set; } = new();
+
+    [Description("Current whole-file hash, as returned by a previous read or edit of this file.")]
     [JsonPropertyName("file_hash")] public string FileHash { get; set; } = string.Empty;
 }
 
 public sealed class DeleteLineParams
 {
+    [Description("Absolute path of the file to edit, inside the workspace.")]
     [JsonPropertyName("filepath")] public string FilePath { get; set; } = string.Empty;
+
+    [Description("1-based first line to delete.")]
     [JsonPropertyName("start_row")] public int StartRow { get; set; }
+
+    [Description("1-based last line to delete (inclusive).")]
     [JsonPropertyName("end_row")] public int EndRow { get; set; }
+
+    [Description("Current whole-file hash, as returned by a previous read or edit of this file.")]
     [JsonPropertyName("file_hash")] public string FileHash { get; set; } = string.Empty;
 }
 
@@ -65,7 +106,8 @@ public static class FileWriter
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
-    [ToolFunction("replace_lines", RequiresApproval = true)]
+    [ToolFunction("replace_lines", RequiresApproval = true,
+        Description = "Replace a contiguous 1-based line range (start_row..end_row) with the same number of new lines. Each content item is {content, hash}, where hash is the line_hash that read_file returned for the line being replaced, copied verbatim (e.g. \"12|ab34...\"). A stale hash is rejected before anything is written - re-read and retry. To change the number of lines, use insert_line or delete_line. Approval-gated.")]
     public static ValueTask<FileMutationResponse> ReplaceLinesAsync(
         ReplaceLinesParams args,
         CancellationToken cancellationToken)
@@ -84,7 +126,7 @@ public static class FileWriter
         }, cancellationToken);
     }
 
-    [ToolFunction("replace_bytes", RequiresApproval = true)]
+    [ToolFunction("replace_bytes", RequiresApproval = true, Description = "Replace length bytes at start_offset with content (UTF-8). filepath is an absolute path inside the workspace; start_offset is a 0-based byte offset; file_hash is the current whole-file hash from the last read_file or edit. Prefer replace_lines/insert_line/delete_line for text. Approval-gated.")]
     public static ValueTask<FileMutationResponse> ReplaceBytesAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
@@ -97,7 +139,7 @@ public static class FileWriter
             cancellationToken);
     }
 
-    [ToolFunction("insert_bytes", RequiresApproval = true)]
+    [ToolFunction("insert_bytes", RequiresApproval = true, Description = "Insert content (UTF-8) at start_offset. filepath is an absolute path inside the workspace; start_offset is a 0-based byte offset; file_hash is the current whole-file hash from the last read_file or edit. Prefer replace_lines/insert_line/delete_line for text. Approval-gated.")]
     public static ValueTask<FileMutationResponse> InsertBytesAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
@@ -110,7 +152,7 @@ public static class FileWriter
             cancellationToken);
     }
 
-    [ToolFunction("insert_byte", RequiresApproval = true)]
+    [ToolFunction("insert_byte", RequiresApproval = true, Description = "Alias of insert_bytes: insert content (UTF-8) at start_offset. filepath is an absolute path inside the workspace; start_offset is a 0-based byte offset; file_hash is the current whole-file hash from the last read_file or edit. Prefer replace_lines/insert_line/delete_line for text. Approval-gated.")]
     public static ValueTask<FileMutationResponse> InsertByteAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
@@ -118,7 +160,7 @@ public static class FileWriter
         return InsertBytesAsync(args, cancellationToken);
     }
 
-    [ToolFunction("delete_bytes", RequiresApproval = true)]
+    [ToolFunction("delete_bytes", RequiresApproval = true, Description = "Delete length bytes starting at start_offset. filepath is an absolute path inside the workspace; start_offset is a 0-based byte offset; file_hash is the current whole-file hash from the last read_file or edit. Prefer replace_lines/insert_line/delete_line for text. Approval-gated.")]
     public static ValueTask<FileMutationResponse> DeleteBytesAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
@@ -131,7 +173,8 @@ public static class FileWriter
             cancellationToken);
     }
 
-    [ToolFunction("insert_line", RequiresApproval = true)]
+    [ToolFunction("insert_line", RequiresApproval = true,
+        Description = "Insert whole lines before or after a 1-based anchor line. Requires file_hash: the current whole-file hash from the last read_file or from the previous edit's result (every edit returns the new file_hash). Approval-gated.")]
     public static ValueTask<FileMutationResponse> InsertLineAsync(
         InsertLineParams args,
         CancellationToken cancellationToken)
@@ -154,7 +197,8 @@ public static class FileWriter
             cancellationToken);
     }
 
-    [ToolFunction("delete_line", RequiresApproval = true)]
+    [ToolFunction("delete_line", RequiresApproval = true,
+        Description = "Delete a contiguous 1-based line range. Requires file_hash: the current whole-file hash from the last read_file or from the previous edit's result (every edit returns the new file_hash). Approval-gated.")]
     public static ValueTask<FileMutationResponse> DeleteLineAsync(
         DeleteLineParams args,
         CancellationToken cancellationToken)

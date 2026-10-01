@@ -68,7 +68,7 @@ Before writing code, follow this decision ladder:
 - Agent/model write paths are fully versioned: `updateAgentDraft` then `publishAgent`; the legacy `saveAgent` client was deleted — do not reintroduce unversioned saves
 - Renderer reuses `src/generated/client.ts` typed client + Pinia stores (project/session/run/workbench); do not mirror state locally
 - Settings page hosts the agent center as five sub-tabs (agents/modes/prompts/evolution/runtime); the standalone `/agent-center` route was removed — extend tabs instead of adding top-level pages
-- Run streaming uses `useRunStream` with `run_id+seq` dedup; keep transport seams (`src/transport/`) for the future WS upgrade
+- Run streaming has one reader: `src/lib/runStream.ts` (`createRunStream`) with `run_id+seq` dedup, `Last-Event-ID` / `?after_seq` resume, and `fetchImpl` as the injectable seam. The `src/transport/` placeholder seam was deleted (verified 2026-09-21): it had no importer, its `sse()` returned an empty `AbortController`, and Core exposes no WebSocket endpoint, so a WS transport is new work against a protocol that does not exist yet rather than a swap behind that interface
 
 ### Tools (approval gates)
 - Approval gate and `confirm_*` fields are AND-composed double gates; never relax either

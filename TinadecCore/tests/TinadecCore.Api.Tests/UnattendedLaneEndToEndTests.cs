@@ -363,7 +363,7 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
 
     private sealed record ActiveInvoke(Task<JsonElement> Acknowledgement, Task<List<JsonElement>> Completion);
 
-    private static ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
+    private ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
     {
         var acknowledgement = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completion = Task.Run(async () =>
@@ -374,7 +374,7 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
         };
         using var admissionResponse = await client.SendAsync(admissionRequest, HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.Created, admissionResponse.StatusCode);
+        await _factory!.AssertStatusAsync(admissionResponse, HttpStatusCode.Created, "Interaction admission");
         var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
         var runId = receipt.GetProperty("run_id").GetString();
         var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
@@ -384,7 +384,7 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             Content = new StringContent(string.Empty, Encoding.UTF8, "application/json")
         };
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream");
             using var stream = await response.Content.ReadAsStreamAsync();
             using var reader = new StreamReader(stream);
             var builder = new StringBuilder();
@@ -411,12 +411,6 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             return chunks;
         });
         return new ActiveInvoke(acknowledgement.Task, completion);
-    }
-
-    private static async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body)
-    {
-        var active = StartStreamingInvoke(client, sessionId, body);
-        return await active.Completion.WaitAsync(TimeSpan.FromSeconds(60));
     }
 
     // ── host ──────────────────────────────────────────────────────────────────
@@ -514,7 +508,10 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
 
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return new ChatResponse(new ChatMessage(ChatRole.Assistant,
-                    "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}"));
+                    "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[],\"criteria_verdicts\":["
+                    + "{\"task_key\":\"build\",\"criterion\":\"完成\",\"satisfied\":true,\"evidence\":\"worker completion evidence recorded\"},"
+                    + "{\"task_key\":\"run-tests\",\"criterion\":\"测试输出文件存在\",\"satisfied\":true,\"evidence\":\"feature.txt tool execution completed\"},"
+                    + "{\"task_key\":\"commit\",\"criterion\":\"产生提交\",\"satisfied\":true,\"evidence\":\"git_commit tool execution completed\"}]}"));
 
             if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
             {
@@ -533,10 +530,10 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await GetResponseAsync(messages, options, cancellationToken);
-            foreach (var chunk in (response.Text ?? "完成").Chunk(2))
+            foreach (var chunk in response.ToChatResponseUpdates())
             {
                 await Task.Delay(1, cancellationToken);
-                yield return new ChatResponseUpdate(ChatRole.Assistant, new string(chunk));
+                yield return chunk;
             }
         }
 
@@ -575,7 +572,26 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
                     ["confirm_commit"] = "yes"
                 })];
             }
-            return [new TextContent("完成")];
+            return [new TextContent(CompletedOutcome(routingText))];
+        }
+
+        private static string CompletedOutcome(string routingText)
+        {
+            if (routingText.Contains("运行测试", StringComparison.Ordinal))
+            {
+                return "测试输出文件已生成。\n"
+                    + "CRITERION_EVIDENCE: 测试输出文件存在 || feature.txt 的工具执行已完成。\n"
+                    + "TASK_OUTCOME: completed";
+            }
+            if (routingText.Contains("提交变更", StringComparison.Ordinal))
+            {
+                return "提交已创建。\n"
+                    + "CRITERION_EVIDENCE: 产生提交 || git_commit 工具执行已完成。\n"
+                    + "TASK_OUTCOME: completed";
+            }
+            return "任务已完成。\n"
+                + "CRITERION_EVIDENCE: 完成 || 脚本任务完成。\n"
+                + "TASK_OUTCOME: completed";
         }
 
         private bool FirstTurn(string title)

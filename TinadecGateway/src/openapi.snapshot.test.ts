@@ -64,6 +64,8 @@ test('openapi external snapshot — title contains Gateway, paths non-empty, fil
     'SessionList',
     'Message',
     'MessageList',
+    'MessageAttachment',
+    'MessageAttachmentSummary',
     'Run',
     'RunList',
     'TaskNode',
@@ -77,6 +79,23 @@ test('openapi external snapshot — title contains Gateway, paths non-empty, fil
   ];
   const schemas = objectAt(doc, 'components', 'schemas');
   for (const name of requiredPackSchemas) assert.ok(name in schemas, `Missing OpenAPI component schema ${name}`);
+
+  // A reopened transcript has to know which files each message carried. The nested
+  // projection is deliberately narrower than the standalone one: the parent row
+  // already says which session and message own an attachment, so restating either
+  // would only add a second place where the two can disagree.
+  assert.equal(
+    valueAt(schemas, 'Message', 'properties', 'attachments', 'items', '$ref'),
+    '#/components/schemas/MessageAttachmentSummary',
+  );
+  assert.deepEqual(
+    Object.keys(objectAt(schemas, 'MessageAttachmentSummary', 'properties')).sort(),
+    ['bound_at', 'content_hash', 'content_length', 'created_at', 'file_name', 'id', 'media_type'],
+  );
+  for (const name of ['Message', 'MessageAttachment', 'MessageAttachmentSummary']) {
+    // content_reference is a path under the data root; bytes are addressed by id.
+    assert.ok(!JSON.stringify(schemas[name]).includes('content_reference'), `${name} must not name a storage path`);
+  }
 
   assert.equal(
     valueAt(doc, 'paths', '/api/v1/projects', 'get', 'responses', '200', 'content', 'application/json', 'schema', '$ref'),

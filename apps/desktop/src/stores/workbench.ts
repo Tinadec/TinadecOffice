@@ -36,11 +36,5 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     await generatedApi.controlRun(runId, { action })
   }
 
-  // approval stage2 placeholder: transport abstraction reserved
-  async function decideApproval(_approvalId: string, _decision: 'approved'|'rejected') {
-    // ponytail: approval transport via httpTransport; keep seam for stage2 WS upgrade
-    throw new Error('approval transport not wired in workbench store — use HomeController/api.decideApproval')
-  }
-
-  return { snapshot, nodes, findings, contextVersions, cursor, status, loading, error, fetchAll, control, decideApproval }
+  return { snapshot, nodes, findings, contextVersions, cursor, status, loading, error, fetchAll, control }
 })

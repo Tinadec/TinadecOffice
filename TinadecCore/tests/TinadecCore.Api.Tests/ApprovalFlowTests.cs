@@ -304,6 +304,19 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         Assert.Equal("awaiting_approval", awaitingApproval.GetProperty("status").GetString());
         var actionApprovalId = awaitingApproval.GetProperty("action_approval_id").GetGuid();
 
+        // The approval-gate envelope is the second row a human can be asked to
+        // decide, and its summary keeps the user's own phrasing. The facts that make
+        // it decidable ride alongside: the named target, and the written bytes kept
+        // behind a size plus hash.
+        var actionDetail = await client.GetFromJsonAsync<JsonElement>($"/api/v1/approvals/{actionApprovalId}");
+        Assert.Equal("user_tool", actionDetail.GetProperty("kind").GetString());
+        Assert.Equal("write_file", actionDetail.GetProperty("tool_id").GetString());
+        Assert.EndsWith("user-action.txt", actionDetail.GetProperty("resource_path").GetString(), StringComparison.Ordinal);
+        var actionArguments = actionDetail.GetProperty("arguments").GetString() ?? string.Empty;
+        Assert.Contains("filepath", actionArguments, StringComparison.Ordinal);
+        Assert.Contains("chars, sha256", actionArguments, StringComparison.Ordinal);
+        Assert.DoesNotContain("governed", actionArguments, StringComparison.Ordinal);
+
         var approval = await client.PostAsJsonAsync($"/api/v1/approvals/{actionApprovalId}/decision",
             new { decision = "approved", reason = "User confirmed the governed write." }, Json);
         Assert.Equal(HttpStatusCode.OK, approval.StatusCode);

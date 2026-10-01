@@ -34,3 +34,17 @@ public sealed class WorkspaceRestoreRequestDto
     [JsonPropertyName("allow_conflicts")]
     public bool AllowConflicts { get; init; }
 }
+
+/// <summary>
+/// Undoes one file from one snapshot. <c>expected_sha256</c> is the hash the caller was just
+/// shown for that path: omitting it is refused, because a restore without it overwrites an edit
+/// nobody looked at.
+/// </summary>
+public sealed class WorkspaceFileRestoreRequestDto
+{
+    [JsonPropertyName("path")]
+    public string Path { get; init; } = string.Empty;
+
+    [JsonPropertyName("expected_sha256")]
+    public string? ExpectedSha256 { get; init; }
+}

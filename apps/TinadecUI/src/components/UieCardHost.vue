@@ -9,25 +9,25 @@ const props = defineProps<{
   active: boolean
 }>()
 
-const wb = useUie()
+const uie = useUie()
 
-const component = computed(() => wb.componentFor(props.instance.descriptorId))
+const component = computed(() => uie.componentFor(props.instance.descriptorId))
 
 // Provide card context via inject so the card content can read its instance id,
 // serialized state, and visibility without extraneous non-props attribute warnings.
 //
-// `wb:active` is provided as a ComputedRef: this SFC is Vapor, so setup runs once and
+// `uie:active` is provided as a ComputedRef: this SFC is Vapor, so setup runs once and
 // a plain value would freeze the flag at whatever it was on mount. Consumers must
 // unwrap it (`toValue`) rather than treat it as a boolean.
-provide('wb:instanceId', props.instance.id)
-provide('wb:cardState', props.instance.state)
-provide('wb:active', computed(() => props.active))
+provide('uie:instanceId', props.instance.id)
+provide('uie:cardState', props.instance.state)
+provide('uie:active', computed(() => props.active))
 </script>
 
 <template vapor>
   <div
-    class="wb-card-host"
-    :class="{ 'wb-card-host--hidden': !active }"
+    class="uie-card-host"
+    :class="{ 'uie-card-host--hidden': !active }"
     :aria-hidden="!active ? 'true' : undefined"
     :inert="!active ? true : undefined"
   >
@@ -36,14 +36,14 @@ provide('wb:active', computed(() => props.active))
       v-if="component"
       :key="instance.id"
     />
-    <div v-else class="wb-card-unknown">
+    <div v-else class="uie-card-unknown">
       Unknown card: {{ instance.descriptorId }}
     </div>
   </div>
 </template>
 
 <style scoped>
-.wb-card-host {
+.uie-card-host {
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -51,11 +51,11 @@ provide('wb:active', computed(() => props.active))
   flex-direction: column;
 }
 
-.wb-card-host--hidden {
+.uie-card-host--hidden {
   display: none;
 }
 
-.wb-card-unknown {
+.uie-card-unknown {
   padding: 12px;
   font-size: 12px;
   color: var(--text-secondary);

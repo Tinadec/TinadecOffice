@@ -53,6 +53,17 @@ public interface IConversationStore
         long afterRevision,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The most recent applied patches of one run, or of the whole session when
+    /// <paramref name="runId"/> is null — oldest first, at most <paramref name="limit"/> of them.
+    /// Read on every context build, so only those rows' bodies are read.
+    /// </summary>
+    Task<IReadOnlyList<ConversationContextPatch>> ListRecentContextPatchesAsync(
+        Guid sessionId,
+        Guid? runId,
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task<ConversationTurn> CreateTurnAsync(
         Guid sessionId,
         Guid userMessageId,
@@ -71,7 +82,34 @@ public interface IConversationStore
         long resultContextRevision,
         string status,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reverts a session's history to <paramref name="fromMessageId"/>: that message
+    /// and everything after it leave the conversation — neither the message list nor a
+    /// later run's context sees them again. This is how "edit and resend" is expressed
+    /// without a second transcript. Rows stay durable because runs, checkpoints and
+    /// context snapshots reference message ids, and <c>FullDuplexRunEngine</c> fails a
+    /// resuming run whose trigger message is gone.
+    /// A default implementation throws so existing doubles keep compiling; the
+    /// relational store overrides it.
+    /// </summary>
+    Task<SessionHistoryRevert> RevertHistoryAsync(
+        Guid sessionId,
+        Guid fromMessageId,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This conversation store cannot revert session history.");
 }
+
+/// <summary>
+/// Result of a history revert. <paramref name="removedCount"/> counts the messages
+/// that left the conversation, so a caller can tell "cut one turn" apart from
+/// "cut nothing because the history already started at that message".
+/// </summary>
+public sealed record SessionHistoryRevert(
+    Guid FromMessageId,
+    long FromSequence,
+    int RemovedCount,
+    long HistoryRevision);
 
 public sealed record ConversationMessage(
     Guid Id,

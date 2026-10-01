@@ -36,6 +36,7 @@ import {
   statusToLabel,
   statusColor,
 } from '../../composables/useGitOperation'
+import { isStagedFile, isUnstagedFile } from '../../lib/gitStatusSides'
 import { useAiCommitMessage } from '../../composables/useAiCommitMessage'
 import { useAiChangeAnalysis, type AiRiskLevel } from '../../composables/useAiChangeAnalysis'
 import CommitMessageEditor from './CommitMessageEditor.vue'
@@ -456,7 +457,9 @@ const pullDisabledReason = computed(() => {
 })
 
 // ---- View Mode (Tree / Flat) & Sections State ----
-const viewMode = ref<'tree' | 'flat'>((localStorage.getItem('git_changes_view_mode') as 'tree' | 'flat') || 'tree')
+// Builds before this persisted the flat view as `list`; both spellings mean one thing.
+const storedViewMode = localStorage.getItem('git_changes_view_mode')
+const viewMode = ref<'tree' | 'flat'>(storedViewMode === 'flat' || storedViewMode === 'list' ? 'flat' : 'tree')
 function toggleViewMode() {
   viewMode.value = viewMode.value === 'tree' ? 'flat' : 'tree'
   localStorage.setItem('git_changes_view_mode', viewMode.value)
@@ -464,11 +467,11 @@ function toggleViewMode() {
 
 const stagedExpanded = ref(true)
 const unstagedExpanded = ref(true)
-const stagedFiles = computed(() => props.statusFiles.filter((f) => f.is_staged))
-const unstagedFiles = computed(() => props.statusFiles.filter((f) => !f.is_staged))
+const stagedFiles = computed(() => props.statusFiles.filter(isStagedFile))
+const unstagedFiles = computed(() => props.statusFiles.filter(isUnstagedFile))
 
-const stagedTree = computed(() => buildFileTree(stagedFiles.value))
-const unstagedTree = computed(() => buildFileTree(unstagedFiles.value))
+const stagedTreeRoots = computed(() => buildFileTree(stagedFiles.value))
+const unstagedTreeRoots = computed(() => buildFileTree(unstagedFiles.value))
 
 const collapsedFolders = ref<Set<string>>(new Set())
 function toggleFolder(path: string) {
@@ -487,8 +490,8 @@ function collapseAllFolders() {
       }
     }
   }
-  collect(stagedTree.value)
-  collect(unstagedTree.value)
+  collect(stagedTreeRoots.value)
+  collect(unstagedTreeRoots.value)
   collapsedFolders.value = allFolders
 }
 function expandAllFolders() {
@@ -575,9 +578,9 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <button
               type="button"
               class="git-mode-btn"
-              :class="{ active: viewMode === 'list' }"
+              :class="{ active: viewMode === 'flat' }"
               :title="t('context.gitViewModeList')"
-              @click="viewMode = 'list'"
+              @click="viewMode = 'flat'"
             >
               <List :size="13" />
               <span>{{ t('context.gitViewModeList') }}</span>
@@ -620,7 +623,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
                   :node="rootNode"
                   :depth="0"
                   :selected-paths="selectedPaths"
-                  :active-diff-path="selectedDiffFile?.path"
+                  :active-diff-path="selectedDiffFile"
                   :operation-loading="operationLoading"
                   @toggle-select="emit('toggle-path', $event)"
                   @select-diff="selectAndOpenDiff($event)"
@@ -637,7 +640,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
                   v-for="file in stagedFiles"
                   :key="file.path"
                   class="git-file-row"
-                  :class="[statusColorClass(file.status ?? file.unstaged_status), { 'is-active-diff': selectedDiffFile?.path === file.path }]"
+                  :class="[statusColorClass(file.status ?? file.unstaged_status), { 'is-active-diff': selectedDiffFile === file.path }]"
                 >
                   <div class="git-file-row-main" @click="selectAndOpenDiff(file.path)">
                     <UiCheckbox
@@ -726,7 +729,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
                   :node="rootNode"
                   :depth="0"
                   :selected-paths="selectedPaths"
-                  :active-diff-path="selectedDiffFile?.path"
+                  :active-diff-path="selectedDiffFile"
                   :operation-loading="operationLoading"
                   @toggle-select="emit('toggle-path', $event)"
                   @select-diff="selectAndOpenDiff($event)"
@@ -743,7 +746,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
                   v-for="file in unstagedFiles"
                   :key="file.path"
                   class="git-file-row"
-                  :class="[statusColorClass(file.status ?? file.unstaged_status), { 'is-active-diff': selectedDiffFile?.path === file.path }]"
+                  :class="[statusColorClass(file.status ?? file.unstaged_status), { 'is-active-diff': selectedDiffFile === file.path }]"
                 >
                   <div class="git-file-row-main" @click="selectAndOpenDiff(file.path)">
                     <UiCheckbox

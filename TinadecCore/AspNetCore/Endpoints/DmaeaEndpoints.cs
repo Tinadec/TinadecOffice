@@ -162,19 +162,25 @@ public static class DmaeaEndpoints
                             waits = Array.Empty<object>()
                         }
                     });
-            var nodes = events.Where(e => e.EventType == "task.assigned" || e.EventType == "step.result.created")
+            var nodes = events.Where(e => e.EventType is "task.assigned" or "step.result.created" or "worker.completed" or "worker.blocked" or "worker.failed")
                 .Select(e =>
                 {
-                    var nodeId = PayloadString(e.Payload, "task_node_id") ?? "";
+                    var nodeId = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id") ?? "";
                     return new
                     {
-                        id = PayloadString(e.Payload, "task_node_id"),
+                        id = nodeId,
                         graph_id = PayloadString(e.Payload, "graph_id"),
                         run_id = run.Id.ToString(),
                         session_id = sessionId,
                         title = PayloadString(e.Payload, "title") ?? "",
                         description = PayloadString(e.Payload, "description") ?? "",
-                        status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "assigned",
+                        status = e.EventType switch
+                        {
+                            "worker.failed" => "failed",
+                            "worker.blocked" => "blocked",
+                            "worker.completed" or "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
+                            _ => "assigned"
+                        },
                         lane_key = taskLaneById.TryGetValue(nodeId, out var nodeLane) ? nodeLane : "main",
                         priority = 1,
                         risk = "medium",
@@ -230,50 +236,7 @@ public static class DmaeaEndpoints
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
-            var items = events.Where(e => e.EventType is "step.result.created" or "task.assigned"
-                    or "tool.execution.requested" or "tool.execution.completed"
-                    or "tool.execution.failed" or "tool.execution.outcome_unknown")
-                .Select(e =>
-            {
-                // The durable tool.execution.* journal rows join the legacy
-                // task.assigned/step.result.created projection so the real
-                // dispatch outcomes (including the honestly recorded embedded
-                // tool_success flag) are visible; legacy rows keep their shape.
-                var isToolExecution = e.EventType.StartsWith("tool.execution.", StringComparison.Ordinal);
-                return new
-                {
-                    id = isToolExecution ? PayloadString(e.Payload, "execution_id") : PayloadString(e.Payload, "task_node_id"),
-                    run_id = isToolExecution ? e.RunId ?? "" : PayloadString(e.Payload, "run_id") ?? "",
-                    session_id = sessionId,
-                    tool_id = PayloadString(e.Payload, "tool_id") ?? "",
-                    tool_display_name = "",
-                    source = "dmaea",
-                    provider_layer = "execution",
-                    risk = isToolExecution ? PayloadString(e.Payload, "risk") ?? "medium" : "medium",
-                    requires_approval = PayloadBool(e.Payload, "requires_approval") ?? false,
-                    status = e.EventType switch
-                    {
-                        "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
-                        "task.assigned" => "pending",
-                        "tool.execution.requested" => "requested",
-                        "tool.execution.completed" => "completed",
-                        "tool.execution.failed" => "failed",
-                        _ => "outcome_unknown"
-                    },
-                    approval_id = (string?)null,
-                    step_result_id = PayloadString(e.Payload, "task_node_id"),
-                    summary = PayloadString(e.Payload, "summary") ?? "",
-                    evidence = PayloadArray(e.Payload, "evidence"),
-                    requested_at = e.Timestamp,
-                    updated_at = e.Timestamp,
-                    duration_ms = 0L,
-                    requested_seq = e.Payload.TryGetValue("sequence", out var seq) ? (long)(seq is JsonElement je && je.ValueKind == JsonValueKind.Number ? je.GetInt64() : 0) : 0L,
-                    updated_seq = 0L,
-                    event_types = new[] { e.EventType },
-                    checkpoint_summary = "",
-                    tool_success = PayloadBool(e.Payload, "tool_success")
-                };
-            }).ToList();
+            var items = BuildToolExecutionTimeline(events, sessionId);
             return Results.Ok(items);
         });
 
@@ -282,15 +245,21 @@ public static class DmaeaEndpoints
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
-            var nodes = events.Where(e => e.EventType == "task.assigned" || e.EventType == "step.result.created").Select(e => new
+            var nodes = events.Where(e => e.EventType is "task.assigned" or "step.result.created" or "worker.completed" or "worker.blocked" or "worker.failed").Select(e => new
             {
-                id = PayloadString(e.Payload, "task_node_id"),
+                id = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id"),
                 graph_id = PayloadString(e.Payload, "graph_id") ?? "",
                 run_id = PayloadString(e.Payload, "run_id") ?? "",
                 session_id = sessionId,
                 title = PayloadString(e.Payload, "title") ?? "",
                 description = PayloadString(e.Payload, "description") ?? "",
-                status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "assigned",
+                status = e.EventType switch
+                {
+                    "worker.failed" => "failed",
+                    "worker.blocked" => "blocked",
+                    "worker.completed" or "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
+                    _ => "assigned"
+                },
                 priority = 1,
                 risk = "medium",
                 success_criteria = Array.Empty<string>(),
@@ -405,7 +374,7 @@ public static class DmaeaEndpoints
             var nodeAgentNames = agentInstanceRows.Where(a => a.TaskId is not null)
                 .GroupBy(a => a.TaskId!.Value)
                 .ToDictionary(g => g.Key, g => DisplayNameFor(g.First()));
-            var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.failed" or "step.result.created").Select(e =>
+            var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.blocked" or "worker.failed" or "step.result.created").Select(e =>
             {
                 var nodeId = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id") ?? "";
                 var nodeAgentName = Guid.TryParse(nodeId, out var nodeGuid) && nodeAgentNames.TryGetValue(nodeGuid, out var dn) ? dn : null;
@@ -417,7 +386,13 @@ public static class DmaeaEndpoints
                     session_id = run.SessionId.ToString(),
                     title = PayloadString(e.Payload, "title") ?? "",
                     description = PayloadString(e.Payload, "description") ?? "",
-                    status = e.EventType is "worker.completed" or "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : e.EventType is "worker.failed" ? "failed" : "assigned",
+                    status = e.EventType switch
+                    {
+                        "worker.failed" => "failed",
+                        "worker.blocked" => "blocked",
+                        "worker.completed" or "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
+                        _ => "assigned"
+                    },
                     lane_key = taskLaneById.TryGetValue(nodeId, out var nodeLane) ? nodeLane : "main",
                     agent_display_name = nodeAgentName,
                     priority = 1,
@@ -476,7 +451,7 @@ public static class DmaeaEndpoints
                 run_id = runGuid.ToString(),
                 decision = PayloadString(e.Payload, "decision"),
                 revision_round = PayloadInt(e.Payload, "revision_round") ?? 0,
-                reason = PayloadString(e.Payload, "reason"),
+                reasons = PayloadArray(e.Payload, "reasons"),
                 created_at = e.Timestamp
             }).ToList();
             var assignments = agentInstanceRows.Where(a => a.TaskId is not null).Select(a => new
@@ -548,10 +523,13 @@ public static class DmaeaEndpoints
                 {
                     id = e.EventId,
                     run_id = runGuid.ToString(),
+                    lane_key = PayloadString(e.Payload, "lane_key"),
                     evidence_count = PayloadInt(e.Payload, "evidence_count") ?? 0,
                     estimated_tokens = PayloadInt(e.Payload, "estimated_tokens") ?? 0,
                     token_budget = PayloadInt(e.Payload, "token_budget") ?? 0,
                     sources = PayloadArray(e.Payload, "sources"),
+                    source_tokens = PayloadShares(e.Payload, "source_tokens"),
+                    dropped_sources = PayloadShares(e.Payload, "dropped_sources"),
                     created_at = e.Timestamp
                 }).ToList()
             }, Options);
@@ -685,6 +663,38 @@ public static class DmaeaEndpoints
         return [];
     }
 
+    /// <summary>
+    /// Reads the <c>[{ source, tokens }]</c> rows written by <c>BudgetShares</c>, dropping a row whose
+    /// shape does not match rather than guessing a price for it.
+    /// <para>
+    /// A malformed row would otherwise reach the surface as <c>NaN</c> or <c>undefined</c>, which is how
+    /// the compression-ratio bug in this very panel read as a measurement of zero.
+    /// </para>
+    /// <para>
+    /// An event from before these keys existed yields an empty list, which the wire cannot tell apart
+    /// from "nothing was priced" — an absent key and an empty array are the same bytes once this host
+    /// serialises them. The reader distinguishes the two by pairing against <c>sources</c>: a pack that
+    /// names its evidence but carries no rows has no price data, while an empty list beside a priced
+    /// pack is the real answer that nothing was crowded out.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<object> PayloadShares(IReadOnlyDictionary<string, object?> payload, string key)
+    {
+        var root = PayloadRoot(payload);
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var shares = new List<object>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            if (!item.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.String) continue;
+            if (!item.TryGetProperty("tokens", out var tokens) || tokens.ValueKind != JsonValueKind.Number || !tokens.TryGetInt32(out var price)) continue;
+            shares.Add(new { source = source.GetString(), tokens = price });
+        }
+        return shares;
+    }
+
     private static int? PayloadInt(IReadOnlyDictionary<string, object?> payload, string key)
     {
         var root = PayloadRoot(payload);
@@ -699,5 +709,195 @@ public static class DmaeaEndpoints
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty(key, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False)
             return v.GetBoolean();
         return null;
+    }
+
+    private static IReadOnlyList<object> BuildToolExecutionTimeline(
+        IReadOnlyList<TinadecCore.Contracts.Events.EventEnvelope> events,
+        string sessionId)
+    {
+        var relevant = events.Where(e => e.EventType is "step.result.created" or "task.assigned"
+                or "tool.execution.requested" or "tool.execution.completed"
+                or "tool.execution.failed" or "tool.execution.outcome_unknown"
+                or "approval.requested" or "approval.decided" or "governance.permission_decided")
+            .ToList();
+
+        // A policy-level permission decision may only carry permission_request_id.
+        // approval.requested is the durable bridge from that request to the concrete
+        // tool execution, so build the correlation once before folding the timeline.
+        var executionByPermission = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in relevant.Where(e => e.EventType == "approval.requested"))
+        {
+            var executionId = PayloadString(e.Payload, "execution_id");
+            var permissionId = PayloadString(e.Payload, "permission_request_id");
+            if (!string.IsNullOrWhiteSpace(executionId) && !string.IsNullOrWhiteSpace(permissionId))
+                executionByPermission[permissionId] = executionId;
+        }
+
+        var toolRows = new Dictionary<string, ToolTimelineAccumulator>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in relevant.Where(e => e.EventType is not ("step.result.created" or "task.assigned")))
+        {
+            var executionId = PayloadString(e.Payload, "execution_id");
+            if (string.IsNullOrWhiteSpace(executionId) && e.EventType == "governance.permission_decided")
+            {
+                var permissionId = PayloadString(e.Payload, "permission_request_id");
+                if (!string.IsNullOrWhiteSpace(permissionId)) executionByPermission.TryGetValue(permissionId, out executionId);
+            }
+            if (string.IsNullOrWhiteSpace(executionId)) continue;
+
+            if (!toolRows.TryGetValue(executionId, out var row))
+            {
+                row = new ToolTimelineAccumulator
+                {
+                    Id = executionId,
+                    RunId = e.RunId ?? string.Empty,
+                    RequestedAt = e.Timestamp,
+                    UpdatedAt = e.Timestamp,
+                    RequestedSeq = EventSequence(e.Payload),
+                    UpdatedSeq = EventSequence(e.Payload)
+                };
+                toolRows.Add(executionId, row);
+            }
+
+            row.RunId = string.IsNullOrWhiteSpace(e.RunId) ? row.RunId : e.RunId;
+            row.ToolId = PayloadString(e.Payload, "tool_id") ?? row.ToolId;
+            row.Risk = PayloadString(e.Payload, "risk") ?? row.Risk;
+            row.RequiresApproval = row.RequiresApproval
+                || PayloadBool(e.Payload, "requires_approval") == true
+                || e.EventType is "approval.requested" or "approval.decided" or "governance.permission_decided";
+
+            var approvalId = PayloadString(e.Payload, "approval_id");
+            if (e.EventType == "approval.requested" && !string.IsNullOrWhiteSpace(approvalId)) row.ApprovalId = approvalId;
+            else if (string.IsNullOrWhiteSpace(row.ApprovalId))
+                row.ApprovalId = approvalId ?? PayloadString(e.Payload, "permission_request_id");
+
+            var summary = EventSummary(e.Payload);
+            if (!string.IsNullOrWhiteSpace(summary)) row.Summary = summary;
+            var toolSuccess = PayloadBool(e.Payload, "tool_success");
+            if (toolSuccess is not null) row.ToolSuccess = toolSuccess;
+
+            row.Status = e.EventType switch
+            {
+                "tool.execution.requested" => "requested",
+                "approval.requested" => "waiting_approval",
+                "approval.decided" => string.Equals(PayloadString(e.Payload, "decision"), "approved", StringComparison.OrdinalIgnoreCase)
+                    ? "running"
+                    : "failed",
+                "governance.permission_decided" => string.Equals(PayloadString(e.Payload, "outcome"), "allowed", StringComparison.OrdinalIgnoreCase)
+                    ? "running"
+                    : "failed",
+                "tool.execution.completed" => "completed",
+                "tool.execution.failed" => "failed",
+                "tool.execution.outcome_unknown" => "outcome_unknown",
+                _ => row.Status
+            };
+
+            if (!row.EventTypes.Contains(e.EventType, StringComparer.Ordinal)) row.EventTypes.Add(e.EventType);
+            var sequence = EventSequence(e.Payload);
+            if (sequence > 0 && (row.RequestedSeq <= 0 || sequence < row.RequestedSeq)) row.RequestedSeq = sequence;
+            if (sequence > row.UpdatedSeq) row.UpdatedSeq = sequence;
+            if (e.Timestamp < row.RequestedAt) row.RequestedAt = e.Timestamp;
+            if (e.Timestamp > row.UpdatedAt) row.UpdatedAt = e.Timestamp;
+        }
+
+        var projected = new List<(long Sequence, object Item)>();
+        foreach (var e in relevant.Where(e => e.EventType is "step.result.created" or "task.assigned"))
+        {
+            var sequence = EventSequence(e.Payload);
+            projected.Add((sequence, new
+            {
+                id = PayloadString(e.Payload, "task_node_id"),
+                run_id = PayloadString(e.Payload, "run_id") ?? string.Empty,
+                session_id = sessionId,
+                tool_id = PayloadString(e.Payload, "tool_id") ?? string.Empty,
+                tool_display_name = string.Empty,
+                source = "dmaea",
+                provider_layer = "execution",
+                risk = "medium",
+                requires_approval = false,
+                status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "pending",
+                approval_id = (string?)null,
+                step_result_id = PayloadString(e.Payload, "task_node_id"),
+                summary = PayloadString(e.Payload, "summary") ?? string.Empty,
+                evidence = PayloadArray(e.Payload, "evidence"),
+                requested_at = e.Timestamp,
+                updated_at = e.Timestamp,
+                duration_ms = 0L,
+                requested_seq = sequence,
+                updated_seq = sequence,
+                event_types = new[] { e.EventType },
+                checkpoint_summary = string.Empty,
+                tool_success = (bool?)null
+            }));
+        }
+
+        foreach (var row in toolRows.Values)
+        {
+            projected.Add((row.RequestedSeq, new
+            {
+                id = row.Id,
+                run_id = row.RunId,
+                session_id = sessionId,
+                tool_id = row.ToolId,
+                tool_display_name = string.Empty,
+                source = "dmaea",
+                provider_layer = "execution",
+                risk = row.Risk,
+                requires_approval = row.RequiresApproval,
+                status = row.Status,
+                approval_id = row.ApprovalId,
+                step_result_id = (string?)null,
+                summary = row.Summary,
+                evidence = Array.Empty<string>(),
+                requested_at = row.RequestedAt,
+                updated_at = row.UpdatedAt,
+                duration_ms = Math.Max(0L, (long)(row.UpdatedAt - row.RequestedAt).TotalMilliseconds),
+                requested_seq = row.RequestedSeq,
+                updated_seq = row.UpdatedSeq,
+                event_types = row.EventTypes.ToArray(),
+                checkpoint_summary = string.Empty,
+                tool_success = row.ToolSuccess
+            }));
+        }
+
+        return projected.OrderBy(item => item.Sequence).Select(item => item.Item).ToList();
+    }
+
+    private static long EventSequence(IReadOnlyDictionary<string, object?> payload)
+    {
+        if (payload.TryGetValue("sequence", out var value))
+        {
+            if (value is long l) return l;
+            if (value is int i) return i;
+            if (value is JsonElement { ValueKind: JsonValueKind.Number } json && json.TryGetInt64(out var parsed)) return parsed;
+        }
+        return 0L;
+    }
+
+    private static string EventSummary(IReadOnlyDictionary<string, object?> payload) =>
+        payload.TryGetValue("summary", out var value)
+            ? value switch
+            {
+                string text => text,
+                JsonElement { ValueKind: JsonValueKind.String } json => json.GetString() ?? string.Empty,
+                _ => string.Empty
+            }
+            : string.Empty;
+
+    private sealed class ToolTimelineAccumulator
+    {
+        public string Id { get; init; } = string.Empty;
+        public string RunId { get; set; } = string.Empty;
+        public string ToolId { get; set; } = string.Empty;
+        public string Risk { get; set; } = "medium";
+        public bool RequiresApproval { get; set; }
+        public string Status { get; set; } = "requested";
+        public string? ApprovalId { get; set; }
+        public string Summary { get; set; } = string.Empty;
+        public bool? ToolSuccess { get; set; }
+        public DateTimeOffset RequestedAt { get; set; }
+        public DateTimeOffset UpdatedAt { get; set; }
+        public long RequestedSeq { get; set; }
+        public long UpdatedSeq { get; set; }
+        public List<string> EventTypes { get; } = [];
     }
 }

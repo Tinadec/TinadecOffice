@@ -33,24 +33,24 @@ Layer 4: Floating UI (notifications, dialogs, z-index: 10+)
 HOME PAGE UPWARD EXIT / ENTRY ANIMATION
 Class-driven keyframes (no Vue <Transition>) — same mechanism as the Settings
 page. HomePage.vue toggles .home-entering / .home-exiting on the classic
-.home-page-container wrapper; these rules animate the blur roots (.wb-stack)
+.home-page-container wrapper; these rules animate the blur roots (.uie-stack)
 themselves. Columns fly upward with scale-down and stagger on exit, and rise
 from below with stagger on entry.
 ---------------------------------------------------------------------------- */
 
 /* During the animation let the column overflow so a rising/flying stack is not
-   clipped by .wb-column's overflow:hidden. !important is required because
-   .wb-column's overflow:hidden lives in a Vue <style scoped> block whose
+   clipped by .uie-column's overflow:hidden. !important is required because
+   .uie-column's overflow:hidden lives in a Vue <style scoped> block whose
    [data-v-xxx] attribute selector wins over plain global specificity (0,2,0).
    overflow does NOT create a backdrop root, so blur is unaffected;
-   .wb-canvas stays overflow:hidden and clips at the window edge. */
-.home-page-container.home-entering .wb-column,
-.home-page-container.home-exiting .wb-column {
+   .uie-canvas stays overflow:hidden and clips at the window edge. */
+.home-page-container.home-entering .uie-column,
+.home-page-container.home-exiting .uie-column {
   overflow: visible !important;
 }
 
 /* EXIT: stacks fly upward and scale down, staggered per column.
-   CSS animations override the scoped .wb-stack transition (animation wins over
+   CSS animations override the scoped .uie-stack transition (animation wins over
    transition for the animated properties), so no !important is needed here —
    unlike the old <Transition> rule, which had to fight a competing transition. */
 @keyframes home-up-exit {
@@ -64,18 +64,18 @@ from below with stagger on entry.
   }
 }
 
-.home-page-container.home-exiting .wb-stack {
+.home-page-container.home-exiting .uie-stack {
   animation: home-up-exit 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
 /* Stagger: first column exits/enters earlier, last column later. */
-.home-page-container.home-exiting .wb-column:nth-child(1) .wb-stack {
+.home-page-container.home-exiting .uie-column:nth-child(1) .uie-stack {
   animation-delay: 0s;
 }
-.home-page-container.home-exiting .wb-column:nth-child(2) .wb-stack {
+.home-page-container.home-exiting .uie-column:nth-child(2) .uie-stack {
   animation-delay: 0.05s;
 }
-.home-page-container.home-exiting .wb-column:nth-child(3) .wb-stack {
+.home-page-container.home-exiting .uie-column:nth-child(3) .uie-stack {
   animation-delay: 0.1s;
 }
 
@@ -93,17 +93,17 @@ from below with stagger on entry.
   }
 }
 
-.home-page-container.home-entering .wb-stack {
+.home-page-container.home-entering .uie-stack {
   animation: home-up-enter 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.home-page-container.home-entering .wb-column:nth-child(1) .wb-stack {
+.home-page-container.home-entering .uie-column:nth-child(1) .uie-stack {
   animation-delay: 0s;
 }
-.home-page-container.home-entering .wb-column:nth-child(2) .wb-stack {
+.home-page-container.home-entering .uie-column:nth-child(2) .uie-stack {
   animation-delay: 0.05s;
 }
-.home-page-container.home-entering .wb-column:nth-child(3) .wb-stack {
+.home-page-container.home-entering .uie-column:nth-child(3) .uie-stack {
   animation-delay: 0.1s;
 }
 
@@ -128,9 +128,6 @@ from below with stagger on entry.
    ---------------------------------------------------------------------------- */
 
 /* Child surfaces inherit blur via CSS custom properties */
-[data-panel-effect="blur"] .surface-section {
-  background: var(--surface-section); /* Auto-maps to blur alpha tier */
-}
 
 /* ----------------------------------------------------------------------------
    REDUCED MOTION ACCESSIBILITY
@@ -138,8 +135,8 @@ from below with stagger on entry.
    ---------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .home-page-container.home-entering .wb-stack,
-  .home-page-container.home-exiting .wb-stack {
+  .home-page-container.home-entering .uie-stack,
+  .home-page-container.home-exiting .uie-stack {
     animation: none !important;
   }
 

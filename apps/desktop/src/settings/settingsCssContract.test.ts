@@ -508,15 +508,15 @@ describe('material-aware UI primitive contract', () => {
 describe('styles.css extraction contract', () => {
   const css = normalizeLineEndings(stylesCss)
 
-  it('still contains page-level route transitions', () => {
-    expect(css).toContain('.page-slide-left-enter-active')
-    expect(css).toContain('.page-slide-right-enter-active')
+  it('carries no route-level transitions (UIE pages own their enter/exit motion)', () => {
+    expect(css).not.toContain('.page-slide-left-enter-active')
+    expect(css).not.toContain('.page-slide-right-enter-active')
   })
 
   it('still contains shared layout styles', () => {
     expect(css).toContain('.shell')
     expect(css).toContain('.sidebar')
-    expect(css).toContain('.float-panel')
+    expect(css).not.toContain('.float-panel')
     expect(css).toContain('.conversation')
     expect(css).toContain('.composer')
     expect(css).toContain('.welcome-screen')
@@ -553,8 +553,8 @@ describe('styles.css extraction contract', () => {
 
   it('renders immersive stacks with a transparent material root', () => {
     const blocks = extractStyleBlocks(uieStackSource)
-    expect(blocks).toMatch(/\.wb-stack--immersive\s*\{[^}]*background:\s*transparent[^}]*\}/)
-    expect(blocks).toMatch(/\.wb-stack--immersive\s*\{[^}]*box-shadow:\s*none[^}]*\}/)
+    expect(blocks).toMatch(/\.uie-stack--immersive\s*\{[^}]*background:\s*transparent[^}]*\}/)
+    expect(blocks).toMatch(/\.uie-stack--immersive\s*\{[^}]*box-shadow:\s*none[^}]*\}/)
   })
 
   it('maps opaque surfaces to the solid theme tokens', () => {

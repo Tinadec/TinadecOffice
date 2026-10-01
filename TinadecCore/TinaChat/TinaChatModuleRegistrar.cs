@@ -1,0 +1,36 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using TinadecCore.Abstractions;
+using TinadecCore.Abstractions.Ports;
+using TinadecCore.Persistence;
+
+namespace TinadecCore.TinaChat;
+
+public sealed class TinaChatModuleRegistrar : IModuleRegistrar
+{
+    public string ModuleId => "tina_chat";
+
+    public void Register(ITinadecCoreBuilder builder)
+    {
+        builder.Services.AddDbContextFactory<TinaChatDbContext>((sp, options) => options.UseTinadecDatabase(sp));
+        builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<TinaChatDbContext>>();
+        builder.Services.AddOptions<TinaChatWakeOptions>().BindConfiguration(TinaChatWakeOptions.SectionName);
+        builder.Services.AddSingleton<TinaChatService>();
+        builder.Services.AddSingleton<ITinaChatService>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ITinaChatRunInput>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ITinaChatObserver>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ITinaChatWakeProcessor>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ITinaChatExecutionResults>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ITinaChatToolGateway>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ISessionOrganization>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ISessionOrganizationView>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.RegisterModule(new ModuleDescriptor
+        {
+            ModuleId = ModuleId, Version = "0.2.0", Language = "C#",
+            Dependencies = ["abstractions", "persistence"],
+            Capabilities = ["named_participants", "group_messaging", "durable_inbox", "message_visibility", "intent_handoffs", "durable_agent_wakes", "agent_chat_tools",
+                "session_organizations", "organization_contacts", "organization_reports", "standing_member_turns", "turn_budgets"],
+            MafPrimitives = [], RegistrationStatus = ModuleRegistrationStatus.Registered
+        });
+    }
+}

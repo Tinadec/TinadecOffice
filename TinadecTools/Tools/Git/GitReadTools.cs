@@ -306,7 +306,7 @@ internal static class GitReadTools
         return status.Ok ? ParseStatus(repo, status.Stdout) : StatusFailure(status.Stderr, status.ExitCode);
     }
 
-    [ToolFunction("git_push_readiness")]
+    [ToolFunction("git_push_readiness", Description = "Check whether the current branch can be pushed: upstream, ahead/behind, uncommitted changes, detached HEAD, with the blocking reasons. Read-only; call it before git_push. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitPushReadinessResult> PushReadinessAsync(GitPushReadinessArgs args, CancellationToken cancellationToken)
     {
         var status = await StatusAsync(new GitStatusArgs { RepositoryPath = args.RepositoryPath }, cancellationToken).ConfigureAwait(false);
@@ -399,7 +399,7 @@ internal static class GitReadTools
         return new GitDiffResult { Success = true, Sections = sections, Truncated = sections.Any(section => section.Truncated) };
     }
 
-    [ToolFunction("git_branch_list")]
+    [ToolFunction("git_branch_list", Description = "List the repository's local branches, plus remote branches unless include_remote=false, marking the current branch. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitBranchListResult> BranchListAsync(GitBranchListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -411,7 +411,7 @@ internal static class GitReadTools
         return new GitBranchListResult { Success = true, Branches = exec.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Split('\t')).Where(fields => fields.Length == 5).Select(fields => new GitBranch { IsCurrent = fields[0] == "*", Name = fields[2], Upstream = NullIfEmpty(fields[3]), Commit = NullIfEmpty(fields[4]), IsRemote = fields[1].StartsWith("refs/remotes/", StringComparison.Ordinal) }).ToList() };
     }
 
-    [ToolFunction("git_worktree_list")]
+    [ToolFunction("git_worktree_list", Description = "List the repository's git worktrees with their paths, branches and HEAD commits. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitWorktreeListResult> WorktreeListAsync(GitWorktreeListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -431,7 +431,7 @@ internal static class GitReadTools
         return new GitWorktreeListResult { Success = true, Worktrees = result };
     }
 
-    [ToolFunction("git_ref_list")]
+    [ToolFunction("git_ref_list", Description = "List refs of the given types (branch, tag, remote; default all) with the commits they point at. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitRefListResult> RefListAsync(GitRefListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -449,7 +449,7 @@ internal static class GitReadTools
         return new GitRefListResult { Success = true, Refs = refs };
     }
 
-    [ToolFunction("git_remote_list")]
+    [ToolFunction("git_remote_list", Description = "List configured remotes with their fetch and push URLs. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitRemoteListResult> RemoteListAsync(GitRemoteListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -466,7 +466,7 @@ internal static class GitReadTools
         return new GitRemoteListResult { Success = true, Remotes = remotes };
     }
 
-    [ToolFunction("git_blame")]
+    [ToolFunction("git_blame", Description = "Line-by-line authorship of a file at a revision (commit, author, date per line). path is the file inside the repository; rev defaults to HEAD; start_line/end_line (1-based, inclusive) narrow the range. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitBlameResult> BlameAsync(GitBlameArgs args, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(args.Path)) throw new InvalidOperationException("path is required.");
@@ -484,7 +484,7 @@ internal static class GitReadTools
         return ParseBlame(exec.Stdout, exec.Truncated);
     }
 
-    [ToolFunction("git_file_at_revision")]
+    [ToolFunction("git_file_at_revision", Description = "Read a file's content as it was at a revision (commit, branch or tag; default HEAD) without checking it out. path is the file inside the repository. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitFileAtRevisionResult> FileAtRevisionAsync(GitFileAtRevisionArgs args, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(args.Path)) throw new InvalidOperationException("path is required.");
@@ -502,7 +502,7 @@ internal static class GitReadTools
         return new GitFileAtRevisionResult { Success = true, Path = path, Rev = args.Rev, BlobHash = hash, ByteSize = size, IsBinary = binary, Content = binary ? null : content.Stdout, Truncated = content.Truncated, TruncationReason = content.Truncated ? "max_output_bytes" : null };
     }
 
-    [ToolFunction("git_conflict_preview")]
+    [ToolFunction("git_conflict_preview", Description = "Show the in-progress merge/rebase conflicts: each conflicted file (or only path) with its conflict blocks, each carrying base/ours/theirs text and line range, so a strategy can be chosen before git_conflict_resolve. Read-only. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitConflictPreviewResult> ConflictPreviewAsync(GitConflictPreviewArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);

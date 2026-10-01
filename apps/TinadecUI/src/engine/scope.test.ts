@@ -7,6 +7,11 @@ describe('layout scope', () => {
     expect(writeScopeFor('home', 'proj-1')).toEqual({ kind: 'workspace-page', projectId: 'proj-1', pageId: 'home' })
   })
 
+  it('pages outside PROJECT_SCOPED_PAGES stay page-wide even with a project active', () => {
+    expect(writeScopeFor('market', 'proj-1')).toEqual({ kind: 'page', pageId: 'market' })
+    expect(resolveReadScope('market', 'proj-1', () => true)).toEqual({ kind: 'page', pageId: 'market' })
+  })
+
   it('write scope is page when no project is active', () => {
     expect(writeScopeFor('home', null)).toEqual({ kind: 'page', pageId: 'home' })
   })

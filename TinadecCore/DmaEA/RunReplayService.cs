@@ -64,6 +64,7 @@ internal sealed class RunReplayService : IRunReplayService
         "task.accepted",
         "task_graph.created",
         "worker.completed",
+        "worker.blocked",
         "worker.failed",
         "worker.tool_round",
         "worker.budget_exhausted",
@@ -77,6 +78,9 @@ internal sealed class RunReplayService : IRunReplayService
         "evolution.agent_candidate_created",
         "git.steward.reviewed",
         "user.response",
+        "run.model_retry_scheduled",
+        "run.model_retry_resumed",
+        "run.model_retry_recovered",
         "run.failed"
     };
 
@@ -132,13 +136,18 @@ internal sealed class RunReplayService : IRunReplayService
         }
 
         var tasks = new Dictionary<string, RunReplayTask>(StringComparer.Ordinal);
-        foreach (var item in events.Where(item => item.EventType is "worker.completed" or "worker.failed"))
+        foreach (var item in events.Where(item => item.EventType is "worker.completed" or "worker.blocked" or "worker.failed"))
         {
             var taskKey = PayloadString(item.Payload, "task_key") ?? PayloadString(item.Payload, "task_id") ?? item.EventId;
             tasks[taskKey] = new RunReplayTask(
                 taskKey,
                 laneByTask.TryGetValue(taskKey, out var laneKey) ? laneKey : "main",
-                item.EventType == "worker.failed" ? "failed" : PayloadString(item.Payload, "status") ?? "completed",
+                item.EventType switch
+                {
+                    "worker.failed" => "failed",
+                    "worker.blocked" => "blocked",
+                    _ => PayloadString(item.Payload, "status") ?? "completed"
+                },
                 PayloadString(item.Payload, "summary") ?? string.Empty,
                 PayloadArray(item.Payload, "evidence"));
         }

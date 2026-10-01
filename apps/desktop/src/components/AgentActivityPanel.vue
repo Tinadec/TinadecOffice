@@ -23,6 +23,10 @@ import {
   Package,
   MessageSquare,
   Terminal,
+  Send,
+  Hourglass,
+  ListChecks,
+  AlertTriangle,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { AgentActivity, AgentState, ThinkingStep, ProgressEvent } from '@/composables/useAgentActivity'
@@ -158,6 +162,12 @@ const stepConfig = (type: ThinkingStep['type']) => {
       return { icon: Package, color: 'step-context', label: t('agent.stepContext') }
     case 'step_result':
       return { icon: CheckCircle2, color: 'step-result', label: t('agent.stepResult') }
+    case 'dispatch':
+      return { icon: Send, color: 'step-assign', label: t('agent.stepDispatch') }
+    case 'wait':
+      return { icon: Hourglass, color: 'step-graph', label: t('agent.stepWait') }
+    case 'plan':
+      return { icon: ListChecks, color: 'step-graph', label: t('agent.stepPlan') }
     default:
       return { icon: Brain, color: 'step-default', label: t('agent.stepThinking') }
   }
@@ -194,6 +204,10 @@ const progressIconMap: Record<string, unknown> = {
   terminal: Terminal,
   check: CheckCircle2,
   x: AlertCircle,
+  'alert-triangle': AlertTriangle,
+  hourglass: Hourglass,
+  send: Send,
+  'list-checks': ListChecks,
 }
 
 function getProgressIcon(iconKey: string) {
@@ -289,7 +303,7 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
           <div class="agent-panel-section-title">
             <component :is="taskGraphCollapsed ? ChevronRight : ChevronDown" :size="12" />
             <ListTodo :size="12" />
-            <span>{{ orchestration.graph.title ?? t('agent.taskPlan') }}</span>
+            <span>{{ t('agent.taskPlan') }}</span>
             <span v-if="taskProgress.total > 0" class="agent-panel-count-badge">
               {{ taskProgress.done }}/{{ taskProgress.total }}
             </span>
@@ -351,7 +365,7 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
                     <strong>{{ step.title }}</strong>
                     <span class="agent-panel-thinking-tag">{{ stepConfig(step.type).label }}</span>
                   </div>
-                  <p v-if="step.description" class="agent-panel-thinking-desc">{{ step.description }}</p>
+                  <p v-if="step.description" class="agent-panel-thinking-desc" :class="{ 'is-plan': step.type === 'plan' }">{{ step.description }}</p>
                   <div class="agent-panel-thinking-meta">
                     <span class="agent-panel-thinking-time">
                       <Clock :size="9" />
@@ -936,6 +950,10 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
   line-height: 1.35;
   color: var(--text-secondary);
   word-break: break-word;
+}
+
+.agent-panel-thinking-desc.is-plan {
+  white-space: pre-line;
 }
 
 .agent-panel-thinking-meta {

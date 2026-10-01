@@ -4,21 +4,37 @@ import type { LayoutScope, UiePageId } from './types'
 // Layout scope resolution.
 //
 // Write scope (runtime):
-//   - active project  -> { kind: 'workspace-page', projectId, pageId }
-//   - otherwise       -> { kind: 'page', pageId }
+//   - project-scoped page + active project -> { kind: 'workspace-page', projectId, pageId }
+//   - otherwise                            -> { kind: 'page', pageId }
 //
 // Read scope (persistence, "most specific valid wins"):
 //   workspace-page(projectId, pageId) > page(pageId) > global > built-in preset.
+//
+// A project without its own layout therefore inherits the page-wide layout (the
+// one used with no workspace selected); its first edit forks a project layout.
 // ---------------------------------------------------------------------------
+
+/**
+ * Pages whose layout is remembered per project. Only workspace-bound pages are
+ * listed: market/chatroom content is not tied to a project, so they keep one
+ * page-wide layout regardless of the active project.
+ */
+export const PROJECT_SCOPED_PAGES: ReadonlySet<UiePageId> = new Set<UiePageId>(['home'])
+
+/** The project a page's layout is scoped to, or null for page-wide layouts. */
+export function layoutProjectFor(
+  pageId: UiePageId,
+  activeProjectId: string | null | undefined,
+): string | null {
+  return activeProjectId && PROJECT_SCOPED_PAGES.has(pageId) ? activeProjectId : null
+}
 
 export function writeScopeFor(
   pageId: UiePageId,
   activeProjectId: string | null | undefined,
 ): LayoutScope {
-  if (activeProjectId) {
-    return { kind: 'workspace-page', projectId: activeProjectId, pageId }
-  }
-  return { kind: 'page', pageId }
+  const projectId = layoutProjectFor(pageId, activeProjectId)
+  return projectId ? { kind: 'workspace-page', projectId, pageId } : { kind: 'page', pageId }
 }
 
 export function scopeKey(scope: LayoutScope): string {
@@ -56,8 +72,9 @@ export function resolveReadScope(
   activeProjectId: string | null | undefined,
   hasSnapshot: (scope: LayoutScope) => boolean,
 ): LayoutScope | null {
-  if (activeProjectId) {
-    const wsScope: LayoutScope = { kind: 'workspace-page', projectId: activeProjectId, pageId }
+  const projectId = layoutProjectFor(pageId, activeProjectId)
+  if (projectId) {
+    const wsScope: LayoutScope = { kind: 'workspace-page', projectId, pageId }
     if (hasSnapshot(wsScope)) return wsScope
   }
   const pageScope: LayoutScope = { kind: 'page', pageId }

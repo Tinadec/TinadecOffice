@@ -22,7 +22,7 @@ namespace TinadecCore.Api.Tests;
 /// pipeline through HTTP: admission, background execution, supervision loop, streaming
 /// chunks, run control, mode catalogs, context versions, lineage, and candidate review.
 /// </summary>
-public sealed class FullDuplexEndpointTests : IAsyncLifetime
+public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
 {
     private const string TestAgentPackId = "tinadec.tests.runtime-agent-pack";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "tinadec-fullduplex-api-tests", Guid.NewGuid().ToString("N"));
@@ -255,12 +255,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         }
     }
 
-    private static async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body)
+    private async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body, Action<JsonElement>? onChunk = null)
     {
         // Durable admission (plan §4.3-4) followed by the run stream replay.
         using var admissionRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/interactions") { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
         using var admissionResponse = await client.SendAsync(admissionRequest);
-        Assert.Equal(HttpStatusCode.Created, admissionResponse.StatusCode);
+        await _factory!.AssertStatusAsync(admissionResponse, HttpStatusCode.Created, "Interaction admission");
         var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
         var runId = receipt.GetProperty("run_id").GetString();
         var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
@@ -269,7 +269,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var chunks = new List<JsonElement>();
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream");
         using var stream = await response.Content.ReadAsStreamAsync();
         using var reader = new StreamReader(stream);
         var builder = new StringBuilder();
@@ -279,7 +279,9 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             {
                 if (builder.Length > 0)
                 {
-                    chunks.Add(JsonSerializer.Deserialize<JsonElement>(builder.ToString()));
+                    var chunk = JsonSerializer.Deserialize<JsonElement>(builder.ToString());
+                    chunks.Add(chunk);
+                    onChunk?.Invoke(chunk);
                     builder.Clear();
                 }
                 continue;
@@ -296,7 +298,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     /// interaction test send a meeting turn while the durable target run is blocked
     /// inside the scripted worker.
     /// </summary>
-    private static ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
+    private ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
     {
         var acknowledgement = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completion = Task.Run(async () =>
@@ -309,22 +311,14 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                     Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
                 };
                 using var admissionResponse = await client.SendAsync(admissionRequest);
-                if (admissionResponse.StatusCode != HttpStatusCode.Created)
-                {
-                    var errorBody = await admissionResponse.Content.ReadAsStringAsync();
-                    Assert.Fail($"Interaction admission returned {(int)admissionResponse.StatusCode} {admissionResponse.StatusCode}: {errorBody}");
-                }
+                await _factory!.AssertStatusAsync(admissionResponse, HttpStatusCode.Created, "Interaction admission");
                 var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
                 var runId = receipt.GetProperty("run_id").GetString();
                 var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
                 var turnId = receipt.TryGetProperty("turn_id", out var tid) ? tid.GetString() : null;
                 using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-                if (response.StatusCode != HttpStatusCode.OK)
-                {
-                    var errorBody = await response.Content.ReadAsStringAsync();
-                    Assert.Fail($"Run stream returned {(int)response.StatusCode} {response.StatusCode}: {errorBody}");
-                }
+                await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream");
                 using var stream = await response.Content.ReadAsStreamAsync();
                 using var reader = new StreamReader(stream);
                 var builder = new StringBuilder();
@@ -358,11 +352,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         return new ActiveInvoke(acknowledgement.Task, completion);
     }
 
-    private static async Task<List<JsonElement>> StreamRunAsync(HttpClient client, Guid runId, Guid turnId)
+    private async Task<List<JsonElement>> StreamRunAsync(HttpClient client, Guid runId, Guid turnId)
     {
         var chunks = new List<JsonElement>();
         using var response = await client.GetAsync($"/api/v1/runs/{runId}/stream?turn_id={turnId}", HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream replay");
         using var stream = await response.Content.ReadAsStreamAsync();
         using var reader = new StreamReader(stream);
         var builder = new StringBuilder();
@@ -414,12 +408,13 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("done", KindOf(done));
         Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
 
-        // Exactly one user and one assistant message.
+        // Exactly one user and one assistant message. The bounded task/tool evidence
+        // digest is a separate durable context message for the next turn.
         var messages = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
-        Assert.Equal(2, messages!.Length);
-        Assert.Equal("user", messages[0].GetProperty("role").GetString());
-        Assert.Equal("assistant", messages[1].GetProperty("role").GetString());
-        Assert.Equal("全部完成。", messages[1].GetProperty("content").GetString());
+        Assert.Single(messages!, message => message.GetProperty("role").GetString() == "user");
+        var assistant = Assert.Single(messages!, message => message.GetProperty("role").GetString() == "assistant");
+        Assert.Equal("全部完成。", assistant.GetProperty("content").GetString());
+        Assert.Single(messages!, message => message.GetProperty("role").GetString() == "tool_evidence");
 
         // Run terminal state and lineage. Graph tiers create workers through the
         // engine-authoritative ROOT path: they are execution-layer instances
@@ -433,6 +428,157 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
         Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
         Assert.True(orchestration.GetProperty("supervision_findings").GetArrayLength() >= 2);
+    }
+
+    [Fact]
+    public async Task InvokeStream_AnswerArrivesBeforeTheProviderFinishes_AndCommitDoesNotDuplicateIt()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient().WhenPlanner("[]").WhenMeeting("Hello streamed answer");
+        script.AfterFirstMeetingDelta = release.Task;
+        var client = CreateFactory(script).CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+        var stream = StreamInvokeAsync(client, sessionId, new { content = "hello", client_message_id = "live-stream" },
+            chunk => { if (KindOf(chunk) == "answer.delta") first.TrySetResult(chunk); });
+        try
+        {
+            var partial = await first.Task.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal("He", partial.GetProperty("delta").GetString());
+            Assert.False(stream.IsCompleted);
+            var messages = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
+            Assert.DoesNotContain(messages!, m => m.GetProperty("role").GetString() == "assistant");
+        }
+        finally { release.TrySetResult(); }
+        var chunks = await stream.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal("Hello streamed answer", string.Concat(chunks.Where(c => KindOf(c) == "answer.delta").Select(c => c.GetProperty("delta").GetString())));
+        Assert.Single(chunks, c => KindOf(c) == "delta"); // one authoritative replacement, not another provisional segment
+        Assert.Equal("done", KindOf(chunks[^1]));
+    }
+
+    [Fact]
+    public async Task FinalMeetingFailure_ReturnsPersistedExecutionEvidenceInsteadOfLosingCompletedWork()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"inspect\",\"title\":\"检查项目\",\"description\":\"\",\"success_criteria\":[\"README 已读取\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已读取 README，并确认项目结构。")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"证据充分\"],\"revise_task_indexes\":[]}")
+            .FailMeeting();
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "介绍项目" });
+
+        var runId = RunIdOf(chunks[0]);
+        var terminal = chunks.Last(chunk => KindOf(chunk) is "done" or "error");
+        Assert.Equal("done", KindOf(terminal));
+        Assert.Equal("completed", terminal.GetProperty("finish_reason").GetString());
+        var responseText = string.Concat(chunks
+            .Where(chunk => KindOf(chunk) == "delta")
+            .Select(chunk => chunk.GetProperty("delta").GetString()));
+        Assert.Contains("已读取 README", responseText, StringComparison.Ordinal);
+        Assert.Contains("request_error", responseText, StringComparison.Ordinal);
+
+        var messages = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
+        var assistant = Assert.Single(messages!, message => message.GetProperty("role").GetString() == "assistant");
+        Assert.Contains("已读取 README", assistant.GetProperty("content").GetString(), StringComparison.Ordinal);
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await lifecycle.ReplayEventsAsync(sessionId, 0);
+        Assert.Contains(events, item => item.RunId == runId.ToString() && item.EventType == "meeting.response_fallback");
+        Assert.DoesNotContain(events, item => item.RunId == runId.ToString() && item.EventType == "run.failed");
+    }
+
+    [Fact]
+    public async Task InvokeStream_TransientModelOutage_RetriesTheDurableRunAndCompletes()
+    {
+        var script = new ScriptedChatClient()
+            // One model call performs three bounded same-candidate attempts. Exhaust
+            // that entire call so the durable run retry, rather than the inner short
+            // retry, is what recovers the interaction.
+            .FailPlannerTransiently(ModelInvocationChatFactory.MaxAttemptsPerCandidate, "provider_server_error")
+            .WhenPlanner("[]")
+            .WhenMeeting("模型恢复后完成。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new
+        {
+            content = "回答一个无需执行任务的问题",
+            client_message_id = "durable-model-retry"
+        });
+
+        var runId = RunIdOf(chunks[0]);
+        var terminal = chunks.Last(chunk => KindOf(chunk) is "done" or "error");
+        Assert.True(KindOf(terminal) == "done", terminal.GetRawText());
+        Assert.Equal("completed", terminal.GetProperty("finish_reason").GetString());
+        Assert.Equal(ModelInvocationChatFactory.MaxAttemptsPerCandidate, script.PlannerFailureCalls);
+
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await lifecycle.ReplayEventsAsync(sessionId, 0);
+        var runEvents = events.Where(item => item.RunId == runId.ToString()).ToArray();
+        Assert.Contains(runEvents, item => item.EventType == "run.model_retry_scheduled");
+        Assert.Contains(runEvents, item => item.EventType == "run.model_retry_resumed");
+        Assert.Contains(runEvents, item => item.EventType == "run.model_retry_recovered");
+
+        var storedCheckpoint = await lifecycle.GetCurrentRunCheckpointAsync(runId.ToString());
+        Assert.NotNull(storedCheckpoint);
+        using (var checkpointJson = JsonDocument.Parse(storedCheckpoint.Content))
+        {
+            Assert.False(checkpointJson.RootElement.TryGetProperty("transientModelRetryCount", out _));
+            Assert.False(checkpointJson.RootElement.TryGetProperty("modelRetryNotBefore", out _));
+        }
+
+        var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+        Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task InvokeStream_TransientModelOutage_ReacquiresAnExpiredLeaseAndPersistsTheRetry()
+    {
+        var plannerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient
+        {
+            BeforePlanner = plannerGate.Task
+        };
+        script.FailPlannerTransiently(ModelInvocationChatFactory.MaxAttemptsPerCandidate, "provider_server_error")
+            .WhenPlanner("[]")
+            .WhenMeeting("重取租约后完成。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var invoke = StartStreamingInvoke(client, sessionId, new
+        {
+            content = "验证模型故障后的租约恢复",
+            client_message_id = "durable-model-retry-expired-lease"
+        });
+        var runId = RunIdOf(await invoke.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)));
+        var gateDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (script.PlannerGateEntries < 1 && DateTimeOffset.UtcNow < gateDeadline)
+        {
+            await Task.Delay(25);
+        }
+        Assert.True(script.PlannerGateEntries >= 1, "The planner call should be blocked before the lease is expired.");
+
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            var past = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.Runs.Where(x => x.Id == runId).ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.LeaseExpiresAt, past)
+                .SetProperty(x => x.LeaseExpiresUnixMilliseconds, past.ToUnixTimeMilliseconds()));
+        }
+        plannerGate.SetResult();
+
+        var chunks = await invoke.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        var terminal = chunks.Last(chunk => KindOf(chunk) is "done" or "error");
+        Assert.Equal("done", KindOf(terminal));
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var state = await lifecycle.GetRunStateAsync(runId.ToString());
+        Assert.True(state.RecoveryCount >= 2, $"Expected a lease reacquire epoch, got {state.RecoveryCount}.");
+        var events = await lifecycle.ReplayEventsAsync(sessionId, 0);
+        Assert.Contains(events, item => item.RunId == runId.ToString() && item.EventType == "run.model_retry_scheduled");
     }
 
     [Fact]
@@ -538,6 +684,154 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InvokeStream_SendsTheProjectInstructionFileInTheMessagesTheModelReads()
+    {
+        // The frozen-root fact above tells a run *where* it is; this one tells it what the
+        // project demands. Asserted against the recorded messages rather than Instructions
+        // because the prompt assembler owns roles and evidence travels in the messages —
+        // a role-only assertion would pass while the file was dropped between context
+        // build and dispatch, which is the gap this slice closes.
+        var root = Path.GetFullPath(Path.Combine(_root, "workspace"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "AGENTS.md"),
+            "# Project rules\nEvery summary must cite PRE-FROZEN-PROJECT-RULE.\n");
+
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。");
+        var client = CreateFactory(script).CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "按项目规矩总结", client_message_id = "instructions-prompt" });
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        Assert.Contains(script.Prompts, prompt =>
+            prompt.Contains("PRE-FROZEN-PROJECT-RULE", StringComparison.Ordinal)
+            && prompt.Contains("Every summary must cite", StringComparison.Ordinal)
+            && prompt.Contains("[workspace_instructions]", StringComparison.Ordinal)
+            && prompt.Contains("AGENTS.md", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task InvokeStream_SendsTheSkillIndexAndKeepsEverySkillBodyOnDisk()
+    {
+        // Progressive disclosure is only real if its second half survives the trip to the model: an
+        // index that arrives while the bodies ride along with it charges every turn of every run for
+        // every skill in the repository. Asserted against the recorded messages, and against all of
+        // them — a body leaking into any one role's prompt breaks the rule as far as the model is
+        // concerned, whichever role it was.
+        var root = Path.GetFullPath(Path.Combine(_root, "workspace"));
+        var skillDirectory = Path.Combine(root, "skills", "changelog");
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(Path.Combine(root, "AGENTS.md"), "Cite the changelog skill.\n");
+        File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"),
+            "---\nname: changelog\ndescription: Group the commits since the last tag into one note.\n---\n\nBODY-MUST-STAY-ON-DISK-7c41\n");
+
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。");
+        var client = CreateFactory(script).CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "写发版说明", client_message_id = "skills-prompt" });
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        Assert.Contains(script.Prompts, prompt =>
+            prompt.Contains("[workspace_skills]", StringComparison.Ordinal)
+            && prompt.Contains("skills/changelog/SKILL.md", StringComparison.Ordinal)
+            && prompt.Contains("Group the commits since the last tag into one note.", StringComparison.Ordinal));
+        Assert.All(script.Prompts, prompt =>
+            Assert.DoesNotContain("BODY-MUST-STAY-ON-DISK-7c41", prompt, StringComparison.Ordinal));
+
+        // The same fact, readable without a model in the loop: the orchestration projection already
+        // asked for a `sources` array that nothing ever wrote, so the panel could only show a count.
+        // A run's evidence list is the difference between "the agent ignored the project rules" and
+        // "the agent was never told them", and only one of those is answerable after the fact.
+        var runId = RunIdOf(chunks.First(chunk => chunk.TryGetProperty("run_id", out _)));
+        var packs = (await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/runs/{runId}/orchestration")).GetProperty("context_packs");
+        var plannerPack = packs.EnumerateArray().First();
+
+        var sources = plannerPack.GetProperty("sources").EnumerateArray()
+            .Select(value => value.GetString()).ToArray();
+        Assert.Contains("workspace_instructions", sources);
+        Assert.Contains("workspace_skills", sources);
+        Assert.Equal(plannerPack.GetProperty("evidence_count").GetInt32(), sources.Length);
+
+        // A name list says what the model was told; it cannot say what that cost, which is the
+        // difference between "raise the budget" and "retrieve fewer memories" when a pack runs over.
+        // One row per evidence item, paired with `sources` by index — the projection must preserve
+        // the mint order rather than regroup it, so the reader never has to guess which price is
+        // whose. Nothing was crowded out in this scripted run, and the wire has to be able to say
+        // that as its own answer instead of leaving the key off.
+        var sourceTokens = plannerPack.GetProperty("source_tokens").EnumerateArray().ToArray();
+        Assert.Equal(sources.Length, sourceTokens.Length);
+        Assert.Equal(sources, sourceTokens.Select(value => value.GetProperty("source").GetString()));
+        Assert.Equal(plannerPack.GetProperty("estimated_tokens").GetInt32(),
+            sourceTokens.Sum(value => value.GetProperty("tokens").GetInt32()));
+        Assert.All(sourceTokens, value => Assert.True(value.GetProperty("tokens").GetInt32() > 0));
+        Assert.Empty(plannerPack.GetProperty("dropped_sources").EnumerateArray());
+
+        // A main-planner pack belongs to no lane. The projection serialises that as an explicit null,
+        // while the durable payload drops it, so a reader has to survive both shapes — which is what
+        // the desktop's `string | null | undefined` is for, and why it is pinned here rather than assumed.
+        Assert.True(plannerPack.TryGetProperty("lane_key", out var plannerLane));
+        Assert.Equal(JsonValueKind.Null, plannerLane.ValueKind);
+    }
+
+    [Fact]
+    public async Task InvokeStream_SendsPromotedMemoryAndKeepsAnUnreviewedCandidateOutOfThePrompt()
+    {
+        // The reason a review queue exists is that saying yes here changes what the model is
+        // told there. Until now nothing in the repository asserted that trip: the curator wrote
+        // candidates, promotion produced an active item, and the retrieval leg that is supposed to
+        // read them back was only reachable by reading the code.
+        // The other half of the same rule is asserted in the same run: a candidate nobody reviewed
+        // must stay out of the prompt, because "proposed" and "true about this workspace" are
+        // different claims and the model cannot tell them apart once both are in its context.
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var memory = factory.Services.GetRequiredService<ILongTermMemoryService>();
+        var proposed = await memory.CreateCandidateAsync(new MemoryCandidateProposal(
+            Guid.NewGuid(), Guid.NewGuid(), "workspace", "preference",
+            "PROMOTED-MEMORY-REACHES-THE-MODEL-4f92: changelog notes go in one line.", 0.9));
+        var promoted = await client.PostAsJsonAsync(
+            $"/api/v1/memory-candidates/{proposed.Id}/promote", new { reason = "reviewed by hand" });
+        Assert.Equal(HttpStatusCode.OK, promoted.StatusCode);
+
+        await memory.CreateCandidateAsync(new MemoryCandidateProposal(
+            Guid.NewGuid(), Guid.NewGuid(), "workspace", "preference",
+            "UNREVIEWED-CANDIDATE-STAYS-OUT-9b13: changelog notes go in a table.", 0.95));
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "写 changelog", client_message_id = "memory-prompt" });
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        Assert.Contains(script.Prompts, prompt =>
+            prompt.Contains("[reviewed_memory]", StringComparison.Ordinal)
+            && prompt.Contains("PROMOTED-MEMORY-REACHES-THE-MODEL-4f92", StringComparison.Ordinal));
+        Assert.All(script.Prompts, prompt =>
+            Assert.DoesNotContain("UNREVIEWED-CANDIDATE-STAYS-OUT-9b13", prompt, StringComparison.Ordinal));
+
+        var runId = RunIdOf(chunks.First(chunk => chunk.TryGetProperty("run_id", out _)));
+        var packs = (await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/runs/{runId}/orchestration")).GetProperty("context_packs");
+        Assert.Contains(
+            "reviewed_memory",
+            packs.EnumerateArray().First().GetProperty("sources").EnumerateArray().Select(value => value.GetString()));
+    }
+
+    [Fact]
     public async Task OperationalTriggers_ActivateBypassRolesWithoutCreatingLineageInstances()
     {
         var script = new ScriptedChatClient()
@@ -616,7 +910,16 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         Assert.Equal(RunIdOf(first[0]), RunIdOf(second[0]));
         var messages = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
-        Assert.Equal(2, messages!.Length);
+        Assert.Single(messages!, message =>
+            message.GetProperty("role").GetString() == "user"
+            && message.GetProperty("content").GetString() == "目标");
+        Assert.Single(messages!, message =>
+            message.GetProperty("role").GetString() == "assistant"
+            && message.GetProperty("content").GetString() == "好的。");
+        // Completed runs now persist one deterministic execution-evidence message
+        // for the next turn. Idempotency means the retry must reuse it rather than
+        // appending a second evidence row.
+        Assert.Single(messages!, message => message.GetProperty("role").GetString() == "tool_evidence");
     }
 
     [Fact]
@@ -631,6 +934,9 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("context_conflict", body.GetProperty("code").GetString());
+        // The read-back door itself, not just the journal: a WebApplicationFactory resolves the same
+        // singleton the handler writes to, so a clean host reports "no 5xx" instead of throwing.
+        Assert.Contains("recorded no 5xx", factory.LastFailure());
     }
 
     [Fact]
@@ -992,9 +1298,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "evolution-curate" });
         Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
-        Assert.True(script.CuratorCalls >= 1, "The experience curator should run at close.");
 
+        // The curator is a bypass dispatch that runs AFTER the terminal done chunk is
+        // appended, so the counter is polled through its durable effect: candidate rows
+        // cannot exist before the curator call returned.
         var agentCandidates = await PollAgentCandidatesAsync(client, TimeSpan.FromSeconds(15));
+        Assert.True(script.CuratorCalls >= 1, "The experience curator should run at close.");
         var candidate = Assert.Single(agentCandidates);
         Assert.Equal("日志巡检执行体", candidate.GetProperty("name").GetString());
         Assert.Equal("execution", candidate.GetProperty("layer").GetString());
@@ -1182,8 +1491,10 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "a" });
-        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "b" });
+        // Two runs side by side is what parallel means; queued (the default) would make whichever
+        // request lands second wait behind the first, so both ask for parallel.
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "a", dispatch_mode = "parallel" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "b", dispatch_mode = "parallel" });
         var ackA = await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         var ackB = await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.NotEqual(RunIdOf(ackA), RunIdOf(ackB));
@@ -1236,7 +1547,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var response = await client.PostAsJsonAsync(
             $"/api/v1/sessions/{sessionId}/interactions",
-            new { content = "完成后测试并提交", client_message_id = "queued-followup" });
+            new
+            {
+                content = "完成后测试并提交",
+                client_message_id = "queued-followup",
+                permission_mode = "full-access"
+            });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("queued", body.GetProperty("status").GetString());
@@ -1259,6 +1575,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             var payload = JsonSerializer.Deserialize<JsonElement>(directive.PayloadJson);
             Assert.Equal("完成后测试并提交", payload.GetProperty("content").GetString());
             Assert.Equal("queued-followup", payload.GetProperty("client_message_id").GetString());
+            Assert.Equal("full-access", payload.GetProperty("permission_mode").GetString());
+            Assert.Equal(body.GetProperty("mode_version_id").GetGuid(), payload.GetProperty("mode_version_id").GetGuid());
             Assert.Equal(body.GetProperty("run_id").GetGuid(), directive.RunId!.Value);
 
             var queuedEvents = await db.EventIndex
@@ -1270,7 +1588,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         // The same client message replays the stored directive instead of queueing twice.
         var replay = await client.PostAsJsonAsync(
             $"/api/v1/sessions/{sessionId}/interactions",
-            new { content = "完成后测试并提交", client_message_id = "queued-followup" });
+            new
+            {
+                content = "完成后测试并提交",
+                client_message_id = "queued-followup",
+                permission_mode = "full-access"
+            });
         Assert.Equal(HttpStatusCode.Created, replay.StatusCode);
         var replayBody = await replay.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(body.GetProperty("interaction_id").GetGuid(), replayBody.GetProperty("interaction_id").GetGuid());
@@ -1345,8 +1668,16 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("graph_tier_lanes_unsupported", conflict.GetProperty("code").GetString());
     }
 
+    /// <summary>
+    /// A queued USER MESSAGE is executed at run terminal, not discarded. The client
+    /// already received 201, and the run that stood in its way has just finished — so
+    /// the only reason it was queued no longer holds. It used to be marked "rejected"
+    /// with code lanes_disabled, which was doubly wrong: lanes have nothing to do with a
+    /// queued conversation turn, and lanes are off by default, so EVERY queued message
+    /// was silently dropped by a configuration default the user never chose.
+    /// </summary>
     [Fact]
-    public async Task RunTerminal_DrainsQueuedDirective_RejectedWhenLanesDisabled()
+    public async Task RunTerminal_ExecutesQueuedInteraction_InsteadOfDiscardingIt()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var script = new ScriptedChatClient()
@@ -1359,8 +1690,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "drain-a" });
-        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "drain-b" });
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "drain-a", dispatch_mode = "parallel" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "drain-b", dispatch_mode = "parallel" });
         await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
@@ -1371,7 +1702,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var queued = await client.PostAsJsonAsync(
             $"/api/v1/sessions/{sessionId}/interactions",
-            new { content = "完成后测试并提交", client_message_id = "drain-followup" });
+            new
+            {
+                content = "完成后测试并提交",
+                client_message_id = "drain-followup",
+                permission_mode = "full-access"
+            });
         Assert.Equal(HttpStatusCode.Created, queued.StatusCode);
         var queuedBody = await queued.Content.ReadFromJsonAsync<JsonElement>();
         var directiveId = queuedBody.GetProperty("interaction_id").GetGuid();
@@ -1390,20 +1726,37 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             while (DateTimeOffset.UtcNow < drainDeadline)
             {
                 directive = await db.RunDirectives.AsNoTracking().SingleOrDefaultAsync(x => x.Id == directiveId);
-                if (directive is { Status: "rejected", DrainedAt: not null }) break;
+                if (directive is { Status: "executed", DrainedAt: not null }) break;
                 await Task.Delay(150);
                 db.ChangeTracker.Clear();
             }
-            Assert.True(directive is { Status: "rejected", DrainedAt: not null },
-                $"Directive {directiveId} was never drained as rejected; last state: {(directive is null ? "row absent" : directive.Status)}.");
+            Assert.True(directive is { Status: "executed", DrainedAt: not null },
+                $"Directive {directiveId} was never drained as executed; last state: {(directive is null ? "row absent" : directive.Status)}.");
         }
 
+        // The drain reports WHAT it did: the release names the run it admitted, and no
+        // rejection event is written for a queued user message.
         var manager = factory.Services.GetRequiredService<ILifecycleManager>();
         var events = await manager.ReplayEventsAsync(sessionId, 0);
-        var rejection = Assert.Single(events, e => e.EventType == "orchestration.directive.rejected");
-        var payload = (JsonElement)rejection.Payload["payload"]!;
-        Assert.Equal("lanes_disabled", payload.GetProperty("code").GetString());
+        var released = Assert.Single(events, e => e.EventType == "interaction.queued_executed");
+        var payload = (JsonElement)released.Payload["payload"]!;
         Assert.Equal(directiveId.ToString(), payload.GetProperty("directive_id").GetString());
+        var releasedRunId = payload.GetProperty("released_run_id").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(releasedRunId));
+        Assert.DoesNotContain(events, e => e.EventType == "orchestration.directive.rejected");
+
+        var messages = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
+        Assert.Single(messages!, message =>
+            message.GetProperty("role").GetString() == "user"
+            && message.GetProperty("content").GetString() == "完成后测试并提交");
+        var frozen = await manager.GetFrozenRunConfigurationAsync(releasedRunId!);
+        Assert.NotNull(frozen);
+        var configuration = JsonSerializer.Deserialize<FrozenRunConfigurationV1>(
+            frozen!.Content,
+            FrozenRunConfigurationV1.JsonOptions);
+        Assert.NotNull(configuration);
+        Assert.Equal("full-access", configuration!.PermissionMode);
+        Assert.Equal(queuedBody.GetProperty("mode_version_id").GetGuid(), configuration.ModeVersionId);
     }
 
     [Fact]
@@ -1450,12 +1803,20 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var control = await client.PostAsJsonAsync($"/api/v1/runs/{runId}/control", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.OK, control.StatusCode);
-        gate.SetResult();
-
+        // Cancellation owns its terminal closure. The blocked meeting call is still
+        // in flight here; done(cancelled) must not depend on that call returning.
         var chunks = await invoke.Completion.WaitAsync(TimeSpan.FromSeconds(30));
-        var last = chunks.Last();
+        var terminals = chunks.Where(chunk => KindOf(chunk) is "done" or "error").ToArray();
+        var last = Assert.Single(terminals);
         Assert.Equal("done", KindOf(last));
         Assert.Equal("cancelled", last.GetProperty("finish_reason").GetString());
+        Assert.DoesNotContain(chunks, chunk => KindOf(chunk) == "error");
+
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var run = await lifecycle.GetRunStateAsync(runId.ToString());
+        Assert.Equal(RunStatus.Cancelled, run.Status);
+
+        gate.SetResult();
     }
 
     [Fact]
@@ -1579,6 +1940,46 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task WorkerBlocked_CannotBecomeCompletedWhenSupervisorPasses()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"write\",\"title\":\"写文件\",\"description\":\"\",\"success_criteria\":[\"文件已写入\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("Task not completed: write_file was unavailable.\nTASK_OUTCOME: blocked")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .ThenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .ThenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "必须写入文件" });
+        var runId = RunIdOf(await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(15)));
+
+        JsonElement orchestration = default;
+        for (var attempt = 0; attempt < 150; attempt++)
+        {
+            orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+            if (orchestration.GetProperty("run").GetProperty("status").GetString() == "awaiting_user") break;
+            await Task.Delay(50);
+        }
+
+        Assert.Equal("awaiting_user", orchestration.GetProperty("run").GetProperty("status").GetString());
+        Assert.False(active.Completion.IsCompleted);
+        Assert.Contains(orchestration.GetProperty("nodes").EnumerateArray(), node =>
+            node.GetProperty("status").GetString() == "blocked");
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await lifecycle.ReplayEventsAsync(sessionId, 0);
+        Assert.Contains(events, item => item.EventType == "worker.blocked" && item.RunId == runId.ToString());
+        Assert.DoesNotContain(events, item => item.EventType == "worker.completed" && item.RunId == runId.ToString());
+
+        var cancel = await client.PostAsJsonAsync($"/api/v1/runs/{runId}/control", new { action = "cancel" });
+        Assert.Equal(HttpStatusCode.OK, cancel.StatusCode);
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal("cancelled", chunks.Last(chunk => KindOf(chunk) is "done" or "error")
+            .GetProperty("finish_reason").GetString());
+    }
+
+    [Fact]
     public async Task Supervision_Escalate_AwaitsUserDecisionAndContinuesWithoutEscalationFinishReason()
     {
         var script = new ScriptedChatClient()
@@ -1605,6 +2006,21 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("awaiting_user", orchestration.GetProperty("run").GetProperty("status").GetString());
         Assert.False(active.Completion.IsCompleted);
 
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await lifecycle.ReplayEventsAsync(sessionId, 0);
+        var review = Assert.Single(events, item => item.EventType == "supervision.user_review.requested" && item.RunId == runId.ToString());
+        // Payload values are materialized as a nested JSON object under "payload".
+        var reviewPayload = Assert.IsType<JsonElement>(review.Payload["payload"]);
+        Assert.Equal("高风险", Assert.Single(reviewPayload.GetProperty("reasons").EnumerateArray()).GetString());
+        Assert.Equal(new[] { "continue", "correct", "cancel" }, reviewPayload.GetProperty("options").EnumerateArray()
+            .Select(item => item.GetString()).ToArray());
+        // The projection keeps one row per supervision event (requested + completed),
+        // so the escalate verdict is the row that carries the decision.
+        var finding = Assert.Single(
+            orchestration.GetProperty("supervision_findings").EnumerateArray(),
+            item => item.GetProperty("decision").GetString() == "escalate");
+        Assert.Equal("高风险", Assert.Single(finding.GetProperty("reasons").EnumerateArray()).GetString());
+
         var resume = await client.PostAsJsonAsync($"/api/v1/runs/{runId}/control", new { action = "resume" });
         Assert.Equal(HttpStatusCode.OK, resume.StatusCode);
 
@@ -1614,6 +2030,62 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
         Assert.DoesNotContain(chunks, chunk => chunk.TryGetProperty("finish_reason", out var reason)
             && reason.GetString() == "completed_with_escalation");
+    }
+
+    /// <summary>
+    /// A correction is the "correct" decision on the escalation gate: the user's text
+    /// is applied as a context patch and the run replans. The engine re-parks on every
+    /// tick while the checkpoint phase is awaiting_user, so the steering endpoint has
+    /// to move the run back to executing — enqueueing the patch alone left it parked
+    /// and the correction was never read.
+    /// </summary>
+    [Fact]
+    public async Task Supervision_CorrectionAfterEscalation_ReplansInsteadOfStayingParked()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("结果")
+            .WhenSupervisor("{\"decision\":\"escalate\",\"reasons\":[\"高风险\"],\"revise_task_indexes\":[]}")
+            .ThenPlanner("[{\"title\":\"任务A-修正\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .ThenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("请用户决定。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "目标" });
+        var runId = RunIdOf(await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(15)));
+
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var snapshot = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+            if (snapshot.GetProperty("run").GetProperty("status").GetString() == "awaiting_user") break;
+            await Task.Delay(50);
+        }
+        var parked = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+        Assert.Equal("awaiting_user", parked.GetProperty("run").GetProperty("status").GetString());
+
+        var correction = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions", new
+        {
+            content = "请改用只读方式",
+            client_message_id = "supervision-correction",
+            dispatch_mode = "insert",
+            target_run_id = runId
+        });
+        Assert.Equal(HttpStatusCode.Created, correction.StatusCode);
+
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        var done = chunks.Last(c => KindOf(c) is "done" or "error");
+        Assert.Equal("done", KindOf(done));
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await lifecycle.ReplayEventsAsync(sessionId, 0);
+        // The correction cleared the escalation and replanned rather than continuing
+        // with the recorded incomplete outcome.
+        Assert.Contains(events, item => item.EventType == "context.goal_adjusted" && item.RunId == runId.ToString());
+        Assert.DoesNotContain(events, item => item.EventType == "supervision.user_decision" && item.RunId == runId.ToString());
+        Assert.True(script.PlannerCalls >= 2, $"expected a replan, PlannerCalls={script.PlannerCalls}");
     }
 
     [Fact]
@@ -1872,6 +2344,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     /// </summary>
     public sealed class ScriptedChatClient : IChatClient
     {
+        public Task? AfterFirstMeetingDelta { get; set; }
         private readonly Queue<string> _supervisorVerdicts = new();
         private string? _planner;
         private readonly Queue<string> _plannerFollowUps = new();
@@ -1880,12 +2353,17 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private string? _worker;
         private string? _meeting;
         private string? _meetingOnce;
+        private bool _failMeeting;
         private string? _compressor;
         private string? _recommender;
         private string? _curator;
         private string? _steward;
         private UsageDetails? _usage;
+        private readonly object _plannerFailureGate = new();
+        private int _transientPlannerFailures;
+        private string _transientPlannerFailureCategory = "provider_server_error";
         public int PlannerCalls;
+        public int PlannerFailureCalls;
         public int WorkerCalls;
         public int CompressorCalls;
         public int RecommenderCalls;
@@ -1900,18 +2378,50 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             get { lock (_laneGate) return _gatePrompts.ToArray(); }
         }
         public Task? BeforeMeeting;
+        /// <summary>Awaited at the start of every model call with (instructions, prompt): how a test holds one run's step while another proceeds.</summary>
+        public Func<string, string, Task>? BeforeCall;
+        public Task? BeforePlanner;
         public Task? BeforeWorker;
         public TaskCompletionSource? WorkerStarted;
+        public int PlannerGateEntries;
         public int WorkerGateEntries;
         private readonly object _instructionsGate = new();
         private readonly List<string> _instructions = [];
+        private readonly List<string> _prompts = [];
 
         public IReadOnlyList<string> Instructions
         {
             get { lock (_instructionsGate) return _instructions.ToArray(); }
         }
 
+        /// <summary>Message texts the pipeline actually sent, joined per call. Instructions are
+        /// frozen agent roles; what the run learned (workspace instructions, attachments,
+        /// evidence) travels in the messages, so asserting a role alone cannot prove it.</summary>
+        public IReadOnlyList<string> Prompts
+        {
+            get { lock (_instructionsGate) return _prompts.ToArray(); }
+        }
+
+        private void Record(string? instructions, string prompt)
+        {
+            lock (_instructionsGate)
+            {
+                if (!string.IsNullOrWhiteSpace(instructions)) _instructions.Add(instructions);
+                if (!string.IsNullOrWhiteSpace(prompt)) _prompts.Add(prompt);
+            }
+        }
+
         public ScriptedChatClient WhenPlanner(string script) { _planner = script; return this; }
+        public ScriptedChatClient FailPlannerTransiently(int count, string category)
+        {
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+            lock (_plannerFailureGate)
+            {
+                _transientPlannerFailures = count;
+                _transientPlannerFailureCategory = category;
+            }
+            return this;
+        }
         public ScriptedChatClient WhenPlanner(string lane, string script) { _plannerLanes[lane] = script; return this; }
         /// <summary>Planner script consumed by the next replan call (supervision revise),
         /// then falls back to WhenPlanner. Queued in order for multiple revisions.</summary>
@@ -1921,6 +2431,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         public ScriptedChatClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient ThenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient WhenMeeting(string script) { _meeting = script; return this; }
+        public ScriptedChatClient FailMeeting() { _failMeeting = true; return this; }
 
         /// <summary>Meeting text consumed by the very next meeting call, then falls
         /// back to WhenMeeting/defaults — for clarification turns whose protocol
@@ -1948,10 +2459,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         {
             var prompt = string.Join('\n', messages.Select(m => m.Text));
             var instructions = options?.Instructions;
-            if (!string.IsNullOrWhiteSpace(instructions))
-            {
-                lock (_instructionsGate) _instructions.Add(instructions);
-            }
+            Record(instructions, prompt);
+            if (BeforeCall is not null) await BeforeCall(instructions ?? string.Empty, prompt).WaitAsync(cancellationToken);
             var isPlanner = instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal);
@@ -1959,6 +2468,20 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 || prompt.Contains("执行证据", StringComparison.Ordinal);
             var isMeeting = instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true
                 || prompt.Contains("Execution evidence", StringComparison.Ordinal);
+            if (isMeeting && _failMeeting)
+            {
+                throw new InvalidOperationException("The meeting model failed before producing a response.");
+            }
+            if (isPlanner && BeforePlanner is not null)
+            {
+                Interlocked.Increment(ref PlannerGateEntries);
+                await BeforePlanner.WaitAsync(cancellationToken);
+            }
+            if (isPlanner && TryTakeTransientPlannerFailure(out var plannerFailure))
+            {
+                Interlocked.Increment(ref PlannerFailureCalls);
+                throw plannerFailure;
+            }
             if (!isPlanner && !isSupervisor && !isMeeting && !IsOperational(instructions))
             {
                 WorkerStarted?.TrySetResult();
@@ -1970,6 +2493,30 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             }
             var text = RouteByPrompt(prompt, instructions);
             return new ChatResponse(new ChatMessage(ChatRole.Assistant, text)) { Usage = CloneUsage() };
+        }
+
+        private bool TryTakeTransientPlannerFailure(out Exception failure)
+        {
+            lock (_plannerFailureGate)
+            {
+                if (_transientPlannerFailures <= 0)
+                {
+                    failure = null!;
+                    return false;
+                }
+
+                _transientPlannerFailures--;
+                failure = _transientPlannerFailureCategory switch
+                {
+                    "rate_limited" => new HttpRequestException(
+                        "Too Many Requests", inner: null, statusCode: HttpStatusCode.TooManyRequests),
+                    "timeout" => new TimeoutException("The model provider timed out."),
+                    "connection_failed" => new IOException("The model provider connection failed."),
+                    _ => new HttpRequestException(
+                        "Service Unavailable", inner: null, statusCode: HttpStatusCode.ServiceUnavailable)
+                };
+                return true;
+            }
         }
 
         private static bool IsOperational(string? instructions) =>
@@ -2006,19 +2553,125 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 return RecordPlanner(_planner ?? "[]");
             }
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
-                return _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}";
+                return CompleteSupervisorVerdict(
+                    _supervisorVerdicts.Count > 0
+                        ? _supervisorVerdicts.Dequeue()
+                        : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}",
+                    prompt);
             if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
             {
                 var once = Interlocked.Exchange(ref _meetingOnce, null);
                 return once ?? _meeting ?? "完成";
             }
-            return _worker is { } workerText ? RecordWorker(workerText) : "完成";
+            return RecordWorker(_worker ?? "完成", instructions);
         }
 
-        private string RecordWorker(string text)
+        private string RecordWorker(string text, string? instructions)
         {
             Interlocked.Increment(ref WorkerCalls);
-            return text;
+            var lines = text.Replace("\r\n", "\n").TrimEnd().Split('\n').ToList();
+            var markerIndex = lines.FindLastIndex(line =>
+                line.Trim().StartsWith(WorkerOutcomeProtocol.Marker, StringComparison.OrdinalIgnoreCase));
+            var insertAt = markerIndex >= 0 ? markerIndex : lines.Count;
+            foreach (var criterion in SuccessCriteriaOf(instructions))
+            {
+                if (lines.Any(line => line.Contains(
+                    WorkerOutcomeProtocol.CriterionMarker + " " + criterion,
+                    StringComparison.Ordinal))) continue;
+                lines.Insert(insertAt++, $"{WorkerOutcomeProtocol.CriterionMarker} {criterion} || scripted evidence");
+            }
+            if (markerIndex < 0)
+            {
+                lines.Add(WorkerOutcomeProtocol.Marker + " completed");
+            }
+            return string.Join("\n", lines);
+        }
+
+        private static IReadOnlyList<string> SuccessCriteriaOf(string? instructions)
+        {
+            if (string.IsNullOrWhiteSpace(instructions)) return [];
+            const string marker = "成功标准：";
+            var start = instructions.LastIndexOf(marker, StringComparison.Ordinal);
+            if (start < 0) return [];
+            start += marker.Length;
+            var end = instructions.IndexOf('\n', start);
+            var value = end < 0 ? instructions[start..] : instructions[start..end];
+            return value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        private static string CompleteSupervisorVerdict(string verdict, string prompt)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(verdict);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return verdict;
+                if (root.TryGetProperty("criteria_verdicts", out var existing)
+                    && existing.ValueKind == JsonValueKind.Array
+                    && existing.GetArrayLength() > 0)
+                {
+                    return verdict;
+                }
+
+                var decision = root.TryGetProperty("decision", out var decisionNode)
+                    ? decisionNode.GetString() ?? "pass"
+                    : "pass";
+                var reasons = root.TryGetProperty("reasons", out var reasonsNode)
+                    ? JsonSerializer.Deserialize<string[]>(reasonsNode.GetRawText()) ?? []
+                    : [];
+                var reviseIndexes = root.TryGetProperty("revise_task_indexes", out var indexesNode)
+                    ? JsonSerializer.Deserialize<int[]>(indexesNode.GetRawText()) ?? []
+                    : [];
+                var criteria = SupervisorCriteriaOf(prompt)
+                    .Select(item => new
+                    {
+                        task_key = item.TaskKey,
+                        criterion = item.Criterion,
+                        satisfied = true,
+                        evidence = "scripted supervisor evidence"
+                    })
+                    .ToArray();
+                return JsonSerializer.Serialize(new
+                {
+                    decision,
+                    reasons,
+                    revise_task_indexes = reviseIndexes,
+                    criteria_verdicts = criteria
+                });
+            }
+            catch (JsonException)
+            {
+                return verdict;
+            }
+        }
+
+        private static IReadOnlyList<(string TaskKey, string Criterion)> SupervisorCriteriaOf(string prompt)
+        {
+            const string tasksMarker = "任务列表:\n";
+            const string evidenceMarker = "\n\n执行证据";
+            var start = prompt.IndexOf(tasksMarker, StringComparison.Ordinal);
+            if (start < 0) return [];
+            start += tasksMarker.Length;
+            var end = prompt.IndexOf(evidenceMarker, start, StringComparison.Ordinal);
+            var section = end < 0 ? prompt[start..] : prompt[start..end];
+            var result = new List<(string TaskKey, string Criterion)>();
+            foreach (var line in section.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                const string keyMarker = "key=";
+                const string titleMarker = " | title=";
+                const string criteriaMarker = " | criteria: ";
+                var keyStart = line.IndexOf(keyMarker, StringComparison.Ordinal);
+                var titleStart = line.IndexOf(titleMarker, StringComparison.Ordinal);
+                var criteriaStart = line.IndexOf(criteriaMarker, StringComparison.Ordinal);
+                if (keyStart < 0 || titleStart <= keyStart || criteriaStart <= titleStart) continue;
+                var taskKey = line[(keyStart + keyMarker.Length)..titleStart].Trim();
+                var criteriaText = line[(criteriaStart + criteriaMarker.Length)..].Trim();
+                foreach (var criterion in criteriaText.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    result.Add((taskKey, criterion));
+                }
+            }
+            return result;
         }
 
         private string RecordPlanner(string text)
@@ -2066,30 +2719,27 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            if (!string.IsNullOrWhiteSpace(options?.Instructions))
+            var materialized = messages.ToArray();
+            var isMeeting = materialized.Any(m => m.Text.Contains("Execution evidence", StringComparison.Ordinal));
+            if (isMeeting && BeforeMeeting is not null) await BeforeMeeting.WaitAsync(cancellationToken);
+            var response = await GetResponseAsync(materialized, options, cancellationToken);
+            var first = true;
+            foreach (var update in response.ToChatResponseUpdates())
             {
-                lock (_instructionsGate) _instructions.Add(options.Instructions);
-            }
-            var isMeeting = options?.Instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) ?? false;
-            if (isMeeting)
-            {
-                if (BeforeMeeting is not null) await BeforeMeeting.WaitAsync(cancellationToken);
-                var chunks = (_meeting ?? "回复").Chunk(2).ToArray();
-                foreach (var chunk in chunks)
+                if (!isMeeting) { yield return update; continue; }
+                foreach (var content in update.Contents)
                 {
-                    await Task.Delay(1, cancellationToken);
-                    yield return new ChatResponseUpdate(ChatRole.Assistant, new string(chunk));
+                    if (content is TextContent text)
+                    {
+                        foreach (var chunk in text.Text.Chunk(2))
+                        {
+                            yield return new ChatResponseUpdate(ChatRole.Assistant, new string(chunk));
+                            if (first && AfterFirstMeetingDelta is not null) await AfterFirstMeetingDelta.WaitAsync(cancellationToken);
+                            first = false;
+                        }
+                    }
+                    else yield return new ChatResponseUpdate(update.Role, [content]);
                 }
-                if (CloneUsage() is { } usage)
-                {
-                    yield return new ChatResponseUpdate(null, [new UsageContent(usage)]);
-                }
-            }
-            else
-            {
-                await Task.Delay(1, cancellationToken);
-                var response = await GetResponseAsync(messages, options, cancellationToken);
-                yield return new ChatResponseUpdate(ChatRole.Assistant, response.Text);
             }
         }
 

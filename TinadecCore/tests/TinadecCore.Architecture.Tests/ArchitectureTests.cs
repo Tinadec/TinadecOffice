@@ -19,6 +19,7 @@ public sealed class ArchitectureTests
     private static readonly Assembly LoopGuardAssembly = typeof(LoopGuard.LoopGuardModuleRegistrar).Assembly;
     private static readonly Assembly LifecycleAssembly = typeof(Lifecycle.LifecycleModuleRegistrar).Assembly;
     private static readonly Assembly GovernanceAssembly = typeof(Governance.GovernanceModuleRegistrar).Assembly;
+    private static readonly Assembly TinaChatAssembly = typeof(TinaChat.TinaChatModuleRegistrar).Assembly;
     private static readonly Assembly RuntimeAssembly = typeof(Runtime.TinadecCoreBuilder).Assembly;
     private static readonly Assembly AspNetCoreAssembly = typeof(TinadecCore.AspNetCore.TinadecCoreHttpExtensions).Assembly;
     private static readonly Assembly ApiAssembly = typeof(Program).Assembly;
@@ -28,7 +29,7 @@ public sealed class ArchitectureTests
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
         MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly, GovernanceAssembly,
-        RuntimeAssembly, AspNetCoreAssembly, ApiAssembly
+        TinaChatAssembly, RuntimeAssembly, AspNetCoreAssembly, ApiAssembly
     ];
 
     // TinadecCore.AspNetCore is intentionally excluded: it is the second
@@ -38,7 +39,7 @@ public sealed class ArchitectureTests
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
         MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly, GovernanceAssembly,
-        RuntimeAssembly
+        TinaChatAssembly, RuntimeAssembly
     ];
 
     [Fact]
@@ -90,6 +91,7 @@ public sealed class ArchitectureTests
             ("LoopGuard", LoopGuardAssembly),
             ("Lifecycle", LifecycleAssembly),
             ("Governance", GovernanceAssembly),
+            ("TinaChat", TinaChatAssembly),
         };
 
         foreach (var (name, asm) in businessModules)

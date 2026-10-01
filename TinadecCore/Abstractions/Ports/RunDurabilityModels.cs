@@ -41,7 +41,35 @@ public sealed record RunCheckpointWrite(
     string Phase,
     string Content,
     long AppliedThroughEventSequence = 0,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    string? ExpectedRunStatus = null,
+    bool RequireCompletionUnclaimed = false,
+    string? ExpectedLeaseOwner = null,
+    int? ExpectedRecoveryCount = null)
+{
+    /// <summary>
+    /// Restores the constructor shape shipped before lease/checkpoint preconditions
+    /// were added. The new preconditions remain opt-in for legacy host callers.
+    /// </summary>
+    public RunCheckpointWrite(
+        long expectedRevision,
+        string phase,
+        string content,
+        long appliedThroughEventSequence,
+        string? idempotencyKey)
+        : this(
+            expectedRevision,
+            phase,
+            content,
+            appliedThroughEventSequence,
+            idempotencyKey,
+            ExpectedRunStatus: null,
+            RequireCompletionUnclaimed: false,
+            ExpectedLeaseOwner: null,
+            ExpectedRecoveryCount: null)
+    {
+    }
+}
 
 public sealed record RunCheckpoint(
     Guid Id,

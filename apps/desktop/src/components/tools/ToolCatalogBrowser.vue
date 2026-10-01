@@ -4,18 +4,14 @@ import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
   ChevronRight,
-  FileCode2,
-  FileText,
-  Folder,
-  GitBranch,
   Package,
   Search,
   Shield,
   ShieldAlert,
-  Terminal,
   Wrench
 } from '@lucide/vue'
 import { api, type ToolDescriptorDto, type ToolSearchResultDto } from '@/api'
+import { riskLevelsPresent, riskToneClass, toolIconOf } from '@/lib/toolPresentation'
 import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
@@ -54,24 +50,16 @@ const sourceOptions = computed(() => {
   ]
 })
 
-const riskOptions = [
+/**
+ * Derived from the rows on screen, like sourceOptions. The previous list was hardcoded
+ * to read-only / workspace-write / shell / git-write / external-url, but a descriptor's
+ * risk is a level (the provider manifest emits low or high for all 49 tools), so every
+ * one of those five choices filtered the catalog to an empty list.
+ */
+const riskOptions = computed(() => [
   { key: 'all', label: 'All risk levels' },
-  { key: 'read-only', label: 'Read-only' },
-  { key: 'workspace-write', label: 'Workspace write' },
-  { key: 'shell', label: 'Shell' },
-  { key: 'git-write', label: 'Git write' },
-  { key: 'external-url', label: 'External URL' }
-]
-
-function toolIcon(toolId: string) {
-  if (toolId === 'read_file') return FileText
-  if (toolId === 'list_directory') return Folder
-  if (toolId === 'glob_search' || toolId === 'grep_content') return Search
-  if (toolId === 'apply_patch' || toolId === 'code_editor') return FileCode2
-  if (toolId === 'git_worktree_manager' || toolId.startsWith('git_')) return GitBranch
-  if (toolId === 'sandbox_exec') return Terminal
-  return Wrench
-}
+  ...riskLevelsPresent(tools.value.map((tool) => tool.risk)).map((risk) => ({ key: risk, label: risk }))
+])
 
 function sourceClass(source: string) {
   if (source === 'core') return 'source-core'
@@ -81,29 +69,19 @@ function sourceClass(source: string) {
   return 'source-default'
 }
 
-function riskClass(risk: string) {
-  const r = risk.toLowerCase()
-  if (r.includes('read')) return 'risk-read'
-  if (r.includes('shell')) return 'risk-shell'
-  if (r.includes('git')) return 'risk-git'
-  if (r.includes('external') || r.includes('url')) return 'risk-url'
-  if (r.includes('write')) return 'risk-write'
-  return 'risk-default'
-}
-
 function riskColor(risk: string) {
-  const r = risk.toLowerCase()
-  if (r.includes('read')) return 'var(--accent-success)'
-  if (r.includes('shell')) return 'var(--accent-warning)'
-  if (r.includes('git')) return 'var(--accent-danger)'
-  if (r.includes('external') || r.includes('url')) return '#bc8cff'
-  if (r.includes('write')) return 'var(--accent-warning)'
-  return 'var(--text-muted)'
+  switch (riskToneClass(risk)) {
+    case 'risk-low': return 'var(--accent-success)'
+    case 'risk-medium': return 'var(--accent-warning)'
+    case 'risk-high': return 'var(--accent-danger)'
+    case 'risk-elevated': return 'var(--accent-recovery)'
+    default: return 'var(--text-muted)'
+  }
 }
 
 function matchesFilters(tool: ToolDescriptorDto): boolean {
   if (sourceFilter.value !== 'all' && tool.source !== sourceFilter.value) return false
-  if (riskFilter.value !== 'all' && !tool.risk.toLowerCase().includes(riskFilter.value.replace('-', ' '))) return false
+  if (riskFilter.value !== 'all' && tool.risk.trim().toLowerCase() !== riskFilter.value) return false
   if (approvalFilter.value === 'required' && !tool.requires_approval) return false
   if (approvalFilter.value === 'optional' && tool.requires_approval) return false
   return true
@@ -262,7 +240,7 @@ function onExecute(tool: ToolDescriptorDto) {
           >
             <div class="tool-catalog-card-head" @click="toggleTool(tool.id)">
               <div class="tool-catalog-card-icon">
-                <component :is="toolIcon(tool.id)" :size="14" />
+                <component :is="toolIconOf(tool.id)" :size="14" />
               </div>
               <div class="tool-catalog-card-main">
                 <strong>{{ tool.display_name }}</strong>
@@ -277,7 +255,7 @@ function onExecute(tool: ToolDescriptorDto) {
 
             <div class="tool-catalog-card-tags">
               <span class="tool-catalog-tag" :class="sourceClass(tool.source)">{{ tool.source }}</span>
-              <span class="tool-catalog-tag" :class="riskClass(tool.risk)" :style="{ '--risk-color': riskColor(tool.risk) }">
+              <span class="tool-catalog-tag" :class="riskToneClass(tool.risk)" :style="{ '--risk-color': riskColor(tool.risk) }">
                 {{ tool.risk }}
               </span>
               <span v-if="tool.requires_approval" class="tool-catalog-tag tag-approval">
@@ -579,29 +557,24 @@ function onExecute(tool: ToolDescriptorDto) {
   background: rgba(210, 153, 34, 0.12);
 }
 
-.tool-catalog-tag.risk-read {
+.tool-catalog-tag.risk-low {
   color: var(--accent-success);
   background: rgba(63, 185, 80, 0.12);
 }
 
-.tool-catalog-tag.risk-write {
+.tool-catalog-tag.risk-medium {
   color: var(--accent-warning);
   background: rgba(210, 153, 34, 0.12);
 }
 
-.tool-catalog-tag.risk-shell {
-  color: var(--accent-warning);
-  background: rgba(210, 153, 34, 0.18);
-}
-
-.tool-catalog-tag.risk-git {
+.tool-catalog-tag.risk-high {
   color: var(--accent-danger);
   background: rgba(248, 81, 73, 0.12);
 }
 
-.tool-catalog-tag.risk-url {
-  color: #bc8cff;
-  background: rgba(188, 140, 255, 0.12);
+.tool-catalog-tag.risk-elevated {
+  color: var(--accent-recovery);
+  background: var(--bg-status-recovery);
 }
 
 .tool-catalog-tag.risk-default {

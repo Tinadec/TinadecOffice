@@ -1,0 +1,351 @@
+// @vitest-environment happy-dom
+// api.ts reads `window.tinadec?.gatewayUrl?.()` at module top level, so this suite
+// needs the same DOM-ish global as api.test.ts.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { effectScope, ref, nextTick, type EffectScope } from 'vue'
+import { api } from '@/api'
+import { useAgentActivity } from './useAgentActivity'
+
+/**
+ * Core writes NAMED SSE frames, and the browser only dispatches a named frame to a
+ * listener registered for exactly that name. These tests drive the real frames
+ * through the real `api.connectEvents` subscription, so a name that drifts out of
+ * sync — the defect that made tool outcomes, approval decisions, and run failures
+ * permanently invisible — fails here instead of silently at runtime.
+ */
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  onmessage: ((ev: MessageEvent) => void) | null = null
+  listeners = new Map<string, EventListener[]>()
+  closed = false
+  constructor(public url: string) {
+    FakeEventSource.instances.push(this)
+  }
+  addEventListener(type: string, listener: EventListener) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+  }
+  close() {
+    this.closed = true
+  }
+  emit(type: string, payload: Record<string, unknown>, seq = 1, ts = '2026-09-17T00:00:00Z', runId = 'r-1') {
+    const frame = {
+      version: '1.0',
+      event_id: `e${seq}`,
+      event_type: type,
+      timestamp: ts,
+      session_id: 's-1',
+      run_id: runId,
+      payload: { sequence: seq, ...payload },
+    }
+    const event = new MessageEvent(type, { data: JSON.stringify(frame), lastEventId: String(seq) })
+    for (const listener of this.listeners.get(type) ?? []) listener(event)
+  }
+}
+
+describe('useAgentActivity event wiring', () => {
+  let scope: EffectScope
+
+  beforeEach(() => {
+    FakeEventSource.instances = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+    // The timeline read is a separate concern (and a network call); the wiring under
+    // test is the SSE one.
+    vi.spyOn(api, 'listToolExecutions').mockResolvedValue([])
+    scope = effectScope()
+  })
+
+  afterEach(() => {
+    scope.stop()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  async function mount() {
+    const sessionId = ref<string | null>(null)
+    const harness = scope.run(() => useAgentActivity(sessionId))!
+    sessionId.value = 's-1'
+    await nextTick()
+    const source = FakeEventSource.instances[0]
+    expect(source, 'the composable must subscribe once a session is selected').toBeDefined()
+    return { harness, source, sessionId }
+  }
+
+  it('cuts each run into its own activity even within the same session', async () => {
+    const { harness, source } = await mount()
+    source.emit('task.accepted', {}, 1)
+    for (let i = 2; i <= 9; i++) source.emit('context.packed', {}, i)
+    expect(harness.thinkingSteps.value).toHaveLength(9)
+    source.emit('task.accepted', {}, 10, undefined, 'r-2')
+    expect(harness.thinkingSteps.value).toHaveLength(1)
+    expect(harness.activity.value.runId).toBe('r-2')
+    expect(harness.turnActivities.value['r-1'].thinkingSteps).toHaveLength(9)
+    source.emit('context.packed', {}, 11, undefined, 'r-1') // delayed older run
+    expect(harness.activity.value.runId).toBe('r-2')
+    expect(harness.thinkingSteps.value).toHaveLength(1)
+    expect(harness.turnActivities.value['r-1'].thinkingSteps).toHaveLength(10)
+  })
+
+  it('folds reasoning deltas once per response and rejects replay duplicates', async () => {
+    const { harness, source } = await mount()
+    source.emit('model.output.started', { response_id: 'response-1', agent_name: 'worker' }, 1)
+    const payload = { response_id: 'response-1', channel: 'reasoning', delta: 'Inspect file' }
+    source.emit('model.output.delta', payload, 2)
+    source.emit('model.output.delta', payload, 2)
+    source.emit('model.output.completed', { response_id: 'response-1' }, 3)
+    expect(harness.thinkingSteps.value).toHaveLength(1)
+    expect(harness.thinkingSteps.value[0]).toMatchObject({ description: 'Inspect file', status: 'completed', seq: 1 })
+  })
+
+  it('scopes tool reads by run and cannot apply a read after switching session', async () => {
+    const { harness, source, sessionId } = await mount()
+    let resolve!: (items: never[]) => void
+    vi.mocked(api.listToolExecutions).mockImplementation(() => new Promise((done) => { resolve = done }))
+    source.emit('task.accepted', {}, 1)
+    expect(api.listToolExecutions).toHaveBeenLastCalledWith('s-1', { run_id: 'r-1', limit: 200 })
+    sessionId.value = 's-2'
+    await nextTick()
+    resolve([{ id: 'old', run_id: 'r-1' }] as never[])
+    await Promise.resolve()
+    expect(harness.toolCalls.value).toEqual([])
+    expect(harness.turnActivities.value).toEqual({})
+  })
+
+  /**
+   * The defect this wiring replaced: every owner of session events opened its own
+   * EventSource on the same URL, so a window held two live streams and parsed each
+   * frame twice. One connection per window is the invariant.
+   */
+  it('costs no extra connection when a second view subscribes', async () => {
+    await mount()
+    expect(FakeEventSource.instances).toHaveLength(1)
+
+    const second = ref<string | null>(null)
+    scope.run(() => useAgentActivity(second))!
+    second.value = 's-1'
+    await nextTick()
+
+    expect(FakeEventSource.instances).toHaveLength(1)
+  })
+
+  it('turns a fed-back tool failure into a visible reasoning step', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('tool.execution.failed', {
+      tool_id: 'write_file',
+      error_category: 'not_approved',
+    }, 7)
+
+    const step = harness.thinkingSteps.value.find((item) => item.type === 'tool')
+    expect(step, 'a failed dispatch must appear in the reasoning trail').toBeDefined()
+    expect(step!.description).toContain('write_file')
+    // The category is what the model acted on, so it must reach the user too.
+    expect(step!.description).toContain('not_approved')
+    expect(harness.progressEvents.value.some((event) => event.type === 'tool.execution.failed')).toBe(true)
+  })
+
+  it('reports an embedded tool failure inside a completed dispatch', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('tool.execution.completed', {
+      tool_id: 'write_file',
+      tool_success: false,
+    }, 3)
+
+    const progress = harness.progressEvents.value.find((event) => event.type === 'tool.execution.completed')
+    expect(progress).toBeDefined()
+    // A dispatch that completes but reports failure is NOT a success to the reader.
+    expect(progress!.message).toContain('失败')
+  })
+
+  it('surfaces a terminal run failure as an error state', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('run.failed', {
+      error_category: 'provider_server_error',
+      message: 'The model provider returned a server error.',
+    }, 11)
+
+    expect(harness.activity.value.status).toBe('error')
+    const step = harness.thinkingSteps.value.find((item) => item.type === 'run')
+    expect(step).toBeDefined()
+    expect(step!.description).toContain('provider_server_error')
+  })
+
+  it('marks the assigned worker and its dispatch reason', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('worker.assigned', {
+      agent_slug: 'global_engineering',
+      reason: 'spawnable_whitelist',
+    }, 5)
+
+    expect(harness.activity.value.activeAgentName).toBe('global_engineering')
+    const progress = harness.progressEvents.value.find((event) => event.type === 'worker.assigned')
+    expect(progress!.message).toContain('global_engineering')
+    // The reason is the diagnosis surface for a wrong dispatch.
+    expect(progress!.message).toContain('spawnable_whitelist')
+  })
+
+  it('names a coordinator-assigned worker by its run handle', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('worker.assigned', {
+      agent_slug: 'search',
+      handle: 'search#2',
+      reason: 'coordinator_assigned',
+    }, 5)
+
+    const progress = harness.progressEvents.value.find((event) => event.type === 'worker.assigned')
+    // Two instances of one role are only distinguishable by the handle.
+    expect(progress!.message).toBe('search#2 接单（协调者点名）')
+  })
+
+  it('shows the coordinator dispatching, waiting, and getting results back', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('task.dispatched', {
+      dispatch_id: 'd-1', dispatched_by: 'solo_master#1', agent: 'search', title: '找出所有引用',
+    }, 3)
+    source.emit('task.wait_started', {
+      handle: 'solo_master#1', awaited: [{ task_key: 'find-refs', handle: null, title: '找出所有引用' }],
+    }, 4)
+    source.emit('task.wait_resolved', {
+      handle: 'solo_master#1', awaited: [{ task_key: 'find-refs', handle: 'search#1', status: 'completed' }],
+    }, 9)
+
+    const steps = harness.thinkingSteps.value.filter((step) => step.type === 'dispatch' || step.type === 'wait')
+    expect(steps.map((step) => step.title)).toEqual([
+      'solo_master#1 派发给 search',
+      'solo_master#1 等待子任务结果',
+      'solo_master#1 收到子任务结果',
+    ])
+    expect(steps[1].description).toBe('找出所有引用')
+    expect(steps[2].description).toBe('search#1')
+  })
+
+  it('titles each parallel worker reasoning stream by its run handle', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('model.output.started', { response_id: 'r-a', agent_name: 'search', handle: 'search#2' }, 1)
+
+    expect(harness.thinkingSteps.value.find((step) => step.id === 'r-a')!.title).toBe('search#2')
+  })
+
+  it('keeps one live plan per agent and replaces it on each update', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('plan.updated', {
+      task_id: 't-1', handle: 'solo_master#1',
+      steps: [{ step: '读现状', status: 'in_progress' }, { step: '改代码', status: 'pending' }],
+    }, 3)
+    source.emit('plan.updated', {
+      task_id: 't-1', handle: 'solo_master#1',
+      steps: [{ step: '读现状', status: 'completed' }, { step: '改代码', status: 'in_progress' }],
+    }, 4)
+
+    const plans = harness.thinkingSteps.value.filter((step) => step.type === 'plan')
+    expect(plans).toHaveLength(1)
+    expect(plans[0].title).toBe('solo_master#1 的计划（1/2）')
+    expect(plans[0].description.split('\n')).toEqual(['✓ 读现状', '→ 改代码'])
+    const progress = harness.progressEvents.value.filter((event) => event.type === 'plan.updated')
+    expect(progress.at(-1)!.message).toBe('solo_master#1：改代码')
+  })
+
+  it('shows a blocked worker as unfinished work instead of completion', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('worker.blocked', {
+      agent_slug: 'global_engineering',
+      status: 'blocked',
+      summary: 'Task not completed: write_file was unavailable.',
+    }, 6)
+
+    expect(harness.activity.value.status).toBe('working')
+    const step = harness.thinkingSteps.value.find((item) => item.id === '6-worker-blocked')
+    expect(step).toBeDefined()
+    expect(step!.title).toContain('未完成')
+    expect(step!.description).toContain('Task not completed')
+    expect(harness.progressEvents.value.some((event) => event.type === 'worker.blocked')).toBe(true)
+  })
+
+  it('captures supervision escalation evidence and clears it after a decision', async () => {
+    const { harness, source } = await mount()
+
+    // The real Core sequence for an escalation: the verdict lands on
+    // supervision.completed, then the review gate opens. Reading only the preview
+    // fixture's severity/category/summary fields rendered the verdict as a blank row.
+    source.emit('supervision.completed', {
+      decision: 'escalate',
+      reasons: ['Task budget exhausted after three rounds.'],
+    }, 11)
+    source.emit('supervision.user_review.requested', {
+      decision: 'escalate',
+      reasons: ['Task budget exhausted after three rounds.'],
+      options: ['continue', 'correct', 'cancel'],
+    }, 12)
+
+    expect(harness.supervisionReview.value).toEqual({
+      runId: 'r-1',
+      reasons: ['Task budget exhausted after three rounds.'],
+      options: ['continue', 'correct', 'cancel'],
+    })
+
+    // The verdict must also be readable in the timeline.
+    const step = harness.thinkingSteps.value.find((item) => item.id === '11-supervision')
+    expect(step, 'the escalation must appear as a supervision step').toBeDefined()
+    expect(step!.title).toContain('escalate')
+    expect(step!.description).toContain('Task budget exhausted after three rounds.')
+
+    source.emit('supervision.user_decision', { decision: 'continue' }, 13)
+    expect(harness.supervisionReview.value).toEqual({ runId: 'r-1', reasons: [], options: [] })
+  })
+
+  it('makes the persisted-evidence final-response fallback visible', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('meeting.response_fallback', {
+      error_category: 'provider_server_error',
+      retry_count: 5,
+    }, 12)
+
+    const step = harness.thinkingSteps.value.find((item) => item.id === '12-meeting-fallback')
+    expect(step).toBeDefined()
+    expect(step!.description).toContain('provider_server_error')
+    expect(harness.progressEvents.value.some((event) => event.type === 'meeting.response_fallback')).toBe(true)
+  })
+
+  it('drives the waiting-approval state from the real approval.requested payload', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('approval.requested', {
+      approval_id: 'a-1',
+      tool_id: 'write_file',
+      risk: 'high',
+    }, 9)
+
+    expect(harness.activity.value.status).toBe('waiting_approval')
+    const progress = harness.progressEvents.value.find((event) => event.type === 'approval.requested')
+    expect(progress!.message).toContain('write_file')
+  })
+
+  it('resolves the decision from approval.decided with the PDP outcome vocabulary', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('approval.requested', { approval_id: 'a-1', tool_id: 'write_file' }, 9)
+    expect(harness.activity.value.status).toBe('waiting_approval')
+
+    // The PDP spells an approval 'allowed', the approval layer spells it 'approved';
+    // both must land as an approval.
+    source.emit('approval.decided', { approval_id: 'a-1', outcome: 'allowed' }, 10)
+    expect(harness.activity.value.status).toBe('working')
+    expect(harness.progressEvents.value.some((event) => event.message.includes('审批已通过'))).toBe(true)
+  })
+
+  it('ignores an event name Core never emits', async () => {
+    const { harness, source } = await mount()
+
+    expect(() => source.emit('project.created', { id: 'p-1' }, 2)).not.toThrow()
+    expect(harness.thinkingSteps.value).toHaveLength(0)
+    expect(harness.progressEvents.value).toHaveLength(0)
+  })
+})

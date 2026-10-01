@@ -24,8 +24,11 @@ import type {
   PromptFragmentDto,
   ExtensionSourceDto,
   MarketCatalogItemDto,
-  InstalledExtensionDto,
-  McpServerDto,
+  MarketCatalogPageDto,
+  MarketSourceListDto,
+  MarketInstallationDto,
+  MarketInstallProposalDto,
+  McpInventoryDto,
   AcpAdapterDto,
   CodeToolExecuteResultDto,
 } from '@/api'
@@ -132,7 +135,7 @@ export function mockToolCalls(): ToolCall[] {
   return [
     {
       id: 'mtc-001',
-      toolId: 'list_directory',
+      toolId: 'ls',
       toolName: 'List Directory',
       status: 'completed',
       startedAt: mockTs(6),
@@ -180,19 +183,19 @@ export function mockToolCalls(): ToolCall[] {
     },
     {
       id: 'mtc-004',
-      toolId: 'apply_patch',
-      toolName: 'Apply Patch',
+      toolId: 'write_file',
+      toolName: 'Write File',
       status: 'running',
       startedAt: mockTs(31),
       completedAt: null,
       durationMs: null,
-      argsSummary: 'target=src/core/dmaea/TaskGraphBuilder.ts +48 −12',
+      argsSummary: 'filepath=src/core/dmaea/TaskGraphBuilder.ts +48 −12',
       resultSummary: null,
-      requiresApproval: false,
+      requiresApproval: true,
       approvalId: null,
       evidence: [],
       seq: 4,
-      risk: 'medium',
+      risk: 'high',
     },
     {
       id: 'mtc-005',
@@ -331,9 +334,9 @@ const ASSISTANT_MARKDOWN_RICH = `## 任务拆解完成
 
 我已分析你的需求，下面是建议的执行计划：
 
-1. **探查现有代码结构** — 使用 \`list_directory\` 与 \`read_file\` 工具梳理相关模块
-2. **定位问题根因** — 通过 \`grep_content\` 搜索关键调用路径
-3. **编写修复补丁** — 使用 \`apply_patch\` 工具应用变更
+1. **探查现有代码结构** — 使用 \`ls\` 与 \`read_file\` 工具梳理相关模块
+2. **定位问题根因** — 通过 \`file_search\` 搜索关键调用路径
+3. **编写修复补丁** — 使用 \`write_file\` 工具应用变更
 
 \`\`\`typescript
 // 示例：编排引擎入口
@@ -360,10 +363,23 @@ const ASSISTANT_MARKDOWN_SIMPLE = `好的，我已开始执行任务。
 
 正在读取 \`src/orchestrator.ts\` 文件，分析现有实现...`
 
+/** One attachment projection, exactly as Core nests it inside a message. */
+const MOCK_ATTACHMENT_SUMMARY = {
+  id: 'att-1',
+  file_name: 'orchestrator-notes.txt',
+  media_type: 'text/plain',
+  content_hash: 'a'.repeat(64),
+  content_length: 4_128,
+  created_at: iso(-60 * 5),
+  bound_at: iso(-60 * 4),
+}
+
 export function mockMessages(sessionId: string): MessageDto[] {
   return [
     {
       id: id('msg', 1),
+      run_id: null,
+      attachments: [MOCK_ATTACHMENT_SUMMARY],
       session_id: sessionId,
       role: 'user',
       content: '请帮我重构编排引擎的任务图构建逻辑，要求支持动态依赖解析。',
@@ -371,6 +387,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 2),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
       content: ASSISTANT_MARKDOWN_RICH,
@@ -378,6 +396,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 3),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'user',
       content: '可以，请按这个计划执行。注意保留向后兼容。',
@@ -385,6 +405,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 4),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
       content: ASSISTANT_MARKDOWN_SIMPLE,
@@ -392,6 +414,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 5),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'user',
       content: '工具调用看起来卡住了，能否查看一下执行状态？',
@@ -399,9 +423,11 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 6),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
-      content: '我已检查工具执行时间线，发现 \`apply_patch\` 调用正在等待审批。\n\n请前往右侧 **审批** 面板批准该操作，或直接拒绝以回滚。',
+      content: '我已检查工具执行时间线，发现 \`write_file\` 调用正在等待审批。\n\n请前往右侧 **审批** 面板批准该操作，或直接拒绝以回滚。',
       created_at: iso(-60 * 2 + 1),
     },
   ]
@@ -413,6 +439,8 @@ export function mockManyMessages(sessionId: string): MessageDto[] {
   for (let i = 0; i < 8; i++) {
     extra.push({
       id: id('msg', 100 + i * 2),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'user',
       content: `第 ${i + 1} 轮追问：请进一步说明第 ${i + 1} 步的实现细节，并给出对应的单元测试用例。`,
@@ -420,6 +448,8 @@ export function mockManyMessages(sessionId: string): MessageDto[] {
     })
     extra.push({
       id: id('msg', 101 + i * 2),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
       content: `### 第 ${i + 1} 轮回复\n\n针对你的追问，补充说明如下：\n\n- 实现要点 ${i + 1}：使用 \`Map<taskNodeId, Dependency[]>\` 维护依赖关系\n- 测试用例 ${i + 1}：\n\n\`\`\`typescript\nit('resolves dynamic dependencies #${i + 1}', async () => {\n  const graph = buildGraph(fixture(${i + 1}))\n  expect(graph.nodes).toHaveLength(${i + 2})\n})\n\`\`\`\n\n> 该用例覆盖了循环依赖检测与拓扑排序边界场景。`,
@@ -462,7 +492,7 @@ export function mockApprovals(sessionId?: string): ApprovalDto[] {
       session_id: sessionId ?? 'sess-tinadec-1001',
       kind: 'code',
       summary: 'Apply patch to src/orchestrator.ts (12 additions, 4 deletions)',
-      command: 'apply_patch src/orchestrator.ts',
+      command: 'write_file src/orchestrator.ts',
       cwd: 'D:/workspace/tinadec',
       status: 'pending',
       created_at: iso(-20),
@@ -521,13 +551,18 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
       updated_at: iso(-60 * 1),
     },
     graph: {
-      id: graphId,
-      run_id: runId,
-      session_id: sessionId,
-      title: '编排引擎重构任务图',
-      status: 'active',
-      created_at: iso(-60 * 4 + 1),
-      updated_at: iso(-60 * 1),
+      tier: 'deterministic',
+      nodes: [
+        { node_key: 'conversation', label: '对话入口', layer: 'operation', is_conversation: true },
+        { node_key: 'planning', label: '任务规划', layer: 'operation', agent_definition_id: 'agent-task-planner', is_conversation: false },
+        { node_key: 'build', label: '代码实现', layer: 'execution', agent_definition_id: 'agent-code-writer', is_conversation: false },
+        { node_key: 'docs', label: '文档更新', layer: 'execution', agent_definition_id: 'agent-doc-writer', is_conversation: false },
+      ],
+      edges: [
+        { edge_key: 'conversation->planning', source_node_key: 'conversation', target_node_key: 'planning' },
+        { edge_key: 'planning->build', source_node_key: 'planning', target_node_key: 'build' },
+        { edge_key: 'build->docs', source_node_key: 'build', target_node_key: 'docs' },
+      ],
     },
     nodes: [
       {
@@ -539,6 +574,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '阅读 src/orchestrator.ts 与相关模块，梳理当前任务图构建流程',
         status: 'completed',
         priority: 1,
+        lane_key: 'plan',
         risk: 'low',
         success_criteria: ['输出当前实现的关键调用路径', '识别可扩展点'],
         dependencies: [],
@@ -555,6 +591,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '设计支持运行时依赖发现的图节点结构，兼容现有序列化协议',
         status: 'completed',
         priority: 2,
+        lane_key: 'plan',
         risk: 'medium',
         success_criteria: ['数据结构通过设计评审', '向后兼容旧图格式'],
         dependencies: ['node-001'],
@@ -571,6 +608,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '编写核心解析器，支持循环检测与拓扑排序',
         status: 'running',
         priority: 3,
+        lane_key: 'build',
         risk: 'high',
         success_criteria: ['单元测试覆盖率 ≥ 85%', '通过循环依赖边界用例'],
         dependencies: ['node-002'],
@@ -587,6 +625,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '将新解析器接入编排服务主流程，替换旧的静态依赖构建',
         status: 'pending',
         priority: 4,
+        lane_key: 'build',
         risk: 'medium',
         success_criteria: ['端到端测试通过', '性能不劣于旧实现'],
         dependencies: ['node-003'],
@@ -603,6 +642,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '编写新特性的使用文档，更新架构图',
         status: 'pending',
         priority: 5,
+        lane_key: 'docs',
         risk: 'low',
         success_criteria: ['文档评审通过', '示例可运行'],
         dependencies: ['node-004'],
@@ -610,6 +650,32 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         created_at: iso(-60 * 1 + 1),
         updated_at: iso(-60 * 1 + 1),
       },
+    ],
+    lanes: [
+      { lane_key: 'plan', status: 'done', escalated: false, task_keys: ['node-001', 'node-002'], waits: [] },
+      { lane_key: 'build', status: 'executing', escalated: false, task_keys: ['node-003', 'node-004'], waits: [] },
+      {
+        lane_key: 'docs',
+        status: 'waiting',
+        escalated: false,
+        task_keys: ['node-005'],
+        waits: [
+          {
+            waiting_task: 'node-005',
+            lane: 'build',
+            predicate: 'lane_tasks_completed',
+            required_criteria: ['端到端测试通过'],
+            facts_hash: null,
+          },
+        ],
+      },
+    ],
+    flows: [
+      { from: 'conversation.plan', to: 'worker.code', task_key: 'node-001', kind: 'dispatch', status: 'completed' },
+      { from: 'conversation.plan', to: 'worker.code', task_key: 'node-002', kind: 'dispatch', status: 'completed' },
+      { from: 'conversation.plan', to: 'worker.code', task_key: 'node-003', kind: 'dispatch', status: 'running' },
+      { from: 'conversation.plan', to: 'worker.general', task_key: 'node-004', kind: 'dispatch', status: 'pending' },
+      { from: 'conversation.plan', to: 'worker.general', task_key: 'node-005', kind: 'dispatch', status: 'pending' },
     ],
     assignments: [
       {
@@ -622,7 +688,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         agent_type: 'code_explorer',
         model_route_purpose: 'execution.fast',
         permission_mode: 'default',
-        allowed_tools: ['read_file', 'list_directory', 'grep_content', 'glob_search'],
+        allowed_tools: ['read_file', 'ls', 'file_search'],
         status: 'completed',
         created_at: iso(-60 * 4 + 2),
       },
@@ -636,7 +702,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         agent_type: 'task_planner',
         model_route_purpose: 'planning.strong',
         permission_mode: 'default',
-        allowed_tools: ['read_file', 'grep_content'],
+        allowed_tools: ['read_file', 'file_search'],
         status: 'completed',
         created_at: iso(-60 * 3),
       },
@@ -650,7 +716,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         agent_type: 'code_writer',
         model_route_purpose: 'execution.strong',
         permission_mode: 'default',
-        allowed_tools: ['read_file', 'apply_patch', 'code_editor', 'grep_content'],
+        allowed_tools: ['read_file', 'write_file', 'replace_lines', 'file_search'],
         status: 'active',
         created_at: iso(-60 * 2),
       },
@@ -664,7 +730,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         agent_type: 'code_writer',
         model_route_purpose: 'execution.strong',
         permission_mode: 'default',
-        allowed_tools: ['read_file', 'apply_patch', 'code_editor'],
+        allowed_tools: ['read_file', 'write_file', 'replace_lines'],
         status: 'waiting',
         created_at: iso(-60 * 1),
       },
@@ -716,23 +782,51 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
       {
         id: 'ctx-001',
         run_id: runId,
-        session_id: sessionId,
-        created_by_agent_id: 'agent-context-compressor',
-        summary: '编排引擎核心模块上下文（含 3 个关键文件）',
+        evidence_count: 6,
+        estimated_tokens: 3120,
         token_budget: 8192,
-        compression_ratio: 2.4,
-        evidence_map: ['src/orchestrator.ts', 'src/graph.ts', 'src/types.ts'],
+        sources: [
+          'structured_session_state',
+          'task_context',
+          'workspace_instructions',
+          'workspace_skills',
+          'session_history',
+          'reviewed_memory',
+        ],
+        // One row per surviving item, in the same order as `sources` — the shape Core mints. A mock
+        // that invented a second shape here would teach this panel a contract the server never sends.
+        source_tokens: [
+          { source: 'structured_session_state', tokens: 42 },
+          { source: 'task_context', tokens: 180 },
+          { source: 'workspace_instructions', tokens: 900 },
+          { source: 'workspace_skills', tokens: 260 },
+          { source: 'session_history', tokens: 1500 },
+          { source: 'reviewed_memory', tokens: 238 },
+        ],
+        dropped_sources: [{ source: 'session_attachments', tokens: 2400 }],
         created_at: iso(-60 * 3),
       },
       {
         id: 'ctx-002',
         run_id: runId,
-        session_id: sessionId,
-        created_by_agent_id: 'agent-context-compressor',
-        summary: '测试用例与 fixture 上下文',
-        token_budget: 4096,
-        compression_ratio: 1.8,
-        evidence_map: ['src/__tests__/orch.test.ts', 'src/__tests__/fixtures/'],
+        lane_key: 'implementation',
+        evidence_count: 4,
+        estimated_tokens: 1480,
+        token_budget: 8192,
+        sources: [
+          'structured_session_state',
+          'task_context',
+          'accepted_intent',
+          'session_history',
+        ],
+        // An empty drop list beside a priced pack is a real answer: this one had room for everything.
+        source_tokens: [
+          { source: 'structured_session_state', tokens: 42 },
+          { source: 'task_context', tokens: 180 },
+          { source: 'accepted_intent', tokens: 620 },
+          { source: 'session_history', tokens: 638 },
+        ],
+        dropped_sources: [],
         created_at: iso(-60 * 2),
       },
     ],
@@ -765,7 +859,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         session_id: sessionId,
         severity: 'critical',
         category: 'security',
-        summary: 'apply_patch 调用未携带 approval_id，存在未授权写入风险',
+        summary: 'write_file 调用未携带 approval_id，存在未授权写入风险',
         recommendation: '在执行前补充审批流程',
         status: 'open',
         created_at: iso(-30),
@@ -784,7 +878,7 @@ export function mockToolExecutions(sessionId: string): ToolExecutionTimelineItem
       id: 'te-001',
       run_id: 'run-orch-001',
       session_id: sessionId,
-      tool_id: 'list_directory',
+      tool_id: 'ls',
       tool_display_name: 'List Directory',
       source: 'builtin',
       provider_layer: 'code',
@@ -830,8 +924,8 @@ export function mockToolExecutions(sessionId: string): ToolExecutionTimelineItem
       id: 'te-003',
       run_id: 'run-orch-001',
       session_id: sessionId,
-      tool_id: 'grep_content',
-      tool_display_name: 'Grep Content',
+      tool_id: 'file_search',
+      tool_display_name: 'File Search',
       source: 'builtin',
       provider_layer: 'code',
       risk: 'low',
@@ -853,8 +947,8 @@ export function mockToolExecutions(sessionId: string): ToolExecutionTimelineItem
       id: 'te-004',
       run_id: 'run-orch-001',
       session_id: sessionId,
-      tool_id: 'apply_patch',
-      tool_display_name: 'Apply Patch',
+      tool_id: 'write_file',
+      tool_display_name: 'Write File',
       source: 'builtin',
       provider_layer: 'code',
       risk: 'high',
@@ -876,8 +970,8 @@ export function mockToolExecutions(sessionId: string): ToolExecutionTimelineItem
       id: 'te-005',
       run_id: 'run-orch-001',
       session_id: sessionId,
-      tool_id: 'code_editor',
-      tool_display_name: 'Code Editor',
+      tool_id: 'replace_lines',
+      tool_display_name: 'Replace Lines',
       source: 'builtin',
       provider_layer: 'code',
       risk: 'medium',
@@ -945,8 +1039,8 @@ export function mockToolExecutions(sessionId: string): ToolExecutionTimelineItem
       id: 'te-008',
       run_id: 'run-orch-001',
       session_id: sessionId,
-      tool_id: 'glob_search',
-      tool_display_name: 'Glob Search',
+      tool_id: 'file_search',
+      tool_display_name: 'File Search',
       source: 'builtin',
       provider_layer: 'code',
       risk: 'low',
@@ -991,8 +1085,8 @@ export function mockToolExecutions(sessionId: string): ToolExecutionTimelineItem
       id: 'te-010',
       run_id: 'run-orch-001',
       session_id: sessionId,
-      tool_id: 'apply_patch',
-      tool_display_name: 'Apply Patch',
+      tool_id: 'write_file',
+      tool_display_name: 'Write File',
       source: 'builtin',
       provider_layer: 'code',
       risk: 'high',
@@ -1032,19 +1126,19 @@ export function mockEvents(sessionId: string): EventEnvelope[] {
     { type: 'run.started', seq: 1, payload: { id: 'run-orch-001', summary: '重构编排引擎' } },
     { type: 'task_graph.created', seq: 2, payload: { id: 'graph-orch-001', title: '编排引擎重构任务图', nodes: [] } },
     { type: 'task.assigned', seq: 3, payload: { agent_id: 'agent-code-explorer', agent_name: 'Code Explorer', task_title: '探查现有编排引擎实现' } },
-    { type: 'tool.execution.started', seq: 4, payload: { tool_id: 'list_directory', tool_name: 'List Directory' } },
-    { type: 'tool.execution.completed', seq: 5, payload: { tool_id: 'list_directory', duration_ms: 42 } },
+    { type: 'tool.execution.started', seq: 4, payload: { tool_id: 'ls', tool_name: 'List Directory' } },
+    { type: 'tool.execution.completed', seq: 5, payload: { tool_id: 'ls', duration_ms: 42 } },
     { type: 'step.result.created', seq: 6, payload: { agent_name: 'Code Explorer', status: 'completed', summary: '已识别 3 处可扩展点' } },
     { type: 'task.assigned', seq: 7, payload: { agent_id: 'agent-task-planner', agent_name: 'Task Planner', task_title: '设计动态依赖解析数据结构' } },
     { type: 'context.pack.created', seq: 8, payload: { summary: '编排引擎核心模块上下文', token_budget: 8192, compression_ratio: 2.4 } },
     { type: 'supervision.checked', seq: 9, payload: { severity: 'warning', category: 'test-coverage', summary: '覆盖率 67% 低于阈值' } },
     { type: 'step.result.created', seq: 10, payload: { agent_name: 'Task Planner', status: 'completed', summary: '设计了 DynamicNode 接口' } },
     { type: 'task.assigned', seq: 11, payload: { agent_id: 'agent-code-writer', agent_name: 'Code Writer', task_title: '实现 DynamicDependencyResolver' } },
-    { type: 'tool.execution.started', seq: 12, payload: { tool_id: 'apply_patch', tool_name: 'Apply Patch' } },
+    { type: 'tool.execution.started', seq: 12, payload: { tool_id: 'write_file', tool_name: 'Write File' } },
     { type: 'approval.requested', seq: 13, payload: { id: 'appr-003', summary: 'Apply patch to src/orchestrator.ts' } },
     { type: 'tool.shell.approval_required', seq: 14, payload: { command: 'npm run test:unit', approval_id: 'appr-002' } },
     { type: 'message.created', seq: 15, payload: { role: 'assistant', content: '我已检查工具执行时间线...' } },
-    { type: 'supervision.checked', seq: 16, payload: { severity: 'critical', category: 'security', summary: 'apply_patch 未携带 approval_id' } },
+    { type: 'supervision.checked', seq: 16, payload: { severity: 'critical', category: 'security', summary: 'write_file 未携带 approval_id' } },
     { type: 'context.pack.created', seq: 17, payload: { summary: '测试用例上下文', token_budget: 4096, compression_ratio: 1.8 } },
     { type: 'approval.approved', seq: 18, payload: { id: 'appr-004', summary: 'Commit 3 files' } },
     { type: 'approval.rejected', seq: 19, payload: { id: 'appr-005', summary: 'npm run lint -- --fix' } },
@@ -1210,22 +1304,22 @@ export function mockModelRoutes(): ModelRouteDto[] {
 export function mockAgents(): AgentViewDto[] {
   const planning: AgentViewDto[] = [
     { id: 'agent-meeting', name: 'Meeting Agent', layer: 'planning', agent_type: 'meeting', mode: 'auto', description: '会议智能体：分析用户意图，拆解任务并调度其他智能体', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['intent.analysis', 'task.decomposition', 'agent.dispatch'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 10) },
-    { id: 'agent-task-planner', name: 'Task Planner', layer: 'planning', agent_type: 'task_planner', mode: 'auto', description: '任务规划智能体：构建任务图，分配执行智能体', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'grep_content'], capabilities: ['task.graph', 'agent.assignment'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 9) },
+    { id: 'agent-task-planner', name: 'Task Planner', layer: 'planning', agent_type: 'task_planner', mode: 'auto', description: '任务规划智能体：构建任务图，分配执行智能体', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'file_search'], capabilities: ['task.graph', 'agent.assignment'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 9) },
     { id: 'agent-context-compressor', name: 'Context Compressor', layer: 'planning', agent_type: 'context_compressor', mode: 'auto', description: '上下文压缩智能体：生成上下文包，控制 token 预算', model_route_purpose: 'planning.strong', allowed_tools: ['read_file'], capabilities: ['context.pack', 'token.budget'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 8) },
     { id: 'agent-prompt-engineer', name: 'Prompt Context Engineer', layer: 'planning', agent_type: 'prompt_context_engineer', mode: 'auto', description: '提示词工程师：组装系统提示词，注入上下文片段', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['prompt.assembly', 'fragment.merge'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 7) },
-    { id: 'agent-supervisor', name: 'Supervisor', layer: 'planning', agent_type: 'supervisor', mode: 'auto', description: '监督智能体：检查执行结果，发现风险并给出建议', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'grep_content'], capabilities: ['supervision.check', 'risk.detect'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 6) },
+    { id: 'agent-supervisor', name: 'Supervisor', layer: 'planning', agent_type: 'supervisor', mode: 'auto', description: '监督智能体：检查执行结果，发现风险并给出建议', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'file_search'], capabilities: ['supervision.check', 'risk.detect'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 6) },
     { id: 'agent-evolver', name: 'Evolver', layer: 'planning', agent_type: 'evolver', mode: 'auto', description: '进化智能体：根据运行反馈优化 agent 配置', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['agent.evolve', 'config.optimize'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 5) },
     { id: 'agent-skill-learner', name: 'Skill Learner', layer: 'planning', agent_type: 'skill_learner', mode: 'auto', description: '技能学习智能体：从历史会话中归纳可复用技能', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['skill.extract', 'knowledge.persist'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 4) },
   ]
   const execution: AgentViewDto[] = [
-    { id: 'agent-code-explorer', name: 'Code Explorer', layer: 'execution', agent_type: 'code_explorer', mode: 'auto', description: '代码探查智能体：阅读代码、搜索符号、梳理调用路径', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'list_directory', 'grep_content', 'glob_search'], capabilities: ['code.read', 'code.search'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 3) },
-    { id: 'agent-code-writer', name: 'Code Writer', layer: 'execution', agent_type: 'code_writer', mode: 'auto', description: '代码编写智能体：应用补丁、编辑文件、生成测试', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'apply_patch', 'code_editor', 'grep_content'], capabilities: ['code.write', 'code.test'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
-    { id: 'agent-search-specialist', name: 'Search Specialist', layer: 'execution', agent_type: 'search_specialist', mode: 'auto', description: '搜索专家：执行复杂的代码与文档检索', model_route_purpose: 'execution.fast', allowed_tools: ['grep_content', 'glob_search', 'read_file'], capabilities: ['search.advanced'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
-    { id: 'agent-file-finder', name: 'File Finder', layer: 'execution', agent_type: 'file_finder', mode: 'auto', description: '文件查找智能体：根据名称模式定位文件', model_route_purpose: 'execution.fast', allowed_tools: ['glob_search', 'list_directory'], capabilities: ['file.locate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24) },
+    { id: 'agent-code-explorer', name: 'Code Explorer', layer: 'execution', agent_type: 'code_explorer', mode: 'auto', description: '代码探查智能体：阅读代码、搜索符号、梳理调用路径', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'ls', 'file_search'], capabilities: ['code.read', 'code.search'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 3) },
+    { id: 'agent-code-writer', name: 'Code Writer', layer: 'execution', agent_type: 'code_writer', mode: 'auto', description: '代码编写智能体：应用补丁、编辑文件、生成测试', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'write_file', 'replace_lines', 'file_search'], capabilities: ['code.write', 'code.test'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
+    { id: 'agent-search-specialist', name: 'Search Specialist', layer: 'execution', agent_type: 'search_specialist', mode: 'auto', description: '搜索专家：执行复杂的代码与文档检索', model_route_purpose: 'execution.fast', allowed_tools: ['file_search', 'read_file'], capabilities: ['search.advanced'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
+    { id: 'agent-file-finder', name: 'File Finder', layer: 'execution', agent_type: 'file_finder', mode: 'auto', description: '文件查找智能体：根据名称模式定位文件', model_route_purpose: 'execution.fast', allowed_tools: ['file_search', 'ls'], capabilities: ['file.locate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24) },
     { id: 'agent-git-manager', name: 'Git Manager', layer: 'execution', agent_type: 'git_manager', mode: 'auto', description: 'Git 管理智能体：处理变更、提交、推送等 Git 操作', model_route_purpose: 'execution.fast', allowed_tools: ['git_worktree_manager', 'read_file'], capabilities: ['git.ops', 'diff.parse'], enabled: true, is_built_in: true, updated_at: iso(-60 * 12) },
-    { id: 'agent-designer', name: 'Designer', layer: 'execution', agent_type: 'designer', mode: 'auto', description: '设计智能体：生成 UI 设计稿与样式规范', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'apply_patch', 'code_editor'], capabilities: ['ui.design', 'style.generate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 6) },
+    { id: 'agent-designer', name: 'Designer', layer: 'execution', agent_type: 'designer', mode: 'auto', description: '设计智能体：生成 UI 设计稿与样式规范', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'write_file', 'replace_lines'], capabilities: ['ui.design', 'style.generate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 6) },
     { id: 'agent-test-runner', name: 'Test Runner', layer: 'execution', agent_type: 'test_runner', mode: 'auto', description: '测试运行智能体：执行测试套件并分析结果', model_route_purpose: 'execution.fast', allowed_tools: ['shell', 'read_file'], capabilities: ['test.run', 'result.analyze'], enabled: false, is_built_in: false, updated_at: iso(-60 * 3) },
-    { id: 'agent-doc-writer', name: 'Doc Writer', layer: 'execution', agent_type: 'doc_writer', mode: 'auto', description: '文档编写智能体：生成与更新技术文档', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'apply_patch', 'code_editor'], capabilities: ['docs.write', 'docs.update'], enabled: false, is_built_in: false, updated_at: iso(-60 * 2) },
+    { id: 'agent-doc-writer', name: 'Doc Writer', layer: 'execution', agent_type: 'doc_writer', mode: 'auto', description: '文档编写智能体：生成与更新技术文档', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'write_file', 'replace_lines'], capabilities: ['docs.write', 'docs.update'], enabled: false, is_built_in: false, updated_at: iso(-60 * 2) },
   ]
   return [...planning, ...execution]
 }
@@ -1351,11 +1445,10 @@ export function mockAgentModes(): AgentModeDto[] {
 export function mockTools(): ToolDescriptorDto[] {
   return [
     { id: 'read_file', display_name: 'Read File', domain: 'code', source: 'builtin', risk: 'low', requires_approval: false, execute_endpoint: '/api/v1/code/tools/read_file/execute', capabilities: ['code.read'] },
-    { id: 'list_directory', display_name: 'List Directory', domain: 'code', source: 'builtin', risk: 'low', requires_approval: false, execute_endpoint: '/api/v1/code/tools/list_directory/execute', capabilities: ['code.read', 'fs.list'] },
-    { id: 'glob_search', display_name: 'Glob Search', domain: 'code', source: 'builtin', risk: 'low', requires_approval: false, execute_endpoint: '/api/v1/code/tools/glob_search/execute', capabilities: ['code.search', 'fs.glob'] },
-    { id: 'grep_content', display_name: 'Grep Content', domain: 'code', source: 'builtin', risk: 'low', requires_approval: false, execute_endpoint: '/api/v1/code/tools/grep_content/execute', capabilities: ['code.search', 'content.grep'] },
-    { id: 'apply_patch', display_name: 'Apply Patch', domain: 'code', source: 'builtin', risk: 'high', requires_approval: true, execute_endpoint: '/api/v1/code/tools/apply_patch/execute', capabilities: ['code.write'] },
-    { id: 'code_editor', display_name: 'Code Editor', domain: 'code', source: 'builtin', risk: 'medium', requires_approval: false, execute_endpoint: '/api/v1/code/tools/code_editor/execute', capabilities: ['code.write', 'code.edit'] },
+    { id: 'ls', display_name: 'List Directory', domain: 'code', source: 'builtin', risk: 'low', requires_approval: false, execute_endpoint: '/api/v1/code/tools/ls/execute', capabilities: ['code.read', 'fs.list'] },
+    { id: 'file_search', display_name: 'File Search', domain: 'code', source: 'builtin', risk: 'low', requires_approval: false, execute_endpoint: '/api/v1/code/tools/file_search/execute', capabilities: ['code.search', 'fs.glob', 'content.grep'] },
+    { id: 'write_file', display_name: 'Write File', domain: 'code', source: 'builtin', risk: 'high', requires_approval: true, execute_endpoint: '/api/v1/code/tools/write_file/execute', capabilities: ['code.write'] },
+    { id: 'replace_lines', display_name: 'Replace Lines', domain: 'code', source: 'builtin', risk: 'high', requires_approval: true, execute_endpoint: '/api/v1/code/tools/replace_lines/execute', capabilities: ['code.write', 'code.edit'] },
     { id: 'git_worktree_manager', display_name: 'Git Worktree Manager', domain: 'git', source: 'builtin', risk: 'medium', requires_approval: true, execute_endpoint: '/api/v1/code/tools/git_worktree_manager/execute', capabilities: ['git.ops', 'diff.parse'] },
     { id: 'shell', display_name: 'Shell', domain: 'system', source: 'builtin', risk: 'high', requires_approval: true, execute_endpoint: '/api/v1/tools/shell', capabilities: ['shell.exec'] },
     { id: 'web_search', display_name: 'Web Search', domain: 'web', source: 'extension', risk: 'low', requires_approval: false, execute_endpoint: '/api/v1/code/tools/web_search/execute', capabilities: ['web.search'] },
@@ -1382,8 +1475,8 @@ export function mockHarnessManifest(): HarnessManifestDto {
       selection_policy: 'first-source-wins',
     },
     agent_layers: [
-      { layer: 'planning', role: '规划层：分析、拆解、调度', agent_count: 7, enabled_agent_count: 5, max_parallel_executors: 1, worktree_isolation: false, approval_required: false, agent_types: ['meeting', 'task_planner', 'context_compressor', 'prompt_context_engineer', 'supervisor', 'evolver', 'skill_learner'], tool_ids: ['read_file', 'grep_content'] },
-      { layer: 'execution', role: '执行层：探查、编写、测试', agent_count: 8, enabled_agent_count: 6, max_parallel_executors: 4, worktree_isolation: false, approval_required: false, agent_types: ['code_explorer', 'code_writer', 'search_specialist', 'file_finder', 'git_manager', 'designer', 'test_runner', 'doc_writer'], tool_ids: ['read_file', 'list_directory', 'grep_content', 'glob_search', 'apply_patch', 'code_editor', 'git_worktree_manager', 'shell'] },
+      { layer: 'planning', role: '规划层：分析、拆解、调度', agent_count: 7, enabled_agent_count: 5, max_parallel_executors: 1, worktree_isolation: false, approval_required: false, agent_types: ['meeting', 'task_planner', 'context_compressor', 'prompt_context_engineer', 'supervisor', 'evolver', 'skill_learner'], tool_ids: ['read_file', 'file_search'] },
+      { layer: 'execution', role: '执行层：探查、编写、测试', agent_count: 8, enabled_agent_count: 6, max_parallel_executors: 4, worktree_isolation: false, approval_required: false, agent_types: ['code_explorer', 'code_writer', 'search_specialist', 'file_finder', 'git_manager', 'designer', 'test_runner', 'doc_writer'], tool_ids: ['read_file', 'ls', 'file_search', 'file_search', 'write_file', 'replace_lines', 'git_worktree_manager', 'shell'] },
     ],
     tool_providers: [
       { source: 'builtin', display_name: '内置工具', layer: 'code', status: 'active', tool_count: 12, active_tool_count: 12, future_tool_count: 0, approval_required_count: 4, read_only_count: 6, capability_prefixes: ['code.', 'fs.', 'git.', 'shell.', 'text.'] },
@@ -1421,37 +1514,184 @@ export function mockPromptFragments(): PromptFragmentDto[] {
 // 扩展市场数据
 // ============================================================
 
-export function mockExtensionSources(): ExtensionSourceDto[] {
+/**
+ * Matches what `GET /api/v1/market/sources` and `GET /api/v1/market/catalog` answer now that Core
+ * stores them. The previous version of these two mocks invented `publisher`, `capabilities`,
+ * `permissions`, `status`, and a `tinadec://` source kind no adapter reads — so the cards rendered
+ * rows that the real app can only ever leave blank, while the preview gallery looked finished.
+ */
+export function mockExtensionSources(): MarketSourceListDto {
+  return {
+    sources: [
+      {
+        id: 'src-mcp-registry',
+        name: 'Official MCP Registry',
+        kind: 'mcp_registry',
+        location: 'https://registry.modelcontextprotocol.io/v0/servers',
+        enabled: true,
+        revision: 1,
+        last_refreshed_at: iso(-60 * 6),
+        entry_count: 3,
+      },
+      {
+        id: 'src-unreachable',
+        name: 'Partner registry',
+        kind: 'mcp_registry',
+        location: 'https://market.example.invalid/v0/servers',
+        enabled: true,
+        revision: 2,
+        last_error: 'the target address is not allowed',
+        entry_count: 0,
+      },
+    ],
+    supported_kinds: ['mcp_registry'],
+  }
+}
+
+export function mockMarketCatalog(): MarketCatalogPageDto {
+  const rows: MarketCatalogItemDto[] = [
+    {
+      catalog_id: 'cat-001',
+      source_id: 'src-mcp-registry',
+      source_name: 'Official MCP Registry',
+      extension_id: 'io.github.github/github-mcp-server',
+      kind: 'mcp-server',
+      version: '2025.10.1',
+      display_name: 'GitHub MCP Server',
+      description: 'Read and write GitHub repositories, issues, and pull requests over MCP.',
+      homepage: 'https://github.com/github/github-mcp-server',
+      registry_type: 'docker',
+      transports: ['streamable-http', 'stdio'],
+      manifest_hash: 'a3f1c0d2e4b5a6978899aabbccddeeff00112233445566778899aabbccddeeff',
+      refreshed_at: iso(-60 * 6),
+      expires_at: iso(60 * 24 * 6),
+      installable: true,
+    },
+    {
+      catalog_id: 'cat-002',
+      source_id: 'src-mcp-registry',
+      source_name: 'Official MCP Registry',
+      extension_id: 'io.github.filesense/filesense',
+      kind: 'mcp-server',
+      version: '2.0.4',
+      display_name: 'FileSense',
+      description: 'Semantic file search over a local workspace.',
+      registry_type: 'npm',
+      transports: ['stdio'],
+      manifest_hash: 'b4e2d1c3f5a6970889a0b1c2d3e4f5061728394a5b6c7d8e9f00112233445566',
+      refreshed_at: iso(-60 * 6),
+      expires_at: iso(60 * 24 * 6),
+      installable: true,
+    },
+    {
+      catalog_id: 'cat-003',
+      source_id: 'src-mcp-registry',
+      source_name: 'Official MCP Registry',
+      extension_id: 'io.github.example/no-description',
+      kind: 'mcp-server',
+      version: '0.1.0',
+      display_name: 'io.github.example/no-description',
+      transports: [],
+      manifest_hash: 'c5f3e2d4a6b70819a0b1c2d3e4f506172839405a6b7c8d9e0f11223344556677',
+      refreshed_at: iso(-60 * 6),
+      expires_at: iso(60 * 24 * 6),
+      installable: false,
+      install_blocker: 'This entry publishes no package record, so there is no command to install.',
+    },
+  ]
+
+  return { items: rows, total_available: rows.length, has_more: false, as_of: iso(-60 * 6) }
+}
+
+/**
+ * What the installation ledger answers: an entry this workspace approved, plus the live status of
+ * the tool action that writes it. Two rows so the preview shows both a write still waiting for a
+ * human and one that landed.
+ */
+export function mockMarketInstallations(): MarketInstallationDto[] {
   return [
-    { id: 'src-builtin-001', name: 'Tinadec Curated', kind: 'marketplace-url', location: 'tinadec://marketplace/curated', enabled: true, last_refreshed_at: iso(-60 * 6), created_at: iso(-60 * 24 * 30) },
-    { id: 'src-local-002', name: '本地扩展目录', kind: 'directory', location: 'D:/workspace/extensions', enabled: true, last_refreshed_at: iso(-60 * 12), created_at: iso(-60 * 24 * 20) },
+    { id: 'ins-001', project_id: 'proj-001', catalog_id: 'cat-002', source_name: 'Official MCP Registry', extension_id: 'io.github.filesense/filesense', kind: 'mcp-server', version: '2.0.4', server_id: 'io-github-filesense-filesense', config_path: 'C:\work\demo\mcp_servers.json', state: 'installing', install_action_id: 'act-001', action_status: 'awaiting_user', created_at: iso(-30), updated_at: iso(-30) },
+    { id: 'ins-002', project_id: 'proj-001', catalog_id: 'cat-001', source_name: 'Official MCP Registry', extension_id: 'io.github.github/github-mcp-server', kind: 'mcp-server', version: '2025.10.1', server_id: 'io-github-github-mcp-server', config_path: 'C:\work\demo\mcp_servers.json', state: 'installing', install_action_id: 'act-002', action_status: 'completed', created_at: iso(-60 * 24 * 3), updated_at: iso(-60 * 24 * 3) },
   ]
 }
 
-export function mockMarketCatalog(): MarketCatalogItemDto[] {
-  return [
-    { catalog_id: 'cat-001', source_id: 'src-builtin-001', extension_id: 'web-search-pro', kind: 'tool-pack', version: '1.2.0', publisher: 'Tinadec', display_name: 'Web Search Pro', description: '增强的网页搜索工具包，支持多引擎与结果聚合', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/packs/web-search-pro', capabilities: ['web.search', 'web.aggregate'], permissions: ['network:read'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-002', source_id: 'src-builtin-001', extension_id: 'github-mcp', kind: 'mcp-server', version: '0.3.1', publisher: 'Tinadec', display_name: 'GitHub MCP Server', description: '通过 MCP 协议接入 GitHub，支持仓库、Issue、PR 管理', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/servers/github-mcp', capabilities: ['github.repo', 'github.issue', 'github.pr'], permissions: ['network:read', 'network:write'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-003', source_id: 'src-builtin-001', extension_id: 'figma-acp', kind: 'acp-adapter', version: '0.1.0', publisher: 'Tinadec', display_name: 'Figma ACP Adapter', description: '通过 ACP 协议接入 Figma，支持设计稿读取与导出', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/adapters/figma-acp', capabilities: ['figma.read', 'figma.export'], permissions: ['network:read'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-004', source_id: 'src-builtin-001', extension_id: 'db-tools', kind: 'tool-pack', version: '2.0.0', publisher: 'Tinadec', display_name: 'Database Tools', description: '数据库查询与迁移工具包，支持 PostgreSQL / MySQL / SQLite', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/packs/db-tools', capabilities: ['data.query', 'data.migrate'], permissions: ['fs:read', 'fs:write'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-005', source_id: 'src-builtin-001', extension_id: 'image-gen-skill', kind: 'skill', version: '1.0.0', publisher: 'Tinadec', display_name: 'Image Generation Skill', description: '为智能体添加图像生成能力，支持 DALL-E / Stable Diffusion', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/skills/image-gen', capabilities: ['media.generate'], permissions: ['network:read', 'network:write'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-006', source_id: 'src-local-002', extension_id: 'custom-linter', kind: 'tool-pack', version: '0.4.2', publisher: 'Local', display_name: 'Custom Linter', description: '本地自定义代码检查工具', source_kind: 'directory', source_location: 'D:/workspace/extensions/custom-linter', capabilities: ['code.lint'], permissions: ['fs:read'], status: 'available', installed_extension_id: null },
-  ]
+/**
+ * The frozen proposal the detail card reviews. Shaped field for field after
+ * `MarketInstallProposalDto`, because the panel's whole job is to show what will be written before
+ * anything is written; a mock with invented fields teaches it a contract Core never answers.
+ */
+export function mockMarketInstallProposal(): MarketInstallProposalDto {
+  return {
+    id: 'prop-001',
+    action: 'install',
+    project_id: 'proj-001',
+    catalog_id: 'cat-002',
+    installation_id: null,
+    source_name: 'Official MCP Registry',
+    extension_id: 'io.github.filesense/filesense',
+    kind: 'mcp-server',
+    version: '2.0.4',
+    server_id: 'io-github-filesense-filesense',
+    replaces_command: null,
+    command: 'npx',
+    args: ['-y', 'filesense-mcp@2.0.4'],
+    environment: [{ name: 'FILESENSE_INDEX_PATH', required: false, secret: true, description: 'Where the index is kept.' }],
+    target_path: 'C:\work\demo\mcp_servers.json',
+    content: [
+      '{',
+      '  "servers": [',
+      '    {',
+      '      "id": "io-github-filesense-filesense",',
+      '      "name": "FileSense",',
+      '      "command": "npx",',
+      '      "args": [',
+      '        "-y",',
+      '        "filesense-mcp@2.0.4"',
+      '      ]',
+      '    }',
+      '  ]',
+      '}',
+    ].join('\n'),
+    expected_file_hash: 'sha256:7c1d4f0aa1b2c3d4',
+    digest: 'sha256:9b2e5c7d1a3f4b6c',
+    expires_at: iso(15),
+    warnings: [
+      'The pinned version is the package host\'s name for a release, not a content digest: a host can serve different bytes for the same version. Nothing here has downloaded or run the package.',
+      'This server asks for environment variables (FILESENSE_INDEX_PATH). No values are written by this proposal - a server that needs them may fail to start until they are configured.',
+    ],
+  }
 }
 
-export function mockInstalledExtensions(): InstalledExtensionDto[] {
-  return [
-    { id: 'ext-001', catalog_id: 'cat-001', extension_id: 'web-search-pro', kind: 'tool-pack', version: '1.2.0', publisher: 'Tinadec', display_name: 'Web Search Pro', description: '增强的网页搜索工具包', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/packs/web-search-pro', capabilities: ['web.search', 'web.aggregate'], permissions: ['network:read'], enabled: true, status: 'active', status_message: '运行正常', installed_at: iso(-60 * 24 * 5), updated_at: iso(-60 * 24 * 5) },
-    { id: 'ext-002', catalog_id: 'cat-002', extension_id: 'github-mcp', kind: 'mcp-server', version: '0.3.1', publisher: 'Tinadec', display_name: 'GitHub MCP Server', description: '通过 MCP 协议接入 GitHub', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/servers/github-mcp', capabilities: ['github.repo', 'github.issue', 'github.pr'], permissions: ['network:read', 'network:write'], enabled: true, status: 'active', status_message: 'MCP 服务已连接', installed_at: iso(-60 * 24 * 3), updated_at: iso(-60 * 24 * 3) },
-    { id: 'ext-003', catalog_id: null, extension_id: 'legacy-tool', kind: 'tool-pack', version: '0.1.0', publisher: 'Local', display_name: 'Legacy Tool', description: '已弃用的旧工具', source_kind: 'directory', source_location: 'D:/workspace/extensions/legacy', capabilities: ['legacy.op'], permissions: ['fs:read'], enabled: false, status: 'disabled', status_message: '已手动禁用', installed_at: iso(-60 * 24 * 40), updated_at: iso(-60 * 24 * 10) },
-  ]
-}
-
-export function mockMcpServers(): McpServerDto[] {
-  return [
-    { id: 'mcp-001', extension_id: 'github-mcp', name: 'GitHub MCP', transport: 'stdio', status: 'connected', tools: ['github.list_repos', 'github.create_issue', 'github.create_pr'], updated_at: iso(-60 * 3) },
-    { id: 'mcp-002', extension_id: 'filesystem-mcp', name: 'Filesystem MCP', transport: 'stdio', status: 'disconnected', tools: [], updated_at: iso(-60 * 24) },
-  ]
+/**
+ * Matches what `GET /api/v1/mcp/servers` actually answers. The previous version of this mock
+ * carried `extension_id`, `transport` and `updated_at` — none of which the route sends — which is
+ * how the detail card learned to render a runtime list that stayed permanently empty in the real
+ * app while looking correct in the preview gallery.
+ */
+export function mockMcpInventory(): McpInventoryDto {
+  return {
+    source: 'tool_provider',
+    workspace_root: 'C:\\work\\demo',
+    config_path: 'C:\\work\\demo\\mcp_servers.json',
+    servers: [
+      {
+        id: 'github',
+        name: 'GitHub',
+        status: 'connected',
+        tools: [
+          { id: 'list_repos', name: 'list_repos', description: 'List repositories visible to the token.' },
+          { id: 'create_issue', name: 'create_issue', description: 'Open an issue.' },
+        ],
+      },
+      {
+        id: 'legacy-fs',
+        name: 'Filesystem',
+        status: 'error',
+        error: "MCP server process exited unexpectedly (exit code: 1). 'npx' is not recognized as an internal or external command.",
+        tools: [],
+      },
+    ],
+  }
 }
 
 export function mockAcpAdapters(): AcpAdapterDto[] {
@@ -1643,26 +1883,36 @@ export function mockGitPushPlan(): CodeToolExecuteResultDto {
 
 export function mockFileTree() {
   return {
+    success: true,
+    error: null,
+    // Shape of TinadecTools' `ls` response (FileSystemTools.cs:31): type is a string,
+    // there is no is_dir/size_bytes.
     entries: [
-      { name: 'src', is_dir: true, is_file: false, size_bytes: null },
-      { name: 'tests', is_dir: true, is_file: false, size_bytes: null },
-      { name: 'package.json', is_dir: false, is_file: true, size_bytes: 2048 },
-      { name: 'tsconfig.json', is_dir: false, is_file: true, size_bytes: 512 },
-      { name: 'README.md', is_dir: false, is_file: true, size_bytes: 4096 },
-      { name: '.gitignore', is_dir: false, is_file: true, size_bytes: 128 },
+      { name: 'src', path: './src', type: 'directory', size: 0, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'tests', path: './tests', type: 'directory', size: 0, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'package.json', path: './package.json', type: 'file', size: 2048, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'tsconfig.json', path: './tsconfig.json', type: 'file', size: 512, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'README.md', path: './README.md', type: 'file', size: 4096, modified_at: '2026-09-14T08:00:00Z' },
+      { name: '.gitignore', path: './.gitignore', type: 'file', size: 128, modified_at: '2026-09-14T08:00:00Z' },
     ],
+    has_more: false,
+    next_cursor: null,
   }
 }
 
 export function mockFileTreeSrc() {
   return {
+    success: true,
+    error: null,
     entries: [
-      { name: 'orchestrator.ts', is_dir: false, is_file: true, size_bytes: 12288 },
-      { name: 'graph.ts', is_dir: false, is_file: true, size_bytes: 6144 },
-      { name: 'types.ts', is_dir: false, is_file: true, size_bytes: 3072 },
-      { name: 'index.ts', is_dir: false, is_file: true, size_bytes: 256 },
-      { name: '__tests__', is_dir: true, is_file: false, size_bytes: null },
+      { name: 'orchestrator.ts', path: './src/orchestrator.ts', type: 'file', size: 12288, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'graph.ts', path: './src/graph.ts', type: 'file', size: 6144, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'types.ts', path: './src/types.ts', type: 'file', size: 3072, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'index.ts', path: './src/index.ts', type: 'file', size: 256, modified_at: '2026-09-14T08:00:00Z' },
+      { name: '__tests__', path: './src/__tests__', type: 'directory', size: 0, modified_at: '2026-09-14T08:00:00Z' },
     ],
+    has_more: false,
+    next_cursor: null,
   }
 }
 
@@ -1834,10 +2084,11 @@ export interface MockDataBundle {
   tools: ToolDescriptorDto[]
   harnessManifest: HarnessManifestDto | null
   promptFragments: PromptFragmentDto[]
-  extensionSources: ExtensionSourceDto[]
-  marketCatalog: MarketCatalogItemDto[]
-  installedExtensions: InstalledExtensionDto[]
-  mcpServers: McpServerDto[]
+  extensionSources: MarketSourceListDto
+  marketCatalog: MarketCatalogPageDto
+  installations: MarketInstallationDto[]
+  installProposal: MarketInstallProposalDto
+  mcpInventory: McpInventoryDto
   acpAdapters: AcpAdapterDto[]
   gitDiffPreview: CodeToolExecuteResultDto | null
   gitPushPlan: CodeToolExecuteResultDto | null
@@ -1865,8 +2116,9 @@ export function buildMockDataBundle(sessionId: string = 'sess-tinadec-1001'): Mo
     promptFragments: mockPromptFragments(),
     extensionSources: mockExtensionSources(),
     marketCatalog: mockMarketCatalog(),
-    installedExtensions: mockInstalledExtensions(),
-    mcpServers: mockMcpServers(),
+    installations: mockMarketInstallations(),
+    installProposal: mockMarketInstallProposal(),
+    mcpInventory: mockMcpInventory(),
     acpAdapters: mockAcpAdapters(),
     gitDiffPreview: mockGitDiffPreview(),
     gitPushPlan: mockGitPushPlan(),

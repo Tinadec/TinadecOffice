@@ -46,7 +46,7 @@ function createFakeTerminal(): FakeTerminal {
     },
     write(data) { term.writes.push(data) },
     focus() {},
-    dispose() {},
+    dispose: vi.fn(),
     onData(cb) {
       term.inputHandlers.push(cb)
       return { dispose: () => { term.inputHandlers = term.inputHandlers.filter((h) => h !== cb) } }
@@ -252,6 +252,23 @@ describe('useTerminal', () => {
       // The earlier attachment is torn down rather than silently overwritten.
       expect(firstRemover).toHaveBeenCalledTimes(1)
       expect(first.terminal.onData).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not let a stale view detach the newer xterm attachment', async () => {
+      const terminal = installTerminalStub()
+      const first = await attachOne(terminal)
+      const secondTerm = createFakeTerminal()
+      const { attachTerminal, detachTerminal, getTerminal } = module.useTerminal()
+
+      attachTerminal(
+        'term-1', laidOutHost(), secondTerm as unknown as Terminal, { fit: vi.fn() } as unknown as FitAddon,
+      )
+      expect(getTerminal('term-1')?.term).toBe(secondTerm)
+
+      detachTerminal('term-1', first.term as unknown as Terminal)
+
+      expect(getTerminal('term-1')?.term).toBe(secondTerm)
+      expect(secondTerm.dispose).not.toHaveBeenCalled()
     })
 
     it('holds live output until the replay snapshot has been written', async () => {

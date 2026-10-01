@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { Bot, Boxes, PlugZap, Terminal } from '@lucide/vue'
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MarketCatalogItemDto } from '@/api'
 import { UiBadge } from '@/components/ui'
-import { marketController } from '@/controllers/MarketController'
+import { catalogKindLabel, marketController } from '@/controllers/MarketController'
 
 const { t } = useI18n()
 
 const {
-  catalog: _catalog, selectedCatalogId: _selectedId, installedByExtensionId, start,
+  catalog: _catalog, selectedCatalogId: _selectedId, installationFor, awaitingDecision, actionFinished,
 } = marketController
 // ponytail: vapor template does not auto-unwrap Ref when destructured from controller — expose plain-typed computed so vue-tsc sees correct brands (single reactivity identity via tsconfig paths)
 const catalog = computed(() => _catalog.value) as unknown as MarketCatalogItemDto[]
@@ -18,13 +18,6 @@ const selectedCatalogId = computed({
   set: (v: string) => { _selectedId.value = v },
 }) as unknown as string
 
-function kindLabel(kind: string) {
-  if (kind === 'skill') return 'Skill'
-  if (kind === 'mcp-server') return 'MCP'
-  if (kind === 'acp-adapter') return 'ACP'
-  return kind
-}
-
 function kindIcon(kind: string) {
   if (kind === 'skill') return Bot
   if (kind === 'mcp-server') return PlugZap
@@ -32,23 +25,27 @@ function kindIcon(kind: string) {
   return Boxes
 }
 
+/**
+ * A row is a claim from a source, and separately a decision this workspace may have queued for it.
+ * "Installed" only ever comes from the ledger's own action status, never from the row being
+ * present — refreshing a market puts entries back on the list whether or not anything was written.
+ */
 function statusLabel(item: MarketCatalogItemDto) {
-  const extension = installedByExtensionId.value.get(item.extension_id)
-  if (!extension) return t('market.available')
-  if (extension.enabled) return t('market.enabled')
-  return t('market.installedDisabled')
+  const row = installationFor(item)
+  if (!row) return item.installable ? t('market.available') : t('market.notInstallable')
+  if (awaitingDecision(row)) return t('market.awaitingDecision')
+  if (row.state === 'removing') return t('market.removing')
+  if (row.action_status === 'completed') return t('market.installed')
+  return actionFinished(row) ? t('market.installFailed') : t('market.installing')
 }
 
 function statusVariant(item: MarketCatalogItemDto) {
-  const extension = installedByExtensionId.value.get(item.extension_id)
-  if (!extension) return 'secondary'
-  if (extension.enabled) return 'default'
-  return 'outline'
+  const row = installationFor(item)
+  if (!row) return item.installable ? 'secondary' : 'outline'
+  if (awaitingDecision(row)) return 'default'
+  if (row.action_status === 'completed') return 'default'
+  return actionFinished(row) ? 'destructive' : 'outline'
 }
-
-onMounted(() => {
-  start()
-})
 </script>
 
 <template vapor>
@@ -78,8 +75,8 @@ onMounted(() => {
         </div>
         <p>{{ item.description }}</p>
         <div class="market-chip-row">
-          <span>{{ kindLabel(item.kind) }}</span>
-          <span>{{ item.publisher }}</span>
+          <span>{{ catalogKindLabel(item.kind) }}</span>
+          <span>{{ item.source_name }}</span>
           <span>{{ item.version }}</span>
         </div>
       </div>

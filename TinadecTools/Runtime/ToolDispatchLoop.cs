@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using NLog;
 using TinadecTools.Abstractions;
@@ -9,16 +10,16 @@ namespace TinadecTools.Runtime;
 /// long-running call (e.g. a 120s shell command) cannot head-of-line block the
 /// reserved <c>#terminal</c> control plane (stdin/kill/status) or read-only tools.
 ///
-/// Trade-off: handlers were written against the original serial loop, so calls
-/// whose descriptor marks them <see cref="ToolDescriptor.MutatesWorkspace"/> still
-/// serialize on a single gate; control-plane (<c>#</c>-prefixed) and read-only
-/// tools run concurrently. Response lines are written under one lock so a line
-/// never interleaves; each response carries its own call id either way.
+/// Mutating calls serialize per explicit worktree/working-directory key; calls
+/// without a target keep the conservative workspace-wide key. Control-plane
+/// (<c>#</c>-prefixed) and read-only tools run concurrently. Response lines are
+/// written under one lock so a line never interleaves; each response carries its
+/// own call id either way.
 /// </summary>
 internal static class ToolDispatchLoop
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-    private static readonly SemaphoreSlim MutatingGate = new(1, 1);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MutatingGates = new(StringComparer.OrdinalIgnoreCase);
 
     public static async Task RunAsync(TextReader input, TextWriter output, CancellationToken cancellationToken = default)
     {
@@ -82,15 +83,33 @@ internal static class ToolDispatchLoop
         if (IsConcurrencySafe(request.ToolId))
             return await ToolRegistry.DispatchAsync(request, cancellationToken).ConfigureAwait(false);
 
-        await MutatingGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gate = MutatingGates.GetOrAdd(MutationKey(request), _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             return await ToolRegistry.DispatchAsync(request, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            MutatingGate.Release();
+            gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Mutating calls serialize per execution target. A single process can host several worktrees;
+    /// one long command in worktree A must not block an unrelated mutation in worktree B. Calls that
+    /// do not identify a target keep the conservative process-wide key.
+    /// </summary>
+    private static string MutationKey(ToolCallRequest<JsonElement> request)
+    {
+        if (request.Params.ValueKind != JsonValueKind.Object) return "__workspace__";
+        foreach (var name in new[] { "worktree_path", "repository_path", "cwd", "workdir", "workspace_root" })
+        {
+            if (request.Params.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(value.GetString()))
+                return value.GetString()!.Trim();
+        }
+        return "__workspace__";
     }
 
     private static bool IsConcurrencySafe(string toolId)

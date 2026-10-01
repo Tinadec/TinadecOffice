@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { homeController } from '@/controllers/HomeController'
 
 // ---------------------------------------------------------------------------
 // useDetachedTabs — detached feature-panel window tracking for the UIE.
@@ -6,17 +7,17 @@ import { ref } from 'vue'
 // The feature panel (right column stack) supports browser-style tab tearing:
 // a tab can be dragged out of the main window into a floating BrowserWindow.
 // The floating window is created by Electron (panelWindow.cjs) and renders via
-// DetachedPanelPage.vue by `?type=`. This composable is the renderer-side
-// module singleton that:
-//   - maps UIE descriptor ids <-> the detached-window PanelType strings
-//     (`browser` -> `preview`, the rest are identical),
-//   - calls the `tinadec.detachPanel` IPC to spawn the window and tracks the
+// DetachedPanelPage.vue by `?type=<UIE descriptor id>`. This composable is the
+// renderer-side module singleton that:
+//   - calls the `tinadec.detachPanel` IPC to spawn the window with the card
+//     state plus the active session/workspace context (the floating window is
+//     a separate renderer and cannot read HomeController), and tracks the
 //     resulting `{ tabId, windowId }` as a dashed "detached indicator" tab,
 //   - subscribes to reattach/closed IPC events so the indicator list stays in
 //     sync with the real floating windows (bind() -> unsubscribe()).
 //
-// Like the legacy usePanelTabs.detachedTabs, this state is intentionally NOT
-// part of the persisted layout snapshot — it is volatile window bookkeeping.
+// Detached-window state is intentionally NOT part of the persisted layout
+// snapshot — it is volatile window bookkeeping.
 // The state is a module singleton so every consumer (the feature stack and its
 // tab bar) observes the same indicator list.
 // ---------------------------------------------------------------------------
@@ -25,26 +26,28 @@ import { ref } from 'vue'
 export interface DetachedTabInfo {
   /** The UIE card instance id (used to key the indicator tab). */
   tabId: string
-  /** Detached-window PanelType string (e.g. 'preview'). */
+  /** The UIE card descriptor id the window renders (e.g. 'browser'). */
   type: string
   title: string
   windowId: number
 }
 
-/** Reverse lookup: the PanelType string used by DetachedPanelPage for a UIE descriptor. */
-const DETACHED_TYPE_BY_DESCRIPTOR: Record<string, string> = {
-  browser: 'preview',
+/** Window-context keys added on detach; stripped again on reattach so they never
+ * leak into the persisted card state. */
+const CONTEXT_KEYS = ['sessionId', 'projectPath'] as const
+
+function withSessionContext(state: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...state,
+    sessionId: homeController.selectedSessionId.value,
+    projectPath: homeController.currentProject.value?.path,
+  }
 }
 
-/** The PanelType string a UIE card descriptor detaches as (e.g. 'browser' -> 'preview'). */
-export function detachedTypeForDescriptor(descriptorId: string): string {
-  return DETACHED_TYPE_BY_DESCRIPTOR[descriptorId] ?? descriptorId
-}
-
-/** The UIE card descriptor a detached window's type reattaches to ('preview' -> 'browser'). */
-export function descriptorForDetachedType(type: string): string {
-  const entry = Object.entries(DETACHED_TYPE_BY_DESCRIPTOR).find(([, v]) => v === type)
-  return entry ? entry[0] : type
+function withoutSessionContext(state: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...state }
+  for (const key of CONTEXT_KEYS) delete rest[key]
+  return rest
 }
 
 /** Shape of the IPC reattach payload (matches preload `ReattachData`). */
@@ -69,9 +72,9 @@ export function useDetachedTabs() {
     state?: Record<string, unknown>,
   ): Promise<boolean> {
     if (!window.tinadec?.detachPanel) return false
-    const type = detachedTypeForDescriptor(instance.descriptorId)
+    const type = instance.descriptorId
     try {
-      const result = await window.tinadec.detachPanel(instance.id, type, instance.title, state ?? {})
+      const result = await window.tinadec.detachPanel(instance.id, type, instance.title, withSessionContext(state ?? {}))
       if (!result) return false
       detachedTabs.value = [
         ...detachedTabs.value,
@@ -114,7 +117,7 @@ export function useDetachedTabs() {
     // the layout owner re-open the card.
     const offReattach = window.tinadec?.onPanelReattach?.((data) => {
       removeDetachedTab(data.tabId)
-      onReattach?.(data)
+      onReattach?.({ ...data, state: withoutSessionContext(data.state ?? {}) })
     })
     if (offReattach) unsubs.push(offReattach)
 

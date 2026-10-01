@@ -104,6 +104,26 @@ public interface IToolDispatcher
 }
 
 /// <summary>
+/// Exact run-execution epoch held by the durable run engine. Tool side effects
+/// use the pair as a fencing token: a host that lost the lease may still have
+/// stale in-memory work, but it can no longer move a tool execution to running.
+/// </summary>
+public sealed record RunExecutionAuthority(string LeaseOwner, int RecoveryCount);
+
+/// <summary>
+/// Optional stronger dispatcher contract used by the durable run engine. The
+/// base <see cref="IToolDispatcher"/> remains source-compatible for embedders and
+/// manual tool callers; autonomous run execution requires this lease-fenced port.
+/// </summary>
+public interface ILeaseFencedToolDispatcher : IToolDispatcher
+{
+    Task<ToolDispatchResultDto> ResumeAsync(
+        string executionId,
+        RunExecutionAuthority authority,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Resolves a tool call's trusted run/session/project/agent scope. Callers never
 /// supply a workspace root or session id to the tools process.
 /// </summary>
@@ -150,7 +170,21 @@ public sealed record ToolInvocationScope(
     bool SerializeWorkspaceWrites,
     IReadOnlyList<FrozenToolManifestEntry>? AuthorizedToolManifest = null,
     string? FrozenToolManifestHash = null,
-    string? PermissionMode = null);
+    string? PermissionMode = null,
+    IReadOnlyList<DispatchRosterEntry>? DispatchRoster = null,
+    IReadOnlyList<string>? DispatchTargets = null,
+    string? ExecutionRootOverride = null)
+{
+    /// <summary>The root actually handed to the provider after worktree/environment binding.</summary>
+    public string ExecutionRoot => string.IsNullOrWhiteSpace(ExecutionRootOverride) ? WorkspaceRoot : ExecutionRootOverride;
+}
+
+/// <summary>
+/// One executor the run's coordinator may name in <c>task_dispatch.agent</c>, read from the run's
+/// frozen dispatch roster. Null roster on a scope = a body frozen before the roster existed; the
+/// engine then validates the name when it assigns the worker.
+/// </summary>
+public sealed record DispatchRosterEntry(string Id, string Description);
 
 /// <summary>
 /// Agent-runtime authorization boundary consumed by the Tools module. DmaEA owns
@@ -182,7 +216,8 @@ public sealed record AgentToolAuthorization(
     Guid TaskId,
     Guid AgentInstanceId,
     IReadOnlyList<string> AllowedTools,
-    IReadOnlyList<string> AllowedResources);
+    IReadOnlyList<string> AllowedResources,
+    IReadOnlyList<string>? AllowedDispatchTargets = null);
 
 /// <summary>
 /// Durable execution and approval state transitions. The Lifecycle module owns
@@ -232,6 +267,14 @@ public interface IToolExecutionCoordinator
     /// </summary>
     Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default);
     /// <summary>
+    /// Mints this execution's pending approval directly from a person's standing rule
+    /// (todo E7): no run grant, no auto policy — the rule the person wrote is the reason.
+    /// The caller (the dispatcher) has already matched the rule against the call's own
+    /// parameters, so this only records it. Returns null when the execution needs no
+    /// approval or none is pending.
+    /// </summary>
+    Task<PreAuthorizationMintResult?> MintApprovalFromRuleAsync(Guid executionId, Guid ruleId, CancellationToken cancellationToken = default);
+    /// <summary>
     /// Compatibility projection for callers that own an execution coordinator but
     /// need to atomically consume its bound action approval.
     /// </summary>
@@ -242,6 +285,29 @@ public interface IToolExecutionCoordinator
         CancellationToken cancellationToken = default);
     Task<ToolExecutionRecoveryResult> ApplyRecoveryDecisionAsync(Guid executionId, string decision, CancellationToken cancellationToken = default);
     Task CancelPendingForRunAsync(Guid runId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Strong execution-start contract for autonomous runs. The lifecycle module
+/// atomically validates the caller's run lease epoch before an execution may
+/// become <c>running</c> (and before an approval may be consumed).
+/// </summary>
+public interface ILeaseFencedToolExecutionCoordinator : IToolExecutionCoordinator
+{
+    Task<ToolExecutionStartDecision> TryStartUnderRunLeaseAsync(
+        Guid executionId,
+        RunExecutionAuthority authority,
+        bool allowStaleRunningReset = false,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Process-local cancellation bridge used after a run cancellation is durably
+/// committed. It deliberately exposes no provider/session details to DmaEA.
+/// </summary>
+public interface IRunInFlightToolCancellation
+{
+    int CancelForRun(Guid runId);
 }
 
 public sealed record ToolExecutionPrepareRequest(
@@ -377,6 +443,18 @@ public interface IToolApprovalCoordinator
         string decision,
         string? reason,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Persists a decision a delegated approval gate made on the user's behalf (the <c>delegate-*</c>
+    /// permission modes). The same transition as <see cref="DecideAsync"/>, but no human principal is
+    /// recorded as the decider: the gate records say who decided and what each gate was shown.
+    /// </summary>
+    Task<ToolApprovalDecision> DecideDelegatedAsync(
+        Guid approvalId,
+        string decision,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        DecideAsync(approvalId, decision, reason, cancellationToken);
 }
 
 public sealed record ToolApprovalDecision(

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
@@ -15,7 +16,13 @@ public static class ModelAgentControlEndpoints
     {
         app.MapPost("/api/v1/model-resolution/preview", Preview);
         app.MapGet("/api/v1/model-references", References);
-        app.MapGet("/api/v1/model-invocations", Invocations);
+        // Typed on purpose: this page is what the desktop's run usage view reads. Without the
+        // annotation the route still appears in both OpenAPI snapshots with a bare "200" and no
+        // content, so the drift gate sees nothing when a field is renamed and the desktop reads a
+        // silent undefined. The query string is read off HttpRequest and stays undocumented here;
+        // the gateway forwards it verbatim and its own contract types the body.
+        app.MapGet("/api/v1/model-invocations", Invocations)
+            .Produces<ModelInvocationPageDto>(StatusCodes.Status200OK);
         return app;
     }
 
@@ -174,11 +181,15 @@ public static class ModelAgentControlEndpoints
             return Results.BadRequest(new { code = "invalid_query", message = "status must be started|succeeded|failed|cancelled." });
         var model = request.Query["model"].ToString();
         var limit = int.TryParse(request.Query["limit"], out var parsedLimit) ? Math.Clamp(parsedLimit, 1, 200) : 50;
-        DateTimeOffset? cursor = null;
+        (DateTimeOffset At, Guid Row)? after = null;
         var cursorText = request.Query["cursor"].ToString();
         if (!string.IsNullOrWhiteSpace(cursorText))
         {
-            try { cursor = new DateTimeOffset(long.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(cursorText))), TimeSpan.Zero); }
+            try
+            {
+                var parts = Encoding.UTF8.GetString(Convert.FromBase64String(cursorText)).Split(':', 2);
+                after = (new DateTimeOffset(long.Parse(parts[0], CultureInfo.InvariantCulture), TimeSpan.Zero), Guid.ParseExact(parts[1], "N"));
+            }
             catch { return Results.BadRequest(new { code = "invalid_cursor", message = "cursor is invalid." }); }
         }
 
@@ -191,10 +202,20 @@ public static class ModelAgentControlEndpoints
         if (providerId is { } selectedProvider) query = query.Where(x => x.ProviderInstanceId == selectedProvider);
         if (!string.IsNullOrWhiteSpace(model)) query = query.Where(x => x.Model == model);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status);
-        if (from is { } fromValue) query = query.Where(x => x.StartedAt >= fromValue);
-        if (to is { } toValue) query = query.Where(x => x.StartedAt <= toValue);
-        if (cursor is { } cursorValue) query = query.Where(x => x.StartedAt < cursorValue);
+        // The started_at window and the cursor filter run in memory, next to the sort that was
+        // already in memory: SQLite stores these timestamps as TEXT and the provider cannot
+        // translate a range comparison against a parameter, so before this the two date filters and
+        // every second page answered 400 with a message about model configuration. The cursor
+        // carries the ordering's tie-break key, because a run's invocations routinely share a
+        // started_at and a timestamp-only cursor skipped the rest of the tied page.
+        var windowFrom = from;
+        var windowTo = to;
+        var afterRow = after;
         var rows = (await query.ToListAsync(cancellationToken).ConfigureAwait(false))
+            .Where(x => (!windowFrom.HasValue || x.StartedAt >= windowFrom.Value)
+                && (!windowTo.HasValue || x.StartedAt <= windowTo.Value)
+                && (!afterRow.HasValue || x.StartedAt < afterRow.Value.At
+                    || (x.StartedAt == afterRow.Value.At && x.Id.CompareTo(afterRow.Value.Row) < 0)))
             .OrderByDescending(x => x.StartedAt)
             .ThenByDescending(x => x.Id)
             .Take(limit + 1)
@@ -205,7 +226,7 @@ public static class ModelAgentControlEndpoints
         {
             Items = rows.Select(ToDto).ToArray(),
             NextCursor = hasMore && rows.Count != 0
-                ? Convert.ToBase64String(Encoding.UTF8.GetBytes(rows[^1].StartedAt.UtcTicks.ToString()))
+                ? Convert.ToBase64String(Encoding.UTF8.GetBytes($"{rows[^1].StartedAt.UtcTicks.ToString(CultureInfo.InvariantCulture)}:{rows[^1].Id:N}"))
                 : null
         });
     }

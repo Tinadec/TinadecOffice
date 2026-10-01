@@ -15,6 +15,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
     private readonly IToolProvider _provider;
     private readonly ITenantContextAccessor _tenant;
     private readonly IAgentToolAuthorization? _agents;
+    private readonly IToolExecutionTargetResolver? _targets;
 
     public ToolInvocationScopeResolver(
         ILifecycleManager lifecycle,
@@ -28,6 +29,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
         _provider = provider;
         _tenant = tenant;
         _agents = services.GetService(typeof(IAgentToolAuthorization)) as IAgentToolAuthorization;
+        _targets = services.GetService(typeof(IToolExecutionTargetResolver)) as IToolExecutionTargetResolver;
     }
 
     public async Task<ToolInvocationScope> ResolveAsync(
@@ -58,9 +60,9 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
         var root = string.Empty;
         if (session.ProjectId is null)
         {
-            // Free-conversation sessions expose only the Core-owned create_workspace
-            // virtual tool; every provider-backed tool requires a project root.
-            if (!CoreWorkspaceTool.IsCoreTool(request.ToolId))
+            // Free-conversation sessions expose only Core-owned virtual tools; every
+            // provider-backed tool requires a project root.
+            if (!CoreVirtualToolPolicy.IsCoreVirtual(request.ToolId))
                 throw new InvalidOperationException("Tool execution is unavailable for a session without a project workspace root.");
         }
         else
@@ -98,9 +100,21 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             throw new InvalidOperationException("The run does not contain a valid frozen TinadecTools v2 manifest.");
         }
 
-        if (project is not null)
+        ToolExecutionTarget? executionTarget = null;
+        if (_targets is not null && project is not null)
         {
-            var liveManifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
+            var resolved = await _targets.ResolveAsync(sessionId, request.RunId, request.TaskId, request.ToolId, root, cancellationToken).ConfigureAwait(false);
+            if (resolved.IsRejected) throw new InvalidOperationException(resolved.Error);
+            executionTarget = resolved.Target;
+        }
+        var providerRoot = executionTarget?.RootPath ?? root;
+
+        // A Core-owned virtual tool has no child-process entry to pair against, so the frozen
+        // manifest is its only declaration source here too - the same exemption the freezer applies
+        // when it builds that manifest. See CoreVirtualToolPolicy.RequiresLiveManifestEntry.
+        if (project is not null && CoreVirtualToolPolicy.RequiresLiveManifestEntry(request.ToolId))
+        {
+            var liveManifest = await _provider.GetManifestAsync(providerRoot, cancellationToken).ConfigureAwait(false);
             if (liveManifest.ProtocolVersion != 2
                 || !string.Equals(liveManifest.ManifestHash, frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(ToolManifestHasher.Compute(liveManifest.Tools), frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase))
@@ -140,7 +154,31 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             policy.SerializeWorkspaceWrites,
             frozenManifest.Tools,
             frozenManifest.ManifestHash,
-            policy.PermissionMode);
+            policy.PermissionMode,
+            ReadFrozenDispatchRoster(frozen.Content),
+            authorization.AllowedDispatchTargets,
+            executionTarget?.RootPath);
+    }
+
+    /// <summary>Reads the frozen dispatch roster (ids + responsibility text); null when absent.</summary>
+    internal static IReadOnlyList<DispatchRosterEntry>? ReadFrozenDispatchRoster(string content)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            if (!TryGetProperty(document.RootElement, out var roster, "dispatchRoster", "dispatch_roster")
+                || roster.ValueKind != JsonValueKind.Array)
+                return null;
+            return roster.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => new DispatchRosterEntry(ReadRootText(item, "id") ?? string.Empty, ReadRootText(item, "description") ?? string.Empty))
+                .Where(item => item.Id.Length > 0)
+                .ToArray();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static bool IsToolAllowed(IReadOnlyList<string> allowedTools, string toolId) =>
@@ -255,7 +293,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             // this gate never grants an approval by itself.
             var permissionMode = ReadString(document.RootElement, "permissionMode", "permission_mode");
             EnsurePermissionModeExecutable(permissionMode);
-            var timeout = ReadInt(document.RootElement, "tools", "defaultTimeoutSeconds", "default_timeout_seconds", 120, 1, 1800);
+            var timeout = ReadInt(document.RootElement, "tools", "defaultTimeoutSeconds", "default_timeout_seconds", 600, 1, 1800);
             var retries = ReadInt(document.RootElement, "scheduling", "workerRetryLimit", "worker_retry_limit", 0, 0, 10);
             var serialize = ReadBoolean(document.RootElement, "tools", "serializeWorkspaceWrites", "serialize_workspace_writes", true);
             return new FrozenToolPolicy(permissionMode, timeout, retries, serialize);
@@ -270,7 +308,8 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
     {
         var normalized = permissionMode?.Trim().ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(normalized)
-            && normalized is not ("ask" or "default" or "auto-approve" or "full-access"))
+            && normalized is not ("ask" or "default" or "auto-approve" or "full-access")
+            && !ApprovalDelegationModes.IsDelegated(normalized))
         {
             throw new UnauthorizedAccessException("Frozen run permission mode does not permit tool execution.");
         }

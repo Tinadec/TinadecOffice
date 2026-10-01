@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Persistence;
 
@@ -19,6 +20,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private readonly TimeProvider _timeProvider;
     private readonly IOptions<AutoApproveOptions> _autoApproveOptions;
     private readonly ILifecycleManager? _lifecycle;
+    private readonly IApprovalRules? _approvalRules;
 
     public GovernanceService(
         IDbContextFactory<GovernanceDbContext> dbFactory,
@@ -27,7 +29,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         TimeProvider? timeProvider = null,
         INonceMaterialStore? nonceMaterials = null,
         IOptions<AutoApproveOptions>? autoApproveOptions = null,
-        ILifecycleManager? lifecycle = null)
+        ILifecycleManager? lifecycle = null,
+        IApprovalRules? approvalRules = null)
     {
         _dbFactory = dbFactory;
         _tenantAccessor = tenantAccessor;
@@ -36,6 +39,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
         _autoApproveOptions = autoApproveOptions ?? Options.Create(new AutoApproveOptions());
         _lifecycle = lifecycle;
+        _approvalRules = approvalRules;
     }
 
     /// <summary>
@@ -353,7 +357,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             command.Rationale,
             command.IdempotencyKey,
             command.PermissionMode,
-            command.ResourceClaim), cancellationToken).ConfigureAwait(false);
+            command.ResourceClaim,
+            command.CommandRuleId), cancellationToken).ConfigureAwait(false);
         var status = resolution.Decision.Outcome switch
         {
             GovernanceOutcomes.Allowed => "allowed",
@@ -443,7 +448,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             command.SubjectAgentInstanceId,
             command.ParentAgentInstanceId,
             Claim = claim,
-            Boundaries = effectiveBoundaries,
+            Boundaries = PolicyIdentityProjection(effectiveBoundaries),
             command.RunId,
             command.TaskId,
             DurationMilliseconds = (long)command.RequestedDuration.TotalMilliseconds,
@@ -485,7 +490,15 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             TaskId = command.TaskId,
             Risk = risk,
             ExpectedCost = command.ExpectedCost,
-            Rationale = Truncate(command.Rationale, 4096),
+            // The upgrade reason rides along so the approval prompt explains what the
+            // frozen envelope is missing. It is deliberately absent from requestHash
+            // above: a replay of the same command must still match, and the reason is
+            // diagnostic rather than part of the request's identity.
+            Rationale = Truncate(
+                boundaryResult.UpgradeReason is { } upgrade
+                    ? $"{command.Rationale} {upgrade}"
+                    : command.Rationale,
+                4096),
             IdempotencyKey = idempotencyKey,
             RequestHash = requestHash,
             RequestedUses = command.RequestedUses,
@@ -549,7 +562,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                 // where the same envelope is consumed once. The release never
                 // widens authority: every boundary rule above has already passed,
                 // and the approval layer re-checks risk ceilings and budgets.
-                var unattendedReason = UnattendedPermissionReleaseReason(command);
+                var unattendedReason = await UnattendedPermissionReleaseReasonAsync(command, cancellationToken).ConfigureAwait(false);
                 if (unattendedReason is not null)
                 {
                     var releaseGrant = NewGrant(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId,
@@ -564,9 +577,12 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                     record.Status = PermissionRequestStatuses.Granted;
                     record.CapabilityGrantId = releaseGrant.Id;
                     record.CapabilityLeaseId = releaseLease.Id;
+                    var releaseReasonText = string.Equals(unattendedReason, "approval_rule_released", StringComparison.Ordinal)
+                        ? $"The standing command-prefix rule the person wrote released this call ('{unattendedReason}'); no fresh decision was needed."
+                        : $"The unattended release path '{unattendedReason}' issued a scoped capability lease without a human decision.";
                     var released = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
                         GovernanceOutcomes.Allowed, unattendedReason,
-                        $"The unattended release path '{unattendedReason}' issued a scoped capability lease without a human decision.",
+                        releaseReasonText,
                         "pdp", boundaryResult.Hash, command.RunId, command.TaskId, record.Id, releaseGrant.Id, releaseLease.Id);
                     // A policy/mode release has no human behind it; leaving the
                     // column empty keeps the audit trail from attributing it to
@@ -768,7 +784,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
 
         if (!command.Approve)
         {
-            return await DenyRequestAsync(db, transaction, request, scope, claim, "approver_rejected",
+            return await DenyRequestAsync(db, transaction, request, scope, claim, RunErrorTaxonomy.ApproverRejected,
                 Truncate(command.Reason, 4096, "The approver rejected the request."), command.ApproverAgentInstanceId,
                 command.ApprovalDelegationId, now, cancellationToken, boundaryResult.Hash).ConfigureAwait(false);
         }
@@ -1257,12 +1273,32 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private static IReadOnlyList<AuthorizationBoundary> NormalizeBoundaries(IReadOnlyList<AuthorizationBoundary> boundaries)
     {
         ArgumentNullException.ThrowIfNull(boundaries);
+        // The diagnostic text travels with the boundary: it is what turns a bare
+        // "authorization boundary denies the capability" into a statement a reader or
+        // a model can act on (which level, which grants). Projecting it away here
+        // silently stripped the reason from every boundary that reached this path.
+        // Neither field is policy material — HashBoundaries rebuilds each boundary
+        // from its name and rules alone — so carrying them changes no policy identity.
         return boundaries.Select(boundary => new AuthorizationBoundary(
                 CapabilityRuleMatcher.Required(boundary.Name, nameof(boundary.Name), 256),
-                CapabilityRuleMatcher.NormalizeRulesAllowEmpty(boundary.Rules)))
+                CapabilityRuleMatcher.NormalizeRulesAllowEmpty(boundary.Rules))
+            {
+                DenyReason = boundary.DenyReason,
+                UpgradeReason = boundary.UpgradeReason
+            })
             .OrderBy(boundary => boundary.Name, StringComparer.Ordinal)
             .ToArray();
     }
+
+    /// <summary>
+    /// The policy-identity projection of a boundary set: name plus rules, with the
+    /// diagnostic text removed. Used for the request hash, which must stay stable —
+    /// request hashes were always computed from diagnostics-free boundaries, so
+    /// folding the reason back in would make a legitimate replay look like a
+    /// different request and be rejected as a reused idempotency key.
+    /// </summary>
+    private static IReadOnlyList<AuthorizationBoundary> PolicyIdentityProjection(IReadOnlyList<AuthorizationBoundary> boundaries) =>
+        boundaries.Select(boundary => new AuthorizationBoundary(boundary.Name, boundary.Rules)).ToArray();
 
     private static async Task<IReadOnlyList<AuthorizationBoundary>> LoadEffectiveBoundariesAsync(
         GovernanceDbContext db,
@@ -1311,6 +1347,14 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private static BoundaryEvaluation EvaluateBoundaries(IReadOnlyList<AuthorizationBoundary> boundaries, CapabilityClaim claim)
     {
         var hash = CapabilityRuleMatcher.HashBoundaries(boundaries);
+        // A boundary that cleared the claim only because a decision can upgrade it
+        // supplies the operator-facing reason. Collect it here so the permission
+        // request can say WHY the human is being asked (which level the frozen
+        // envelope is missing) instead of a bare "approval required". Diagnostic
+        // only — like DenyReason it never enters the boundary hash.
+        var upgradeReason = boundaries
+            .Select(boundary => boundary.UpgradeReason)
+            .FirstOrDefault(reason => !string.IsNullOrWhiteSpace(reason));
         if (boundaries.Count == 0)
             return new BoundaryEvaluation(false, "missing_authorization_boundary", "No authorization boundary was supplied or published.", hash);
         foreach (var boundary in boundaries)
@@ -1331,7 +1375,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             if (!CapabilityRuleMatcher.HasAllow(boundary.Rules, claim))
                 return new BoundaryEvaluation(false, "boundary_not_allowed", $"Authorization boundary '{boundary.Name}' does not allow the capability.", hash);
         }
-        return new BoundaryEvaluation(true, "boundaries_allow", "Every authorization boundary allows the capability.", hash);
+        return new BoundaryEvaluation(true, "boundaries_allow", "Every authorization boundary allows the capability.", hash, upgradeReason);
     }
 
     private static async Task<CapabilityGrantRecord?> FindMatchingGrantAsync(
@@ -1375,17 +1419,63 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     /// the single place that spends it, so an exhausted budget parks the
     /// approval instead of widening this release.
     /// </summary>
-    private string? UnattendedPermissionReleaseReason(PermissionRequestCommand command)
+    private async Task<string?> UnattendedPermissionReleaseReasonAsync(PermissionRequestCommand command, CancellationToken cancellationToken)
     {
-        if (string.Equals(command.PermissionMode, "full-access", StringComparison.Ordinal))
-            return "full_access_auto_grant";
-        if (!string.Equals(command.PermissionMode, "auto-approve", StringComparison.Ordinal)) return null;
         var toolId = command.Claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)
             ? command.Claim.Resource["tool://".Length..]
             : command.Claim.Resource;
-        return AutoApprovePolicyRules.Engages(_autoApproveOptions.Value, approveIntent: true, toolId, command.Risk)
-            ? "auto_policy_released"
-            : null;
+        // A person's standing command-prefix rule (todo E7) is honored first and in every mode:
+        // the click it replaces is one the person already gave when they wrote the rule. The
+        // engine matched the command; this service re-verifies the rule against the run's own
+        // session — never the call's word.
+        if (command.CommandRuleId is { } ruleId && _approvalRules is not null && command.RunId is { } ruleRunId
+            && await _approvalRules.VerifyCommandRuleAsync(ruleId, ruleRunId, toolId, cancellationToken).ConfigureAwait(false))
+            return "approval_rule_released";
+        if (string.Equals(command.PermissionMode, "full-access", StringComparison.Ordinal))
+            return "full_access_auto_grant";
+        if (string.Equals(command.PermissionMode, "auto-approve", StringComparison.Ordinal))
+        {
+            return AutoApprovePolicyRules.Engages(_autoApproveOptions.Value, approveIntent: true, toolId, command.Risk)
+                ? "auto_policy_released"
+                : null;
+        }
+
+        // Delegated approval modes release a delegable MUTATING claim the way auto-approve does: the
+        // grant is minted so the call reaches the durable approval layer, where a delegated gate — not
+        // this PDP — decides it. The release never widens authority: every boundary rule above has
+        // already passed, the approval is still consumed once against its request hash, and a
+        // human-only tool or a risk above the delegable ceiling falls through to the person's park.
+        if (ApprovalDelegationModes.IsDelegated(command.PermissionMode)
+            && !string.Equals(command.Claim.Action, "read", StringComparison.OrdinalIgnoreCase))
+        {
+            if (DelegatedApprovalRules.Delegable(_autoApproveOptions.Value, toolId, command.Risk))
+                return "delegated_gate_release";
+            // Shell (human-only by default) reaches the gates only when this run's session opted
+            // it in; the gates re-verify against the run's own session, never the call's word.
+            var optedIn = _approvalRules is not null
+                && command.RunId is { } optRunId
+                && await _approvalRules.IsDelegatedToolAsync(optRunId, toolId, cancellationToken).ConfigureAwait(false);
+            if (optedIn) return "delegated_gate_release";
+        }
+
+        // READ-level claims are released in the ask family too. A read cannot change
+        // the workspace, and the resource envelope plus the tool process's own root
+        // check already bound which paths it may touch, so a human click adds no
+        // authority — only latency. Mutating claims keep the human gate: this branch
+        // is reached only for the read level, and the human-only list is honoured so
+        // an operator can still force a gate on a specific read tool.
+        // The ask FAMILY only — an unmodeled mode keeps its historical "always park"
+        // semantics rather than silently gaining a release.
+        // Delegated approval modes belong to the ask family here: they move the approval-gate click to
+        // an agent, never a resource-authorization decision, so a read releases exactly as in ask.
+        var askFamily = string.Equals(command.PermissionMode, "ask", StringComparison.Ordinal)
+            || string.Equals(command.PermissionMode, "default", StringComparison.Ordinal)
+            || ApprovalDelegationModes.IsDelegated(command.PermissionMode);
+        if (!askFamily || !_autoApproveOptions.Value.ReleaseReadOnlyInAskMode) return null;
+        if (!string.Equals(command.Claim.Action, "read", StringComparison.OrdinalIgnoreCase)) return null;
+        var options = _autoApproveOptions.Value;
+        if (string.IsNullOrWhiteSpace(toolId) || options.IsHumanOnlyTool(toolId)) return null;
+        return "read_only_auto_release";
     }
 
     private static async Task<bool> HasEligibleDelegationAsync(
@@ -1825,7 +1915,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         record.PolicySnapshotHash, record.Status, record.MaxUses, record.UseCount, record.StartsAt, record.ExpiresAt,
         record.RevokedAt, record.RevokeReason);
 
-    private sealed record BoundaryEvaluation(bool Allowed, string ReasonCode, string Reason, string Hash);
+    private sealed record BoundaryEvaluation(bool Allowed, string ReasonCode, string Reason, string Hash, string? UpgradeReason = null);
     private sealed record EscalationEntry(string Reason, DateTimeOffset At);
 
     private sealed class InMemoryNonceMaterialStore : INonceMaterialStore

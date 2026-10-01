@@ -76,7 +76,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var laneOrder = checkpoint.Lanes
             .Where(lane => !lane.Escalated
                 && lane.Status is LaneStatus.Pending or LaneStatus.Executing
-                && checkpoint.Tasks.Any(task => LaneKeyOf(task) == lane.LaneKey && task.Status is "pending" or "ready" or "running"))
+                && checkpoint.Tasks.Any(task => LaneKeyOf(task) == lane.LaneKey && (task.Status is "running" || IsDispatchable(task, checkpoint.Tasks))))
             .Select(lane => lane.LaneKey)
             .OrderBy(key => string.Equals(key, "main", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(key => key, StringComparer.OrdinalIgnoreCase)
@@ -91,7 +91,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 if (dispatched.Count >= budget) break;
                 var ready = checkpoint.Tasks
                     .Where(item => LaneKeyOf(item) == laneKey
-                        && item.Status is "pending" or "ready"
+                        && IsDispatchable(item, checkpoint.Tasks)
                         && item.Dependencies.All(dependency => checkpoint.Tasks.Any(other => other.TaskKey == dependency && other.Status == "completed")))
                     .OrderBy(item => item.Priority).ThenBy(item => item.TaskKey, StringComparer.Ordinal)
                     .FirstOrDefault(item => dispatched.All(pair => pair.Task != item));
@@ -141,8 +141,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         foreach (var (_, task) in dispatched)
         {
+            // See the single-lane path: a task resuming from task_wait keeps its attempt.
+            if (task.Status != "waiting") task.Attempt++;
             task.Status = "running";
-            task.Attempt++;
             task.InputContextRevision = checkpoint.ContextRevision;
             task.Waits = [];
         }
@@ -158,15 +159,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var workers = new Dictionary<Guid, RuntimeAgentInstance>();
         foreach (var (_, task) in dispatched)
         {
-            try
-            {
-                workers[task.TaskId] = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
-            }
-            catch (WorkerAssignmentException ex)
-            {
-                await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
-                    FailedTaskResult(task, task.WorkerAgentId, WorkerAssignmentInvalidCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
-            }
+            // Same assignment path as the single-lane tick: worker, write-scope lease, organization.
+            if (await AssignWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false) is { } assigned)
+                workers[task.TaskId] = assigned;
         }
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "workers-assigned", cancellationToken).ConfigureAwait(false);
 
@@ -643,10 +638,33 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var latest = tasks.SelectMany(item => item.CriteriaVerdicts.Select(verdict => (TaskKey: item.TaskKey, Verdict: verdict)))
             .GroupBy(pair => (pair.TaskKey, pair.Verdict.Criterion))
             .ToDictionary(group => group.Key, group => group.OrderBy(pair => pair.Verdict.Round).Last().Verdict);
-        foreach (var verdict in latest.Values)
+        if (requiredCriteria is null)
         {
-            if (requiredCriteria is not null && !requiredCriteria.Contains(verdict.Criterion, StringComparer.Ordinal)) continue;
-            if (!verdict.Satisfied || string.IsNullOrWhiteSpace(verdict.Evidence)) return false;
+            foreach (var task in tasks)
+            {
+                foreach (var criterion in task.SuccessCriteria)
+                {
+                    if (!latest.TryGetValue((task.TaskKey, criterion), out var verdict)
+                        || !verdict.Satisfied
+                        || string.IsNullOrWhiteSpace(verdict.Evidence))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        foreach (var criterion in requiredCriteria)
+        {
+            var matches = latest.Values
+                .Where(verdict => string.Equals(verdict.Criterion, criterion, StringComparison.Ordinal))
+                .ToArray();
+            if (matches.Length == 0
+                || matches.Any(verdict => !verdict.Satisfied || string.IsNullOrWhiteSpace(verdict.Evidence)))
+            {
+                return false;
+            }
         }
         return true;
     }
@@ -905,10 +923,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
     /// <summary>
     /// Run-terminal drain of orchestration directives queued while this run held
-    /// the session. Queued interactions keep the M2 semantics; an orchestration
-    /// directive arriving at terminal fails closed (a new lane is meaningless on
-    /// a finished run). The pending-status filter makes a replayed finalize
-    /// idempotent.
+    /// the session. An orchestration directive arriving at terminal fails closed (a
+    /// new lane is meaningless on a finished run); a queued INTERACTION is re-admitted
+    /// as its own run by <see cref="ReleaseQueuedInteractionAsync"/>, because the slot
+    /// it was waiting for is exactly what just became free. The pending-status filter
+    /// makes a replayed finalize idempotent.
     /// </summary>
     private async Task<FullDuplexCheckpointV1> DrainRunDirectivesAsync(
         RunState run,
@@ -920,6 +939,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var pending = await _lifecycle.ListPendingRunDirectivesAsync(checkpoint.RunId, cancellationToken).ConfigureAwait(false);
         foreach (var directive in pending)
         {
+            // Queued interactions belong exclusively to the re-admission pass below.
+            // Letting them fall through to the generic branch marked them "rejected"
+            // (lanes are off by default) BEFORE the releasing pass saw them, so one
+            // message was recorded as both rejected and executed, and the release's
+            // own drain then matched no pending row.
+            if (string.Equals(directive.Kind, "queued_interaction", StringComparison.Ordinal)) continue;
             if (string.Equals(directive.Kind, "orchestration", StringComparison.Ordinal))
             {
                 await AppendEventAsync(runId, "orchestration.directive.rejected",
@@ -945,11 +970,242 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             }
             checkpoint.DirectiveCursor++;
         }
+        // A queued USER MESSAGE is not an orchestration directive. It already returned
+        // 201 to the client, and the run that stood in its way has just finished — so
+        // the only reason it was queued no longer holds and it must be executed.
+        //
+        // It used to share the directives' fate: with lanes off (the shipped default)
+        // it was marked "rejected" and the user, who had seen the message accepted,
+        // simply never got an answer. Nothing about a queued conversation turn depends
+        // on lanes.
+        checkpoint.DirectiveCursor += await ReleaseTerminalQueuedInteractionsAsync(
+            run,
+            pending,
+            cancellationToken).ConfigureAwait(false);
         if (pending.Count > 0)
         {
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "directives-drained", cancellationToken).ConfigureAwait(false);
         }
         return checkpoint;
+    }
+
+    private async Task<int> ReleaseTerminalQueuedInteractionsAsync(
+        RunState run,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(run.RunId, out var runId)) return 0;
+        var pending = await _lifecycle.ListPendingRunDirectivesAsync(runId, cancellationToken).ConfigureAwait(false);
+        return await ReleaseTerminalQueuedInteractionsAsync(run, pending, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<int> ReleaseTerminalQueuedInteractionsAsync(
+        RunState run,
+        IReadOnlyList<RunDirective> pending,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(run.RunId, out var runId)) return 0;
+        var released = 0;
+        // Oldest first (the lifecycle lists pending directives in creation order). The queue keeps
+        // its order (todo D1): only its head is admitted, and the rest move to wait behind whatever
+        // run the session is working on next, so two queued messages never run side by side.
+        var queue = pending.Where(item => string.Equals(item.Kind, "queued_interaction", StringComparison.Ordinal)).ToList();
+        for (var index = 0; index < queue.Count; index++)
+        {
+            var directive = queue[index];
+            var outcome = await ReleaseQueuedInteractionAsync(run, directive, cancellationToken).ConfigureAwait(false);
+            switch (outcome.Status)
+            {
+                case "executed":
+                    await _lifecycle.DrainRunDirectivesAsync(runId, [directive.Id], "executed", cancellationToken).ConfigureAwait(false);
+                    released++;
+                    await MoveQueueAsync(run, queue.Skip(index + 1).ToArray(), outcome.OwnerRunId!.Value, cancellationToken).ConfigureAwait(false);
+                    return released;
+                case "busy":
+                    // Another run of the session is still working (a parallel one, or one admitted a
+                    // moment ago): the whole remaining queue now waits behind it, in order.
+                    await MoveQueueAsync(run, queue.Skip(index).ToArray(), outcome.OwnerRunId!.Value, cancellationToken).ConfigureAwait(false);
+                    return released;
+                case "rejected":
+                    await _lifecycle.DrainRunDirectivesAsync(runId, [directive.Id], "rejected", cancellationToken).ConfigureAwait(false);
+                    released++;
+                    continue;
+                default:
+                    // Deferred: still accepted, but nothing can admit it right now. It stays pending
+                    // here for the terminal repair pass, and nothing behind it may overtake it.
+                    return released;
+            }
+        }
+        return released;
+    }
+
+    /// <summary>Moves the rest of a queue behind the run that now owns it, and says so on both runs.</summary>
+    private async Task MoveQueueAsync(RunState from, IReadOnlyList<RunDirective> rest, Guid ownerRunId, CancellationToken cancellationToken)
+    {
+        if (rest.Count == 0) return;
+        var fromRunId = Guid.Parse(from.RunId);
+        var moved = await _lifecycle.RequeueRunDirectivesAsync(fromRunId, rest.Select(item => item.Id).ToArray(), ownerRunId, cancellationToken).ConfigureAwait(false);
+        if (moved == 0) return;
+        await AppendEventAsync(fromRunId, "interaction.queue_moved",
+            $"{moved} queued message(s) now wait behind run {ownerRunId:N}.",
+            new { behind_run_id = ownerRunId, directive_ids = rest.Select(item => item.Id).ToArray(), moved }, cancellationToken).ConfigureAwait(false);
+        // The new owner announces what waits behind it, exactly as when a message is first queued.
+        foreach (var directive in rest)
+        {
+            var payload = ParseQueuedInteractionPayload(directive.PayloadJson);
+            await AppendEventAsync(ownerRunId, "run.queued", "Interaction queued behind the active run", new
+            {
+                interaction_id = directive.Id,
+                directive_id = directive.Id,
+                content = payload?.Content,
+                moved_from_run_id = fromRunId
+            }, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed record QueuedRelease(string Status, Guid? OwnerRunId = null);
+
+    /// <summary>
+    /// Re-admits an interaction that was queued behind this run, now that the run has
+    /// finished and the slot it was waiting for is free. The payload is the one the
+    /// interactions endpoint persisted, so the message the user already received a 201
+    /// for becomes the run that actually answers it.
+    /// </summary>
+    /// <returns>
+    /// <c>executed</c> with the admitted run; <c>busy</c> with the session run it must now wait
+    /// behind (queued still means "after", so a parallel run still working blocks it);
+    /// <c>deferred</c> when it still could not be admitted and no run can own it (the reason is
+    /// published on the run rather than swallowed) or when no coordinator is available in this
+    /// host; <c>rejected</c> only when the stored payload cannot be read at all, because a message
+    /// that cannot be reconstructed can never be executed.
+    /// </returns>
+    private async Task<QueuedRelease> ReleaseQueuedInteractionAsync(RunState run, RunDirective directive, CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        var payload = ParseQueuedInteractionPayload(directive.PayloadJson);
+
+        if (payload is null || string.IsNullOrWhiteSpace(payload.Content))
+        {
+            await AppendEventAsync(runId, "interaction.queued_unreadable",
+                "A queued interaction could not be re-admitted: its stored payload carries no content.",
+                new { directive_id = directive.Id, code = "queued_payload_unreadable" }, cancellationToken).ConfigureAwait(false);
+            return new QueuedRelease("rejected");
+        }
+
+        // Resolved lazily for the same reason the other optional collaborators are:
+        // the coordinator depends on this engine, so a constructor dependency would be
+        // a cycle. By drain time the engine singleton exists, so this cannot recurse.
+        if (_services.GetService(typeof(IFullDuplexRunCoordinator)) is not IFullDuplexRunCoordinator coordinator)
+        {
+            await AppendEventAsync(runId, "interaction.queued_deferred",
+                "A queued interaction is still pending: this host has no run coordinator to admit it.",
+                new { directive_id = directive.Id, code = "run_coordinator_unavailable" }, cancellationToken).ConfigureAwait(false);
+            return new QueuedRelease("deferred");
+        }
+
+        try
+        {
+            var submission = await coordinator.SubmitAsync(new FullDuplexInvocation(
+                directive.SessionId,
+                payload.Content,
+                payload.ClientMessageId,
+                string.IsNullOrWhiteSpace(payload.PermissionMode) ? "default" : payload.PermissionMode,
+                TargetRunId: null,
+                ExpectedContextRevision: null,
+                MeetingModelOverride: payload.MeetingModelOverride,
+                ModeVersionId: payload.ModeVersionId,
+                QueueBehindActiveRun: true), cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(runId, "interaction.queued_executed",
+                "A queued interaction was admitted as its own run once this run finished.",
+                new { directive_id = directive.Id, released_run_id = submission.RunId, existing = submission.Existing }, cancellationToken).ConfigureAwait(false);
+            return new QueuedRelease("executed", submission.RunId);
+        }
+        catch (RunAdmissionException ex) when (ex.Code is "SESSION_BUSY" or "ACTIVE_RUN_LIMIT")
+        {
+            if (await NewestActiveRunAsync(directive.SessionId, runId, cancellationToken).ConfigureAwait(false) is { } owner)
+                return new QueuedRelease("busy", owner);
+            await AppendEventAsync(runId, "interaction.queued_deferred",
+                $"A queued interaction is still waiting: {ex.Message}",
+                new { directive_id = directive.Id, code = ex.Code }, cancellationToken).ConfigureAwait(false);
+            return new QueuedRelease("deferred");
+        }
+        catch (RunAdmissionException ex)
+        {
+            // Still not admissible. Say so where the user can see it instead of
+            // dropping the message: the failure is a queueing fact, not a verdict.
+            await AppendEventAsync(runId, "interaction.queued_deferred",
+                $"A queued interaction is still waiting: {ex.Message}",
+                new { directive_id = directive.Id, code = ex.Code }, cancellationToken).ConfigureAwait(false);
+            return new QueuedRelease("deferred");
+        }
+    }
+
+    /// <summary>The session run a waiting message should now sit behind: the newest unfinished one other than <paramref name="except"/>.</summary>
+    private async Task<Guid?> NewestActiveRunAsync(Guid sessionId, Guid except, CancellationToken cancellationToken)
+    {
+        var active = await _lifecycle.ListActiveRunsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return active.Where(item => Guid.TryParse(item.RunId, out var id) && id != except)
+            .OrderByDescending(item => item.StartedAt)
+            .Select(item => (Guid?)Guid.Parse(item.RunId))
+            .FirstOrDefault();
+    }
+
+    internal sealed record QueuedInteractionPayload(
+        string? Content,
+        string? ClientMessageId,
+        string? PermissionMode,
+        Guid? ModeVersionId,
+        SessionModelOverride? MeetingModelOverride);
+
+    internal static QueuedInteractionPayload? ParseQueuedInteractionPayload(string payloadJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payloadJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            var content = root.TryGetProperty("content", out var contentValue)
+                && contentValue.ValueKind == JsonValueKind.String
+                ? contentValue.GetString()
+                : null;
+            var clientMessageId = root.TryGetProperty("client_message_id", out var clientValue)
+                && clientValue.ValueKind == JsonValueKind.String
+                ? clientValue.GetString()
+                : null;
+            var permissionMode = root.TryGetProperty("permission_mode", out var permissionValue)
+                && permissionValue.ValueKind == JsonValueKind.String
+                ? permissionValue.GetString()
+                : null;
+            Guid? modeVersionId = null;
+            if (root.TryGetProperty("mode_version_id", out var modeVersionValue)
+                && modeVersionValue.ValueKind == JsonValueKind.String
+                && Guid.TryParse(modeVersionValue.GetString(), out var parsedModeVersionId))
+            {
+                modeVersionId = parsedModeVersionId;
+            }
+            SessionModelOverride? meetingModelOverride = null;
+            if (root.TryGetProperty("meeting_model_override", out var overrideValue)
+                && overrideValue.ValueKind == JsonValueKind.Object
+                && overrideValue.TryGetProperty("provider_instance_id", out var providerValue)
+                && providerValue.ValueKind == JsonValueKind.String
+                && Guid.TryParse(providerValue.GetString(), out var providerInstanceId))
+            {
+                var model = overrideValue.TryGetProperty("model", out var modelValue)
+                    && modelValue.ValueKind == JsonValueKind.String
+                    ? modelValue.GetString()
+                    : null;
+                meetingModelOverride = new SessionModelOverride(providerInstanceId, model);
+            }
+            return new QueuedInteractionPayload(
+                content,
+                clientMessageId,
+                permissionMode,
+                modeVersionId,
+                meetingModelOverride);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -1027,7 +1283,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             var laneTasks = ReadLaneTasks(document.RootElement);
             nodes = laneTasks.Length == 0
                 ? []
-                : ValidateAndMaterializeGraph(laneTasks, configuration.Orchestration.MaxTasksPerLane);
+                : ValidateAndMaterializeGraph(laneTasks, configuration.Orchestration.MaxTasksPerLane, DispatchRosterOf(configuration));
         }
         catch (Exception ex) when (ex is JsonException or InvalidTaskGraphException)
         {
@@ -1236,10 +1492,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 evidence_count = context.Evidence.Count,
                 estimated_tokens = context.EstimatedTokens,
                 token_budget = context.TokenBudget,
+                sources = context.Evidence.Select(item => item.Source).ToArray(),
+                source_tokens = BudgetShares(context.Evidence),
+                dropped_sources = BudgetShares(context.Dropped),
                 context_revision = checkpoint.ContextRevision
             }, cancellationToken).ConfigureAwait(false);
 
         Exception? lastError = null;
+        var laneParseError = string.Empty;
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -1247,13 +1507,17 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 var contextForPlanner = CreateRunContext(run, checkpoint);
                 var planner = new PlanningAgent(CreateModelFactory(configuration, checkpoint, plannerDefinition,
                     lanePlanner.Id, null), _logger);
+                var instructionsForAttempt = attempt == 0
+                    ? PlannerInstructions(checkpoint, assembly.Instructions, laneKey)
+                    : PlannerInstructions(checkpoint, assembly.Instructions, laneKey) + BuildPlannerRetryHint(lastError, laneParseError);
                 var planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
-                    PlannerInstructions(checkpoint, assembly.Instructions, laneKey),
+                    instructionsForAttempt,
                     cancellationToken).ConfigureAwait(false);
+                laneParseError = planner.LastParseErrorDetail;
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
-                return ValidateAndMaterializeGraph(planned, configuration.Orchestration.MaxTasksPerLane);
+                return ValidateAndMaterializeGraph(planned, configuration.Orchestration.MaxTasksPerLane, DispatchRosterOf(configuration));
             }
             catch (InvalidTaskGraphException ex)
             {

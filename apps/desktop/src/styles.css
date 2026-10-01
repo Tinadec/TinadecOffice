@@ -438,15 +438,6 @@ button {
   z-index: 1;
 }
 
-.market-workspace {
-  display: grid;
-  grid-template-columns: 292px minmax(360px, 1fr) 392px;
-  gap: 1px;
-  min-height: 0;
-  flex: 1;
-  background: var(--border-default);
-}
-
 .market-rail,
 .market-list,
 .market-detail {
@@ -527,9 +518,7 @@ button {
 .market-filter-list,
 .market-source-box,
 .market-source-form,
-.market-direct,
-.market-section,
-.market-risk-panel {
+.market-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -551,8 +540,7 @@ button {
 }
 
 .market-source-box,
-.market-source-form,
-.market-direct {
+.market-source-form {
   padding-top: 14px;
   margin-top: 14px;
   border-top: 1px solid var(--border-muted);
@@ -577,12 +565,38 @@ button {
   cursor: pointer;
 }
 
-.market-source-item.is-builtin {
-  background: var(--bg-tertiary);
+/* The row itself is a container now: picking the source, refreshing it, enabling it and deleting it
+   are four different actions, and a row cannot hold four nested buttons inside one button. */
+.market-source-pick {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font: inherit;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
 }
 
-.market-source-item.is-builtin .builtin-icon {
-  color: var(--accent-brand);
+.market-source-item .market-source-count,
+.market-source-item .market-source-stale {
+  flex: 0 0 auto;
+}
+
+.market-source-count {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* A source whose last refresh failed still shows its rows; this marks that the catalog below is
+   standing on stale data rather than on nothing. */
+.market-source-stale {
+  color: var(--accent-warning);
+  font-weight: 700;
 }
 
 .market-source-item span {
@@ -593,8 +607,7 @@ button {
   text-overflow: ellipsis;
 }
 
-.market-select,
-.market-textarea {
+.market-select {
   width: 100%;
   border: 1px solid var(--border-input);
   border-radius: 8px;
@@ -605,14 +618,6 @@ button {
 .market-select {
   height: 34px;
   padding: 0 10px;
-}
-
-.market-textarea {
-  min-height: 82px;
-  resize: vertical;
-  padding: 9px 10px;
-  font-size: 12px;
-  line-height: 1.45;
 }
 
 .market-list-head {
@@ -766,9 +771,7 @@ button {
 }
 
 .market-detail-grid span,
-.market-section h3,
-.market-direct h3,
-.market-risk-panel h3 {
+.market-section h3 {
   display: block;
   margin: 0 0 5px;
   color: var(--text-secondary);
@@ -782,28 +785,8 @@ button {
   font-size: 13px;
 }
 
-.market-section,
-.market-risk-panel {
+.market-section {
   margin-top: 14px;
-}
-
-.market-risk-panel {
-  padding: 11px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--bg-primary);
-}
-
-.market-risk-panel.compact {
-  margin-top: 8px;
-}
-
-.market-risk-panel ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .market-runtime-line {
@@ -817,19 +800,6 @@ button {
   gap: 8px;
   margin-top: 14px;
   flex-wrap: wrap;
-}
-
-.agent-center-layout {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-top: 16px;
-}
-
-.agent-heading-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .agent-view-toggle {
@@ -1051,8 +1021,7 @@ button.agent-topology-node:hover,
   background: var(--surface-button-hover);
 }
 
-.agent-card.active,
-.agent-mode-card.active {
+.agent-card.active {
   border-color: var(--border-input-focus);
   background: var(--surface-selected);
 }
@@ -1091,10 +1060,7 @@ button.agent-topology-node:hover,
   overflow-wrap: anywhere;
 }
 
-.agent-card-main span,
-.agent-mode-card span,
-.agent-mode-card small,
-.agent-candidate-head span {
+.agent-card-main span {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.35;
@@ -1104,8 +1070,7 @@ button.agent-topology-node:hover,
   margin-top: 16px;
 }
 
-.agent-config-switch,
-.agent-model-config {
+.agent-config-switch {
   margin-top: 14px;
   padding: 12px;
   border: 1px solid var(--border-default);
@@ -1135,68 +1100,11 @@ button.agent-topology-node:hover,
   font-size: 12px;
 }
 
-.agent-model-config .model-section-header {
-  margin-top: 0;
-}
-
-
 .modal-actions.compact {
   margin-top: 10px;
 }
 
-.agent-candidate-card p {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.agent-mode-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.agent-mode-card {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-height: 104px;
-  padding: 11px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--surface-button);
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-}
-
-.agent-policy-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 10px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--bg-status-neutral);
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.model-readiness-panel {
-display: grid;
-gap: 12px;
-margin: 16px 0;
-padding: 14px;
-background: var(--surface-section);
-border-radius: 10px;
-box-shadow: var(--shadow-subtle);
-}
-
-.model-readiness-head,
-.provider-readiness-detail-head {
+.model-readiness-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1253,16 +1161,14 @@ box-shadow: var(--shadow-subtle);
   font-size: 11px;
 }
 
-.model-readiness-routes,
-.provider-readiness-evidence {
+.model-readiness-routes {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
   min-width: 0;
 }
 
-.model-readiness-routes span,
-.provider-readiness-evidence span {
+.model-readiness-routes span {
   max-width: 100%;
   overflow: hidden;
   padding: 3px 7px;
@@ -1272,38 +1178,6 @@ box-shadow: var(--shadow-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
-}
-
-.provider-readiness-detail {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 10px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--surface-section);
-}
-
-.provider-readiness-detail-head span {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.provider-readiness-detail p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.provider-readiness-evidence.route-list span {
-  color: var(--text-primary);
-  background: var(--bg-status-neutral);
-}
-
-.catalog-readiness-panel {
-  background: var(--surface-section);
 }
 
 .catalog-readiness-rows {
@@ -1345,97 +1219,6 @@ box-shadow: var(--shadow-subtle);
 .catalog-readiness-row span {
   color: var(--text-secondary);
   font-size: 11px;
-}
-
-.git-manager-panel {
-  margin: 0 0 16px;
-  padding: 14px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--surface-section);
-}
-
-.git-manager-summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.git-manager-icon {
-  width: 38px;
-  height: 38px;
-}
-
-.git-manager-copy {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.git-manager-title-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.git-manager-title-row h3 {
-  margin: 0;
-  font-size: 15px;
-  color: var(--text-primary);
-}
-
-.git-manager-copy p,
-.git-manager-metric p {
-  margin: 3px 0 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.git-manager-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.git-manager-metric {
-  display: flex;
-  gap: 9px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--surface-raised);
-}
-
-.git-manager-metric svg {
-  flex: 0 0 auto;
-  color: var(--accent-primary);
-}
-
-.git-manager-metric span,
-.git-manager-tool-row > div > span {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0;
-}
-
-.git-manager-metric strong {
-  display: block;
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.git-manager-tool-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
-  margin-top: 12px;
 }
 
 .agent-config-section {
@@ -1567,11 +1350,6 @@ box-shadow: var(--shadow-subtle);
   align-items: center;
 }
 
-.agent-cap-add-row .input-wrap {
-  flex: 1;
-}
-
-
 .agent-detail-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1594,38 +1372,6 @@ box-shadow: var(--shadow-subtle);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0;
-}
-
-.agent-candidate-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.agent-candidate-card {
-  min-width: 0;
-}
-
-.agent-candidate-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.agent-candidate-head div {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.agent-eval-list {
-  margin: 10px 0 0;
-  padding-left: 18px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 /* Thin draggable bar at the very top of the window for window dragging.
@@ -1713,81 +1459,16 @@ box-shadow: var(--shadow-subtle);
   color: #ffffff;
 }
 
-.workspace {
-  flex: 1;
-  display: block;
-  position: relative;
-  min-height: 0;
-  overflow: clip;
-  overflow-clip-margin: 20px;
-  /* Always transparent — the background-layer shows through gaps
-     between floating panels. */
-  background: transparent;
-}
-
-.sidebar,
-.float-panel {
+.sidebar {
+  /* AppSidebar is the UIE `nav` card content: it fills its card, and the UIE
+     stack owns position, size and material (no own background/border/shadow). */
   display: flex;
   flex-direction: column;
+  flex: 1;
+  height: 100%;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  background: var(--bg-secondary);
-}
-
-.sidebar {
-  position: absolute;
-  /* Floating rounded rectangle with margins on all sides
-     so the background layer is visible around it. */
-  top: 8px;
-  left: 8px;
-  bottom: 8px;
-  width: 260px;
-  z-index: 10;
-  border: 1px solid var(--border-muted);
-  border-radius: 12px;
-  box-shadow: var(--shadow-panel);
   overflow: hidden;
-}
-
-.float-panel {
-  position: absolute;
-  top: 48px;
-  right: 8px;
-  bottom: 8px;
-  width: 320px;
-  z-index: 10;
-  border: 1px solid var(--border-muted);
-  border-radius: 12px;
-  box-shadow: var(--shadow-panel);
-  overflow: hidden;
-  transition: width 0.2s ease;
-}
-
-.float-panel.resizing {
-  transition: none;
-  user-select: none;
-}
-
-.float-panel.collapsed {
-  width: 44px;
-}
-
-.float-panel-resizer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 5px;
-  cursor: col-resize;
-  z-index: 20;
   background: transparent;
-}
-
-/* Only show visual feedback during active drag, not on hover. */
-.float-panel.resizing .float-panel-resizer {
-  background: var(--accent-primary);
-  opacity: 0.4;
 }
 
 /* ===== Browser-style floating tab bar ===== */
@@ -1980,35 +1661,28 @@ box-shadow: var(--shadow-subtle);
    below, which dynamically calculate based on tab count + panel width. */
 
 /* ===== Smart tab label visibility (dynamic, not fixed breakpoint) ===== */
-/* tab-labels-hidden: Not enough space for any label — icon-only mode.
-   Applies to both the legacy .float-panel and the UIE .wb-stack feature panel. */
-.float-panel.tab-labels-hidden .browser-tab-label,
-.wb-stack.tab-labels-hidden .browser-tab-label {
+/* tab-labels-hidden: Not enough space for any label — icon-only mode. */
+.uie-stack.tab-labels-hidden .browser-tab-label {
   display: none;
 }
 
-.float-panel.tab-labels-hidden .browser-tab,
-.wb-stack.tab-labels-hidden .browser-tab {
+.uie-stack.tab-labels-hidden .browser-tab {
   max-width: 36px;
   padding: 5px;
   justify-content: center;
 }
 
-.float-panel.tab-labels-hidden .browser-tab-home,
-.wb-stack.tab-labels-hidden .browser-tab-home {
+.uie-stack.tab-labels-hidden .browser-tab-home {
   max-width: 36px;
 }
 
 /* Hide close/detach buttons in icon-only; show on hover */
-.float-panel.tab-labels-hidden .browser-tab-close,
-.float-panel.tab-labels-hidden .browser-tab-detach,
-.wb-stack.tab-labels-hidden .browser-tab-close,
-.wb-stack.tab-labels-hidden .browser-tab-detach {
+.uie-stack.tab-labels-hidden .browser-tab-close,
+.uie-stack.tab-labels-hidden .browser-tab-detach {
   display: none;
 }
 
-.float-panel.tab-labels-hidden .browser-tab:hover .browser-tab-close,
-.wb-stack.tab-labels-hidden .browser-tab:hover .browser-tab-close {
+.uie-stack.tab-labels-hidden .browser-tab:hover .browser-tab-close {
   display: grid;
   position: absolute;
   top: 2px;
@@ -2017,27 +1691,22 @@ box-shadow: var(--shadow-subtle);
 }
 
 /* tab-labels-active-only: Enough space for the active tab's label only */
-.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label,
-.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label {
+.uie-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label {
   display: none;
 }
 
-.float-panel.tab-labels-active-only .browser-tab:not(.active),
-.wb-stack.tab-labels-active-only .browser-tab:not(.active) {
+.uie-stack.tab-labels-active-only .browser-tab:not(.active) {
   max-width: 36px;
   padding: 5px;
   justify-content: center;
 }
 
-.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
-.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach,
-.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
-.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach {
+.uie-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
+.uie-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach {
   display: none;
 }
 
-.float-panel.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close,
-.wb-stack.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close {
+.uie-stack.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close {
   display: grid;
   position: absolute;
   top: 2px;
@@ -2047,105 +1716,63 @@ box-shadow: var(--shadow-subtle);
 
 /* ===== Responsive: Ultra-compact mode (panel width < 340px) ===== */
 /* Strategy: Hide secondary actions, keep only essential icons. */
-.float-panel.mode-ultra .browser-tab-add,
-.wb-stack.mode-ultra .browser-tab-add {
+.uie-stack.mode-ultra .browser-tab-add {
   display: none;
 }
 
-.float-panel.mode-ultra .browser-tab-bar,
-.wb-stack.mode-ultra .browser-tab-bar {
+.uie-stack.mode-ultra .browser-tab-bar {
   padding: 4px;
   gap: 2px;
 }
 
-.float-panel.mode-ultra .browser-tab,
-.wb-stack.mode-ultra .browser-tab {
+.uie-stack.mode-ultra .browser-tab {
   max-width: 30px;
   min-width: 28px;
   padding: 5px 4px;
 }
 
-.float-panel.mode-ultra .browser-tab-collapse,
-.wb-stack.mode-ultra .browser-tab-collapse {
+.uie-stack.mode-ultra .browser-tab-collapse {
   width: 24px;
   height: 24px;
 }
 
 /* ===== Responsive: Preview browser toolbar ===== */
 /* Compact: hide secondary nav buttons (forward, home) to save space */
-.float-panel.mode-compact .preview-nav-secondary,
-.wb-stack.mode-compact .preview-nav-secondary {
+.uie-stack.mode-compact .preview-nav-secondary {
   display: none;
 }
 
-.float-panel.mode-compact .preview-toolbar,
-.wb-stack.mode-compact .preview-toolbar {
+.uie-stack.mode-compact .preview-toolbar {
   gap: 2px;
   padding: 4px 6px;
 }
 
 /* Ultra-compact: further reduce toolbar */
-.float-panel.mode-ultra .preview-nav-btn,
-.wb-stack.mode-ultra .preview-nav-btn {
+.uie-stack.mode-ultra .preview-nav-btn {
   width: 24px;
   height: 24px;
 }
 
 /* ===== Responsive: Commit panel ===== */
 /* Compact: stack action buttons vertically */
-.float-panel.mode-compact .commit-actions,
-.wb-stack.mode-compact .commit-actions {
-  flex-direction: column;
-}
-
-.float-panel.mode-compact .commit-action-btn,
-.wb-stack.mode-compact .commit-action-btn {
-  width: 100%;
-}
 
 /* Compact: reduce file list height */
-.float-panel.mode-compact .commit-file-list,
-.wb-stack.mode-compact .commit-file-list {
-  max-height: 160px;
-}
 
 /* ===== Responsive: General panel padding ===== */
-.float-panel.mode-compact .panel,
-.wb-stack.mode-compact .panel {
+.uie-stack.mode-compact .panel {
   padding: 10px 8px;
 }
 
-.float-panel.mode-ultra .panel,
-.wb-stack.mode-ultra .panel {
+.uie-stack.mode-ultra .panel {
   padding: 8px 6px;
 }
 
 /* ===== Tab content area ===== */
-.browser-tab-content {
-  flex: 1;
-  overflow: hidden;
-  min-height: 0;
-  position: relative;
-}
-
-.browser-tab-pane {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
 
 /* Terminal panels need no scroll and full height */
-.browser-tab-pane-terminal {
-  overflow: hidden;
-  padding: 0;
-}
 
 /* ===== Collapsed panel ===== */
-.float-panel-collapsed-bar {
+.uie-column-rail {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2153,7 +1780,7 @@ box-shadow: var(--shadow-subtle);
   padding: 6px 0;
 }
 
-.float-panel-toggle-btn {
+.uie-column-toggle-btn {
   display: grid;
   place-items: center;
   width: 32px;
@@ -2167,12 +1794,12 @@ box-shadow: var(--shadow-subtle);
   flex-shrink: 0;
 }
 
-.float-panel-toggle-btn:hover {
+.uie-column-toggle-btn:hover {
   color: var(--text-primary);
   background: var(--surface-hover);
 }
 
-.float-panel-collapsed-icon {
+.uie-column-collapsed-icon {
   display: grid;
   place-items: center;
   width: 32px;
@@ -2185,8 +1812,8 @@ box-shadow: var(--shadow-subtle);
   transition: background 0.15s, color 0.15s;
 }
 
-.float-panel-collapsed-icon:hover,
-.float-panel-collapsed-icon.active {
+.uie-column-collapsed-icon:hover,
+.uie-column-collapsed-icon.active {
   color: var(--accent-primary);
   background: var(--surface-hover);
 }
@@ -2223,94 +1850,6 @@ box-shadow: var(--shadow-subtle);
   opacity: 0.45;
 }
 
-.sidebar-search-box {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border-muted);
-}
-
-.sidebar-search-box input {
-  flex: 1;
-  height: 28px;
-  font-size: 12px;
-  padding: 0 8px;
-}
-
-.sidebar-search-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.sidebar-search-clear {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  color: var(--text-muted);
-  background: transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.sidebar-search-clear:hover {
-  color: var(--text-primary);
-  background: var(--surface-button-hover);
-}
-
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.sidebar-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px 6px;
-}
-
-.sidebar-section-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.sidebar-section-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.sidebar-section-action {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  color: var(--text-muted);
-  background: transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-}
-
-.sidebar-section-action:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-.sidebar-section-action:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
 .sidebar-list {
   display: flex;
   flex-direction: column;
@@ -2321,50 +1860,9 @@ box-shadow: var(--shadow-subtle);
   flex: 1;
 }
 
-.sidebar-list-item {
-  display: flex !important;
-  align-items: center;
-  justify-content: flex-start !important;
-  gap: 8px;
-  width: 100% !important;
-  padding: 6px 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-  background: transparent;
-  border-radius: 5px;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.sidebar-list-item:hover {
-  background: var(--bg-hover);
-}
-
-.sidebar-list-item.active {
-  background: var(--bg-selected);
-}
-
 .sidebar-list-item-icon {
   color: var(--text-muted);
   flex-shrink: 0;
-}
-
-.sidebar-list-item-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.sidebar-list-item-dot.running {
-  background: var(--accent-primary);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.sidebar-list-item-dot.done {
-  background: var(--accent-success);
 }
 
 @keyframes pulse {
@@ -2377,12 +1875,6 @@ box-shadow: var(--shadow-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sidebar-list-item-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
 }
 
 .project-group {
@@ -2574,28 +2066,6 @@ box-shadow: var(--shadow-subtle);
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-}
-
-.sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sidebar-user-avatar {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border-radius: 50%;
-}
-
-.sidebar-user-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
 }
 
 .sidebar-footer-action {
@@ -2960,6 +2430,71 @@ overflow: hidden;
   padding: 4px;
 }
 
+/* Composer slash commands. The textarea keeps focus while the list is open, so the
+   highlighted row is carried by .is-active + aria-selected rather than :focus. */
+.composer-commands-portal {
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 10px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-muted);
+  box-shadow: var(--shadow-panel);
+  overscroll-behavior: contain;
+}
+
+.composer-commands-portal li {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.composer-commands-portal li.is-active {
+  background: var(--bg-hover);
+}
+
+/* Path suggestions reuse the command menu's surface; only the row shape differs. */
+.composer-mentions-portal li {
+  grid-template-columns: auto minmax(88px, auto) 1fr;
+  grid-template-rows: auto;
+  align-items: center;
+}
+
+.composer-mentions-portal .composer-command-syntax {
+  grid-row: auto;
+}
+
+.composer-mention-icon {
+  align-self: center;
+  color: var(--text-muted);
+}
+
+.composer-command-syntax {
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.composer-command-label {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.composer-command-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .plus-menu-item {
   display: flex;
   align-items: center;
@@ -3044,23 +2579,6 @@ overflow: hidden;
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.toolbar-project {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  background: var(--bg-tertiary);
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-secondary);
-  transition: background 0.1s;
-}
-
-.toolbar-project:hover {
-  background: var(--bg-hover);
 }
 
 .project-dropdown-trigger {
@@ -3157,24 +2675,6 @@ overflow: hidden;
   background: var(--surface-hover);
 }
 
-.toolbar-plan {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-secondary);
-  transition: background 0.1s, color 0.1s;
-}
-
-.toolbar-plan:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .toolbar-right {
   display: flex;
   align-items: center;
@@ -3217,59 +2717,19 @@ margin-top: 4px;
   font-size: 13px;
 }
 
-.list-row,
-.empty-action {
-  display: grid;
-  width: 100%;
-  gap: 4px;
-  padding: 8px 10px;
-  text-align: left;
-  color: var(--text-primary);
-  background: transparent;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.list-row:hover,
-.empty-action:hover {
-  background: var(--bg-hover);
-}
-
-.list-row.selected {
-  background: var(--bg-selected);
-  outline: 1px solid var(--bg-selected-outline);
-}
-
-.list-row small {
-  overflow: hidden;
-  color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-
-.empty-action {
-  grid-template-columns: 18px 1fr;
-  align-items: center;
-  color: var(--text-brand);
-  border: 1px dashed var(--border-empty-action);
-}
-
 .conversation {
-display: flex;
-flex-direction: column;
-position: absolute;
-top: var(--chat-top, 8px);
-left: var(--chat-left, 276px);
-right: var(--chat-right, 8px);
-bottom: var(--chat-bottom, 8px);
-min-width: 0;
-min-height: 0;
-overflow: clip;
-overflow-clip-margin: 20px;
-/* No panel container — material effect is applied to inner chat controls */
-transition: left 0.2s ease, right 0.2s ease;
+  /* ChatPanel is the UIE `chat` card content: it fills its card. It stays a
+     positioned box because .chat-panel-leave-active anchors to it, and has no
+     panel container — material is applied to the inner chat controls. */
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: 20px;
 }
 
 .conversation-head {
@@ -3677,6 +3137,40 @@ transition: left 0.2s ease, right 0.2s ease;
   outline: none;
 }
 
+.mode-selector-item-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mode-selector-item-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+}
+
+/* Two lines: a mode's description says what it does and when to pick it, and one line cut
+   that sentence in half. The full text stays in the item's title. */
+.mode-selector-item-copy small {
+  display: -webkit-box;
+  max-width: 300px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* Sits on the name line rather than floating between two lines of description. */
+.mode-selector-item-icon {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
 .mode-selector-item:hover,
 .mode-selector-item:focus-visible {
   background: var(--surface-hover);
@@ -3793,8 +3287,7 @@ input:focus {
 }
 
 .icon-button,
-.primary-button,
-.secondary-button {
+.secondary-button{
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3817,18 +3310,6 @@ input:focus {
   color: var(--text-primary);
 }
 
-.primary-button {
-  align-self: end;
-  padding: 0 16px;
-  color: #ffffff;
-  background: var(--bg-primary-button);
-  font-weight: 600;
-}
-
-.primary-button:hover {
-  background: var(--bg-primary-button-hover);
-}
-
 .secondary-button {
   width: 100%;
   color: var(--text-brand);
@@ -3844,7 +3325,6 @@ button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
-
 
 label {
   display: grid;
@@ -3888,6 +3368,84 @@ padding: 10px 0;
   gap: 6px;
 }
 
+.approval-facts {
+  min-width: 0;
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.approval-tool,
+.approval-command code,
+.approval-target code,
+.approval-arguments code {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+}
+
+.approval-tool {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.approval-risk {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.approval-risk[data-risk='high'],
+.approval-risk[data-risk='elevated'] {
+  color: var(--accent-warning);
+}
+
+.approval-risk[data-risk='critical'] {
+  color: var(--accent-danger);
+}
+
+/* A command line and a target path are the two things a reviewer has to read in
+   full, so they wrap instead of inheriting the row's single-line ellipsis. */
+.approval-command,
+.approval-target {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  white-space: normal;
+  word-break: break-all;
+  font-size: 12px;
+}
+
+.approval-cwd {
+  color: var(--text-muted);
+}
+
+.approval-arguments {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.approval-arguments summary {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.approval-arguments code {
+  display: block;
+  overflow: auto;
+  max-height: 140px;
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+}
+
 .approve {
   color: var(--text-approve);
 }
@@ -3901,319 +3459,12 @@ padding: 10px 0;
   font-size: 13px;
 }
 
-.diff-box {
-  display: grid;
-  place-items: center;
-  height: 96px;
-  color: var(--text-muted);
-  border: 1px dashed var(--border-dashed);
-  border-radius: 6px;
-  background: var(--bg-diff);
-  font-size: 13px;
-}
-
-.git-plan-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.git-plan-card {
-  display: grid;
-  gap: 10px;
-}
-
-.git-plan-status {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 10px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-
-.git-plan-status.ready {
-  border-color: rgba(63, 185, 80, 0.35);
-}
-
-.git-plan-status.ready svg {
-  color: var(--accent-success);
-}
-
-.git-plan-status.blocked {
-  border-color: rgba(248, 81, 73, 0.32);
-}
-
-.git-plan-status.blocked svg,
-.git-plan-state.risky svg {
-  color: var(--accent-danger);
-}
-
-.git-plan-status strong,
-.git-plan-grid strong {
-  display: block;
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.git-plan-status span,
-.git-plan-approval,
-.git-plan-state {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.git-plan-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-}
-
-.git-plan-grid div {
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-primary);
-}
-
-.git-plan-grid span,
-.git-plan-section > span {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.git-plan-section {
-  display: grid;
-  gap: 5px;
-}
-
-.git-plan-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.git-plan-tags small,
-.git-plan-section code {
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.git-plan-tags small {
-  padding: 3px 7px;
-}
-
-.git-plan-section code {
-  display: block;
-  padding: 5px 7px;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.git-plan-section pre {
-  overflow-x: auto;
-  margin: 0;
-  padding: 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-diff);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.git-plan-actions {
-  display: grid;
-  gap: 6px;
-}
-
-.git-action-button {
-  width: 100%;
-  min-width: 0;
-}
-
-.git-action-note {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.git-approval-inline-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.git-plan-approval,
-.git-plan-state {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  padding: 9px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-status-neutral);
-}
-
 .git-manager-view {
   display: grid;
   gap: 12px;
 }
 
-.git-panel-head,
-.git-panel-subtitle,
-.git-action-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.git-panel-subtitle {
-  justify-content: flex-start;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.git-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 7px;
-}
-
-.git-summary-grid div {
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-primary);
-}
-
-.git-summary-grid span {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.git-summary-grid strong {
-  display: block;
-  overflow: hidden;
-  color: var(--text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-.git-info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.git-info-panel {
-  display: grid;
-  align-content: start;
-  gap: 5px;
-  min-width: 0;
-  max-height: 132px;
-  overflow: auto;
-  padding: 9px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-
-.git-info-panel span,
-.git-info-panel code {
-  overflow: hidden;
-  color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-
-.git-info-panel code {
-  font-family: 'Geist Mono', ui-monospace, monospace;
-}
-
-.git-sections {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.git-section-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 6px 8px;
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.git-section-tab:hover,
-.git-section-tab.active {
-  color: var(--text-primary);
-  border-color: var(--bg-selected-outline);
-  background: var(--bg-selected);
-}
-
-.git-section-tab small {
-  color: var(--text-muted);
-}
-
-.git-notices {
-  display: grid;
-  gap: 5px;
-}
-
-.git-notices span {
-  padding: 7px 8px;
-  color: var(--text-secondary);
-  background: var(--bg-status-warn);
-  border: 1px solid rgba(210, 153, 34, 0.25);
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.git-review-layout {
-  display: grid;
-  grid-template-columns: minmax(130px, 0.38fr) minmax(0, 1fr);
-  min-height: 280px;
-  max-height: 520px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--bg-primary);
-}
-
-.git-file-list,
-.git-diff-view {
+.git-file-list {
   min-height: 0;
   overflow: auto;
 }
@@ -4253,139 +3504,6 @@ padding: 10px 0;
 .git-file-row small {
   color: var(--text-muted);
   font-size: 10px;
-}
-
-.git-diff-view {
-  background: var(--bg-diff);
-}
-
-.git-diff-file-head {
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-muted);
-}
-
-.git-diff-file-head strong {
-  overflow: hidden;
-  color: var(--text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.git-diff-file-head small {
-  overflow: hidden;
-  color: var(--text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10px;
-}
-
-.git-hunk {
-  border-bottom: 1px solid var(--border-muted);
-}
-
-.git-hunk-head {
-  padding: 5px 8px;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  font-family: 'Geist Mono', ui-monospace, monospace;
-  font-size: 11px;
-}
-
-.git-diff-line {
-  display: grid;
-  grid-template-columns: 36px 36px minmax(0, 1fr);
-  min-width: max-content;
-  font-family: 'Geist Mono', ui-monospace, monospace;
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.git-diff-line.add {
-  background: rgba(63, 185, 80, 0.1);
-}
-
-.git-diff-line.delete {
-  background: rgba(248, 81, 73, 0.1);
-}
-
-.git-line-number {
-  padding: 2px 6px;
-  color: var(--text-muted);
-  border-right: 1px solid var(--border-muted);
-  text-align: right;
-  user-select: none;
-}
-
-.git-diff-line code {
-  padding: 2px 8px;
-  color: var(--text-primary);
-  white-space: pre;
-}
-
-.git-empty-inline {
-  padding: 12px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.git-status-list,
-.git-push-panel,
-.git-worktrees {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-
-.git-commit-file {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
-  font-size: 12px;
-}
-
-.git-commit-file input {
-  width: 14px;
-  height: 14px;
-}
-
-.git-commit-file span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.git-commit-file small {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.git-worktree-row {
-  display: grid;
-  gap: 2px;
-  padding: 7px 0;
-  border-top: 1px solid var(--border-muted);
-}
-
-.git-worktree-row strong {
-  color: var(--text-primary);
-  font-size: 12px;
-}
-
-.git-worktree-row span {
-  overflow: hidden;
-  color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
 }
 
 .event-list {
@@ -4538,33 +3656,6 @@ padding: 10px 0;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
-}
-
-.context-tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border-muted);
-  padding: 0 12px;
-}
-
-.context-tab {
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  background: transparent;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.context-tab:hover {
-  color: var(--text-primary);
-}
-
-.context-tab.active {
-  color: var(--accent-primary);
-  border-bottom-color: var(--accent-primary);
 }
 
 /* TaskGraphPanel - Codex 风格紧凑步骤列表 */
@@ -4823,61 +3914,15 @@ box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.36), var(--shadow-subtle);
   line-height: 1.35;
 }
 
-
 /* Settings page is always transparent — the background-layer provides
    the window's bottom colour, keeping it stable during page transitions. */
-
-
 
 /* Staggered entrance: nav slides in from the left, content fades in.
 Triggered by the page-level transition on the parent .settings-page. */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* Narrow viewport: further compress dialog */
 
 /* Detail slide transition */
-.detail-slide-enter-active {
-  transition: all 0.25s ease-out;
-}
-.detail-slide-leave-active {
-  transition: all 0.2s ease-in;
-}
-.detail-slide-enter-from {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-.detail-slide-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
-
-
 
 /* Conversation body (header + messages + mode strip). The composer is a
    persistent sibling BELOW this panel, so the panel only owns the top rows. */
@@ -4937,40 +3982,8 @@ Triggered by the page-level transition on the parent .settings-page. */
 ================================================================== */
 
 /* --- Slide Left (forward navigation: home → settings) --- */
-.page-slide-left-enter-active {
-transition: opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
-            transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.page-slide-left-leave-active {
-transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1),
-            transform 0.2s cubic-bezier(0.4, 0, 1, 1);
-}
-.page-slide-left-enter-from {
-opacity: 0;
-transform: translateX(30px);
-}
-.page-slide-left-leave-to {
-opacity: 0;
-transform: translateX(-30px);
-}
 
 /* --- Slide Right (back navigation: settings → home) --- */
-.page-slide-right-enter-active {
-transition: opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
-            transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.page-slide-right-leave-active {
-transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1),
-            transform 0.2s cubic-bezier(0.4, 0, 1, 1);
-}
-.page-slide-right-enter-from {
-opacity: 0;
-transform: translateX(-30px);
-}
-.page-slide-right-leave-to {
-opacity: 0;
-transform: translateX(30px);
-}
 
 /* --- Settings section switch transition --- */
 
@@ -4991,13 +4004,6 @@ transform: translateX(30px);
   opacity: 1;
 }
 
-.assistant-tool-calls {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-bottom: 8px;
-}
-
 .user-message-time {
   display: flex;
   align-items: center;
@@ -5006,6 +4012,79 @@ transform: translateX(30px);
   font-size: 10px;
   color: var(--text-muted);
   justify-content: flex-end;
+}
+
+/* --- Message attachment strip ----------------------------------------------
+   Rendered from the projection the message itself carries. Nothing here opens a
+   file: an image becomes a thumbnail whose original stays one click away, every
+   other type is a named download, and both point at the Gateway route that
+   addresses bytes by attachment id. */
+.message-attachments {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.message-wrapper.user .message-attachments {
+  justify-content: flex-end;
+}
+
+.message-attachment {
+  min-width: 0;
+}
+
+.message-attachment-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.3;
+  text-decoration: none;
+}
+
+.message-attachment-link:hover {
+  border-color: var(--text-muted);
+}
+
+.message-attachment-link:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+/* A thumbnail is its own shape, so the chip chrome steps back for it. */
+.message-attachment-link.is-thumb {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.message-attachment-thumb {
+  display: block;
+  max-height: 96px;
+  max-width: 160px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.message-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-size {
+  color: var(--text-muted);
+  font-size: 10px;
 }
 
 /* --- Chat activity micro-interactions -------------------------------------
@@ -5065,6 +4144,11 @@ transform: translateX(30px);
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
+  /* Collapsed content stays in the DOM so the 0fr -> 1fr transition can
+     animate, but it must not sit invisibly above later message controls.
+     In particular, an old thinking-step used to intercept clicks intended for
+     a tool approval card rendered underneath it. */
+  pointer-events: none;
   transition: grid-template-rows 0.2s cubic-bezier(0.19, 1, 0.22, 1),
               opacity 0.2s cubic-bezier(0.19, 1, 0.22, 1);
   transition-delay: 0.15s, 0.15s;
@@ -5073,6 +4157,7 @@ transform: translateX(30px);
 .chat-collapse.open {
   grid-template-rows: 1fr;
   opacity: 1;
+  pointer-events: auto;
   transition-delay: 0s, 0s;
 }
 
@@ -5081,11 +4166,6 @@ transform: translateX(30px);
   min-height: 0;
   min-width: 0;
   align-self: start;
-}
-
-.activity-glow-icon {
-  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 90%, transparent))
-          drop-shadow(0 0 10px color-mix(in srgb, currentColor 48%, transparent));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5361,11 +4441,6 @@ transform: translateX(30px);
    (bg-primary/bg-destructive) are intentionally left solid to preserve
    the action hierarchy. */
 
-.panel-styled {
-  position: relative;
-  z-index: 1;
-}
-
 /* ---- Material surface re-mapping ----
    Re-map the surface tokens on each material root. Custom properties
    inherit through every descendant, including scoped Vue components. */
@@ -5429,21 +4504,8 @@ transform: translateX(30px);
   background-color: var(--surface-input);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 .provider-brand-icon,
-.provider-detail-logo,
-.agent-card-icon {
+.agent-card-icon{
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5454,16 +4516,6 @@ transform: translateX(30px);
   color: var(--accent-primary);
   background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-tertiary));
 }
-
-/* ============================================================
-   Splash → Main UI transition (splash-exit + main-rise staggered)
-   ============================================================
-   - splash-exit: logo translateY(-100vh) + container opacity fade
-   - main-rise:   容器瞬时显示，内部子元素 staggered 升起
-                  （sidebar → ChatPanel → ContextPanel，从左至右）
-   - background-layer is intentionally NOT wrapped (stays static).
-   - Honors prefers-reduced-motion (see bottom of this block).
-   ============================================================ */
 
 /* --- splash 退出：logo 向上飞出窗口 + 容器淡出 --- */
 .splash-exit-leave-active {
@@ -5476,43 +4528,6 @@ transform: translateX(30px);
   opacity: 0;
 }
 
-/* --- main-rise：容器瞬时显示，内部 staggered 升起 --- */
-/* 容器本身无 transition（避免与子元素 animation 冲突） */
-@keyframes rise-up {
-  from {
-    transform: translateY(40px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-/* AppHeader (.topbar)：顶部框架，最先就位 */
-.main-rise-enter-active .topbar {
-  animation: rise-up 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: 0ms;
-}
-
-/* 侧边栏 (.sidebar)：从左至右第 1 位 */
-.main-rise-enter-active .sidebar {
-  animation: rise-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: 80ms;
-}
-
-/* ChatPanel (.conversation)：中间主面板，第 2 位 */
-.main-rise-enter-active .conversation {
-  animation: rise-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: 200ms;
-}
-
-/* ContextPanel (.browser-tabs-panel)：右侧面板，第 3 位 */
-.main-rise-enter-active .browser-tabs-panel {
-  animation: rise-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: 320ms;
-}
-
 /* Reduced motion: 禁用 transform 与 filter，仅保留 opacity 淡入淡出 */
 @media (prefers-reduced-motion: reduce) {
   .splash-exit-leave-active {
@@ -5522,13 +4537,5 @@ transform: translateX(30px);
     transform: none;
     opacity: 0;
   }
-  .main-rise-enter-active .topbar,
-  .main-rise-enter-active .sidebar,
-  .main-rise-enter-active .conversation,
-  .main-rise-enter-active .browser-tabs-panel {
-    animation: none;
-  }
 }
-
-
 

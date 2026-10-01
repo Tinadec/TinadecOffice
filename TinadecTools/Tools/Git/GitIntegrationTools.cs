@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 
@@ -9,7 +10,9 @@ public sealed class GitIntegrationArgs
     [JsonPropertyName("operation")] public string? Operation { get; set; }
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("strategy")] public string? Strategy { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_merge")] public string? ConfirmMerge { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_rebase")] public string? ConfirmRebase { get; set; }
 }
 
@@ -36,10 +39,10 @@ internal partial class GitIntegrationToolsJsonContext : JsonSerializerContext { 
 
 internal static class GitIntegrationTools
 {
-    [ToolFunction("git_merge", RequiresApproval = true, ConfirmationFields = ["confirm_merge"])]
+    [ToolFunction("git_merge", RequiresApproval = true, ConfirmationFields = ["confirm_merge"], Description = "Merge branch into the current branch (operation=start, the default), or continue/abort an in-progress merge. On conflict the result lists conflicted_files; resolve them, then operation=continue. confirm_merge must be a short non-empty note naming the branch. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static ValueTask<GitIntegrationResult> MergeAsync(GitIntegrationArgs args, CancellationToken ct) => ExecuteAsync(args, "merge", ct);
 
-    [ToolFunction("git_rebase", RequiresApproval = true, ConfirmationFields = ["confirm_rebase"])]
+    [ToolFunction("git_rebase", RequiresApproval = true, ConfirmationFields = ["confirm_rebase"], Description = "Rebase the current branch onto branch (operation=start, the default), or continue/skip/abort an in-progress rebase. On conflict the result lists conflicted_files; resolve them, then operation=continue. confirm_rebase must be a short non-empty note naming the branch. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static ValueTask<GitIntegrationResult> RebaseAsync(GitIntegrationArgs args, CancellationToken ct) => ExecuteAsync(args, "rebase", ct);
 
     private static async ValueTask<GitIntegrationResult> ExecuteAsync(GitIntegrationArgs args, string action, CancellationToken ct)

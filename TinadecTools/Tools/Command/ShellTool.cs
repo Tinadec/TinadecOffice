@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 using TinadecTools.Runtime;
+using TinadecTools.Runtime.Sandbox;
 
 namespace TinadecTools.Tools.Command;
 
@@ -78,7 +79,13 @@ internal static class ShellToolRegistration
 
         string command;
         string? cwd = null;
-        var timeoutMs = 120_000;
+        // A build, test, or install run on a real repository routinely outlives two
+        // minutes, and the tool's own deadline is what ends the command. The former
+        // 120s default cut those commands off and reported a timeout for work that
+        // was still progressing. This stays in step with Core's frozen
+        // `tools.default_timeout_seconds` (600), and Core's wire budget adds its own
+        // margin on top, so the tool always gets to report the outcome its own way.
+        var timeoutMs = 600_000;
         var longLived = false;
         try
         {
@@ -122,12 +129,41 @@ internal static class ShellToolRegistration
             return Fail(request.ToolCallId, $"Working directory '{cwd}' does not exist.");
         }
 
-        var (fileName, arguments) = ResolveShell(command);
         try
         {
-            var result = await TerminalSessionRunner.RunAsync(
-                fileName, arguments, workingDirectory, command,
-                timeoutMs, longLived, request.ToolCallId, cancellationToken).ConfigureAwait(false);
+            if (longLived)
+            {
+                var (streamFileName, streamArguments) = ResolveSandboxCommand(command);
+                var streamPermissions = CommandSandboxRuntime.MergeWithPolicy(
+                    CommandSandboxRuntime.BuildPermissions(null, null, null));
+                var streamingSandbox = await CommandSandboxRuntime.StartStreamingAsync(
+                    streamFileName, streamArguments, workingDirectory, timeoutMs, streamPermissions, cancellationToken).ConfigureAwait(false);
+                var streamed = await TerminalSessionRunner.RunSandboxedStreamingAsync(
+                    streamingSandbox, workingDirectory, command, request.ToolCallId, cancellationToken).ConfigureAwait(false);
+                return Ok(request.ToolCallId, streamed);
+            }
+
+            var (fileName, arguments) = ResolveSandboxCommand(command);
+            var permissions = CommandSandboxRuntime.MergeWithPolicy(
+                CommandSandboxRuntime.BuildPermissions(null, null, null));
+            var sandbox = await CommandSandboxRuntime.ExecuteSandboxedAsync(
+                fileName, arguments, workingDirectory, stdin: null, timeoutMs, permissions,
+                persistGrants: false, cancellationToken).ConfigureAwait(false);
+            if (sandbox.TimedOut)
+                return Fail(request.ToolCallId, sandbox.Error ?? $"Command timed out after {timeoutMs}ms and was terminated.");
+            var result = new ShellToolResult(
+                sandbox.Success,
+                $"sandbox-{request.ToolCallId}",
+                command,
+                "completed",
+                sandbox.ExitCode,
+                sandbox.Stdout,
+                sandbox.Stderr,
+                sandbox.StdoutTruncated,
+                sandbox.StderrTruncated,
+                sandbox.TimedOut,
+                sandbox.DurationMs,
+                sandbox.Error);
             return Ok(request.ToolCallId, result);
         }
         catch (OperationCanceledException)
@@ -138,6 +174,13 @@ internal static class ShellToolRegistration
         {
             return Fail(request.ToolCallId, ex.Message);
         }
+    }
+
+    internal static (string FileName, List<string> Arguments) ResolveSandboxCommand(string command)
+    {
+        if (OperatingSystem.IsWindows())
+            return ("cmd.exe", ["/d", "/s", "/c", command]);
+        return ("/bin/bash", ["-lc", command]);
     }
 
     private static string? ResolveWorkingDirectory(string? requested)

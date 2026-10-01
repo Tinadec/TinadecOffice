@@ -213,6 +213,25 @@ public sealed class AgentPackModeResourceDto
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<AgentPackModeBindingDto>? Bindings { get; init; }
 
+    /// <summary>
+    /// Mode-level prompt pipeline (typed reference, e.g. <c>prompt:solo-base</c>).
+    ///
+    /// A prompt pipeline is otherwise bound per AGENT, which is why several modes used
+    /// to share one set of instructions: nothing on the mode could say "this mode
+    /// collaborates differently". When declared, this pipeline wins over every agent's
+    /// own <c>base_prompt_pipeline_ref</c> for the whole mode — a mode's pipeline
+    /// describes the COLLABORATION SEMANTICS and therefore reaches the conversation
+    /// identity and every execution-layer worker alike.
+    ///
+    /// Nullable + omitted-when-absent, following the same rule as <see cref="Bindings"/>:
+    /// writing an explicit null would change the digest of packs that predate the field.
+    /// Per-agent role wording inside one mode stays on the agent's own
+    /// <c>system_prompt</c>, which is mode-independent by design.
+    /// </summary>
+    [JsonPropertyName("prompt_pipeline_ref")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PromptPipelineRef { get; init; }
+
     [JsonPropertyName("canvas_layout")]
     public JsonElement CanvasLayout { get; init; }
 }
