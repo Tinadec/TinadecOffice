@@ -15,6 +15,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
     private readonly IToolProvider _provider;
     private readonly ITenantContextAccessor _tenant;
     private readonly IAgentToolAuthorization? _agents;
+    private readonly IToolExecutionTargetResolver? _targets;
 
     public ToolInvocationScopeResolver(
         ILifecycleManager lifecycle,
@@ -28,6 +29,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
         _provider = provider;
         _tenant = tenant;
         _agents = services.GetService(typeof(IAgentToolAuthorization)) as IAgentToolAuthorization;
+        _targets = services.GetService(typeof(IToolExecutionTargetResolver)) as IToolExecutionTargetResolver;
     }
 
     public async Task<ToolInvocationScope> ResolveAsync(
@@ -98,12 +100,21 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             throw new InvalidOperationException("The run does not contain a valid frozen TinadecTools v2 manifest.");
         }
 
+        ToolExecutionTarget? executionTarget = null;
+        if (_targets is not null && project is not null)
+        {
+            var resolved = await _targets.ResolveAsync(sessionId, request.RunId, request.TaskId, request.ToolId, root, cancellationToken).ConfigureAwait(false);
+            if (resolved.IsRejected) throw new InvalidOperationException(resolved.Error);
+            executionTarget = resolved.Target;
+        }
+        var providerRoot = executionTarget?.RootPath ?? root;
+
         // A Core-owned virtual tool has no child-process entry to pair against, so the frozen
         // manifest is its only declaration source here too - the same exemption the freezer applies
         // when it builds that manifest. See CoreVirtualToolPolicy.RequiresLiveManifestEntry.
         if (project is not null && CoreVirtualToolPolicy.RequiresLiveManifestEntry(request.ToolId))
         {
-            var liveManifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
+            var liveManifest = await _provider.GetManifestAsync(providerRoot, cancellationToken).ConfigureAwait(false);
             if (liveManifest.ProtocolVersion != 2
                 || !string.Equals(liveManifest.ManifestHash, frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(ToolManifestHasher.Compute(liveManifest.Tools), frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase))
@@ -145,7 +156,8 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             frozenManifest.ManifestHash,
             policy.PermissionMode,
             ReadFrozenDispatchRoster(frozen.Content),
-            authorization.AllowedDispatchTargets);
+            authorization.AllowedDispatchTargets,
+            executionTarget?.RootPath);
     }
 
     /// <summary>Reads the frozen dispatch roster (ids + responsibility text); null when absent.</summary>

@@ -62,6 +62,74 @@ public sealed class EnvironmentRegistryTests : IDisposable
     }
 
     [Fact]
+    public async Task AnEnvironmentLeaseResolvesItsDeclaredLocalRoot_AndRemoteUrlOnlyTargetsFailClosed()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "tinadec-environment-target", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            var runId = Guid.NewGuid();
+            var taskId = Guid.NewGuid();
+            await Registry.RegisterAsync(new EnvironmentRegistration("local-test", EnvironmentKinds.Test, "Local test", null,
+                JsonSerializer.Serialize(new { workspace_root = root })));
+            var acquired = await Registry.AcquireAsync(new EnvironmentAcquireRequest(
+                sessionId, runId, taskId, Guid.NewGuid(), "local-test", null, "run tests"));
+            Assert.True(acquired.Granted, acquired.Error);
+
+            var resolver = _factory.Services.GetRequiredService<IToolExecutionTargetResolver>();
+            var resolved = await resolver.ResolveAsync(sessionId, runId, taskId, "read_file", Path.GetTempPath());
+            Assert.False(resolved.IsRejected, resolved.Error);
+            Assert.Equal(root, resolved.Target!.RootPath);
+            Assert.Equal(acquired.LeaseId, resolved.Target.LeaseId);
+
+            var remote = await Registry.RegisterAsync(new EnvironmentRegistration("remote-url", EnvironmentKinds.Remote, "Remote", null,
+                "{\"url\":\"https://example.test\"}"));
+            var remoteRun = Guid.NewGuid();
+            var remoteAcquired = await Registry.AcquireAsync(new EnvironmentAcquireRequest(
+                sessionId, remoteRun, taskId, Guid.NewGuid(), "remote-url", null, "remote test"));
+            Assert.True(remoteAcquired.Granted);
+            var rejected = await resolver.ResolveAsync(sessionId, remoteRun, taskId, "read_file", Path.GetTempPath());
+            Assert.True(rejected.IsRejected);
+            Assert.Contains("no local Tool Provider binding", rejected.Error);
+            _ = remote;
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task AWorktreeAssignmentBecomesTheProviderRootForItsRun()
+    {
+        var worktree = Path.Combine(Path.GetTempPath(), "tinadec-worktree-target", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(worktree);
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            var runId = Guid.NewGuid();
+            var taskId = Guid.NewGuid();
+            var lease = await _factory.Services.GetRequiredService<IResourceLeaseService>().AcquireAsync(new ResourceAcquireRequest(
+                new ResourceClaim(ResourceLeaseKinds.Worktree, worktree, Exclusive: true), sessionId, runId, null, Guid.NewGuid(),
+                "assigned worktree", ResourceLeasePurposes.Assignment));
+            Assert.True(lease.Granted);
+
+            var resolved = await _factory.Services.GetRequiredService<IToolExecutionTargetResolver>()
+                .ResolveAsync(sessionId, runId, taskId, "read_file", Path.GetTempPath());
+
+            Assert.False(resolved.IsRejected, resolved.Error);
+            Assert.Equal("worktree", resolved.Target!.Kind);
+            Assert.Equal(Path.GetFullPath(worktree), resolved.Target.RootPath);
+            Assert.Equal(lease.Lease!.Id, resolved.Target.LeaseId);
+        }
+        finally
+        {
+            try { Directory.Delete(worktree, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task TheApiRegistersListsAndUpdates_AndRefusesCredentialsAndDuplicates()
     {
         var client = _factory.CreateClient();

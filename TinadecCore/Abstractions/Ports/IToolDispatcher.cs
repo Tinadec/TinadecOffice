@@ -172,7 +172,12 @@ public sealed record ToolInvocationScope(
     string? FrozenToolManifestHash = null,
     string? PermissionMode = null,
     IReadOnlyList<DispatchRosterEntry>? DispatchRoster = null,
-    IReadOnlyList<string>? DispatchTargets = null);
+    IReadOnlyList<string>? DispatchTargets = null,
+    string? ExecutionRootOverride = null)
+{
+    /// <summary>The root actually handed to the provider after worktree/environment binding.</summary>
+    public string ExecutionRoot => string.IsNullOrWhiteSpace(ExecutionRootOverride) ? WorkspaceRoot : ExecutionRootOverride;
+}
 
 /// <summary>
 /// One executor the run's coordinator may name in <c>task_dispatch.agent</c>, read from the run's

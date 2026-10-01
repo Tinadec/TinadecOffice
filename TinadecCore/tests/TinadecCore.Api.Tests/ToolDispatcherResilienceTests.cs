@@ -130,6 +130,28 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ResumeAsync_UsesTheBoundExecutionRoot_WhenAWorktreeOrEnvironmentSelectsOne()
+    {
+        var tools = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("execution-target");
+        var run = await InsertRunAsync(sessionId, "executing");
+        var taskId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var executionRoot = Path.Combine(_root, "bound-target");
+        Directory.CreateDirectory(executionRoot);
+        var scope = ScopeFor(tools, run, projectId, sessionId, taskId, agentId) with { ExecutionRootOverride = executionRoot };
+        var dispatcher = CreateDispatcher(provider, scope);
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, taskId, agentId,
+            "disp:execution-target", "read_file", risk: "low", mutatesWorkspace: false, requiresApproval: false, Parameters);
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Completed, result.Status);
+        Assert.Equal(executionRoot, Assert.Single(provider.CapturedCallRoots));
+    }
+
+    [Fact]
     public async Task ResumeAsync_ProviderStartupTimeout_FailsExecution_RunSurvives()
     {
         var tools = new[] { Tool("read_file") };
@@ -923,14 +945,19 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
 
         public int CallCount { get; private set; }
         public List<TimeSpan?> CapturedTimeouts { get; } = [];
+        public List<string> CapturedRoots { get; } = [];
+        public List<string> CapturedCallRoots { get; } = [];
         /// <summary>When set, manifest reads throw this (handshake failure).</summary>
         public Exception? ManifestFailure { get; init; }
 
         public Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
             Manifest();
 
-        public Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
-            Manifest();
+        public Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default)
+        {
+            CapturedRoots.Add(workspaceRoot);
+            return Manifest();
+        }
 
         private Task<ToolManifestDto> Manifest()
         {
@@ -949,6 +976,8 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
             TimeSpan? timeout = null,
             CancellationToken cancellationToken = default)
         {
+            CapturedRoots.Add(workspaceRoot);
+            CapturedCallRoots.Add(workspaceRoot);
             CapturedTimeouts.Add(timeout);
             CallCount++;
             return await _handler(request, timeout, cancellationToken);

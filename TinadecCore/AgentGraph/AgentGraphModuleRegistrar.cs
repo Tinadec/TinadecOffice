@@ -32,6 +32,7 @@ public sealed class AgentGraphModuleRegistrar : IModuleRegistrar
         builder.Services.AddHostedService(sp => sp.GetRequiredService<EvidenceIndexService>());
         // The environment steward's registry: rows here, occupancy in the ledger above.
         builder.Services.AddSingleton<IEnvironmentRegistry, EnvironmentRegistryService>();
+        builder.Services.AddSingleton<IToolExecutionTargetResolver, ToolExecutionTargetResolver>();
         // Standing approvals a person gave: command prefixes, and the per-session shell delegation opt-in.
         builder.Services.AddSingleton<IApprovalRules, ApprovalRulesService>();
         builder.RegisterModule(new ModuleDescriptor

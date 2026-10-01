@@ -255,8 +255,8 @@ TinaChat 本身就是 Core 的模块，组织放在上面不违反"Core 是唯�
 | 深度/预算对引擎派出的 worker 生效 | `CreateRootAsync` 已按派发链推导深度并强制 | 已补 |
 | 共享上下文的并行实例 | 同"并行 = 同上下文多实例" | 已补 |
 | 向量存档与回查 | 证据检索已实现；全文仍截断，专用上下文角色与预算触发未闭环 | 部分（F12） |
-| 环境管家 | 注册、租约与工具已实现；实际执行目标未绑定分配结果 | 部分（F11） |
-| worktree 管家 | 创建/删除记账已实现；委派、工作区 rebinding 与合并验收尚缺 | 部分（F11） |
+| 环境管家 | 注册、租约与工具已实现；带本地根的 test/local/terminal assignment 已绑定 provider，remote/cloud 与浏览器/远程 provider 尚缺 | 部分（F11） |
+| worktree 管家 | 创建/删除记账已实现；单一 run assignment 已绑定 provider 根，多 worktree 任务级 rebinding 与合并验收尚缺 | 部分（F11） |
 | 会话 = TinaChat 组织 | 2026-09-29 已落地：组织、成员自动入组、通讯录、各类会议室、公告板、报告（implementation §14） | 已补 |
 | 治理角色是常驻节点 | 组织成员和独立回合存在；治理报告已能统一执行受边界校验的 pause/resume/stop run 动作，但成员上下文、改派与资源治理仍不完整 | 部分（F5/F6/F10） |
 | shell 隔离 | `command_run` 走 Windows 沙箱，`shell` 仍直接 `Process.Start`；每次 shell 占整个工作区的粗粒度已撤掉（§7.4：不加锁，声明写入范围 + 事后核对）；shell 进沙箱待管理员权限实机验证后落地 | **中** |

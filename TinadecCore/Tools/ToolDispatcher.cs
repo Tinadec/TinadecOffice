@@ -138,7 +138,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             if (_resourceLeases is not null)
             {
                 var claim = ResourceClaimResolver.Resolve(
-                    descriptor.Entry.Id, ReadStringArguments(parametersJson), scope.WorkspaceRoot, descriptor.Entry.MutatesWorkspace);
+                    descriptor.Entry.Id, ReadStringArguments(parametersJson), scope.ExecutionRoot, descriptor.Entry.MutatesWorkspace);
                 if (claim is not null)
                 {
                     var decision = await _resourceLeases.AcquireAsync(new ResourceAcquireRequest(
@@ -630,7 +630,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         if (streams)
         {
             pump = new ToolEventPump(_lifecycle, _logger, execution.RunId, execution.TaskId, execution.Id, descriptor.Id);
-            await pump.AppendCommandAsync(parameters, scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
+            await pump.AppendCommandAsync(parameters, scope.ExecutionRoot, cancellationToken).ConfigureAwait(false);
         }
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, inFlight.Token);
@@ -830,8 +830,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         if (!scope.SerializeWorkspaceWrites || !execution.MutatesWorkspace)
         {
             return streaming is not null
-                ? await streaming.CallStreamingAsync(scope.WorkspaceRoot, wire, timeout, observer, cancellationToken).ConfigureAwait(false)
-                : await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
+                ? await streaming.CallStreamingAsync(scope.ExecutionRoot, wire, timeout, observer, cancellationToken).ConfigureAwait(false)
+                : await _provider.CallAsync(scope.ExecutionRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
         }
 
         var gate = WorkspaceLocks.GetOrAdd(WorkspaceWriteLockKey(scope, wire), _ => new SemaphoreSlim(1, 1));
@@ -839,8 +839,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         try
         {
             return streaming is not null
-                ? await streaming.CallStreamingAsync(scope.WorkspaceRoot, wire, timeout, observer, cancellationToken).ConfigureAwait(false)
-                : await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
+                ? await streaming.CallStreamingAsync(scope.ExecutionRoot, wire, timeout, observer, cancellationToken).ConfigureAwait(false)
+                : await _provider.CallAsync(scope.ExecutionRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -851,7 +851,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
     private static string WorkspaceWriteLockKey(ToolInvocationScope scope, ToolWireRequestDto wire)
     {
         if (wire.Params is not { ValueKind: JsonValueKind.Object } parameters)
-            return scope.WorkspaceRoot;
+            return scope.ExecutionRoot;
 
         if (parameters.ValueKind == JsonValueKind.Object)
         {
@@ -861,12 +861,12 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                     && !string.IsNullOrWhiteSpace(value.GetString()))
                 {
                     var candidate = value.GetString()!.Trim();
-                    try { return Path.GetFullPath(Path.IsPathRooted(candidate) ? candidate : Path.Combine(scope.WorkspaceRoot, candidate)); }
-                    catch (ArgumentException) { return scope.WorkspaceRoot; }
+                    try { return Path.GetFullPath(Path.IsPathRooted(candidate) ? candidate : Path.Combine(scope.ExecutionRoot, candidate)); }
+                    catch (ArgumentException) { return scope.ExecutionRoot; }
                 }
             }
         }
-        return scope.WorkspaceRoot;
+        return scope.ExecutionRoot;
     }
 
     /// <summary>
@@ -1132,7 +1132,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         if (result is not { ValueKind: JsonValueKind.Object } payload
             || !payload.TryGetProperty("path", out var pathNode) || pathNode.ValueKind != JsonValueKind.String
             || string.IsNullOrWhiteSpace(pathNode.GetString())) return;
-        var key = ResourceClaimResolver.Absolute(pathNode.GetString()!, scope.WorkspaceRoot);
+        var key = ResourceClaimResolver.Absolute(pathNode.GetString()!, scope.ExecutionRoot);
         var branch = payload.TryGetProperty("branch", out var branchNode) && branchNode.ValueKind == JsonValueKind.String ? branchNode.GetString() : null;
         try
         {
@@ -1450,7 +1450,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             execution.TaskId,
             execution.AgentInstanceId,
             execution.Id,
-            scope.WorkspaceRoot,
+            scope.ExecutionRoot,
             command,
             status,
             DateTimeOffset.UtcNow));
@@ -1480,7 +1480,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             return (ToFrozenEntry(frozen), null);
         }
 
-        var manifest = await _provider.GetManifestAsync(scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
+        var manifest = await _provider.GetManifestAsync(scope.ExecutionRoot, cancellationToken).ConfigureAwait(false);
         if (manifest.ProtocolVersion != 2) return (null, "TinadecTools manifest v2 is required for autonomous dispatch.");
         if (string.IsNullOrWhiteSpace(scope.FrozenToolManifestHash)
             || !string.Equals(manifest.ManifestHash, scope.FrozenToolManifestHash, StringComparison.OrdinalIgnoreCase)
@@ -1568,7 +1568,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         const int PathBudget = 50;
         if (_resourceLeases is null) return;
         // A call that named its file already holds a lease on exactly that file.
-        if (ResourceClaimResolver.Resolve(toolId, ReadStringArguments(execution.ParametersJson), scope.WorkspaceRoot, mutatesWorkspace: true) is not null) return;
+        if (ResourceClaimResolver.Resolve(toolId, ReadStringArguments(execution.ParametersJson), scope.ExecutionRoot, mutatesWorkspace: true) is not null) return;
         try
         {
             var changes = await _snapshots.ListFileChangesAsync(snapshotId, cancellationToken).ConfigureAwait(false);
@@ -1753,7 +1753,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ToolExecutionSnapshot execution,
         ToolInvocationScope scope) =>
         ToolResourcePathRegistry.TryBuildResourceClaim(
-            descriptor.Id, execution.ParametersJson, scope.WorkspaceRoot, descriptor.MutatesWorkspace);
+            descriptor.Id, execution.ParametersJson, scope.ExecutionRoot, descriptor.MutatesWorkspace);
 
     private static ToolDispatchResultDto PreparedResult(ToolExecutionSnapshot execution, bool existing, DispatchAuthorization? authorization)
     {
