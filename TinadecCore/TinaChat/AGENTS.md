@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-10-01
 **Last Updated By:** Codex 修复 TinaChat 唤醒的 claimed source、fencing、过期回收和来源无上限合并；补模型失败/旧 claim 回归。
-**Last Verified Commit:** 3e44ef6；TinaChat/组织/资源相关 Api 定向 41/41，新增唤醒回归 3/3。完整 API 历史矩阵仍为 588/590，真实模型/PG/多宿主未验收。完整报告见 `../../docs/agent-graph/review-2026-10-01.zh-CN.md`。
+**Last Verified Commit:** 11733f1；TinaChat/组织/资源相关 Api 定向 41/41，新增唤醒回归 3/3。完整 API 历史矩阵仍为 588/590，真实模型/PG/多宿主未验收。完整报告见 `../../docs/agent-graph/review-2026-10-01.zh-CN.md`。
 **Branch:** Everything-changed
 
 ## 位置与依赖
