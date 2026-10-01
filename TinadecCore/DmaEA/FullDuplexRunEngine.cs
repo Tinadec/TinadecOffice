@@ -153,6 +153,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _scheduledModelRetries = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _terminalFinalizationGates = new();
     private readonly AsyncLocal<RunLeaseEpoch?> _currentLeaseEpoch = new();
+    /// <summary>
+    /// Parallel ready workers run their model/tool loop against a private checkpoint snapshot. Their
+    /// durable writes are merged by the owning run tick; nested SaveCheckpoint calls must therefore
+    /// remain local until that merge completes.
+    /// </summary>
+    private readonly AsyncLocal<bool> _deferParallelTaskCheckpointWrites = new();
     // A decision can enqueue a run during the small window in which the prior
     // owner is unwinding. Keep that wake-up durable until the owner has left the
     // running set; otherwise the queue item is consumed and silently discarded.
@@ -1515,7 +1521,33 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tasks-stale-after-context", cancellationToken).ConfigureAwait(false);
         }
 
-        foreach (var task in toolCapable)
+        var parallelToolTasks = toolCapable
+            .Where(task => task.ToolTurns.Count == 0 && string.IsNullOrWhiteSpace(task.PendingToolExecutionId))
+            .ToList();
+        var serialToolTasks = toolCapable.Except(parallelToolTasks).ToList();
+        ToolTaskExecutionResult[] parallelResults = parallelToolTasks.Count == 0
+            ? []
+            : await Task.WhenAll(parallelToolTasks.Select(task => ExecuteParallelToolTaskAsync(
+                run, configuration, checkpoint, plannerId, task, cancellationToken, surfaces[task.TaskId]))).ConfigureAwait(false);
+        var parallelWaiting = false;
+        foreach (var result in parallelResults)
+        {
+            MergeParallelTaskCheckpoint(checkpoint, result.Checkpoint, result.TaskId);
+            if (result.Waiting)
+            {
+                parallelWaiting = true;
+                continue;
+            }
+            if (result.Result is not null)
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint, result.Result, cancellationToken).ConfigureAwait(false);
+        }
+        if (parallelWaiting)
+        {
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting-decision", cancellationToken).ConfigureAwait(false);
+            throw new RunAwaitingExternalDecisionException();
+        }
+
+        foreach (var task in serialToolTasks)
         {
             var result = await ExecuteToolTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken, surfaces[task.TaskId]).ConfigureAwait(false);
             checkpoint = result.Checkpoint;
@@ -1532,6 +1564,50 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision,
             "tasks-completed", cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ToolTaskExecutionResult> ExecuteParallelToolTaskAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        Guid plannerId,
+        DurableTaskNode task,
+        CancellationToken cancellationToken,
+        IReadOnlyList<WorkerToolDescriptor> descriptors)
+    {
+        var local = CloneCheckpoint(checkpoint);
+        var localTask = local.Tasks.Single(item => item.TaskId == task.TaskId);
+        var prior = _deferParallelTaskCheckpointWrites.Value;
+        _deferParallelTaskCheckpointWrites.Value = true;
+        try
+        {
+            var result = await ExecuteToolTaskAsync(run, configuration, local, plannerId, localTask, cancellationToken, descriptors).ConfigureAwait(false);
+            return result with { TaskId = task.TaskId };
+        }
+        finally
+        {
+            _deferParallelTaskCheckpointWrites.Value = prior;
+        }
+    }
+
+    private static FullDuplexCheckpointV1 CloneCheckpoint(FullDuplexCheckpointV1 checkpoint)
+    {
+        var clone = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(JsonSerializer.Serialize(checkpoint, JsonOptions), JsonOptions)
+            ?? throw new InvalidDataException("Could not clone the run checkpoint for a parallel worker.");
+        clone.CheckpointRevision = checkpoint.CheckpointRevision;
+        return clone;
+    }
+
+    private static void MergeParallelTaskCheckpoint(
+        FullDuplexCheckpointV1 target,
+        FullDuplexCheckpointV1 source,
+        Guid taskId)
+    {
+        var updated = source.Tasks.FirstOrDefault(item => item.TaskId == taskId)
+            ?? throw new InvalidDataException($"Parallel worker checkpoint lost task {taskId}.");
+        var index = target.Tasks.FindIndex(item => item.TaskId == taskId);
+        if (index < 0) throw new InvalidDataException($"Parallel worker task {taskId} is missing from the owner checkpoint.");
+        target.Tasks[index] = updated;
     }
 
 
@@ -4960,6 +5036,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         string? expectedRunStatus = null,
         bool requireCompletionUnclaimed = false)
     {
+        if (_deferParallelTaskCheckpointWrites.Value)
+            return checkpoint;
         // The lane segment keeps same-purpose saves from distinct lanes from
         // colliding on one idempotency row, which would return the first body
         // and silently drop the second lane's update.
@@ -6792,7 +6870,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private sealed record ToolTaskExecutionResult(
         FullDuplexCheckpointV1 Checkpoint,
         bool Waiting,
-        TaskExecutionResult? Result);
+        TaskExecutionResult? Result)
+    {
+        public Guid TaskId { get; init; }
+    }
     private readonly record struct ModelRetryScheduleResult(
         bool Scheduled,
         bool LeaseRetained,
