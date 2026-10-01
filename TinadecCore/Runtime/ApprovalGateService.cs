@@ -175,9 +175,11 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
                         && modes.Contains(run.PermissionMode)
                         && run.Status != "completed" && run.Status != "failed" && run.Status != "cancelled"
                         && (afterApprovalId == null || approval.Id > afterApprovalId.Value)
+                    // Order entity columns before constructing a record. EF cannot bind a member
+                    // access on the positional Candidate constructor back to its SQL projection.
+                    orderby approval.Id
                     select new Candidate(approval.Id, run.Id, run.SessionId, execution.Id, execution.TaskId, execution.ToolId,
                         execution.Risk, run.PermissionMode, approval.CreatedAt))
-                    .OrderBy(row => row.ApprovalId)
                     .Take(CandidateWindow)
                     .ToListAsync(ct).ConfigureAwait(false);
             }
@@ -225,7 +227,7 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
             // arguments, so a rule from another session is never honored.
             var optedIn = _services.GetService(typeof(Abstractions.Ports.IApprovalRules)) is Abstractions.Ports.IApprovalRules rules
                 && await rules.IsDelegatedToolAsync(candidate.RunId, candidate.ToolId, ct).ConfigureAwait(false);
-            if (!optedIn)
+            if (!DelegatedApprovalRules.Delegable(_approval, candidate.ToolId, candidate.Risk, optedIn))
                 return await EscalateAsync(db, candidate, gates, $"'{candidate.ToolId}' ({candidate.Risk} risk) always stays with the person.", ct).ConfigureAwait(false);
         }
 

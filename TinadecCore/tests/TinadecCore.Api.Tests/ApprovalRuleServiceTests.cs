@@ -19,6 +19,56 @@ public sealed class ApprovalRuleServiceTests : IAsyncLifetime
 
     private IApprovalRules Rules => _factory.Services.GetRequiredService<IApprovalRules>();
 
+    [Theory]
+    [InlineData("git_push")]
+    [InlineData("mcp_invoke")]
+    [InlineData("write_file")]
+    [InlineData("delete_file")]
+    [InlineData("*")]
+    public async Task DelegateRule_RejectsToolsWithoutASessionOptInContract(string toolId)
+    {
+        var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/v1/approval-rules", new
+        {
+            kind = "delegate_tool", tool_id = toolId, session_id = Guid.NewGuid()
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(await Rules.ListAsync(null));
+    }
+
+    [Fact]
+    public async Task DelegateRule_RequiresASession_AndValidatesPersistedRulesOnRead()
+    {
+        var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/v1/approval-rules", new { kind = "delegate_tool", tool_id = "shell" });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var scope = _factory.Services.GetRequiredService<ITenantContextAccessor>().Current;
+        var sessionId = Guid.NewGuid();
+        var runId = Guid.NewGuid();
+        await using (var lifecycle = await _factory.Services.GetRequiredService<IDbContextFactory<TinadecCore.Lifecycle.LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            lifecycle.Runs.Add(new TinadecCore.Lifecycle.RunRecord { Id = runId, TenantId = scope.TenantId,
+                WorkspaceId = scope.WorkspaceId, SessionId = sessionId, Status = "completed" });
+            await lifecycle.SaveChangesAsync();
+        }
+        await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<TinadecCore.AgentGraph.AgentGraphDbContext>>().CreateDbContextAsync())
+        {
+            foreach (var tool in new[] { "git_push", "mcp_invoke", "shell" })
+                db.ApprovalRules.Add(new TinadecCore.AgentGraph.ApprovalRuleRecord { Id = Guid.NewGuid(),
+                    TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, Kind = "delegate_tool", ToolId = tool,
+                    SessionId = tool == "shell" ? null : sessionId });
+            await db.SaveChangesAsync();
+        }
+        Assert.False(await Rules.IsDelegatedToolAsync(runId, "git_push"));
+        Assert.False(await Rules.IsDelegatedToolAsync(runId, "mcp_invoke"));
+        Assert.False(await Rules.IsDelegatedToolAsync(runId, "shell"));
+        var allowed = await Rules.CreateAsync(new("delegate_tool", "shell", null, sessionId));
+        Assert.True(await Rules.IsDelegatedToolAsync(runId, "shell"));
+        Assert.False(await Rules.IsDelegatedToolAsync(Guid.NewGuid(), "shell"));
+        Assert.True(await Rules.RevokeAsync(allowed.Id));
+        Assert.False(await Rules.IsDelegatedToolAsync(runId, "shell"));
+    }
+
     [Fact]
     public async Task PrefixRule_ScopedToItsSession_OnlyItsSessionHonorsIt()
     {

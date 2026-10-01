@@ -687,7 +687,7 @@ flowchart TD
 **残余风险**
 
 - 批准质量取决于门所用模型；门提示词尚未经真实模型评测（当前只有脚本化模型的端到端验证）。
-- 默认只委托到 `medium`（`DelegatedApprovalRiskMax`，与策略自动批准同一上限），守住"高风险要有人工检查点"：`git_commit` 这类 `high` 风险在委托模式下仍停在 PDP 等人。运营者若更信任门，可显式抬到 `high`，代价是提交类变更不再经人。
+- 委托最多到 `medium`，`DelegatedApprovalRiskMax` 可以进一步收窄；`elevated/high/critical` 与未知风险必须由人工裁决，常驻规则不能提高这一上限。`delegate_tool` 只允许具体会话中的 `shell`/`command_run`，且仅把低/中风险调用交给委托门；推送、MCP、删除等人工工具不能借此放行。旧的宽泛规则在读取时同样被拒绝。显式 `full-access` 与人工前缀授权仍是独立的用户选择，不等于模型委托审批。
 
 ## 11. 上下文、记忆与压缩
 

@@ -51,11 +51,16 @@ internal static class AutoApprovePolicyRules
 /// </summary>
 public static class DelegatedApprovalRules
 {
-    public static bool Delegable(AutoApproveOptions options, string? toolId, string? risk) =>
+    public static bool Delegable(AutoApproveOptions options, string? toolId, string? risk, bool optedIn = false) =>
         !string.IsNullOrWhiteSpace(toolId)
-        && !options.IsHumanOnlyTool(toolId)
+        && (!options.IsHumanOnlyTool(toolId)
+            || (optedIn && Abstractions.Ports.DelegatedToolOptInRules.IsEligibleTool(toolId)))
         // Core's own virtual tools with an approval (create_workspace) keep the person's click: their
         // approval gate is their whole safety net.
         && !Abstractions.Ports.CoreVirtualToolPolicy.IsCoreVirtual(toolId)
+        // An opt-in moves a low/medium shell call to the judge, never the risk ceiling.
+        // Unknown ceilings must not sort above unknown risks and accidentally admit them.
+        && AutoApprovePolicyRules.RiskRank(risk) <= 1
+        && AutoApprovePolicyRules.RiskRank(options.DelegatedApprovalRiskMax) != int.MaxValue
         && AutoApprovePolicyRules.RiskRank(risk) <= AutoApprovePolicyRules.RiskRank(options.DelegatedApprovalRiskMax);
 }

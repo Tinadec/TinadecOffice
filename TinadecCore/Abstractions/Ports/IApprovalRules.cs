@@ -20,6 +20,13 @@ public static class ApprovalRuleKinds
     public static readonly IReadOnlyList<string> All = [CommandPrefix, DelegateTool];
 }
 
+/// <summary>Only the command tools have a per-session delegated-approval opt-in.
+/// The gate policy still applies its risk ceiling; this is not an approval itself.</summary>
+public static class DelegatedToolOptInRules
+{
+    public static bool IsEligibleTool(string? toolId) => toolId is "shell" or "command_run";
+}
+
 /// <summary>A standing approval. <see cref="SessionId"/> null means the whole workspace.</summary>
 public sealed record ApprovalRuleView(
     Guid Id,

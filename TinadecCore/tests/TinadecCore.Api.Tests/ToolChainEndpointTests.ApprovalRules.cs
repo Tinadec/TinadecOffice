@@ -95,15 +95,17 @@ public sealed partial class ToolChainEndpointTests
     }
 
     /// <summary>
-    /// Shell is human-only by default — but this session opted it into delegated approval:
-    /// the reviewer gate opens, approves, and the command runs without the person clicking.
+    /// A session opt-in delegates only a call inside the ceiling. A high-risk shell
+    /// call still waits for the person. The provider is inert for both cases.
     /// </summary>
-    [Fact]
-    public async Task DelegateReviewer_WithShellOptedIn_GateDecidesTheShellCall()
+    [Theory]
+    [InlineData("medium", true)]
+    [InlineData("high", false)]
+    public async Task DelegateReviewer_WithShellOptedIn_StillEnforcesRiskCeiling(string risk, bool delegated)
     {
         var workspace = Path.Combine(_root, "workspace-rule-shell-gate");
         Directory.CreateDirectory(workspace);
-        var provider = new FakeToolProvider();
+        var provider = new FakeToolProvider { ShellRisk = risk };
         var script = new ToolScriptedClient()
             .WhenPlanner(ShellPlan)
             .WhenWorkerTool("shell", new Dictionary<string, object?> { ["command"] = "npm run build" })
@@ -122,17 +124,26 @@ public sealed partial class ToolChainEndpointTests
         var active = StartStreamingInvoke(client, sessionId, new { content = "跑一次构建", client_message_id = "rule-shell-gate-1", permission_mode = "delegate-reviewer" });
         var runId = (await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30))).GetProperty("run_id").GetGuid();
         var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
-        // Delegated release put the call at the tool-approval layer: a gate opened for shell.
-        Assert.Equal("tool", (await client.GetFromJsonAsync<JsonElement>($"/api/v1/approvals/{approvalId}")).GetProperty("kind").GetString());
+        Assert.Equal(delegated ? "tool" : "permission", (await client.GetFromJsonAsync<JsonElement>($"/api/v1/approvals/{approvalId}")).GetProperty("kind").GetString());
 
-        Assert.Equal(1, await _factory.Services.GetRequiredService<ApprovalGateService>().RunPassAsync());
+        Assert.Equal(delegated ? 1 : 0, await _factory.Services.GetRequiredService<ApprovalGateService>().RunPassAsync());
+        if (!delegated)
+        {
+            Assert.Empty(script.GateCalls);
+            Assert.Equal(0, provider.CallCount);
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" })).StatusCode);
+        }
         var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60));
         Assert.Equal("done", KindOf(Assert.Single(chunks, chunk => KindOf(chunk) is "done" or "error")));
         Assert.Equal(["shell"], provider.ReceivedToolIds.ToArray());
 
-        var gate = Assert.Single(script.GateCalls);
-        Assert.Equal("reviewer", gate.Gate);
-        var gates = await client.GetFromJsonAsync<ApprovalGatesDto>($"/api/v1/approvals/{approvalId}/gates", SnakeWire);
-        Assert.Equal("approved", gates!.Status);
+        if (delegated)
+        {
+            var gate = Assert.Single(script.GateCalls);
+            Assert.Equal("reviewer", gate.Gate);
+            var gates = await client.GetFromJsonAsync<ApprovalGatesDto>($"/api/v1/approvals/{approvalId}/gates", SnakeWire);
+            Assert.Equal("approved", gates!.Status);
+        }
+        else Assert.Empty(script.GateCalls);
     }
 }

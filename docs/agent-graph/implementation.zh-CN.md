@@ -186,7 +186,7 @@ public sealed class ApprovalGateRecord
 
 **落地与原计划的两处不同**，都是被现状逼出来的：
 
-1. **门挂在审批层，不挂在 PDP。** 治理层禁止祖先/后代智能体互批（`DecidePermissionCoreAsync` 的 `self_approval_forbidden`），对话身份恰是每个执行者的祖先，走现成的 `ApprovalDelegationRecord` 一定被拒。所以委托模式下 PDP 像 auto-approve 一样把**可委托的写**放到审批层（`UnattendedPermissionReleaseReason` → `delegated_gate_release`；租约限定该声明、单次），调用停在工具审批（`kind=tool`），由门来替人点这一下。判定"可委托"只有一条规则 `DelegatedApprovalRules.Delegable`：非人工工具（`AutoApproveOptions.HumanOnlyTools` + `*_delete`/`delete_*`）、非 Core 虚拟工具、风险 ≤ `DelegatedApprovalRiskMax`（默认 medium，与策略自动批准同一上限：高风险照旧要人工检查点；运营者可抬到 high）。PDP 与门服务读同一条规则，不会一边放一边不放。
+1. **门挂在审批层，不挂在 PDP。** 治理层禁止祖先/后代智能体互批（`self_approval_forbidden`），委托模式由 PDP 将可委托的写以 `delegated_gate_release` 放到工具审批层，再由独立门裁决。PDP 和门服务均调用 `DelegatedApprovalRules.Delegable`：排除 Core 虚拟工具、人工专属工具与 `elevated/high/critical`、未知风险，并遵守 `DelegatedApprovalRiskMax` 更窄上限。唯一的工具例外是具体会话登记的低/中风险 shell/command_run；读取旧规则时也检查工具、会话和风险。规则命中不能作为跳过该判定的返回分支。
 2. **配置面是权限模式，不是 workspace 配置。** 用户按消息选 `delegate-conversation` / `delegate-reviewer` / `delegate-both`（`ApprovalDelegationModes`），冻结进 run，和 ask / auto-approve / full-access 同一个位置——它们本来就是同一句话："这条消息把多少审批工作交出去"。
 
 **门的顺序**：`delegate-both` 先审查员后对话身份（独立的那一眼先看；它驳回就省掉第二次调用）。

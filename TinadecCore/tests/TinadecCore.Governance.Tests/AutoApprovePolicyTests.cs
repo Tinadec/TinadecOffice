@@ -350,6 +350,48 @@ public sealed class AutoApprovePolicyTests
 
     // ── Delegated approval modes (delegate-*) ───────────────────────────────────
 
+    [Theory]
+    [InlineData("git_push", "low", false)]
+    [InlineData("mcp_invoke", "low", false)]
+    [InlineData("web_fetch", "low", false)]
+    [InlineData("delete_file", "low", false)]
+    [InlineData("create_workspace", "low", false)]
+    [InlineData("write_file", "elevated", false)]
+    [InlineData("shell", "high", false)]
+    [InlineData("command_run", "critical", false)]
+    [InlineData("shell", "low", true)]
+    [InlineData("command_run", "medium", true)]
+    public async Task DelegatedOptIn_CannotOverrideToolOrRiskRestrictions(string toolId, string risk, bool allowed)
+    {
+        await using var harness = await GovernanceHarness.CreateAsync(
+            new AutoApproveOptions { DelegatedApprovalRiskMax = "high" }, new OptedInRules());
+        AllowEverything(harness);
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), $"opt-in-{toolId}-{risk}", toolId, runId: Guid.NewGuid(), action: "mutate", permissionMode: "delegate-both") with { Risk = risk });
+        Assert.Equal(allowed ? PermissionRequestStatuses.Granted : PermissionRequestStatuses.AwaitingUser, resolution.Request.Status);
+        Assert.Equal(allowed ? "delegated_gate_release" : "user_approval_required", resolution.Decision.ReasonCode);
+    }
+
+    [Fact]
+    public void DelegatedOptIn_UnknownCeilingFailsClosed_AndConfiguredHumanToolsStayHuman()
+    {
+        Assert.False(DelegatedApprovalRules.Delegable(new() { DelegatedApprovalRiskMax = "unknown" }, "shell", "low", true));
+        Assert.False(DelegatedApprovalRules.Delegable(new(), "write_file", "unknown", true));
+        Assert.False(DelegatedApprovalRules.Delegable(new() { HumanOnlyTools = ["write_file"] }, "write_file", "low", true));
+        Assert.False(DelegatedApprovalRules.Delegable(new() { DelegatedApprovalRiskMax = "low" }, "shell", "medium", true));
+    }
+
+    private sealed class OptedInRules : IApprovalRules
+    {
+        public Task<bool> IsDelegatedToolAsync(Guid runId, string toolId, CancellationToken ct = default) => Task.FromResult(true);
+        public Task<IReadOnlyList<ApprovalRuleView>> ListAsync(Guid? sessionId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ApprovalRuleView> CreateAsync(ApprovalRuleCreate rule, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> RevokeAsync(Guid id, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ApprovalRuleView?> MatchCommandAsync(Guid sessionId, string tool, string command, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> VerifyCommandRuleAsync(Guid id, Guid runId, string tool, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ApprovalRuleView> RecordUseAsync(Guid id, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
     /// <summary>
     /// A delegated run hands the approval click to its gates, so the PDP releases a delegable
     /// mutating claim to the approval layer the way auto-approve does — the gate, not this

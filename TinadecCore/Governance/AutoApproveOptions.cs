@@ -45,8 +45,8 @@ public sealed class AutoApproveOptions
     /// The highest risk a delegated approval gate (<c>delegate-*</c> permission modes) may decide.
     /// Above it — and for every human-only tool — the call waits for the person, whatever mode the
     /// run was started in. The default keeps the project rule that high-risk operations get a human
-    /// checkpoint; an operator who trusts the gates more may raise it to <c>high</c>. Unknown risks
-    /// are never delegated.
+    /// checkpoint. Configuration may narrow the low/medium ceiling; elevated/high/critical and
+    /// unknown risks always require a person, including when a shell opt-in rule exists.
     /// </summary>
     public string DelegatedApprovalRiskMax { get; set; } = "medium";
 

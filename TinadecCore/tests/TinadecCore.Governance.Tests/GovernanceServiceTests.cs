@@ -375,7 +375,7 @@ internal sealed class GovernanceHarness : IAsyncDisposable
     public TestAuthorizationContextResolver Context { get; }
     public MutableTimeProvider Time { get; }
 
-    public static async Task<GovernanceHarness> CreateAsync(AutoApproveOptions? autoApprove = null)
+    public static async Task<GovernanceHarness> CreateAsync(AutoApproveOptions? autoApprove = null, IApprovalRules? approvalRules = null)
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"tinadec-governance-{Guid.NewGuid():N}.db");
         var options = new DbContextOptionsBuilder<GovernanceDbContext>()
@@ -391,7 +391,7 @@ internal sealed class GovernanceHarness : IAsyncDisposable
         var context = new TestAuthorizationContextResolver();
         var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 22, 0, 0, 0, TimeSpan.Zero));
         var service = new GovernanceService(factory, tenant, context, time,
-            autoApproveOptions: Options.Create(autoApprove ?? new AutoApproveOptions()));
+            autoApproveOptions: Options.Create(autoApprove ?? new AutoApproveOptions()), approvalRules: approvalRules);
         return new GovernanceHarness(databasePath, service, tenant, context, time);
     }
 

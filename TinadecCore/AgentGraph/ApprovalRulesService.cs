@@ -13,8 +13,6 @@ internal sealed class ApprovalRulesService(
     IServiceProvider services,
     ITenantContextAccessor tenant) : IApprovalRules
 {
-    private const int RunSessionLifetimeMs = 12 * 60 * 60 * 1000;
-
     public async Task<IReadOnlyList<ApprovalRuleView>> ListAsync(Guid? sessionId, CancellationToken cancellationToken = default)
     {
         var scope = tenant.Current;
@@ -37,8 +35,7 @@ internal sealed class ApprovalRulesService(
         string? pattern = null;
         if (rule.Kind == ApprovalRuleKinds.CommandPrefix)
         {
-            // Only shells execute command text, so only they can be prefix-matched. A delegated-tool
-            // opt-in names the tool itself and stays open to any tool id.
+            // Only shells execute command text, so only they can be prefix-matched.
             if (!CommandPrefixRules.IsRuleTool(rule.ToolId))
                 throw new ApprovalRuleException(400, "invalid_request", $"A command_prefix rule's tool_id must be one of: {string.Join(", ", CommandPrefixRules.Tools)}.");
             pattern = rule.Pattern?.Trim() ?? string.Empty;
@@ -50,6 +47,9 @@ internal sealed class ApprovalRulesService(
             throw new ApprovalRuleException(400, "invalid_request", "A delegated-tool opt-in takes no pattern; it covers the tool, not a command.");
         }
         var toolId = rule.ToolId.Trim();
+        if (rule.Kind == ApprovalRuleKinds.DelegateTool
+            && (!DelegatedToolOptInRules.IsEligibleTool(toolId) || rule.SessionId is null || rule.SessionId == Guid.Empty))
+            throw new ApprovalRuleException(400, "invalid_request", "A delegate_tool rule requires a session_id and tool_id shell or command_run; risk limits still apply.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var duplicate = await db.ApprovalRules.AsNoTracking().AnyAsync(x =>
                 x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Revoked
@@ -118,9 +118,12 @@ internal sealed class ApprovalRulesService(
 
     public async Task<bool> IsDelegatedToolAsync(Guid runId, string toolId, CancellationToken cancellationToken = default)
     {
+        // Check again when reading: old, overly broad rules must never acquire authority.
+        if (!DelegatedToolOptInRules.IsEligibleTool(toolId)) return false;
         var sessionId = await RunSessionAsync(runId, cancellationToken).ConfigureAwait(false);
+        if (sessionId is null || sessionId == Guid.Empty) return false;
         foreach (var rule in await ActiveAsync(sessionId, toolId, cancellationToken).ConfigureAwait(false))
-            if (rule.Kind == ApprovalRuleKinds.DelegateTool)
+            if (rule.Kind == ApprovalRuleKinds.DelegateTool && rule.SessionId == sessionId)
                 return true;
         return false;
     }

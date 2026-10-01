@@ -1455,7 +1455,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             var optedIn = _approvalRules is not null
                 && command.RunId is { } optRunId
                 && await _approvalRules.IsDelegatedToolAsync(optRunId, toolId, cancellationToken).ConfigureAwait(false);
-            if (optedIn) return "delegated_gate_release";
+            if (DelegatedApprovalRules.Delegable(_autoApproveOptions.Value, toolId, command.Risk, optedIn))
+                return "delegated_gate_release";
         }
 
         // READ-level claims are released in the ask family too. A read cannot change

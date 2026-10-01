@@ -764,15 +764,17 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
     {
         var workspace = Path.Combine(_root, "workspace-c3");
         Directory.CreateDirectory(workspace);
-        var provider = new FakeToolProvider { FailOnCallNumber = 2 };
+        var provider = new FakeToolProvider { FailWhen = request =>
+            request.Params is { } args && args.TryGetProperty("filepath", out var path) && path.GetString() == "t2.txt" };
         var script = new ToolScriptedClient()
             .WhenPlanner("[{\"task_key\":\"t1\",\"title\":\"写一\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"},"
                 + "{\"task_key\":\"t2\",\"title\":\"写二\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":2,\"risk\":\"low\"}]")
             .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
             .WhenMeeting("完成。")
-            .WhenWorkerTurns(
+            .WhenTaskWorkerTurns("写一",
                 [new FunctionCallContent("call-t1", "write_file", new Dictionary<string, object?> { ["filepath"] = "t1.txt", ["content"] = "1" })],
-                [new TextContent("t1 完成")],
+                [new TextContent("t1 完成")])
+            .WhenTaskWorkerTurns("写二",
                 [new FunctionCallContent("call-t2", "write_file", new Dictionary<string, object?> { ["filepath"] = "t2.txt", ["content"] = "2" })],
                 // Consumed after t2's dispatch failure is fed back: the model reads
                 // the error and hands off instead of retrying blindly.
@@ -785,8 +787,8 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
 
         var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
 
-        // t1 parks → approved → dispatches → completes; t2 parks → approved → the
-        // provider fails that dispatch → the failure goes back to the worker.
+        // Independent tasks can park together. Each task has its own model script;
+        // t2's failure is keyed to its file, not to whichever call wins scheduling.
         var firstApproval = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/v1/approvals/{firstApproval}/decision", new { decision = "approved" })).StatusCode);
         var secondApproval = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
@@ -1878,7 +1880,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         Assert.Contains(TinaChatMemberTurnRunner.TurnMarker, turn.Instructions);
         Assert.Contains("治理审查智能体", turn.Instructions);
         Assert.Contains("lease_conflict", turn.Briefing);
-        Assert.Equal(["graph_view", "org_directory", "org_read", "org_report", "org_send", "recall_evidence"], turn.Tools.Order().ToArray());
+        Assert.Equal(["graph_view", "org_directory", "org_execute_report", "org_read", "org_report", "org_send", "recall_evidence"], turn.Tools.Order().ToArray());
         // The reviewer recalled what the finished task actually said, verbatim, from the evidence archive —
         // keyword mode here (the test host has no embedding model), which is a result, not "nothing".
         var recalled = Assert.Single(script.MemberToolResults, result => result.Contains("\"mode\"", StringComparison.Ordinal));
@@ -2416,6 +2418,8 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
 
         /// <summary>1-based dispatch number that must fail on the wire; -1 disables.</summary>
         public int FailOnCallNumber { get; set; } = -1;
+        public Func<ToolWireRequestDto, bool>? FailWhen { get; init; }
+        public string ShellRisk { get; init; } = "high";
 
         /// <summary>Optional side effect per call (workspace root, request): how a test makes a fake command change files.</summary>
         public Action<string, ToolWireRequestDto>? OnCall { get; set; }
@@ -2449,7 +2453,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
                 ReceivedApproved |= request.Approved;
             }
             OnCall?.Invoke(workspaceRoot, request);
-            if (callNumber == FailOnCallNumber)
+            if (callNumber == FailOnCallNumber || FailWhen?.Invoke(request) == true)
             {
                 return new ToolWireResponseDto
                 {
@@ -2473,7 +2477,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
 
         public Task ShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        private static ToolManifestDto CreateManifest()
+        private ToolManifestDto CreateManifest()
         {
             // Covers the GraphSeedPack templates' declared tool scopes so the
             // spawnable-ceiling manifest intersection passes at admission; the
@@ -2492,7 +2496,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
                 new() { Id = "ls", Description = "In-process fake directory listing probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
                 new() { Id = "stat", Description = "In-process fake stat probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
                 new() { Id = "file_search", Description = "In-process fake file search probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
-                new() { Id = "shell", Description = "In-process fake shell probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = true },
+                new() { Id = "shell", Description = "In-process fake shell probe", RequiresApproval = true, Risk = ShellRisk, MutatesWorkspace = true },
                 new() { Id = "mcp_search", Description = "In-process fake search probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
                 // Mirrors the real descriptor: an approved MCP call is an external
                 // surface, not a workspace mutation (declared explicitly on the tool).
@@ -2891,6 +2895,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         private string? _workerFollowUp;
         private string? _workerText;
         private readonly Queue<AIContent[]> _workerTurns = new();
+        private readonly Dictionary<string, Queue<AIContent[]>> _taskWorkerTurns = new();
         public int WorkerCalls;
         public int StewardCalls;
         public int PlannerCalls;
@@ -2951,6 +2956,12 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         public ToolScriptedClient WhenWorkerTurns(params AIContent[][] turns)
         {
             foreach (var turn in turns) _workerTurns.Enqueue(turn);
+            return this;
+        }
+
+        public ToolScriptedClient WhenTaskWorkerTurns(string title, params AIContent[][] turns)
+        {
+            _taskWorkerTurns[title] = new Queue<AIContent[]>(turns);
             return this;
         }
 
@@ -3066,8 +3077,15 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
                     // Serialized the way the provider adapter sends it to the model, not JsonElement.ToString()
                     // (raw text, where non-ASCII stays escaped).
                     .Select(result => result.Result?.ToString() ?? string.Empty));
-            if (_workerTurns.Count > 0)
-                return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerTurns.Dequeue()), instructions);
+            lock (_instructionsGate)
+            {
+                var taskScript = _taskWorkerTurns.FirstOrDefault(pair =>
+                    instructions?.Contains($"标题：{pair.Key}\n", StringComparison.Ordinal) == true).Value;
+                if (taskScript is not null)
+                    return WorkerResponse(new ChatMessage(ChatRole.Assistant, taskScript.Dequeue()), instructions);
+                if (_workerTurns.Count > 0)
+                    return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerTurns.Dequeue()), instructions);
+            }
             if (_workerText is not null)
                 return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerText), instructions);
             var contents = isFirstWorkerTurn

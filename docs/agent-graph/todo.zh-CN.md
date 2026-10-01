@@ -225,7 +225,7 @@
 
 - **E7 收尾**：补了 ask 族的最后一环——此前前缀规则只在到达审批层后生效（auto/full-access/委托），默认 ask 模式的 shell 仍停在 PDP 等人点。现在 dispatcher 授权前按冻结参数匹配规则并把 `CommandRuleId` 带给 PDP（`ToolAuthorizationCommand`/`PermissionRequestCommand` 尾部可选字段），PDP 复核（`VerifyCommandRuleAsync`：范围按 run 自己的会话、类型、工具，不信调用方）后以 `approval_rule_released` 放行，决策文案如实写"人写规则时给过的批准"。审批层仍先 `HonorCommandPrefixAsync` → `MintApprovalFromRuleAsync`，审计 source=`approval_rule:{id}`。
 - **计用语义**：匹配与复核都不计用（一次调用会经过多处匹配），只在铸刻消费时记一次（`IApprovalRules.RecordUseAsync`，铸刻成功后 best-effort）。
-- **顺手修了三处上一批未验证代码的缺陷**：①`CreateAsync` 无重复检测、且把 `delegate_tool` 也限制在 shell/command_run——补 409 `approval_rule_conflict` 与按 kind 的工具校验；②`ActiveAsync(sessionId==null)` 会返回**全部**规则（含别的会话的），改为 null 会话只见工作区级规则；③`RecordUseAsync` 之前藏在 Match 里导致一次调用计两次。
+- **2026-10-02 复查纠正**：当时解除 `delegate_tool` 的 shell/command_run 限制是引入缺陷，并非修复。现恢复具体会话的命令工具准入，PDP/门服务统一重查风险上限，旧宽泛规则不能放行。重复检测（409）、null 会话只见工作区级前缀规则、消费时单次计用仍保留。
 - **测试**：`ToolChainEndpointTests.ApprovalRules.cs` 3 条端到端（ask 模式下被规则覆盖的 shell 不点任何人就完成且审计 source=approval_rule；未覆盖的命令照样驻留；`delegate_tool` 勾选后审查门裁决 shell）+ `ApprovalRuleServiceTests` 3 条服务级（含新计用语义与冲突 409）。6/6 通过。
 - **诚实边界**：聚合后的 Core Api 全量本轮未重跑（上一轮的 580 全量在这些改动之前）；shell 进沙箱拆为独立项（见第四期 E7 备注）。
 
