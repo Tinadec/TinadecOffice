@@ -109,7 +109,7 @@ public static class CoreVirtualToolPolicy
     /// </summary>
     public static readonly IReadOnlyList<string> OrganizationToolIds =
     [
-        "org_directory", "org_read", "org_send", "org_report", "org_decide_report", "org_contact", "org_room",
+        "org_directory", "org_read", "org_send", "org_report", "org_decide_report", "org_execute_report", "org_contact", "org_room",
     ];
 
     public static bool IsOrganization(string? toolId) =>

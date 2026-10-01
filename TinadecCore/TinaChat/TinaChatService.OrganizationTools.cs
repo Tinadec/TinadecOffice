@@ -57,6 +57,7 @@ public sealed partial class TinaChatService
         "org_send" => await SendOrganizationToolAsync(scope, organizationId, actorId, args, key, ct),
         "org_report" => await ReportToolAsync(scope, organizationId, actorId, args, key, ct),
         "org_decide_report" => await DecideReportToolAsync(scope, organizationId, actorId, args, ct),
+        "org_execute_report" => await ExecuteReportToolAsync(scope, organizationId, actorId, args, ct),
         "org_contact" => await ContactToolAsync(scope, organizationId, actorId, args, ct),
         "org_room" => await RoomToolAsync(scope, organizationId, actorId, args, key, ct),
         _ => throw Invalid($"Unknown organization tool '{toolId}'."),
@@ -363,13 +364,133 @@ public sealed partial class TinaChatService
         }, ct);
     }
 
+    /// <summary>
+    /// Executes a report proposal through the runtime's one action port. The
+    /// action runs before the report is marked acted; a rejected or unsupported
+    /// action leaves the report open so another governance node can continue it.
+    /// </summary>
+    private async Task<object> ExecuteReportToolAsync(TenantContext scope, Guid organizationId, Guid actorId, JsonElement? args, CancellationToken ct)
+    {
+        var reportId = Identifier(args, "report_id");
+        var expected = Long(args, "expected_revision");
+        string verb;
+        string? subjectKind;
+        string? subjectId;
+        string? proposedArgs;
+        ChatOrganization organization;
+        ChatParticipant actor;
+        await using (var db = await factory.CreateDbContextAsync(ct))
+        {
+            (organization, actor) = await LoadMemberAsync(db, organizationId, actorId, ct);
+            RequireWritable(organization);
+            var report = await db.Reports.AsNoTracking().SingleOrDefaultAsync(x => x.MessageId == reportId && x.OrganizationId == organization.Id, ct)
+                ?? throw new TinaChatException(404, "tina_chat_not_found", "No report with that id in this organization. Take report ids from org_read.");
+            if (!MayActOnReport(actor, report))
+                throw Forbidden("Only the user, the conversation identity and the report's own author may execute a report proposal.");
+            if (report.Status != "open")
+                throw Conflict("report_closed", $"The report is already {report.Status}; a closed report is not reopened.");
+            Expect(report.Revision, expected);
+            verb = report.ProposedVerb ?? "";
+            subjectKind = report.SubjectKind;
+            subjectId = report.SubjectId;
+            proposedArgs = report.ProposedArgs;
+        }
+
+        if (verb.Length == 0)
+            throw Invalid("This report has no proposed action. Use org_decide_report to record a decision instead.");
+
+        if (services?.GetService(typeof(IOrganizationReportActionExecutor)) is not IOrganizationReportActionExecutor executor)
+            throw new TinaChatException(503, "organization_action_unavailable", "The runtime has no governance action executor; the report remains open.");
+
+        var action = await executor.ExecuteAsync(new OrganizationReportActionRequest(
+            scope, organization.SessionId, organization.Id, reportId, actor.Id, verb, proposedArgs,
+            subjectKind, subjectId, $"report:{reportId:N}:revision:{expected}"), ct).ConfigureAwait(false);
+
+        if (!action.Completed)
+        {
+            await RecordReportActionAuditAsync(scope, organizationId, actorId, reportId, "report.action." + verb + "." + action.Status, ct).ConfigureAwait(false);
+            return new
+            {
+                status = action.Status,
+                executed = false,
+                code = action.Code,
+                report_id = reportId.ToString("N"),
+                revision = expected,
+                target_run_id = action.TargetRunId?.ToString("N"),
+                note = action.Message,
+            };
+        }
+
+        try
+        {
+            var decided = await WriteAsync(scope, async (db, _) =>
+            {
+                var org = await db.Organizations.SingleAsync(x => x.Id == organizationId, ct);
+                RequireWritable(org);
+                var currentActor = await db.Participants.SingleAsync(x => x.Id == actorId && x.OrganizationId == org.Id, ct);
+                var report = await db.Reports.SingleOrDefaultAsync(x => x.MessageId == reportId && x.OrganizationId == org.Id, ct)
+                    ?? throw new TinaChatException(404, "tina_chat_not_found", "The report disappeared before its action could be recorded.");
+                if (!MayActOnReport(currentActor, report))
+                    throw Forbidden("The acting member no longer has authority over this report.");
+                if (report.Status != "open")
+                    throw Conflict("report_closed", $"The report is already {report.Status}; the action may already have been recorded.");
+                Expect(report.Revision, expected);
+                var result = await DecideReportCoreAsync(db, org, currentActor, reportId, "acted",
+                    $"Executed {verb}: {action.Message}", expected, ct);
+                Audit(db, scope, currentActor.Id, "report.action." + verb, reportId, result.ConversationId);
+                return result;
+            }, ct).ConfigureAwait(false);
+
+            return new
+            {
+                status = decided.Status,
+                executed = true,
+                code = action.Code,
+                action = verb,
+                report_id = reportId.ToString("N"),
+                revision = decided.Revision,
+                target_run_id = action.TargetRunId?.ToString("N"),
+                target_status = action.TargetStatus,
+                note = action.Message,
+            };
+        }
+        catch (TinaChatException ex) when (ex.Code == "report_closed")
+        {
+            // The run-control idempotency key makes the external operation safe
+            // when two governance members race; report closure is then a normal
+            // replay outcome rather than a second execution.
+            return new
+            {
+                status = "already_decided",
+                executed = true,
+                code = "report_closed_after_action",
+                action = verb,
+                report_id = reportId.ToString("N"),
+                revision = expected,
+                target_run_id = action.TargetRunId?.ToString("N"),
+                target_status = action.TargetStatus,
+                note = "The action was accepted, but another member recorded the report first. Read the report again before continuing.",
+            };
+        }
+    }
+
+    private async Task RecordReportActionAuditAsync(TenantContext scope, Guid organizationId, Guid actorId, Guid reportId, string action, CancellationToken ct)
+    {
+        await WriteAsync(scope, async (db, _) =>
+        {
+            var report = await db.Reports.AsNoTracking().SingleOrDefaultAsync(x => x.MessageId == reportId && x.OrganizationId == organizationId, ct);
+            if (report is not null) Audit(db, scope, actorId, action, reportId, report.ConversationId);
+            return 0;
+        }, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Shared by the tool and the owner's HTTP view: one decision rule, one CAS.</summary>
     private static async Task<ChatReport> DecideReportCoreAsync(TinaChatDbContext db, ChatOrganization org, ChatParticipant actor, Guid reportId,
         string decision, string note, long expectedRevision, CancellationToken ct)
     {
         var report = await db.Reports.SingleOrDefaultAsync(x => x.MessageId == reportId && x.OrganizationId == org.Id, ct)
             ?? throw new TinaChatException(404, "tina_chat_not_found", "No report with that id in this organization. Take report ids from org_read.");
-        var permitted = actor.OrgRole is OrganizationRoles.Human or OrganizationRoles.Conversation || report.AuthorId == actor.Id;
+        var permitted = MayActOnReport(actor, report);
         if (!permitted)
             throw Forbidden("Only the user, the conversation identity and the report's author record a decision. If you acted on it, say so in the room; they will close it.");
         if (report.Status != "open")
@@ -383,6 +504,9 @@ public sealed partial class TinaChatService
         Audit(db, new TenantContext(org.TenantId, org.WorkspaceId, org.OwnerPrincipalId, "tina-chat-organization"), actor.Id, "report." + decision, report.MessageId, report.ConversationId);
         return report;
     }
+
+    private static bool MayActOnReport(ChatParticipant actor, ChatReport report) =>
+        actor.OrgRole is OrganizationRoles.Human or OrganizationRoles.Conversation || report.AuthorId == actor.Id;
 
     private Task<object> ContactToolAsync(TenantContext scope, Guid organizationId, Guid actorId, JsonElement? args, CancellationToken ct)
     {

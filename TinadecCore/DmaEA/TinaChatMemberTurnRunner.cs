@@ -53,7 +53,7 @@ public sealed class TinaChatMemberTurnRunner : ITinaChatMemberTurnRunner
         // A declared tool scope narrows the surface; a role frozen without one gets the read-and-report
         // default, which is what every governance role needs and cannot hurt anything.
         bool Allowed(string toolId) => declared.Count == 0
-            ? toolId is "org_directory" or "org_read" or "org_report" or "org_send" or CoreVirtualToolPolicy.GraphViewToolId or CoreVirtualToolPolicy.RecallEvidenceToolId
+            ? toolId is "org_directory" or "org_read" or "org_report" or "org_send" or "org_execute_report" or CoreVirtualToolPolicy.GraphViewToolId or CoreVirtualToolPolicy.RecallEvidenceToolId
             : declared.Contains(toolId, StringComparer.OrdinalIgnoreCase);
         var tools = toolbox.Tools.Where(tool => Allowed(tool.Id)).ToList();
         var graph = Allowed(CoreVirtualToolPolicy.GraphViewToolId) && _services.GetService(typeof(ISessionTopology)) is ISessionTopology topology

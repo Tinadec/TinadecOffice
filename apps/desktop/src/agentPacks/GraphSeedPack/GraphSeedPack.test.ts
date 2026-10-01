@@ -96,7 +96,7 @@ describe('GraphSeedPack', () => {
     // capability (it must never become a conversation identity or flip a tier).
     const governance = agents.find((agent) => agent.resource_key === 'governance_reviewer')!
     expect(governance.layer).toBe('operation')
-    expect(governance.tool_scope).toEqual(['graph_view', 'org_directory', 'org_read', 'org_send', 'org_report', 'recall_evidence', 'environment_list'])
+    expect(governance.tool_scope).toEqual(['graph_view', 'org_directory', 'org_read', 'org_send', 'org_report', 'org_execute_report', 'recall_evidence', 'environment_list'])
     expect(governance.capabilities).not.toContain('user.respond')
   })
 

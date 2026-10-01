@@ -25,6 +25,7 @@ public sealed class OrganizationTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "tinadec-org-tests", Guid.NewGuid().ToString("N"));
     private readonly MemberScript _script = new();
+    private readonly RecordingRunController _governanceController = new();
     private OrganizationFactory _factory = null!;
     private readonly Guid _session = Guid.NewGuid();
     private readonly Guid _run = Guid.NewGuid();
@@ -32,7 +33,7 @@ public sealed class OrganizationTests : IAsyncLifetime
     public Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _factory = new OrganizationFactory(_root, _script);
+        _factory = new OrganizationFactory(_root, _script, _governanceController);
         _ = _factory.CreateClient();
         return Task.CompletedTask;
     }
@@ -222,6 +223,39 @@ public sealed class OrganizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnOpenReportActionUsesTheRuntimeController_BeforeItMarksTheReportActed()
+    {
+        var (meeting, worker, _, _) = await CastAsync();
+        var filed = await ToolAsync(worker, "org_report", new
+        {
+            kind = "risk", severity = "blocking", subject_kind = "run", subject_id = _run.ToString("N"),
+            finding = "The run must stop before the conflicting write continues.", evidence = new[] { "run graph" },
+            proposed_verb = "stop_run"
+        });
+        Assert.True(filed.Ok, filed.Error);
+        var reportId = Guid.Parse(filed.Result.GetProperty("report_id").GetString()!);
+
+        var executed = await ToolAsync(meeting, "org_execute_report", new
+        {
+            report_id = reportId.ToString("N"), expected_revision = 1
+        });
+
+        Assert.True(executed.Ok, executed.Error);
+        Assert.True(executed.Result.GetProperty("executed").GetBoolean());
+        Assert.Equal("acted", executed.Result.GetProperty("status").GetString());
+        var call = Assert.Single(_governanceController.Calls);
+        Assert.Equal("cancel", call.Action);
+        Assert.Equal(_run, call.RunId);
+        Assert.Equal($"report:{reportId:N}:revision:1", call.ClientControlId);
+
+        var report = Assert.Single((await View.ListReportsAsync(_session, "acted")).Items);
+        Assert.Equal(reportId, report.Id);
+        Assert.Contains("Executed stop_run", report.DecisionNote);
+        await using var db = await _factory.Services.GetRequiredService<IDbContextFactory<TinaChatDbContext>>().CreateDbContextAsync();
+        Assert.Contains(await db.Audit.AsNoTracking().ToArrayAsync(), item => item.TargetId == reportId && item.Action == "report.action.stop_run");
+    }
+
+    [Fact]
     public async Task ANoticeWakesTheStandingMember_WhichActsInItsOwnTurn_AndTheBudgetPostponesInsteadOfDropping()
     {
         await CastAsync();
@@ -356,7 +390,21 @@ public sealed class OrganizationTests : IAsyncLifetime
         Assert.Single(_script.Turns);
     }
 
-    private sealed class OrganizationFactory(string root, MemberScript script) : WebApplicationFactory<Program>
+    private sealed class RecordingRunController : IGovernanceRunController
+    {
+        public List<Call> Calls { get; } = [];
+
+        public Task<GovernanceRunControlResult> ControlAsync(TenantContext scope, Guid sessionId, Guid runId,
+            string action, string clientControlId, CancellationToken cancellationToken = default)
+        {
+            Calls.Add(new Call(scope, sessionId, runId, action, clientControlId));
+            return Task.FromResult(new GovernanceRunControlResult(true, action == "cancel" ? "cancelled" : "paused", action, RunId: runId));
+        }
+    }
+
+    private sealed record Call(TenantContext Scope, Guid SessionId, Guid RunId, string Action, string ClientControlId);
+
+    private sealed class OrganizationFactory(string root, MemberScript script, RecordingRunController governanceController) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -374,8 +422,10 @@ public sealed class OrganizationTests : IAsyncLifetime
             {
                 services.AddSingleton<ISecretStore>(new TestModelSecretStore());
                 services.AddSingleton<IAgentChatClientFactory>(new MemberScriptFactory(script));
+                services.AddSingleton<IGovernanceRunController>(governanceController);
             });
-        }
+    }
+
     }
 
     /// <summary>A scripted model for standing-member turns: queued responses in order, then silence.</summary>

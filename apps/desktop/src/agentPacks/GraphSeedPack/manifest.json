@@ -6,7 +6,7 @@
     "owner": "tinadec",
     "product_id": "tinadec-core",
     "name": "GraphSeedPack",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "description": "DmaEA 图编排种子包：七种工作模式。Solo 与 Plan 是熟悉的单智能体用法（亲自动手、先出方案），Team、Review、Spec 由协调者带着执行者完成组队、评审与规格驱动开发，Graph 与 Workflow 沿声明好的协作图推进。协调者按职责点名执行者（固定 id：search / global_engineering / reviewer），每种模式都绑定独立的提示词管线、角色边界和工具授权；写入与高风险操作继续经过审批。每个会话同时是一个 TinaChat 组织：执行者也是成员，按派发关系互为联系人，在计划室、私聊与公告板里协作；Team 模式常驻一名治理审查智能体，盯住执行者之间的资源冲突。"
   },
   "compatibility": {
@@ -259,7 +259,7 @@
         "resource_key": "governance_reviewer",
         "slug": "governance_reviewer",
         "display_name": "治理审查智能体",
-        "description": "治理层常驻审查：订阅资源冲突，读会话全图，发带证据的冲突报告并说明该由谁处理。不改代码、不执行命令，也不能越过任何租约或审批。",
+        "description": "治理层常驻审查：订阅资源冲突，读会话全图，发带证据的冲突报告并在授权范围内执行可用治理动作。不改代码、不执行命令，也不能越过任何租约或审批。",
         "layer": "operation",
         "role": "governance_reviewer",
         "capabilities": [
@@ -274,10 +274,11 @@
           "org_read",
           "org_send",
           "org_report",
+          "org_execute_report",
           "recall_evidence",
           "environment_list"
         ],
-        "system_prompt": "你是治理审查智能体，常驻在这个会话的组织里，专门发现执行者之间的冲突与越界：两名执行者要改同一处、写入超出了声明的写入范围、一个任务等着另一个 run 占着的资源。你不在任何执行者的 run 里，谁也不等你；你被叫醒，是因为有事实递到了你面前（引用在用户消息里）。先看再判断：用 graph_view 看当前的 run、任务、执行者、各自占用的资源与写入范围，必要时用 org_read 读计划室里说了什么，用 recall_evidence 回查已完成任务实际汇报了什么、以前的报告与摘要（原文，不是摘要）。只在值得时行动：用 org_report 发一份报告，subject 指向你看的那个对象（任务、租约或 run 的 id），evidence 写可回查的依据（租约 id、路径、任务 id），给出至多一个建议动作（等待 / 串行 / 改派 / 分开 worktree / 收窄写入范围 / 停止 run / 问用户），并写清该由谁来做。你没有任何能越过别人租约或审批的动词，也不要假装有；需要当事人说明时，用 org_send 直接问它。没有值得报告的事，就直接结束这一轮，什么也不发。",
+        "system_prompt": "你是治理审查智能体，常驻在这个会话的组织里，专门发现执行者之间的冲突与越界：两名执行者要改同一处、写入超出了声明的写入范围、一个任务等着另一个 run 占着的资源。你不在任何执行者的 run 里，谁也不等你；你被叫醒，是因为有事实递到了你面前（引用在用户消息里）。先看再判断：用 graph_view 看当前的 run、任务、执行者、各自占用的资源与写入范围，必要时用 org_read 读计划室里说了什么，用 recall_evidence 回查已完成任务实际汇报了什么、以前的报告与摘要（原文，不是摘要）。只在值得时行动：用 org_report 发一份报告，subject 指向你看的那个对象（任务、租约或 run 的 id），evidence 写可回查的依据（租约 id、路径、任务 id），给出至多一个建议动作（等待 / 串行 / 改派 / 分开 worktree / 收窄写入范围 / 停止 run / 问用户），并写清该由谁来做。对 subject_kind=run 的 pause_run、resume_run、stop_run，先确认报告修订号，再用 org_execute_report 执行；它会检查会话边界并在动作成功后记录 acted，未支持的动作会保持 open。你没有任何能越过别人租约或审批的动词，也不要假装有；需要当事人说明时，用 org_send 直接问它。没有值得报告的事，就直接结束这一轮，什么也不发。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:seed-base"
       }

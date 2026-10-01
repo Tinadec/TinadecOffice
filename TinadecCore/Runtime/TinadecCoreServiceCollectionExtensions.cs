@@ -56,6 +56,10 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
         services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
         services.AddSingleton<IExecutorMessageWakeSink, ExecutorMessageWakeSink>();
+        // Governance reports use one runtime action port. The adapter checks the
+        // target run's tenant/workspace/session before it reaches run control.
+        services.AddSingleton<IGovernanceRunController, GovernanceRunController>();
+        services.AddSingleton<IOrganizationReportActionExecutor, OrganizationReportActionExecutor>();
         // The handoff tool needs the mode catalog and the coordinator, so the composition root wraps
         // the module's gateway rather than giving the communication module a dependency that would
         // point back at itself.
