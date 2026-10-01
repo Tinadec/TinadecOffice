@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TinadecTools.Abstractions;
+using TinadecTools.Runtime.Sandbox;
 using TinadecTools.Tools.Command;
 
 namespace TinadecTools.Tests;
@@ -42,7 +43,7 @@ public sealed class ShellToolTests
     {
         if (!OperatingSystem.IsWindows()) return;
 
-        var response = await ToolRegistry.DispatchAsync(ShellRequest("{\"command\":\"echo \\\"hi\\\"\"}"));
+        var response = await DispatchSandboxedAsync(ShellRequest("{\"command\":\"echo \\\"hi\\\"\"}"));
 
         Assert.True(response.IsSuccess);
         var result = response.Response;
@@ -58,7 +59,7 @@ public sealed class ShellToolTests
     {
         if (!OperatingSystem.IsWindows()) return;
 
-        var response = await ToolRegistry.DispatchAsync(
+        var response = await DispatchSandboxedAsync(
             ShellRequest("{\"command\":\"echo git commit -m \\\"initial commit\\\"\"}"));
 
         Assert.True(response.IsSuccess);
@@ -71,7 +72,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task Shell_MissingCommand_IsWireFailure()
     {
-        var response = await ToolRegistry.DispatchAsync(ShellRequest("{}"));
+        var response = await DispatchSandboxedAsync(ShellRequest("{}"));
 
         Assert.False(response.IsSuccess);
         Assert.Contains("command", response.Response.GetString());
@@ -80,7 +81,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task Shell_ProtectedBranchPush_IsWireFailure()
     {
-        var response = await ToolRegistry.DispatchAsync(ShellRequest("{\"command\":\"git push origin main\"}"));
+        var response = await DispatchSandboxedAsync(ShellRequest("{\"command\":\"git push origin main\"}"));
 
         Assert.False(response.IsSuccess);
         Assert.Contains("protected_branch_push", response.Response.GetString());
@@ -89,7 +90,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task Shell_MissingWorkingDirectory_IsWireFailure()
     {
-        var response = await ToolRegistry.DispatchAsync(
+        var response = await DispatchSandboxedAsync(
             ShellRequest("{\"command\":\"echo hi\",\"cwd\":\"no-such-dir-xyz-abc\"}"));
 
         Assert.False(response.IsSuccess);
@@ -102,7 +103,7 @@ public sealed class ShellToolTests
         var command = OperatingSystem.IsWindows()
             ? "ping -n 30 127.0.0.1 >nul"
             : "sleep 30";
-        var response = await ToolRegistry.DispatchAsync(
+        var response = await DispatchSandboxedAsync(
             ShellRequest($"{{\"command\":\"{command}\",\"timeout_ms\":500}}"));
 
         Assert.False(response.IsSuccess);
@@ -112,7 +113,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task Shell_NotApproved_IsWireFailure()
     {
-        var response = await ToolRegistry.DispatchAsync(
+        var response = await DispatchSandboxedAsync(
             ShellRequest("{\"command\":\"echo hi\"}", approved: false));
 
         Assert.False(response.IsSuccess);
@@ -122,7 +123,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task Shell_NonZeroExit_IsWireSuccessWithEmbeddedFailure()
     {
-        var response = await ToolRegistry.DispatchAsync(ShellRequest("{\"command\":\"exit 3\"}"));
+        var response = await DispatchSandboxedAsync(ShellRequest("{\"command\":\"exit 3\"}"));
 
         // The command really executed: wire success, embedded failure + exit code,
         // snake_case fields unchanged (Core deserializes ShellToolResult and
@@ -140,11 +141,39 @@ public sealed class ShellToolTests
     [Fact]
     public async Task Shell_SuccessfulCommand_IsWireSuccess()
     {
-        var response = await ToolRegistry.DispatchAsync(ShellRequest("{\"command\":\"exit 0\"}"));
+        var response = await DispatchSandboxedAsync(ShellRequest("{\"command\":\"exit 0\"}"));
 
         Assert.True(response.IsSuccess);
         var result = response.Response;
         Assert.True(result.GetProperty("success").GetBoolean());
         Assert.Equal(0, result.GetProperty("exit_code").GetInt32());
+    }
+
+    private static async Task<ToolCallResponse<JsonElement>> DispatchSandboxedAsync(ToolCallRequest<JsonElement> request)
+    {
+        using var backend = CommandSandboxRuntime.OverrideBackendForTests(new ShellTestSandboxBackend());
+        return await ToolRegistry.DispatchAsync(request);
+    }
+
+    private sealed class ShellTestSandboxBackend : ISandboxBackend
+    {
+        public bool IsSupported => true;
+        public bool IsInitialized => true;
+        public Task EnsureSetupAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task ResetAsync(SandboxResetScope scope, CancellationToken ct) => Task.CompletedTask;
+
+        public Task<SandboxRunnerResponse> ExecuteAsync(SandboxRunnerRequest request, SandboxPermissions permissions,
+            bool persistGrants, CancellationToken ct)
+        {
+            var command = request.Arguments.LastOrDefault() ?? string.Empty;
+            if (command.Contains("ping", StringComparison.OrdinalIgnoreCase) || command.Contains("sleep", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new SandboxRunnerResponse { Success = false, TimedOut = true, ExitCode = -1, Error = $"Command timed out after {request.TimeoutMs}ms." });
+            if (command.Contains("exit 3", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new SandboxRunnerResponse { Success = false, ExitCode = 3, Stderr = "exit 3" });
+            var stdout = command.Contains("echo", StringComparison.OrdinalIgnoreCase)
+                ? command[(command.IndexOf("echo", StringComparison.OrdinalIgnoreCase) + 4)..].Trim() + "\n"
+                : string.Empty;
+            return Task.FromResult(new SandboxRunnerResponse { Success = true, ExitCode = 0, Stdout = stdout });
+        }
     }
 }

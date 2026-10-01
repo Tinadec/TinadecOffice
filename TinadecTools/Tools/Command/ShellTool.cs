@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 using TinadecTools.Runtime;
+using TinadecTools.Runtime.Sandbox;
 
 namespace TinadecTools.Tools.Command;
 
@@ -128,12 +129,37 @@ internal static class ShellToolRegistration
             return Fail(request.ToolCallId, $"Working directory '{cwd}' does not exist.");
         }
 
-        var (fileName, arguments) = ResolveShell(command);
         try
         {
-            var result = await TerminalSessionRunner.RunAsync(
-                fileName, arguments, workingDirectory, command,
-                timeoutMs, longLived, request.ToolCallId, cancellationToken).ConfigureAwait(false);
+            if (longLived)
+            {
+                // The Windows sandbox runner is deliberately one-shot: it owns the child process and
+                // returns bounded output only after exit. Never fall back to an unsandboxed long-lived
+                // terminal; a future streaming sandbox backend must explicitly implement this mode.
+                return Fail(request.ToolCallId, "long_lived shell sessions are unavailable until a streaming sandbox backend is configured.");
+            }
+
+            var (fileName, arguments) = ResolveSandboxCommand(command);
+            var permissions = CommandSandboxRuntime.MergeWithPolicy(
+                CommandSandboxRuntime.BuildPermissions(null, null, null));
+            var sandbox = await CommandSandboxRuntime.ExecuteSandboxedAsync(
+                fileName, arguments, workingDirectory, stdin: null, timeoutMs, permissions,
+                persistGrants: false, cancellationToken).ConfigureAwait(false);
+            if (sandbox.TimedOut)
+                return Fail(request.ToolCallId, sandbox.Error ?? $"Command timed out after {timeoutMs}ms and was terminated.");
+            var result = new ShellToolResult(
+                sandbox.Success,
+                $"sandbox-{request.ToolCallId}",
+                command,
+                "completed",
+                sandbox.ExitCode,
+                sandbox.Stdout,
+                sandbox.Stderr,
+                sandbox.StdoutTruncated,
+                sandbox.StderrTruncated,
+                sandbox.TimedOut,
+                sandbox.DurationMs,
+                sandbox.Error);
             return Ok(request.ToolCallId, result);
         }
         catch (OperationCanceledException)
@@ -144,6 +170,13 @@ internal static class ShellToolRegistration
         {
             return Fail(request.ToolCallId, ex.Message);
         }
+    }
+
+    internal static (string FileName, List<string> Arguments) ResolveSandboxCommand(string command)
+    {
+        if (OperatingSystem.IsWindows())
+            return ("cmd.exe", ["/d", "/s", "/c", command]);
+        return ("/bin/bash", ["-lc", command]);
     }
 
     private static string? ResolveWorkingDirectory(string? requested)
