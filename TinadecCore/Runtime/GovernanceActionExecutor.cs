@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.DmaEA;
 
@@ -8,7 +9,10 @@ namespace TinadecCore.Runtime;
 /// Communication decides who may submit the action; this class decides whether
 /// the operation is supported and delegates the state change to its owner.
 /// </summary>
-internal sealed class OrganizationReportActionExecutor(IGovernanceRunController runs) : IOrganizationReportActionExecutor
+internal sealed class OrganizationReportActionExecutor(
+    IGovernanceRunController runs,
+    IEnvironmentRegistry? environments = null,
+    ILifecycleManager? lifecycle = null) : IOrganizationReportActionExecutor
 {
     private static readonly HashSet<string> RunActions = ["pause_run", "resume_run", "stop_run"];
 
@@ -30,6 +34,8 @@ internal sealed class OrganizationReportActionExecutor(IGovernanceRunController 
 
         if (!RunActions.Contains(verb))
         {
+            if (verb == "assign_environment")
+                return await AssignEnvironmentAsync(request, cancellationToken).ConfigureAwait(false);
             return new OrganizationReportActionResult(
                 Completed: false,
                 Status: "not_executed",
@@ -83,6 +89,87 @@ internal sealed class OrganizationReportActionExecutor(IGovernanceRunController 
                 string.IsNullOrWhiteSpace(result.Code) ? "run_control_rejected" : result.Code,
                 string.IsNullOrWhiteSpace(result.Message) ? "The run control was rejected; the report remains open." : result.Message,
                 runId, result.Status);
+    }
+
+    private async Task<OrganizationReportActionResult> AssignEnvironmentAsync(
+        OrganizationReportActionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (environments is null)
+            return new OrganizationReportActionResult(false, "not_executed", "environment_registry_unavailable",
+                "No environment registry is available in this host; the report remains open.");
+        if (!string.Equals(request.SubjectKind, "run", StringComparison.OrdinalIgnoreCase)
+            || !Guid.TryParse(request.SubjectId, out var runId)
+            || runId == Guid.Empty)
+            return new OrganizationReportActionResult(false, "not_executed", "run_subject_required",
+                "assign_environment requires subject_kind=run and a valid subject_id.");
+
+        var arguments = ParseArguments(request.ArgumentsJson);
+        var key = arguments.GetValueOrDefault("key");
+        var kind = arguments.GetValueOrDefault("kind");
+        var reason = arguments.GetValueOrDefault("reason") ?? $"Governance report {request.ReportId:N}";
+        if (string.IsNullOrWhiteSpace(key) && string.IsNullOrWhiteSpace(kind))
+            return new OrganizationReportActionResult(false, "not_executed", "environment_target_required",
+                "assign_environment needs key or kind in proposed_args (JSON or key=value pairs).", runId);
+
+        var result = await environments.AcquireAsync(new EnvironmentAcquireRequest(
+            request.SessionId, runId, null, null, key, kind, reason), cancellationToken).ConfigureAwait(false);
+        if (!result.Granted)
+            return new OrganizationReportActionResult(false, "not_executed", "environment_unavailable",
+                result.Error ?? "No environment slot was available; the report remains open.", runId);
+
+        if (lifecycle is not null)
+        {
+            try
+            {
+                await lifecycle.AppendEventAsync(runId, "governance.environment_assigned", new
+                {
+                    report_id = request.ReportId,
+                    environment = result.Environment!.Key,
+                    kind = result.Environment.Kind,
+                    slot = result.Slot,
+                    lease_id = result.LeaseId,
+                    reason
+                }, "A governance report assigned an environment to the run.", "info", cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The durable resource lease is authoritative; a missing/terminal
+                // run event must not turn a granted slot into a second attempt.
+            }
+        }
+
+        return new OrganizationReportActionResult(true, "executed", "environment_assigned",
+            $"Environment '{result.Environment!.Key}' slot {result.Slot} was assigned to run {runId:N}.", runId, "assigned");
+    }
+
+    private static Dictionary<string, string> ParseArguments(string? raw)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw)) return result;
+        try
+        {
+            using var document = JsonDocument.Parse(raw);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in document.RootElement.EnumerateObject())
+                    if (property.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(property.Value.GetString()))
+                        result[property.Name.Trim()] = property.Value.GetString()!.Trim();
+                return result;
+            }
+        }
+        catch (JsonException)
+        {
+            // The report contract historically stored short prose. Keep accepting
+            // key=value;key=value for existing reports while writes use JSON.
+        }
+        foreach (var part in raw.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = part.IndexOf('=');
+            if (separator <= 0 || separator == part.Length - 1) continue;
+            result[part[..separator].Trim()] = part[(separator + 1)..].Trim();
+        }
+        return result;
     }
 }
 

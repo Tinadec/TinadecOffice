@@ -57,8 +57,8 @@ public static class OrganizationToolCatalog
                 ("subject_id", Str("The id (or path) of the subject, copied from graph_view.")),
                 ("finding", Str("What you observed and what you conclude, in two or three sentences.")),
                 ("evidence", ArrStr("Checkable references: event sequence numbers, lease ids, file:line, command output lines.")),
-                ("proposed_verb", Enum("The one action you recommend, if any.", "none", "wait", "serialize", "reassign", "separate_worktree", "narrow_scope", "pause_run", "resume_run", "stop_run", "ask_user")),
-                ("proposed_args", Str("Optional arguments of the proposed action, as short text (e.g. which task should wait for which).")),
+                ("proposed_verb", Enum("The one action you recommend, if any.", "none", "wait", "serialize", "reassign", "separate_worktree", "narrow_scope", "pause_run", "resume_run", "stop_run", "assign_environment", "ask_user")),
+                ("proposed_args", Str("Optional action arguments. For assign_environment prefer JSON such as {key: staging, reason: run tests} (JSON string) or key=value;key=value.")),
                 ("supersedes_report_id", Str("Optional report_id this one replaces; the old one is marked superseded."))),
             Writes: true),
 
@@ -75,7 +75,7 @@ public static class OrganizationToolCatalog
         new("org_execute_report",
             "Execute the open report's proposed governance action through the runtime action executor, then record acted only after the operation is accepted. "
             + "This is the only organization tool that changes a run because of a report. Read the report first and pass its exact revision; a stale revision or a target outside this session fails closed. "
-            + "Currently supported run actions are pause_run, resume_run and stop_run (stop_run maps to durable cancel). wait and ask_user leave the report open; unsupported actions also stay open with a reason.",
+            + "Currently supported actions are pause_run, resume_run, stop_run (stop_run maps to durable cancel) and assign_environment. wait and ask_user leave the report open; unsupported actions also stay open with a reason.",
             Obj(("report_id", Str("report_id from org_read.")),
                 ("expected_revision", Int("The report revision as org_read returned it."))),
             Writes: true),

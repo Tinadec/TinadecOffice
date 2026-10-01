@@ -256,6 +256,40 @@ public sealed class OrganizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnOpenReportActionCanAssignAnEnvironment_AndTheLeaseIsVisibleToTheRun()
+    {
+        var (meeting, worker, _, _) = await CastAsync();
+        var environmentRoot = Path.Combine(_root, "governed-environment");
+        Directory.CreateDirectory(environmentRoot);
+        await _factory.Services.GetRequiredService<IEnvironmentRegistry>().RegisterAsync(new EnvironmentRegistration(
+            "governed-test", EnvironmentKinds.Test, "Governed test", null,
+            JsonSerializer.Serialize(new { workspace_root = environmentRoot })));
+
+        var filed = await ToolAsync(worker, "org_report", new
+        {
+            kind = "budget", severity = "warning", subject_kind = "run", subject_id = _run.ToString("N"),
+            finding = "The task needs the governed test environment before continuing.", evidence = new[] { "plan room" },
+            proposed_verb = "assign_environment",
+            proposed_args = JsonSerializer.Serialize(new { key = "governed-test", reason = "governance requested test execution" })
+        });
+        Assert.True(filed.Ok, filed.Error);
+        var reportId = Guid.Parse(filed.Result.GetProperty("report_id").GetString()!);
+
+        var executed = await ToolAsync(meeting, "org_execute_report", new
+        {
+            report_id = reportId.ToString("N"), expected_revision = 1
+        });
+
+        Assert.True(executed.Ok, executed.Error);
+        Assert.True(executed.Result.GetProperty("executed").GetBoolean());
+        var environment = Assert.Single(await _factory.Services.GetRequiredService<IEnvironmentRegistry>().ListAsync());
+        Assert.Equal("governed-test", environment.Key);
+        var holder = Assert.Single(environment.Holders);
+        Assert.Equal(_run, holder.RunId);
+        Assert.Contains("governed-test", executed.Result.GetProperty("note").GetString());
+    }
+
+    [Fact]
     public async Task ANoticeWakesTheStandingMember_WhichActsInItsOwnTurn_AndTheBudgetPostponesInsteadOfDropping()
     {
         await CastAsync();

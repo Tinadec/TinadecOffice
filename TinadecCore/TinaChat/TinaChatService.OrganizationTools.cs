@@ -25,7 +25,7 @@ public sealed partial class TinaChatService
     private static readonly string[] ReportKinds = ["conflict", "risk", "drift", "budget", "progress"];
     private static readonly string[] ReportSeverities = ["info", "warning", "blocking"];
     private static readonly string[] SubjectKinds = ["run", "task", "lease", "approval", "member", "path"];
-    private static readonly string[] ProposedVerbs = ["wait", "serialize", "reassign", "separate_worktree", "narrow_scope", "stop_run", "ask_user"];
+    private static readonly string[] ProposedVerbs = ["wait", "serialize", "reassign", "separate_worktree", "narrow_scope", "pause_run", "resume_run", "stop_run", "assign_environment", "ask_user"];
 
     /// <summary>Gateway entry: the calling instance's own member acts.</summary>
     private async Task<object> OrganizationToolAsync(TenantContext scope, TinaChatToolCall call, CancellationToken ct)
