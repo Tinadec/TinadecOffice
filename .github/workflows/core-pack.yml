@@ -23,9 +23,9 @@ jobs:
   build-test-pack:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1    #v7.0.1
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  #v6.0.0
         with:
           dotnet-version: 10.0.300
 
@@ -47,7 +47,7 @@ jobs:
         run: dotnet pack TinadecCore/TinadecCore.slnx -c Release -o artifacts/nuget
 
       - name: Upload NuGet packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a #v7.0.1
         with:
           name: tinadec-core-nuget
           path: artifacts/nuget/*.nupkg
@@ -61,12 +61,12 @@ jobs:
     env:
       NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c #v8.0.1
         with:
           name: tinadec-core-nuget
           path: artifacts/nuget
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  #v6.0.0
         with:
           dotnet-version: 10.0.300
 
@@ -86,7 +86,7 @@ jobs:
     # A4 slice: keep the container image buildable; no registry push yet.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1    #v7.0.1
 
       - name: Build Core API image (no push)
         run: docker build -f TinadecCore/Api/Dockerfile -t tinadec-core-api:${{ github.sha }} .
