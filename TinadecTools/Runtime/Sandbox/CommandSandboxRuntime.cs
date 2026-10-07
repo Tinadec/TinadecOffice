@@ -110,9 +110,10 @@ internal static class CommandSandboxRuntime
         int timeoutMs,
         SandboxPermissions permissions,
         bool persistGrants,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? argumentString = null)
     {
-        SandboxRequestValidator.Validate(executable, arguments, workingDirectory, timeoutMs);
+        SandboxRequestValidator.Validate(executable, arguments, workingDirectory, timeoutMs, argumentString: argumentString);
 
         var fullWorkDir = SandboxPaths.ValidateWorkingDirectory(workingDirectory);
 
@@ -122,6 +123,7 @@ internal static class CommandSandboxRuntime
         {
             Executable = executable,
             Arguments = arguments,
+            ArgumentString = argumentString,
             WorkingDirectory = fullWorkDir,
             Stdin = stdin,
             TimeoutMs = timeoutMs
@@ -136,15 +138,17 @@ internal static class CommandSandboxRuntime
         string workingDirectory,
         int timeoutMs,
         SandboxPermissions permissions,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? argumentString = null)
     {
-        SandboxRequestValidator.Validate(executable, arguments, workingDirectory, timeoutMs);
+        SandboxRequestValidator.Validate(executable, arguments, workingDirectory, timeoutMs, argumentString: argumentString);
         var fullWorkDir = SandboxPaths.ValidateWorkingDirectory(workingDirectory);
         await _backend.EnsureSetupAsync(ct).ConfigureAwait(false);
         return await _backend.StartStreamingAsync(new SandboxRunnerRequest
         {
             Executable = executable,
             Arguments = arguments,
+            ArgumentString = argumentString,
             WorkingDirectory = fullWorkDir,
             TimeoutMs = timeoutMs
         }, permissions, ct).ConfigureAwait(false);

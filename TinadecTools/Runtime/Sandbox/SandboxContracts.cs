@@ -29,6 +29,15 @@ internal sealed class SandboxRunnerRequest
 {
     [JsonPropertyName("executable")] public string Executable { get; set; } = string.Empty;
     [JsonPropertyName("arguments")] public List<string> Arguments { get; set; } = new();
+    /// <summary>
+    /// Raw argument tail for parsers that own their command line. When set, the
+    /// Windows runner assigns it to <see cref="ProcessStartInfo.Arguments"/>
+    /// instead of encoding <see cref="Arguments"/> into argv — cmd.exe parses
+    /// its tail itself and does not understand MSVCRT's <c>\"</c> escaping, so
+    /// a shell command carrying quotes cannot survive the ArgumentList path.
+    /// Only meaningful on Windows; POSIX backends fail closed when it is set.
+    /// </summary>
+    [JsonPropertyName("argument_string")] public string? ArgumentString { get; set; }
     [JsonPropertyName("working_directory")] public string WorkingDirectory { get; set; } = string.Empty;
     [JsonPropertyName("stdin")] public string? Stdin { get; set; }
     [JsonPropertyName("timeout_ms")] public int TimeoutMs { get; set; } = 30_000;

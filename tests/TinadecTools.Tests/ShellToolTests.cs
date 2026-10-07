@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Text.Json;
 using TinadecTools.Abstractions;
 using TinadecTools.Runtime.Sandbox;
+using TinadecTools.Runtime.Sandbox.Windows;
 using TinadecTools.Tools.Command;
+using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tests;
 
@@ -27,16 +29,76 @@ public sealed class ShellToolTests
     // ── A1: cmd quoting ────────────────────────────────────────────────────────
 
     [Fact]
-    public void ResolveShell_Windows_WrapsCommandWithoutBackslashEscapes()
+    public void ResolveSandboxCommand_Windows_CarriesCommandAsRawArgumentString()
     {
         if (!OperatingSystem.IsWindows()) return;
 
-        var (fileName, arguments) = ShellToolRegistration.ResolveShell("echo \"hi\"");
+        var (fileName, arguments, argumentString) = ShellToolRegistration.ResolveSandboxCommand("echo \"hi\"");
 
         Assert.Equal("cmd.exe", fileName);
+        Assert.Equal("/d /s /c", string.Join(' ', arguments));
         // cmd /d /s /c strips exactly the outer quote pair; inner quotes pass through.
-        Assert.Equal("/d /s /c \"echo \"hi\"\"", arguments);
-        Assert.DoesNotContain("\\\"", arguments);
+        Assert.Equal("/d /s /c \"echo \"hi\"\"", argumentString);
+        Assert.DoesNotContain("\\\"", argumentString);
+    }
+
+    // The regression must drive a real cmd.exe: the fake sandbox backend never
+    // spawns a process, so quoting bugs are invisible to it — the dispatch-level
+    // tests below used to pass while production corrupted every quoted command.
+    [Fact]
+    public void RealCmd_ParsesInnerQuotesThroughTheRawTail()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var (_, _, argumentString) = ShellToolRegistration.ResolveSandboxCommand("echo \"hi\"");
+        var response = WindowsSandboxRunner.RunSandboxedProcess(new SandboxRunnerRequest
+        {
+            Executable = "cmd.exe",
+            Arguments = ["/d", "/s", "/c"],
+            ArgumentString = argumentString,
+            WorkingDirectory = FileToolRuntime.WorkspaceRoot,
+            TimeoutMs = 30_000,
+            Environment = MinimalWindowsEnvironment()
+        });
+
+        Assert.True(response.Success, response.Stderr);
+        Assert.Contains("\"hi\"", response.Stdout);
+        Assert.DoesNotContain("\\", response.Stdout); // no stray backslashes from mis-escaping
+    }
+
+    [Fact]
+    public void RealCmd_GitCommitStyleQuoting_SurvivesToTheChild()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var (_, _, argumentString) = ShellToolRegistration.ResolveSandboxCommand("echo git commit -m \"initial commit\"");
+        var response = WindowsSandboxRunner.RunSandboxedProcess(new SandboxRunnerRequest
+        {
+            Executable = "cmd.exe",
+            Arguments = ["/d", "/s", "/c"],
+            ArgumentString = argumentString,
+            WorkingDirectory = FileToolRuntime.WorkspaceRoot,
+            TimeoutMs = 30_000,
+            Environment = MinimalWindowsEnvironment()
+        });
+
+        Assert.True(response.Success, response.Stderr);
+        Assert.Contains("git commit -m \"initial commit\"", response.Stdout);
+    }
+
+    private static Dictionary<string, string> MinimalWindowsEnvironment()
+    {
+        var systemRoot = Environment.GetEnvironmentVariable("SystemRoot")
+            ?? Environment.GetEnvironmentVariable("windir")
+            ?? @"C:\Windows";
+        var temp = Environment.GetEnvironmentVariable("TEMP") ?? systemRoot;
+        return new Dictionary<string, string>
+        {
+            ["SystemRoot"] = systemRoot,
+            ["TEMP"] = temp,
+            ["TMP"] = temp,
+            ["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? string.Empty
+        };
     }
 
     [Fact]
@@ -195,7 +257,9 @@ public sealed class ShellToolTests
         public Task<SandboxRunnerResponse> ExecuteAsync(SandboxRunnerRequest request, SandboxPermissions permissions,
             bool persistGrants, CancellationToken ct)
         {
-            var command = request.Arguments.LastOrDefault() ?? string.Empty;
+            // Production hands cmd the command as the raw tail; mirror that here so
+            // the dispatch-level quoting tests exercise the real payload shape.
+            var command = request.ArgumentString ?? request.Arguments.LastOrDefault() ?? string.Empty;
             if (command.Contains("ping", StringComparison.OrdinalIgnoreCase) || command.Contains("sleep", StringComparison.OrdinalIgnoreCase))
                 return Task.FromResult(new SandboxRunnerResponse { Success = false, TimedOut = true, ExitCode = -1, Error = $"Command timed out after {request.TimeoutMs}ms." });
             if (command.Contains("exit 3", StringComparison.OrdinalIgnoreCase))
@@ -221,7 +285,10 @@ public sealed class ShellToolTests
                 RedirectStandardInput = true,
                 CreateNoWindow = true
             };
-            foreach (var argument in request.Arguments) psi.ArgumentList.Add(argument);
+            if (request.ArgumentString is not null)
+                psi.Arguments = request.ArgumentString;
+            else
+                foreach (var argument in request.Arguments) psi.ArgumentList.Add(argument);
             var process = Process.Start(psi) ?? throw new InvalidOperationException("test process did not start");
             return Task.FromResult(new SandboxStreamingProcess(process, new NoopCleanup()));
         }

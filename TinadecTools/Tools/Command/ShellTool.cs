@@ -54,20 +54,6 @@ internal static class ShellToolRegistration
             retrySafety: "safe");
     }
 
-    // Internal for tests: the cmd quoting rule is the regression surface.
-    internal static (string FileName, string Arguments) ResolveShell(string command)
-    {
-        if (OperatingSystem.IsWindows())
-            // cmd has no backslash escaping. Under /d /s /c it strips exactly the
-            // outermost quote pair and executes the rest verbatim, so wrapping the
-            // whole command in quotes preserves every inner quote as-is.
-            return ("cmd.exe", $"/d /s /c \"{command}\"");
-        return ("/bin/bash", $"-lc {EscapeSingleQuoted(command)}");
-    }
-
-    private static string EscapeSingleQuoted(string value) =>
-        "'" + value.Replace("'", "'\\''") + "'";
-
     private static async ValueTask<ToolCallResponse<JsonElement>> HandleShellAsync(
         ToolCallRequest<JsonElement> request,
         CancellationToken cancellationToken)
@@ -133,22 +119,23 @@ internal static class ShellToolRegistration
         {
             if (longLived)
             {
-                var (streamFileName, streamArguments) = ResolveSandboxCommand(command);
+                var (streamFileName, streamArguments, streamArgumentString) = ResolveSandboxCommand(command);
                 var streamPermissions = CommandSandboxRuntime.MergeWithPolicy(
                     CommandSandboxRuntime.BuildPermissions(null, null, null));
                 var streamingSandbox = await CommandSandboxRuntime.StartStreamingAsync(
-                    streamFileName, streamArguments, workingDirectory, timeoutMs, streamPermissions, cancellationToken).ConfigureAwait(false);
+                    streamFileName, streamArguments, workingDirectory, timeoutMs, streamPermissions, cancellationToken,
+                    streamArgumentString).ConfigureAwait(false);
                 var streamed = await TerminalSessionRunner.RunSandboxedStreamingAsync(
                     streamingSandbox, workingDirectory, command, request.ToolCallId, cancellationToken).ConfigureAwait(false);
                 return Ok(request.ToolCallId, streamed);
             }
 
-            var (fileName, arguments) = ResolveSandboxCommand(command);
+            var (fileName, arguments, argumentString) = ResolveSandboxCommand(command);
             var permissions = CommandSandboxRuntime.MergeWithPolicy(
                 CommandSandboxRuntime.BuildPermissions(null, null, null));
             var sandbox = await CommandSandboxRuntime.ExecuteSandboxedAsync(
                 fileName, arguments, workingDirectory, stdin: null, timeoutMs, permissions,
-                persistGrants: false, cancellationToken).ConfigureAwait(false);
+                persistGrants: false, cancellationToken, argumentString).ConfigureAwait(false);
             if (sandbox.TimedOut)
                 return Fail(request.ToolCallId, sandbox.Error ?? $"Command timed out after {timeoutMs}ms and was terminated.");
             var result = new ShellToolResult(
@@ -176,11 +163,14 @@ internal static class ShellToolRegistration
         }
     }
 
-    internal static (string FileName, List<string> Arguments) ResolveSandboxCommand(string command)
+    internal static (string FileName, List<string> Arguments, string? ArgumentString) ResolveSandboxCommand(string command)
     {
         if (OperatingSystem.IsWindows())
-            return ("cmd.exe", ["/d", "/s", "/c", command]);
-        return ("/bin/bash", ["-lc", command]);
+            // cmd.exe parses its own command-line tail and does not understand
+            // MSVCRT \" escaping, so the command travels as the raw tail of
+            // /s (ArgumentString) instead of an encoded argv entry.
+            return ("cmd.exe", ["/d", "/s", "/c"], $"/d /s /c \"{command}\"");
+        return ("/bin/bash", ["-lc", command], null);
     }
 
     private static string? ResolveWorkingDirectory(string? requested)

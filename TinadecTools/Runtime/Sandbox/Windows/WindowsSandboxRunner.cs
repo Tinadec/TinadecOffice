@@ -62,7 +62,8 @@ internal static class WindowsSandboxRunner
                 request.Arguments,
                 request.WorkingDirectory,
                 request.TimeoutMs,
-                request.Environment);
+                request.Environment,
+                request.ArgumentString);
             if (request.Environment is null)
                 throw new InvalidDataException("Sandbox runner environment is required.");
             var response = RunSandboxedProcess(request);
@@ -80,14 +81,17 @@ internal static class WindowsSandboxRunner
         }
     }
 
-    private static SandboxRunnerResponse RunSandboxedProcess(SandboxRunnerRequest request)
+    // Internal for tests: the cmd.exe quoting regression is verified by driving
+    // the real process spawn directly, without the sandbox account setup.
+    internal static SandboxRunnerResponse RunSandboxedProcess(SandboxRunnerRequest request)
     {
         SandboxRequestValidator.Validate(
             request.Executable,
             request.Arguments,
             request.WorkingDirectory,
             request.TimeoutMs,
-            request.Environment);
+            request.Environment,
+            request.ArgumentString);
         if (request.Environment is null)
             throw new InvalidDataException("Sandbox runner environment is required.");
 
@@ -105,8 +109,18 @@ internal static class WindowsSandboxRunner
             CreateNoWindow = true
         };
 
-        foreach (var arg in request.Arguments)
-            psi.ArgumentList.Add(arg);
+        // ArgumentString and ArgumentList are mutually exclusive on
+        // ProcessStartInfo; a raw tail means the child parses its own command
+        // line (cmd.exe with /s), everything else goes through argv encoding.
+        if (request.ArgumentString is not null)
+        {
+            psi.Arguments = request.ArgumentString;
+        }
+        else
+        {
+            foreach (var arg in request.Arguments)
+                psi.ArgumentList.Add(arg);
+        }
 
         psi.Environment.Clear();
         foreach (var kv in request.Environment)

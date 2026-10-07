@@ -134,6 +134,12 @@ internal sealed class PosixSandboxBackend : ISandboxBackend
     /// </summary>
     internal static ProcessStartInfo BuildLaunch(SandboxRunnerRequest request, SandboxPermissions permissions)
     {
+        // The raw tail is a Windows contract (cmd.exe reparses its own command
+        // line); POSIX launches every command as execve argv, so a payload
+        // carrying one is a protocol error, not something to silently drop.
+        if (request.ArgumentString is not null)
+            throw new NotSupportedException("argument_string is Windows-only; POSIX launches commands as argv.");
+
         var environment = request.Environment ?? SandboxEnvironment.Build(null, permissions.EnvironmentVariableNames);
         var writePaths = WriteTargets(request, permissions, environment);
 

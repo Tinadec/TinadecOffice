@@ -89,7 +89,13 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
                 StandardOutputEncoding = System.Text.Encoding.UTF8,
                 StandardErrorEncoding = System.Text.Encoding.UTF8
             };
-            foreach (var argument in request.Arguments) psi.ArgumentList.Add(argument);
+            // Same contract as WindowsSandboxRunner: a raw tail is assigned to
+            // Arguments so cmd.exe parses it itself; both fields are mutually
+            // exclusive on ProcessStartInfo.
+            if (request.ArgumentString is not null)
+                psi.Arguments = request.ArgumentString;
+            else
+                foreach (var argument in request.Arguments) psi.ArgumentList.Add(argument);
             psi.Environment.Clear();
             foreach (var pair in request.Environment) psi.Environment[pair.Key] = pair.Value;
 
