@@ -1,5 +1,6 @@
 const { BrowserWindow } = require('electron');
 const path = require('node:path');
+const { appBundleUrl, externalLinkWindowOpenHandler } = require('./appBundle.cjs');
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
@@ -32,13 +33,12 @@ async function createDebugStudioWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
-      webSecurity: false
+      sandbox: true
     }
   });
   debugStudioWindow = win;
 
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(externalLinkWindowOpenHandler);
 
   win.once('ready-to-show', () => {
     win.show();
@@ -69,10 +69,7 @@ async function createDebugStudioWindow() {
     if (isDev) {
       await win.loadURL(`${process.env.VITE_DEV_SERVER_URL}?splash=0#/debug-studio`);
     } else {
-      await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
-        hash: '/debug-studio',
-        query: { splash: '0' }
-      });
+      await win.loadURL(appBundleUrl('/debug-studio', { splash: '0' }));
     }
   } catch (error) {
     console.error('[debug-studio] Load failed:', error.message);

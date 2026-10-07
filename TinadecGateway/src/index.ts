@@ -60,7 +60,9 @@ function corsHeadersFor(origin: string | null): Record<string, string> {
 const ALLOWED_ORIGINS: (string | RegExp)[] = [
   /^http:\/\/127\.0\.0\.1:\d+$/,
   /^http:\/\/localhost:\d+$/,
-  'file://',
+  // The packaged desktop renderer loads from this custom scheme instead of
+  // file:// so it keeps same-origin policy; its fetches carry this real origin.
+  'app://bundle',
   'tauri://localhost',
   'https://tauri.localhost',
   ...config.corsExtraOrigins.map((origin) => {

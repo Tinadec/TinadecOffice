@@ -2,6 +2,7 @@ const { BrowserWindow, screen } = require('electron');
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const { getPetForWindow, getPetPreferences, savePetPreferences, setEnabled } = require('./petStore.cjs');
+const { appBundleUrl, externalLinkWindowOpenHandler } = require('./appBundle.cjs');
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const noTransparency = process.env.TINADEC_DISABLE_TRANSPARENCY === '1';
@@ -35,7 +36,7 @@ function clampBounds(bounds = {}, offset = 0) {
 function petWindowUrl(instanceId) {
   const hash = `/pet?instanceId=${encodeURIComponent(instanceId)}`;
   if (isDev) return `${process.env.VITE_DEV_SERVER_URL}?splash=0#${hash}`;
-  return { file: path.join(__dirname, '..', 'dist', 'index.html'), hash, query: { splash: '0' } };
+  return appBundleUrl(hash, { splash: '0' });
 }
 
 async function createPetWindow(petId) {
@@ -77,12 +78,11 @@ async function createPetWindow(petId) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: false,
     },
   });
 
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(externalLinkWindowOpenHandler);
   const entry = { window: win, petId, scale, saveTimer: null };
   petWindows.set(instanceId, entry);
   const saveBounds = () => {
@@ -100,11 +100,7 @@ async function createPetWindow(petId) {
   win.once('ready-to-show', () => win.show());
 
   const target = petWindowUrl(instanceId);
-  if (typeof target === 'string') {
-    await win.loadURL(target);
-  } else {
-    await win.loadFile(target.file, { hash: target.hash, query: target.query });
-  }
+  await win.loadURL(target);
 
   return { instanceId, windowId: win.id };
 }

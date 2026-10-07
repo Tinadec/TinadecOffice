@@ -62,11 +62,25 @@ const {
   removePet,
   setEnabled,
 } = require('./petStore.cjs');
+const {
+  APP_BUNDLE_ORIGIN,
+  registerAppBundleProtocol,
+  externalLinkWindowOpenHandler,
+} = require('./appBundle.cjs');
 
-protocol.registerSchemesAsPrivileged([{
-  scheme: 'tinadec-pet-preview',
-  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
-}]);
+protocol.registerSchemesAsPrivileged([
+  // The packaged renderer's own origin: a standard, secure scheme so windows
+  // keep same-origin policy while loading local files (replaces file:// + the
+  // webSecurity:false every window used to carry).
+  {
+    scheme: 'app',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+  {
+    scheme: 'tinadec-pet-preview',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
+]);
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
@@ -94,8 +108,7 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
-      webSecurity: false
+      sandbox: true
     }
   });
 
@@ -103,7 +116,9 @@ async function createWindow() {
   // can reliably distinguish it from the Debug Studio window.
   tagMainWindow(win);
 
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Keep popups denied, but send http(s) links to the user's browser instead of
+  // silently swallowing them (the About page's repo link used to do nothing).
+  win.webContents.setWindowOpenHandler(externalLinkWindowOpenHandler);
 
   win.once('ready-to-show', () => {
     win.show();
@@ -115,7 +130,7 @@ async function createWindow() {
   if (isDev) {
     await win.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    await win.loadURL(`${APP_BUNDLE_ORIGIN}/index.html`);
   }
 
   // Restore any persisted panel windows after the main window is ready
@@ -426,6 +441,9 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
+  // Serve the packaged renderer from its own origin. Must be in place before
+  // the first window loads app://bundle.
+  registerAppBundleProtocol();
   const gatewayUrl = loadAppConfig(appConfigFile()).gateway_url;
   process.env.TINADEC_RESOLVED_GATEWAY_URL = gatewayUrl;
   try {

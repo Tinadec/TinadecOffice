@@ -1,6 +1,7 @@
 const { BrowserWindow, screen, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { appBundleUrl, externalLinkWindowOpenHandler } = require('./appBundle.cjs');
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
@@ -184,11 +185,10 @@ async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: false,
     },
   });
 
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(externalLinkWindowOpenHandler);
   // Mirrors tagMainWindow(): lets the terminal output router recognise a window that
   // can host a terminal view without consulting the panel tracking Map.
   win._isTinadecPanel = true;
@@ -255,11 +255,8 @@ async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
       console.error('[panelWindow] loadURL error:', err.message);
     });
   } else {
-    await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
-      hash: hashPath,
-      query: { splash: '0' },
-    }).catch((err) => {
-      console.error('[panelWindow] loadFile error:', err.message);
+    await win.loadURL(appBundleUrl(hashPath, { splash: '0' })).catch((err) => {
+      console.error('[panelWindow] loadURL error:', err.message);
     });
   }
 

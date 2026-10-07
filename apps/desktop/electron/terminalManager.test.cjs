@@ -92,11 +92,38 @@ function emit(id, data) {
 test('createTerminal reports the PTY backend instead of degrading silently', async () => {
   const result = terminalManager.createTerminal({ cols: 100, rows: 30 })
 
-  assert.equal(result.id, 'term-1')
+  assert.match(result.id, /^term-\d+$/)
   assert.equal(result.backend, 'pty')
   assert.equal(result.error, undefined)
   assert.equal(ptySpawns.length, 1)
   assert.ok(path.isAbsolute(ptySpawns[0].shell), `expected absolute shell, got ${ptySpawns[0].shell}`)
+})
+
+// The id is server-generated: honoring a client-chosen id would let a create
+// overwrite a live Map entry and orphan its PTY. Cases create first and use
+// the returned id.
+function createTerminal(options = {}) {
+  const result = terminalManager.createTerminal(options)
+  assert.ok(result.id, `createTerminal failed: ${result.error}`)
+  return result.id
+}
+
+test('createTerminal refuses shells outside the catalog', () => {
+  const result = terminalManager.createTerminal({ shell: 'C:\\Windows\\System32\\notepad.exe' })
+
+  assert.equal(result.id, null)
+  assert.match(result.error, /allowed catalog/)
+  assert.equal(ptySpawns.length, 0)
+})
+
+test('createTerminal accepts a catalog shell and takes its args from the catalog', () => {
+  const [profile] = terminalManager.getAvailableShells()
+
+  const id = createTerminal({ shell: profile.shell, args: ['--evil-flag'] })
+
+  assert.ok(id)
+  assert.equal(ptySpawns[0].shell, profile.shell)
+  assert.deepEqual(ptySpawns[0].args, profile.args)
 })
 
 test('createTerminal fails loudly when the addon cannot spawn', async () => {
@@ -131,25 +158,25 @@ test('shell catalog exposes no bare powershell.exe', () => {
 })
 
 test('output is coalesced into one send per window', async () => {
-  terminalManager.createTerminal({ id: 'term-a' })
-  emit('term-a', 'a')
-  emit('term-a', 'b')
-  emit('term-a', 'c')
+  const id = createTerminal()
+  emit(id, 'a')
+  emit(id, 'b')
+  emit(id, 'c')
 
   assert.deepEqual(sends, [], 'nothing should cross IPC before the flush window closes')
   await new Promise((resolve) => setTimeout(resolve, 40))
 
-  const dataSends = sends.filter((s) => s.channel === 'terminal:data:term-a')
+  const dataSends = sends.filter((s) => s.channel === `terminal:data:${id}`)
   assert.equal(dataSends.length, 1)
   assert.equal(dataSends[0].payload, 'abc')
 })
 
 test('a late snapshot returns output printed before it subscribed', () => {
-  terminalManager.createTerminal({ id: 'term-b' })
-  emit('term-b', 'banner\r\n')
-  emit('term-b', 'C:\\work> ')
+  const id = createTerminal()
+  emit(id, 'banner\r\n')
+  emit(id, 'C:\\work> ')
 
-  const snapshot = terminalManager.readTerminalSnapshot('term-b')
+  const snapshot = terminalManager.readTerminalSnapshot(id)
   assert.equal(snapshot.replay, 'banner\r\nC:\\work> ')
   assert.equal(snapshot.exited, false)
 })
@@ -160,8 +187,8 @@ test('output reaches only declared terminal hosts', async () => {
   liveWindows = [host, petWindow]
   terminalManager.setTerminalHostFilter(() => [host])
 
-  terminalManager.createTerminal({ id: 'term-c' })
-  emit('term-c', 'hello')
+  const id = createTerminal()
+  emit(id, 'hello')
   await new Promise((resolve) => setTimeout(resolve, 40))
 
   assert.equal(sends.length, 1)
@@ -169,34 +196,34 @@ test('output reaches only declared terminal hosts', async () => {
 })
 
 test('exit flushes pending output before reporting', async () => {
-  terminalManager.createTerminal({ id: 'term-d' })
-  emit('term-d', 'last words')
+  const id = createTerminal()
+  emit(id, 'last words')
   ptyExitHandler({ exitCode: 3, signal: undefined })
 
   const channels = sends.map((s) => s.channel)
-  assert.deepEqual(channels, ['terminal:data:term-d', 'terminal:exit:term-d'])
-  const snapshot = terminalManager.readTerminalSnapshot('term-d')
+  assert.deepEqual(channels, [`terminal:data:${id}`, `terminal:exit:${id}`])
+  const snapshot = terminalManager.readTerminalSnapshot(id)
   assert.equal(snapshot.exited, true)
   assert.equal(snapshot.exitCode, 3)
 })
 
 test('destroy drops the entry so nothing stays reachable', () => {
-  terminalManager.createTerminal({ id: 'term-e' })
-  emit('term-e', 'x')
-  terminalManager.destroyTerminal('term-e')
+  const id = createTerminal()
+  emit(id, 'x')
+  terminalManager.destroyTerminal(id)
 
-  assert.equal(terminalManager.readTerminalSnapshot('term-e'), null)
+  assert.equal(terminalManager.readTerminalSnapshot(id), null)
   assert.deepEqual(terminalManager.listTerminals(), [])
 })
 
 test('resize refuses a zero size measured against a hidden host', () => {
-  terminalManager.createTerminal({ id: 'term-f', cols: 80, rows: 24 })
-  const entry = terminalManager.getTerminal('term-f')
+  const id = createTerminal({ cols: 80, rows: 24 })
+  const entry = terminalManager.getTerminal(id)
 
-  terminalManager.resizeTerminal('term-f', 0, 1)
+  terminalManager.resizeTerminal(id, 0, 1)
   assert.equal(entry.cols, 80)
 
-  terminalManager.resizeTerminal('term-f', 120, 40)
+  terminalManager.resizeTerminal(id, 120, 40)
   assert.equal(entry.cols, 120)
   assert.equal(entry.rows, 40)
 })

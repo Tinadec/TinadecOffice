@@ -225,10 +225,26 @@ function buildEnv(extra = {}) {
  * @returns {{id: string|null, shell?: string, title?: string, backend: 'pty'|null, error?: string}}
  */
 function createTerminal(options = {}, ownerWebContentsId = null) {
-  const id = options.id || generateId();
+  // The id is always server-generated. Honoring a client-supplied id would let a
+  // create overwrite an existing Map entry and orphan its live PTY process.
+  const id = generateId();
   const defaultShell = getDefaultShell();
-  const shell = options.shell || defaultShell.shell;
-  const args = options.args || defaultShell.args;
+  // terminal:create is an arbitrary-process primitive unless the shell is pinned
+  // to this machine's catalog. The renderer only ever passes catalog values
+  // (from terminal:get-shells) or nothing; anything else is refused, and args
+  // always come from the catalog rather than the request.
+  const requestedShell = typeof options.shell === 'string' && options.shell ? options.shell : null;
+  const samePath = (a, b) => {
+    try { return path.resolve(a) === path.resolve(b); } catch { return false; }
+  };
+  const profile = requestedShell
+    ? getAvailableShells().find((s) => samePath(s.shell, requestedShell) || s.id === requestedShell)
+    : defaultShell;
+  if (!profile) {
+    return { id: null, backend: null, error: `Shell is not in the allowed catalog: ${requestedShell}` };
+  }
+  const shell = profile.shell;
+  const args = profile.args;
   const cwd = options.cwd || process.env.HOME || process.env.USERPROFILE || os.homedir();
   const cols = options.cols || 80;
   const rows = options.rows || 24;
@@ -501,6 +517,17 @@ function readTerminalSnapshot(id) {
 // ---- IPC Handler Registration ----
 
 /**
+ * Terminals are per-window property: the window that created one owns it
+ * (the detached panel spawns its own). A foreign window's renderer may not
+ * write to, resize, kill, or read another window's shell.
+ */
+function isOwner(event, id) {
+  const entry = terminals.get(String(id));
+  if (!entry || entry.ownerWebContentsId == null) return true;
+  return event.sender.id === entry.ownerWebContentsId;
+}
+
+/**
  * Register all terminal-related IPC handlers.
  * Should be called once during app initialization.
  * @param {{hostFilter?: () => import('electron').BrowserWindow[]}} [options]
@@ -515,22 +542,26 @@ function registerTerminalIpc(registration = {}) {
   });
 
   // Write data to a terminal
-  ipcMain.on('terminal:write', (_event, id, data) => {
+  ipcMain.on('terminal:write', (event, id, data) => {
+    if (!isOwner(event, id)) return;
     writeTerminal(id, data);
   });
 
   // Resize a terminal
-  ipcMain.on('terminal:resize', (_event, id, cols, rows) => {
+  ipcMain.on('terminal:resize', (event, id, cols, rows) => {
+    if (!isOwner(event, id)) return;
     resizeTerminal(id, cols, rows);
   });
 
   // Destroy a terminal
-  ipcMain.on('terminal:destroy', (_event, id) => {
+  ipcMain.on('terminal:destroy', (event, id) => {
+    if (!isOwner(event, id)) return;
     destroyTerminal(id);
   });
 
   // Replay what a terminal has printed so far
-  ipcMain.handle('terminal:snapshot', async (_event, id) => {
+  ipcMain.handle('terminal:snapshot', async (event, id) => {
+    if (!isOwner(event, id)) return null;
     return readTerminalSnapshot(id);
   });
 
