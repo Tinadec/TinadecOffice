@@ -14,8 +14,12 @@ export const useRunStore = defineStore('run', () => {
 
   const current = computed(() => runs.value.find(r => r.id === selectedRunId.value) ?? runs.value[0] ?? null)
 
+  // Last call wins — see useWorkbenchStore.fetchAll for the overlapping-refresh rationale.
+  let fetchSeq = 0
+
   async function fetchRuns(sessionId: string) {
-    try { runs.value = await generatedApi.listRuns(sessionId) } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
+    const seq = ++fetchSeq
+    try { const fetched = await generatedApi.listRuns(sessionId); if (seq !== fetchSeq) return; runs.value = fetched } catch (e) { if (seq !== fetchSeq) return; error.value = e instanceof Error ? e.message : String(e) }
     if (selectedRunId.value && !runs.value.find(r => r.id === selectedRunId.value)) selectedRunId.value = runs.value[0]?.id ?? null
     if (!selectedRunId.value) selectedRunId.value = runs.value[0]?.id ?? null
   }

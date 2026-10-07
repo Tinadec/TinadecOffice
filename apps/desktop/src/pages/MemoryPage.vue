@@ -42,22 +42,32 @@ function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+// Last call wins: each filter @change starts a fresh load, so a slow response
+// for a filter the user already flipped away from must not replace the queue.
+let loadSeq = 0
+
 async function load(): Promise<void> {
+  const seq = ++loadSeq
+  const requestedStatus = status.value
+  const requestedScope = scope.value
+  const requestedHistory = showHistory.value
   loading.value = true
   loadError.value = null
   try {
     const [queue, shelf] = await Promise.all([
-      api.listMemoryCandidates({ status: status.value, scope: scope.value || undefined, limit: PAGE }),
-      api.listMemoryItems({ status: showHistory.value ? 'revoked' : 'active', scope: scope.value || undefined, limit: PAGE }),
+      api.listMemoryCandidates({ status: requestedStatus, scope: requestedScope || undefined, limit: PAGE }),
+      api.listMemoryItems({ status: requestedHistory ? 'revoked' : 'active', scope: requestedScope || undefined, limit: PAGE }),
     ])
+    if (seq !== loadSeq) return
     candidates.value = queue
     items.value = shelf
   } catch (e) {
+    if (seq !== loadSeq) return
     loadError.value = errorMessage(e)
     candidates.value = []
     items.value = []
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 

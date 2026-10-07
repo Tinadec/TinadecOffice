@@ -41,16 +41,26 @@ const sorted = computed(() =>
   [...snapshots.value].sort((a, b) => b.created_at.localeCompare(a.created_at)),
 )
 
+// Last call wins: selectProject clears the list and starts a new read, so a
+// slow response for the previous project must be discarded instead of
+// repopulating the page with rows the user believes belong to the new one.
+let loadSeq = 0
+
 async function load(): Promise<void> {
   if (!selectedProjectId.value) return
+  const seq = ++loadSeq
+  const requestedProjectId = selectedProjectId.value
   loading.value = true
   loadError.value = null
   try {
-    snapshots.value = await api.listWorkspaceSnapshots(selectedProjectId.value)
+    const fetched = await api.listWorkspaceSnapshots(requestedProjectId)
+    if (seq !== loadSeq) return
+    snapshots.value = fetched
   } catch (e) {
+    if (seq !== loadSeq) return
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -105,9 +115,15 @@ function describeError(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+let changesSeq = 0
+
 async function loadChanges(): Promise<void> {
   if (!reviewSnapshotId.value) return
-  changes.value = await api.listWorkspaceSnapshotFiles(reviewSnapshotId.value)
+  const seq = ++changesSeq
+  const requestedSnapshotId = reviewSnapshotId.value
+  const fetched = await api.listWorkspaceSnapshotFiles(requestedSnapshotId)
+  if (seq !== changesSeq || reviewSnapshotId.value !== requestedSnapshotId) return
+  changes.value = fetched
 }
 
 async function toggleReview(snapshot: SnapshotDto): Promise<void> {

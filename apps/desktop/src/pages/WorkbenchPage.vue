@@ -40,17 +40,26 @@ const selectedInstance = computed(
   () => lineage.value.find((x) => x.id === selectedInstanceId.value) ?? null,
 )
 
+// Last call wins: refresh fires on both session and run switches, so a slow
+// lineage response for a run the user already left must not land after the
+// newer one and repaint the canvas with stale data.
+let lineageSeq = 0
+
 async function loadLineage(): Promise<void> {
   lineage.value = []
   selectedInstanceId.value = null
   if (!runId.value) return
+  const seq = ++lineageSeq
+  const requestedRunId = runId.value
   try {
-    const rows = await api.getRunAgentLineage(runId.value)
+    const rows = await api.getRunAgentLineage(requestedRunId)
+    if (seq !== lineageSeq || runId.value !== requestedRunId) return
     // git_steward vs worker.git are distinct roles; label with role when no
     // friendlier name is projected.
     lineage.value = rows.map((row) => ({ ...row, display_name: row.role }))
   } catch {
     // Lineage is a projection; absence degrades the canvas to empty state.
+    if (seq !== lineageSeq || runId.value !== requestedRunId) return
     lineage.value = []
   }
 }

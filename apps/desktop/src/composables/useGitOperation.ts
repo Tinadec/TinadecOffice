@@ -195,6 +195,11 @@ export function useGitOperation(
   // 拉取策略：后端当前仅支持 ff-only，merge/rebase 在 UI 上预留并禁用，避免静默行为不一致。
   const pullStrategy = ref<'ff-only' | 'merge' | 'rebase'>('ff-only')
 
+  // 项目切换时自增；每个异步加载在开始时记下当时的值，await 返回后若已变化则丢弃结果。
+  // 否则上一个项目的慢响应会覆盖新项目的面板数据——用户会拿着旧仓库的文件清单
+  // 配上新仓库的 cwd 去暂存/提交（错误仓库写入）。
+  let cwdEpoch = 0
+
   // Approval tracking
   const indexApprovalId = ref<string | null>(null)
   const indexAction = ref<'stage' | 'unstage' | null>(null)
@@ -520,6 +525,7 @@ export function useGitOperation(
       selectedPaths.value = new Set()
       return
     }
+    const epoch = cwdEpoch
     loading.value = true
     try {
       const [nextPreview, nextPushPlan] = await Promise.all([
@@ -532,22 +538,28 @@ export function useGitOperation(
           arguments: { action: 'push_plan' },
         }),
       ])
+      if (epoch !== cwdEpoch) return
       preview.value = nextPreview
       pushPlan.value = nextPushPlan
       syncSelection()
     } catch (err) {
+      if (epoch !== cwdEpoch) return
       notifyOperationError(err, t('context.gitLoadFailed'))
     } finally {
-      loading.value = false
+      if (epoch === cwdEpoch) loading.value = false
     }
   }
 
   async function loadLog(limit = 50, ref?: string) {
     const path = cwd.value
     if (!path) return
+    const epoch = cwdEpoch
     try {
-      logResult.value = await api.gitLog(path, limit, ref)
+      const res = await api.gitLog(path, limit, ref)
+      if (epoch !== cwdEpoch) return
+      logResult.value = res
     } catch (err) {
+      if (epoch !== cwdEpoch) return
       logResult.value = null
       notifyOperationError(err, t('context.gitLoadFailed'))
     }
@@ -556,13 +568,16 @@ export function useGitOperation(
   async function loadBranches() {
     const path = cwd.value
     if (!path) return
+    const epoch = cwdEpoch
     try {
       const res = await api.executeCodeTool('git_worktree_manager', {
         cwd: path,
         arguments: { action: 'branch_list', all: true },
       })
+      if (epoch !== cwdEpoch) return
       branchResult.value = res
     } catch (err) {
+      if (epoch !== cwdEpoch) return
       notifyOperationError(err, t('context.gitLoadFailed'))
     }
   }
@@ -1242,6 +1257,16 @@ export function useGitOperation(
   watch(
     () => cwd.value,
     () => {
+      // 切换仓库时清掉上一个项目的一切痕迹：面板数据、勾选清单、提交信息，
+      // 只留 resetApprovals 管不到的这里也一并处理，然后按新 cwd 重新加载。
+      cwdEpoch++
+      preview.value = null
+      pushPlan.value = null
+      logResult.value = null
+      branchResult.value = null
+      selectedPaths.value = new Set()
+      selectAll.value = true
+      commitMessage.value = ''
       resetApprovals()
       void loadStatus()
     },
