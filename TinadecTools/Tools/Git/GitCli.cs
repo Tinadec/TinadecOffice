@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using TinadecTools.Runtime;
 using TinadecTools.Tools.FileRW;
 
@@ -45,7 +46,8 @@ internal static class GitCli
             ["rev-parse", "--show-toplevel"],
             path,
             stdin: null,
-            timeoutMs: 10_000).GetAwaiter().GetResult();
+            timeoutMs: 10_000,
+            outputEncoding: Encoding.UTF8).GetAwaiter().GetResult();
 
         if (!revParse.Success || string.IsNullOrWhiteSpace(revParse.Stdout.Trim()))
         {
@@ -109,7 +111,8 @@ internal static class GitCli
                 stdin,
                 timeoutMs,
                 cancellationToken,
-                maxOutputChars: maxOutputChars).ConfigureAwait(false);
+                maxOutputChars: maxOutputChars,
+                outputEncoding: Encoding.UTF8).ConfigureAwait(false);
 
             // git not found: TerminalRunner catches and returns Success=false with ex.Message in Stderr.
             if (!r.Success && r.ExitCode < 0 && r.Stderr.Contains("cannot find", StringComparison.OrdinalIgnoreCase))

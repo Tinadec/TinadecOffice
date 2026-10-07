@@ -109,6 +109,14 @@ internal static class GitRemoteMutationTools
         if ((remote is null) != (branch is null)) throw new InvalidOperationException("remote and branch must be provided together.");
         if (remote is not null && !await RemoteExistsAsync(repo, remote, ct).ConfigureAwait(false)) return Failure("pull", $"Remote '{remote}' is not configured.");
         if (remote is null && string.IsNullOrWhiteSpace(status.Upstream)) return Failure("pull", "No upstream branch is configured.");
+        if (branch is not null)
+        {
+            // `branch` lands in argv after the remote, so a dash-leading value like
+            // `--upload-pack=...` would be parsed by git pull as an option instead
+            // of a ref. Validate it exactly like git_push does.
+            var validBranch = await GitCli.RunAsync(repo, ["check-ref-format", "--branch", branch], cancellationToken: ct).ConfigureAwait(false);
+            if (!validBranch.Ok) return Failure("pull", $"Invalid branch name '{branch}'.");
+        }
         var command = new List<string> { "-c", "credential.interactive=never", "pull", "--ff-only" };
         if (remote is not null) command.AddRange([remote, branch!]);
         var execution = await GitCli.RunAsync(repo, command, cancellationToken: ct, timeoutMs: 60_000).ConfigureAwait(false);

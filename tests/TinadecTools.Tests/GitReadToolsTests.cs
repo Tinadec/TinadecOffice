@@ -29,6 +29,30 @@ public sealed class GitReadToolsTests
     }
 
     [Fact]
+    public async Task Status_ReportsNonAsciiPathsRawAndCarriesRenamePreviousPath()
+    {
+        using var repo = new TempGitRepo("git-read-z");
+        // Pin the git default so the regression holds even on machines whose
+        // global config sets core.quotepath=false: the old LF-based parser
+        // surfaced the C-quoted octal escapes verbatim as file paths.
+        repo.RunGit("config", "core.quotepath", "true");
+        repo.SeedInitialCommit("keep.txt", "initial\n");
+        repo.CommitFile("笔记.md", "v1\n", "add cjk file");
+        File.WriteAllText(System.IO.Path.Combine(repo.Path, "笔记.md"), "v2\n");
+        File.Move(System.IO.Path.Combine(repo.Path, "keep.txt"), System.IO.Path.Combine(repo.Path, "改名后.txt"));
+        repo.RunGit("add", "-A");
+
+        var status = await GitReadTools.StatusAsync(new GitStatusArgs { RepositoryPath = repo.Path }, CancellationToken.None);
+
+        Assert.True(status.Success, status.Error ?? "status failed without error text");
+        Assert.True(status.HasUncommittedChanges);
+        Assert.Contains(status.Files, item => item.Path == "笔记.md");
+        var renamed = Assert.Single(status.Files, item => item.PreviousPath is not null);
+        Assert.Equal("改名后.txt", renamed.Path);
+        Assert.Equal("keep.txt", renamed.PreviousPath);
+    }
+
+    [Fact]
     public async Task ReadTools_RejectLinkTraversalAndOptionLikeRevisions()
     {
         using var repo = new TempGitRepo("git-read");

@@ -302,7 +302,10 @@ internal static class GitReadTools
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return StatusFailure(error);
-        var status = await GitCli.RunAsync(repo, ["status", "--porcelain=v1", "--branch"], cancellationToken: cancellationToken).ConfigureAwait(false);
+        // -z keeps git from C-quoting paths, so CJK and control-character
+        // filenames arrive raw and usable downstream; rename entries carry the
+        // original path in a following NUL-terminated field.
+        var status = await GitCli.RunAsync(repo, ["status", "--porcelain=v1", "-z", "--branch"], cancellationToken: cancellationToken).ConfigureAwait(false);
         return status.Ok ? ParseStatus(repo, status.Stdout) : StatusFailure(status.Stderr, status.ExitCode);
     }
 
@@ -576,24 +579,41 @@ internal static class GitReadTools
         return new GitDiffSection { Kind = kind, BaseRef = baseRef, HeadRef = headRef, Diff = diff.Stdout, Files = files, Truncated = fileTruncated || diff.Truncated, TruncationReason = diff.Truncated ? "max_diff_bytes" : fileTruncated ? "max_files" : null };
     }
 
+    // `status --porcelain=v1 -z`: every record — the `##` branch header included —
+    // is NUL-terminated, so paths arrive raw (no C-quoting) and may contain CJK,
+    // spaces or even line breaks. A rename/copy entry is followed by the original
+    // path as its own NUL-terminated segment.
     private static GitStatusResult ParseStatus(string repo, string output)
     {
-        var lines = output.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        var header = lines.FirstOrDefault(line => line.StartsWith("## ", StringComparison.Ordinal)) ?? "## unknown";
+        var segments = output.Split('\0');
+        var header = segments.FirstOrDefault(segment => segment.StartsWith("## ", StringComparison.Ordinal)) ?? "## unknown";
         var branchText = header[3..];
         var rawBranch = branchText.Split("...")[0].Split(" [")[0].Trim();
         var detached = rawBranch.StartsWith("HEAD (", StringComparison.Ordinal) || rawBranch == "HEAD";
         var upstream = branchText.Contains("...", StringComparison.Ordinal) ? NullIfEmpty(branchText.Split("...")[1].Split(" [")[0].Trim()) : null;
-        var entries = lines.Where(line => !line.StartsWith("## ", StringComparison.Ordinal)).Where(line => line.Length >= 3).Select(ParseStatusEntry).ToList();
+        var entries = new List<GitStatusEntry>();
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var segment = segments[i];
+            if (segment.Length < 4 || segment.StartsWith("## ", StringComparison.Ordinal)) continue;
+            var staged = segment[0];
+            var unstaged = segment[1];
+            string? previousPath = null;
+            if (staged is 'R' or 'C' || unstaged is 'R' or 'C')
+            {
+                if (i + 1 >= segments.Length) break;
+                previousPath = segments[++i];
+            }
+            entries.Add(BuildStatusEntry(segment, previousPath));
+        }
         return new GitStatusResult { Success = true, RepositoryRoot = repo, Branch = rawBranch.StartsWith("No commits yet on ", StringComparison.Ordinal) ? rawBranch[18..] : rawBranch, DetachedHead = detached, Upstream = upstream, Ahead = MatchNumber(branchText, "ahead "), Behind = MatchNumber(branchText, "behind "), HasUncommittedChanges = entries.Count > 0, Files = entries };
     }
 
-    private static GitStatusEntry ParseStatusEntry(string line)
+    private static GitStatusEntry BuildStatusEntry(string line, string? previousPath)
     {
         var staged = line[0]; var unstaged = line[1]; var raw = line[3..];
-        var rename = raw.Split(" -> ", 2, StringSplitOptions.None);
         var conflicted = staged == 'U' || unstaged == 'U' || new[] { "AA", "DD", "AU", "UA", "DU", "UD" }.Contains($"{staged}{unstaged}");
-        return new GitStatusEntry { Path = rename.Length == 2 ? rename[1] : raw, PreviousPath = rename.Length == 2 ? rename[0] : null, StagedStatus = StatusLabel(staged), UnstagedStatus = StatusLabel(unstaged), Status = conflicted ? "conflicted" : staged == '?' && unstaged == '?' ? "untracked" : staged != ' ' && unstaged != ' ' ? "staged_and_modified" : staged != ' ' ? $"staged_{StatusLabel(staged)}" : StatusLabel(unstaged), IsUntracked = staged == '?' && unstaged == '?', IsConflicted = conflicted };
+        return new GitStatusEntry { Path = raw, PreviousPath = previousPath, StagedStatus = StatusLabel(staged), UnstagedStatus = StatusLabel(unstaged), Status = conflicted ? "conflicted" : staged == '?' && unstaged == '?' ? "untracked" : staged != ' ' && unstaged != ' ' ? "staged_and_modified" : staged != ' ' ? $"staged_{StatusLabel(staged)}" : StatusLabel(unstaged), IsUntracked = staged == '?' && unstaged == '?', IsConflicted = conflicted };
     }
 
     private static GitBlameResult ParseBlame(string output, bool truncated)

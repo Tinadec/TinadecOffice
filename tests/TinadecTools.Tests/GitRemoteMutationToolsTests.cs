@@ -148,6 +148,27 @@ public sealed class GitRemoteMutationToolsTests
     }
 
     [Fact]
+    public async Task PullAsync_RejectsOptionLikeBranchNames()
+    {
+        using var repo = new TempGitRepo("git-remote");
+        repo.SeedInitialCommit();
+        repo.RunGit("remote", "add", "origin", NewBareRemote("git-remote-pull"));
+        var result = await GitRemoteMutationTools.PullAsync(new GitRemoteMutationArgs
+        {
+            RepositoryPath = repo,
+            Remote = "origin",
+            // `git pull <remote> <branch>` forwards fetch options: a dash-leading
+            // value would be parsed as an option (--upload-pack executes a local
+            // command during fetch), so it must fail the ref-format check exactly
+            // like git_push already does.
+            Branch = "--upload-pack=calc",
+            ConfirmPull = "ok"
+        }, CancellationToken.None);
+        Assert.False(result.Success);
+        Assert.Contains("Invalid branch name", result.Error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Mutations_RequireConfirmFields()
     {
         await Assert.ThrowsAsync<InvalidOperationException>(() => GitRemoteMutationTools.FetchAsync(new GitRemoteMutationArgs { Remote = "x" }, CancellationToken.None).AsTask());

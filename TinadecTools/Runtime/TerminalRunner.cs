@@ -22,7 +22,8 @@ internal static class TerminalRunner
         string? stdin = null,
         int timeoutMs = 30_000,
         CancellationToken cancellationToken = default,
-        int maxOutputChars = 65_536)
+        int maxOutputChars = 65_536,
+        Encoding? outputEncoding = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -37,6 +38,14 @@ internal static class TerminalRunner
             RedirectStandardInput = true,
             CreateNoWindow = true
         };
+        // The default decoder follows the console codepage (e.g. GBK on zh-CN
+        // Windows), which corrupts tools that always speak UTF-8 on pipes — git
+        // among them. Callers that know the child's encoding pin it here.
+        if (outputEncoding is not null)
+        {
+            psi.StandardOutputEncoding = outputEncoding;
+            psi.StandardErrorEncoding = outputEncoding;
+        }
 
         if (arguments is not null)
         {
