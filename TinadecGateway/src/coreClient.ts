@@ -51,6 +51,19 @@ export async function proxyRaw(path: string, options: ProxyOptions = {}): Promis
   }
 }
 
+/**
+ * Shared 502 for raw/stream proxies: a fetch rejection (Core unreachable) must
+ * surface as an error response, not escape into the catch-all handler where the
+ * route's staged 2xx status would turn it into a fake success.
+ */
+export function upstreamUnreachableResponse(upstream: string, upstreamUrl: string, error: unknown): Response {
+  const message = error instanceof Error ? error.message : 'Network request failed';
+  return new Response(
+    JSON.stringify({ code: `${upstream}_UNREACHABLE`, message: `Cannot reach ${upstream} at ${upstreamUrl}: ${message}` }),
+    { status: 502, headers: { 'content-type': 'application/problem+json' } },
+  );
+}
+
 function proxyBaseHeaders(incoming?: HeadersInit): Record<string, string> {
   let incomingRequestId: string | null = null;
   if (incoming) {
@@ -141,14 +154,18 @@ export async function proxyJson(path: string, options: ProxyOptions = {}): Promi
  */
 export async function proxySse(path: string, init?: RequestInit): Promise<Response> {
   const baseHeaders = proxyBaseHeaders(init?.headers as HeadersInit | undefined);
-  return fetch(coreEndpoint(path), {
-    ...init,
-    headers: {
-      accept: 'text/event-stream',
-      ...baseHeaders,
-      ...(init?.headers ?? {})
-    }
-  });
+  try {
+    return await fetch(coreEndpoint(path), {
+      ...init,
+      headers: {
+        accept: 'text/event-stream',
+        ...baseHeaders,
+        ...(init?.headers ?? {})
+      }
+    });
+  } catch (error) {
+    return upstreamUnreachableResponse('Core', coreUrl(), error);
+  }
 }
 
 export async function proxySseWithCursor(
@@ -168,13 +185,17 @@ export async function proxySseWithCursor(
     const sep = path.includes('?') ? '&' : '?';
     url = `${path}${sep}cursor=${encodeURIComponent(cursor)}`;
   }
-  return fetch(coreEndpoint(url), {
-    ...extraInit,
-    headers: {
-      ...headers,
-      ...(extraInit?.headers as Record<string, string> | undefined)
-    }
-  });
+  try {
+    return await fetch(coreEndpoint(url), {
+      ...extraInit,
+      headers: {
+        ...headers,
+        ...(extraInit?.headers as Record<string, string> | undefined)
+      }
+    });
+  } catch (error) {
+    return upstreamUnreachableResponse('Core', coreUrl(), error);
+  }
 }
 
 /**
@@ -183,11 +204,15 @@ export async function proxySseWithCursor(
  */
 export async function proxyStream(path: string, init?: RequestInit): Promise<Response> {
   const baseHeaders = proxyBaseHeaders(init?.headers as HeadersInit | undefined);
-  return fetch(coreEndpoint(path), {
-    ...init,
-    headers: {
-      ...baseHeaders,
-      ...(init?.headers as Record<string, string> | undefined)
-    }
-  });
+  try {
+    return await fetch(coreEndpoint(path), {
+      ...init,
+      headers: {
+        ...baseHeaders,
+        ...(init?.headers as Record<string, string> | undefined)
+      }
+    });
+  } catch (error) {
+    return upstreamUnreachableResponse('Core', coreUrl(), error);
+  }
 }

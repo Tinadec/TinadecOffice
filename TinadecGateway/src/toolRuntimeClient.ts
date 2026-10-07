@@ -11,6 +11,7 @@
  */
 
 import { getConfig } from './config.js';
+import { upstreamUnreachableResponse } from './coreClient.js';
 
 export type ToolRuntimeBody = Record<string, unknown> | string | undefined;
 
@@ -106,13 +107,17 @@ export async function proxyToolRuntimeSse(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
-  return fetch(toolRuntimeEndpoint(path), {
-    ...init,
-    headers: {
-      accept: 'text/event-stream',
-      ...(init?.headers ?? {}),
-    },
-  });
+  try {
+    return await fetch(toolRuntimeEndpoint(path), {
+      ...init,
+      headers: {
+        accept: 'text/event-stream',
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    return upstreamUnreachableResponse('Tool Runtime', toolRuntimeUrl(), error);
+  }
 }
 
 /**
@@ -123,5 +128,9 @@ export async function proxyToolRuntimeStream(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
-  return fetch(toolRuntimeEndpoint(path), init);
+  try {
+    return await fetch(toolRuntimeEndpoint(path), init);
+  } catch (error) {
+    return upstreamUnreachableResponse('Tool Runtime', toolRuntimeUrl(), error);
+  }
 }

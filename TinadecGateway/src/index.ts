@@ -148,7 +148,14 @@ const app = new Elysia()
       return toProblemDetails(400, 'invalid_request', detail, path, rid);
     }
     if (code === 'INTERNAL_SERVER_ERROR' || code === 'UNKNOWN' || (code as string) === 'ERROR') {
-      const status = typeof set.status === 'number' ? set.status : 500;
+      // Elysia serves an onError body with the route's current status (default
+      // 200) unless set.status is assigned, so a failure after a route already
+      // staged a 2xx (e.g. attachment upload sets 201, then response.json()
+      // throws) would otherwise answer 201 with an error body. Only inherit a
+      // status that is itself an error; everything else is an honest 500.
+      const current = typeof set.status === 'number' ? set.status : 500;
+      const status = current >= 400 && current <= 599 ? current : 500;
+      set.status = status;
       set.headers['content-type'] = 'application/problem+json';
       return toProblemDetails(status, 'conflict', (error as Error)?.message ?? 'Internal error.', path, rid);
     }
