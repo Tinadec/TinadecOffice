@@ -65,3 +65,4 @@ native/rg/
 
 # Local logs (runtime output, security keys)
 logs/
+/.cancricode
