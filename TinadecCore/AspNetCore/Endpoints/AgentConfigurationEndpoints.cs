@@ -230,15 +230,29 @@ public static class AgentConfigurationEndpoints
             .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.UpdatedAt).First());
         var ownership = await LoadPackOwnershipAsync(db, t, w, ct);
 
+        var visibleDefinitions = definitions.Where(definition =>
+            (string.IsNullOrWhiteSpace(status) || string.Equals(definition.Status, status, StringComparison.OrdinalIgnoreCase))
+            && (string.IsNullOrWhiteSpace(sourceKind) || string.Equals(definition.SourceKind, sourceKind, StringComparison.OrdinalIgnoreCase))
+            && (string.IsNullOrWhiteSpace(layer) || string.Equals(definition.Layer, layer, StringComparison.OrdinalIgnoreCase))
+            && (!ownership.TryGetValue(definition.Id, out var owner) || string.Equals(owner.Status, "active", StringComparison.Ordinal))).ToArray();
+        var visibleIds = visibleDefinitions.Select(x => x.Id).ToHashSet();
+        var previewRequests = nodes.Where(node => visibleIds.Contains(node.AgentDefinitionId) && latestModeVersions.ContainsKey(node.ModeId))
+            .Select(node => new ModelResolutionPreviewRequestDto
+            {
+                AgentDefinitionId = node.AgentDefinitionId,
+                AgentVersionId = latestAgentVersions.GetValueOrDefault(node.AgentDefinitionId)?.Id,
+                ModeVersionId = latestModeVersions[node.ModeId].Id,
+                NodeKey = node.NodeKey
+            }).DistinctBy(request => (request.AgentDefinitionId, request.ModeVersionId, request.NodeKey)).ToArray();
+        var previewResults = await modelResolver.PreviewBatchAsync(previewRequests, ct).ConfigureAwait(false);
+        var previewByNode = previewRequests.Select((request, index) => (request, preview: previewResults[index]))
+            .ToDictionary(x => (x.request.AgentDefinitionId, x.request.ModeVersionId, x.request.NodeKey), x => x.preview);
+
         var result = new List<AgentDirectoryItemDto>();
-        foreach (var definition in definitions)
+        foreach (var definition in visibleDefinitions)
         {
-            if (!string.IsNullOrWhiteSpace(status) && !string.Equals(definition.Status, status, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!string.IsNullOrWhiteSpace(sourceKind) && !string.Equals(definition.SourceKind, sourceKind, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!string.IsNullOrWhiteSpace(layer) && !string.Equals(definition.Layer, layer, StringComparison.OrdinalIgnoreCase)) continue;
             // A disabled pack's rows stay in the store (re-enabling is lossless)
             // but leave the selectable directory.
-            if (ownership.TryGetValue(definition.Id, out var owner) && !string.Equals(owner.Status, "active", StringComparison.Ordinal)) continue;
             latestAgentVersions.TryGetValue(definition.Id, out var agentVersion);
             recentInvocations.TryGetValue(definition.Id, out var invocation);
             var usages = nodes.Where(x => x.AgentDefinitionId == definition.Id).Select(node =>
@@ -255,18 +269,7 @@ public static class AgentConfigurationEndpoints
             var previews = new Dictionary<string, ModelResolutionPreviewDto>(StringComparer.Ordinal);
             foreach (var usage in usages.Where(x => x.ModeVersionId is not null))
             {
-                try
-                {
-                    previews[$"{usage.ModeSlug}:{usage.NodeKey}"] = await modelResolver.PreviewAsync(new ModelResolutionPreviewRequestDto
-                    {
-                        AgentDefinitionId = definition.Id, AgentVersionId = agentVersion?.Id,
-                        ModeVersionId = usage.ModeVersionId, NodeKey = usage.NodeKey
-                    }, ct).ConfigureAwait(false);
-                }
-                catch (Exception exception) when (exception is ArgumentException or InvalidDataException or KeyNotFoundException)
-                {
-                    previews[$"{usage.ModeSlug}:{usage.NodeKey}"] = UnavailablePreview(exception.Message);
-                }
+                previews[$"{usage.ModeSlug}:{usage.NodeKey}"] = previewByNode[(definition.Id, usage.ModeVersionId, usage.NodeKey)];
             }
             ModelStrategyDto configuredStrategy;
             try { configuredStrategy = ModelStrategyJson.Parse(definition.ModelStrategyJson); }
@@ -619,18 +622,6 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null, model_strategy_override = n.ModelStrategyOverrideJson!=null ? JsonSerializer.Deserialize<JsonElement>(n.ModelStrategyOverrideJson) : (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
     }
 
-    static ModelResolutionPreviewDto UnavailablePreview(string reason) => new()
-    {
-        StrategySource = "unavailable",
-        Candidates =
-        [
-            new ModelResolutionCandidatePreviewDto
-            {
-                Available = false,
-                UnavailableReason = reason
-            }
-        ]
-    };
     static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var el=await JsonSerializer.DeserializeAsync<JsonElement>(req.Body,cancellationToken:ct);

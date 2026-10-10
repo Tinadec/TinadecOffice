@@ -1,5 +1,7 @@
 # AgentConfiguration
 
+2026-10-11目录性能专项：HTTP列表过滤后一次批量模型预览，草稿/published同逻辑节点键去重；策略优先级和公开DTO不改变。Runtime的请求内复用与Persistence已应用摘要减少重复配置读取；写/安装/准入继续原契约。[报告](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)区分真实HTTP和完整产品/平台边界，唯一任务[APP-HOME-107](../../app/home/TODO.md#app-home-107)。
+
 模块ID：`CORE-AGENT-CONFIG` · 初始基线：2026-10-05，b6115e6 + 当前工作树。
 
 本模块已完成配置文件权威、SQL 编辑投影和运行冻结链路的拆分，Windows/SQLite 及 Linux/真实 PostgreSQL 的定向验证均有本轮证据；包生命周期的完整审计、macOS 和发布产品验收仍未完成，范围分别记录在 STATUS 和 TODO。

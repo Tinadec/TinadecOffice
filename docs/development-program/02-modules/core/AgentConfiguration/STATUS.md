@@ -1,5 +1,7 @@
 # AgentConfiguration：功能与完成情况
 
+2026-10-11目录性能接口回归跟进：当前配置副本20个published Agent、14模式、67节点，修复后Gateway列表1138ms、20份详情全部200；用户原配置不变。Core60项定向覆盖AgentRuntimeBinding/ConfigurationDocument/GraphSeed/AgentPackEndpoint，批量语义、错误、更新、取消及同键节点含在其中。[证据与限制](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)，任务[APP-HOME-107](../../app/home/TODO.md#app-home-107)；不继承为全平台或包服务全量验收。
+
 模块ID：`CORE-AGENT-CONFIG` · 更新日期：2026-10-09 · 基线：b6115e6 + 当前工作树。
 
 **审计阶段：配置存储链路已拆分并完成 Windows/SQLite、Linux/真实 PostgreSQL 定向验证；包服务全量审计、macOS 和完整发布产物验收仍未完成。** 不报告完成百分比，也不把源码存在折算为功能完成。

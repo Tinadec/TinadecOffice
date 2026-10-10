@@ -1,5 +1,7 @@
 # Runtime · 唯一组合根
 
+2026-10-11 `AgentModelResolver.PreviewBatchAsync`在同tenant/workspace读取绑定/版本集合，仅当前请求复用相同FrozenModelPlan和解析。单项Preview、策略优先级、运行Freeze/Invocation均保持原语义；已知配置失败局部不可用，取消/数据库/未知异常传播，不跨作用域/请求缓存。APP-HOME-107性能跟进及WindowsSQLite/真实HTTP证据见[报告](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)，Runtime整体审计另行保留。
+
 模块ID：`CORE-RUNTIME` · 初始基线：2026-10-05，b6115e6 + 当前工作树。
 
 本模块目前处于**初始源码清点**，还未完成逐功能审计；下列介绍继承总图中已核对的职责，初始状态区分源码能力、范围与缺口。

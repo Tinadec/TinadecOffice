@@ -45,7 +45,52 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         _sessions = sessions;
     }
 
-    public async Task<ModelResolutionPreviewDto> PreviewAsync(ModelResolutionPreviewRequestDto request, CancellationToken cancellationToken = default)
+    public Task<ModelResolutionPreviewDto> PreviewAsync(ModelResolutionPreviewRequestDto request, CancellationToken cancellationToken = default) =>
+        PreviewCoreAsync(request, null, cancellationToken);
+
+    public async Task<IReadOnlyList<ModelResolutionPreviewDto>> PreviewBatchAsync(IReadOnlyList<ModelResolutionPreviewRequestDto> requests,
+        CancellationToken cancellationToken = default)
+    {
+        if (requests.Count == 0) return [];
+        var scope = _tenant.Current;
+        await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var agentIds = requests.Where(x => x.AgentDefinitionId.HasValue).Select(x => x.AgentDefinitionId!.Value).Distinct().ToArray();
+        var agentVersions = requests.Where(x => x.AgentVersionId.HasValue).Select(x => x.AgentVersionId!.Value).Distinct().ToArray();
+        var modeVersions = requests.Where(x => x.ModeVersionId.HasValue).Select(x => x.ModeVersionId!.Value).Distinct().ToArray();
+        var batch = new PreviewBatch(
+            await db.AgentRuntimeBindings.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && agentIds.Contains(x.AgentDefinitionId))
+                .ToDictionaryAsync(x => x.AgentDefinitionId, cancellationToken).ConfigureAwait(false),
+            await db.AgentVersions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && agentVersions.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, cancellationToken).ConfigureAwait(false),
+            await db.ModeVersions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && modeVersions.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, cancellationToken).ConfigureAwait(false),
+            await db.AgentDefinitions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && agentIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, cancellationToken).ConfigureAwait(false));
+        var previews = new List<ModelResolutionPreviewDto>(requests.Count);
+        foreach (var request in requests)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try { previews.Add(await PreviewCoreAsync(request, batch, cancellationToken).ConfigureAwait(false)); }
+            catch (Exception error) when (error is ArgumentException or InvalidDataException or KeyNotFoundException)
+            { previews.Add(ModelPreviewFailure.Unavailable(error.Message)); }
+        }
+        return previews;
+    }
+
+    // This cache lives only for one read. It never survives a scope switch,
+    // another HTTP request, a configuration edit or a run admission.
+    private sealed record PreviewBatch(
+        IReadOnlyDictionary<Guid, AgentRuntimeBindingRecord> Bindings,
+        IReadOnlyDictionary<Guid, AgentVersionRecord> AgentVersions,
+        IReadOnlyDictionary<Guid, ModeVersionRecord> ModeVersions,
+        IReadOnlyDictionary<Guid, AgentDefinitionRecord> Definitions)
+    {
+        public Dictionary<string, Task<FrozenModelPlan>> Plans { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, Task<IReadOnlyList<ChatResolution>>> Resolutions { get; } = new(StringComparer.Ordinal);
+    }
+
+    private async Task<ModelResolutionPreviewDto> PreviewCoreAsync(ModelResolutionPreviewRequestDto request, PreviewBatch? batch,
+        CancellationToken cancellationToken)
     {
         var scope = _tenant.Current;
         var chain = new List<ModelResolutionStepDto>();
@@ -79,33 +124,53 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         // meeting-root 预览只传 MeetingModelOverride，不受影响。
         if (request.AgentDefinitionId is { } bindingAgentId)
         {
-            await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var binding = await db.AgentRuntimeBindings.AsNoTracking().SingleOrDefaultAsync(x => x.AgentDefinitionId == bindingAgentId
-                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            AgentRuntimeBindingRecord? binding;
+            if (batch is not null) binding = batch.Bindings.GetValueOrDefault(bindingAgentId);
+            else
+            {
+                await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+                binding = await db.AgentRuntimeBindings.AsNoTracking().SingleOrDefaultAsync(x => x.AgentDefinitionId == bindingAgentId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            }
             Consider("user_binding", BindingToStrategy(binding));
         }
 
         if (request.ModeVersionId is { } modeVersionId && !string.IsNullOrWhiteSpace(request.NodeKey))
         {
-            await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var version = await db.ModeVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == modeVersionId
-                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            ModeVersionRecord? version;
+            if (batch is not null) version = batch.ModeVersions.GetValueOrDefault(modeVersionId);
+            else
+            {
+                await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+                version = await db.ModeVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == modeVersionId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            }
             var strategy = version is null ? null : ReadModeNodeStrategy(version.SnapshotJson, request.NodeKey!);
             Consider("mode_node_override", strategy);
         }
 
         if (request.AgentVersionId is { } agentVersionId)
         {
-            await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var version = await db.AgentVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == agentVersionId
-                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            AgentVersionRecord? version;
+            if (batch is not null) version = batch.AgentVersions.GetValueOrDefault(agentVersionId);
+            else
+            {
+                await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+                version = await db.AgentVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == agentVersionId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            }
             Consider("agent_version", version is null ? null : ReadAgentStrategy(version.SnapshotJson));
         }
         else if (request.AgentDefinitionId is { } agentDefinitionId)
         {
-            await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var definition = await db.AgentDefinitions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == agentDefinitionId
-                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            AgentDefinitionRecord? definition;
+            if (batch is not null) definition = batch.Definitions.GetValueOrDefault(agentDefinitionId);
+            else
+            {
+                await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+                definition = await db.AgentDefinitions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == agentDefinitionId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            }
             Consider("agent_default", definition is null ? null : ModelStrategyJson.Parse(definition.ModelStrategyJson));
         }
 
@@ -113,8 +178,18 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         if (chain.Count == 0) chain.Add(new ModelResolutionStepDto { Source = "implicit_inherit", Strategy = selected, Selected = true });
         source = source.Length == 0 ? "implicit_inherit" : source;
 
-        var plan = await FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, cancellationToken).ConfigureAwait(false);
-        var resolutions = await ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, cancellationToken).ConfigureAwait(false);
+        var planKey = JsonSerializer.Serialize(new { selected, source, parent = request.ParentInstanceId is not null });
+        Task<FrozenModelPlan> planRead;
+        if (batch is null) planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, cancellationToken);
+        else if (!batch.Plans.TryGetValue(planKey, out planRead!))
+            batch.Plans[planKey] = planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, cancellationToken);
+        var plan = await planRead.ConfigureAwait(false);
+        var resolutionKey = JsonSerializer.Serialize(new { plan, request.ParentInstanceId });
+        Task<IReadOnlyList<ChatResolution>> resolutionRead;
+        if (batch is null) resolutionRead = ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, cancellationToken);
+        else if (!batch.Resolutions.TryGetValue(resolutionKey, out resolutionRead!))
+            batch.Resolutions[resolutionKey] = resolutionRead = ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, cancellationToken);
+        var resolutions = await resolutionRead.ConfigureAwait(false);
         var candidates = resolutions.Select(ToPreview).ToArray();
         return new ModelResolutionPreviewDto
         {

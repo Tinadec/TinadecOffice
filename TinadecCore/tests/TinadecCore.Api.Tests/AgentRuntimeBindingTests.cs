@@ -3,6 +3,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using TinadecCore.Abstractions.Ports;
+using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Api.Tests;
 
@@ -130,6 +135,77 @@ public sealed class AgentRuntimeBindingTests : IAsyncLifetime
             .Select(p => p.Value).Where(v => v.TryGetProperty("strategy_source", out _)).ToArray();
         Assert.NotEmpty(previews);
         Assert.All(previews, p => Assert.Equal("user_binding", p.GetProperty("strategy_source").GetString()));
+    }
+
+    [Fact]
+    public async Task BatchPreview_PreservesSinglePreview_ContainsBadItems_AndRefreshesBindings()
+    {
+        var client = _factory!.CreateClient();
+        using var savedProvider = await client.PostAsJsonAsync("/api/v1/model-providers", new
+        {
+            driver = "openai", display_name = "Batch provider", base_url = "http://localhost", model = "first-model", api_key = "sk-test"
+        });
+        savedProvider.EnsureSuccessStatusCode();
+        var providerId = (await savedProvider.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var agents = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");
+        var agent = agents!.First(a => a.GetProperty("source_kind").GetString() == "pack" && a.GetProperty("mode_usages").GetArrayLength() > 0);
+        var agentId = agent.GetProperty("id").GetGuid();
+        using var savedBinding = await client.PutAsJsonAsync($"/api/v1/agents/{agentId}/runtime-binding", new
+        {
+            mode = "fixed", provider_instance_id = providerId, model = "first-model"
+        });
+        savedBinding.EnsureSuccessStatusCode();
+        var usage = agent.GetProperty("mode_usages")[0];
+        var request = new ModelResolutionPreviewRequestDto
+        {
+            AgentDefinitionId = agentId, AgentVersionId = agent.GetProperty("current_version_id").GetGuid(),
+            ModeVersionId = usage.GetProperty("mode_version_id").GetGuid(), NodeKey = usage.GetProperty("node_key").GetString()
+        };
+        var invalid = new ModelResolutionPreviewRequestDto
+        {
+            Strategy = new ModelStrategyDto { Kind = ModelStrategyKinds.Fixed, ProviderInstanceId = Guid.NewGuid(), Model = "missing" }
+        };
+        using var scope = _factory.Services.CreateScope();
+        var resolver = scope.ServiceProvider.GetRequiredService<IAgentModelResolver>();
+        var single = await resolver.PreviewAsync(request);
+        var batch = await resolver.PreviewBatchAsync([request, invalid, request]);
+        Assert.Equal(3, batch.Count);
+        Assert.Equal(JsonSerializer.Serialize(single), JsonSerializer.Serialize(batch[0]));
+        Assert.Equal(JsonSerializer.Serialize(single), JsonSerializer.Serialize(batch[2]));
+        Assert.Equal("user_binding", batch[0].StrategySource);
+        Assert.Equal("unavailable", batch[1].StrategySource);
+        Assert.False(Assert.Single(batch[1].Candidates).Available);
+        Assert.Equal("first-model", batch[0].ExpectedSelection?.Model);
+        using var changedBinding = await client.PutAsJsonAsync($"/api/v1/agents/{agentId}/runtime-binding", new
+        {
+            mode = "fixed", provider_instance_id = providerId, model = "changed-model"
+        });
+        changedBinding.EnsureSuccessStatusCode();
+        var nextRead = await resolver.PreviewBatchAsync([request]);
+        Assert.Equal("changed-model", nextRead[0].ExpectedSelection?.Model);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => resolver.PreviewBatchAsync([request], cancelled.Token));
+    }
+
+    [Fact]
+    public async Task ListAgents_WithDraftAndPublishedNodeKeys_StillReturnsDirectory()
+    {
+        var client = _factory!.CreateClient();
+        // Draft and published nodes legitimately share the same logical key.
+        using var scope = _factory.Services.CreateScope();
+        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>();
+        await using var db = await factory.CreateDbContextAsync();
+        var node = await db.ModeNodes.AsNoTracking().FirstAsync(x => x.Status == "published");
+        var agentId = node.AgentDefinitionId;
+        node.Id = Guid.NewGuid(); node.Status = "draft";
+        db.ModeNodes.Add(node);
+        await db.SaveChangesAsync();
+        using var response = await client.GetAsync("/api/v1/agents");
+        response.EnsureSuccessStatusCode();
+        var agents = await response.Content.ReadFromJsonAsync<JsonElement[]>();
+        var agent = agents!.Single(a => a.GetProperty("id").GetGuid() == agentId);
+        Assert.NotEmpty(agent.GetProperty("effective_previews").EnumerateObject());
     }
 
     private sealed class AgentRuntimeBindingFactory : IsolatedApiFactory

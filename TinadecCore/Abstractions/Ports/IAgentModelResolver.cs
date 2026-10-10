@@ -5,10 +5,32 @@ namespace TinadecCore.Abstractions.Ports;
 public interface IAgentModelResolver
 {
     Task<ModelResolutionPreviewDto> PreviewAsync(ModelResolutionPreviewRequestDto request, CancellationToken cancellationToken = default);
+    async Task<IReadOnlyList<ModelResolutionPreviewDto>> PreviewBatchAsync(IReadOnlyList<ModelResolutionPreviewRequestDto> requests,
+        CancellationToken cancellationToken = default)
+    {
+        var previews = new List<ModelResolutionPreviewDto>(requests.Count);
+        foreach (var request in requests)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try { previews.Add(await PreviewAsync(request, cancellationToken).ConfigureAwait(false)); }
+            catch (Exception error) when (error is ArgumentException or InvalidDataException or KeyNotFoundException)
+            { previews.Add(ModelPreviewFailure.Unavailable(error.Message)); }
+        }
+        return previews;
+    }
     Task<FrozenModelPlan> FreezeAsync(AgentModelFreezeRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ChatResolution>> ResolveInvocationCandidatesAsync(FrozenModelPlan plan, Guid? parentInstanceId, CancellationToken cancellationToken = default);
     Task<Guid> StartInvocationAsync(ModelInvocationStart request, CancellationToken cancellationToken = default);
     Task CompleteInvocationAsync(Guid invocationId, string status, ModelUsage? usage = null, string? errorCategory = null, string? safeErrorMessage = null, CancellationToken cancellationToken = default);
+}
+
+public static class ModelPreviewFailure
+{
+    public static ModelResolutionPreviewDto Unavailable(string reason) => new()
+    {
+        StrategySource = "unavailable",
+        Candidates = [new ModelResolutionCandidatePreviewDto { Available = false, UnavailableReason = reason }]
+    };
 }
 
 public sealed record AgentModelFreezeRequest(
