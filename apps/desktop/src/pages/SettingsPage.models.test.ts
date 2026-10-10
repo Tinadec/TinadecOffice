@@ -6,6 +6,7 @@ import { createI18n } from 'vue-i18n'
 import { defineComponent, h, Fragment, vaporInteropPlugin } from 'vue'
 import en from '@/locales/en'
 import SettingsPage from './SettingsPage.vue'
+import { setHostAccessStatus } from '@/lib/hostAccess'
 
 const mocks = vi.hoisted(() => ({ providers: vi.fn(), routes: vi.fn(), save: vi.fn(), statusError: vi.fn() }))
 vi.mock('@/api', () => ({ api: new Proxy({}, { get(_target, key) {
@@ -41,6 +42,7 @@ beforeEach(() => {
   const storage = new Map<string, string>()
   Object.defineProperty(window, 'localStorage', { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key), clear: () => storage.clear() } })
   Object.defineProperty(window, 'tinadec', { configurable: true, value: { gatewayUrl: () => 'http://127.0.0.1:48730', getAppConfig: vi.fn(async () => ({})) } })
+  setHostAccessStatus({ state: 'ready', managed: true })
 })
 
 async function openModels() {

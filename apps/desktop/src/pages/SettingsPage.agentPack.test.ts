@@ -87,6 +87,8 @@ vi.mock('vue-i18n', () => ({
 
 import SettingsPage from './SettingsPage.vue'
 import { resolveConfirmation, useNotifications } from '@/composables/useNotifications'
+import { setHostAccessStatus } from '@/lib/hostAccess'
+import { ApiError } from '@/lib/apiError'
 
 const customAgent = {
   id: 'custom-agent-id',
@@ -209,6 +211,7 @@ beforeEach(() => {
     configurable: true,
     value: {
       gatewayUrl: () => 'http://127.0.0.1:48730',
+      getHostStatus: vi.fn().mockResolvedValue({ state: 'ready', managed: true }),
       getAppConfig: vi.fn().mockResolvedValue({ gateway_url: 'http://127.0.0.1:48730' }),
       minimizeWindow: vi.fn(),
       maximizeWindow: vi.fn(),
@@ -216,6 +219,7 @@ beforeEach(() => {
     },
   })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })))
+  setHostAccessStatus({ state: 'ready', managed: true })
 })
 
 afterEach(() => {
@@ -275,6 +279,133 @@ describe('SettingsPage GraphSeedPack clone flow', () => {
       enabled: true,
     }))
 
+    wrapper.unmount()
+  })
+})
+
+describe('SettingsPage Agent Center read recovery', () => {
+  async function openCenter() {
+    const transition = { template: '<slot />' }
+    const wrapper = mount(SettingsPage, { global: { stubs: { Transition: transition, transition, GeneralSection: true } } })
+    await flushPromises()
+    await wrapper.findAll('.settings-nav-item').find(item => item.text().includes('settings.agentCenter'))!.trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('waits for the host and reads automatically after authentication recovers', async () => {
+    setHostAccessStatus({ state: 'checking', managed: true })
+    const wrapper = await openCenter()
+    expect(mocks.listAgents).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('settings.noAgents')
+    setHostAccessStatus({ state: 'ready', managed: true })
+    await flushPromises()
+    expect(mocks.listAgents).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('.agent-detail-panel').text()).toContain('Custom Helper')
+    expect(mocks.installOrUpgradeGraphSeedPack).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows a classified read failure instead of an empty directory, then merges retry requests', async () => {
+    mocks.listAgents.mockRejectedValueOnce(new ApiError('Offline fixture', 0, {
+      code: 'backend_network_unavailable', category: 'retryable', retryable: true, actions: ['retry'], trace_id: 'fixture-read',
+    }))
+    const wrapper = await openCenter()
+    expect(wrapper.get('[data-testid="agent-center-read-failure"]').text()).toContain('backend_network_unavailable')
+    expect(wrapper.get('[data-testid="agent-center-read-failure"]').text()).toContain('fixture-read')
+    expect(wrapper.text()).not.toContain('settings.noAgents')
+    const retry = wrapper.get('[data-testid="agent-center-read-failure"] button')
+    await Promise.all([retry.trigger('click'), retry.trigger('click')])
+    await flushPromises()
+    expect(mocks.listAgents).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="agent-center-read-failure"]').exists()).toBe(false)
+    expect(wrapper.findAll('.agent-card')).toHaveLength(2)
+    expect(mocks.installOrUpgradeGraphSeedPack).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows an empty directory only after a successful empty read', async () => {
+    mocks.listAgents.mockResolvedValueOnce([])
+    const wrapper = await openCenter()
+    expect(wrapper.find('[data-testid="agent-center-read-failure"]').exists()).toBe(false)
+    expect(wrapper.findAll('.agent-card')).toHaveLength(0)
+    expect(wrapper.get('.center-empty-state-prominent').text()).toContain('settings.noAgents')
+    wrapper.unmount()
+  })
+
+  it('keeps the successful directory when a later refresh fails', async () => {
+    const wrapper = await openCenter()
+    mocks.listAgents.mockRejectedValueOnce(new Error('Refresh offline'))
+    await wrapper.get('.agent-center-merged > .center-command-bar button').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.agent-card')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="agent-center-read-failure"]').text()).toContain('Refresh offline')
+    expect(wrapper.text()).not.toContain('settings.noAgents')
+    wrapper.unmount()
+  })
+
+  it('keeps a row with failed details and blocks editing an invented empty definition', async () => {
+    mocks.getAgent.mockImplementation(async id => {
+      if (id === customAgent.id) throw new Error('Definition offline')
+      return managedAgentDefinition
+    })
+    const wrapper = await openCenter()
+    expect(wrapper.findAll('.agent-card')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="agent-definition-read-failure"]').text()).toContain('Definition offline')
+    expect(wrapper.find('.agent-detail-panel').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="agent-center-partial-failure"]').text()).toContain('Custom Helper')
+    mocks.getAgent.mockImplementation(async id => id === customAgent.id ? customAgentDefinition : managedAgentDefinition)
+    await wrapper.get('[data-testid="agent-definition-read-failure"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.agent-detail-panel').text()).toContain('Custom Helper')
+    expect(wrapper.find('[data-testid="agent-definition-read-failure"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('preserves an unsaved prompt through reconnection and read refresh', async () => {
+    const wrapper = await openCenter()
+    await wrapper.get('textarea.prompt-editor').setValue('Unsaved user draft')
+    setHostAccessStatus({ state: 'unavailable', managed: true })
+    setHostAccessStatus({ state: 'ready', managed: true })
+    await flushPromises()
+    expect(mocks.listAgents).toHaveBeenCalledTimes(2)
+    expect((wrapper.get('textarea.prompt-editor').element as HTMLTextAreaElement).value).toBe('Unsaved user draft')
+    expect(mocks.createAgentDraft).not.toHaveBeenCalled()
+    expect(mocks.installOrUpgradeGraphSeedPack).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('ignores the cancelled response from the previous connection', async () => {
+    let finish!: (directory: typeof customAgent[]) => void
+    mocks.listAgents.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = await openCenter()
+    const oldSignal = mocks.listAgents.mock.calls[0]![0].signal as AbortSignal
+    setHostAccessStatus({ state: 'unavailable', managed: true })
+    expect(oldSignal.aborted).toBe(true)
+    setHostAccessStatus({ state: 'ready', managed: true })
+    await flushPromises()
+    expect(wrapper.findAll('.agent-card')).toHaveLength(2)
+    finish([])
+    await flushPromises()
+    expect(wrapper.findAll('.agent-card')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('settings.noAgents')
+    wrapper.unmount()
+  })
+
+  it('does not replace a dirty editor when its agent temporarily leaves the directory', async () => {
+    const wrapper = await openCenter()
+    await wrapper.get('textarea.prompt-editor').setValue('Unsaved user draft')
+    mocks.listAgents.mockResolvedValueOnce([managedAgent])
+    setHostAccessStatus({ state: 'unavailable', managed: true })
+    setHostAccessStatus({ state: 'ready', managed: true })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="agent-definition-read-failure"]').exists()).toBe(true)
+    expect(wrapper.find('.agent-detail-panel').exists()).toBe(false)
+    // When the same identity reappears, recovery must show the retained draft.
+    await wrapper.get('[data-testid="agent-definition-read-failure"] button').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('textarea.prompt-editor').element as HTMLTextAreaElement).value).toBe('Unsaved user draft')
+    expect(mocks.createAgentDraft).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

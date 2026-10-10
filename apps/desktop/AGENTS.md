@@ -1,5 +1,11 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-11 Settings read recovery
+
+`backendRequest.ts` owns bounded GET/HEAD transport recovery for api.ts and generated/client.ts: 250/750ms, three attempts total, response body transport included, each attempt revalidates host access with captured storage identity. HTTP/JSON failures and mutations are never replayed; a lost write response becomes backend_write_outcome_unknown without retry. Binary/SSE paths retain their existing owners.
+
+Settings model/agent reads use `useRecoverableRead`: mount/ready refresh, cancellation on lost host/unmount, single flight, generation guards and explicit successful-empty versus failed state. Agent details load four at a time; failures retain directory/previous data and disable editing an invented blank definition. Recovery does not reseed a dirty editor, even if its identity disappears and reappears. Auxiliary failures remain scoped diagnostics. APP-HOME-107 owns task/status; current evidence and platform limits are in `.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md`.
+
 ## 2026-10-10 Host IPC version mismatch
 
 APP-HOME-107 跟进：`lib/hostConnection.ts` 统一读取和重试宿主状态，已有 preload 缺方法或 host-status/host-retry 缺 handler 必须失败关闭为 restart_required / desktop_restart_required，其他 IPC 错误为 host_bridge_unavailable。只有完全没有 bridge 的浏览器读为 preview；独立注入 transport 的准入边界保留。`hostAccess` 先撤权再抛 ApiError，缓存 restart_required 避免重复 IPC；`useConnection` 停止无效计时器，广播与手动重试也遵循 revision 保护。App/Home 将本地故障交给共享 Banner，不伪装后端连接失败或重放写操作。
@@ -48,9 +54,9 @@ The deb keeps Electron's existing dependency list and explicitly requires `libca
 
 scope-enabled Core 全部业务 API 要求私有宿主头，health/challenge 两个公开探针除外。main 先验证 Core/Gateway nonce/角色绑定 HMAC，不能按公开指纹复用伪服务；验证后仅为登记主/panel/debug 主frame在精确入口访问固定local API签发，导航/iframe/未知窗口/远程均不继承，重验失败撤权。敏感IPC同样复核主frame。dev共享启动key，仅Electron保留、Vite剥除，main收到后移除env；默认不开放CDP。Electron43.3.0隔离夹具已验证HTTP/SSE、HMAC、主/辅助路由、iframe拒绝、导航/端点撤权及redirect剥离，不替代完整产品UI或安装验收。
 
-**Last Updated:** 2026-10-10
-**Last Updated By:** APP-HOME-107 宿主 IPC 版本不一致、业务撤权及开发整链恢复指引。
-**Last Verified Commit:** 5c799714（宿主 IPC 修复）+ 文档工作树；验证与边界见 .tinadec_dev/reports/2026-10-10-host-ipc-mismatch.zh-CN.md。
+**Last Updated:** 2026-10-11
+**Last Updated By:** APP-HOME-107 智能体/模型目录读取恢复、草稿保护与共享传输。
+**Last Verified Commit:** 6c9b5dd8 + 本次Settings工作树；本轮证据见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md。
 **Branch:** main
 
 ### 2026-10-08 工具设置

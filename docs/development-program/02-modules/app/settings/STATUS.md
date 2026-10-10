@@ -1,5 +1,9 @@
 # Settings / 配置中心：功能与完成情况
 
+## 2026-10-11 接口回归跟进
+
+目录非空与加载失败已分离；首次/恢复/手动读取合并并可取消，详情局部失败不阻断目录也不能编辑空定义，刷新保护未保存草稿。当前源码、89项Desktop定向、类型、真实配置副本HTTP及Windows Electron边界见[本轮报告](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)，功能/任务仍由[APP-HOME-107](../home/TODO.md#app-home-107)持有；不增加第二套完成记录，不将Settings整体标完成。
+
 模块ID：`APP-SETTINGS` · 清点日期：2026-10-05 · 基线：b6115e6 + 当前工作树。
 
 最近专项：2026-10-09，d5e6c8d8 + 当前工作树；仅 Debug Studio 本机开关。

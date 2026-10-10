@@ -146,6 +146,9 @@ import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { createSettingsLeaveGuard } from './settingsNavigation'
 import { useNotifications } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
+import { useRecoverableRead, type ReadContext } from '@/composables/useRecoverableRead'
+import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 
 type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
@@ -192,6 +195,7 @@ interface ProviderForm {
 }
 
 const { t } = useI18n()
+const { canAccessBackend, reason: hostReason } = useHostAccess()
 const router = useRouter()
 const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
 
@@ -332,9 +336,8 @@ const modelProviderQuery = ref('')
 const modelProviderListRef = ref<HTMLElement | null>(null)
 const modelDiagnosticsRef = ref<HTMLDetailsElement | null>(null)
 const busy = ref(false)
-const loading = ref(false)
-const modelCenterLoading = ref(false)
-const agentCenterLoading = ref(false)
+const agentDefinitionFailures = ref<Record<string, ErrorState>>({})
+const agentReadDiagnostics = ref<Array<{ source: string; error: ErrorState }>>([])
 const modelCenterBusy = ref(false)
 const agentRuntimeBusy = ref(false)
 
@@ -571,7 +574,8 @@ const selectedAgent = computed(() =>
   agents.value.find((agent) => agent.id === selectedAgentId.value) ?? null
 )
 const configuringAgent = computed(() =>
-  agents.value.find((agent) => agent.id === configuringAgentId.value) ?? null
+  agentDefinitionFailures.value[configuringAgentId.value] ? null
+    : agents.value.find((agent) => agent.id === configuringAgentId.value) ?? null
 )
 function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
   const v = String(layer ?? '').trim().toLowerCase();
@@ -858,23 +862,26 @@ function closeModal() {
   showModal.value = false
 }
 
-let modelCenterRead: Promise<void> | null = null
+const modelCenterRead = useRecoverableRead(loadModelCenterData, {
+  onSuccess: () => dismissByKey('model-center'),
+  onFailure: error => status.error(error, { key: 'model-center', source: 'models', action: { label: t('settings.retry'), run: loadModelCenter } }),
+})
+const modelCenterLoading = modelCenterRead.loading
+const modelCenterFailure = modelCenterRead.failure.error
 function loadModelCenter(): Promise<void> {
-  return modelCenterRead ??= loadModelCenterData().finally(() => { modelCenterRead = null })
+  return modelCenterRead.refresh()
 }
-async function loadModelCenterData() {
-  modelCenterLoading.value = true
-  dismissByKey('model-center')
-  try {
+async function loadModelCenterData({ signal, isCurrent }: ReadContext) {
     // model-center/overview BFF was deleted; derive the same projection from versioned APIs.
     const [providerRows, providerTemplates, routeRows, acpAdapters, modelReadinessReceipt, catalogReadinessReceipt] = await Promise.all([
-      api.listModelProviders(),
-      api.listModelProviderTemplates().catch(() => [] as ModelProviderTemplateDto[]),
-      api.listModelRoutes(),
-      api.listAcpAdapters().catch(() => [] as AcpAdapterDto[]),
-      api.getModelReadiness().catch(() => null),
-      api.getModelCatalogReadiness().catch(() => null)
+      api.listModelProviders({ signal }),
+      api.listModelProviderTemplates({ signal }).catch(() => [] as ModelProviderTemplateDto[]),
+      api.listModelRoutes({ signal }),
+      api.listAcpAdapters({ signal }).catch(() => [] as AcpAdapterDto[]),
+      api.getModelReadiness({ signal }).catch(() => modelReadiness.value),
+      api.getModelCatalogReadiness({ signal }).catch(() => modelCatalogReadiness.value)
     ])
+    if (!isCurrent()) return
     const overview = aggregateModelCenterOverview({
       providers: providerRows,
       templates: providerTemplates,
@@ -897,11 +904,6 @@ async function loadModelCenterData() {
     if (selected) {
       selectedProviderId.value = selected.id
     }
-  } catch (error) {
-    status.error({ key: 'model-center', source: 'models', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadModelCenter } })
-  } finally {
-    modelCenterLoading.value = false
-  }
 }
 
 const showModelModal = ref(false)
@@ -1148,24 +1150,32 @@ function channelLabel(fact: HarnessChannelDto): string {
   return t(discoveryAffordanceLabelKey(fact))
 }
 
-let agentCenterRead: Promise<void> | null = null
+const agentCenterRead = useRecoverableRead(loadAgentCenterData, {
+  onSuccess: () => dismissByKey('agent-center'),
+  onFailure: error => status.error(error, { key: 'agent-center', source: 'agents', action: { label: t('settings.retry'), run: loadAgentCenter } }),
+})
+const agentCenterLoading = agentCenterRead.loading
+const agentCenterLoaded = agentCenterRead.loaded
+const agentCenterFailure = agentCenterRead.failure.error
 function loadAgentCenter(): Promise<void> {
-  return agentCenterRead ??= loadAgentCenterData().finally(() => { agentCenterRead = null })
+  return agentCenterRead.refresh()
 }
-async function loadAgentCenterData() {
-  agentCenterLoading.value = true
-  dismissByKey('agent-center')
+async function loadAgentCenterData(context: ReadContext) {
+  const { signal, isCurrent } = context
   // getAgentCenterOverview is a deleted 404 route (docs/app-core-ui.md §4.8).
   // Load the versioned directory + full definitions directly; overview-only projections degrade.
-  loading.value = true
-  try {
+      const partial: Array<{ source: string; error: ErrorState }> = []
+      function preserve<T>(source: string, fallback: T): (error: unknown) => T {
+        return error => { if (isCurrent()) partial.push({ source, error: toErrorState(error) }); return fallback }
+      }
       const [directory, modes, candidates, toolReadiness, packDetail] = await Promise.all([
-        api.listAgents(),
-        api.listAgentModes().catch(() => [] as AgentModeDto[]),
-        api.listAgentCandidates().catch(() => [] as AgentCandidateDto[]),
-        api.getToolLayerReadiness().catch(() => null),
-        api.getAgentPack(graphSeedPackManifest.metadata.pack_id).catch(() => null),
+        api.listAgents({ signal }),
+        api.listAgentModes({ signal }).catch(preserve('agent-modes', agentModes.value)),
+        api.listAgentCandidates({ signal }).catch(preserve('agent-candidates', agentCandidates.value)),
+        api.getToolLayerReadiness({ signal }).catch(preserve('tool-layer-readiness', toolLayerReadiness.value)),
+        api.getAgentPack(graphSeedPackManifest.metadata.pack_id, { signal }).catch(() => null),
       ])
+      if (!isCurrent()) return
       const managedAgentIds = new Set(
         (packDetail?.resources ?? [])
           .filter((resource) => resource.kind === 'agent' && resource.logical_entity_id)
@@ -1173,19 +1183,35 @@ async function loadAgentCenterData() {
       )
       // Full definitions power the editor (prompt/tools/capabilities); the directory
       // projection carries source/usage/preview/invocation evidence.
-      const definitions = await Promise.all(
-        directory
-          .filter((item) => item.source_kind !== 'missing_reference')
-          .map((item) => api.getAgent(item.id).catch(() => null)),
-      )
-      const definitionById = new Map(
-        definitions.filter((item): item is AgentDefinitionDto => item !== null).map((item) => [item.id, item]),
-      )
+      const definitionById = new Map<string, AgentDefinitionDto>()
+      const failures: Record<string, ErrorState> = {}
+      const live = directory.filter((item) => item.source_kind !== 'missing_reference')
+      // Bound the fan-out; one failed definition cannot erase the directory or
+      // provide an empty prompt/tools configuration to the editor.
+      for (let start = 0; start < live.length && isCurrent(); start += 4) {
+        await Promise.all(live.slice(start, start + 4).map(async item => {
+          try { definitionById.set(item.id, await api.getAgent(item.id, { signal })) }
+          catch (error) {
+            if (!isCurrent()) return
+            failures[item.id] = toErrorState(error)
+            partial.push({ source: item.display_name ?? item.slug, error: failures[item.id]! })
+          }
+        }))
+      }
+      if (!isCurrent()) return
+      const preserveDraft = agentEditorBaseline !== '' && agentEditorSnapshot() !== agentEditorBaseline
+      const previousAgents = new Map(agents.value.map(agent => [agent.id, agent]))
+      if (preserveDraft && !directory.some(item => item.id === configuringAgentId.value)) {
+        failures[configuringAgentId.value] = toErrorState(new Error(t('settings.agentDraftSourceMissing')))
+        partial.push({ source: previousAgents.get(configuringAgentId.value)?.name ?? configuringAgentId.value, error: failures[configuringAgentId.value]! })
+      }
+      agentDefinitionFailures.value = failures
       agentCenterOverview.value = null
       agentModes.value = modes
       agentDirectory.value = directory
       agents.value = directory.map((item) => {
         const definition = definitionById.get(item.id)
+        const previous = previousAgents.get(item.id)
         return {
           id: item.id,
           slug: item.slug,
@@ -1195,11 +1221,11 @@ async function loadAgentCenterData() {
           role: item.role,
           agent_type: item.role,
           mode: '',
-          description: definition?.description ?? '',
+          description: definition?.description ?? previous?.description ?? '',
           model_route_purpose: item.configured_strategy?.route_purpose ?? '',
-          allowed_tools: Array.isArray(definition?.tool_scope) ? definition!.tool_scope as string[] : [],
-          capabilities: definition?.capabilities ?? [],
-          system_prompt: definition?.system_prompt ?? null,
+          allowed_tools: definition ? (Array.isArray(definition.tool_scope) ? definition.tool_scope as string[] : []) : previous?.allowed_tools ?? [],
+          capabilities: definition?.capabilities ?? previous?.capabilities ?? [],
+          system_prompt: definition?.system_prompt ?? previous?.system_prompt ?? null,
           enabled: item.enabled,
           is_built_in: item.managed || item.source_kind !== 'custom' || managedAgentIds.has(item.id),
           model_strategy: item.configured_strategy as unknown as Record<string, unknown>,
@@ -1212,59 +1238,60 @@ async function loadAgentCenterData() {
           updated_at: item.updated_at ?? null,
         }
       })
-      agentCandidates.value = candidates as unknown as AgentCandidateDto[]
+      agentCandidates.value = candidates
       toolLayerReadiness.value = toolReadiness
-      void agentPacksPanelRef.value?.reloadPackInventory()
-      // Harness manifest is non-critical: fall back to the legacy tool list for older Core builds.
-      api.getHarnessManifest()
-        .then((manifest) => {
-          harnessManifest.value = manifest
-          availableTools.value = manifest.tools
-          void loadToolDiscovery()
-        })
-        .catch(() => {
-          harnessManifest.value = null
-          api.listTools()
-            .then((tools) => {
-              availableTools.value = tools
-              void loadToolDiscovery()
-            })
-            .catch(() => {
-              availableTools.value = []
-              toolSearchResults.value = []
-            })
-        })
       const activeAgent = requestedAgentId.value
         ? agents.value.find((agent) => agent.id === requestedAgentId.value)
         : agents.value.find((agent) => agent.id === configuringAgentId.value)
           ?? agents.value.find((agent) => agent.id === selectedAgentId.value)
           ?? agents.value[0]
-      if (activeAgent) {
+      if (activeAgent && !preserveDraft) {
         openAgentConfig(activeAgent)
       }
-      api.executeCodeTool('project_templates')
-        .then((result) => { projectTemplates.value = projectTemplatesFromResult(result) })
-        .catch(() => { projectTemplates.value = [] })
-    } catch (error) {
-      status.error({ key: 'agent-center', source: 'agents', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadAgentCenter } })
-    } finally {
-      agentCenterLoading.value = false
-    }
+      agentReadDiagnostics.value = partial.slice()
+      // Auxiliary tools do not determine whether the agent directory is usable.
+      // Keep the last successful values on failure and guard late completions.
+      await Promise.all([
+        (async () => {
+          try {
+            const manifest = await api.getHarnessManifest({ signal })
+            if (!isCurrent()) return
+            harnessManifest.value = manifest
+            availableTools.value = manifest.tools
+          } catch (error) {
+            if (!isCurrent()) return
+            try {
+              const tools = await api.listTools({ signal })
+              if (!isCurrent()) return
+              harnessManifest.value = null
+              availableTools.value = tools
+            } catch (error) { preserve('tools', availableTools.value)(error) }
+          }
+        })(),
+        api.executeCodeTool('project_templates', {}, { signal }).then(result => {
+          if (isCurrent()) projectTemplates.value = projectTemplatesFromResult(result)
+        }).catch(preserve('project-templates', null)),
+      ])
+      if (isCurrent()) agentReadDiagnostics.value = partial
+      if (isCurrent()) await loadToolDiscovery(context)
 }
 
-async function loadToolDiscovery() {
+async function loadToolDiscovery(context?: ReadContext) {
+  if (!canAccessBackend.value) return
   toolDiscoveryLoading.value = true
   try {
-    toolSearchResults.value = await api.searchTools({
+    const results = await api.searchTools({
       query: toolDiscoveryQuery.value.trim() || undefined,
       source: toolDiscoverySource.value === 'all' ? undefined : toolDiscoverySource.value,
       risk: toolDiscoveryRisk.value === 'all' ? undefined : toolDiscoveryRisk.value,
       limit: 10
-    })
-  } catch {
-    toolSearchResults.value = []
+    }, context ? { signal: context.signal } : undefined)
+    if (!context || context.isCurrent()) toolSearchResults.value = results
+  } catch (error) {
+    if (!context || context.isCurrent()) agentReadDiagnostics.value = [...agentReadDiagnostics.value,
+      { source: 'tool-search', error: toErrorState(error) }]
   } finally {
-    toolDiscoveryLoading.value = false
+    if (!context || context.isCurrent()) toolDiscoveryLoading.value = false
   }
 }
 
@@ -1448,9 +1475,16 @@ function addAgentCapability() {
   }
 }
 
+let agentEditorBaseline = ''
+function agentEditorSnapshot(): string {
+  return JSON.stringify([configuringAgentId.value, agentEditTools.value, agentEditCapabilities.value,
+    agentEditSystemPrompt.value, agentEditDescription.value, agentRuntimeSelection.value,
+    agentRuntimeModelKey.value, agentRuntimeRoutePurpose.value])
+}
 function openAgentConfig(agent: AgentViewDto) {
   selectedAgentId.value = agent.id
   configuringAgentId.value = agent.id
+  if (agentDefinitionFailures.value[agent.id]) return
   agentEditTools.value = [...(agent.allowed_tools ?? [])]
   agentEditCapabilities.value = [...(agent.capabilities ?? [])]
   agentEditSystemPrompt.value = agent.system_prompt ?? ''
@@ -1475,6 +1509,7 @@ function openAgentConfig(agent: AgentViewDto) {
     || routes.value[0]?.purpose
     || ''
   agentRuntimeModelQuery.value = ''
+  agentEditorBaseline = agentEditorSnapshot()
   void loadAgentVersionHistory(agent.id)
   nextTick(() => {
     if (!window.matchMedia('(max-width: 760px)').matches) return
@@ -1947,9 +1982,6 @@ watch(pendingToolAgentId, (id) => {
   if (id) void selectSettingsSection('tools')
 }, { immediate: true })
 
-loadModelCenter()
-loadAgentCenter()
-
 import '../settings/settings.css'
 </script>
 
@@ -1998,6 +2030,7 @@ import '../settings/settings.css'
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
         <p v-if="activeSection === 'model' || activeSection === 'agentCenter'" class="quiet" role="status">{{ t('settings.userConfigurationSource') }}</p>
+        <p v-if="(activeSection === 'model' || activeSection === 'agentCenter') && !canAccessBackend" class="quiet" role="status">{{ hostReason }}</p>
         <Transition name="section-fade" mode="out-in">
         <div
           :key="activeSection"
@@ -2026,11 +2059,22 @@ import '../settings/settings.css'
                 <Plus :size="14" />
                 <span>{{ t('settings.addProvider') }}</span>
               </UiButton>
-              <UiButton variant="outline" size="sm" :disabled="modelCenterLoading || modelCenterBusy" @click="loadModelCenter">
+              <UiButton variant="outline" size="sm" :disabled="modelCenterLoading || modelCenterBusy || !canAccessBackend" @click="loadModelCenter">
                 <RefreshCw :size="14" />
                 <span>{{ t('settings.refresh') }}</span>
               </UiButton>
             </div>
+          </div>
+
+          <div v-if="modelCenterFailure" class="center-message" role="alert" data-testid="model-center-read-failure">
+            <Info :size="16" aria-hidden="true" />
+            <div class="center-message-content">
+              <strong>{{ t('settings.centerLoadFailed') }}</strong>
+              <span>{{ modelCenterFailure.message }}</span>
+              <span v-if="modelCenterFailure.code">{{ modelCenterFailure.code }}</span>
+              <pre v-if="modelCenterFailure.details">{{ modelCenterFailure.details }}</pre>
+            </div>
+            <UiButton variant="outline" size="sm" :disabled="modelCenterLoading || !canAccessBackend" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
           </div>
 
           <section class="center-overview-receipt" :aria-label="t('settings.centerOverview')">
@@ -2857,7 +2901,7 @@ import '../settings/settings.css'
                 <p>{{ t('settings.agentCenterSubtitle') }}</p>
               </div>
               <div class="center-command-actions">
-                <UiButton variant="outline" size="sm" @click="refreshAgentCenterTab()">
+                <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || !canAccessBackend" @click="refreshAgentCenterTab()">
                   <RefreshCw :size="14" />
                   <span>{{ t('settings.refresh') }}</span>
                 </UiButton>
@@ -2935,6 +2979,26 @@ import '../settings/settings.css'
             <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
           </div>
 
+          <div v-if="agentCenterFailure" class="center-message" role="alert" data-testid="agent-center-read-failure">
+            <Info :size="16" aria-hidden="true" />
+            <div class="center-message-content">
+              <strong>{{ t('settings.centerLoadFailed') }}</strong>
+              <span>{{ agentCenterFailure.message }}</span>
+              <span v-if="agentCenterFailure.code">{{ agentCenterFailure.code }}</span>
+              <pre v-if="agentCenterFailure.details">{{ agentCenterFailure.details }}</pre>
+            </div>
+            <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || !canAccessBackend" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
+          </div>
+
+          <details v-if="agentReadDiagnostics.length" class="center-message-content" data-testid="agent-center-partial-failure">
+            <summary>{{ t('settings.centerPartialLoadFailed') }}</summary>
+            <p v-for="diagnostic in agentReadDiagnostics" :key="diagnostic.source">
+              {{ diagnostic.source }}: {{ diagnostic.error.message }}
+              <span v-if="diagnostic.error.code"> · {{ diagnostic.error.code }}</span>
+              <pre v-if="diagnostic.error.details">{{ diagnostic.error.details }}</pre>
+            </p>
+          </details>
+
           <div v-if="agentCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
             <Info :size="16" />
             <div class="center-message-content">
@@ -2948,7 +3012,7 @@ import '../settings/settings.css'
             <UiButton variant="outline" size="sm" :disabled="agentCenterLoading" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
           </div>
 
-          <div v-if="!agentCenterLoading && agents.length === 0" class="center-empty-state center-empty-state-prominent">
+          <div v-if="canAccessBackend && agentCenterLoaded && !agentCenterFailure && !agentCenterLoading && agents.length === 0" class="center-empty-state center-empty-state-prominent">
             <Bot :size="22" />
             <div>
               <strong>{{ t('settings.noAgents') }}</strong>
@@ -3057,7 +3121,12 @@ import '../settings/settings.css'
               </div>
               <PanelRight :size="16" />
             </div>
-            <div v-if="configuringAgent" class="agent-detail-panel">
+            <div v-if="agentDefinitionFailures[configuringAgentId]" class="center-message-content" role="alert" data-testid="agent-definition-read-failure">
+              <strong>{{ t('settings.agentDefinitionLoadFailed') }}</strong>
+              <p>{{ agentDefinitionFailures[configuringAgentId]?.message }}</p>
+              <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || !canAccessBackend" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
+            </div>
+            <div v-else-if="configuringAgent" class="agent-detail-panel">
               <div class="agent-detail-head">
                 <div class="agent-card-icon" :class="{ execution: configuringAgent.layer === 'execution' }">
                   <component :is="configuringAgent.layer === 'operation' ? Workflow : Cpu" :size="20" />
@@ -3385,7 +3454,7 @@ import '../settings/settings.css'
                 <span v-if="configuringAgent.is_built_in" class="agent-builtin-save-hint">{{ t('settings.builtInCloneHint') }}</span>
               </div>
             </div>
-            <div v-else class="center-empty-state inspector-empty">
+            <div v-else-if="canAccessBackend && agentCenterLoaded && !agentCenterFailure" class="center-empty-state inspector-empty">
               <PanelRight :size="20" />
               <span>{{ agents.length > 0 ? t('settings.pleaseOpenAgentConfig') : t('settings.noAgents') }}</span>
             </div>

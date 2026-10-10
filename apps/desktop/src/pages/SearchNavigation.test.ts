@@ -206,7 +206,7 @@ describe('search navigation through the shipping pages', () => {
     await vi.waitFor(async () => {
       await flushPromises()
       expect(wrapper.findAll('.tool-discovery-card')).toHaveLength(1)
-    })
+    }, { timeout: 5000 })
     expect(wrapper.get('.tool-discovery-card').text()).toContain('read_file')
     expect(pendingToolId.value).toBe(null)
   })

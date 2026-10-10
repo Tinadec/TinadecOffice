@@ -1,5 +1,7 @@
 # Settings / 配置中心：TODO
 
+2026-10-11智能体目录性能与读取恢复继续由[APP-HOME-107](../home/TODO.md#app-home-107)记录，Settings实现/证据见[专项报告](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)。本模块既有配置发布/整体审计任务保持独立。
+
 模块ID：`APP-SETTINGS` · 初始基线：2026-10-05，b6115e6 + 当前工作树。
 
 最近专项：2026-10-09，d5e6c8d8 + 当前工作树；仅 Debug Studio 本机开关。
