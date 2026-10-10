@@ -56,7 +56,7 @@ scope-enabled Core 全部业务 API 要求私有宿主头，health/challenge 两
 
 **Last Updated:** 2026-10-11
 **Last Updated By:** APP-HOME-107 智能体/模型目录读取恢复、草稿保护与共享传输。
-**Last Verified Commit:** 6c9b5dd8 + 本次Settings工作树；本轮证据见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md。
+**Last Verified Commit:** df0977ff（Settings及共享读取修复）；本轮证据和全量首跑/局部复跑对账见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md。
 **Branch:** main
 
 ### 2026-10-08 工具设置

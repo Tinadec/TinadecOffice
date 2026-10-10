@@ -1,0 +1,43 @@
+{
+  "checked_at": "2026-10-10T17:36:39.381Z",
+  "electron": "43.3.0",
+  "real_settings_page": true,
+  "real_core_gateway": true,
+  "isolated_exact_toml_copy": true,
+  "main_preload": "fixture_status_bridge_not_product_main",
+  "events": [
+    {
+      "step": "initial_network_loss",
+      "displayed_agents": 20,
+      "agent_read_attempts": 2,
+      "automatic_read_recovery": true
+    },
+    {
+      "step": "persistent_network_loss",
+      "retained_agents": 20,
+      "read_attempts_in_refresh": 3,
+      "inline_failure": true,
+      "draft_preserved": true
+    },
+    {
+      "step": "explicit_read_retry",
+      "displayed_agents": 20,
+      "read_requests": 1,
+      "draft_preserved": true
+    },
+    {
+      "step": "host_recovery",
+      "read_refreshes": 1,
+      "draft_preserved": true,
+      "writes_replayed": 0
+    }
+  ],
+  "requests": {
+    "network_drops": 13,
+    "agent_reads": 7,
+    "agent_wire_requests": 16,
+    "configuration_or_install_writes": 0,
+    "metadata_preview_posts": 3,
+    "pack_preview_posts": 1
+  }
+}

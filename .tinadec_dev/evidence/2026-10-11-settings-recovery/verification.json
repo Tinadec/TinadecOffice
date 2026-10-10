@@ -1,0 +1,113 @@
+{
+  "checked_at": "2026-10-10T17:32:39.713Z",
+  "core": {
+    "selected_suites": [
+      "AgentRuntimeBindingTests",
+      "ConfigurationDocumentTests",
+      "GraphSeed",
+      "AgentPackEndpointTests"
+    ],
+    "counts": {
+      "total": 60,
+      "executed": 60,
+      "passed": 60,
+      "failed": 0,
+      "error": 0,
+      "timeout": 0,
+      "aborted": 0,
+      "inconclusive": 0,
+      "passedButRunAborted": 0,
+      "notRunnable": 0,
+      "notExecuted": 0,
+      "disconnected": 0,
+      "warning": 0,
+      "completed": 0,
+      "inProgress": 0,
+      "pending": 0
+    }
+  },
+  "desktop": [
+    {
+      "name": "desktop-targeted",
+      "files": 8,
+      "passed": 72,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "desktop-contract",
+      "files": 3,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "typecheck": {
+    "exit_code": 0
+  },
+  "production_build": {
+    "exit_code": 0,
+    "isolated_output": true,
+    "modules_transformed": 6438,
+    "existing_warnings": [
+      "circular_chunk_reexports",
+      "large_chunks"
+    ]
+  },
+  "windows_electron": {
+    "version": "43.3.0",
+    "production_renderer": true,
+    "real_core_gateway": true,
+    "main_preload_fixture": true,
+    "accepted_scenarios": [
+      "initial_network_loss",
+      "persistent_network_loss",
+      "explicit_read_retry",
+      "host_recovery"
+    ],
+    "application_reads": 7,
+    "configuration_or_install_writes": 0
+  },
+  "updated_at": "2026-10-10T17:46:22.314Z",
+  "desktop_full": {
+    "first_run": {
+      "files": 138,
+      "total": 1278,
+      "passed": 1263,
+      "failed": 1,
+      "skipped": 14,
+      "success": false,
+      "raw_report": ".tinadec_dev/tmp/settings-recovery-results/desktop-full.json",
+      "raw_sha256": "edd8d5bac21d41b9bc81d5378ef9b46275b20311ed21a39c0ccd57f396a46793",
+      "failure": {
+        "file": "apps/desktop/src/settingsCenters.test.ts",
+        "test": "settings centers presentation contract preserves the agent inspector and runtime preview contract",
+        "reason": "The source literal asserted the previous false-empty behavior. Replaced with a real successful-empty component test."
+      }
+    },
+    "affected_file_followup": {
+      "files": 2,
+      "total": 16,
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0,
+      "success": true,
+      "added_cases": 1,
+      "raw_report": ".tinadec_dev/tmp/settings-recovery-results/desktop-followup.json",
+      "raw_sha256": "155fff3c8c5800947af8c03a8eb10fd41c98aba2ab9a7874127da712e10c344d"
+    },
+    "reconciled": {
+      "total": 1279,
+      "passed": 1265,
+      "failed": 0,
+      "skipped": 14,
+      "basis": "Full first run with affected-file results superseded by the successful followup; not a new full-suite run."
+    }
+  },
+  "code_commits": {
+    "configuration_projection": "4787970c",
+    "agent_batch_preview": "d40e89f6",
+    "desktop_read_transport": "6c9b5dd8",
+    "settings_read_recovery": "df0977ff"
+  }
+}

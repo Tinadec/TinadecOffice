@@ -47,6 +47,10 @@
 
 旧 main 与新 preload/renderer 混用的缺 handler 错误已纳入本地协议失败处理：业务撤权、停止无效重试、共享 Banner 恢复和 Home 通知去重。DEV 明确整链 npm run dev，生产保留既有可信重启入口；迟到状态/手动重试不覆盖较新撤权。[现场、回归与 Electron 契约证据](../../../../../.tinadec_dev/reports/2026-10-10-host-ipc-mismatch.zh-CN.md) 独立记录，本任务继续待验收，不重置用户数据或扩大平台完成声明。
 
+**2026-10-11 智能体目录与连接读取跟进**
+
+已确认当前配置非空，而旧/agents逐节点预览导致Core超过90s、Gateway网络失败；设置首次读取失败又误显示空目录。按同一任务实施配置摘要复用、作用域内批量预览、共享JSON只读网络重试，以及Settings取消/单飞/恢复/草稿保护。HTTP、配置、安装语义保持不变；写与普通重连不重放。[本轮实测与边界](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)单列，不沿用上轮IPC验收，也不改变本任务完整平台待验收状态。
+
 <a id="app-home-106"></a>
 
 ### APP-HOME-106 项目选择器长列表与模式、权限展开指示

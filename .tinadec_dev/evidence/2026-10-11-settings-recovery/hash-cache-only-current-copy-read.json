@@ -1,0 +1,166 @@
+{
+  "checked_at": "2026-10-10T16:41:20.802Z",
+  "exact_current_user_toml_copy": true,
+  "copied_database_or_credentials": false,
+  "user_config_unchanged": true,
+  "files_before": [
+    {
+      "name": "agents.toml",
+      "bytes": 327362,
+      "sha256": "a51211f5c5eb442cdf12174a9b15f377bdc898c6e8a3a1e27e4488a16bf0f463"
+    },
+    {
+      "name": "models.toml",
+      "bytes": 2313,
+      "sha256": "8005978ba69053c3598d38fc9676da742bcbc196306463d9d9ebb22af2397a79"
+    },
+    {
+      "name": "prompts.toml",
+      "bytes": 31,
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "tools.toml",
+      "bytes": 31,
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "mcp.toml",
+      "bytes": 31,
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "skills.toml",
+      "bytes": 2106,
+      "sha256": "6c172d05dc6094e2c5af2df88f230256846329cc575dc0bd24ce9e32d8405283"
+    },
+    {
+      "name": "storage.toml",
+      "bytes": 116,
+      "sha256": "e2a19becc31c8cf2f5d4b481abc3a3552e314a789b0c003483d8d931c6a6c35c"
+    },
+    {
+      "name": "logging.toml",
+      "bytes": 72,
+      "sha256": "fefd69a3d2fe6e0605a2fb5fb54657184eb66010d0d9e621adbaa5ecc28c04ef"
+    },
+    {
+      "name": "runtime.toml",
+      "bytes": 3469,
+      "sha256": "450e4c4f9c775fac311a2170ae41f311f46dafaaf60affaa74dad050290b5156"
+    }
+  ],
+  "files_after": [
+    {
+      "name": "agents.toml",
+      "bytes": 327362,
+      "sha256": "a51211f5c5eb442cdf12174a9b15f377bdc898c6e8a3a1e27e4488a16bf0f463"
+    },
+    {
+      "name": "models.toml",
+      "bytes": 2313,
+      "sha256": "8005978ba69053c3598d38fc9676da742bcbc196306463d9d9ebb22af2397a79"
+    },
+    {
+      "name": "prompts.toml",
+      "bytes": 31,
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "tools.toml",
+      "bytes": 31,
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "mcp.toml",
+      "bytes": 31,
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "skills.toml",
+      "bytes": 2106,
+      "sha256": "6c172d05dc6094e2c5af2df88f230256846329cc575dc0bd24ce9e32d8405283"
+    },
+    {
+      "name": "storage.toml",
+      "bytes": 116,
+      "sha256": "e2a19becc31c8cf2f5d4b481abc3a3552e314a789b0c003483d8d931c6a6c35c"
+    },
+    {
+      "name": "logging.toml",
+      "bytes": 72,
+      "sha256": "fefd69a3d2fe6e0605a2fb5fb54657184eb66010d0d9e621adbaa5ecc28c04ef"
+    },
+    {
+      "name": "runtime.toml",
+      "bytes": 3469,
+      "sha256": "450e4c4f9c775fac311a2170ae41f311f46dafaaf60affaa74dad050290b5156"
+    }
+  ],
+  "table_counts": {
+    "agent_pack_installations": 2,
+    "agent_pack_versions": 2,
+    "prompt_pipelines": 9,
+    "prompt_versions": 9,
+    "agent_pack_managed_resources": 43,
+    "agent_pack_resource_bindings": 43,
+    "agent_definitions": 20,
+    "agent_versions": 20,
+    "agent_modes": 14,
+    "mode_versions": 14,
+    "mode_nodes": 67,
+    "canvas_layouts": 14,
+    "workspace_defaults": 1,
+    "agent_pack_default_adoptions": 2,
+    "mode_edges": 4
+  },
+  "agent_status_counts": {
+    "published": 20
+  },
+  "pack_status_counts": {
+    "active": 2
+  },
+  "reads": [
+    {
+      "service": "core",
+      "path": "/api/v1/agents",
+      "status": 200,
+      "elapsed_ms": 86440,
+      "count": 20
+    },
+    {
+      "service": "core",
+      "path": "/api/v1/agent-modes",
+      "status": 200,
+      "elapsed_ms": 762,
+      "count": 14
+    },
+    {
+      "service": "core",
+      "path": "/api/v1/agent-packs",
+      "status": 200,
+      "elapsed_ms": 431,
+      "count": 2
+    },
+    {
+      "service": "gateway",
+      "path": "/api/v1/agents",
+      "elapsed_ms": 32016,
+      "error_name": "TypeError"
+    },
+    {
+      "service": "gateway",
+      "path": "/api/v1/agent-modes",
+      "status": 200,
+      "elapsed_ms": 677,
+      "count": 14
+    },
+    {
+      "service": "gateway",
+      "path": "/api/v1/agent-packs",
+      "status": 200,
+      "elapsed_ms": 641,
+      "count": 2
+    }
+  ]
+}

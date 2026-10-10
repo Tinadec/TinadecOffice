@@ -1,0 +1,81 @@
+{
+  "checked_at": "2026-10-10T17:36:39.762Z",
+  "user_config_unchanged": true,
+  "database_or_credentials_copied": false,
+  "files_before": [
+    {
+      "name": "agents.toml",
+      "sha256": "a51211f5c5eb442cdf12174a9b15f377bdc898c6e8a3a1e27e4488a16bf0f463"
+    },
+    {
+      "name": "models.toml",
+      "sha256": "8005978ba69053c3598d38fc9676da742bcbc196306463d9d9ebb22af2397a79"
+    },
+    {
+      "name": "prompts.toml",
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "tools.toml",
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "mcp.toml",
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "skills.toml",
+      "sha256": "6c172d05dc6094e2c5af2df88f230256846329cc575dc0bd24ce9e32d8405283"
+    },
+    {
+      "name": "storage.toml",
+      "sha256": "e2a19becc31c8cf2f5d4b481abc3a3552e314a789b0c003483d8d931c6a6c35c"
+    },
+    {
+      "name": "logging.toml",
+      "sha256": "fefd69a3d2fe6e0605a2fb5fb54657184eb66010d0d9e621adbaa5ecc28c04ef"
+    },
+    {
+      "name": "runtime.toml",
+      "sha256": "450e4c4f9c775fac311a2170ae41f311f46dafaaf60affaa74dad050290b5156"
+    }
+  ],
+  "files_after": [
+    {
+      "name": "agents.toml",
+      "sha256": "a51211f5c5eb442cdf12174a9b15f377bdc898c6e8a3a1e27e4488a16bf0f463"
+    },
+    {
+      "name": "models.toml",
+      "sha256": "8005978ba69053c3598d38fc9676da742bcbc196306463d9d9ebb22af2397a79"
+    },
+    {
+      "name": "prompts.toml",
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "tools.toml",
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "mcp.toml",
+      "sha256": "259dc71bc4ef7c99b72edd4df67a70563efc974a77a777447ffac6795be5d129"
+    },
+    {
+      "name": "skills.toml",
+      "sha256": "6c172d05dc6094e2c5af2df88f230256846329cc575dc0bd24ce9e32d8405283"
+    },
+    {
+      "name": "storage.toml",
+      "sha256": "e2a19becc31c8cf2f5d4b481abc3a3552e314a789b0c003483d8d931c6a6c35c"
+    },
+    {
+      "name": "logging.toml",
+      "sha256": "fefd69a3d2fe6e0605a2fb5fb54657184eb66010d0d9e621adbaa5ecc28c04ef"
+    },
+    {
+      "name": "runtime.toml",
+      "sha256": "450e4c4f9c775fac311a2170ae41f311f46dafaaf60affaa74dad050290b5156"
+    }
+  ]
+}

@@ -7,10 +7,14 @@
 沿用APP-HOME-107唯一任务，宿主启动、Core逐项挂载、Gateway错误投影与Desktop跨作用域读取分别交叉引用。证据与实际/模拟边界见 .tinadec_dev/reports/2026-10-10-interface-regression.zh-CN.md。目录、用户配置和测试包均保留；未宣称全平台完成。
 
 **Generated:** 2026-10-05
-**Last Updated:** 2026-10-10
-**Last Updated By:** APP-HOME-107/F007 侧边栏与多文件夹工作区、作用域目录授权、真实平台证据及唯一文档入口；此前专项独立保留。
-**Last Verified Commit:** 607b7406（本轮五组代码提交）+ 文档工作树；Windows证据与未验收边界见 .tinadec_dev/reports/2026-10-10-interface-regression.zh-CN.md。
+**Last Updated:** 2026-10-11
+**Last Updated By:** APP-HOME-107 智能体目录性能、读取恢复及配置缓存契约；任务入口不复制。
+**Last Verified Commit:** df0977ff（本轮全部代码）；本轮证据、实际/夹具边界及测试对账见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md。
 **Branch:** main
+
+### 2026-10-11 设置目录读取恢复
+
+继续在APP-HOME-107记录接口回归跟进，Settings、Renderer、Persistence、AgentConfiguration和Runtime交叉引用。报告分别记录实际用户TOML副本的HTTP时延/目录数量、定向测试、Electron夹具及构建；当前用户服务未重启不等于采用新DLL。不得引用上轮IPC证据替代本轮连接/智能体验收，不重置用户数据。
 
 ### 2026-10-10 工作区交互与多目录
 
