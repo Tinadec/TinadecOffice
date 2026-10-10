@@ -1,5 +1,13 @@
 # 错误处理与恢复契约
 
+## 2026-10-11 读取传输与屏幕恢复
+
+共享 JSON 请求仅对 GET/HEAD 的网络异常及正文传输中断自动重试：首次请求之后等待250ms、750ms，最多三次。每次重新核对宿主授权，使用发送前固定的URL、headers和storage_id；取消、撤权或离开页面终止旧读取。HTTP错误、JSON解析失败和配置校验不进入这个预算，POST/PUT/PATCH/DELETE不会自动重发。SSE与二进制传输仍由各自模块处理。
+
+读取网络失败在预算用尽后提供`backend_network_unavailable`，分类retryable、动作retry。写请求传输失败提供`backend_write_outcome_unknown`，不能判定服务端未执行，也不自动提供原请求重试。客户端不借公共health成功或网络重试放宽宿主身份校验。
+
+设置的智能体/模型目录拥有页面读取生命周期：挂载或宿主重新就绪刷新，手动读取重试合并，卸载/撤权取消，旧响应不能覆盖新连接。成功读取空列表才显示空态；刷新失败保留旧目录并显示结构化错误。单个智能体详情失败保留目录身份，禁止用空提示词/工具配置编辑；辅助数据失败单独诊断。读取恢复保留未保存编辑草稿，也不会自动安装AgentPack或提交配置。当前实现与验证见[专项报告](../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)，唯一任务继续为APP-HOME-107。
+
 适用：2026-10-10 工作树。功能与验收进度唯一归属 [APP-HOME-107](development-program/02-modules/app/home/TODO.md#app-home-107)。本文件定义产品错误契约；初始框架见 [错误恢复报告](../.tinadec_dev/reports/2026-10-10-error-recovery.zh-CN.md)，本轮接口接线与验收见 [接口回归报告](../.tinadec_dev/reports/2026-10-10-interface-regression.zh-CN.md)。
 
 ## 为什么要统一

@@ -1,4 +1,4 @@
-import { assertHostAccess } from '@/lib/hostAccess'
+import { readBackendResponse } from '@/lib/backendRequest'
 /**
  * Typed fetch wrapper aligned to the Gateway external contract (snake_case).
  * DTOs are type aliases into src/generated/schema.d.ts, which is generated from
@@ -8,7 +8,6 @@ import { assertHostAccess } from '@/lib/hostAccess'
  * not part of the JSON OpenAPI surface.
  */
 import type { components } from './schema'
-import { isAbortError } from '../lib/isAbortError'
 import { ApiError, apiErrorMessage } from '../lib/apiError'
 import { storageHeaders, captureStorageId, rememberStorageResult, normalizeStorageRequest, type StorageRequestOptions } from '../lib/storageScope'
 
@@ -103,18 +102,11 @@ async function req<T>(path: string, init?: StorageRequestOptions): Promise<T> {
   const storageId = captureStorageId(path, init)
   const normalized = normalizeStorageRequest(path, init)
   const url = `${gatewayUrl()}${normalized.path}`
-  let res: Response
-  try {
-    const headers = storageHeaders(path, { ...init, storageId })
-    headers.set('accept', 'application/json')
-    if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
-    await assertHostAccess(path, init?.signal ?? undefined)
-    res = await fetch(url, { ...init, body: normalized.body, headers })
-  } catch (e) {
-    if (isAbortError(e) || e instanceof ApiError) throw e
-    throw new Error(`Cannot connect to backend (${gatewayUrl()}): ${e instanceof Error ? e.message : String(e)}`)
-  }
-  const text = await res.text()
+  const headers = storageHeaders(path, { ...init, storageId })
+  headers.set('accept', 'application/json')
+  if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
+  const { response: res, text } = await readBackendResponse(url, path,
+    { ...init, body: normalized.body, headers }, { storageId })
   let data: unknown = null
   if (text) { try { data = JSON.parse(text) } catch { throw new Error(`Invalid JSON: ${text.slice(0,200)}`) } }
   if (!res.ok) {
@@ -128,18 +120,11 @@ async function reqWithEtag<T>(path: string, init?: StorageRequestOptions): Promi
   const storageId = captureStorageId(path, init)
   const normalized = normalizeStorageRequest(path, init)
   const url = `${gatewayUrl()}${normalized.path}`
-  let res: Response
-  try {
-    const headers = storageHeaders(path, { ...init, storageId })
-    headers.set('accept', 'application/json')
-    if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
-    await assertHostAccess(path, init?.signal ?? undefined)
-    res = await fetch(url, { ...init, body: normalized.body, headers })
-  } catch (e) {
-    if (isAbortError(e) || e instanceof ApiError) throw e
-    throw new Error(`Cannot connect to backend (${gatewayUrl()}): ${e instanceof Error ? e.message : String(e)}`)
-  }
-  const text = await res.text()
+  const headers = storageHeaders(path, { ...init, storageId })
+  headers.set('accept', 'application/json')
+  if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
+  const { response: res, text } = await readBackendResponse(url, path,
+    { ...init, body: normalized.body, headers }, { storageId })
   let data: unknown = null
   if (text) { try { data = JSON.parse(text) } catch { throw new Error(`Invalid JSON: ${text.slice(0,200)}`) } }
   if (!res.ok) {

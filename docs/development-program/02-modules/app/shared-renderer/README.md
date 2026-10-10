@@ -1,5 +1,9 @@
 # 共享渲染层 / 路由与 API
 
+## 2026-10-11 JSON读取与恢复所有权
+
+`backendRequest.ts`统一api.ts/生成客户端的JSON传输，仅GET/HEAD网络与正文中断在250/750ms内再试，合计最多三次；每次重验宿主，作用域固定。HTTP/JSON错误与写不重放，写回执丢失明确结果未知。`useRecoverableRead`由页面持有单飞、取消、已加载状态与迟到保护。SSE/二进制仍使用原模块。[错误契约](../../../../error-contract.zh-CN.md)、[证据](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)，任务[APP-HOME-107](../home/TODO.md#app-home-107)。
+
 模块ID：`APP-RENDERER` · 初始基线：2026-10-05，b6115e6 + 当前工作树。
 
 本模块目前处于**初始源码清点**，还未完成逐功能审计；下列介绍继承总图中已核对的职责，初始状态区分源码能力、范围与缺口。

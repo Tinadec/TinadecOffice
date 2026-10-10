@@ -1,10 +1,9 @@
-import { assertHostAccess } from '@/lib/hostAccess'
+import { readBackendResponse } from '@/lib/backendRequest'
 import type { AgentPackEnvelope } from '@/agentPacks/GraphSeedPack'
 import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
 import type { components } from '@/generated/schema'
 import type { MessageAttachmentDto, MessageDto, SseChunk } from '@/generated/client'
 import { createRunStream, runStreamDelta, type RunStreamHandle } from '@/lib/runStream'
-import { isAbortError } from '@/lib/isAbortError'
 import { ApiError } from '@/lib/apiError'
 import { captureStorageId, rememberStorageResult, normalizeStorageRequest, storageHeaders, storageFetch, sessionStorageId, selectionIdentity, type StorageRequestOptions } from '@/lib/storageScope'
 import type { StorageScopeDto, StorageStatsDto, StorageCleanupPreviewDto, StorageContentPreviewDto, StorageDeletePreviewDto, SessionTransferDto, ConfigurationDocumentDto, StorageConfigureInput } from '@/settings/storage'
@@ -2601,23 +2600,8 @@ async function requestResult<T>(path: string, init?: StorageRequestOptions): Pro
   const headers = storageHeaders(path, { ...init, storageId })
   if (!headers.has('accept')) headers.set('accept', 'application/json')
   if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
-  let response: Response;
-  try {
-    await assertHostAccess(path, init?.signal ?? undefined)
-    response = await fetch(`${gatewayUrl}${normalized.path}`, {
-      ...init,
-      body: normalized.body,
-      headers,
-    });
-  } catch (err) {
-    if (isAbortError(err)) throw err
-    if (err instanceof ApiError) throw err
-    // fetch() itself failed (network error, CORS blocked, etc.)
-    const msg = err instanceof Error ? err.message : 'Network request failed';
-    throw new Error(`Cannot connect to backend (${gatewayUrl}): ${msg}`);
-  }
-
-  const text = await response.text();
+  const { response, text } = await readBackendResponse(`${gatewayUrl}${normalized.path}`, path,
+    { ...init, body: normalized.body, headers }, { storageId })
   let data: unknown = null;
   if (text.length > 0) {
     try {
@@ -2957,7 +2941,7 @@ export const api = {
   health: () => request<Record<string, unknown>>('/api/v1/health'),
   doctor: () => request<DoctorReportDto>('/api/v1/doctor'),
   readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),
-  getToolLayerReadiness: () => request<ToolLayerReadinessReceiptDto>('/api/v1/tool-layer-readiness'),
+  getToolLayerReadiness: (options?: { signal?: AbortSignal }) => request<ToolLayerReadinessReceiptDto>('/api/v1/tool-layer-readiness', options),
   listProjects: (options?: { signal?: AbortSignal; storageId?: string; lifecycleStatus?: 'active' | 'archived' | 'trashed' }) => request<ProjectDto[]>(`/api/v1/projects${options?.lifecycleStatus ? '?lifecycle_status=' + encodeURIComponent(options.lifecycleStatus) : ''}`, options),
   createProject: (name: string, path: string) => request<ProjectDto>('/api/v1/projects', {
     method: 'POST',
@@ -3140,7 +3124,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input)
   }),
-  listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
+  listModelProviderTemplates: (options?: { signal?: AbortSignal }) => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates', options),
   listModelProviders: (options?: { signal?: AbortSignal }) => request<ModelProviderInstanceDto[]>('/api/v1/model-providers', options),
   discoverHarnesses: () => request<CliDiscoveryResultDto>('/api/v1/model-providers/harnesses/discover'),
   connectHarness: (input: ConnectHarnessInput) => request<ModelProviderInstanceDto>('/api/v1/model-providers/harnesses/connect', {
@@ -3150,8 +3134,8 @@ export const api = {
   refreshProviderModels: (providerInstanceId: string) => request<ModelDiscoveryResultDto>(`/api/v1/model-providers/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
     method: 'POST'
   }),
-  getModelReadiness: () => request<ModelReadinessReceiptDto>('/api/v1/model-readiness'),
-  getModelCatalogReadiness: () => request<ModelCatalogReadinessReceiptDto>('/api/v1/model-catalog-readiness'),
+  getModelReadiness: (options?: { signal?: AbortSignal }) => request<ModelReadinessReceiptDto>('/api/v1/model-readiness', options),
+  getModelCatalogReadiness: (options?: { signal?: AbortSignal }) => request<ModelCatalogReadinessReceiptDto>('/api/v1/model-catalog-readiness', options),
   createModelProvider: (provider: SaveModelProviderInstanceInput) => request<ModelProviderInstanceDto>('/api/v1/model-providers', {
     method: 'POST',
     body: JSON.stringify(provider)
@@ -3171,7 +3155,7 @@ export const api = {
       headers: options?.expected_revision !== undefined ? { 'if-match': `"${options.expected_revision}"` } : undefined
     })
   },
-  listModelRoutes: () => request<ModelRouteDto[]>('/api/v1/model-routes'),
+  listModelRoutes: (options?: { signal?: AbortSignal }) => request<ModelRouteDto[]>('/api/v1/model-routes', options),
   saveModelRoute: (purpose: string, candidates: ModelRouteWriteRequestDto | string, model?: string | null, options?: { expected_revision?: number }) => request<ModelRouteDto>(`/api/v1/model-routes/${encodeURIComponent(purpose)}`, {
     method: 'PUT',
     headers: options?.expected_revision !== undefined ? { 'if-match': `"${options.expected_revision}"` } : undefined,
@@ -3246,10 +3230,10 @@ export const api = {
   listMcpServers: () => request<McpInventoryDto>('/api/v1/mcp/servers'),
   listMcpServerTools: (serverId: string) =>
     request<McpServerToolsDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools`),
-  listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
+  listAcpAdapters: (options?: { signal?: AbortSignal }) => request<AcpAdapterDto[]>('/api/v1/acp/adapters', options),
   listAgentModes: (options?: { signal?: AbortSignal }) => request<AgentModeDto[]>('/api/v1/agent-modes', options),
   listAgents: (options?: { signal?: AbortSignal }) => request<AgentDirectoryItemDto[]>('/api/v1/agents', options),
-  getAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}`),
+  getAgent: (id: string, options?: { signal?: AbortSignal }) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}`, options),
   // ── New 5-tab config objects (snake_case, If-Match via etag) ──
   // `/api/v1/agents` is the directory projection; full definitions are fetched per id.
   listAgentDefinitions: async (): Promise<AgentDefinitionDto[]> => {
@@ -3269,7 +3253,7 @@ export const api = {
   archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
   getWorkspaceDefaults: (signal?: AbortSignal) => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults', { signal }),
   listAgentPacks: (signal?: AbortSignal) => request<AgentPackDto[]>('/api/v1/agent-packs', { signal }),
-  getAgentPack: async (packId: string) => withResponseEtag(await requestResult<AgentPackDetailDto>(`/api/v1/agent-packs/${encodeURIComponent(packId)}`)),
+  getAgentPack: async (packId: string, options?: { signal?: AbortSignal }) => withResponseEtag(await requestResult<AgentPackDetailDto>(`/api/v1/agent-packs/${encodeURIComponent(packId)}`, options)),
   // 包管理：卸载（不可逆，带 revision 守卫）、启用/禁用、设为工作区默认。
   purgeAgentPack: (packId: string, revision: number | string) => request<AgentPackPurgeDto>(`/api/v1/agent-packs/${encodeURIComponent(packId)}`, {
     method: 'DELETE',
@@ -3368,7 +3352,7 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return normalizeToolSearchResults(await request<(ToolSearchResultDto | ToolManifestEntryDto)[]>(`/api/v1/tools/search${suffix}`, { signal: options?.signal }));
   },
-  getHarnessManifest: () => request<HarnessManifestDto>('/api/v1/harness/manifest'),
+  getHarnessManifest: (options?: { signal?: AbortSignal }) => request<HarnessManifestDto>('/api/v1/harness/manifest', options),
   listPromptFragments: (params: { scope?: string; target_agent_id?: string; category?: string; enabled?: boolean } = {}, options?: { signal?: AbortSignal }) => {
     const search = new URLSearchParams();
     if (params.scope) search.set('scope', params.scope);
@@ -3433,7 +3417,7 @@ export const api = {
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
   gitLog: (cwd: string, limit?: number, ref?: string) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
-  listAgentCandidates: () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'),
+  listAgentCandidates: (options?: { signal?: AbortSignal }) => request<AgentCandidateDto[]>('/api/v1/agent-candidates', options),
 
   // --- Memory review (candidates are never retrieval-visible; only promoted items are) ---
   listMemoryCandidates: (query: MemoryQueueQuery = {}) =>
