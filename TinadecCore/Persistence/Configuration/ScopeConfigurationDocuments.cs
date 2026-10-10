@@ -16,15 +16,28 @@ public sealed class ScopeConfigurationDocuments(
     public IReadOnlyList<string> DocumentIds => Ids;
     internal bool RequiresRuntimeDocument => validators.Any(v => v.DocumentId == "runtime");
 
-    public async Task<ScopeConfigurationDocument> ReadAsync(string id, CancellationToken cancellationToken = default)
+    public Task<ScopeConfigurationDocument> ReadAsync(string id, CancellationToken cancellationToken = default) =>
+        ReadCoreAsync(id, null, cancellationToken);
+
+    // Only the coordinator may supply a successfully validated and applied
+    // projection. Re-read the source bytes and verify their hash on every
+    // attach; unchanged files need no repeated SQL/history/TOML validation.
+    internal Task<ScopeConfigurationDocument> ReadForProjectionAsync(string id, ScopeConfigurationDocument? applied,
+        CancellationToken cancellationToken) => ReadCoreAsync(id, applied, cancellationToken);
+
+    private async Task<ScopeConfigurationDocument> ReadCoreAsync(string id, ScopeConfigurationDocument? applied, CancellationToken cancellationToken)
     {
         var path = ResolvePath(id);
         var exists = File.Exists(path);
         var text = exists ? await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false) : "";
+        cancellationToken.ThrowIfCancellationRequested();
+        var hash = exists ? Hash(text) : "";
+        if (exists && applied is not null && applied.Id == id && applied.Path == path && applied.ContentHash == hash)
+            return applied;
         var diagnostics = exists ? await ValidateAsync(id, text, cancellationToken).ConfigureAwait(false)
             : File.Exists(EstablishedPath(id)) || ScopeConfigurationInitialization.IsPublishedProject(locations)
                 ? new ConfigurationDiagnostic[] { new("configuration_missing", "An established configuration file is missing. Restore it or save a valid replacement.") } : [];
-        return new(id, path, text, exists ? Hash(text) : "", diagnostics, DocumentVersion(text));
+        return new(id, path, text, hash, diagnostics, DocumentVersion(text));
     }
 
     public Task<IReadOnlyList<ConfigurationDiagnostic>> ValidateAsync(string id, string text, CancellationToken cancellationToken = default)

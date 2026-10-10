@@ -1,5 +1,7 @@
 # Persistence · 公共存储适配：功能与完成情况
 
+2026-10-11投影摘要复用专项：Windows隔离SQLite21项ConfigurationDocument包含源编辑检测、失败不缓存、写入失效和scope隔离；公开Read/Compile/Verify继续校验。真实配置副本HTTP与其他回归见[报告](../../../../../.tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md)，唯一接口跟进任务[APP-HOME-107](../../app/home/TODO.md#app-home-107)。既有存储全平台/整体状态不改变。
+
 模块ID：`CORE-PERSISTENCE` · 清点日期：2026-10-05 · 基线：b6115e6 + 当前工作树。
 
 **审计阶段：初始源码清点；逐功能审计未完成。** 不报告完成百分比，也不把历史全量绿或源码存在折算为功能完成。

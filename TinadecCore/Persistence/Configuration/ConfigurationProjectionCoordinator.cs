@@ -22,7 +22,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     private readonly IEnumerable<IConfigurationProjectionSource> _sources;
     private readonly ITenantContextAccessor _tenant;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly Dictionary<string, string> _projectedHashes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ScopeConfigurationDocument> _projectedDocuments = new(StringComparer.Ordinal);
     private static readonly MethodInfo QueryMethod = typeof(ConfigurationProjectionCoordinator).GetMethod(nameof(QueryRows), BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
@@ -106,9 +106,10 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
             Dictionary<Type, List<object>>? existing = null;
             foreach (var group in entities.GroupBy(e => DocumentId(db, e)))
             {
-                var document = await _documents.ReadAsync(group.Key, cancellationToken).ConfigureAwait(false);
+                _projectedDocuments.TryGetValue(group.Key, out var applied);
+                var document = await _documents.ReadForProjectionAsync(group.Key, applied, cancellationToken).ConfigureAwait(false);
                 ThrowDiagnostics(document);
-                if (document.ContentHash.Length > 0 && _projectedHashes.TryGetValue(group.Key, out var applied) && applied == document.ContentHash)
+                if (document.ContentHash.Length > 0 && applied?.ContentHash == document.ContentHash)
                 { db.ConfigurationDocumentHashes[group.Key] = document.ContentHash; continue; }
                 existing ??= await LoadRowsAsync(db, entities, cancellationToken).ConfigureAwait(false);
                 if (document.ContentHash.Length == 0)
@@ -127,7 +128,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 }
                 await _documents.MarkEstablishedAsync(group.Key, cancellationToken).ConfigureAwait(false);
                 db.ConfigurationDocumentHashes[group.Key] = document.ContentHash;
-                _projectedHashes[group.Key] = document.ContentHash;
+                _projectedDocuments[group.Key] = document;
             }
             db.ConfigurationCoordinator = this;
         }
@@ -177,7 +178,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 db.ConfigurationDocumentHashes[id] = updated.ContentHash;
                 // The file is durable even if the following SQL projection update fails.
                 // A later read always repairs that projection from these authoritative bytes.
-                _projectedHashes.Remove(id);
+                _projectedDocuments.Remove(id);
             }
         }
         finally { _gate.Release(); }

@@ -20,6 +20,87 @@ public sealed class ConfigurationDocumentTests : IDisposable
     private static readonly TenantContext Actor = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "owner");
 
     [Fact]
+    public async Task UnchangedProjectionReusesValidationButStillChecksBytesAndRejectsChangedSource()
+    {
+        var observer = new CountingValidator();
+        await using var services = Build(_root, new MemoryContentStore(), observer: observer);
+        await InitializeAsync(services);
+        var factory = services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>();
+        var count = observer.Count;
+        for (var i = 0; i < 8; i++)
+        {
+            await using var db = await factory.CreateDbContextAsync();
+            Assert.Empty(await db.AgentDefinitions.ToListAsync());
+        }
+        Assert.Equal(count, observer.Count);
+
+        // Same-length edits with unchanged timestamps must invalidate the
+        // projection; file metadata cannot substitute for source bytes.
+        var path = Path.Combine(_root, "config", "agents.toml");
+        var text = await File.ReadAllTextAsync(path);
+        await File.WriteAllTextAsync(path, text + "\n# source-one\n");
+        await using (var db = await factory.CreateDbContextAsync()) { }
+        var firstEditCount = observer.Count;
+        var stamp = File.GetLastWriteTimeUtc(path);
+        await File.WriteAllTextAsync(path, text + "\n# source-two\n");
+        File.SetLastWriteTimeUtc(path, stamp);
+        await using (var db = await factory.CreateDbContextAsync()) { }
+        Assert.Equal(firstEditCount + 1, observer.Count);
+
+        await File.WriteAllTextAsync(path, text + "\n# reject-fixture\n");
+        for (var i = 0; i < 2; i++)
+        {
+            var error = await Assert.ThrowsAsync<ConfigurationDocumentException>(() => factory.CreateDbContextAsync());
+            Assert.Contains(error.Diagnostics, d => d.Code == "fixture_invalid");
+        }
+        Assert.Equal(firstEditCount + 3, observer.Count);
+        Assert.EndsWith("# reject-fixture\n", await File.ReadAllTextAsync(path));
+
+        await File.WriteAllTextAsync(path, text);
+        await using (var db = await factory.CreateDbContextAsync()) { }
+        var beforeExplicitRead = observer.Count;
+        await services.GetRequiredService<IScopeConfigurationDocuments>().ReadAsync("agents");
+        Assert.Equal(beforeExplicitRead + 1, observer.Count);
+    }
+
+    [Fact]
+    public async Task ProjectionValidationCacheIsScopeLocalAndInvalidatedByCommittedWrites()
+    {
+        var observer = new CountingValidator();
+        await using var services = Build(_root, new MemoryContentStore(), observer: observer);
+        await InitializeAsync(services);
+        var factory = services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>();
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.AgentDefinitions.Add(new AgentDefinitionRecord { Id = Guid.NewGuid(), TenantId = Actor.TenantId, WorkspaceId = Actor.WorkspaceId,
+                Slug = "cache-probe", DisplayName = "Cache probe", SourceKind = "custom", SourceKey = "cache-probe", Status = "draft", Revision = 1 });
+            await db.SaveChangesAsync();
+        }
+        var beforeRead = observer.Count;
+        await using (var db = await factory.CreateDbContextAsync()) Assert.Single(await db.AgentDefinitions.ToListAsync());
+        Assert.Equal(beforeRead + 1, observer.Count);
+
+        var otherRoot = Path.Combine(_root, "other-scope");
+        await using var other = Build(otherRoot, new MemoryContentStore(), observer: observer);
+        var beforeOther = observer.Count;
+        await InitializeAsync(other);
+        Assert.True(observer.Count > beforeOther);
+        await using var otherDb = await other.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
+        Assert.Empty(await otherDb.AgentDefinitions.ToListAsync());
+    }
+
+    private sealed class CountingValidator : IConfigurationDocumentValidator
+    {
+        public string DocumentId => "agents";
+        public int Count { get; private set; }
+        public IReadOnlyList<ConfigurationDiagnostic> Validate(string text)
+        {
+            Count++;
+            return text.Contains("# reject-fixture", StringComparison.Ordinal) ? [new("fixture_invalid", "Rejected in isolated fixture.")] : [];
+        }
+    }
+
+    [Fact]
     public async Task NativeBindingsRoundTripGuiWritesManualModesAndFrozenHistory()
     {
         await using var services = Build(_root, new MemoryContentStore(), validateToolSettings: true);
@@ -437,7 +518,7 @@ public sealed class ConfigurationDocumentTests : IDisposable
         Assert.Equal("{}", (await historical.ModeVersions.SingleAsync()).SnapshotJson);
     }
 
-    private static ServiceProvider Build(string root, MemoryContentStore content, bool validateToolSettings = false)
+    private static ServiceProvider Build(string root, MemoryContentStore content, bool validateToolSettings = false, IConfigurationDocumentValidator? observer = null)
     {
         Directory.CreateDirectory(root);
         Directory.CreateDirectory(Path.Combine(root, "config"));
@@ -454,6 +535,7 @@ public sealed class ConfigurationDocumentTests : IDisposable
         services.AddDbContextFactory<ModelControlDbContext>(options => options.UseSqlite(connection));
         services.AddDbContextFactory<AgentConfigurationDbContext>(options => options.UseSqlite(connection));
         if (validateToolSettings) services.AddSingleton<IConfigurationDocumentValidator, ToolSettingsDocumentValidator>();
+        if (observer is not null) services.AddSingleton(observer);
         services.AddTinadecConfigurationFiles();
         return services.BuildServiceProvider();
     }
