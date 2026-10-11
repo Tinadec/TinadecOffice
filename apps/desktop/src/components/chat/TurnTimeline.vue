@@ -8,8 +8,10 @@ import { useNotifications } from '@/composables/useNotifications'
 import ThinkingProcess from './ThinkingProcess.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import ToolGroupSummary from './ToolGroupSummary.vue'
+import SubAgentCard from './SubAgentCard.vue'
 import type { SupervisionDecisionOption, TurnActivity } from '@/composables/useAgentActivity'
 import { attentionRows, detailRows, turnRows } from '@/lib/turnTimeline'
+import { subAgentGroups } from '@/lib/subAgents'
 
 const props = defineProps<TurnActivity & {
   /**
@@ -26,6 +28,12 @@ const { t } = useI18n()
 const rows = computed(() => turnRows(props.thinkingSteps ?? [], props.toolCalls ?? []))
 const details = computed(() => detailRows(rows.value))
 const pending = computed(() => attentionRows(rows.value))
+
+/**
+ * Which steps belong to a dispatched subagent rather than to the turn itself. Only work Core
+ * explicitly attributed to an instance is lifted out; the rest stays on the turn's spine.
+ */
+const subAgents = computed(() => subAgentGroups(props.thinkingSteps ?? [], props.toolCalls ?? []).groups)
 
 /**
  * `null` means "follow the turn's own state". Once the reader opens or closes it themselves
@@ -104,6 +112,8 @@ async function decideSupervision(option: SupervisionDecisionOption) {
               <ToolCallCard v-else-if="row.kind === 'tool'" :tool-call="row.call" :run-id="runId"
                 @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
             </template>
+            <!-- A dispatched instance keeps its own block, after the turn's own rows. -->
+            <SubAgentCard v-for="group in subAgents" :key="group.key" :group="group" />
           </div>
         </div>
       </div>

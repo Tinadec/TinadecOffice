@@ -57,6 +57,13 @@ export interface ToolCall {
   evidence: string[]
   seq: number
   risk: string
+  /**
+   * The run-scoped agent handle (`search#2`) and its task, when the journal said which
+   * instance ran the call. Core puts both on tool events; without them a call cannot be
+   * attributed to the subagent that made it, and parallel instances of one role merge.
+   */
+  handle?: string | null
+  taskId?: string | null
 }
 
 export interface ThinkingStep {
@@ -89,6 +96,10 @@ export interface ThinkingStep {
   severity?: string
   category?: string
   details?: Record<string, unknown>
+  /** The agent handle this step belongs to (`search#2`), when the journal named one. */
+  handle?: string | null
+  /** The task this step belongs to; the key a subagent card groups its work by. */
+  taskId?: string | null
 }
 
 export interface TurnActivity {
@@ -810,6 +821,8 @@ export function useAgentActivity(
       timestamp: event.ts,
       durationMs: null,
       details: { steps, explanation: extractString(payload, 'explanation') },
+      handle: extractString(payload, 'handle'),
+      taskId: extractString(payload, 'task_id'),
     }
     thinkingSteps.value = thinkingSteps.value.some((item) => item.id === id)
       ? thinkingSteps.value.map((item) => item.id === id ? step : item)
@@ -894,6 +907,10 @@ export function useAgentActivity(
           // share agent_name and would otherwise render as identical "search" thoughts.
           id, type: 'reasoning', title: extractString(event.payload, 'handle') ?? extractString(event.payload, 'agent_name') ?? 'Model',
           description: '', timestamp: event.ts, seq: event.seq, durationMs: null, status,
+          // Core stamps every model.output frame with the task and handle that produced it,
+          // so a thought can be shown under the subagent that had it.
+          handle: extractString(event.payload, 'handle'),
+          taskId: extractString(event.payload, 'task_id'),
         }
         // Only the provider's explicit reasoning channel is a reasoning text. Internal
         // planning JSON, prompts and tool arguments never become a "thought" here.
@@ -1042,8 +1059,7 @@ export function useAgentActivity(
           evidence: item.evidence,
           seq: item.requested_seq,
           risk: item.risk,
-        }))
-        .sort((a, b) => a.seq - b.seq)
+        }))        .sort((a, b) => a.seq - b.seq)
       if (activity.value.runId === runId) {
         toolCalls.value = calls
         saveTurn()
