@@ -21,6 +21,12 @@ namespace TinadecCore.AspNetCore.Endpoints;
 /// </summary>
 public static class DmaeaEndpoints
 {
+    /// <summary>
+    /// How much of a tool result the display route returns. A result can be a whole file; a
+    /// browser tab should not be handed it unfiltered. Truncation is reported, never silent.
+    /// </summary>
+    private const int ToolResultDisplayBudget = 256 * 1024;
+
     public static IEndpointRouteBuilder MapDmaeaEndpoints(this IEndpointRouteBuilder app)
     {
         // POST /sessions/{sessionId}/invoke-stream was retired (plan §4.3 item 4):
@@ -242,6 +248,27 @@ public static class DmaeaEndpoints
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
             var items = BuildToolExecutionTimeline(events, sessionId);
             return Results.Ok(items);
+        });
+
+        // What a tool actually produced. The timeline above projects a one-line summary and the
+        // row's payload has always been written to the content store, but no route returned it,
+        // so a reader had only that line. Bounded here rather than at the client.
+        app.MapGet("/api/v1/tool-executions/{id:guid}/result", async (Guid id, StorageLifecycleService lifecycle, CancellationToken ct) =>
+        {
+            var result = await lifecycle.ReadToolExecutionResultAsync(id, ToolResultDisplayBudget, ct).ConfigureAwait(false);
+            if (result is null) return Results.NotFound(new { code = "TOOL_EXECUTION_NOT_FOUND" });
+            return Results.Ok(new
+            {
+                execution_id = id,
+                tool_id = result.ToolId,
+                status = result.Status,
+                media_type = result.MediaType,
+                content_hash = result.Sha256,
+                content_length = result.TotalLength,
+                returned_length = result.ReturnedLength,
+                truncated = result.Truncated,
+                body = result.Body
+            });
         });
 
         app.MapGet("/api/v1/sessions/{sessionId}/task-nodes", async (string sessionId, StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>

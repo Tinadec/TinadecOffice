@@ -1841,8 +1841,23 @@ export interface ToolExecutionTimelineItemDto {
   checkpoint_summary: string;
 }
 
-/** One evidence item in a context pack and the estimated tokens it cost. */
-export interface ContextBudgetShareDto {
+/**
+ * A tool execution's stored result, as `GET /api/v1/tool-executions/{id}/result` returns it.
+ * `truncated` is how the reader learns the body is partial; it is never inferred from length.
+ */
+export interface ToolExecutionResultDto {
+  execution_id: string;
+  tool_id: string;
+  status: string;
+  media_type: string;
+  content_hash: string;
+  content_length: number;
+  returned_length: number;
+  truncated: boolean;
+  body: string | null;
+}
+
+/** One evidence item in a context pack and the estimated tokens it cost. */export interface ContextBudgetShareDto {
   source: string;
   tokens: number;
 }
@@ -3026,6 +3041,13 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<ToolExecutionTimelineItemDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/tool-executions${suffix}`, { signal, cache: 'no-store' });
   },
+  /**
+   * The stored result of one tool execution. The timeline row carries a one-line `summary`
+   * only; this is the payload the tool actually produced, bounded server-side with the
+   * truncation reported rather than hidden.
+   */
+  getToolExecutionResult: (executionId: string, signal?: AbortSignal) =>
+    request<ToolExecutionResultDto>(`/api/v1/tool-executions/${encodeURIComponent(executionId)}/result`, { signal, cache: 'no-store' }),
   listRuns: (sessionId: string, signal?: AbortSignal) => request<OrchestrationRunDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/runs`, { signal, cache: 'no-store' }),
   listTaskNodes: (sessionId: string) => request<TaskNodeDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/task-nodes`),
   listContextPacks: (sessionId: string) => request<ContextPackDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/context-packs`),

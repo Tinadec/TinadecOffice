@@ -1664,6 +1664,8 @@ retry: 'Retry',
     groupSteps: '{count} steps',
     expandSubAgent: 'Expand the work done by {handle}',
     collapseSubAgent: 'Collapse the work done by {handle}',
+    resultTruncated: 'Showing the first {returned} of {total} bytes',
+    resultEmpty: 'This call returned no content.',
     subAgentState: {
       running: 'working',
       done: 'finished',

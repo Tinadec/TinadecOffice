@@ -13888,6 +13888,28 @@
         ]
       }
     },
+    "/api/v1/tool-executions/{executionId}/result": {
+      "get": {
+        "operationId": "getApiV1Tool-executionsByExecutionIdResult",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "executionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Stored result of one tool execution",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tool-layer-readiness": {
       "get": {
         "operationId": "getApiV1Tool-layer-readiness",

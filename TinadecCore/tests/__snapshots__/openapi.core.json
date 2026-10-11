@@ -13656,6 +13656,29 @@
         ]
       }
     },
+    "/api/v1/tool-executions/{id}/result": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/tool-layer-readiness": {
       "get": {
         "responses": {

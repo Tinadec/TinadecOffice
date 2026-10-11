@@ -1662,6 +1662,8 @@ retry: '重试',
     groupSteps: '{count} 步',
     expandSubAgent: '展开 {handle} 的工作记录',
     collapseSubAgent: '收起 {handle} 的工作记录',
+    resultTruncated: '仅显示前 {returned} 字节，共 {total} 字节',
+    resultEmpty: '该调用没有返回内容。',
     subAgentState: {
       running: '进行中',
       done: '已结束',

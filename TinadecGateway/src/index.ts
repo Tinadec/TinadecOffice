@@ -843,6 +843,17 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Session tool executions', tags: ['Runs'] } })
+  // What a tool actually produced. The timeline above carries only a one-line summary; this
+  // reads the stored result body back so the transcript can show the real output.
+  .get('/api/v1/tool-executions/:executionId/result', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/tool-executions/${encodeURIComponent(params.executionId)}/result`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Stored result of one tool execution', tags: ['Tools'] } })
   .get('/api/v1/sessions/:sessionId/runs', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/runs`, { headers });

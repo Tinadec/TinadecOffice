@@ -1142,6 +1142,60 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             ?? throw new KeyNotFoundException("Run was not found for the tool execution.");
     }
 
+    /// <summary>
+    /// The stored result of one tool execution, read back for display.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CompleteToolExecutionAsync"/> has always written the tool's full <c>ResultJson</c>
+    /// into the content store and kept only a reference on the row, but nothing ever read it back:
+    /// the session timeline projects a one-line <c>summary</c> and no route returned the payload.
+    /// A reader who wanted to see what a tool actually did had only that line. This returns the
+    /// bytes the tool produced, bounded by <paramref name="maxBytes"/> so a large result cannot be
+    /// pulled whole into a browser tab; callers report truncation rather than hiding it.
+    /// </remarks>
+    public async Task<ToolExecutionResult?> ReadToolExecutionResultAsync(
+        Guid executionId, int maxBytes, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // Scoped by the ambient tenant/workspace through the DbContext, so an execution id from
+        // another scope resolves to nothing rather than to someone else's tool output.
+        var row = await db.ToolExecutions.AsNoTracking()
+            .Where(x => x.Id == executionId)
+            .Select(x => new { x.Status, x.ToolId, x.ResultReference, x.ResultHash, x.ResultLength, x.ErrorCategory, x.SafeErrorMessage })
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (row is null) return null;
+
+        // A failed execution also has a stored body: the structured error Core wrote, which is
+        // what the transcript should show instead of an empty panel.
+        if (string.IsNullOrWhiteSpace(row.ResultReference))
+        {
+            return new ToolExecutionResult(
+                row.ToolId, row.Status, "application/json", row.ResultHash ?? string.Empty, 0, 0, false,
+                row.ErrorCategory is null && row.SafeErrorMessage is null
+                    ? null
+                    : JsonSerializer.Serialize(new { error_category = row.ErrorCategory, message = row.SafeErrorMessage }));
+        }
+
+        // `ToolExecutionCompletion.ResultMediaType` is not persisted — the row has no column for
+        // it and the completion path drops it — so the media type is reported as what Core
+        // actually writes today rather than guessed per tool.
+        var reference = new ContentReference(
+            row.ResultReference, row.ResultHash ?? string.Empty, row.ResultLength ?? 0, "application/json");
+        await using var stream = await _contentStore.OpenReadAsync(reference, cancellationToken).ConfigureAwait(false);
+        var buffer = new byte[maxBytes];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var chunk = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), cancellationToken).ConfigureAwait(false);
+            if (chunk == 0) break;
+            read += chunk;
+        }
+        var truncated = reference.Length > read;
+        return new ToolExecutionResult(
+            row.ToolId, row.Status, reference.MediaType, reference.Sha256, reference.Length, read, truncated,
+            Encoding.UTF8.GetString(buffer, 0, read));    }
+
     public async Task ReconcileAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

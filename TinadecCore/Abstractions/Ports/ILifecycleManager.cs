@@ -308,6 +308,22 @@ public sealed record ToolExecutionCompletion(
     string ResultJson,
     string ResultMediaType = "application/json");
 
+/// <summary>
+/// A tool execution's stored result, read back for display. <paramref name="Body"/> is the
+/// stored bytes decoded as UTF-8, bounded by the caller's budget; <paramref name="Truncated"/>
+/// says the budget cut it, and <paramref name="TotalLength"/> is what it actually is — a caller
+/// must report truncation rather than present a partial result as the whole one.
+/// </summary>
+public sealed record ToolExecutionResult(
+    string ToolId,
+    string Status,
+    string MediaType,
+    string Sha256,
+    long TotalLength,
+    int ReturnedLength,
+    bool Truncated,
+    string? Body);
+
 public enum RunStatus
 {
     Planning,

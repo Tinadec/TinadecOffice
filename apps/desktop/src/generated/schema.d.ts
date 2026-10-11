@@ -910,6 +910,10 @@ export interface paths {
     get: operations["getApiV1Tina-chatWorkspace-policy"];
     put: operations["putApiV1Tina-chatWorkspace-policy"];
   };
+  "/api/v1/tool-executions/{executionId}/result": {
+    /** Stored result of one tool execution */
+    get: operations["getApiV1Tool-executionsByExecutionIdResult"];
+  };
   "/api/v1/tool-layer-readiness": {
     /** Tool layer readiness */
     get: operations["getApiV1Tool-layer-readiness"];
@@ -6478,6 +6482,19 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["TinaChatWorkspacePolicyDto"];
         };
+      };
+    };
+  };
+  /** Stored result of one tool execution */
+  "getApiV1Tool-executionsByExecutionIdResult": {
+    parameters: {
+      path: {
+        executionId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
       };
     };
   };

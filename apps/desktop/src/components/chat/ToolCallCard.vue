@@ -6,6 +6,7 @@ import { toolIconOf } from '@/lib/toolPresentation'
 import { UiCollapsible } from '@/components/ui'
 import type { ToolCall } from '@/composables/useAgentActivity'
 import TerminalCallBlock from './TerminalCallBlock.vue'
+import ToolResultView from './ToolResultView.vue'
 import ApprovalGateStatus from '@/components/approval/ApprovalGateStatus.vue'
 
 const props = defineProps<{ toolCall: ToolCall; runId?: string | null }>()
@@ -13,6 +14,15 @@ const emit = defineEmits<{ approve: [approvalId: string]; reject: [approvalId: s
 const { t } = useI18n()
 const expanded = ref(false)
 const detailsId = useId()
+
+/**
+ * The stored result is fetched only when the row is opened, and only once the call has
+ * finished: a running call has no payload yet, and a parked one must not fetch anything
+ * before the person decides. This is what keeps the transcript from making one request per
+ * tool row on every session open.
+ */
+const showResult = computed(() => expanded.value
+  && (props.toolCall.status === 'completed' || props.toolCall.status === 'failed'))
 const statusConfig = computed(() => {
   switch (props.toolCall.status) {
     case 'running': return { icon: Loader2, key: 'running' }
@@ -50,7 +60,10 @@ const toolIcon = computed(() => {
         <pre v-if="toolCall.argsSummary">{{ toolCall.argsSummary }}</pre>
         <TerminalCallBlock v-if="isShellCall" :execution-id="toolCall.id" :command="toolCall.argsSummary"
           :run-id="runId ?? toolCall.runId" :status="toolCall.status" />
-        <p v-if="toolCall.resultSummary && toolCall.resultSummary !== toolCall.argsSummary">{{ toolCall.resultSummary }}</p>
+        <!-- The stored result, read back on open. Only for a finished call: a running one has
+             no payload yet, and a parked one must not fetch before the decision. -->
+        <ToolResultView v-else-if="showResult" :execution-id="toolCall.id" :tool-id="toolCall.toolId" />
+        <p v-else-if="toolCall.resultSummary && toolCall.resultSummary !== toolCall.argsSummary">{{ toolCall.resultSummary }}</p>
         <ul v-if="toolCall.evidence.length">
           <li v-for="(item, idx) in toolCall.evidence" :key="idx">{{ item }}</li>
         </ul>
