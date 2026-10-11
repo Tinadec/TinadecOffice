@@ -10,7 +10,17 @@ const i18n = createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': z
 vi.mock('@/controllers/HomeController', () => ({
   homeController: { currentSession: { value: null } },
 }))
-vi.mock('@/api', () => ({ api: { listModelProviders: vi.fn().mockResolvedValue([]) } }))
+/**
+ * The panel loads its catalogs on open, so every API it reaches has to exist on the mock. An
+ * incomplete one only passes when some earlier test file already populated vitest's module cache
+ * with the real module — which is why this passed locally and failed on a cold CI run.
+ */
+vi.mock('@/api', () => ({
+  api: {
+    listModelProviders: vi.fn().mockResolvedValue([]),
+    listAgentModeTopologies: vi.fn().mockResolvedValue([]),
+  },
+}))
 
 function mountPanel(props: Record<string, unknown> = {}) {
   return mount(ComposerCommandPanel, {
