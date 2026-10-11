@@ -40,6 +40,12 @@ public sealed record FrozenPromptAssemblyRequest(
     /// path contract, and never asks the store for a current root.
     /// </summary>
     public FrozenWorkspaceBinding? Workspace { get; init; }
+
+    /// <summary>
+    /// "concise" | "standard" | "detailed" — how much this conversation wants the model to
+    /// explain itself. Null reads as standard.
+    /// </summary>
+    public string? TranscriptTemplate { get; init; }
 }
 
 public sealed class PromptAssemblyResult

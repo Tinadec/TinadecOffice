@@ -29,6 +29,8 @@ public sealed record SessionReference(
     SpaceRunOptions? SpaceOptions = null,
     string PermissionMode = "default",
     string ViewMode = "flat",
-    long SettingsRevision = 0);
+    long SettingsRevision = 0,
+    // "concise" | "standard" | "detailed"; null on sessions predating the column.
+    string? TranscriptTemplate = null);
 
 public sealed record ProjectReference(Guid ProjectId, Guid TenantId, Guid WorkspaceId, string RootPath);

@@ -60,10 +60,14 @@ const spaceOptions = t.Object({
   worktree: t.Boolean(),
 }, { additionalProperties: false });
 
+/** How much a conversation explains itself. Bounded here so an unknown value is a 400, not a surprise. */
+const transcriptTemplate = () => t.Union([t.Literal('concise'), t.Literal('standard'), t.Literal('detailed')]);
+
 const sessionPreferenceProperties = {
   mode_version_id: t.Optional(nullableString()),
   meeting_model_override: t.Optional(nullableRef('MeetingModelOverride')),
   permission_mode: t.Optional(nullableString()),
+  transcript_template: t.Optional(transcriptTemplate()),
   space_options: t.Optional(nullableRef('SpaceOptions')),
 };
 const createSessionRequest = t.Object({
@@ -101,6 +105,7 @@ const session = t.Object({
   mode_version_id: nullableString(),
   view_mode: t.Union([t.Literal('flat'), t.Literal('space')]),
   permission_mode: t.String(),
+  transcript_template: transcriptTemplate(),
   space_options: nullableRef('SpaceOptions'),
   settings_revision: t.Integer(),
   meeting_model_override: nullableRef('MeetingModelOverride'),

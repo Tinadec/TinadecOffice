@@ -1,4 +1,11 @@
 /** Core-owned, per-task spatial orchestration preferences. */
+/** How much a conversation explains itself. An unknown value reads as standard. */
+export type TranscriptTemplate = 'concise' | 'standard' | 'detailed'
+
+export function transcriptTemplateOf(value: unknown): TranscriptTemplate {
+  return value === 'concise' || value === 'detailed' ? value : 'standard'
+}
+
 export interface SpaceOptionsDto {
   plan_first: boolean;
   spec_enabled: boolean;
@@ -25,6 +32,8 @@ export interface ExternalSessionDto {
   mode_version_id: string | null;
   view_mode: 'flat' | 'space';
   permission_mode: string;
+  /** How much the conversation explains itself: concise | standard | detailed. */
+  transcript_template: TranscriptTemplate;
   space_options: SpaceOptionsDto | null;
   settings_revision: number;
   /** ConversationIdentity (DmaEA graph orchestration), frozen at session creation; null on pre-identity rows. */
@@ -63,6 +72,7 @@ export function mapSession(core: unknown): ExternalSessionDto | null {
     mode_version_id: (core.mode_version_id as string) ?? (core.modeVersionId as string) ?? null,
     view_mode: (core.view_mode ?? core.viewMode) === 'space' ? 'space' : 'flat',
     permission_mode: typeof core.permission_mode === 'string' ? core.permission_mode : 'default',
+    transcript_template: transcriptTemplateOf(core.transcript_template),
     space_options: isRecord(core.space_options) ? core.space_options as unknown as SpaceOptionsDto : null,
     settings_revision: typeof core.settings_revision === 'number' ? core.settings_revision : 0,
     conversation_node_key: (core.conversation_node_key as string) ?? (core.conversationNodeKey as string) ?? null,

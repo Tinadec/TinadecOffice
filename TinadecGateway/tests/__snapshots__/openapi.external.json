@@ -1116,6 +1116,22 @@
             "nullable": true,
             "type": "string"
           },
+          "transcript_template": {
+            "anyOf": [
+              {
+                "const": "concise",
+                "type": "string"
+              },
+              {
+                "const": "standard",
+                "type": "string"
+              },
+              {
+                "const": "detailed",
+                "type": "string"
+              }
+            ]
+          },
           "view_mode": {
             "anyOf": [
               {
@@ -3352,6 +3368,22 @@
             "nullable": true,
             "type": "string"
           },
+          "transcript_template": {
+            "anyOf": [
+              {
+                "const": "concise",
+                "type": "string"
+              },
+              {
+                "const": "standard",
+                "type": "string"
+              },
+              {
+                "const": "detailed",
+                "type": "string"
+              }
+            ]
+          },
           "trashed_at": {
             "nullable": true,
             "type": "string"
@@ -3382,6 +3414,7 @@
           "mode_version_id",
           "view_mode",
           "permission_mode",
+          "transcript_template",
           "space_options",
           "settings_revision",
           "meeting_model_override",
@@ -3486,6 +3519,22 @@
           "target_run_id": {
             "nullable": true,
             "type": "string"
+          },
+          "transcript_template": {
+            "anyOf": [
+              {
+                "const": "concise",
+                "type": "string"
+              },
+              {
+                "const": "standard",
+                "type": "string"
+              },
+              {
+                "const": "detailed",
+                "type": "string"
+              }
+            ]
           }
         },
         "required": [
@@ -6226,6 +6275,22 @@
           "title": {
             "nullable": true,
             "type": "string"
+          },
+          "transcript_template": {
+            "anyOf": [
+              {
+                "const": "concise",
+                "type": "string"
+              },
+              {
+                "const": "standard",
+                "type": "string"
+              },
+              {
+                "const": "detailed",
+                "type": "string"
+              }
+            ]
           }
         },
         "type": "object"

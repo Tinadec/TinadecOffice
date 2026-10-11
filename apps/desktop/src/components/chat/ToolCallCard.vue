@@ -10,7 +10,16 @@ import TerminalCallBlock from './TerminalCallBlock.vue'
 import ToolResultView from './ToolResultView.vue'
 import ApprovalGateStatus from '@/components/approval/ApprovalGateStatus.vue'
 
-const props = defineProps<{ toolCall: ToolCall; runId?: string | null }>()
+const props = defineProps<{
+  toolCall: ToolCall
+  runId?: string | null
+  /**
+   * False under the "concise" conversation template. Concise means the reader asked for less,
+   * so a tool's expanded view stays plain text instead of a diff, a result table or a file list.
+   * The row itself is unchanged — this withholds richness, not information.
+   */
+  richViews?: boolean
+}>()
 const emit = defineEmits<{ approve: [approvalId: string]; reject: [approvalId: string] }>()
 const { t } = useI18n()
 const expanded = ref(false)
@@ -29,7 +38,7 @@ const showSpinner = useDelayedLoading(() => props.toolCall.status === 'running')
  * before the person decides. This is what keeps the transcript from making one request per
  * tool row on every session open.
  */
-const showResult = computed(() => expanded.value
+const showResult = computed(() => (props.richViews ?? true) && expanded.value
   && (props.toolCall.status === 'completed' || props.toolCall.status === 'failed'))
 const statusConfig = computed(() => {
   switch (props.toolCall.status) {
@@ -71,7 +80,7 @@ const toolIcon = computed(() => {
         <!-- The stored result, read back on open. Only for a finished call: a running one has
              no payload yet, and a parked one must not fetch before the decision. -->
         <ToolResultView v-else-if="showResult" :execution-id="toolCall.id" :tool-id="toolCall.toolId" />
-        <p v-else-if="toolCall.resultSummary && toolCall.resultSummary !== toolCall.argsSummary">{{ toolCall.resultSummary }}</p>
+        <p v-if="toolCall.resultSummary && toolCall.resultSummary !== toolCall.argsSummary && !showResult">{{ toolCall.resultSummary }}</p>
         <ul v-if="toolCall.evidence.length">
           <li v-for="(item, idx) in toolCall.evidence" :key="idx">{{ item }}</li>
         </ul>

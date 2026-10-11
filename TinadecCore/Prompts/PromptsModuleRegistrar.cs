@@ -111,6 +111,17 @@ internal sealed class PromptAssembler : IPromptAssembler
             warnings.Add("Mode profile could not fit in the configured context budget.");
         }
 
+        // The conversation's own answer-depth setting. It is a behavioural instruction, so it
+        // belongs in the prompt rather than in any client-side rendering: the desktop cannot make
+        // a model explain itself by drawing differently. "concise" adds nothing — brevity is not
+        // an instruction worth spending context on, and the baseline already asks for answers.
+        if (ExplanationInstruction(request.TranscriptTemplate) is { } explanation)
+        {
+            sections.Add(explanation);
+            fragmentIds.Add($"builtin:explanation-{request.TranscriptTemplate!.Trim().ToLowerInvariant()}");
+            used += EstimateTokens(explanation);
+        }
+
         var agentProfile = $"Agent profile: agent_id={agentId}. Follow only the capabilities and layer constraints frozen for this run.";
         var agentTokens = EstimateTokens(agentProfile);
         if (agentTokens <= budget - used)
@@ -278,6 +289,17 @@ internal sealed class PromptAssembler : IPromptAssembler
         using var reader = new StreamReader(stream);
         return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// What the answer-depth setting asks of the model. Concise returns null on purpose: there is
+    /// no instruction to give, and inventing one would spend context to say nothing.
+    /// </summary>
+    internal static string? ExplanationInstruction(string? template) => template?.Trim().ToLowerInvariant() switch
+    {
+        "detailed" =>
+            "Answer depth: detailed. Every reply must explain itself, not only report a result. State what you did and why, name the trade-offs and alternatives you weighed, call out anything you assumed, and point at the evidence behind each claim. A reader who has not been watching the run should be able to understand the reasoning from the answer alone.",
+        _ => null,
+    };
 
     private static string ArchitectureBaseline(string agentId) =>
         $"TinadecOffice uses a Core-owned operation/execution agent harness. You are '{agentId}'. The meeting agent is the only formal user-facing agent; all other agents submit auditable evidence to Core.";

@@ -143,6 +143,7 @@ public static class StorageEndpoints
             {
                 var spaceOptions = ToSpaceOptions(request.SpaceOptions);
                 ProjectSessionStore.ValidateSessionSettings(request.ViewMode ?? "flat", request.PermissionMode, spaceOptions);
+                ProjectSessionStore.ValidateTranscriptTemplate(request.TranscriptTemplate);
                 await ValidateWorkflowAsync(spaceOptions, tenant.Current.TenantId, tenant.Current.WorkspaceId, cfgFactory, ct).ConfigureAwait(false);
                 Guid? modeVersionId = request.ModeVersionId;
                 string? conversationNodeKey = null;
@@ -193,7 +194,8 @@ public static class StorageEndpoints
                     modelOverride = new SessionModelOverride(requestedOverride.ProviderInstanceId, requestedOverride.Model);
                 }
                 var session = await store.CreateSessionAsync(projectId, request.Title, modeVersionId.Value, modelOverride, conversationNodeKey, conversationTemplateSlug, ct,
-                    viewMode: request.ViewMode ?? "flat", permissionMode: request.PermissionMode, spaceOptions: spaceOptions).ConfigureAwait(false);
+                    viewMode: request.ViewMode ?? "flat", permissionMode: request.PermissionMode, spaceOptions: spaceOptions,
+                    transcriptTemplate: request.TranscriptTemplate).ConfigureAwait(false);
                 return Results.Created($"/api/v1/sessions/{session.Id}", await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
             }
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "PROJECT_NOT_FOUND" }); }
@@ -210,6 +212,7 @@ public static class StorageEndpoints
                 if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
                 var spaceOptions = ToSpaceOptions(request.SpaceOptions);
                 ProjectSessionStore.ValidateSessionSettings(session.ViewMode ?? "flat", request.PermissionMode, spaceOptions);
+                ProjectSessionStore.ValidateTranscriptTemplate(request.TranscriptTemplate);
                 await ValidateWorkflowAsync(spaceOptions, session.TenantId, session.WorkspaceId, cfgFactory, ct).ConfigureAwait(false);
                 if (request.ClearMeetingModelOverride && request.MeetingModelOverride is not null)
                     return Results.BadRequest(new { code = "invalid_model_override", message = "Cannot set and clear meeting_model_override together." });
@@ -244,7 +247,8 @@ public static class StorageEndpoints
                 session = await store.UpdateSessionModeAsync(id, requestedMode, modelOverride, ct,
                     permissionMode: request.PermissionMode, spaceOptions: spaceOptions,
                     clearMeetingModelOverride: request.ClearMeetingModelOverride, title: request.Title,
-                    expectedSettingsRevision: request.ExpectedSettingsRevision).ConfigureAwait(false);
+                    expectedSettingsRevision: request.ExpectedSettingsRevision,
+                    transcriptTemplate: request.TranscriptTemplate).ConfigureAwait(false);
                 if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
                 return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
             }
@@ -536,7 +540,7 @@ public static class StorageEndpoints
             }
         }
         catch { }
-        return new { id = session.Id, storage_id = storageId, project_id = session.ProjectId, title = session.Title, status = session.Status, view_mode = session.ViewMode ?? "flat", mode_version_id = session.ModeVersionId, conversation_node_key = session.ConversationNodeKey, conversation_template_slug = session.ConversationTemplateSlug, meeting_model_override = ToMeetingModelOverride(session), permission_mode = session.PermissionMode ?? "default", space_options = ToSpaceOptionsDto(ProjectSessionStore.ReadSpaceOptions(session)), settings_revision = session.SettingsRevision, has_update = hasUpdate, latest_mode_version_id = latestModeVersionId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, lifecycle_status = session.LifecycleStatus, trashed_at = session.TrashedAt };
+        return new { id = session.Id, storage_id = storageId, project_id = session.ProjectId, title = session.Title, status = session.Status, view_mode = session.ViewMode ?? "flat", mode_version_id = session.ModeVersionId, conversation_node_key = session.ConversationNodeKey, conversation_template_slug = session.ConversationTemplateSlug, meeting_model_override = ToMeetingModelOverride(session), permission_mode = session.PermissionMode ?? "default", transcript_template = session.TranscriptTemplate ?? "standard", space_options = ToSpaceOptionsDto(ProjectSessionStore.ReadSpaceOptions(session)), settings_revision = session.SettingsRevision, has_update = hasUpdate, latest_mode_version_id = latestModeVersionId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, lifecycle_status = session.LifecycleStatus, trashed_at = session.TrashedAt };
     }
 
     internal static SpaceRunOptions? ToSpaceOptions(SpaceRunOptionsDto? options) => options is null ? null

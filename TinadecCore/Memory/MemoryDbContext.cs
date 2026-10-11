@@ -172,6 +172,11 @@ public sealed class SessionRecord
     // Immutable presentation family. Existing database rows are null (= flat).
     public string? ViewMode { get; set; }
     public string? PermissionMode { get; set; }
+    /// <summary>
+    /// How much the conversation explains itself: "concise", "standard" or "detailed".
+    /// Null means the session predates the setting and reads as standard.
+    /// </summary>
+    public string? TranscriptTemplate { get; set; }
     public string? SpaceOptionsJson { get; set; }
     public long SettingsRevision { get; set; }
     public Guid Id { get; set; }

@@ -17,6 +17,8 @@ const props = defineProps<{
   /** Passed by the owner that resolved this run's activity. The controller lookup
       stays as a fallback for callers that only know the run id. */
   supervisionReview?: SupervisionReview | null
+  /** False under the "concise" template; forwarded to the activity trail. */
+  richToolViews?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -38,7 +40,7 @@ const review = computed(() => {
     <!-- A turn rendered here has no answering message yet, so it is by definition still
          working: the trail stays open rather than folding while the agent runs. -->
     <TurnTimeline :run-id="runId" :thinking-steps="steps" :tool-calls="calls"
-      :supervision-review="review" :settled="false"
+      :supervision-review="review" :settled="false" :rich-tool-views="richToolViews"
       @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
   </div>
 </template>

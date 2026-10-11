@@ -65,6 +65,8 @@ export interface SessionDto {
   mode_version_id?: string | null;
   meeting_model_override?: MeetingModelOverrideDto | null;
   permission_mode: string;
+  /** How much the conversation explains itself. Absent on older rows, which read as standard. */
+  transcript_template?: 'concise' | 'standard' | 'detailed';
   space_options: SpaceOptionsDto | null;
   settings_revision: number;
   created_at: string;
@@ -80,6 +82,8 @@ export interface SessionSettingsUpdate {
   expected_settings_revision?: number;
   mode_version_id?: string | null;
   permission_mode?: string;
+  /** "concise" | "standard" | "detailed" — how much the conversation explains itself. */
+  transcript_template?: 'concise' | 'standard' | 'detailed';
   meeting_model_override?: MeetingModelOverrideDto | null;
   clear_meeting_model_override?: boolean;
   clear_mode_version?: boolean;

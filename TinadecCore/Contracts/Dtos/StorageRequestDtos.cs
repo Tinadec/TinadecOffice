@@ -20,6 +20,8 @@ public sealed class CreateSessionRequest
     public Guid? ModeVersionId { get; set; }
     public MeetingModelOverrideDto? MeetingModelOverride { get; set; }
     public string? PermissionMode { get; set; }
+    /// <summary>"concise" | "standard" | "detailed" — how much the conversation explains itself.</summary>
+    public string? TranscriptTemplate { get; set; }
     public SpaceRunOptionsDto? SpaceOptions { get; set; }
     // ConversationIdentity (additive, optional): the mode node carrying the
     // conversation role. Omitted → resolved from the selected mode's designated
@@ -37,6 +39,8 @@ public sealed class UpdateSessionRequest
     public MeetingModelOverrideDto? MeetingModelOverride { get; set; }
     public bool ClearMeetingModelOverride { get; set; }
     public string? PermissionMode { get; set; }
+    /// <summary>"concise" | "standard" | "detailed" — how much the conversation explains itself.</summary>
+    public string? TranscriptTemplate { get; set; }
     public SpaceRunOptionsDto? SpaceOptions { get; set; }
     public long? ExpectedSettingsRevision { get; set; }
 }

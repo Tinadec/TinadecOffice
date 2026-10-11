@@ -87,3 +87,13 @@ test('session mapper and interaction transport preserve Core spatial choices and
   if (validated.ok) assert.deepEqual(validated.value, body);
   assert.equal(mapSession({ id: 'legacy' })?.space_options, null);
 });
+
+test('the session projection carries the conversation template, defaulting an unknown one', () => {
+  const withTemplate = mapSession({ id: 's1', transcript_template: 'detailed' });
+  assert.equal(withTemplate.transcript_template, 'detailed');
+
+  // A row written before the setting existed reads as standard rather than as undefined:
+  // the desktop gates the rich tool views on this value, and an absent one would decide it.
+  assert.equal(mapSession({ id: 's2' }).transcript_template, 'standard');
+  assert.equal(mapSession({ id: 's3', transcript_template: 'verbose' }).transcript_template, 'standard');
+});

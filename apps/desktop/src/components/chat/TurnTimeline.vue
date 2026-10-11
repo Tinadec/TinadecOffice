@@ -21,6 +21,8 @@ const props = defineProps<TurnActivity & {
    * choice stands and the turn stops moving under them.
    */
   settled?: boolean
+  /** False under the "concise" template; withholds the rich tool-result views. */
+  richToolViews?: boolean
 }>()
 const emit = defineEmits<{ approve: [id: string]; reject: [id: string] }>()
 const { notify } = useNotifications()
@@ -112,6 +114,7 @@ async function decideSupervision(option: SupervisionDecisionOption) {
               <ThinkingProcess v-if="row.kind === 'thinking'" :steps="row.steps" />
               <ToolGroupSummary v-else-if="row.kind === 'toolGroup'" :calls="row.calls" />
               <ToolCallCard v-else-if="row.kind === 'tool'" :tool-call="row.call" :run-id="runId"
+                :rich-views="richToolViews"
                 @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
             </template>
             <!-- A dispatched instance keeps its own block, after the turn's own rows. -->
@@ -132,7 +135,7 @@ async function decideSupervision(option: SupervisionDecisionOption) {
     <!-- A decision is never behind a fold. This is the one region that must stay in view
          however the turn is collapsed, so it renders outside the collapsible element. -->
     <template v-for="row in pending" :key="`attention-${row.id}`">
-      <ToolCallCard :tool-call="row.call" :run-id="runId"
+      <ToolCallCard :tool-call="row.call" :run-id="runId" :rich-views="richToolViews"
         @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
     </template>
     <div v-if="supervisionReview?.reasons.length || supervisionReview?.options.length" class="supervision-review">

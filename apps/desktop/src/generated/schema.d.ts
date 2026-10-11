@@ -1356,6 +1356,7 @@ export interface components {
       project_id?: string | null;
       space_options?: components["schemas"]["SpaceOptions"] | null;
       title?: string | null;
+      transcript_template?: "concise" | "standard" | "detailed";
       view_mode?: "flat" | "space";
     };
     EnvironmentDto: {
@@ -1899,6 +1900,7 @@ export interface components {
       storage_id?: string;
       summary: string | null;
       title: string | null;
+      transcript_template: "concise" | "standard" | "detailed";
       trashed_at: string | null;
       updated_at: string | null;
       view_mode: "flat" | "space";
@@ -1918,6 +1920,7 @@ export interface components {
       permission_mode?: string | null;
       space_options?: components["schemas"]["SpaceOptions"] | null;
       target_run_id?: string | null;
+      transcript_template?: "concise" | "standard" | "detailed";
     };
     SessionList: components["schemas"]["Session"][];
     SessionTopologyDto: {
@@ -2609,6 +2612,7 @@ export interface components {
       permission_mode?: string | null;
       space_options?: components["schemas"]["SpaceOptions"] | null;
       title?: string | null;
+      transcript_template?: "concise" | "standard" | "detailed";
     };
     WorkspaceDefinition: {
       color: string;

@@ -17,6 +17,8 @@ const props = defineProps<{
   supervisionReview?: SupervisionReview | null
   /** False while this turn's run is still working — the activity trail opens while it does. */
   settled?: boolean
+  /** False under the "concise" template; forwarded to the tool rows. */
+  richToolViews?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -116,7 +118,7 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
           <!-- 思考过程 -->
           <TurnTimeline v-if="hasThinking || hasToolCalls" :thinking-steps="messageThinkingSteps"
             :tool-calls="messageToolCalls" :run-id="message.run_id ?? undefined"
-            :supervision-review="supervisionReview" :settled="settled"
+            :supervision-review="supervisionReview" :settled="settled" :rich-tool-views="richToolViews"
             @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
 
           <MarkdownRender :content="message.content" />

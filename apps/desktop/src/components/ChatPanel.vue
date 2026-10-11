@@ -41,6 +41,8 @@ const props = defineProps<{
   streamingReply?: string
   /** True while a run can still be cancelled — drives the composer's stop button. */
   canStop?: boolean
+  /** False under the "concise" template: tool rows keep plain text instead of rich views. */
+  richToolViews?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -192,6 +194,7 @@ function handleReject(approvalId: string) {
           :live-turn="liveTurn"
           :live-turns="liveTurns"
           :running-run-ids="runningRunIds"
+          :rich-tool-views="richToolViews"
           :streaming-reply="streamingReply"
           @approve="handleApprove"
           @reject="handleReject"

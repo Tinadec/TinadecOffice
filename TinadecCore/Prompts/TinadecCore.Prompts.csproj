@@ -17,4 +17,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
   </ItemGroup>
 
+  <!-- `PromptAssembler` stays internal, but its answer-depth rule is a behavioural
+       contract worth pinning from the test side rather than only through a full host. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+  </ItemGroup>
+
 </Project>

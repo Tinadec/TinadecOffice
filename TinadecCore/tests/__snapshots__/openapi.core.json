@@ -1517,6 +1517,12 @@
               "string"
             ]
           },
+          "transcript_template": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "view_mode": {
             "type": [
               "null",
@@ -6304,6 +6310,12 @@
             ]
           },
           "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "transcript_template": {
             "type": [
               "null",
               "string"

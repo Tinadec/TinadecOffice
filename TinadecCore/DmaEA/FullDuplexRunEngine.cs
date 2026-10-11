@@ -3239,7 +3239,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             definition.PromptVersionContentHash,
             definition.PromptGraphJson)
         {
-            Workspace = configuration.Workspace
+            Workspace = configuration.Workspace,
+            TranscriptTemplate = configuration.TranscriptTemplate
         }, cancellationToken).ConfigureAwait(false);
     }
 

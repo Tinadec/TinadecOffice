@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { ArrowLeft, Check, ChevronRight, Cloud, Cpu, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Sparkles, Terminal, Users, Workflow, X } from '@lucide/vue'
+import { AlignJustify, AlignLeft, ArrowLeft, Check, ChevronRight, Cloud, Cpu, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Minus, Network, Search, Sparkles, Terminal, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { api, type AgentModeTopologyDto, type MeetingModelOverrideDto, type ModelProviderInstanceDto, type SpaceOptionsDto } from '@/api'
 import type { PermissionLevel } from '@/types/mode'
@@ -18,6 +18,7 @@ const props = defineProps<{
   initialPage?: ComposerPage
   canAttach: boolean
   permission: PermissionLevel
+  transcriptTemplate: 'concise' | 'standard' | 'detailed'
   modeVersionId?: string | null
   meetingModelOverride?: MeetingModelOverrideDto | null
   spaceOptions?: SpaceOptionsDto | null
@@ -33,6 +34,7 @@ const emit = defineEmits<{
   'send-as-text': []
   'update:modeVersionId': [value: string | null]
   'update:permission': [value: PermissionLevel]
+  'update:transcriptTemplate': [value: 'concise' | 'standard' | 'detailed']
   'update:meetingModelOverride': [value: MeetingModelOverrideDto | null]
   'update:spaceOptions': [value: SpaceOptionsDto]
   'mode-label': [value: string, unavailable: boolean, icon: Component]
@@ -114,6 +116,14 @@ const currentModelName = computed(() => {
   return override.model || provider?.display_name || override.provider_instance_id
 })
 const currentPermission = computed(() => permissionChoices.find(choice => choice.value === props.permission)!)
+/** The three conversation templates, in escalating depth. */
+const transcriptChoices = [
+  { value: 'concise' as const, label: 'transcript.concise', hint: 'transcript.conciseHint', icon: Minus },
+  { value: 'standard' as const, label: 'transcript.standard', hint: 'transcript.standardHint', icon: AlignJustify },
+  { value: 'detailed' as const, label: 'transcript.detailed', hint: 'transcript.detailedHint', icon: AlignLeft },
+] as const
+const transcriptName = computed(() => t(transcriptChoices.find(choice => choice.value === props.transcriptTemplate)?.label ?? 'transcript.standard'))
+const transcriptIcon = computed(() => transcriptChoices.find(choice => choice.value === props.transcriptTemplate)?.icon ?? AlignJustify)
 const permissionName = computed(() => t(currentPermission.value.label))
 const title = computed(() => page.value === 'root' ? t('composer.commands') : t(`commandPanel.${page.value}`))
 const activeQuery = computed(() => page.value === 'root' && props.slashQuery != null ? props.slashQuery : query.value)
@@ -177,6 +187,11 @@ const allRows = computed<Row[]>(() => {
     id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon, risk: choice.risk, checked: props.permission === choice.value,
     disabled: props.settingsSaving, run: () => emit('update:permission', choice.value),
   }))
+  if (page.value === 'transcript') return transcriptChoices.map(choice => ({
+    id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon,
+    checked: props.transcriptTemplate === choice.value,
+    disabled: props.settingsSaving, run: () => emit('update:transcriptTemplate', choice.value),
+  }))
   if (page.value === 'mode' || page.value === 'workflow') return modeRows(page.value === 'workflow')
   if (page.value === 'model') return [{
     id: 'default', label: t('chat.followDefault'), hint: t('commandPanel.defaultModelHint'), checked: !props.meetingModelOverride,
@@ -203,11 +218,11 @@ const allRows = computed<Row[]>(() => {
     if ('surface' in setting && (setting.surface === 'space') !== Boolean(props.spatial)) continue
     const toggle = 'toggle' in setting ? setting.toggle : null
     const submenu = 'page' in setting ? setting.page : null
-    const currentValue = setting.id === 'model' ? currentModelName.value : setting.id === 'mode' ? selectedMode.value?.display_name ?? t('chat.followDefault') : setting.id === 'permission' ? permissionName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
+    const currentValue = setting.id === 'model' ? currentModelName.value : setting.id === 'mode' ? selectedMode.value?.display_name ?? t('chat.followDefault') : setting.id === 'permission' ? permissionName.value : setting.id === 'transcript' ? transcriptName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
     rows.push({
       id: setting.id, label: t(setting.label), hint: t(setting.hint),
       keywords: setting.keywords,
-      icon: setting.id === 'permission' ? currentPermission.value.icon : setting.id === 'mode' && selectedMode.value ? modeIcon(selectedMode.value.slug) : icons[setting.id],
+      icon: setting.id === 'permission' ? currentPermission.value.icon : setting.id === 'transcript' ? transcriptIcon.value : setting.id === 'mode' && selectedMode.value ? modeIcon(selectedMode.value.slug) : icons[setting.id],
       risk: setting.id === 'permission' ? currentPermission.value.risk : undefined, value: currentValue,
       switch: !!toggle, checked: toggle ? Boolean(space.value[toggle]) : undefined, submenu: !!submenu,
       disabled: props.settingsSaving,

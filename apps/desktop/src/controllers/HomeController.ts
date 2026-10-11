@@ -124,10 +124,13 @@ function settingsFor(session: SessionDto | null, view: SessionView): ComposerSet
     permission_mode: (session.permission_mode ?? 'default') as PermissionLevel,
     meeting_model_override: session.meeting_model_override ?? null,
     space_options: view === 'space' ? session.space_options ?? defaultSpaceOptions() : null,
+    transcript_template: session.transcript_template ?? 'standard',
   } : newSessionSettings.value[view]
 }
 const composerSettings = computed(() => settingsFor(currentSession.value, viewMode.value))
 const currentPermission = computed(() => composerSettings.value.permission_mode)
+/** The active conversation template. Read by the transcript to gate rich tool views. */
+const currentTranscriptTemplate = computed(() => composerSettings.value.transcript_template)
 const settingsKey = computed(() => `${selectedStorage.value}::${selectedSessionId.value ?? `draft:${viewMode.value}`}`)
 const settingsSaving = computed(() => (settingsPending.value[settingsKey.value] ?? 0) > 0)
 const settingsError = computed(() => settingsErrors.value[settingsKey.value] ?? null)
@@ -1367,6 +1370,7 @@ export const homeController = {
   refreshProjectsAndSessions,
   updateDraft: (value: string) => { draft.value = value },
   updatePermission: (value: PermissionLevel) => updateComposerSettings({ permission_mode: value }),
+  currentTranscriptTemplate,
   setSelectedProject: (id: string | null) => {
     startNewConversation(id)
   },

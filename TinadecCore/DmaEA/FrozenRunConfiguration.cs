@@ -72,6 +72,15 @@ public sealed record FrozenRunConfigurationV1(
     public FrozenToolConfigurationDto? ToolConfiguration { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SpaceRunOptions? SpaceOptions { get; init; }
+
+    /// <summary>
+    /// How much this conversation explains itself ("concise" | "standard" | "detailed"), frozen
+    /// at admission from the session. It is prompt input, not display state: "explain more" is an
+    /// instruction to the model, and no amount of desktop rendering makes a model explain itself.
+    /// Omitted when unset so existing frozen configurations keep their canonical bytes and hash.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TranscriptTemplate { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? SpacePreparationToolIds { get; init; }
 
@@ -494,6 +503,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         {
             ToolConfiguration = _toolSettings is null ? null : await _toolSettings.ResolveForRunAsync(session.ProjectId,
                 operation.Concat(execution).Select(a => a.AgentDefinitionId).Concat(graph?.SpawnableTemplates.Select(a => (Guid?)a.AgentDefinitionId) ?? []).Where(id => id is not null).Select(id => id!.Value).Distinct().ToArray(), cancellationToken),
+            TranscriptTemplate = session.TranscriptTemplate ?? "standard",
             PolicySnapshotHash = policySnapshot?.SnapshotHash ?? "",
             PolicyBundles = policySnapshot?.Bundles ?? [],
             Triggers = snapshot.Triggers,

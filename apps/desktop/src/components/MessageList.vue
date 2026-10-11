@@ -31,6 +31,8 @@ const props = defineProps<{
   liveTurn?: TurnActivity
   liveTurns?: TurnActivity[]
   streamingReply?: string
+  /** False under the "concise" template; threaded down to the tool rows it changes. */
+  richToolViews?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -68,6 +70,7 @@ const emit = defineEmits<{
               :tool-calls="activityByMessage?.[message.id]?.toolCalls"
               :supervision-review="activityByMessage?.[message.id]?.supervisionReview"
               :settled="!message.run_id || !runningRunIds?.[message.run_id]"
+              :rich-tool-views="richToolViews"
               @approve="emit('approve', $event)"
               @reject="emit('reject', $event)"
               @edit="emit('edit', $event)"
@@ -75,6 +78,7 @@ const emit = defineEmits<{
           </MessageScrollerItem>
           <LiveTurnBlock
             v-if="liveTurn"
+            :rich-tool-views="richToolViews"
             :thinking-steps="liveTurn?.thinkingSteps"
             :tool-calls="liveTurn?.toolCalls"
             :supervision-review="liveTurn?.supervisionReview"
