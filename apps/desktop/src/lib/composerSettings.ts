@@ -5,7 +5,7 @@ export function defaultSpaceOptions(): SpaceOptionsDto {
   return { plan_first: false, spec_enabled: false, multi_agent: false, workflow_mode_version_id: null, bulletin_board: false, worktree: false }
 }
 
-export type TranscriptTemplate = 'concise' | 'standard' | 'detailed'
+export type TranscriptTemplate = 'concise' | 'standard' | 'detailed' | 'information'
 
 export interface ComposerSettings {
   mode_version_id: string | null

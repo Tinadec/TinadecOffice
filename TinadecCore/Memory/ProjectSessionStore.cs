@@ -269,7 +269,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
     /// prompt input, because "explain more" is a behavioural instruction to the model, and
     /// the desktop cannot make the model explain anything by rendering differently.
     /// </summary>
-    public static readonly string[] TranscriptTemplates = ["concise", "standard", "detailed"];
+    public static readonly string[] TranscriptTemplates = ["concise", "standard", "detailed", "information"];
 
     public static void ValidateTranscriptTemplate(string? template)
     {

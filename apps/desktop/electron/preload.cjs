@@ -17,6 +17,14 @@ contextBridge.exposeInMainWorld('tinadec', {
   resetGatewayUrl: () => ipcRenderer.invoke('tinadec:gateway-url-reset'),
   discoverServices: () => ipcRenderer.invoke('tinadec:discover-services'),
   restartApp: () => ipcRenderer.invoke('tinadec:restart'),
+  /**
+   * Hand tool-authored HTML to the main process and get back a one-time `tinadec-widget://` URL.
+   * The renderer never holds the URL until main has accepted the body, so a refused payload has
+   * no address at all. Returns null when main refuses it (empty or oversized).
+   */
+  registerToolWidget: (html) => ipcRenderer.invoke('tinadec:register-tool-widget', html),
+  /** Revoke a widget the frame never used, so an abandoned turn leaves nothing behind. */
+  releaseToolWidget: (token) => ipcRenderer.invoke('tinadec:release-tool-widget', token),
   selectWorkspaceFolders: () => ipcRenderer.invoke('tinadec:select-workspace-folders'),
   minimizeWindow: () => ipcRenderer.send('tinadec:minimize'),
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),

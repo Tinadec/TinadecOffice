@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { AlignJustify, AlignLeft, ArrowLeft, Check, ChevronRight, Cloud, Cpu, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Minus, Network, Search, Sparkles, Terminal, Users, Workflow, X } from '@lucide/vue'
+import { AlignJustify, AlignLeft, ArrowLeft, Check, ChevronRight, Cloud, Cpu, FileText, GitBranch, Image, Layers, LayoutDashboard, ListChecks, MessageSquare, Minus, Network, Search, Sparkles, Terminal, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { api, type AgentModeTopologyDto, type MeetingModelOverrideDto, type ModelProviderInstanceDto, type SpaceOptionsDto } from '@/api'
 import type { PermissionLevel } from '@/types/mode'
@@ -18,7 +18,7 @@ const props = defineProps<{
   initialPage?: ComposerPage
   canAttach: boolean
   permission: PermissionLevel
-  transcriptTemplate: 'concise' | 'standard' | 'detailed'
+  transcriptTemplate: 'concise' | 'standard' | 'detailed' | 'information'
   modeVersionId?: string | null
   meetingModelOverride?: MeetingModelOverrideDto | null
   spaceOptions?: SpaceOptionsDto | null
@@ -34,7 +34,7 @@ const emit = defineEmits<{
   'send-as-text': []
   'update:modeVersionId': [value: string | null]
   'update:permission': [value: PermissionLevel]
-  'update:transcriptTemplate': [value: 'concise' | 'standard' | 'detailed']
+  'update:transcriptTemplate': [value: 'concise' | 'standard' | 'detailed' | 'information']
   'update:meetingModelOverride': [value: MeetingModelOverrideDto | null]
   'update:spaceOptions': [value: SpaceOptionsDto]
   'mode-label': [value: string, unavailable: boolean, icon: Component]
@@ -121,6 +121,7 @@ const transcriptChoices = [
   { value: 'concise' as const, label: 'transcript.concise', hint: 'transcript.conciseHint', icon: Minus },
   { value: 'standard' as const, label: 'transcript.standard', hint: 'transcript.standardHint', icon: AlignJustify },
   { value: 'detailed' as const, label: 'transcript.detailed', hint: 'transcript.detailedHint', icon: AlignLeft },
+  { value: 'information' as const, label: 'transcript.information', hint: 'transcript.informationHint', icon: LayoutDashboard },
 ] as const
 const transcriptName = computed(() => t(transcriptChoices.find(choice => choice.value === props.transcriptTemplate)?.label ?? 'transcript.standard'))
 const transcriptIcon = computed(() => transcriptChoices.find(choice => choice.value === props.transcriptTemplate)?.icon ?? AlignJustify)

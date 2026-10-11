@@ -43,6 +43,8 @@ const props = defineProps<{
   canStop?: boolean
   /** False under the "concise" template: tool rows keep plain text instead of rich views. */
   richToolViews?: boolean
+  /** True only under the "information" template: tool-authored HTML may be rendered. */
+  allowToolWidget?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -195,6 +197,7 @@ function handleReject(approvalId: string) {
           :live-turns="liveTurns"
           :running-run-ids="runningRunIds"
           :rich-tool-views="richToolViews"
+          :allow-tool-widget="allowToolWidget"
           :streaming-reply="streamingReply"
           @approve="handleApprove"
           @reject="handleReject"

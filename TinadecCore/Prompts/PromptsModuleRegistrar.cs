@@ -298,6 +298,12 @@ internal sealed class PromptAssembler : IPromptAssembler
     {
         "detailed" =>
             "Answer depth: detailed. Every reply must explain itself, not only report a result. State what you did and why, name the trade-offs and alternatives you weighed, call out anything you assumed, and point at the evidence behind each claim. A reader who has not been watching the run should be able to understand the reasoning from the answer alone.",
+        // The information tier asks for a *form*, not more prose: visual, interactive, and
+        // asking the reader for what the work needs next. The constraints below are the
+        // reference product's, and they are constraints on the tool that renders the view,
+        // not styling advice — a widget that nests scrolling or navigates is unusable in place.
+        "information" =>
+            "Presentation: information. When a visual or interactive presentation would carry the answer better than prose — a comparison, a set of options, a form asking for the parameters you need next, a chart, a small table — return it as a self-contained HTML view in the tool result's `widget_html` field. The view runs sandboxed: it has no network access, no storage, and cannot navigate or load outside resources. So keep it self-contained: inline scripts and styles only, images and fonts as data URIs, no frames, no forms that submit anywhere. Send its measured height to the host with postMessage({ type: 'height', height: <px> }). Keep it focused on one thing and interactive only where that helps. When prose says it better, use prose: this is a preference, not a requirement to render everything.",
         _ => null,
     };
 

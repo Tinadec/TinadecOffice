@@ -104,6 +104,13 @@ const {
   registerLocalMediaProtocol,
   sourceToMediaPath,
 } = require('./localMedia.cjs');
+const {
+  WIDGET_SCHEME,
+  WIDGET_SCHEME_PRIVILEGES,
+  registerWidget,
+  registerWidgetProtocol,
+  dropWidget,
+} = require('./toolWidget.cjs');
 const { attachExternalLinkGuards } = require('./externalLinks.cjs');
 
 const DIST_DIR = path.join(__dirname, '..', 'dist');
@@ -115,6 +122,9 @@ protocol.registerSchemesAsPrivileged([
   },
   { scheme: 'app', privileges: APP_SCHEME_PRIVILEGES },
   { scheme: 'tinadec-media', privileges: MEDIA_SCHEME_PRIVILEGES },
+  // Tool-authored HTML is served from here into a sandboxed frame. Its own file explains the
+  // one-time-token model and the policy that travels with every document.
+  { scheme: WIDGET_SCHEME, privileges: WIDGET_SCHEME_PRIVILEGES },
 ]);
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -191,6 +201,22 @@ function appConfigSnapshot() {
 }
 // Readiness recovery needs the trusted document, even while business authorization is unavailable.
 ipcMain.handle('tinadec:host-status', (event) => {
+  // Tool-authored HTML becomes a one-time URL. This is the single entry point that can put
+  // untrusted markup behind `tinadec-widget://`, so it is gated on a trusted host document
+  // exactly like the other host reads, and it validates the payload here rather than trusting
+  // the caller's shape.
+  ipcMain.handle('tinadec:register-tool-widget', (event, html) => {
+    if (!isTrustedHostDocumentSender(event)) throw new Error('Registering a tool widget requires a trusted host page.');
+    const registered = registerWidget(html);
+    // A refused body is not an error: the caller falls back to plain text, which is the right
+    // outcome for a tool that returned something we will not render.
+    return registered ?? null;
+  });
+  ipcMain.handle('tinadec:release-tool-widget', (event, token) => {
+    if (!isTrustedHostDocumentSender(event)) throw new Error('Releasing a tool widget requires a trusted host page.');
+    return typeof token === 'string' && dropWidget(token);
+  });
+
   if (!isTrustedHostDocumentSender(event)) throw new Error('Host status requires a trusted host page.');
   return hostConnection?.snapshot() ?? { state: 'checking', managed: true };
 });
@@ -570,6 +596,7 @@ app.whenReady().then(async () => {
 
   registerAppBundleProtocol({ protocol, distDir: DIST_DIR });
   registerLocalMediaProtocol({ protocol });
+  registerWidgetProtocol({ protocol });
   protocol.handle('tinadec-pet-preview', async (request) => {
     try {
       const url = new URL(request.url);

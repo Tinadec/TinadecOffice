@@ -1143,6 +1143,39 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     }
 
     /// <summary>
+    /// Pull the tool-authored HTML view out of a result body, or null when there is none.
+    /// </summary>
+    /// <remarks>
+    /// A tool opts into rendering its own view by returning <c>widget_html</c> alongside its data:
+    /// <c>{"files":[…],"widget_html":"&lt;div&gt;…"}</c>. Two properties matter. The key is read
+    /// from the raw JSON, so a tool (or a model) cannot make Core treat an unrelated string as
+    /// markup by naming a field differently. And the field is left in the body it came from — this
+    /// extracts a copy for the caller, it does not strip anything, so a reader of the plain result
+    /// still sees exactly what the tool returned.
+    /// </remarks>
+    internal static string? ExtractWidgetHtml(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        // The body is only JSON when the tool returned an object; anything else has no envelope.
+        if (body.TrimStart().FirstOrDefault() != '{') return null;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            if (!document.RootElement.TryGetProperty("widget_html", out var widget)) return null;
+            if (widget.ValueKind != JsonValueKind.String) return null;
+            var html = widget.GetString();
+            return string.IsNullOrWhiteSpace(html) ? null : html;
+        }
+        catch (JsonException)
+        {
+            // A body we cannot parse has no envelope, which is not an error: it is simply a tool
+            // result that does not offer a view.
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The stored result of one tool execution, read back for display.
     /// </summary>
     /// <remarks>
@@ -1192,9 +1225,10 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             read += chunk;
         }
         var truncated = reference.Length > read;
+        var body = Encoding.UTF8.GetString(buffer, 0, read);
         return new ToolExecutionResult(
             row.ToolId, row.Status, reference.MediaType, reference.Sha256, reference.Length, read, truncated,
-            Encoding.UTF8.GetString(buffer, 0, read));    }
+            body, ExtractWidgetHtml(body));    }
 
     public async Task ReconcileAsync(CancellationToken cancellationToken = default)
     {

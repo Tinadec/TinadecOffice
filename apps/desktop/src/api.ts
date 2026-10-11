@@ -66,7 +66,7 @@ export interface SessionDto {
   meeting_model_override?: MeetingModelOverrideDto | null;
   permission_mode: string;
   /** How much the conversation explains itself. Absent on older rows, which read as standard. */
-  transcript_template?: 'concise' | 'standard' | 'detailed';
+  transcript_template?: 'concise' | 'standard' | 'detailed' | 'information';
   space_options: SpaceOptionsDto | null;
   settings_revision: number;
   created_at: string;
@@ -82,8 +82,11 @@ export interface SessionSettingsUpdate {
   expected_settings_revision?: number;
   mode_version_id?: string | null;
   permission_mode?: string;
-  /** "concise" | "standard" | "detailed" — how much the conversation explains itself. */
-  transcript_template?: 'concise' | 'standard' | 'detailed';
+  /**
+   * How much the conversation explains itself, and in "information" whether the agent may
+   * present its answer as a sandboxed HTML view.
+   */
+  transcript_template?: 'concise' | 'standard' | 'detailed' | 'information';
   meeting_model_override?: MeetingModelOverrideDto | null;
   clear_meeting_model_override?: boolean;
   clear_mode_version?: boolean;
@@ -1859,6 +1862,11 @@ export interface ToolExecutionResultDto {
   returned_length: number;
   truncated: boolean;
   body: string | null;
+  /**
+   * HTML the tool authored to present its own result, when it returned one. Model-and-tool
+   * authored markup: it is only ever rendered inside a sandboxed frame, never into this DOM.
+   */
+  widget_html: string | null;
 }
 
 /** One evidence item in a context pack and the estimated tokens it cost. */export interface ContextBudgetShareDto {

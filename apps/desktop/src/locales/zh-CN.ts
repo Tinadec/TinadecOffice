@@ -2110,7 +2110,10 @@ retry: '重试',
     detailed: '详尽',
     detailedHint: '每次回答都说明依据、权衡与假设',
     information: '信息',
-    informationHint: '用 HTML 卡片、表单与图表呈现和询问信息',
+    informationHint: '智能体用沙箱内的 HTML 卡片、表单与图表呈现与询问信息',
+  },
+  widget: {
+    refused: '这个视图无法安全渲染，已改为显示原始结果。',
   },
   common: {
     loading: '加载中…',

@@ -322,7 +322,16 @@ public sealed record ToolExecutionResult(
     long TotalLength,
     int ReturnedLength,
     bool Truncated,
-    string? Body);
+    string? Body,
+    /// <summary>
+    /// HTML the tool authored to present its own result — the "information" view. Null when the
+    /// tool returned plain data, which is the ordinary case.
+    ///
+    /// This is materialised from <c>widget_html</c> inside the result JSON, so a tool opts in by
+    /// returning a key rather than by Core declaring which tools produce UI. The desktop is what
+    /// renders it, inside a sandboxed frame; Core never interprets it.
+    /// </summary>
+    string? WidgetHtml = null);
 
 public enum RunStatus
 {

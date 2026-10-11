@@ -33,6 +33,8 @@ const props = defineProps<{
   streamingReply?: string
   /** False under the "concise" template; threaded down to the tool rows it changes. */
   richToolViews?: boolean
+  /** True only under the "information" template; reaches the one component that mounts a frame. */
+  allowToolWidget?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -71,6 +73,7 @@ const emit = defineEmits<{
               :supervision-review="activityByMessage?.[message.id]?.supervisionReview"
               :settled="!message.run_id || !runningRunIds?.[message.run_id]"
               :rich-tool-views="richToolViews"
+              :allow-tool-widget="allowToolWidget"
               @approve="emit('approve', $event)"
               @reject="emit('reject', $event)"
               @edit="emit('edit', $event)"
@@ -79,6 +82,7 @@ const emit = defineEmits<{
           <LiveTurnBlock
             v-if="liveTurn"
             :rich-tool-views="richToolViews"
+            :allow-tool-widget="allowToolWidget"
             :thinking-steps="liveTurn?.thinkingSteps"
             :tool-calls="liveTurn?.toolCalls"
             :supervision-review="liveTurn?.supervisionReview"
@@ -86,6 +90,7 @@ const emit = defineEmits<{
             @reject="emit('reject', $event)"
           />
           <LiveTurnBlock v-for="turn in liveTurns" :key="turn.runId" v-bind="turn"
+            :allow-tool-widget="allowToolWidget"
             @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
           <div v-if="streamingReply" class="message-content assistant" data-testid="chat-streaming-reply">
             <MarkdownRender :content="streamingReply" />

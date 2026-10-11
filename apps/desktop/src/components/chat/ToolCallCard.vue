@@ -19,6 +19,8 @@ const props = defineProps<{
    * The row itself is unchanged — this withholds richness, not information.
    */
   richViews?: boolean
+  /** True only under the "information" template; forwarded to the result view. */
+  allowWidget?: boolean
 }>()
 const emit = defineEmits<{ approve: [approvalId: string]; reject: [approvalId: string] }>()
 const { t } = useI18n()
@@ -79,7 +81,7 @@ const toolIcon = computed(() => {
           :run-id="runId ?? toolCall.runId" :status="toolCall.status" />
         <!-- The stored result, read back on open. Only for a finished call: a running one has
              no payload yet, and a parked one must not fetch before the decision. -->
-        <ToolResultView v-else-if="showResult" :execution-id="toolCall.id" :tool-id="toolCall.toolId" />
+        <ToolResultView v-else-if="showResult" :execution-id="toolCall.id" :tool-id="toolCall.toolId" :allow-widget="allowWidget" />
         <p v-if="toolCall.resultSummary && toolCall.resultSummary !== toolCall.argsSummary && !showResult">{{ toolCall.resultSummary }}</p>
         <ul v-if="toolCall.evidence.length">
           <li v-for="(item, idx) in toolCall.evidence" :key="idx">{{ item }}</li>

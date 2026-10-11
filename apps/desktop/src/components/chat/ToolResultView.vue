@@ -17,8 +17,19 @@ import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import type { ToolExecutionResultDto } from '@/api'
 import DiffViewer from '@/components/git/DiffViewer.vue'
+import ToolWidgetFrame from './ToolWidgetFrame.vue'
 
-const props = defineProps<{ executionId: string; toolId: string }>()
+const props = defineProps<{
+  executionId: string
+  toolId: string
+  /**
+   * Whether a tool-authored HTML view may be rendered. Only the "information" conversation
+   * template turns this on: it is the tier where the agent is asked to present and ask for
+   * information, and where the reader has opted into that. Every other template shows the
+   * structured result and never mounts a frame.
+   */
+  allowWidget?: boolean
+}>()
 const { t } = useI18n()
 
 const result = ref<ToolExecutionResultDto | null>(null)
@@ -97,6 +108,13 @@ const truncatedLabel = computed(() => result.value?.truncated
     <template v-else-if="result">
       <p v-if="truncatedLabel" class="tool-result-note is-warning">{{ truncatedLabel }}</p>
       <p v-if="!result.body" class="tool-result-note">{{ t('agent.resultEmpty') }}</p>
+      <!-- The tool's own view. Rendered before the generic shapes so a tool that authored HTML
+           decides how its result reads, and only when the reader asked for that tier. -->
+      <ToolWidgetFrame
+        v-if="allowWidget && result.widget_html"
+        :html="result.widget_html"
+        :title="toolId"
+      />
       <DiffViewer v-else-if="diffText" :diff-text="diffText" :file-path="result.tool_id" />
       <ul v-else-if="listValues.length" class="tool-result-list">
         <li v-for="(item, index) in listValues" :key="index">{{ item }}</li>

@@ -28,6 +28,7 @@ const c = homeController
     :streaming-reply="c.streamingReply.value"
     :can-stop="Boolean(c.stoppableRunId.value)"
     :rich-tool-views="c.currentTranscriptTemplate.value !== 'concise'"
+    :allow-tool-widget="c.currentTranscriptTemplate.value === 'information'"
     @update:draft="c.updateDraft($event)"
     @update:permission="c.updatePermission($event)"
     @update:transcript-template="c.updateComposerSettings({ transcript_template: $event })"

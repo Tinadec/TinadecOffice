@@ -18,4 +18,10 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
+  <!-- The widget envelope rule decides what a tool may hand the renderer, so it is pinned from
+       the test side rather than only exercised through a full run. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+  </ItemGroup>
+
 </Project>

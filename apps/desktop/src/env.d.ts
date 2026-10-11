@@ -182,6 +182,14 @@ declare global {
       resetGatewayUrl: () => Promise<{ gateway_url: string; source: 'default' | 'environment'; managed: boolean }>;
       discoverServices: () => Promise<DiscoveredService[]>;
       restartApp: () => Promise<void>;
+      /**
+       * Hand tool-authored HTML to the main process for a one-time `tinadec-widget://` URL.
+       * Null when main refuses the body (empty or over its ceiling); the caller then falls
+       * back to plain text rather than rendering an empty frame.
+       */
+      registerToolWidget: (html: string) => Promise<{ url: string; token: string } | null>;
+      /** Revoke a widget whose frame never mounted. */
+      releaseToolWidget: (token: string) => Promise<boolean>;
       selectWorkspaceFolders: () => Promise<string[]>;
       setStorageWritePolicy: (storageId: string, allow: boolean) => Promise<{ storage_id: string; allow_storage_write: boolean }>;
       storageAction: (storageId: string, action: 'configure' | 'cleanup' | 'content-collect' | 'storage-delete' | 'unregister', input?: Record<string, unknown>) => Promise<unknown>;

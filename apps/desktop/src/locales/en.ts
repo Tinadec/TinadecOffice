@@ -2113,7 +2113,10 @@ retry: 'Retry',
     detailed: 'Detailed',
     detailedHint: 'Explain the reasoning, trade-offs and assumptions every time',
     information: 'Information',
-    informationHint: 'Present and ask for information with HTML cards, forms and charts',
+    informationHint: 'The agent presents and asks for information with sandboxed HTML',
+  },
+  widget: {
+    refused: 'This view could not be rendered safely; showing the raw result instead.',
   },
   common: {
     loading: 'Loading…',

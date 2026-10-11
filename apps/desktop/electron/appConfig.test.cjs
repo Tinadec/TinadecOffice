@@ -171,6 +171,10 @@ function mainConfigFixture(configFile) {
     './petStore.cjs': {},
     './appBundle.cjs': {},
     './localMedia.cjs': {},
+    // main.cjs serves tool-authored HTML from this scheme and exposes the one IPC entry point
+    // that can register a widget. Stubbed to its no-ops: the scheme's own behaviour is pinned by
+    // toolWidget.test.cjs, and all this file needs is for the require to resolve.
+    './toolWidget.cjs': { registerWidgetProtocol() {}, registerWidget: () => null, dropWidget: () => false },
     './externalLinks.cjs': {},
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), {

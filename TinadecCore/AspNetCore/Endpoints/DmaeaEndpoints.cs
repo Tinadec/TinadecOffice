@@ -267,7 +267,11 @@ public static class DmaeaEndpoints
                 content_length = result.TotalLength,
                 returned_length = result.ReturnedLength,
                 truncated = result.Truncated,
-                body = result.Body
+                body = result.Body,
+                // The tool's own HTML view, when it returned one. Core only carries it: the desktop
+                // is what renders it, inside a sandboxed frame, because this is model-and-tool
+                // authored markup and nothing here should treat it as trusted.
+                widget_html = result.WidgetHtml
             });
         });
 

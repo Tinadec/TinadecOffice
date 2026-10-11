@@ -48,6 +48,22 @@ public sealed class TranscriptTemplatePromptTests
     }
 
     [Fact]
+    public void Information_AsksForAViewAndStatesItsConstraints()
+    {
+        var instruction = PromptAssembler.ExplanationInstruction("information");
+
+        Assert.NotNull(instruction);
+        Assert.Contains("widget_html", instruction, StringComparison.Ordinal);
+        // The frame is sandboxed, so the instruction has to say what that forbids — a widget that
+        // reaches for the network or nests a frame simply will not work, and saying so here is
+        // cheaper than a broken view the reader has to diagnose.
+        Assert.Contains("sandboxed", instruction, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("network", instruction, StringComparison.OrdinalIgnoreCase);
+        // And it stays a preference: rendering everything as HTML is not the goal.
+        Assert.Contains("prose", instruction, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void AnUnknownTemplateAddsNothingRatherThanGuessing()
     {
         // The session validator rejects unknown values before a run is admitted; reaching here

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlignJustify, AlignLeft, ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Minus, Plus, Settings, Sparkles, Square } from '@lucide/vue'
+import { AlignJustify, AlignLeft, ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, LayoutDashboard, Minus, Plus, Settings, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, useId, type Component, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -59,13 +59,13 @@ const props = defineProps<{
    */
   canStop?: boolean
   /** How much the conversation explains itself; frozen into the run by Core. */
-  transcriptTemplate?: 'concise' | 'standard' | 'detailed'
+  transcriptTemplate?: 'concise' | 'standard' | 'detailed' | 'information'
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:permission': [value: PermissionLevel]
-  'update:transcript-template': [value: 'concise' | 'standard' | 'detailed']
+  'update:transcript-template': [value: 'concise' | 'standard' | 'detailed' | 'information']
   'update:modeVersionId': [value: string | null]
   'update:meetingModelOverride': [value: MeetingModelOverrideDto | null]
   'update:spaceOptions': [value: SpaceOptionsDto]
@@ -213,7 +213,7 @@ function consumeSettingsSlash() {
 
 function changeMode(value: string | null) { consumeSettingsSlash(); emit('update:modeVersionId', value) }
 function changePermission(value: PermissionLevel) { consumeSettingsSlash(); emit('update:permission', value) }
-function changeTranscriptTemplate(value: 'concise' | 'standard' | 'detailed') { consumeSettingsSlash(); emit('update:transcript-template', value) }
+function changeTranscriptTemplate(value: 'concise' | 'standard' | 'detailed' | 'information') { consumeSettingsSlash(); emit('update:transcript-template', value) }
 function changeModel(value: MeetingModelOverrideDto | null) { consumeSettingsSlash(); emit('update:meetingModelOverride', value) }
 function changeSpaceOptions(value: SpaceOptionsDto) { consumeSettingsSlash(); emit('update:spaceOptions', value) }
 
@@ -374,10 +374,15 @@ const transcriptChoice = computed(() => {
   return {
     key,
     label: t(`transcript.${key}`),
-    icon: key === 'concise' ? Minus : key === 'detailed' ? AlignLeft : AlignJustify,
+    icon: key === 'concise' ? Minus : key === 'detailed' ? AlignLeft : key === 'information' ? LayoutDashboard : AlignJustify,
   }
 })
 const richToolViews = computed(() => transcriptChoice.value.key !== 'concise')
+/**
+ * Whether a tool-authored HTML view may be rendered. Only the "information" tier turns this on:
+ * it is the one where the reader has asked for the agent to present and ask for information, and
+ * it is the only one that pays the cost of mounting a sandboxed frame.
+ */
 const transcriptPanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'transcript')
 
 const attachments = pendingAttachments

@@ -19,6 +19,8 @@ const props = defineProps<{
   supervisionReview?: SupervisionReview | null
   /** False under the "concise" template; forwarded to the activity trail. */
   richToolViews?: boolean
+  /** True only under the "information" template; forwarded to the activity trail. */
+  allowToolWidget?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -40,7 +42,7 @@ const review = computed(() => {
     <!-- A turn rendered here has no answering message yet, so it is by definition still
          working: the trail stays open rather than folding while the agent runs. -->
     <TurnTimeline :run-id="runId" :thinking-steps="steps" :tool-calls="calls"
-      :supervision-review="review" :settled="false" :rich-tool-views="richToolViews"
+      :supervision-review="review" :settled="false" :rich-tool-views="richToolViews" :allow-tool-widget="allowToolWidget"
       @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
   </div>
 </template>

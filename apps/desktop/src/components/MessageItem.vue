@@ -19,6 +19,8 @@ const props = defineProps<{
   settled?: boolean
   /** False under the "concise" template; forwarded to the tool rows. */
   richToolViews?: boolean
+  /** True only under the "information" template; forwarded to the activity trail. */
+  allowToolWidget?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -118,7 +120,7 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
           <!-- 思考过程 -->
           <TurnTimeline v-if="hasThinking || hasToolCalls" :thinking-steps="messageThinkingSteps"
             :tool-calls="messageToolCalls" :run-id="message.run_id ?? undefined"
-            :supervision-review="supervisionReview" :settled="settled" :rich-tool-views="richToolViews"
+            :supervision-review="supervisionReview" :settled="settled" :rich-tool-views="richToolViews" :allow-tool-widget="allowToolWidget"
             @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
 
           <MarkdownRender :content="message.content" />
