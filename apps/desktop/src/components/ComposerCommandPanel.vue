@@ -19,6 +19,8 @@ const props = defineProps<{
   canAttach: boolean
   permission: PermissionLevel
   transcriptTemplate: 'concise' | 'standard' | 'detailed' | 'information'
+  /** The send behaviour the composer falls back to; owned by `lib/dispatchPref`. */
+  dispatchPref: 'queued' | 'parallel' | 'ask'
   modeVersionId?: string | null
   meetingModelOverride?: MeetingModelOverrideDto | null
   spaceOptions?: SpaceOptionsDto | null
@@ -35,6 +37,7 @@ const emit = defineEmits<{
   'update:modeVersionId': [value: string | null]
   'update:permission': [value: PermissionLevel]
   'update:transcriptTemplate': [value: 'concise' | 'standard' | 'detailed' | 'information']
+  'update:dispatchPref': [value: 'queued' | 'parallel' | 'ask']
   'update:meetingModelOverride': [value: MeetingModelOverrideDto | null]
   'update:spaceOptions': [value: SpaceOptionsDto]
   'mode-label': [value: string, unavailable: boolean, icon: Component]
@@ -123,6 +126,18 @@ const transcriptChoices = [
   { value: 'detailed' as const, label: 'transcript.detailed', hint: 'transcript.detailedHint', icon: AlignLeft },
   { value: 'information' as const, label: 'transcript.information', hint: 'transcript.informationHint', icon: LayoutDashboard },
 ] as const
+/**
+ * The three send behaviours. This is the same preference Settings › General used to own; the panel
+ * is where a reader already is when they care about it, and it is read on the send path.
+ */
+const sendChoices = [
+  { value: 'queued' as const, label: 'settings.enterQueued', hint: 'commandPanel.sendQueuedHint', icon: Layers },
+  { value: 'parallel' as const, label: 'settings.enterParallel', hint: 'commandPanel.sendParallelHint', icon: ListChecks },
+  { value: 'ask' as const, label: 'settings.enterAsk', hint: 'commandPanel.sendAskHint', icon: MessageSquare },
+] as const
+const sendName = computed(() => t(sendChoices.find(choice => choice.value === props.dispatchPref)?.label ?? 'settings.enterQueued'))
+const sendIcon = computed(() => sendChoices.find(choice => choice.value === props.dispatchPref)?.icon ?? Layers)
+
 const transcriptName = computed(() => t(transcriptChoices.find(choice => choice.value === props.transcriptTemplate)?.label ?? 'transcript.standard'))
 const transcriptIcon = computed(() => transcriptChoices.find(choice => choice.value === props.transcriptTemplate)?.icon ?? AlignJustify)
 const permissionName = computed(() => t(currentPermission.value.label))
@@ -188,6 +203,11 @@ const allRows = computed<Row[]>(() => {
     id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon, risk: choice.risk, checked: props.permission === choice.value,
     disabled: props.settingsSaving, run: () => emit('update:permission', choice.value),
   }))
+  if (page.value === 'send') return sendChoices.map(choice => ({
+    id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon,
+    checked: props.dispatchPref === choice.value,
+    disabled: props.settingsSaving, run: () => emit('update:dispatchPref', choice.value),
+  }))
   if (page.value === 'transcript') return transcriptChoices.map(choice => ({
     id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon,
     checked: props.transcriptTemplate === choice.value,
@@ -219,11 +239,11 @@ const allRows = computed<Row[]>(() => {
     if ('surface' in setting && (setting.surface === 'space') !== Boolean(props.spatial)) continue
     const toggle = 'toggle' in setting ? setting.toggle : null
     const submenu = 'page' in setting ? setting.page : null
-    const currentValue = setting.id === 'model' ? currentModelName.value : setting.id === 'mode' ? selectedMode.value?.display_name ?? t('chat.followDefault') : setting.id === 'permission' ? permissionName.value : setting.id === 'transcript' ? transcriptName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
+    const currentValue = setting.id === 'model' ? currentModelName.value : setting.id === 'mode' ? selectedMode.value?.display_name ?? t('chat.followDefault') : setting.id === 'permission' ? permissionName.value : setting.id === 'transcript' ? transcriptName.value : setting.id === 'send' ? sendName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
     rows.push({
       id: setting.id, label: t(setting.label), hint: t(setting.hint),
       keywords: setting.keywords,
-      icon: setting.id === 'permission' ? currentPermission.value.icon : setting.id === 'transcript' ? transcriptIcon.value : setting.id === 'mode' && selectedMode.value ? modeIcon(selectedMode.value.slug) : icons[setting.id],
+      icon: setting.id === 'permission' ? currentPermission.value.icon : setting.id === 'transcript' ? transcriptIcon.value : setting.id === 'send' ? sendIcon.value : setting.id === 'mode' && selectedMode.value ? modeIcon(selectedMode.value.slug) : icons[setting.id],
       risk: setting.id === 'permission' ? currentPermission.value.risk : undefined, value: currentValue,
       switch: !!toggle, checked: toggle ? Boolean(space.value[toggle]) : undefined, submenu: !!submenu,
       disabled: props.settingsSaving,

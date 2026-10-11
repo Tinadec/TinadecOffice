@@ -65,21 +65,46 @@ async function loadDocument(current = generation) {
   if (current !== generation) return
   document.value = result; text.value = baseline.value = result.text; diagnostics.value = result.diagnostics
 }
+/**
+ * Usage is measured, not read: `StatisticsAsync` walks every owned directory and stats each file,
+ * and the user scope here is thousands of files. On the critical path that was seconds of an empty
+ * panel on every open and every scope switch, so it is now an explicit action — the reader asked
+ * for it, or the section was opened. Everything else on this page is cheap and paints at once.
+ */
+const statisticsLoading = ref(false)
+const statisticsLoaded = ref(false)
+async function loadStatistics(current = generation) {
+  const captured = scopeId.value
+  if (current !== generation || !canAccessBackend.value) return
+  statisticsLoading.value = true
+  try {
+    const result = await api.getStorageStats(captured)
+    if (current !== generation) return
+    stats.value = result
+    statisticsLoaded.value = true
+    scopeDiagnostics.value = [...scopeDiagnostics.value.filter(item => item.code !== 'storage_unreadable'), ...result.diagnostics]
+  } catch (value) { if (current === generation) failure.set(value) }
+  finally { if (current === generation) statisticsLoading.value = false }
+}
+
 async function loadContext() {
   const current = ++generation; busy.value = true; failure.clear(); preview.value = null; contentPreview.value = null; deletePreview.value = null; notice.value = ''
   const captured = scopeId.value
-  stats.value = null; scopeDiagnostics.value = []; document.value = null
+  stats.value = null; statisticsLoaded.value = false; scopeDiagnostics.value = []; document.value = null
   try {
     if (scope.value?.availability === 'error') {
       const item = scope.value
       throw new ApiError(item.availability_error ?? '工作区不可用', 409, { ...item, code: item.availability_code })
     }
-    const [result, diagnosis] = await Promise.all([api.getStorageStats(captured), api.getStorageDiagnostics(captured)])
+    // The two reads that are not a filesystem walk, and one does not depend on the other.
+    const [diagnosis, documentResult] = await Promise.all([
+      api.getStorageDiagnostics(captured),
+      api.getConfigurationDocument(captured, documentId.value),
+    ])
     if (current !== generation) return
-    stats.value = result
-    scopeDiagnostics.value = [...(diagnosis.diagnostics ?? []), ...result.diagnostics]
+    scopeDiagnostics.value = diagnosis.diagnostics ?? []
+    document.value = documentResult; text.value = baseline.value = documentResult.text; diagnostics.value = documentResult.diagnostics
     backend.value = scope.value?.backend.toLowerCase() === 'postgresql' ? 'postgresql' : 'sqlite'; root.value = scope.value?.storage_root ?? ''; postgresReference.value = scope.value?.postgres_connection_reference ?? ''
-    await loadDocument(current)
   } catch (value) { if (current === generation) failure.set(value) }
   finally { if (current === generation) busy.value = false }
 }
@@ -191,8 +216,8 @@ async function cleanup() {
   try {
     await hostAction(captured.storage_id, 'cleanup', { preview_id: captured.preview_id })
     if (!isCurrent(current, captured.storage_id)) return
-    preview.value = null; const result = await api.getStorageStats(captured.storage_id)
-    if (isCurrent(current, captured.storage_id)) { stats.value = result; notice.value = label('清理完成。', 'Cleanup complete.') }
+    preview.value = null
+    if (isCurrent(current, captured.storage_id)) { await loadStatistics(current); notice.value = label('清理完成。', 'Cleanup complete.') }
   } catch (value) { if (isCurrent(current, captured.storage_id)) failure.set(value) } finally { if (isCurrent(current, captured.storage_id)) busy.value = false }
 }
 async function previewContent() {
@@ -207,8 +232,8 @@ async function collectContent() {
   try {
     await hostAction(captured.storage_id, 'content-collect', { preview_id: captured.preview_id })
     if (!isCurrent(current, captured.storage_id)) return
-    contentPreview.value = null; const result = await api.getStorageStats(captured.storage_id)
-    if (isCurrent(current, captured.storage_id)) { stats.value = result; notice.value = label('未被引用的内容已回收。', 'Unreferenced content collected.') }
+    contentPreview.value = null
+    if (isCurrent(current, captured.storage_id)) { await loadStatistics(current); notice.value = label('未被引用的内容已回收。', 'Unreferenced content collected.') }
   } catch (value) { if (isCurrent(current, captured.storage_id)) failure.set(value) } finally { if (isCurrent(current, captured.storage_id)) busy.value = false }
 }
 async function previewDelete() {
@@ -307,6 +332,14 @@ const failureRecovery = computed(() => recoveryActions(failure.error.value, {
       <div class="storage-config"><label class="storage-field">{{ label('持久化后端', 'Persistence backend') }}<select v-model="backend" class="settings-select" :disabled="busy"><option value="sqlite">SQLite</option><option value="postgresql">PostgreSQL</option></select></label><label class="storage-field">{{ label('存储根目录（绝对路径）', 'Storage root (absolute path)') }}<UiInput v-model="root" :disabled="busy" /></label><label v-if="backend === 'postgresql'" class="storage-field">{{ label('PostgreSQL 连接引用', 'PostgreSQL connection reference') }}<UiInput v-model="postgresReference" :disabled="busy" placeholder="secret reference" /></label><UiButton variant="outline" :disabled="busy || dirty" @click="configure">{{ label('应用存储配置', 'Apply storage configuration') }}</UiButton></div>
       <label v-if="scope.scope_kind === 'project'" class="storage-policy"><input type="checkbox" :checked="scope.allow_storage_write" :disabled="busy" @change="writePolicy" />{{ label('允许 Agent 写入整个项目存储目录', 'Allow Agent writes to the entire project storage directory') }}</label>
       <h3>{{ label('使用量与清理', 'Usage and cleanup') }}</h3>
+      <!-- Measuring walks every owned file, so it runs when asked for rather than on open.
+           Everything above this line has already painted by the time this button appears. -->
+      <div v-if="!statisticsLoaded" class="storage-actions">
+        <UiButton variant="outline" size="sm" :disabled="statisticsLoading || busy || !canAccessBackend" data-testid="storage-measure" @click="loadStatistics()">
+          {{ statisticsLoading ? label('正在统计…', 'Measuring…') : label('统计使用量', 'Measure usage') }}
+        </UiButton>
+        <span class="quiet">{{ label('需要遍历全部存储文件，可能耗时数秒。', 'Walks every stored file and can take a few seconds.') }}</span>
+      </div>
       <table v-if="stats" class="storage-table"><thead><tr><th>{{ label('分类', 'Category') }}</th><th>{{ label('大小 / 文件数', 'Size / files') }}</th><th>{{ label('操作', 'Action') }}</th></tr></thead><tbody><tr v-for="category in stats.categories" :key="category.category"><td><strong>{{ category.category }}</strong><code>{{ category.path }}</code></td><td>{{ bytes(category.size_bytes) }} / {{ category.file_count }}</td><td><UiButton v-if="category.clearable" variant="outline" size="sm" :disabled="busy" @click="previewCleanup(category.category)">{{ label('预览清理', 'Preview cleanup') }}</UiButton></td></tr></tbody></table>
       <div v-if="preview" class="tools-validation" role="status"><strong>{{ label('清理预览', 'Cleanup preview') }} · {{ preview.category }}</strong><p><code>{{ preview.path }}</code></p><p>{{ bytes(preview.size_bytes) }} · {{ preview.file_count }} {{ label('文件', 'files') }} · {{ label('有效期至', 'Expires') }} {{ preview.expires_at }}</p><UiButton variant="destructive" :disabled="busy" @click="cleanup">{{ label('确认执行此预览', 'Execute this preview') }}</UiButton><UiButton variant="ghost" :disabled="busy" @click="preview = null">{{ label('取消', 'Cancel') }}</UiButton></div>
       <div class="storage-actions"><UiButton variant="outline" size="sm" :disabled="busy" @click="previewContent">{{ label('预览内容回收', 'Preview content collection') }}</UiButton><UiButton v-if="scope.scope_kind === 'project'" variant="outline" size="sm" :disabled="busy" @click="previewDelete">{{ label('预览删除整个项目存储', 'Preview deletion of project storage') }}</UiButton></div>

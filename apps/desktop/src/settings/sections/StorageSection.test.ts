@@ -33,6 +33,15 @@ beforeEach(() => {
   mocks.hostAction.mockResolvedValue({})
   Object.defineProperty(window, 'tinadec', { configurable: true, value: { storageAction: mocks.hostAction } })
 })
+/**
+ * Usage is measured on request, not on open, so a case that drives the cleanup table has to ask
+ * for the measurement first — exactly as a reader does.
+ */
+async function measure(wrapper: ReturnType<typeof mount>) {
+  await wrapper.get('[data-testid="storage-measure"]').trigger('click')
+  await flushPromises()
+}
+
 it('waits for scope closing and lets the user cancel the captured request', async () => {
   let signal!: AbortSignal
   mocks.closeStorageScope.mockImplementation((_scope: string, closeSignal: AbortSignal) => new Promise((_resolve, reject) => {
@@ -79,6 +88,7 @@ it('executes exactly the displayed cleanup preview and obtains write grants thro
   await wrapper.get('select').setValue(project.storage_id); await flushPromises()
   await wrapper.get('input[type="checkbox"]').setValue(true); await flushPromises()
   expect(grant).toHaveBeenCalledWith(project.storage_id, true)
+  await measure(wrapper)
   await wrapper.findAll('button').find(button => button.text() === '预览清理')!.trigger('click'); await flushPromises()
   expect(wrapper.text()).toContain('C:/project/.tinadec/cache')
   await wrapper.findAll('button').find(button => button.text() === '确认执行此预览')!.trigger('click'); await flushPromises()
@@ -119,6 +129,7 @@ it('explains why a web client cannot execute maintenance without a trusted host'
   Object.defineProperty(window, 'tinadec', { configurable: true, value: {} })
   mocks.previewStorageCleanup.mockResolvedValue({ preview_id: 'preview-1', storage_id: 'user', category: 'cache', path: 'C:/user/cache', file_count: 2, size_bytes: 1024, expires_at: '2026-10-09T20:00:00Z' })
   const wrapper = mount(StorageSection); await flushPromises()
+  await measure(wrapper)
   await wrapper.findAll('button').find(button => button.text() === '预览清理')!.trigger('click'); await flushPromises()
   await wrapper.findAll('button').find(button => button.text() === '确认执行此预览')!.trigger('click'); await flushPromises()
   expect(wrapper.text()).toContain('需要可信主窗口宿主')
@@ -134,6 +145,8 @@ it.each(['cleanup', 'content', 'delete'] as const)('discards a late %s preview a
   const wrapper = mount(StorageSection); await flushPromises()
   await wrapper.get('select').setValue(project.storage_id); await flushPromises()
   const label = kind === 'cleanup' ? '预览清理' : kind === 'content' ? '预览内容回收' : '预览删除整个项目存储'
+  // Only the per-category cleanup button lives in the usage table.
+  if (kind === 'cleanup') await measure(wrapper)
   await wrapper.findAll('button').find(button => button.text() === label)!.trigger('click'); await flushPromises()
   setHostAccessStatus({ state: 'unavailable', managed: true }); await flushPromises()
   setHostAccessStatus({ state: 'ready', managed: true }); await flushPromises()
@@ -158,5 +171,43 @@ it('does not apply late maintenance completion or stats to a newly selected scop
   expect((wrapper.get('select').element as HTMLSelectElement).value).toBe('user')
   expect(wrapper.text()).not.toContain('未被引用的内容已回收')
   expect(mocks.getStorageStats).toHaveBeenCalledTimes(reads)
+  wrapper.unmount()
+})
+
+/**
+ * The page used to run the usage walk on open. It is a full recursive stat of every owned file —
+ * thousands of files in the user scope — and it sat on the critical path with the panel cleared,
+ * so opening the section meant seconds of an empty screen, repeated on every scope switch. These
+ * pin the contract that replaced it.
+ */
+it('does not measure usage on open, and paints the cheap details instead', async () => {
+  const wrapper = mount(StorageSection); await flushPromises()
+  expect(mocks.getStorageStats).not.toHaveBeenCalled()
+  // The parts that are not a filesystem walk are already on screen.
+  expect(wrapper.text()).toContain('C:/user/config')
+  expect(wrapper.get('[data-testid="storage-measure"]')).toBeTruthy()
+  wrapper.unmount()
+})
+
+it('measures only when asked, and keeps the result', async () => {
+  const wrapper = mount(StorageSection); await flushPromises()
+  await measure(wrapper)
+  expect(mocks.getStorageStats).toHaveBeenCalledWith('user')
+  expect(wrapper.text()).toContain('C:/user/cache')
+  // The button is replaced by the table; asking again is not the only way forward.
+  expect(wrapper.find('[data-testid="storage-measure"]').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+it('re-measures after cleanup instead of reusing the pre-cleanup numbers', async () => {
+  mocks.previewStorageCleanup.mockResolvedValue({ preview_id: 'preview-1', storage_id: 'user', category: 'cache', path: 'C:/user/cache', file_count: 2, size_bytes: 1024, expires_at: '2026-10-09T20:00:00Z' })
+  mocks.cleanupStorage.mockResolvedValue({})
+  const wrapper = mount(StorageSection); await flushPromises()
+  await measure(wrapper)
+  const before = mocks.getStorageStats.mock.calls.length
+  await wrapper.findAll('button').find(button => button.text() === '预览清理')!.trigger('click'); await flushPromises()
+  await wrapper.findAll('button').find(button => button.text() === '确认执行此预览')!.trigger('click'); await flushPromises()
+  // A stale number here would read as "the cleanup did nothing".
+  expect(mocks.getStorageStats.mock.calls.length).toBeGreaterThan(before)
   wrapper.unmount()
 })

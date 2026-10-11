@@ -7,14 +7,13 @@ import { api as baseApi } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
-import { getDispatchPref, setDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 
 /**
  * General section extracted from SettingsPage (D7.2).
  *
- * Owns: Gateway connection config (Electron appConfig IPC), dispatch
- * behavior preferences (localStorage via dispatchPref). Workspace defaults
- * remain Core-owned and are managed from Agent Center.
+ * Owns: Gateway connection config (Electron appConfig IPC). The send-behaviour preference used
+ * to be here; it now lives in the composer's command panel, where the send path already is.
+ * Workspace defaults remain Core-owned and are managed from Agent Center.
  */
 const { t } = useI18n()
 const { items: notificationItems, notify, banner, status, confirm: dismissConfirm, dismiss: dismissNotification, dismissByKey } =
@@ -31,7 +30,7 @@ const appConfig = ref<DesktopAppConfig>({ gateway_url: api.gatewayUrl, source: '
 const gatewayUrlDraft = ref(api.gatewayUrl)
 const gatewayConfigBusy = ref(false)
 const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
-const enterPrefDraft = ref<DispatchPref>(getDispatchPref())
+
 
 async function loadAppConfig(): Promise<void> {
   appConfig.value = await window.tinadec.getAppConfig()
@@ -153,11 +152,6 @@ function selectDiscoveredService(service: DiscoveredService): void {
   notify.success({ message: t('settings.serviceDiscoverySelected'), source: 'gateway' })
 }
 
-function onEnterPrefChange(e: Event): void {
-  const v = (e.target as HTMLSelectElement).value as DispatchPref
-  enterPrefDraft.value = v
-  setDispatchPref(v)
-}
 
 onMounted(() => {
   void loadAppConfig()
@@ -284,25 +278,5 @@ void dismissConfirm
       </div>
     </section>
 
-    <section class="general-settings-group" aria-labelledby="dispatch-settings-title">
-      <div class="general-settings-group-heading">
-        <div>
-          <h3 id="dispatch-settings-title">{{ t('settings.dispatchBehavior') }}</h3>
-          <p>{{ t('settings.dispatchBehaviorHint') }}</p>
-        </div>
-      </div>
-
-      <div class="gateway-config-field">
-        <UiLabel for="enter-pref">{{ t('settings.enterKeyBehavior') }}</UiLabel>
-        <select id="enter-pref" class="settings-select" :value="enterPrefDraft" @change="onEnterPrefChange">
-          <option value="queued">{{ t('settings.enterQueued') }}</option>
-          <option value="parallel">{{ t('settings.enterParallel') }}</option>
-          <option value="ask">{{ t('settings.enterAsk') }}</option>
-        </select>
-        <div class="gateway-config-meta">
-          <span>{{ t('settings.enterKeyBehaviorMeta') }}</span>
-        </div>
-      </div>
-    </section>
   </div>
 </template>

@@ -54,8 +54,11 @@ public static class StorageScopeEndpoints
             await HandleAsync(async () => Results.Ok(await maintenance.ApplyAsync(storageId, request.PreviewId, ct).ConfigureAwait(false))));
         app.MapPost("/api/v1/storage/scopes/{storageId}/content-preview", async (string storageId, ContentCollectionService collection, CancellationToken ct) =>
             await HandleAsync(async () => Results.Ok(await collection.PreviewAsync(storageId, ct).ConfigureAwait(false))));
-        app.MapPost("/api/v1/storage/scopes/{storageId}/content-collect", async (string storageId, CleanupApplyRequest request, ContentCollectionService collection, CancellationToken ct) =>
-            await HandleAsync(async () => Results.Ok(await collection.ApplyAsync(storageId, request.PreviewId, ct).ConfigureAwait(false))));
+        // Reclaiming orphaned content changes what the usage summary would report, so the cached
+        // walk is dropped here — otherwise the next open would show the pre-collection numbers for
+        // up to the TTL and look like the operation had done nothing.
+        app.MapPost("/api/v1/storage/scopes/{storageId}/content-collect", async (string storageId, CleanupApplyRequest request, ContentCollectionService collection, StorageMaintenanceService maintenance, CancellationToken ct) =>
+            await HandleAsync(async () => { var result = await collection.ApplyAsync(storageId, request.PreviewId, ct).ConfigureAwait(false); maintenance.InvalidateStatistics(storageId); return Results.Ok(result); }));
         app.MapPost("/api/v1/storage/scopes/{storageId}/storage-delete-preview", async (string storageId, StorageMaintenanceService maintenance, CancellationToken ct) =>
             await HandleAsync(async () => Results.Ok(await maintenance.PreviewDeleteAsync(storageId, ct).ConfigureAwait(false))));
         app.MapPost("/api/v1/storage/scopes/{storageId}/storage-delete", async (string storageId, CleanupApplyRequest request, StorageMaintenanceService maintenance, CancellationToken ct) =>

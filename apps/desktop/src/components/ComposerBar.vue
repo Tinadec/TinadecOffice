@@ -9,7 +9,7 @@ import type { PermissionLevel } from '@/types/mode'
 import type { MeetingModelOverrideDto, ProjectDto, SpaceOptionsDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { selectionKey, selectedStorage } from '@/lib/storageScope'
-import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
+import { getDispatchPref, setDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 import { isCommandAvailable, parseSlashCommand, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { composerSlashQuery, composerSettings, permissionChoices, type ComposerPage } from '@/lib/composerCommands'
 import { defaultSpaceOptions } from '@/lib/composerSettings'
@@ -213,6 +213,16 @@ function consumeSettingsSlash() {
 
 function changeMode(value: string | null) { consumeSettingsSlash(); emit('update:modeVersionId', value) }
 function changePermission(value: PermissionLevel) { consumeSettingsSlash(); emit('update:permission', value) }
+/**
+ * The send preference is stored outside Vue (a module the send path reads synchronously), so the
+ * panel would keep showing the old value after a change without this local mirror.
+ */
+const dispatchPref = ref<DispatchPref>(getDispatchPref())
+function changeDispatchPref(value: DispatchPref) {
+  setDispatchPref(value)
+  dispatchPref.value = value
+}
+
 function changeTranscriptTemplate(value: 'concise' | 'standard' | 'detailed' | 'information') { consumeSettingsSlash(); emit('update:transcript-template', value) }
 function changeModel(value: MeetingModelOverrideDto | null) { consumeSettingsSlash(); emit('update:meetingModelOverride', value) }
 function changeSpaceOptions(value: SpaceOptionsDto) { consumeSettingsSlash(); emit('update:spaceOptions', value) }
@@ -547,7 +557,7 @@ function submit(pref?: DispatchPref, asText = false) {
     })
     return
   }
-  const p = pref ?? getDispatchPref()
+  const p = pref ?? dispatchPref.value
   if (p === 'ask') {
     void toggleAskMenu()
     return
@@ -811,6 +821,7 @@ function confirmSteer(id: string, interrupt = false) {
       :can-attach="canAttach"
       :permission="permission"
       :transcript-template="transcriptTemplate ?? 'standard'"
+      :dispatch-pref="dispatchPref"
       :mode-version-id="modeVersionId"
       :meeting-model-override="meetingModelOverride"
       :space-options="spaceOptions"
@@ -825,6 +836,7 @@ function confirmSteer(id: string, interrupt = false) {
       @update:mode-version-id="changeMode"
       @update:permission="changePermission"
       @update:transcript-template="changeTranscriptTemplate"
+      @update:dispatch-pref="changeDispatchPref"
       @update:meeting-model-override="changeModel"
       @update:space-options="changeSpaceOptions"
       @mode-label="(label, unavailable, icon) => { modeLabel = label; modeUnavailable = unavailable; modeGlyph = icon }"

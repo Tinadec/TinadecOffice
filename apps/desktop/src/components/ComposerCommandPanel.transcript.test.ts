@@ -20,6 +20,7 @@ function mountPanel(props: Record<string, unknown> = {}) {
       spatial: false,
       permission: 'default',
       transcriptTemplate: 'standard',
+      dispatchPref: 'queued',
       slashQuery: null,
       settingsSaving: false,
       // Required by the panel: the attachment entry point and the command host its slash
@@ -76,5 +77,30 @@ describe('ComposerCommandPanel conversation template', () => {
     expect(rowFor('detailed')?.attributes('aria-pressed')).toBe('true')
     expect(rowFor('concise')?.attributes('aria-pressed')).toBe('false')
     expect(rowFor('information')?.attributes('aria-pressed')).toBe('false')
+  })
+})
+
+/**
+ * The send default moved here from Settings › General. It is read on the send path, and this panel
+ * is where a reader already is when they care about it.
+ */
+describe('ComposerCommandPanel send default', () => {
+  it('offers the send behaviour and reports the current one', async () => {
+    const wrapper = mountPanel({ dispatchPref: 'parallel' })
+    const row = wrapper.get('[data-testid="command-panel-send"]')
+    expect(row.text()).toContain(zh.settings.enterParallel)
+    await row.trigger('click')
+    const rows = wrapper.findAll('[data-testid^="command-panel-"]')
+    const rowFor = (id: string) => rows.find(node => node.attributes('data-testid') === `command-panel-${id}`)
+    expect(rowFor('queued')).toBeDefined()
+    expect(rowFor('parallel')?.attributes('aria-pressed')).toBe('true')
+    expect(rowFor('ask')).toBeDefined()
+  })
+
+  it('emits the chosen behaviour so the composer can persist it', async () => {
+    const wrapper = mountPanel()
+    await wrapper.get('[data-testid="command-panel-send"]').trigger('click')
+    await wrapper.get('[data-testid="command-panel-ask"]').trigger('click')
+    expect(wrapper.emitted('update:dispatchPref')?.[0]).toEqual(['ask'])
   })
 })
