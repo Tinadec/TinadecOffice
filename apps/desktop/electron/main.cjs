@@ -189,6 +189,21 @@ async function createWindow() {
   return win;
 }
 
+// Tool-authored HTML becomes a one-time URL. This is the single entry point that can put
+// untrusted markup behind `tinadec-widget://`, so it is gated on a trusted host document exactly
+// like the other host reads, and it validates the payload here rather than trusting the caller.
+ipcMain.handle('tinadec:register-tool-widget', (event, html) => {
+  if (!isTrustedHostDocumentSender(event)) throw new Error('Registering a tool widget requires a trusted host page.');
+  const registered = registerWidget(html);
+  // A refused body is not an error: the caller falls back to plain text, which is the right
+  // outcome for a tool that returned something we will not render.
+  return registered ?? null;
+});
+ipcMain.handle('tinadec:release-tool-widget', (event, token) => {
+  if (!isTrustedHostDocumentSender(event)) throw new Error('Releasing a tool widget requires a trusted host page.');
+  return typeof token === 'string' && dropWidget(token);
+});
+
 ipcMain.handle('tinadec:select-workspace-folders', async (event) => {
   return require('./workspaceFolders.cjs').selectWorkspaceFolders(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender, dialog });
 });
@@ -201,22 +216,6 @@ function appConfigSnapshot() {
 }
 // Readiness recovery needs the trusted document, even while business authorization is unavailable.
 ipcMain.handle('tinadec:host-status', (event) => {
-  // Tool-authored HTML becomes a one-time URL. This is the single entry point that can put
-  // untrusted markup behind `tinadec-widget://`, so it is gated on a trusted host document
-  // exactly like the other host reads, and it validates the payload here rather than trusting
-  // the caller's shape.
-  ipcMain.handle('tinadec:register-tool-widget', (event, html) => {
-    if (!isTrustedHostDocumentSender(event)) throw new Error('Registering a tool widget requires a trusted host page.');
-    const registered = registerWidget(html);
-    // A refused body is not an error: the caller falls back to plain text, which is the right
-    // outcome for a tool that returned something we will not render.
-    return registered ?? null;
-  });
-  ipcMain.handle('tinadec:release-tool-widget', (event, token) => {
-    if (!isTrustedHostDocumentSender(event)) throw new Error('Releasing a tool widget requires a trusted host page.');
-    return typeof token === 'string' && dropWidget(token);
-  });
-
   if (!isTrustedHostDocumentSender(event)) throw new Error('Host status requires a trusted host page.');
   return hostConnection?.snapshot() ?? { state: 'checking', managed: true };
 });

@@ -139,7 +139,17 @@ function mainConfigFixture(configFile) {
   const fakeElectron = {
     app: { on() {}, whenReady: () => ({ then() {} }), setAppUserModelId() {} },
     BrowserWindow: { getAllWindows: () => [main, panel, state.debug, disposed].filter(Boolean) },
-    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), on() {} },
+    // Real Electron throws on a duplicate channel. The fake used to overwrite silently, which
+    // made it laxer than the thing it stands in for and let a handler-inside-a-handler slip
+    // through: host-status answered the first call and would have thrown on the second in
+    // production while this fixture stayed green.
+    ipcMain: {
+      handle: (channel, handler) => {
+        if (handlers.has(channel)) throw new Error(`Attempted to register a second handler for '${channel}'`);
+        handlers.set(channel, handler);
+      },
+      on() {},
+    },
     protocol: { registerSchemesAsPrivileged() {} },
   };
   const dependencies = {
@@ -326,4 +336,30 @@ test('TOML is authoritative and malformed configuration is never silently replac
     assert.throws(() => retry(fixture.panelEvent), /trusted main host page/);
     assert.throws(() => retry({ ...fixture.event, mainFrame: false }), /trusted main host page/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('host-status answers every time, not only the first', () => {
+  // Real Electron throws when a channel is handled twice, and a handler registered INSIDE another
+  // handler only exists once that handler has run. So host-status used to answer the first call
+  // and throw on the second — "the host is running but nothing connects", because the desktop
+  // never got its status and nothing was granted. The widget channels are registered at load now;
+  // this drives the real handler twice, which is the shape of the bug.
+  const fixture = mainConfigFixture(path.join(os.tmpdir(), `tinadec-host-status-${process.pid}.toml`));
+  const hostStatus = fixture.handlers.get('tinadec:host-status');
+  assert.ok(hostStatus, 'host-status must be registered');
+
+  const first = hostStatus(fixture.event);
+  const second = hostStatus(fixture.event);
+
+  assert.ok(first, 'the first host-status call must answer');
+  assert.ok(second, 'the second host-status call must answer too');
+  assert.equal(typeof second.state, 'string');
+});
+
+test('the widget channels are registered at load, not from inside another handler', () => {
+  // A lazily-registered channel is the same bug one step later: the renderer asks for it before
+  // anything has called host-status, and gets "no handler registered".
+  const fixture = mainConfigFixture(path.join(os.tmpdir(), `tinadec-widget-channels-${process.pid}.toml`));
+  assert.ok(fixture.handlers.has('tinadec:register-tool-widget'));
+  assert.ok(fixture.handlers.has('tinadec:release-tool-widget'));
 });
