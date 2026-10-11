@@ -6,7 +6,7 @@
  * a run emits activity, approvals and a streamed reply regardless of where the reader is
  * looking. Without the count the only signal was an arrow that might mean nothing arrived.
  */
-import { computed, ref, useTemplateRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowDown } from '@lucide/vue'
 import { useMessageScroller, useMessageScrollerScrollable } from './useMessageScroller'
@@ -70,6 +70,11 @@ watch(anchorRef, (element) => {
   observer = new MutationObserver(count)
   observer.observe(content, { childList: true })
 }, { immediate: true, flush: 'post' })
+
+// The ref watcher only fires when `anchorRef` changes; on unmount Vue nulls the ref without
+// guaranteeing the callback still runs, which left the observer attached to a live content node
+// and calling into a dead component.
+onBeforeUnmount(() => { observer?.disconnect(); observer = null })
 
 function onClick() {
   if (!active.value) return

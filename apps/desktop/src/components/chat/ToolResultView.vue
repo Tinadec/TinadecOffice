@@ -12,7 +12,7 @@
  * preformatted text rather than pretending to understand it. It never renders HTML or executes
  * anything from the payload — the model and the tools do not get to produce markup here.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import type { ToolExecutionResultDto } from '@/api'
@@ -36,20 +36,33 @@ const result = ref<ToolExecutionResultDto | null>(null)
 const failure = ref<string | null>(null)
 const loading = ref(false)
 
+/**
+ * Aborted on every re-run, so a slow response for a previous execution cannot land on the current
+ * one. `api.getToolExecutionResult` takes the signal; an aborted request rejects and is ignored.
+ */
+let inFlight: AbortController | null = null
 async function load() {
-  if (!props.executionId) return
+  inFlight?.abort()
+  if (!props.executionId) { result.value = null; return }
+  const controller = new AbortController()
+  inFlight = controller
   loading.value = true
   try {
-    result.value = await api.getToolExecutionResult(props.executionId)
+    const loaded = await api.getToolExecutionResult(props.executionId, controller.signal)
+    if (controller.signal.aborted) return
+    result.value = loaded
     failure.value = null
   } catch (cause) {
+    // A cancellation is not a failure to show: the newer request owns the state now.
+    if (controller.signal.aborted) return
     failure.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    loading.value = false
+    if (inFlight === controller) { inFlight = null; loading.value = false }
   }
 }
 
 watch(() => props.executionId, load, { immediate: true })
+onBeforeUnmount(() => inFlight?.abort())
 
 /** Parsed payload, or null when the body is not JSON. */
 const parsed = computed<unknown>(() => {

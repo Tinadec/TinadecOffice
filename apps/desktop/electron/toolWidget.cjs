@@ -65,7 +65,10 @@ const WIDGET_CSP = [
   "connect-src data:",
   "form-action 'none'",
   "base-uri 'none'",
-  "frame-ancestors 'self'",
+  // `frame-ancestors 'self'` would be the widget scheme itself, which is never the embedding page:
+  // the host is `app://bundle` when packaged and the Vite dev origin in development. Naming both —
+  // and nothing else — keeps the rule meaningful instead of making every frame render blank.
+  "frame-ancestors app://bundle http://127.0.0.1:5173",
 ].join('; ');
 
 /**

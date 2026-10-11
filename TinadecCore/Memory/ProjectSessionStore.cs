@@ -1030,12 +1030,19 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
                 await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN \"meeting_model_override_provider_instance_id\" TEXT NULL", ct).ConfigureAwait(false);
             if (!cols.Contains("meeting_model_override_model"))
                 await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN \"meeting_model_override_model\" TEXT NULL", ct).ConfigureAwait(false);
+            // Every mapped column needs its line here, not only the ones that were added first:
+            // a database created before a column existed never receives it from migrations (this
+            // table is bootstrap-created), so the omission only surfaces as a query failure on
+            // somebody else's already-populated database.
+            if (!cols.Contains("transcript_template"))
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN \"transcript_template\" TEXT NULL", ct).ConfigureAwait(false);
             return;
         }
         // PostgreSQL (and any other) – IF NOT EXISTS is idempotent; swallow provider-specific syntax errors for unknown providers
         try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN IF NOT EXISTS \"mode_version_id\" uuid NULL", ct).ConfigureAwait(false); } catch { }
         try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN IF NOT EXISTS \"meeting_model_override_provider_instance_id\" uuid NULL", ct).ConfigureAwait(false); } catch { }
         try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN IF NOT EXISTS \"meeting_model_override_model\" TEXT NULL", ct).ConfigureAwait(false); } catch { }
+        try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN IF NOT EXISTS \"transcript_template\" TEXT NULL", ct).ConfigureAwait(false); } catch { }
     }
 
     private async Task EnsureSessionExistsAsync(Guid sessionId, CancellationToken cancellationToken)

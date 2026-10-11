@@ -842,6 +842,11 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
       sessionListAbort?.abort()
       const session = await boundApi.createSession(requestedProject ?? null, 'Tinadec session', requestedMode, requestedView, {
         permission_mode: requestedPermission, meeting_model_override: requestedModel,
+        // Every preference the send freezes has to travel with the session it applies to. The
+        // template was read into `selected` like the others but omitted here, so a session created
+        // by the first send always started as `standard` — the choice made on the welcome screen
+        // was silently dropped, while an already-open session (ensureComposerSession) kept it.
+        transcript_template: selected.transcript_template,
         ...(requestedSpace ? { space_options: requestedSpace } : {}),
       })
       sessions.value = [session, ...sessions.value]

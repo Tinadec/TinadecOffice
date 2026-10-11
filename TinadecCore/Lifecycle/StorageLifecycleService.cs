@@ -1216,7 +1216,9 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         var reference = new ContentReference(
             row.ResultReference, row.ResultHash ?? string.Empty, row.ResultLength ?? 0, "application/json");
         await using var stream = await _contentStore.OpenReadAsync(reference, cancellationToken).ConfigureAwait(false);
-        var buffer = new byte[maxBytes];
+        // One byte past the budget, so "is there more" is a fact the read establishes rather than
+        // a comparison against a length that may have changed since the row was written.
+        var buffer = new byte[maxBytes + 1];
         var read = 0;
         while (read < buffer.Length)
         {
@@ -1224,11 +1226,67 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             if (chunk == 0) break;
             read += chunk;
         }
-        var truncated = reference.Length > read;
-        var body = Encoding.UTF8.GetString(buffer, 0, read);
+        var truncated = read > maxBytes;
+        var returned = Math.Min(read, maxBytes);
+        // Decoding a cut-off multi-byte character yields U+FFFD, so the body is decoded as a
+        // prefix: a trailing partial sequence stays undecoded instead of turning into a
+        // replacement character the tool never wrote. The next byte is then examined only from
+        // the undecoded remainder, which is what tells us the cut landed mid-character.
+        var decoder = Encoding.UTF8.GetDecoder();
+        var charCount = decoder.GetCharCount(buffer, 0, returned, flush: !truncated);
+        var chars = new char[charCount];
+        decoder.GetChars(buffer, 0, returned, chars, 0, flush: !truncated);
+        var body = new string(chars);
+        // The widget lives in the same body, and a truncated body is not valid JSON — so the
+        // envelope is read from bytes rather than from `body`, or a result larger than the
+        // display budget would silently lose its view with nothing to explain the absence.
+        var widget = ReadWidgetHtmlFromPrefix(buffer, read, truncated);
         return new ToolExecutionResult(
-            row.ToolId, row.Status, reference.MediaType, reference.Sha256, reference.Length, read, truncated,
-            body, ExtractWidgetHtml(body));    }
+            row.ToolId, row.Status, reference.MediaType, reference.Sha256, reference.Length, returned, truncated,
+            body, widget);
+    }
+
+    /// <summary>
+    /// Read <c>widget_html</c> from a result body that may have been cut off.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ExtractWidgetHtml"/> needs the whole body, which is exactly what a truncated read
+    /// does not have: the JSON is incomplete, so parsing it yields nothing and the caller cannot
+    /// tell "this tool offered no view" from "the view was in the part we did not read". Streaming the
+    /// property out of the available bytes separates those two facts, and keeps working when the
+    /// markup itself is the reason the body is large.
+    /// </remarks>
+    private static string? ReadWidgetHtmlFromPrefix(byte[] buffer, int length, bool truncated)
+    {
+        if (length <= 0) return null;
+        try
+        {
+            var reader = new Utf8JsonReader(buffer.AsSpan(0, length), isFinalBlock: !truncated, state: default);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
+            while (reader.Read())
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName)
+                {
+                    if (reader.TokenType == JsonTokenType.EndObject) return null;
+                    continue;
+                }
+                // `Skip()` throws on a partial buffer ("Cannot skip tokens on partial JSON"), which is
+                // exactly the case this method exists for. `TrySkip` reports "the value ran past the
+                // bytes we have" as false so the caller gets no view instead of an exception.
+                if (!reader.ValueTextEquals("widget_html")) { if (!reader.TrySkip()) return null; continue; }
+                if (!reader.Read()) return null;
+                if (reader.TokenType != JsonTokenType.String) return null;
+                var html = reader.GetString();
+                return string.IsNullOrWhiteSpace(html) ? null : html;
+            }
+        }
+        catch (JsonException)
+        {
+            // Either the property is in the part that was not read, or this body is not the object
+            // we expected. Both mean "no view from here", which the caller reports as such.
+        }
+        return null;
+    }
 
     public async Task ReconcileAsync(CancellationToken cancellationToken = default)
     {

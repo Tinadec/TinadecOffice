@@ -99,7 +99,17 @@ export function conversationTurns(input: ConversationTurnsInput): ConversationTu
       current = { key: message.run_id ?? message.id, userMessage: null, answer: null, runId: null }
       open.push(current)
     }
-    if (message.run_id && !current.runId) current.runId = message.run_id
+    // A trailing row whose run differs from the turn's belongs to another run — parallel runs
+    // write answers into the same session, so this is the normal case, not an anomaly. Opening a
+    // turn for it keeps run and answer consistent; adopting the message under the existing run id
+    // instead would mislabel the answer AND leave its own run unclaimed, so it would be appended
+    // again as a live turn and the same run would appear twice.
+    if (message.run_id && current.runId && message.run_id !== current.runId) {
+      current = { key: message.run_id, userMessage: null, answer: null, runId: message.run_id }
+      open.push(current)
+    } else if (message.run_id && !current.runId) {
+      current.runId = message.run_id
+    }
     if (message.role === 'assistant') current.answer = message
   }
 

@@ -1,9 +1,11 @@
 /** Core-owned, per-task spatial orchestration preferences. */
 /** How much a conversation explains itself. An unknown value reads as standard. */
-export type TranscriptTemplate = 'concise' | 'standard' | 'detailed'
+export type TranscriptTemplate = 'concise' | 'standard' | 'detailed' | 'information'
 
 export function transcriptTemplateOf(value: unknown): TranscriptTemplate {
-  return value === 'concise' || value === 'detailed' ? value : 'standard'
+  // Every value Core's validator accepts has to survive here. A downgrade is silent: the session
+  // would read back as 'standard' and the desktop would never allow the tier the reader chose.
+  return value === 'concise' || value === 'detailed' || value === 'information' ? value : 'standard'
 }
 
 export interface SpaceOptionsDto {

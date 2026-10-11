@@ -90,6 +90,7 @@ const emit = defineEmits<{
             @reject="emit('reject', $event)"
           />
           <LiveTurnBlock v-for="turn in liveTurns" :key="turn.runId" v-bind="turn"
+            :rich-tool-views="richToolViews"
             :allow-tool-widget="allowToolWidget"
             @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
           <div v-if="streamingReply" class="message-content assistant" data-testid="chat-streaming-reply">

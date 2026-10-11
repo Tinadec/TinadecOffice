@@ -34,26 +34,30 @@ export function keepsOwnLine(kind: ToolKind, status: string): boolean {
   return !isFoldableKind(kind)
 }
 
-const VERBS: Record<ToolKind, { running: string; done: string }> = {
-  read: { running: '正在读取', done: '读取' },
-  list: { running: '正在列出', done: '列出' },
-  search: { running: '正在搜索', done: '搜索' },
-  write: { running: '正在写入', done: '写入' },
-  shell: { running: '正在运行', done: '运行' },
-  git: { running: '正在执行 Git', done: 'Git' },
-  mcp: { running: '正在调用', done: '调用' },
-  sandbox: { running: '正在检查沙箱', done: '沙箱' },
-  orchestration: { running: '正在编排', done: '编排' },
-  chat: { running: '正在通信', done: '通信' },
-  other: { running: '正在执行', done: '执行' },
+/**
+ * Verb **keys**, not words. The rendered label has to follow the reader's language, and a table
+ * of literals here would show Chinese in the English build — the one place this transcript could
+ * not be translated. `ToolGroupSummary` resolves these through `t()`.
+ */
+const VERB_KEYS: Record<ToolKind, { running: string; done: string }> = {
+  read: { running: 'agent.toolVerb.reading', done: 'agent.toolVerb.read' },
+  list: { running: 'agent.toolVerb.listing', done: 'agent.toolVerb.list' },
+  search: { running: 'agent.toolVerb.searching', done: 'agent.toolVerb.search' },
+  write: { running: 'agent.toolVerb.writing', done: 'agent.toolVerb.write' },
+  shell: { running: 'agent.toolVerb.running', done: 'agent.toolVerb.ran' },
+  git: { running: 'agent.toolVerb.gitBusy', done: 'agent.toolVerb.git' },
+  mcp: { running: 'agent.toolVerb.calling', done: 'agent.toolVerb.call' },
+  sandbox: { running: 'agent.toolVerb.sandboxBusy', done: 'agent.toolVerb.sandbox' },
+  orchestration: { running: 'agent.toolVerb.orchestrating', done: 'agent.toolVerb.orchestrate' },
+  chat: { running: 'agent.toolVerb.communicating', done: 'agent.toolVerb.communicate' },
+  other: { running: 'agent.toolVerb.working', done: 'agent.toolVerb.work' },
 }
 
-/** The verb for one step, in the tense its status calls for. */
-export function verbFor(toolId: string | null | undefined, status: string): string {
+/** The i18n key for one step's verb, in the tense its status calls for. */
+export function verbKeyFor(toolId: string | null | undefined, status: string): string {
   const kind = toolKindOf(toolId)
-  const pair = VERBS[kind]
-  if (status === 'running' || status === 'pending') return pair.running
-  return pair.done
+  const pair = VERB_KEYS[kind]
+  return status === 'running' || status === 'pending' ? pair.running : pair.done
 }
 
 /**
@@ -65,8 +69,8 @@ export function verbFor(toolId: string | null | undefined, status: string): stri
 export interface FoldedSummary {
   /** Step count in the run, always >= 1. */
   steps: number
-  /** Verb phrase for the run, chosen from the dominant kind. */
-  label: string
+  /** i18n key for the run's verb phrase, chosen from the dominant kind. */
+  labelKey: string
 }
 
 export function foldSummary(kinds: ToolKind[]): FoldedSummary {
@@ -79,5 +83,5 @@ export function foldSummary(kinds: ToolKind[]): FoldedSummary {
   for (const [kind, count] of counts) {
     if (count > (counts.get(dominant) ?? 0)) dominant = kind
   }
-  return { steps, label: VERBS[dominant].done }
+  return { steps, labelKey: VERB_KEYS[dominant].done }
 }

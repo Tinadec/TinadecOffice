@@ -372,6 +372,12 @@ function createEngine(props: MessageScrollerProviderProps) {
   let spacerGap = 0
   let spacerHeight = 0
   let mode: Mode = autoScroll() ? "following-bottom" : "free-scrolling"
+  /**
+   * True from the moment the reader drives the viewport until something explicitly asks for the
+   * live edge again. Wheel, touch, key and native scrollbar drag all mean the same thing;
+   * `autoscrolling` only covers "the engine is animating", which is a different claim.
+   */
+  let userDriven = false
   let streamingTurn: HTMLElement | null = null
   let firstItem: HTMLElement | null = null
   let itemCount = 0
@@ -405,8 +411,20 @@ function createEngine(props: MessageScrollerProviderProps) {
     const scrolledUp = scrollTop < lastScrollTop - SCROLL_EPSILON
     lastScrollTop = scrollTop
     if (autoScroll() && !next.end && mode !== "settling-jump" && mode !== "anchored-to-message") {
-      mode = "following-bottom"
+      // Sticking to the bottom is only the right default while the reader is not driving. Two
+      // cases reach here that the `autoscrolling` guard below cannot exclude, because both happen
+      // *after* the reader acted:
+      //   - dragging the native scrollbar enters only through `scroll`, never through the wheel /
+      //     touch / key listeners, so nothing marked the reader as driving;
+      //   - a drag that stops within one edge threshold of the bottom leaves `end` false, which
+      //     re-entered following-bottom on top of `userScrollIntent()`.
+      // `userDriven` records real intent and is cleared by an explicit scroll-to-end, so a
+      // programmatic re-anchor has to ask for the bottom again rather than inherit it.
+      if (!userDriven) mode = "following-bottom"
     } else if (mode === "following-bottom" && next.end && scrolledUp && !autoscrolling.value) {
+      mode = "free-scrolling"
+    } else if (mode === "following-bottom" && userDriven) {
+      // The reader left the live edge without crossing the threshold in this measurement.
       mode = "free-scrolling"
     }
   }
@@ -496,6 +514,7 @@ function createEngine(props: MessageScrollerProviderProps) {
 
   function scrollToStart({ behavior = "auto" }: { behavior?: ScrollBehavior } = {}): boolean {
     if (!viewport) return false
+    userDriven = true
     setSpacerHeight(0)
     streamingTurn = null
     mode = "free-scrolling"
@@ -506,6 +525,9 @@ function createEngine(props: MessageScrollerProviderProps) {
 
   function scrollToEnd({ behavior = "auto" }: { behavior?: ScrollBehavior } = {}): boolean {
     if (!viewport) return false
+    // Asking for the bottom is the reader (or a caller acting for them) re-entering the live edge,
+    // so following may resume. Anything else keeps their position authoritative.
+    userDriven = false
     setSpacerHeight(0)
     streamingTurn = null
     mode = autoScroll() ? "following-bottom" : "free-scrolling"
@@ -636,6 +658,13 @@ function createEngine(props: MessageScrollerProviderProps) {
   function applyContentChange(children: HTMLElement[], previousCount: number, previousFirst: HTMLElement | null) {
     if (flushPendingScrollToMessage()) return
     if (previousCount === 0) {
+      // Every anchor present at first paint is part of the initial state, not a new turn. Leaving
+      // them unmarked made the `children.length === previousCount` branch below treat the earliest
+      // one as pending on the next same-count mutation (a streaming reply replaced by its
+      // persisted message, a live turn swapped in) and scroll the reader to the top of the thread.
+      for (const child of children) {
+        if (child.dataset.scrollAnchor === "true") handledScrollAnchors.add(child)
+      }
       if (applyDefaultScrollPosition() || (children.length > 0 && autoScroll() && scrollToEnd({ behavior: "auto" }))) {
         return
       }
@@ -779,6 +808,7 @@ function createEngine(props: MessageScrollerProviderProps) {
   // --- user intent + element setters -----------------------------------------
 
   function userScrollIntent() {
+    userDriven = true
     if (mode === "following-bottom" || mode === "anchored-to-message" || mode === "settling-jump") {
       streamingTurn = null
       mode = "free-scrolling"

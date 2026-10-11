@@ -18,6 +18,8 @@ const { t } = useI18n()
 
 const expanded = ref(false)
 const summary = computed(() => foldSummary(props.calls.map((call) => toolKindOf(call.toolId))))
+/** The verb follows the reader's language; `toolSentence` only decides which verb. */
+const summaryLabel = computed(() => t(summary.value.labelKey))
 const icon = computed(() => toolIconOf(props.calls[0]?.toolId))
 
 /** Distinct targets, so the line can name what was touched rather than only count steps. */
@@ -37,12 +39,12 @@ const targets = computed(() => {
       type="button"
       class="tool-group-head"
       :aria-expanded="expanded"
-      :aria-label="t(expanded ? 'agent.collapseGroup' : 'agent.expandGroup', { label: summary.label })"
+      :aria-label="t(expanded ? 'agent.collapseGroup' : 'agent.expandGroup', { label: summaryLabel })"
       @click="expanded = !expanded"
     >
       <ChevronRight :size="13" class="tool-group-chevron" :class="{ expanded }" />
       <component :is="icon" :size="13" class="tool-group-icon" />
-      <span class="tool-group-label">{{ summary.label }}</span>
+      <span class="tool-group-label">{{ summaryLabel }}</span>
       <span class="tool-group-count">{{ t('agent.groupSteps', { count: summary.steps }) }}</span>
       <span v-if="targets.length" class="tool-group-targets">{{ targets.join('、') }}</span>
     </button>

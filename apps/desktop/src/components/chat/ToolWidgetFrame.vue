@@ -62,16 +62,37 @@ function onMessage(event: MessageEvent) {
   height.value = clampHeight(data.height)
 }
 
+/**
+ * A registration is a main-process resource with a TTL, so every path that abandons one has to
+ * give it back: the component can unmount while `register` is still in flight (the token does not
+ * exist yet, so `onBeforeUnmount` cannot see it), and a changed `html` replaces the previous token
+ * before anything releases it. Both leak a served-but-never-consumed document until it expires.
+ */
+let disposed = false
+/** Bumped per mount call, so a superseded registration can tell that it lost the race. */
+let generation = 0
+
+function releaseToken(value: string | null) {
+  const release = window.tinadec?.releaseToolWidget
+  if (release && value) void release(value)
+}
+
 async function mount(html: string | null | undefined) {
   const register = window.tinadec?.registerToolWidget
+  const mine = ++generation
+  // Whatever the previous call registered is now superseded.
+  releaseToken(token.value)
+  token.value = null
+  url.value = null
   if (!register || !html || !html.trim()) {
     failure.value = null
-    token.value = null
-    url.value = null
     return
   }
   try {
     const registered = await register(html)
+    // Unmounted, or a newer html arrived while this was in flight: hand the token straight back
+    // rather than adopting it, because nothing will ever render or release it.
+    if (disposed || mine !== generation) { releaseToken(registered?.token ?? null); return }
     // Main refuses an unusable body rather than serving an empty frame; the caller's plain-text
     // fallback is then the whole view, which is honest about what the tool returned.
     if (!registered) {
@@ -82,6 +103,7 @@ async function mount(html: string | null | undefined) {
     url.value = registered.url
     failure.value = null
   } catch (cause) {
+    if (disposed || mine !== generation) return
     failure.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
@@ -91,10 +113,10 @@ watch(() => props.html, (next) => { void mount(next) }, { immediate: true })
 
 onMounted(() => window.addEventListener('message', onMessage))
 onBeforeUnmount(() => {
+  disposed = true
   window.removeEventListener('message', onMessage)
   // A widget the frame never consumed is revoked, so an abandoned turn leaves nothing served.
-  const release = window.tinadec?.releaseToolWidget
-  if (release && token.value) void release(token.value)
+  releaseToken(token.value)
   token.value = null
   url.value = null
 })

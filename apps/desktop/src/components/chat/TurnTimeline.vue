@@ -30,16 +30,18 @@ const emit = defineEmits<{ approve: [id: string]; reject: [id: string] }>()
 const { notify } = useNotifications()
 const { t } = useI18n()
 
-const rows = computed(() => turnRows(props.thinkingSteps ?? [], props.toolCalls ?? []))
-const details = computed(() => detailRows(rows.value))
-const pending = computed(() => attentionRows(rows.value))
-const markers = computed(() => markerRows(rows.value))
-
 /**
  * Which steps belong to a dispatched subagent rather than to the turn itself. Only work Core
  * explicitly attributed to an instance is lifted out; the rest stays on the turn's spine.
  */
-const subAgents = computed(() => subAgentGroups(props.thinkingSteps ?? [], props.toolCalls ?? []).groups)
+const split = computed(() => subAgentGroups(props.thinkingSteps ?? [], props.toolCalls ?? []))
+// The spine, not the full list: an attributed plan or thought is drawn inside its subagent's card,
+// and feeding it to the turn's own rows as well put the same step on screen twice.
+const rows = computed(() => turnRows(split.value.spine, props.toolCalls ?? []))
+const details = computed(() => detailRows(rows.value))
+const pending = computed(() => attentionRows(rows.value))
+const markers = computed(() => markerRows(rows.value))
+const subAgents = computed(() => split.value.groups)
 
 /**
  * `null` means "follow the turn's own state". Once the reader opens or closes it themselves
@@ -97,12 +99,15 @@ async function decideSupervision(option: SupervisionDecisionOption) {
 
 <template>
   <div class="turn-timeline">
-    <div v-if="details.length" class="activity-summary" data-testid="activity-summary">
+    <!-- `details.length || subAgents.length`, not just `details`: once attributed steps move into a
+         subagent card, a turn whose only activity is that subagent has no details of its own and
+         would otherwise render nothing at all. -->
+    <div v-if="details.length || subAgents.length" class="activity-summary" data-testid="activity-summary">
       <button class="activity-summary-trigger" type="button" :aria-expanded="expanded" data-testid="activity-toggle" @click="manual = !expanded">
         <ListChecks :size="13" class="activity-summary-icon" aria-hidden="true" />
         <span class="activity-summary-chevron" :class="{ expanded }" aria-hidden="true">›</span>
         <span class="activity-summary-label">{{ t('agent.activity') }}</span>
-        <span class="activity-summary-count">{{ t('agent.activityCount', { count: details.length }) }}</span>
+        <span class="activity-summary-count">{{ t('agent.activityCount', { count: details.length + subAgents.length }) }}</span>
         <span v-if="failedCount" class="activity-summary-failed">{{ t('agent.activityFailed', { count: failedCount }) }}</span>
         <span v-if="activityState" class="activity-summary-state">{{ activityState }}</span>
       </button>

@@ -1129,6 +1129,10 @@
               {
                 "const": "detailed",
                 "type": "string"
+              },
+              {
+                "const": "information",
+                "type": "string"
               }
             ]
           },
@@ -3381,6 +3385,10 @@
               {
                 "const": "detailed",
                 "type": "string"
+              },
+              {
+                "const": "information",
+                "type": "string"
               }
             ]
           },
@@ -3532,6 +3540,10 @@
               },
               {
                 "const": "detailed",
+                "type": "string"
+              },
+              {
+                "const": "information",
                 "type": "string"
               }
             ]
@@ -6288,6 +6300,10 @@
               },
               {
                 "const": "detailed",
+                "type": "string"
+              },
+              {
+                "const": "information",
                 "type": "string"
               }
             ]

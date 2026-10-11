@@ -61,7 +61,7 @@ const spaceOptions = t.Object({
 }, { additionalProperties: false });
 
 /** How much a conversation explains itself. Bounded here so an unknown value is a 400, not a surprise. */
-const transcriptTemplate = () => t.Union([t.Literal('concise'), t.Literal('standard'), t.Literal('detailed')]);
+const transcriptTemplate = () => t.Union([t.Literal('concise'), t.Literal('standard'), t.Literal('detailed'), t.Literal('information')]);
 
 const sessionPreferenceProperties = {
   mode_version_id: t.Optional(nullableString()),

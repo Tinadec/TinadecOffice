@@ -58,3 +58,63 @@ public sealed class ToolWidgetEnvelopeTests
         Assert.Null(Extract(body));
     }
 }
+
+/// <summary>
+/// A truncated body is not valid JSON, so the envelope cannot come from the decoded text. The read
+/// path streams the property out of the bytes it does have, which is what keeps a large result from
+/// silently losing a view it did declare.
+/// </summary>
+public sealed class ToolWidgetTruncationTests
+{
+    private static readonly System.Reflection.MethodInfo PrefixReader =
+        typeof(StorageLifecycleService).GetMethod("ReadWidgetHtmlFromPrefix",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+    private static string? FromPrefix(string body, int budget)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(body);
+        var take = Math.Min(bytes.Length, budget);
+        var truncated = bytes.Length > budget;
+        var buffer = new byte[take];
+        Array.Copy(bytes, buffer, take);
+        return (string?)PrefixReader.Invoke(null, [buffer, take, truncated]);
+    }
+
+    [Fact]
+    public void ReadsTheViewFromACompleteBody()
+    {
+        var body = "{\"files\":[\"a.ts\"],\"widget_html\":\"<div>x</div>\"}";
+        Assert.Equal("<div>x</div>", FromPrefix(body, 1024));
+    }
+
+    [Fact]
+    public void ReadsTheViewEvenWhenTheBodyWasCutOff()
+    {
+        // The view comes first and the cut lands in an unrelated later field.
+        var body = "{\"widget_html\":\"<p>kept</p>\",\"tail\":\"" + new string('x', 500) + "\"}";
+        Assert.Equal("<p>kept</p>", FromPrefix(body, 60));
+    }
+
+    [Fact]
+    public void ReportsNoViewWhenTheCutLandedBeforeIt()
+    {
+        // The property is past the budget, so there is nothing to read. Either way the caller is
+        // told "no view" rather than handed a partial parse.
+        var body = "{\"filler\":\"" + new string('x', 500) + "\",\"widget_html\":\"<p>lost</p>\"}";
+        Assert.Null(FromPrefix(body, 60));
+    }
+
+    [Fact]
+    public void DoesNotInventAViewFromAnUnrelatedBody()
+    {
+        Assert.Null(FromPrefix("{\"files\":[\"a.ts\"]}", 1024));
+        Assert.Null(FromPrefix("plain text", 1024));
+        Assert.Null(FromPrefix("", 1024));
+    }
+
+    [Fact]
+    public void IgnoresANestedViewThatBelongsToSomebodyElse()
+    {
+        Assert.Null(FromPrefix("{\"result\":{\"widget_html\":\"<p>inner</p>\"}}", 1024));
+    }
+}

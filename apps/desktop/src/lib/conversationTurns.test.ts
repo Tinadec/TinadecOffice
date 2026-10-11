@@ -159,3 +159,28 @@ describe('conversationTurns', () => {
     expect(turns[0]).toMatchObject({ userMessage: null, answer: { id: 'a1' }, status: 'settled' })
   })
 })
+
+/**
+ * Parallel runs write answers into one session, so a trailing row whose run differs from the
+ * turn's is ordinary. Adopting it under the existing run id mislabelled the answer and left its
+ * own run unclaimed — so that run was appended again as a live turn and appeared twice.
+ */
+describe('conversationTurns parallel answers', () => {
+  it('opens a turn for an answer from a different run instead of overwriting', () => {
+    const turns = conversationTurns({
+      messages: [
+        message({ id: 'u1', role: 'user' }),
+        message({ id: 'a1', role: 'assistant', run_id: 'r1', content: 'first' }),
+        message({ id: 'a2', role: 'assistant', run_id: 'r2', content: 'second' }),
+      ],
+      runs: [run('r0', 'completed', 'u1'), run('r1', 'completed'), run('r2', 'completed')],
+    })
+    // No turn may hold a run id that disagrees with the answer it carries.
+    for (const turn of turns) {
+      if (turn.answer?.run_id) expect(turn.runId).toBe(turn.answer.run_id)
+    }
+    // And one run must not be rendered twice.
+    const keys = turns.map((turn) => turn.runId).filter(Boolean)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+})

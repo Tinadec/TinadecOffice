@@ -230,18 +230,24 @@ MessageScrollerProvider(auto-scroll, default-scroll-position="last-anchor")
 |---|---|
 | 简洁 | 预算子风格；活动一律收起，只留摘要行 + 待办 |
 | 标准 | 本方案的默认：运行中展开、落答收起、子智能体卡、分层工具行 |
-| 详尽 | 全部展开，推理链与每个子智能体的每一步都平铺 |
+| 详尽 | 全部展开，推理链与每个子智能体的每一步都平铺；并要求模型每次回答都解释推理 |
+| 信息 | 同标准，且允许工具用 HTML 呈现与询问信息（档 C） |
 
-入口放设置页「外观」下，与现有材质/主题同列。
+入口**不在设置页**：最终落在发送框的命令面板里（`/` 或 `+` 打开 → 对话模板 → 四选一），
+因为它是发送路径上的选择，而命令面板已经在管发送相关的事。
 
-## 工具结果渲染：档 B（受限富组件，已拍板）
+## 工具结果渲染：先档 B，后追加档 C
 
-ChatGPT 那套的核心是**工具返回 HTML 在沙箱 iframe 里跑**，那要开 iframe sandbox + CSP +
-自定义桥。你们刚在 issue #33 把 `webSecurity` 收回来、打包态改 `app://bundle`、本地媒体改
-`tinadec-media://` —— **这是安全边界决策**。
+> **2026-10-12 更正**：本文档原先记「拍板档 B，档 C 不做」。实际实现走得更远——档 C 已在同一
+> PR 内落地（`widget_html` 信封 + `tinadec-widget://` 一次性令牌 + 沙箱 iframe + 文档级 CSP +
+> `information` 对话模板）。下面同时保留两段记录：档 B 是基础渲染，档 C 是叠加其上的可选档。
+> 读者请以「档 C 已落地」为准。
 
-**拍板结果：档 B。Core 继续给结构化结果，Desktop 用固定组件表渲染，模型不产 HTML。**
-安全上等价于现在（不引入任何新的执行面），只是把工具结果从一块 `<pre>` 换成按类型分发的固定视图。
+**档 B（已落地）**：Core 给结构化结果，Desktop 用固定组件表渲染，模型不产 HTML。
+安全上等价于改动之前（不引入任何新的执行面），把工具结果从一块 `<pre>` 换成按类型分发的固定视图。
+
+**档 C（已落地，见「档 C」一节）**：在档 B 之上，工具可以返回自己的 HTML 视图，但只在
+一个一次性令牌、无同源、带文档级 CSP 的沙箱 iframe 里渲染，且只在 `information` 模板下启用。
 
 `ToolCallCard` 的展开区按 `toolKindOf()` 分发：
 
@@ -254,7 +260,7 @@ ChatGPT 那套的核心是**工具返回 HTML 在沙箱 iframe 里跑**，那要
 | `mcp` / `web` | 结果列表 + 来源链接 |
 | 其它 | 现在的 `evidence` 列表 |
 
-**档 C 不做**，但分发点是按 kind 表的，将来要加 HTML 视图只加一行映射，不动结构。
+**档 C 见下**：分发点是按 kind 表的，HTML 视图作为其中一档加进来，结构未变。
 
 **依赖**：档 B 需要先确认 Core 侧工具结果到底给了什么结构（`ToolExecutionTimelineItemDto` 现在只有
 `summary`/`evidence`/`risk`/`duration_ms`）。第 5 批开工前先读一遍真实结果负载；如果只有自由文本，
@@ -284,11 +290,28 @@ ChatGPT 那套的核心是**工具返回 HTML 在沙箱 iframe 里跑**，那要
 - `styles.css` — `.message-stream-*` → `.message-scroller-*`；窄/超窄两组同步
 - `locales/zh-CN.ts`、`en.ts`、`i18nParity.test.ts`
 
+## 档 C：工具自产 HTML 视图（已落地 2026-10-12）
+
+工具通过在结果 JSON 里返回 `widget_html` 选择加入。信任边界是「一个被批准的工具调用的产物」，
+所以每一处都是有意的：
+
+- **一次性令牌，内存登记，不落盘、无路径**：渲染层把 HTML 交给主进程（唯一入口 IPC），主进程
+  返回 `tinadec-widget://<token>/`。没有路径就没有穿越面。
+- **取用即销毁**：正文只发一次，发完即删；frame 重载只得到 404。
+- **`sandbox="allow-scripts"`，不给 `allow-same-origin`**：两者同给等于没有沙箱。
+- **文档级 CSP 随正文下发**，`frame-ancestors` 只允许宿主源（打包 `app://bundle`、开发
+  `http://127.0.0.1:5173`）。
+- **不收 CORS 头**；宿主只接受来自该 frame 的 `widget:height`，且只接受有限数值。
+- 只有 `information` 模板启用这一档；`concise` 会收起受限富组件本身。
+
+**未验证边界**：沙箱只在单测层验过（令牌一次性/过期/拒绝、frame 的 sandbox 属性与降级、
+Core 的信封规则）；**没有在真实 Electron 里验过** iframe 是否真以不透明源运行、CSP 是否真拦住
+外联。这一步需要真机走查。
+
 ## 不在这一轮
 
 - 后端契约改动（没有 diff 行数就不显示 diff）
 - `ComposerBar` / 发送区
-- HTML 沙箱（档 C）
 - `SpatialWorkCard` 复用 `TurnTimeline`，它会跟着拿到新模型；不改调用语义但要跑它的测试
 
 ## 验证
