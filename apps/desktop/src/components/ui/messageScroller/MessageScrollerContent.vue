@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Transcript scroll scaffolding. Three elements, no visual opinion of their own — the
- * material, padding and typography come from `.message-stream-*` in `styles.css`.
+ * material, padding and typography come from `.message-scroller-*` in `styles.css`.
  *
  * Provider must wrap a height-bounded parent so the viewport can actually scroll.
  */

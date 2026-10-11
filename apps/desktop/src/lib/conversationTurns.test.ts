@@ -7,7 +7,7 @@ function message(over: Partial<MessageDto> & { id: string; role: string }): Mess
 }
 
 function run(id: string, status: string, trigger?: string | null): TranscriptRun {
-  return { id, status, trigger_message_id: trigger ?? null }
+  return { id, status, user_message_id: trigger ?? null }
 }
 
 const activity = (runId: string) => ({ runId, thinkingSteps: [], toolCalls: [], supervisionReview: null })

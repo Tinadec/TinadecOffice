@@ -99,7 +99,7 @@ const activityByMessage = computed(() => ({
   flex-direction: column;
 }
 
-.conversation-preview-inner :deep(.message-stream-inner) {
+.conversation-preview-inner :deep(.message-scroller-content) {
   max-width: 720px;
 }
 

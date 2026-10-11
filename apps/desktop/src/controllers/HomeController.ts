@@ -89,7 +89,10 @@ const newSessionSettings = ref<Record<SessionView, ComposerSettings>>({ flat: ne
 const settingsWrites = new Map<string, Promise<boolean>>()
 const settingsPending = ref<Record<string, number>>({})
 const settingsErrors = ref<Record<string, string | null>>({})
-const runs = ref<Array<{ id: string; status: string }>>([])
+// `user_message_id` is Core's `trigger_message_id` as the Gateway's external DTO spells it,
+// and it is the only exact run→message link: the user message itself carries no run (Core
+// appends it before the run exists), so the transcript pairs them by this or by reading order.
+const runs = ref<Array<{ id: string; status: string; user_message_id?: string | null }>>([])
 /**
  * Messages waiting in the session's queue. `interactionId` is set when Core holds the message
  * (queued delivery never runs beside an unfinished run); the card then leaves when Core admits,
@@ -487,7 +490,9 @@ async function loadMessagesAndApprovals() {
   approvalRules.value = ruleList
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
-  runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({ id: String(r.id), status: String(r.status ?? '') }))
+  runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({
+    id: String(r.id), status: String(r.status ?? ''), user_message_id: r.user_message_id ?? null,
+  }))
   // 状态源统一（问题 3 修复）：ChatHeader 的 run-pills 读 Pinia runStore.runs，而
   // runStore.fetchRuns 此前只在无入口的 WorkbenchPage 调用 → Home 页 pills 恒空。
   // 把 Home 已拉取的 run 列表（含 session_id，WorkbenchPage.control 依赖）同步进 store。

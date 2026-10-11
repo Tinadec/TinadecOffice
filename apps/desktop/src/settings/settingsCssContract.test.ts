@@ -545,7 +545,7 @@ describe('styles.css extraction contract', () => {
     expect(css).toContain('.conversation')
     expect(css).toContain('.composer')
     expect(css).toContain('.welcome-screen')
-    expect(css).toContain('.message-stream')
+    expect(css).toContain('.message-scroller-viewport')
     expect(css).toContain('.background-layer')
     expect(css).toContain('.agent-card')
     expect(css).toContain('.agent-topology-node')

@@ -18,12 +18,15 @@ import type { TurnActivity } from '@/composables/useAgentActivity'
  * turn at the end, in run order. That is the case the old code could not render at all.
  */
 
-/** The run shape this module needs. `RunDto` satisfies it; the controller's local row may not. */
+/** The run shape this module needs. `OrchestrationRunDto` satisfies it. */
 export interface TranscriptRun {
   id: string
   status: string
-  /** Core's exact link from a run to the user message it was admitted for. */
-  trigger_message_id?: string | null
+  /**
+   * Core's exact link from a run to the user message it was admitted for. Core calls the
+   * field `trigger_message_id`; the Gateway's external DTO spells it `user_message_id`.
+   */
+  user_message_id?: string | null
 }
 
 export interface ConversationTurn {
@@ -64,7 +67,7 @@ export function conversationTurns(input: ConversationTurnsInput): ConversationTu
   // would mean two runs for one message, and the earlier run owns it.
   const runByTrigger = new Map<string, string>()
   for (const run of runs) {
-    const trigger = run.trigger_message_id
+    const trigger = run.user_message_id
     if (trigger && !runByTrigger.has(trigger)) runByTrigger.set(trigger, run.id)
   }
 

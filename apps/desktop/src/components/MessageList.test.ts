@@ -52,15 +52,15 @@ function step(over: Partial<ThinkingStep> = {}): ThinkingStep {
   } as ThinkingStep
 }
 
-const scrollStub = { template: '<div><slot /></div>' }
-
+// The scroller is real here, not stubbed: it is a handful of plain divs, and the turn
+// anchoring it provides is the thing these cases are about. jsdom/happy-dom report zero
+// sizes, so the engine's measurements are inert — it does not throw on them.
 function mountList(props: Record<string, unknown>) {
   return mount(MessageList, {
     props: props as never,
     // MessageItem reaches for the plugin-installed global $t, which the
     // useI18n mock above does not provide.
     global: {
-      stubs: { UiScrollArea: scrollStub },
       mocks: { $t: (key: string) => key },
     },
   })

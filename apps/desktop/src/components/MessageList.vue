@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { Bot } from '@lucide/vue'
-import { ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { UiScrollArea } from '@/components/ui'
 import type { MessageDto } from '../api'
 import MessageItem from './MessageItem.vue'
 import LiveTurnBlock from './chat/LiveTurnBlock.vue'
 import MarkdownRender from './MarkdownRender.vue'
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from './ui/messageScroller'
 import type { TurnActivity } from '@/composables/useAgentActivity'
 
 const { t } = useI18n()
@@ -25,30 +31,6 @@ const props = defineProps<{
   streamingReply?: string
 }>()
 
-const inner = ref<HTMLElement | null>(null)
-const showJumpToLatest = ref(false)
-let followOutput = true
-function onScroll(event: Event) {
-  const viewport = inner.value?.parentElement
-  if (event.target !== viewport || !viewport) return
-  const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
-  followOutput = distance < 40
-  showJumpToLatest.value = !followOutput
-}
-async function jumpToLatest() {
-  followOutput = true
-  showJumpToLatest.value = false
-  await nextTick()
-  const viewport = inner.value?.parentElement
-  viewport?.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
-}
-watch(() => [props.streamingReply, props.messages.length, props.liveTurn, props.liveTurns], async () => {
-  if (!followOutput) return
-  await nextTick()
-  const viewport = inner.value?.parentElement
-  if (viewport) viewport.scrollTop = viewport.scrollHeight
-}, { flush: 'post' })
-
 const emit = defineEmits<{
   approve: [approvalId: string]
   reject: [approvalId: string]
@@ -57,76 +39,65 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="message-stream-container" @scroll.capture="onScroll">
-    <UiScrollArea class="message-stream">
-      <div
-        ref="inner"
-        class="message-stream-inner"
-        role="log"
-        aria-live="polite"
-        aria-relevant="additions"
-        :aria-label="t('chat.ready')"
-      >
-        <MessageItem
-          v-for="(message, index) in messages"
-          :key="message.id"
-          :message="message"
-          :index="index"
-          :thinking-steps="activityByMessage?.[message.id]?.thinkingSteps"
-          :tool-calls="activityByMessage?.[message.id]?.toolCalls"
-          :supervision-review="activityByMessage?.[message.id]?.supervisionReview"
-          @approve="emit('approve', $event)"
-          @reject="emit('reject', $event)"
-          @edit="emit('edit', $event)"
-        />
-        <LiveTurnBlock
-          v-if="liveTurn"
-          :thinking-steps="liveTurn?.thinkingSteps"
-          :tool-calls="liveTurn?.toolCalls"
-          :supervision-review="liveTurn?.supervisionReview"
-          @approve="emit('approve', $event)"
-          @reject="emit('reject', $event)"
-        />
-        <LiveTurnBlock v-for="turn in liveTurns" :key="turn.runId" v-bind="turn"
-          @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
-        <div v-if="streamingReply" class="message-content assistant" data-testid="chat-streaming-reply">
-          <MarkdownRender :content="streamingReply" />
-        </div>
-        <div v-if="messages.length === 0" class="empty-state">
-          <Bot :size="20" />
-          <span>{{ t('chat.ready') }}</span>
-        </div>
-      </div>
-    </UiScrollArea>
-    <button v-if="showJumpToLatest" class="jump-to-latest" type="button" data-testid="jump-to-latest"
-      :aria-label="t('chat.jumpToLatest')" @click="jumpToLatest">
-      <span aria-hidden="true">↓</span>{{ t('chat.jumpToLatest') }}
-    </button>
-  </div>
+  <!--
+    Scrolling is owned by `messageScroller`, not by an `onScroll` handler here. The old
+    version decided "am I at the bottom?" from one distance check and then wrote `scrollTop`
+    on every streaming delta — correct for the easy case, wrong for anchoring a new turn,
+    holding position while a reply streams below it, restoring the reader's place when older
+    history is prepended, and jumping to a message.
+
+    `defaultScrollPosition="last-anchor"` opens a saved session on its last turn rather than
+    on the absolute end, so reopening a thread does not drop the reader in without context.
+  -->
+  <MessageScrollerProvider auto-scroll default-scroll-position="last-anchor">
+    <MessageScroller>
+      <MessageScrollerViewport>
+        <MessageScrollerContent>
+          <MessageScrollerItem
+            v-for="(message, index) in messages"
+            :key="message.id"
+            :message-id="message.id"
+            :scroll-anchor="message.role === 'user'"
+          >
+            <MessageItem
+              :message="message"
+              :index="index"
+              :thinking-steps="activityByMessage?.[message.id]?.thinkingSteps"
+              :tool-calls="activityByMessage?.[message.id]?.toolCalls"
+              :supervision-review="activityByMessage?.[message.id]?.supervisionReview"
+              @approve="emit('approve', $event)"
+              @reject="emit('reject', $event)"
+              @edit="emit('edit', $event)"
+            />
+          </MessageScrollerItem>
+          <LiveTurnBlock
+            v-if="liveTurn"
+            :thinking-steps="liveTurn?.thinkingSteps"
+            :tool-calls="liveTurn?.toolCalls"
+            :supervision-review="liveTurn?.supervisionReview"
+            @approve="emit('approve', $event)"
+            @reject="emit('reject', $event)"
+          />
+          <LiveTurnBlock v-for="turn in liveTurns" :key="turn.runId" v-bind="turn"
+            @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
+          <div v-if="streamingReply" class="message-content assistant" data-testid="chat-streaming-reply">
+            <MarkdownRender :content="streamingReply" />
+          </div>
+          <div v-if="messages.length === 0" class="empty-state">
+            <Bot :size="20" />
+            <span>{{ t('chat.ready') }}</span>
+          </div>
+        </MessageScrollerContent>
+      </MessageScrollerViewport>
+      <MessageScrollerButton />
+    </MessageScroller>
+  </MessageScrollerProvider>
 </template>
 
 <style scoped>
-.message-stream-container {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-.jump-to-latest {
-  position: absolute; right: 18px; bottom: 14px; z-index: 2;
-  display: inline-flex; align-items: center; gap: 5px;
-  border: 1px solid var(--border-muted); border-radius: 999px; padding: 5px 10px;
-  color: var(--text-primary); background: var(--surface-section);
-  box-shadow: var(--shadow-panel); font-size: 11px; cursor: pointer;
-  animation: jump-to-latest-in 160ms ease-out;
-}
-.jump-to-latest:hover, .jump-to-latest:focus-visible { background: var(--surface-hover); }
-@keyframes jump-to-latest-in { from { opacity: 0; transform: translateY(4px); } }
-@media (prefers-reduced-motion: reduce) { .jump-to-latest { animation: none; } }
-
-.message-stream-container :deep(.message-stream) {
+/* The conversation column is flex so the scroller can claim the remaining height; the
+   scroller itself must stay height-bounded or the viewport never scrolls. */
+:deep(.message-scroller) {
   flex: 1;
   min-height: 0;
 }

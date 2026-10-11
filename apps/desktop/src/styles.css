@@ -2909,12 +2909,29 @@ margin-top: 4px;
   background: var(--bg-status-queued);
 }
 
-.message-stream {
+/* Transcript scroll surface. The engine measures this element directly (scrollTop,
+   clientHeight, spacer maths), so it is a plain native scroll container with no wrapper
+   between it and the content. Edge fades are driven by the `data-scrollable` attribute the
+   engine already publishes ("start", "end", or both) rather than a second scroll listener. */
+.message-scroller-viewport {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-gutter: stable;
+  contain: content;
 }
 
-.message-stream-inner {
+/* While the engine is auto-scrolling, the thumb is noise: the reader is not driving. */
+.message-scroller-viewport[data-active] {
+  scrollbar-color: transparent transparent;
+}
+
+.message-scroller-content {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -2922,6 +2939,7 @@ margin-top: 4px;
   max-width: 820px;
   width: 100%;
   margin: 0 auto;
+  min-height: 100%;
 }
 
 .message-wrapper {
@@ -4695,7 +4713,7 @@ Triggered by the page-level transition on the parent .settings-page. */
 }
 
 /* Message list: reduce horizontal padding */
-.conversation.chat-narrow .message-stream-inner {
+.conversation.chat-narrow .message-scroller-content {
   padding: 8px 8px 12px;
 }
 
@@ -4763,7 +4781,7 @@ Triggered by the page-level transition on the parent .settings-page. */
 }
 
 /* Message list: minimal padding */
-.conversation.chat-ultra .message-stream-inner {
+.conversation.chat-ultra .message-scroller-content {
   padding: 6px 4px 10px;
 }
 
