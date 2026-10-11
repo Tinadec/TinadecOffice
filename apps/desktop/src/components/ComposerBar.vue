@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlignJustify, AlignLeft, ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, LayoutDashboard, Minus, Plus, Settings, Sparkles, Square } from '@lucide/vue'
+import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Plus, Settings, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, useId, type Component, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -369,21 +369,13 @@ async function togglePlusMenu() {
  * where it would look like it only changed rendering. `concise` additionally withholds the rich
  * tool views — see `richToolViews` below.
  */
-const transcriptChoice = computed(() => {
-  const key = props.transcriptTemplate ?? 'standard'
-  return {
-    key,
-    label: t(`transcript.${key}`),
-    icon: key === 'concise' ? Minus : key === 'detailed' ? AlignLeft : key === 'information' ? LayoutDashboard : AlignJustify,
-  }
-})
+const transcriptChoice = computed(() => ({ key: props.transcriptTemplate ?? 'standard' }))
 const richToolViews = computed(() => transcriptChoice.value.key !== 'concise')
 /**
  * Whether a tool-authored HTML view may be rendered. Only the "information" tier turns this on:
  * it is the one where the reader has asked for the agent to present and ask for information, and
  * it is the only one that pays the cost of mounting a sandboxed frame.
  */
-const transcriptPanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'transcript')
 
 const attachments = pendingAttachments
 const uploading = computed(() => attachments.value.some((item) => item.status === 'uploading'))
@@ -780,18 +772,6 @@ function confirmSteer(id: string, interrupt = false) {
             :aria-expanded="modePanelExpanded"
             @click="openCommandPanel('mode')"
           ><component :is="modeGlyph" :size="14" /><span class="mode-selector-label">{{ modeLabel }}</span><span v-if="modeUnavailable" class="mode-selector-stale" :title="t('chat.modeUnavailable')">⚠</span><ChevronDown :size="12" class="mode-selector-chevron" :class="{ 'is-expanded': modePanelExpanded }" aria-hidden="true" /></button>
-          <!-- Conversation template: how much the agent explains itself. This is prompt input,
-               not a display switch — Core freezes it into the run and the model reads it. -->
-          <button
-            v-if="!spatial"
-            class="transcript-selector-trigger"
-            type="button"
-            data-testid="transcript-selector"
-            :title="t('transcript.hint')"
-            aria-haspopup="dialog"
-            :aria-expanded="transcriptPanelExpanded"
-            @click="openCommandPanel('transcript')"
-          ><component :is="transcriptChoice.icon" :size="14" aria-hidden="true" /><span class="transcript-selector-label">{{ transcriptChoice.label }}</span><ChevronDown :size="12" class="transcript-selector-chevron" :class="{ 'is-expanded': transcriptPanelExpanded }" aria-hidden="true" /></button>
           <slot v-if="spatial" name="capabilities" />
           <button class="permission-selector-trigger" type="button" :title="t('permission.nextRunHint')" aria-haspopup="dialog" :aria-expanded="permissionPanelExpanded" @click="openCommandPanel('permission')"><component :is="permissionChoice.icon" :size="14" class="composer-permission-icon" :data-risk="permissionChoice.risk" aria-hidden="true" /><span class="permission-selector-label">{{ permissionLabel }}</span><ChevronDown :size="12" class="permission-selector-chevron" :class="{ 'is-expanded': permissionPanelExpanded }" aria-hidden="true" /></button>
           <button
