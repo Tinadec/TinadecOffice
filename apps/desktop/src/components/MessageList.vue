@@ -21,6 +21,8 @@ const props = defineProps<{
   messages: MessageDto[]
   /** Completed turns, keyed by the message that ended them. */
   activityByMessage?: Record<string, TurnActivity>
+  /** Runs still working, keyed by run id. A turn is "running" until its run ends. */
+  runningRunIds?: Record<string, true>
   /**
    * The turn still in flight. It has no message id yet — a run emits thinking
    * and tool calls long before its assistant message is persisted — so without
@@ -65,6 +67,7 @@ const emit = defineEmits<{
               :thinking-steps="activityByMessage?.[message.id]?.thinkingSteps"
               :tool-calls="activityByMessage?.[message.id]?.toolCalls"
               :supervision-review="activityByMessage?.[message.id]?.supervisionReview"
+              :settled="!message.run_id || !runningRunIds?.[message.run_id]"
               @approve="emit('approve', $event)"
               @reject="emit('reject', $event)"
               @edit="emit('edit', $event)"

@@ -35,8 +35,10 @@ const review = computed(() => {
 
 <template>
   <div v-if="steps.length > 0 || calls.length > 0 || review" class="live-turn" data-testid="live-turn" aria-live="polite">
+    <!-- A turn rendered here has no answering message yet, so it is by definition still
+         working: the trail stays open rather than folding while the agent runs. -->
     <TurnTimeline :run-id="runId" :thinking-steps="steps" :tool-calls="calls"
-      :supervision-review="review"
+      :supervision-review="review" :settled="false"
       @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
   </div>
 </template>
@@ -50,11 +52,5 @@ const review = computed(() => {
   gap: 2px;
   max-width: 100%;
   padding: 4px 0;
-}
-
-.live-turn-tools {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 </style>

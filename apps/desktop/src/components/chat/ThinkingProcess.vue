@@ -152,7 +152,7 @@ function stepMetaSuffix(step: ThinkingStep): string {
                 <strong>{{ step.title }}</strong>
                 <span class="thinking-step-suffix">{{ stepMetaSuffix(step) }}</span>
               </div>
-              <p v-if="step.description" class="thinking-step-desc" :class="{ 'is-plan': step.type === 'plan' }">{{ step.description }}</p>
+              <p v-if="step.description" class="thinking-step-desc" :class="{ 'is-plan': step.type === 'plan', 'is-reasoning': step.type === 'reasoning' }">{{ step.description }}</p>
             </div>
           </div>
         </div>
@@ -341,5 +341,16 @@ function stepMetaSuffix(step: ThinkingStep): string {
 /* A plan is one step per line (✓ / → / ○). */
 .thinking-step-desc.is-plan {
   white-space: pre-line;
+}
+
+/* The provider's own reasoning is the one description long enough to be worth reading, so it
+   keeps its paragraph breaks and caps its own height instead of stretching the turn. The
+   collapsed row above already carries the tail preview; this is the full text. */
+.thinking-step-desc.is-reasoning {
+  max-height: 22rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
 }
 </style>

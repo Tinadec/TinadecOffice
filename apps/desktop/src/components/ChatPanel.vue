@@ -108,6 +108,19 @@ const liveTurns = computed(() => props.turnActivities
   ? Object.values(props.turnActivities).filter((turn) => !props.messages.some((m) => m.role === 'assistant' && m.run_id === turn.runId))
   : undefined)
 
+/**
+ * Runs that have not reached a terminal state. The activity trail opens while a turn is
+ * working and folds to a summary once it answers, so the transcript has to know which of its
+ * turns are still in flight — a persisted assistant message alone does not say that, because
+ * a run can persist an answer and keep working.
+ */
+const TERMINAL_RUN_STATUS = ['completed', 'failed', 'cancelled']
+const runningRunIds = computed<Record<string, true>>(() => Object.fromEntries(
+  (props.runsForComposer ?? [])
+    .filter((run) => !TERMINAL_RUN_STATUS.includes(run.status))
+    .map((run) => [run.id, true as const]),
+))
+
 const modeVersionId = ref<string | null>(null)
 function selectMode(value: string | null) {
   modeVersionId.value = value
@@ -178,6 +191,7 @@ function handleReject(approvalId: string) {
           :activity-by-message="activityByMessage"
           :live-turn="liveTurn"
           :live-turns="liveTurns"
+          :running-run-ids="runningRunIds"
           :streaming-reply="streamingReply"
           @approve="handleApprove"
           @reject="handleReject"

@@ -75,17 +75,58 @@ describe('TurnTimeline supervision review', () => {
 })
 
 describe('TurnTimeline activity summary', () => {
-  it('collapses the detailed activity into one compact row by default', async () => {
-    const call = {
-      id: 'call-1', toolId: 'read_file', toolName: 'read_file', status: 'completed',
-      startedAt: null, completedAt: null, durationMs: 12, argsSummary: 'README.md',
-      resultSummary: 'ok', requiresApproval: false, approvalId: null, evidence: [], seq: 1, risk: 'low',
-    } as unknown as ToolCall
-    const wrapper = mount(TurnTimeline, { props: { toolCalls: [call] }, global: { plugins: [i18n] } })
-    expect(wrapper.find('[data-testid="activity-summary"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="activity-details"]').exists()).toBe(false)
-    await wrapper.get('[data-testid="activity-toggle"]').trigger('click')
+  const call = {
+    id: 'call-1', toolId: 'read_file', toolName: 'read_file', status: 'completed',
+    startedAt: null, completedAt: null, durationMs: 12, argsSummary: 'README.md',
+    resultSummary: 'ok', requiresApproval: false, approvalId: null, evidence: [], seq: 1, risk: 'low',
+  } as unknown as ToolCall
+
+  /**
+   * The turn's own state decides the default: open while the run works, so the reader can see
+   * what it is doing, and folded to one summary once it answers.
+   */
+  it('opens the trail while the run is still working', () => {
+    const wrapper = mount(TurnTimeline, { props: { toolCalls: [call], settled: false }, global: { plugins: [i18n] } })
     expect(wrapper.find('[data-testid="activity-details"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('read_file')
+    expect(wrapper.get('[data-testid="activity-toggle"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('folds to one compact row once the turn has settled', () => {
+    const wrapper = mount(TurnTimeline, { props: { toolCalls: [call], settled: true }, global: { plugins: [i18n] } })
+    expect(wrapper.find('[data-testid="activity-summary"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="activity-toggle"]').attributes('aria-expanded')).toBe('false')
+  })
+
+  it('lets the reader open it, and never re-folds under them afterwards', async () => {
+    const wrapper = mount(TurnTimeline, { props: { toolCalls: [call], settled: true }, global: { plugins: [i18n] } })
+    await wrapper.get('[data-testid="activity-toggle"]').trigger('click')
+    expect(wrapper.get('[data-testid="activity-toggle"]').attributes('aria-expanded')).toBe('true')
+    // A lone read is quiet work, so it reaches the screen as a folded group rather than
+    // a raw tool row — that layering is the point, and the target is what names it.
+    expect(wrapper.text()).toContain('README.md')
+    // The run keeps settling; the reader's choice stands.
+    await wrapper.setProps({ settled: false })
+    await wrapper.setProps({ settled: true })
+    expect(wrapper.get('[data-testid="activity-toggle"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('keeps a waiting approval out of the fold', () => {
+    const waiting = { ...call, id: 'call-2', status: 'waiting_approval', approvalId: 'a1', requiresApproval: true } as unknown as ToolCall
+    const wrapper = mount(TurnTimeline, { props: { toolCalls: [waiting], settled: true }, global: { plugins: [i18n] } })
+    // Nothing to fold, so no summary row is invented — and the decision is on screen.
+    expect(wrapper.find('[data-testid="activity-summary"]').exists()).toBe(false)
+    expect(wrapper.find('.tool-call-approve-btn').exists()).toBe(true)
+    expect(wrapper.find('.tool-call-reject-btn').exists()).toBe(true)
+  })
+
+  it('lifts an approval out of a fold that has other work in it', () => {
+    const quiet = { ...call, id: 'call-1', toolId: 'read_file' } as unknown as ToolCall
+    const waiting = { ...call, id: 'call-2', status: 'waiting_approval', approvalId: 'a1', requiresApproval: true } as unknown as ToolCall
+    const wrapper = mount(TurnTimeline, { props: { toolCalls: [quiet, waiting], settled: true }, global: { plugins: [i18n] } })
+    expect(wrapper.get('[data-testid="activity-toggle"]').attributes('aria-expanded')).toBe('false')
+    // The approval's buttons are outside the collapsed region, so they survive the fold.
+    expect(wrapper.find('.tool-call-approve-btn').exists()).toBe(true)
+    const collapsed = wrapper.get('[data-testid="activity-details"]')
+    expect(collapsed.find('.tool-call-approve-btn').exists()).toBe(false)
   })
 })
