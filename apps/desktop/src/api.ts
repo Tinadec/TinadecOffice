@@ -1844,6 +1844,11 @@ export interface ToolExecutionTimelineItemDto {
   duration_ms: number;
   requested_seq: number;
   updated_seq: number;
+  /**
+   * The task the call belonged to, when Core could name one. It is what lets the transcript place a
+   * call under the dispatched subagent that made it instead of on the turn's own spine.
+   */
+  task_id?: string | null;
   event_types: string[];
   checkpoint_summary: string;
 }

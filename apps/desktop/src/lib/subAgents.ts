@@ -28,6 +28,8 @@ export interface SubAgentGroup {
   /** The agent slug (`search`, `global_engineering`) when a worker.assigned named it. */
   slug: string | null
   steps: ThinkingStep[]
+  /** Calls Core attributed to this task. Owned by the card, not shown on the turn's spine. */
+  calls: ToolCall[]
   /** Ordering clock: the earliest sequence in the group. */
   seq: number
 }
@@ -35,6 +37,8 @@ export interface SubAgentGroup {
 export interface SubAgentSplit {
   /** Steps no instance claimed — the lead agent's own work. */
   spine: ThinkingStep[]
+  /** Calls no instance claimed; these are the ones the turn renders itself. */
+  ownCalls: ToolCall[]
   groups: SubAgentGroup[]
 }
 
@@ -47,13 +51,14 @@ export function subAgentGroups(steps: ThinkingStep[], calls: ToolCall[]): SubAge
   // say "搜索专家" instead of only "search#2". worker.assigned is the only event with all
   // three, so it is read first and its mapping applied to every later step.
   const slugByTask = new Map<string, string>()
+  // A call arrives with its task but not its handle — the timeline route names the task, and the
+  // handle is what a card is keyed by. The steps are where a task's handle is known, so the map is
+  // built from them and then used to place calls.
   const handleByTask = new Map<string, string>()
   for (const step of steps) {
     const slug = typeof step.details?.slug === 'string' ? step.details.slug : undefined
     if (step.taskId && slug) slugByTask.set(step.taskId, slug)
-  }
-  for (const call of calls) {
-    if (call.taskId && call.handle) handleByTask.set(call.taskId, call.handle)
+    if (step.taskId && step.handle) handleByTask.set(step.taskId, step.handle)
   }
 
   const spine: ThinkingStep[] = []
@@ -73,6 +78,7 @@ export function subAgentGroups(steps: ThinkingStep[], calls: ToolCall[]): SubAge
         handle,
         slug: slugByTask.get(key) ?? null,
         steps: [],
+        calls: [],
         seq: seqOf(step),
       }
       byKey.set(key, group)
@@ -81,8 +87,24 @@ export function subAgentGroups(steps: ThinkingStep[], calls: ToolCall[]): SubAge
     group.seq = Math.min(group.seq, seqOf(step))
   }
 
+  // Place each call under the instance that made it. A call whose task never named a handle stays on
+  // the spine: guessing which subagent it belonged to would put it under the wrong card, and a card
+  // is a claim about who did the work.
+  const ownCalls: ToolCall[] = []
+  for (const call of calls) {
+    const handle = call.taskId ? handleByTask.get(call.taskId) : undefined
+    const group = handle ? byKey.get(call.taskId!) : undefined
+    // A call waiting on a person always stays on the spine, whichever instance made it. Moving it
+    // into a card would put the decision behind a fold — the one thing this transcript must never
+    // do — because only the turn's own rows are promoted into the always-visible attention region.
+    if (!group || call.status === 'waiting_approval') { ownCalls.push(call); continue }
+    group.calls.push(call)
+    group.seq = Math.min(group.seq, typeof call.seq === 'number' ? call.seq : group.seq)
+  }
+
   return {
     spine,
+    ownCalls,
     groups: [...byKey.values()].sort((a, b) => a.seq - b.seq),
   }
 }

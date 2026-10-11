@@ -820,6 +820,11 @@ public static class DmaeaEndpoints
             }
 
             row.RunId = string.IsNullOrWhiteSpace(e.RunId) ? row.RunId : e.RunId;
+            // The journal names the task on the events that carry one; keep the first we see, because
+            // a row's task is fixed once the call is made.
+            if (row.TaskId == Guid.Empty
+                && Guid.TryParse(PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id"), out var eventTask))
+                row.TaskId = eventTask;
             row.ToolId = PayloadString(e.Payload, "tool_id") ?? row.ToolId;
             row.Risk = PayloadString(e.Payload, "risk") ?? row.Risk;
             row.RequiresApproval = row.RequiresApproval
@@ -869,6 +874,7 @@ public static class DmaeaEndpoints
                 id = PayloadString(e.Payload, "task_node_id"),
                 run_id = PayloadString(e.Payload, "run_id") ?? string.Empty,
                 session_id = sessionId,
+                task_id = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id") ?? string.Empty,
                 tool_id = PayloadString(e.Payload, "tool_id") ?? string.Empty,
                 tool_display_name = string.Empty,
                 source = "dmaea",
@@ -907,6 +913,9 @@ public static class DmaeaEndpoints
                 status = row.Status,
                 approval_id = row.ApprovalId,
                 step_result_id = (string?)null,
+                // The instance that made the call. Without it a tool row cannot be attributed to a
+                // dispatched subagent, and every call renders on the turn's own spine.
+                task_id = row.TaskId == Guid.Empty ? null : row.TaskId.ToString(),
                 summary = row.Summary,
                 evidence = Array.Empty<string>(),
                 requested_at = row.RequestedAt,
@@ -948,6 +957,8 @@ public static class DmaeaEndpoints
     {
         public string Id { get; init; } = string.Empty;
         public string RunId { get; set; } = string.Empty;
+        /// <summary>The task this execution belongs to; the key a subagent card groups its calls by.</summary>
+        public Guid TaskId { get; set; }
         public string ToolId { get; set; } = string.Empty;
         public string Risk { get; set; } = "medium";
         public bool RequiresApproval { get; set; }

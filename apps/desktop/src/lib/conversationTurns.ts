@@ -99,14 +99,18 @@ export function conversationTurns(input: ConversationTurnsInput): ConversationTu
       current = { key: message.run_id ?? message.id, userMessage: null, answer: null, runId: null }
       open.push(current)
     }
-    // A trailing row whose run differs from the turn's belongs to another run — parallel runs
-    // write answers into the same session, so this is the normal case, not an anomaly. Opening a
-    // turn for it keeps run and answer consistent; adopting the message under the existing run id
-    // instead would mislabel the answer AND leave its own run unclaimed, so it would be appended
-    // again as a live turn and the same run would appear twice.
+    // A trailing row whose run differs from the turn's belongs to another run. Parallel runs write
+    // answers into one session — and they can arrive out of order, so the run's turn may already
+    // exist further up: `u1`(r1), `u2`(r2), answer(r1), answer(r2). Opening a turn here instead of
+    // finding that one would leave `u1` and `u2` answerless and add a second turn for each run.
     if (message.run_id && current.runId && message.run_id !== current.runId) {
-      current = { key: message.run_id, userMessage: null, answer: null, runId: message.run_id }
-      open.push(current)
+      const existing = open.find((turn) => turn.runId === message.run_id)
+      if (existing) {
+        current = existing
+      } else {
+        current = { key: message.run_id, userMessage: null, answer: null, runId: message.run_id }
+        open.push(current)
+      }
     } else if (message.run_id && !current.runId) {
       current.runId = message.run_id
     }

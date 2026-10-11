@@ -81,3 +81,37 @@ describe('subAgentGroups', () => {
     expect(groupStatus(group!)).toBe('done')
   })
 })
+
+/**
+ * A call names its task but not its handle — the timeline route projects `task_id`, and the handle
+ * is what a card is keyed by. The steps are where a task's handle is known, so calls are placed
+ * through them. Attributed calls belong to the card; the rest stay on the turn's spine.
+ */
+describe('subAgentGroups call ownership', () => {
+  const assigned = step({ id: 'a', seq: 1, handle: 'search#1', taskId: 't1' })
+
+  it('gives a call to the instance whose task it names', () => {
+    const split = subAgentGroups([assigned], [call({ id: 'c1', taskId: 't1' })])
+    expect(split.ownCalls).toEqual([])
+    expect(split.groups[0]!.calls.map((c) => c.id)).toEqual(['c1'])
+  })
+
+  it('leaves a call on the spine when its task named no handle', () => {
+    // Guessing which subagent it belonged to would attribute work to the wrong instance.
+    const split = subAgentGroups([assigned], [call({ id: 'c1', taskId: 't-unknown' })])
+    expect(split.ownCalls.map((c) => c.id)).toEqual(['c1'])
+    expect(split.groups[0]!.calls).toEqual([])
+  })
+
+  it('leaves an unattributed call on the spine', () => {
+    const split = subAgentGroups([assigned], [call({ id: 'c1', taskId: null })])
+    expect(split.ownCalls.map((c) => c.id)).toEqual(['c1'])
+  })
+
+  /** The invariant worth guarding: a decision must never move behind a fold. */
+  it('keeps a waiting approval on the spine even when its instance is known', () => {
+    const split = subAgentGroups([assigned], [call({ id: 'c1', taskId: 't1', status: 'waiting_approval', approvalId: 'ap1' })])
+    expect(split.ownCalls.map((c) => c.id)).toEqual(['c1'])
+    expect(split.groups[0]!.calls).toEqual([])
+  })
+})

@@ -1058,6 +1058,8 @@ export function useAgentActivity(
           approvalId: item.approval_id ?? null,
           evidence: item.evidence,
           seq: item.requested_seq,
+          // Core's task attribution, if it named one; `subAgents` turns this into a handle.
+          taskId: item.task_id ?? null,
           risk: item.risk,
         }))        .sort((a, b) => a.seq - b.seq)
       if (activity.value.runId === runId) {

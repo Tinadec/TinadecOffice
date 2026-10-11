@@ -184,3 +184,28 @@ describe('conversationTurns parallel answers', () => {
     expect(new Set(keys).size).toBe(keys.length)
   })
 })
+
+/**
+ * Parallel runs answer out of order: both user messages are persisted before either answer, so an
+ * answer can arrive for a run whose turn is already further up the list. Opening a new turn for it
+ * left the real turn answerless and rendered the same run twice.
+ */
+describe('conversationTurns out-of-order answers', () => {
+  it('attaches each answer to the turn its run already owns', () => {
+    const turns = conversationTurns({
+      messages: [
+        message({ id: 'u1', role: 'user' }),
+        message({ id: 'u2', role: 'user' }),
+        message({ id: 'a1', role: 'assistant', run_id: 'r1', content: 'first' }),
+        message({ id: 'a2', role: 'assistant', run_id: 'r2', content: 'second' }),
+      ],
+      runs: [run('r1', 'completed', 'u1'), run('r2', 'completed', 'u2')],
+    })
+    expect(turns).toHaveLength(2)
+    expect(turns.find((t) => t.runId === 'r1')?.answer?.id).toBe('a1')
+    expect(turns.find((t) => t.runId === 'r2')?.answer?.id).toBe('a2')
+    // Neither user turn is left answerless, and no run is rendered twice.
+    expect(turns.every((t) => t.answer !== null)).toBe(true)
+    expect(turns.map((t) => t.runId)).toEqual(['r1', 'r2'])
+  })
+})

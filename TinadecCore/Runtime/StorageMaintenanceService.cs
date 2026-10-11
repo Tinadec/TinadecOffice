@@ -35,11 +35,29 @@ public sealed class StorageMaintenanceService(IStorageScopeRegistry registry)
     private static readonly TimeSpan StatisticsTtl = TimeSpan.FromSeconds(30);
 
     /// <summary>Forget a scope's cached usage, because something the reader just did changed it.</summary>
-    public void InvalidateStatistics(string storageId) => _statistics.TryRemove(storageId, out _);
+    public void InvalidateStatistics(string storageId)
+    {
+        // Every root that id has been measured at, not just the current one: the caller knows the id,
+        // and a stale entry for an abandoned root would otherwise never be reclaimed.
+        foreach (var key in _statistics.Keys.Where(key => key.StartsWith(storageId + "|", StringComparison.Ordinal)).ToList())
+            _statistics.TryRemove(key, out _);
+    }
+
+    /// <summary>
+    /// The cache is keyed by storage id **and by the root it measured**.
+    /// </summary>
+    /// <remarks>
+    /// Reconfiguring a scope keeps its storage id while changing where it reads and writes. Keyed by
+    /// id alone, the first lookup after such a change returned the previous root's category paths and
+    /// sizes for up to the TTL — a summary of a directory that is no longer this scope. The root is
+    /// part of the answer, so it is part of the key.
+    /// </remarks>
+    private static string StatisticsKey(StorageScopeDescriptor scope) => scope.StorageId + "|" + scope.Root;
 
     public Task<StorageStatistics> StatisticsAsync(StorageScopeDescriptor scope, CancellationToken ct)
     {
-        if (_statistics.TryGetValue(scope.StorageId, out var cached) && DateTimeOffset.UtcNow - cached.At < StatisticsTtl)
+        var key = StatisticsKey(scope);
+        if (_statistics.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < StatisticsTtl)
             return Task.FromResult(cached.Statistics);
         var diagnostics = new List<ConfigurationDiagnostic>();
         var categories = new List<StorageCategoryStatistics>();
@@ -54,7 +72,7 @@ public sealed class StorageMaintenanceService(IStorageScopeRegistry registry)
             { diagnostics.Add(new("storage_unreadable", path + ": " + ex.Message)); }
         }
         var statistics = new StorageStatistics(scope.StorageId, categories, diagnostics);
-        _statistics[scope.StorageId] = (statistics, DateTimeOffset.UtcNow);
+        _statistics[key] = (statistics, DateTimeOffset.UtcNow);
         return Task.FromResult(statistics);
     }
 

@@ -37,7 +37,7 @@ const { t } = useI18n()
 const split = computed(() => subAgentGroups(props.thinkingSteps ?? [], props.toolCalls ?? []))
 // The spine, not the full list: an attributed plan or thought is drawn inside its subagent's card,
 // and feeding it to the turn's own rows as well put the same step on screen twice.
-const rows = computed(() => turnRows(split.value.spine, props.toolCalls ?? []))
+const rows = computed(() => turnRows(split.value.spine, split.value.ownCalls))
 const details = computed(() => detailRows(rows.value))
 const pending = computed(() => attentionRows(rows.value))
 const markers = computed(() => markerRows(rows.value))
@@ -55,6 +55,8 @@ watch(() => props.runId, () => { manual.value = null })
 
 const pendingCount = computed(() => pending.value.length)
 const failedCount = computed(() => (props.toolCalls ?? []).filter((call) => call.status === 'failed').length)
+// A pending call is lifted out of the fold wherever it sits, including one a subagent made: the
+// decision is the reader's to make regardless of which instance asked for it.
 const isWorking = computed(() => (props.thinkingSteps ?? []).some((step) => step.status === 'running')
   || (props.toolCalls ?? []).some((call) => call.status === 'running' || call.status === 'pending'))
 
@@ -125,7 +127,9 @@ async function decideSupervision(option: SupervisionDecisionOption) {
                 @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
             </template>
             <!-- A dispatched instance keeps its own block, after the turn's own rows. -->
-            <SubAgentCard v-for="group in subAgents" :key="group.key" :group="group" />
+            <SubAgentCard v-for="group in subAgents" :key="group.key" :group="group"
+              :rich-views="richToolViews" :allow-widget="allowToolWidget"
+              @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
           </div>
         </div>
       </div>

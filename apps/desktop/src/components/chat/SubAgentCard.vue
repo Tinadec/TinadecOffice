@@ -11,9 +11,17 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight, Loader2, CheckCircle2, XCircle } from '@lucide/vue'
 import ThinkingProcess from './ThinkingProcess.vue'
+import ToolCallCard from './ToolCallCard.vue'
 import { groupStatus, groupTargets, type SubAgentGroup } from '@/lib/subAgents'
 
-const props = defineProps<{ group: SubAgentGroup; defaultOpen?: boolean }>()
+const props = defineProps<{
+  group: SubAgentGroup
+  defaultOpen?: boolean
+  /** Forwarded to the calls this instance made, exactly as the turn forwards them to its own. */
+  richViews?: boolean
+  allowWidget?: boolean
+}>()
+const emit = defineEmits<{ approve: [id: string]; reject: [id: string] }>()
 const { t } = useI18n()
 
 const expanded = ref(props.defaultOpen ?? true)
@@ -43,6 +51,12 @@ const roleLabel = computed(() => props.group.slug ?? null)
     <div v-if="expanded" class="subagent-body">
       <p v-if="targets.length" class="subagent-targets">{{ targets.join(' · ') }}</p>
       <ThinkingProcess :steps="group.steps" />
+      <!-- The calls this instance made, which is what makes the card a record of its work rather
+           than only of its thoughts. Pending approvals are deliberately not here — they stay on the
+           turn's spine so the decision is never behind a fold. -->
+      <ToolCallCard v-for="call in group.calls" :key="call.id" :tool-call="call" :run-id="group.key"
+        :rich-views="richViews" :allow-widget="allowWidget"
+        @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
     </div>
   </article>
 </template>

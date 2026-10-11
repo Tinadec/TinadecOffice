@@ -426,6 +426,14 @@ function createEngine(props: MessageScrollerProviderProps) {
     } else if (mode === "following-bottom" && userDriven) {
       // The reader left the live edge without crossing the threshold in this measurement.
       mode = "free-scrolling"
+    } else if (userDriven && !next.end && !scrolledUp) {
+      // The reader scrolled back down to the live edge by hand. Returning to following-bottom is
+      // what makes a later streamed chunk follow them again; without it the viewport stays in
+      // free-scrolling, `end` reads false, the jump button stays hidden and nothing follows.
+      // Gated on not scrolling up, so the small upward nudge that starts a gesture near the bottom
+      // is not mistaken for arriving there.
+      userDriven = false
+      if (autoScroll() && mode !== "settling-jump" && mode !== "anchored-to-message") mode = "following-bottom"
     }
   }
 

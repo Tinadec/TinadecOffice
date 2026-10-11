@@ -73,24 +73,52 @@ async function loadDocument(current = generation) {
  */
 const statisticsLoading = ref(false)
 const statisticsLoaded = ref(false)
-async function loadStatistics(current = generation) {
+/** Marks the shown numbers as older than the last change the reader made. */
+const statisticsStale = ref(false)
+/**
+ * Identifies the in-flight measurement. Only the request that owns the current token may clear the
+ * loading flag: keying that off `generation` alone meant a superseded request left the flag set (it
+ * was no longer "current"), and the new page's measure button stayed disabled with no way back.
+ */
+let statisticsToken = 0
+async function loadStatistics() {
   const captured = scopeId.value
-  if (current !== generation || !canAccessBackend.value) return
+  if (!canAccessBackend.value) return
+  const token = ++statisticsToken
   statisticsLoading.value = true
   try {
     const result = await api.getStorageStats(captured)
-    if (current !== generation) return
+    if (token !== statisticsToken || captured !== scopeId.value || !canAccessBackend.value) return
     stats.value = result
     statisticsLoaded.value = true
+    statisticsStale.value = false
     scopeDiagnostics.value = [...scopeDiagnostics.value.filter(item => item.code !== 'storage_unreadable'), ...result.diagnostics]
-  } catch (value) { if (current === generation) failure.set(value) }
-  finally { if (current === generation) statisticsLoading.value = false }
+  } catch (value) {
+    if (token !== statisticsToken) return
+    // Keep the last measurement on screen and say it is stale rather than clearing it: a refresh
+    // that failed must not look like a scope with no usage, and the reader keeps the retry.
+    if (stats.value) statisticsStale.value = true
+    else failure.set(value)
+  } finally { if (token === statisticsToken) statisticsLoading.value = false }
+}
+
+/**
+ * Re-measure after a change the reader made. The caller invalidated the cached walk server-side, so
+ * the next read is authoritative; if it fails, the previous numbers stay but are marked stale.
+ */
+async function remeasure() {
+  if (!statisticsLoaded.value) return
+  await loadStatistics()
 }
 
 async function loadContext() {
+  // Supersede any in-flight measurement before the page changes under it; leaving the flag set is
+  // what disabled the next page's measure button.
+  statisticsToken++
+  statisticsLoading.value = false
   const current = ++generation; busy.value = true; failure.clear(); preview.value = null; contentPreview.value = null; deletePreview.value = null; notice.value = ''
   const captured = scopeId.value
-  stats.value = null; statisticsLoaded.value = false; scopeDiagnostics.value = []; document.value = null
+  stats.value = null; statisticsLoaded.value = false; statisticsStale.value = false; scopeDiagnostics.value = []; document.value = null
   try {
     if (scope.value?.availability === 'error') {
       const item = scope.value
@@ -217,7 +245,7 @@ async function cleanup() {
     await hostAction(captured.storage_id, 'cleanup', { preview_id: captured.preview_id })
     if (!isCurrent(current, captured.storage_id)) return
     preview.value = null
-    if (isCurrent(current, captured.storage_id)) { await loadStatistics(current); notice.value = label('清理完成。', 'Cleanup complete.') }
+    if (isCurrent(current, captured.storage_id)) { await remeasure(); notice.value = label('清理完成。', 'Cleanup complete.') }
   } catch (value) { if (isCurrent(current, captured.storage_id)) failure.set(value) } finally { if (isCurrent(current, captured.storage_id)) busy.value = false }
 }
 async function previewContent() {
@@ -233,7 +261,7 @@ async function collectContent() {
     await hostAction(captured.storage_id, 'content-collect', { preview_id: captured.preview_id })
     if (!isCurrent(current, captured.storage_id)) return
     contentPreview.value = null
-    if (isCurrent(current, captured.storage_id)) { await loadStatistics(current); notice.value = label('未被引用的内容已回收。', 'Unreferenced content collected.') }
+    if (isCurrent(current, captured.storage_id)) { await remeasure(); notice.value = label('未被引用的内容已回收。', 'Unreferenced content collected.') }
   } catch (value) { if (isCurrent(current, captured.storage_id)) failure.set(value) } finally { if (isCurrent(current, captured.storage_id)) busy.value = false }
 }
 async function previewDelete() {
@@ -333,12 +361,16 @@ const failureRecovery = computed(() => recoveryActions(failure.error.value, {
       <label v-if="scope.scope_kind === 'project'" class="storage-policy"><input type="checkbox" :checked="scope.allow_storage_write" :disabled="busy" @change="writePolicy" />{{ label('允许 Agent 写入整个项目存储目录', 'Allow Agent writes to the entire project storage directory') }}</label>
       <h3>{{ label('使用量与清理', 'Usage and cleanup') }}</h3>
       <!-- Measuring walks every owned file, so it runs when asked for rather than on open.
-           Everything above this line has already painted by the time this button appears. -->
-      <div v-if="!statisticsLoaded" class="storage-actions">
-        <UiButton variant="outline" size="sm" :disabled="statisticsLoading || busy || !canAccessBackend" data-testid="storage-measure" @click="loadStatistics()">
-          {{ statisticsLoading ? label('正在统计…', 'Measuring…') : label('统计使用量', 'Measure usage') }}
+           Everything above this line has already painted by the time this button appears. The
+           button stays after a first measurement: a stale figure has to have a way back. -->
+      <div class="storage-actions">
+        <UiButton v-if="!statisticsLoaded || statisticsStale" variant="outline" size="sm" :disabled="statisticsLoading || busy || !canAccessBackend" data-testid="storage-measure" @click="loadStatistics()">
+          {{ statisticsLoading ? label('正在统计…', 'Measuring…') : statisticsStale ? label('重新统计', 'Measure again') : label('统计使用量', 'Measure usage') }}
         </UiButton>
-        <span class="quiet">{{ label('需要遍历全部存储文件，可能耗时数秒。', 'Walks every stored file and can take a few seconds.') }}</span>
+        <span v-if="!statisticsLoaded" class="quiet">{{ label('需要遍历全部存储文件，可能耗时数秒。', 'Walks every stored file and can take a few seconds.') }}</span>
+        <!-- A failed refresh keeps the last numbers and says so, rather than looking like a scope
+             that holds nothing. -->
+        <span v-if="statisticsStale" class="quiet" role="status" data-testid="statistics-stale">{{ label('上次统计后存储已变化，数字可能已过期。', 'Storage changed since this measurement; the numbers may be out of date.') }}</span>
       </div>
       <table v-if="stats" class="storage-table"><thead><tr><th>{{ label('分类', 'Category') }}</th><th>{{ label('大小 / 文件数', 'Size / files') }}</th><th>{{ label('操作', 'Action') }}</th></tr></thead><tbody><tr v-for="category in stats.categories" :key="category.category"><td><strong>{{ category.category }}</strong><code>{{ category.path }}</code></td><td>{{ bytes(category.size_bytes) }} / {{ category.file_count }}</td><td><UiButton v-if="category.clearable" variant="outline" size="sm" :disabled="busy" @click="previewCleanup(category.category)">{{ label('预览清理', 'Preview cleanup') }}</UiButton></td></tr></tbody></table>
       <div v-if="preview" class="tools-validation" role="status"><strong>{{ label('清理预览', 'Cleanup preview') }} · {{ preview.category }}</strong><p><code>{{ preview.path }}</code></p><p>{{ bytes(preview.size_bytes) }} · {{ preview.file_count }} {{ label('文件', 'files') }} · {{ label('有效期至', 'Expires') }} {{ preview.expires_at }}</p><UiButton variant="destructive" :disabled="busy" @click="cleanup">{{ label('确认执行此预览', 'Execute this preview') }}</UiButton><UiButton variant="ghost" :disabled="busy" @click="preview = null">{{ label('取消', 'Cancel') }}</UiButton></div>
