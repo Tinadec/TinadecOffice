@@ -1210,7 +1210,10 @@ describe('ComposerBar attachments', () => {
     // A ready row says nothing: the absence of a state line is the confirmation.
     expect(chips[0]!.find('.attachment-state').exists()).toBe(false)
     expect(chips[1]!.text()).toContain('composer.attachUploading')
-    expect(chips[1]!.find('.attachment-spinner').attributes('aria-hidden')).toBe('true')
+    // The uploading state shows at once (dashed chip + label); only the spinner waits, so a
+    // file that finishes in milliseconds does not flash one.
+    expect(chips[1]!.classes()).toContain('is-uploading')
+    expect(chips[1]!.find('.attachment-spinner').exists()).toBe(false)
     expect(chips[2]!.classes()).toContain('is-failed')
     // The ceiling travels from the module constant into the label rather than a literal.
     expect(chips[2]!.text()).toContain('composer.attachTooLarge')

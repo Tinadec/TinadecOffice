@@ -9,8 +9,9 @@ import ThinkingProcess from './ThinkingProcess.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import ToolGroupSummary from './ToolGroupSummary.vue'
 import SubAgentCard from './SubAgentCard.vue'
+import TurnMarker from './TurnMarker.vue'
 import type { SupervisionDecisionOption, TurnActivity } from '@/composables/useAgentActivity'
-import { attentionRows, detailRows, turnRows } from '@/lib/turnTimeline'
+import { attentionRows, detailRows, markerRows, turnRows } from '@/lib/turnTimeline'
 import { subAgentGroups } from '@/lib/subAgents'
 
 const props = defineProps<TurnActivity & {
@@ -28,6 +29,7 @@ const { t } = useI18n()
 const rows = computed(() => turnRows(props.thinkingSteps ?? [], props.toolCalls ?? []))
 const details = computed(() => detailRows(rows.value))
 const pending = computed(() => attentionRows(rows.value))
+const markers = computed(() => markerRows(rows.value))
 
 /**
  * Which steps belong to a dispatched subagent rather than to the turn itself. Only work Core
@@ -118,6 +120,14 @@ async function decideSupervision(option: SupervisionDecisionOption) {
         </div>
       </div>
     </div>
+
+    <!-- Lifecycle notes stay visible: a run that failed or was cancelled is why the turn
+         ended, and a fold must not be the thing that hides it. -->
+    <TurnMarker v-for="row in markers" :key="`marker-${row.id}`" :severity="row.step.severity">
+      <strong v-if="row.step.title">{{ row.step.title }}</strong>
+      <template v-if="row.step.title && row.step.description"> · </template>
+      {{ row.step.description }}
+    </TurnMarker>
 
     <!-- A decision is never behind a fold. This is the one region that must stay in view
          however the turn is collapsed, so it renders outside the collapsible element. -->

@@ -3,6 +3,7 @@ import { computed, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CheckCircle2, XCircle, Loader2, Clock, ShieldAlert, ChevronRight } from '@lucide/vue'
 import { toolIconOf } from '@/lib/toolPresentation'
+import { useDelayedLoading } from '@/composables/useDelayedLoading'
 import { UiCollapsible } from '@/components/ui'
 import type { ToolCall } from '@/composables/useAgentActivity'
 import TerminalCallBlock from './TerminalCallBlock.vue'
@@ -14,6 +15,13 @@ const emit = defineEmits<{ approve: [approvalId: string]; reject: [approvalId: s
 const { t } = useI18n()
 const expanded = ref(false)
 const detailsId = useId()
+
+/**
+ * A tool call that finishes in milliseconds should not flash a spinner, and one that ends
+ * just after the delay should not keep spinning afterwards. The icon stays put; only its
+ * rotation waits for the work to prove it is slow.
+ */
+const showSpinner = useDelayedLoading(() => props.toolCall.status === 'running')
 
 /**
  * The stored result is fetched only when the row is opened, and only once the call has
@@ -49,7 +57,7 @@ const toolIcon = computed(() => {
           :aria-label="t(expanded ? 'agent.collapseTool' : 'agent.expandTool', { tool: toolCall.toolName })">
           <ChevronRight :size="13" class="tool-call-toggle" :class="{ expanded }" />
           <component :is="toolIcon" :size="13" class="tool-status-glyph"
-            :class="{ 'tool-icon-spin': toolCall.status === 'running' }" />
+            :class="{ 'tool-icon-spin': showSpinner }" />
           <strong>{{ toolCall.toolName }}</strong>
           <span v-if="isRisky" class="tool-call-risk-tag">{{ t('agent.highRisk') }}</span>
           <span class="tool-call-args">{{ toolCall.argsSummary }}</span>

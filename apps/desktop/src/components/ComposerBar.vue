@@ -27,6 +27,7 @@ import {
   type PendingAttachment,
 } from '@/lib/pendingAttachments'
 import { api } from '@/api'
+import { useDelayedLoading } from '@/composables/useDelayedLoading'
 import { toDirEntryView, type DirEntryDto, type DirEntryView } from '@/lib/workspaceSearch'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 
@@ -359,6 +360,13 @@ async function togglePlusMenu() {
 }
 
 const attachments = pendingAttachments
+const uploading = computed(() => attachments.value.some((item) => item.status === 'uploading'))
+/**
+ * A small file finishes in milliseconds; spinning for it reads as a glitch rather than as
+ * progress. The chip shows its uploading state immediately (dashed border, "上传中…") and only
+ * the spinner waits for the upload to prove it is slow.
+ */
+const showUploadSpinner = useDelayedLoading(() => uploading.value)
 // The native picker opens within the user gesture. If necessary, its selection
 // creates a correctly typed draft session before bytes are uploaded.
 const canAttach = computed(() => !attachmentPreparing.value && !props.settingsSaving)
@@ -640,7 +648,7 @@ function confirmSteer(id: string, interrupt = false) {
           <component :is="item.mediaType.startsWith('image/') ? Image : FileText" :size="12" class="attachment-icon" aria-hidden="true" />
           <span class="attachment-name">{{ item.fileName }}</span>
           <span class="attachment-meta">{{ formatAttachmentBytes(item.size) }}</span>
-          <span v-if="item.status === 'uploading'" class="attachment-spinner" aria-hidden="true" />
+          <span v-if="item.status === 'uploading' && showUploadSpinner" class="attachment-spinner" aria-hidden="true" />
           <span v-if="item.status !== 'ready'" class="attachment-state">{{ attachmentHint(item) }}</span>
           <button class="attachment-remove" :aria-label="t('composer.removeAttachment', { name: item.fileName })" @click="dropAttachment(item.clientId)">×</button>
         </div>

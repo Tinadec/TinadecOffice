@@ -21,6 +21,7 @@ import { isFoldableKind, keepsOwnLine } from './toolSentence'
 
 export type TurnRow =
   | { kind: 'thinking'; id: string; steps: ThinkingStep[] }
+  | { kind: 'marker'; id: string; step: ThinkingStep }
   | { kind: 'tool'; id: string; call: ToolCall }
   | { kind: 'toolGroup'; id: string; calls: ToolCall[] }
   | { kind: 'pending'; id: string; call: ToolCall }
@@ -75,6 +76,12 @@ export function turnRows(steps: ThinkingStep[], calls: ToolCall[]): TurnRow[] {
     const step = item.step
     if (!step) continue
     closeGroup()
+    // A lifecycle fact ("the run failed", "the run was cancelled") is not work the agent did,
+    // so it reads as a note between content rather than as another step it took.
+    if (step.type === 'run') {
+      rows.push({ kind: 'marker', id: step.id, step })
+      continue
+    }
     const last = rows.at(-1)
     const isReasoning = step.type === 'reasoning'
     // Provider reasoning and orchestration facts never merge into one block.
@@ -90,7 +97,16 @@ export function turnRows(steps: ThinkingStep[], calls: ToolCall[]): TurnRow[] {
 
 /** Rows that belong inside the collapsible region: everything a person need not act on. */
 export function detailRows(rows: TurnRow[]): TurnRow[] {
-  return rows.filter((row) => row.kind !== 'pending')
+  return rows.filter((row) => row.kind !== 'pending' && row.kind !== 'marker')
+}
+
+/**
+ * Lifecycle notes. They render outside the fold: a run that failed or was cancelled is the
+ * reason the turn ended, and hiding that behind "活动 · 12 项" is how a reader ends up not
+ * knowing why the answer stopped.
+ */
+export function markerRows(rows: TurnRow[]): Array<Extract<TurnRow, { kind: 'marker' }>> {
+  return rows.filter((row): row is Extract<TurnRow, { kind: 'marker' }> => row.kind === 'marker')
 }
 
 /** Rows that must stay in view however the turn is folded. */
