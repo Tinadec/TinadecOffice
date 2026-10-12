@@ -295,13 +295,13 @@ function attachTerminal(
   container: HTMLElement,
   term: Terminal,
   fitAddon: FitAddon,
-): void {
+): boolean {
   const instance = terminalInstances.value.find((entry) => entry.id === id)
-  if (!instance) return
+  if (!instance) return false
 
   // Re-attaching overwrote the previous cleanup array and leaked an xterm plus its
   // IPC listeners, so tear the earlier attachment down first.
-  if (ipcCleanup.has(id)) detachTerminal(id)
+  if (instance.term || ipcCleanup.has(id)) detachTerminal(id)
 
   // Store references
   // xterm and its addons own mutable private object graphs. Vue must never proxy
@@ -309,6 +309,7 @@ function attachTerminal(
   // renderer lifecycle.
   instance.term = markRaw(term)
   instance.fitAddon = markRaw(fitAddon)
+  const ownsAttachment = () => instance.term === term
 
   // Apply current theme
   term.options.theme = buildXtermTheme()
@@ -317,11 +318,7 @@ function attachTerminal(
   term.open(container)
 
   // Fit to container size
-  try {
-    fitAddon.fit()
-  } catch {
-    // Fit may fail if container has no dimensions yet
-  }
+  fitTerminal(id)
 
   instance.ready = true
 
@@ -330,18 +327,18 @@ function attachTerminal(
   if (instance.sourceKind === 'agent' && instance.source) {
     instance.source.attach({
       onData: (data) => {
-        if (instance.term && !instance.exited) instance.term.write(data)
+        if (ownsAttachment() && !instance.exited) term.write(data)
       },
       onStatus: (status) => {
-        if (status === 'exited' || status === 'killed') instance.exited = true
+        if (ownsAttachment() && (status === 'exited' || status === 'killed')) instance.exited = true
       },
     })
 
     const agentInputDisposable = term.onData((data) => {
-      instance.source?.write(data)
+      if (ownsAttachment()) instance.source?.write(data)
     })
     const agentResizeDisposable = term.onResize(({ cols, rows }) => {
-      instance.source?.resize(cols, rows)
+      if (ownsAttachment()) instance.source?.resize(cols, rows)
     })
 
     ipcCleanup.set(id, [
@@ -349,21 +346,20 @@ function attachTerminal(
       () => agentInputDisposable.dispose(),
       () => agentResizeDisposable.dispose(),
     ])
-    return
+    return true
   }
 
   // Notify main process of the initial size
   const { cols, rows } = term
   window.tinadec.terminal.resize(id, cols, rows)
 
-  // The shell starts printing as soon as it spawns, so listen first and hold the
-  // bytes until the replay snapshot has been written; writing in that order leaves
-  // neither a gap nor a duplicate.
+  // Listen before the replay read so output arriving during the request is retained.
+  // The local snapshot has no output cursor, so replay and held bytes may overlap.
   let replayed = false
   const held: string[] = []
   const writeOrHold = (data: string) => {
-    if (!instance.term || instance.exited) return
-    if (replayed) instance.term.write(data)
+    if (!ownsAttachment() || instance.exited) return
+    if (replayed) term.write(data)
     else held.push(data)
   }
 
@@ -372,20 +368,19 @@ function attachTerminal(
 
   // Set up IPC exit listener
   const removeExitListener = window.tinadec.terminal.onExit(id, (exitCode) => {
+    if (!ownsAttachment()) return
     instance.exited = true
-    if (instance.term) {
-      instance.term.write(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`)
-    }
+    term.write(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`)
   })
 
   // Set up xterm input → IPC write
   const inputDisposable = term.onData((data) => {
-    window.tinadec.terminal.write(id, data)
+    if (ownsAttachment()) window.tinadec.terminal.write(id, data)
   })
 
   // Set up xterm resize → IPC resize
   const resizeDisposable = term.onResize(({ cols, rows }) => {
-    window.tinadec.terminal.resize(id, cols, rows)
+    if (ownsAttachment()) window.tinadec.terminal.resize(id, cols, rows)
   })
 
   // Store cleanup functions
@@ -394,22 +389,24 @@ function attachTerminal(
     removeExitListener,
     () => inputDisposable.dispose(),
     () => resizeDisposable.dispose(),
+    () => { held.length = 0 },
   ])
 
   void window.tinadec.terminal.snapshot(id).then((snapshot) => {
+    if (!ownsAttachment()) return
     replayed = true
-    if (instance.term) {
-      if (snapshot?.replay) instance.term.write(snapshot.replay)
-      for (const chunk of held) instance.term.write(chunk)
-      if (snapshot?.exited) instance.exited = true
-    }
+    if (snapshot?.replay) term.write(snapshot.replay)
+    for (const chunk of held) term.write(chunk)
+    if (snapshot?.exited) instance.exited = true
     held.length = 0
   }).catch(() => {
+    if (!ownsAttachment()) return
     // No snapshot available; deliver whatever was held and keep streaming.
     replayed = true
-    if (instance.term) for (const chunk of held) instance.term.write(chunk)
+    for (const chunk of held) term.write(chunk)
     held.length = 0
   })
+  return true
 }
 
 /**
@@ -426,6 +423,12 @@ function detachTerminal(id: string, expectedTerm?: Terminal | null): void {
   // or tear down its IPC listeners.
   if (expectedTerm && instance.term !== expectedTerm) return
 
+  // Revoke ownership before unsubscribing: queued callbacks cannot reach a disposed renderer.
+  const term = instance.term
+  instance.term = null
+  instance.fitAddon = null
+  instance.ready = false
+
   // Run cleanup functions
   const cleanups = ipcCleanup.get(id)
   if (cleanups) {
@@ -436,12 +439,7 @@ function detachTerminal(id: string, expectedTerm?: Terminal | null): void {
   }
 
   // Dispose xterm
-  if (instance.term) {
-    try { instance.term.dispose() } catch { /* ignore */ }
-    instance.term = null
-  }
-  instance.fitAddon = null
-  instance.ready = false
+  term?.dispose()
 }
 
 /**
@@ -587,11 +585,7 @@ function fitTerminal(id: string): void {
   const host = instance.term.element?.parentElement
   if (!host || !host.isConnected || host.clientWidth <= 0 || host.clientHeight <= 0) return
 
-  try {
-    instance.fitAddon.fit()
-  } catch {
-    // Ignore fit errors during a rapid resize
-  }
+  instance.fitAddon.fit()
 }
 
 /**

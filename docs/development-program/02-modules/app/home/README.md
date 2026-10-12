@@ -35,6 +35,10 @@
 
 源目录集合、主要目录、图标与颜色以原存储根 project.toml 为权威；宿主授权、新运行冻结和工具隔离由 Core/Tools 管理。本机列表偏好不构成授权。正式规则见[工作区契约](../../../../workspaces.zh-CN.md)，唯一任务为[APP-HOME-107](TODO.md#app-home-107)，验收边界见[报告](../../../../../.tinadec_dev/reports/2026-10-10-sidebar-workspaces.zh-CN.md)。
 
+### 2026-10-12 对话流读取与稳定性
+
+[APP-HOME-108](TODO.md#app-home-108) 统一记录本轮修复：Home/独立面板按事件类别单飞读取；正文最近100条完成即显示，上翻使用排他sequence游标。session SSE以live-only ready控制帧建立快照屏障，活动按run+seq去重；撤回epoch取消旧页并重读最近页。滚动实例按storage+session重建，几何只测末行及观察器可见锚点；折叠活动和工具正文按需挂载。终端撤销挂载归属后取消任务再释放，正常异常保留堆栈。证据/实际与夹具边界见[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)。
+
 ## 源码入口
 
 - [apps/desktop/src/controllers/HomeController.ts:22](../../../../../apps/desktop/src/controllers/HomeController.ts#L22)

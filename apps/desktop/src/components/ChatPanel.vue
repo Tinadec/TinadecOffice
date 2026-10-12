@@ -45,6 +45,10 @@ const props = defineProps<{
   richToolViews?: boolean
   /** True only under the "information" template: tool-authored HTML may be rendered. */
   allowToolWidget?: boolean
+  hasMoreMessages?: boolean
+  loadingOlderMessages?: boolean
+  messagesLoading?: boolean
+  messagesLoadError?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -59,6 +63,8 @@ const emit = defineEmits<{
   'reject': [approvalId: string]
   'edit-message': [payload: { id: string; content: string }]
   'stop': []
+  'load-older': []
+  'retry-messages': []
 }>()
 
 // meeting_model_override 原样透传。此前这里把它读成 `payload.meeting_model`（字符串）
@@ -76,7 +82,8 @@ function onWelcomeSubmit(payload: ComposerSubmitOptions & { content: string }) {
 const conversationRef = ref<HTMLElement | null>(null)
 const { mode: chatMode } = useChatResponsiveMode(conversationRef)
 
-const hero = computed(() => props.messages.length === 0)
+const hero = computed(() => props.messages.length === 0 && !props.messagesLoading && !props.messagesLoadError)
+const transcriptKey = computed(() => `${props.currentSession?.storage_id ?? props.currentProject?.storage_id ?? 'user'}:${props.currentSession?.id ?? 'new'}`)
 
 const lastAssistantId = computed(() => {
   for (let i = props.messages.length - 1; i >= 0; i--) {
@@ -191,7 +198,12 @@ function handleReject(approvalId: string) {
       <div v-else key="chat-active" class="chat-active-panel" style="background: transparent !important; border: none !important; box-shadow: none !important;">
         <ChatHeader :current-session="currentSession" />
         <MessageList
+          :key="transcriptKey"
           :messages="messages"
+          :has-more-messages="hasMoreMessages"
+          :loading-older-messages="loadingOlderMessages"
+          :messages-loading="messagesLoading"
+          :messages-load-error="messagesLoadError"
           :activity-by-message="activityByMessage"
           :live-turn="liveTurn"
           :live-turns="liveTurns"
@@ -202,6 +214,8 @@ function handleReject(approvalId: string) {
           @approve="handleApprove"
           @reject="handleReject"
           @edit="emit('edit-message', $event)"
+          @load-older="emit('load-older')"
+          @retry-messages="emit('retry-messages')"
         />
       </div>
     </Transition>

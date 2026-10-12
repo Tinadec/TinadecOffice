@@ -85,6 +85,18 @@ describe('useAgentActivity event wiring', () => {
     expect(harness.thinkingSteps.value).toHaveLength(1)
     expect(harness.turnActivities.value['r-1'].thinkingSteps).toHaveLength(10)
   })
+  it('hydrates a large run once without REST reads, then accepts a small live sequence from a new run', async () => {
+    const sessionId = ref<string | null>('s-1')
+    const harness = scope.run(() => useAgentActivity(sessionId, undefined, { managedReads: true }))!
+    const events = Array.from({ length: 2000 }, (_, index) => ({ v: '1', type: index === 0 ? 'task.accepted' : 'context.packed', run_id: 'history-run', session_id: 's-1', request_id: '', trace_id: '', capabilities: [], seq: index + 1, ts: '', payload: {} }))
+    harness.hydrate(events, [], ['history-run'])
+    harness.hydrate(events, [], ['history-run'])
+    expect(harness.turnActivities.value['history-run']?.thinkingSteps).toHaveLength(2000)
+    expect(api.listToolExecutions).not.toHaveBeenCalled()
+    FakeEventSource.instances[0]!.emit('task.accepted', {}, 1, undefined, 'new-run')
+    expect(harness.turnActivities.value['new-run']?.thinkingSteps).toHaveLength(1)
+    expect(api.listToolExecutions).not.toHaveBeenCalled()
+  })
 
   it('folds reasoning deltas once per response and rejects replay duplicates', async () => {
     const { harness, source } = await mount()

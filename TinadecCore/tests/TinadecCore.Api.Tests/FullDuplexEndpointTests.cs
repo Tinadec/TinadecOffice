@@ -1572,6 +1572,7 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
             Assert.Equal(body.GetProperty("interaction_id").GetGuid(), directive.Id);
             Assert.NotNull(directive.RunId);
             Assert.NotNull(directive.MessageId);
+            Assert.Equal(directive.MessageId.Value, body.GetProperty("message_id").GetGuid());
             var payload = JsonSerializer.Deserialize<JsonElement>(directive.PayloadJson);
             Assert.Equal("完成后测试并提交", payload.GetProperty("content").GetString());
             Assert.Equal("queued-followup", payload.GetProperty("client_message_id").GetString());
@@ -1598,6 +1599,7 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
         var replayBody = await replay.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(body.GetProperty("interaction_id").GetGuid(), replayBody.GetProperty("interaction_id").GetGuid());
         Assert.Equal("queued-followup", replayBody.GetProperty("correlation_id").GetString());
+        Assert.Equal(body.GetProperty("message_id").GetGuid(), replayBody.GetProperty("message_id").GetGuid());
 
         gate.SetResult();
         await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
@@ -1625,6 +1627,7 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal(body.GetProperty("turn_id").GetGuid(), body.GetProperty("interaction_id").GetGuid());
         Assert.Equal("receipt-1", body.GetProperty("client_message_id").GetString());
         Assert.Equal("receipt-1", body.GetProperty("correlation_id").GetString());
+        Assert.NotEqual(Guid.Empty, body.GetProperty("message_id").GetGuid());
         Assert.True(body.GetProperty("context_revision").GetInt64() >= 0);
         Assert.True(body.GetProperty("stream_cursor").GetInt64() >= 0);
 
@@ -1636,6 +1639,7 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
         var retryBody = await retry.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(body.GetProperty("run_id").GetGuid(), retryBody.GetProperty("run_id").GetGuid());
         Assert.Equal(body.GetProperty("turn_id").GetGuid(), retryBody.GetProperty("turn_id").GetGuid());
+        Assert.Equal(body.GetProperty("message_id").GetGuid(), retryBody.GetProperty("message_id").GetGuid());
     }
 
     private static string LanesEnabledToml() =>

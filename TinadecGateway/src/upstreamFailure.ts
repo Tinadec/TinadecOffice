@@ -13,6 +13,12 @@ const UPSTREAM = {
 
 export type Upstream = keyof typeof UPSTREAM;
 
+/** Caller cancellation is not an upstream availability failure. */
+export function rethrowCancellation(error: unknown, signal?: AbortSignal | null): void {
+  if (signal?.aborted || (error !== null && typeof error === 'object' && 'name' in error
+    && error.name === 'AbortError')) throw error;
+}
+
 /**
  * 构造 502 ProblemDetails 响应；调用方负责把它交给 `setStatus`。
  */

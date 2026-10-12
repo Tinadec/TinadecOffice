@@ -1,0 +1,17 @@
+{
+  "accepted": false,
+  "finished": false,
+  "checks": [
+    {
+      "name": "desktop-final-race-tests",
+      "code": 1,
+      "timedOut": false,
+      "durationSeconds": 33.452,
+      "command": "node_modules/vitest/vitest.mjs run src/controllers/HomeController.test.ts src/pages/DetachedPanelPage.test.ts src/lib/sessionEventBus.test.ts src/composables/useTerminal.test.ts src/components/TerminalView.test.ts src/components/chat/TerminalCallBlock.test.ts --maxWorkers=1",
+      "cwd": "apps/desktop",
+      "log": "C:\\git\\agent\\TinadecOffice\\.tinadec_dev\\tmp\\desktop-final-race-tests.log",
+      "output": "(node:3208) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n\n RUN  v4.1.11 C:/git/agent/TinadecOffice/apps/desktop\n\n  ➜  MCP:     Server is running at http://localhost:5173/__mcp/sse\n(node:50216) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n ❯ src/controllers/HomeController.test.ts (56 tests | 1 failed) 15623ms\n     × releases a timed-out snapshot barrier, keeps existing messages and allows a later retry 309ms\n(node:32064) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:73712) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:40608) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:48196) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:7944) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  src/controllers/HomeController.test.ts > HomeController bounded transcript reads > releases a timed-out snapshot barrier, keeps existing messages and allows a later retry\nAssertionError: expected \"vi.fn()\" to be called with arguments: [ ObjectContaining{…}, …(1) ]\n\nNumber of calls: 0\n\n ❯ src/controllers/HomeController.test.ts:1112:29\n    1110|       expect(homeController.messagesLoadError.value).toBe('Snapshot re…\n    1111|       expect(homeController.messagesLoading.value).toBe(false)\n    1112|       expect(h.notifyError).toHaveBeenCalledWith(expect.objectContaini…\n       |                             ^\n    1113|       h.listMessagePage.mockResolvedValue(page(rows(1, 2)))\n    1114|       const retry = homeController.retryMessages()\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n\n Test Files  1 failed | 5 passed (6)\n      Tests  1 failed | 99 passed (100)\n   Start at  18:57:33\n   Duration  29.61s (transform 3.52s, setup 207ms, import 5.94s, tests 16.55s, environment 3.79s)\n\n"
+    }
+  ],
+  "checked_at": "2026-10-12T10:58:03.556Z"
+}

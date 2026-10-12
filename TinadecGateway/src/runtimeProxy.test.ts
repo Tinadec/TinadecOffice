@@ -37,7 +37,7 @@ test('composer settings and admission preserve options, reset flags and revision
   const admitted = await app.handle(new Request('http://gateway.local/api/v1/sessions/space/interactions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(submission) }));
   assert.equal(admitted.status, 200);
   assert.deepEqual(requests[1]?.body, submission);
-  globalThis.fetch = (async () => new Response(JSON.stringify({ code: 'session_settings_conflict', detail: 'Settings changed in another window.' }), { status: 409, headers: { 'content-type': 'application/problem+json' } })) as typeof fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ code: 'session_settings_conflict', detail: 'Settings changed in another window.' }), { status: 409, headers: { 'content-type': 'application/problem+json' } })) as unknown as typeof fetch;
   const conflict = await app.handle(new Request('http://gateway.local/api/v1/sessions/space', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }));
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json() as { code: string }).code, 'session_settings_conflict');
@@ -48,7 +48,7 @@ test('run SSE forwards live answer frames before the upstream completes', { conc
   let upstream!: ReadableStreamDefaultController<Uint8Array>;
   globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
     start(controller) { upstream = controller; controller.enqueue(new TextEncoder().encode(first)); },
-  }), { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch;
+  }), { headers: { 'content-type': 'text/event-stream' } })) as unknown as typeof fetch;
   try {
     const response = await app.handle(new Request('http://gateway.local/api/v1/runs/run-1/stream?after_seq=2'));
     const reader = response.body!.getReader();
@@ -321,7 +321,7 @@ test('pack preview and apply preserve configuration diagnostics through actual r
   globalThis.fetch = (async () => new Response(JSON.stringify({
     code: 'configuration_invalid', detail: 'Configuration validation failed.', trace_id: 'trace-pack-validation',
     diagnostics: [{ ...diagnostic, private_extension: 'drop-this' }], private_extension: 'drop-this',
-  }), { status: 400, headers: { 'content-type': 'application/problem+json' } })) as typeof fetch;
+  }), { status: 400, headers: { 'content-type': 'application/problem+json' } })) as unknown as typeof fetch;
   for (const [method, path, body] of [
     ['POST', '/api/v1/agent-packs/install-preview', { api_version: 'tinadec.io/agent-pack/v1alpha1' }],
     ['PUT', '/api/v1/agent-packs/tinadec.graph.seed-pack', { preview_id: 'preview-1', envelope: {} }],
@@ -610,7 +610,7 @@ test('approval pre-authorization creation surfaces Core validation as ProblemDet
     detail: 'Wildcard tool grants are not allowed in a pre-authorization.',
     code: 'invalid_request',
     trace_id: 'trace-pre-auth-1',
-  }), { status: 400, headers: { 'content-type': 'application/problem+json' } })) as typeof fetch;
+  }), { status: 400, headers: { 'content-type': 'application/problem+json' } })) as unknown as typeof fetch;
 
   const response = await app.handle(new Request('http://gateway.local/api/v1/approvals/pre-authorizations', {
     method: 'POST',
@@ -680,7 +680,7 @@ test('memory review failures keep their 4xx meaning instead of collapsing to con
       code: testCase.coreCode,
       message: 'review refused',
       field: 'run_id',
-    }), { status: testCase.status, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    }), { status: testCase.status, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
 
     const response = await app.handle(new Request(`http://gateway.local${testCase.path}`, {
       method: testCase.method,

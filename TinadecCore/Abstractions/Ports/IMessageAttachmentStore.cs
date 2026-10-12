@@ -24,6 +24,10 @@ public interface IMessageAttachmentStore
         Guid sessionId,
         CancellationToken cancellationToken = default);
 
+    async Task<IReadOnlyList<StoredAttachment>> ListForMessagesAsync(Guid sessionId, IReadOnlyList<Guid> messageIds,
+        CancellationToken cancellationToken = default) =>
+        (await ListAsync(sessionId, cancellationToken).ConfigureAwait(false)).Where(x => x.MessageId is { } id && messageIds.Contains(id)).ToArray();
+
     Task<StoredAttachment?> FindAsync(
         Guid attachmentId,
         CancellationToken cancellationToken = default);

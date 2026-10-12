@@ -1,0 +1,27 @@
+{
+  "accepted": true,
+  "finished": true,
+  "checks": [
+    {
+      "name": "desktop-final-race-tests",
+      "code": 0,
+      "timedOut": false,
+      "durationSeconds": 28.199,
+      "command": "node_modules/vitest/vitest.mjs run src/controllers/HomeController.test.ts src/pages/DetachedPanelPage.test.ts src/lib/sessionEventBus.test.ts src/composables/useTerminal.test.ts src/components/TerminalView.test.ts src/components/chat/TerminalCallBlock.test.ts src/components/chat/ToolCallCard.test.ts --maxWorkers=1",
+      "cwd": "apps/desktop",
+      "log": "C:\\git\\agent\\TinadecOffice\\.tinadec_dev\\tmp\\desktop-final-race-tests.log",
+      "output": "(node:30384) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n\n RUN  v4.1.11 C:/git/agent/TinadecOffice/apps/desktop\n\n  ➜  MCP:     Server is running at http://localhost:5173/__mcp/sse\n(node:53940) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:71956) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:71084) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:3320) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:3804) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:70976) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:53016) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n\n Test Files  7 passed (7)\n      Tests  104 passed (104)\n   Start at  19:03:31\n   Duration  25.98s (transform 3.13s, setup 125ms, import 4.93s, tests 16.00s, environment 2.83s)\n\n"
+    },
+    {
+      "name": "desktop-final-race-typecheck",
+      "code": 0,
+      "timedOut": false,
+      "durationSeconds": 33.74,
+      "command": "node_modules/vue-tsc/bin/vue-tsc.js --noEmit",
+      "cwd": "apps/desktop",
+      "log": "C:\\git\\agent\\TinadecOffice\\.tinadec_dev\\tmp\\desktop-final-race-typecheck.log",
+      "output": ""
+    }
+  ],
+  "checked_at": "2026-10-12T11:04:31.269Z"
+}

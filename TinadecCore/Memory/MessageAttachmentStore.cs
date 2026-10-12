@@ -100,6 +100,18 @@ public sealed class MessageAttachmentStore : IMessageAttachmentStore
         return rows.Select(ToStored).ToArray();
     }
 
+    public async Task<IReadOnlyList<StoredAttachment>> ListForMessagesAsync(Guid sessionId, IReadOnlyList<Guid> messageIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (messageIds.Count == 0) return [];
+        var scope = _tenantContext.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.MessageAttachments.AsNoTracking().Where(x => x.SessionId == sessionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.MessageId != null && messageIds.Contains(x.MessageId.Value))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return rows.OrderBy(x => x.CreatedAt).Select(ToStored).ToArray();
+    }
+
     public async Task<StoredAttachment?> FindAsync(Guid attachmentId, CancellationToken cancellationToken = default)
     {
         var scope = _tenantContext.Current;

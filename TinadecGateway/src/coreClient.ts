@@ -6,7 +6,8 @@
 
 import { getConfig } from './config.js';
 import { PRINCIPAL_VALUE, ensureRequestId } from './headers.js';
-import { upstreamUnreachableResponse } from './upstreamFailure.js';
+import { rethrowCancellation, upstreamUnreachableResponse } from './upstreamFailure.js';
+import { createStreamProxyResponse } from './streamResponse.js';
 
 export type ProxyBody = Record<string, unknown> | string | undefined;
 
@@ -22,11 +23,6 @@ export interface ProxyResult {
   status: number;
   data: unknown;
   headers?: Headers;
-}
-
-function rethrowCancellation(error: unknown, signal?: AbortSignal | null): void {
-  if (signal?.aborted || (error !== null && typeof error === 'object' && 'name' in error
-    && error.name === 'AbortError')) throw error;
 }
 
 /** For transport surfaces, preserve the Core status, headers, and bytes. */
@@ -159,7 +155,7 @@ export async function proxySse(path: string, init?: RequestInit): Promise<Respon
   const baseHeaders = proxyBaseHeaders(init?.headers as HeadersInit | undefined);
   const url = coreEndpoint(path);
   try {
-    return await fetch(url, {
+    return createStreamProxyResponse(await fetch(url, {
       ...init,
       redirect: 'manual',
       headers: {
@@ -167,7 +163,7 @@ export async function proxySse(path: string, init?: RequestInit): Promise<Respon
         ...baseHeaders,
         ...(init?.headers ?? {})
       }
-    });
+    }));
   } catch (error) {
     rethrowCancellation(error, init?.signal);
     return upstreamUnreachableResponse('core', url, error);
@@ -193,14 +189,14 @@ export async function proxySseWithCursor(
   }
   const endpoint = coreEndpoint(url);
   try {
-    return await fetch(endpoint, {
+    return createStreamProxyResponse(await fetch(endpoint, {
       ...extraInit,
       redirect: 'manual',
       headers: {
         ...headers,
         ...(extraInit?.headers as Record<string, string> | undefined)
       }
-    });
+    }));
   } catch (error) {
     rethrowCancellation(error, extraInit?.signal);
     return upstreamUnreachableResponse('core', endpoint, error);
@@ -215,14 +211,14 @@ export async function proxyStream(path: string, init?: RequestInit): Promise<Res
   const baseHeaders = proxyBaseHeaders(init?.headers as HeadersInit | undefined);
   const url = coreEndpoint(path);
   try {
-    return await fetch(url, {
+    return createStreamProxyResponse(await fetch(url, {
       ...init,
       redirect: 'manual',
       headers: {
         ...baseHeaders,
         ...(init?.headers as Record<string, string> | undefined)
       }
-    });
+    }));
   } catch (error) {
     rethrowCancellation(error, init?.signal);
     return upstreamUnreachableResponse('core', url, error);

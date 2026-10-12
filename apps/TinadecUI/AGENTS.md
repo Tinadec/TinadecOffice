@@ -1,9 +1,15 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-10-10
-**Last Updated By:** NavCard接入工作区纯折叠、逐作用域加载和统一编辑入口；保留窗格ReKa Tooltip、ChatCard及空间专项。
-**Last Verified Commit:** d5e6c8d838f93f6bc26d4b7b77ecb0d9bdb9c2f3 + 工作树；本批工作区组件/真实接口结果见 .tinadec_dev/reports/2026-10-10-sidebar-workspaces.zh-CN.md；历史导航、窗格与空间证据仍独立。
-**Branch:** main
+**Last Updated:** 2026-10-12
+**Last Updated By:** APP-HOME-108 对话分页与UIE叶依赖防环。
+**Last Verified Commit:** 1b6b7673 + 本轮工作树；证据和边界见 .tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md。
+**Branch:** feat/flat-transcript-refactor
+
+### 2026-10-12 对话流分页
+
+ChatCard仅传递HomeController的hasMore/loading/error与loadOlder/retry到ChatPanel。分页、scope、SSE与撤回状态仍归Desktop/Core；UIE不维护第二份消息目录。滚动树按storage+session重建，隐藏终端保活与跨容器销毁由既有宿主生命周期决定。统一任务APP-HOME-108，实际Electron/宿主替代边界见报告。
+
+UIE组件反向引用的Desktop叶模块不得再从`@tinadec/ui`总入口取运行时依赖：`useDockDrag`直读`engine/dockDrop`与`engine/types`，`TerminalCallBlock`直读`components/useUie`。这两处例外阻断Canvas与ChatCard返回公共barrel的循环；未配置`@tinadec/ui/engine`子路径，采用相对源路径。生产构建循环警告是执行顺序风险，尚非构建超时的已证根因。
 
 ### 2026-10-10 工作区侧边栏
 

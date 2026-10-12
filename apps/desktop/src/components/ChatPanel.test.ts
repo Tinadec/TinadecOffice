@@ -70,6 +70,20 @@ function mountPanel(messages: MessageDto[] = []) {
 }
 
 describe('ChatPanel persistent composer', () => {
+  it('recreates the transcript for a different session or storage identity', async () => {
+    const w = mount(ChatPanel, {
+      props: { ...baseProps, messages: [msg('m1')] },
+      global: { stubs: { transition: false, ComposerBar: true, ChatHeader: true, MessageList: true } },
+    })
+    await w.setProps({ currentSession: { id: 's1', storage_id: 'user' } as never })
+    const first = w.get('message-list-stub').element
+    await w.setProps({ currentSession: { id: 's2', storage_id: 'user' } as never, messages: [msg('m2')] })
+    const second = w.get('message-list-stub').element
+    expect(second).not.toBe(first)
+    await w.setProps({ currentSession: { id: 's2', storage_id: 'project' } as never })
+    expect(w.get('message-list-stub').element).not.toBe(second)
+    w.unmount()
+  })
   it('anchors each run to its own answer instead of moving old activity into the next turn', async () => {
     const w = mount(ChatPanel, {
       props: { ...baseProps, messages: [msg('user-1'), { ...msg('answer-1'), role: 'assistant', run_id: 'run-1' }, msg('user-2')] },

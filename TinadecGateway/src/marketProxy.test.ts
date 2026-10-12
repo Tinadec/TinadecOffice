@@ -116,7 +116,7 @@ test('a market refusal keeps its own code instead of becoming conflict', async (
   globalThis.fetch = (async () => new Response(
     JSON.stringify({ code: 'unsupported_market_source_kind', message: 'No market adapter reads kind ' + "'cli_runtime'." }),
     { status: 400, headers: { 'content-type': 'application/json' } },
-  )) as typeof fetch;
+  )) as unknown as typeof fetch;
 
   const response = await app.handle(new Request('http://gateway.local/api/v1/market/sources', {
     method: 'POST',
@@ -134,7 +134,7 @@ test('a disabled source answers 409, not an empty refresh', async () => {
   globalThis.fetch = (async () => new Response(
     JSON.stringify({ code: 'market_source_disabled', message: "'office' is disabled." }),
     { status: 409, headers: { 'content-type': 'application/json' } },
-  )) as typeof fetch;
+  )) as unknown as typeof fetch;
 
   const response = await app.handle(new Request(
     'http://gateway.local/api/v1/market/sources/a1b2/refresh',
@@ -150,7 +150,7 @@ test('an expired install proposal stays a 412 with its own code', async () => {
   globalThis.fetch = (async () => new Response(
     JSON.stringify({ code: 'market_install_proposal_stale', message: 'This proposal is no longer available.' }),
     { status: 412, headers: { 'content-type': 'application/json' } },
-  )) as typeof fetch;
+  )) as unknown as typeof fetch;
 
   const response = await app.handle(new Request(
     'http://gateway.local/api/v1/market/install-proposals/p1/apply',
@@ -165,7 +165,7 @@ test('an install refusal that names its reason keeps it through the proxy', asyn
   globalThis.fetch = (async () => new Response(
     JSON.stringify({ code: 'market_install_target_unresolved', message }),
     { status: 409, headers: { 'content-type': 'application/json' } },
-  )) as typeof fetch;
+  )) as unknown as typeof fetch;
 
   const response = await app.handle(new Request(
     'http://gateway.local/api/v1/market/catalog/c1/install-preview',

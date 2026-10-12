@@ -14,6 +14,10 @@ UIE NavCard 继续作为侧边栏宿主，业务交互由 AppSidebar/HomeControl
 
 本专项统一由 [APP-HOME-107](../../app/home/TODO.md#app-home-107) 记账，APP-RENDERER 保留本模块整体审计；交互与存储契约见 [workspaces.zh-CN.md](../../../../workspaces.zh-CN.md)，本轮证据与平台边界见 [实施报告](../../../../../.tinadec_dev/reports/2026-10-10-sidebar-workspaces.zh-CN.md)。
 
+## 2026-10-12 稳定性与对话读取
+
+终端升级与挂载归属、完整错误诊断、messages/page/activity公开客户端、live-only快照屏障及独立面板分类单飞读取共归[APP-HOME-108](../home/TODO.md#app-home-108)。正文和活动读取分别有迟到/取消防护；普通错误保留stack/组件/来源。实际Electron、API替身与真实服务范围及完整测试见[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)。
+
 ## 文档入口
 
 - [模块架构与边界](ARCHITECTURE.md) · [模块SVG](architecture.svg)

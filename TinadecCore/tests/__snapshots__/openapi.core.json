@@ -1718,6 +1718,39 @@
         },
         "type": "object"
       },
+      "EventEnvelope": {
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "run_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "session_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "EvidenceHitDto": {
         "properties": {
           "author": {
@@ -2701,6 +2734,106 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "MessageAttachmentReadDto": {
+        "properties": {
+          "bound_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "content_length": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "file_name",
+          "media_type",
+          "content_length",
+          "content_hash",
+          "created_at",
+          "bound_at"
+        ],
+        "type": "object"
+      },
+      "MessageReadDto": {
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/MessageAttachmentReadDto"
+            },
+            "type": "array"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "run_id",
+          "sequence",
+          "role",
+          "content",
+          "created_at",
+          "attachments"
+        ],
         "type": "object"
       },
       "MigrateSessionRequest": {
@@ -3933,6 +4066,161 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "SessionActivityDto": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventEnvelope"
+            },
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRunReadDto"
+            },
+            "type": "array"
+          },
+          "tool_executions": {
+            "type": "array"
+          }
+        },
+        "required": [
+          "events",
+          "tool_executions",
+          "runs"
+        ],
+        "type": "object"
+      },
+      "SessionMessagesPageDto": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "history_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MessageReadDto"
+            },
+            "type": "array"
+          },
+          "next_before_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "revert_epoch": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRunReadDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "runs",
+          "has_more",
+          "next_before_sequence",
+          "history_revision",
+          "revert_epoch"
+        ],
+        "type": "object"
+      },
+      "SessionRunReadDto": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "latest_event_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "latest_event_sequence": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "task_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "trigger_message_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "trigger_message_id",
+          "status",
+          "summary",
+          "task_revision",
+          "latest_event_sequence",
+          "latest_event_at",
+          "created_at",
+          "updated_at",
+          "completed_at"
+        ],
         "type": "object"
       },
       "SessionTopologyDto": {
@@ -8626,6 +8914,13 @@
                 "string"
               ]
             }
+          },
+          {
+            "in": "query",
+            "name": "replay",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -11203,6 +11498,42 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/activity": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_ids",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionActivityDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/archive": {
       "post": {
         "parameters": [
@@ -11592,6 +11923,71 @@
         },
         "responses": {
           "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/messages/page": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_sequence",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revert_epoch",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMessagesPageDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
@@ -12058,6 +12454,34 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "runId",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
             }
           }
         ],

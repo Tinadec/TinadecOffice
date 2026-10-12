@@ -10,6 +10,10 @@
 
 本专项统一由 [APP-HOME-107](../../app/home/TODO.md#app-home-107) 记账，GATEWAY-SESSIONS 保留本模块整体审计；交互与存储契约见 [workspaces.zh-CN.md](../../../../workspaces.zh-CN.md)，本轮证据与平台边界见 [实施报告](../../../../../.tinadec_dev/reports/2026-10-10-sidebar-workspaces.zh-CN.md)。
 
+## 2026-10-12 对话页与活动
+
+messages/page、activity和消息sequence公开契约与Core同步，Gateway只转发游标/epoch/run_ids，不维护第二份状态。原消息数组接口保留；公开OpenAPI及Desktop生成类型同步。统一任务[APP-HOME-108](../../app/home/TODO.md#app-home-108)，完整Gateway107项与HTTP边界见[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)。
+
 ## 文档入口
 
 - [模块架构与边界](ARCHITECTURE.md) · [模块SVG](architecture.svg)

@@ -1,0 +1,26 @@
+[
+  {
+    "mode": "elysia-chunked",
+    "completed": 100,
+    "exited": false,
+    "exitCode": null,
+    "abortErrors": 100,
+    "panic": false
+  },
+  {
+    "mode": "elysia-stripped",
+    "completed": 100,
+    "exited": false,
+    "exitCode": null,
+    "abortErrors": 0,
+    "panic": false
+  },
+  {
+    "mode": "native",
+    "completed": 100,
+    "exited": false,
+    "exitCode": null,
+    "abortErrors": 0,
+    "panic": false
+  }
+]

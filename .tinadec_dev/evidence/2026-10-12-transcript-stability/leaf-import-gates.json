@@ -1,0 +1,37 @@
+{
+  "accepted": true,
+  "checks": [
+    {
+      "name": "desktop-leaf-tests",
+      "code": 0,
+      "timedOut": false,
+      "durationSeconds": 72.328,
+      "command": "node_modules/vitest/vitest.mjs run src/components/chat/TerminalCallBlock.test.ts src/components/BrowserTabBar.test.ts --maxWorkers=1",
+      "cwd": "apps/desktop",
+      "log": "C:\\git\\agent\\TinadecOffice\\.tinadec_dev\\tmp\\desktop-leaf-tests.log",
+      "output": "(node:63472) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n\n RUN  v4.1.11 C:/git/agent/TinadecOffice/apps/desktop\n\n  ➜  MCP:     Server is running at http://localhost:5173/__mcp/sse\n(node:59172) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:70444) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n\n Test Files  2 passed (2)\n      Tests  9 passed (9)\n   Start at  18:44:02\n   Duration  59.17s (transform 13.10s, setup 367ms, import 29.02s, tests 3.44s, environment 16.85s)\n\n"
+    },
+    {
+      "name": "uie-dock-tests",
+      "code": 0,
+      "timedOut": false,
+      "durationSeconds": 15.612,
+      "command": "node_modules/vitest/vitest.mjs run src/engine/dockDrop.test.ts src/engine/reducer-dock.test.ts --maxWorkers=1",
+      "cwd": "apps/TinadecUI",
+      "log": "C:\\git\\agent\\TinadecOffice\\.tinadec_dev\\tmp\\uie-dock-tests.log",
+      "output": "\n RUN  v4.1.11 C:/git/agent/TinadecOffice/apps/TinadecUI\n\n\n Test Files  2 passed (2)\n      Tests  26 passed (26)\n   Start at  18:45:11\n   Duration  6.33s (transform 1.73s, setup 0ms, import 1.88s, tests 183ms, environment 1ms)\n\n"
+    },
+    {
+      "name": "desktop-leaf-typecheck",
+      "code": 0,
+      "timedOut": false,
+      "durationSeconds": 271.223,
+      "command": "node_modules/vue-tsc/bin/vue-tsc.js --noEmit",
+      "cwd": "apps/desktop",
+      "log": "C:\\git\\agent\\TinadecOffice\\.tinadec_dev\\tmp\\desktop-leaf-typecheck.log",
+      "output": ""
+    }
+  ],
+  "checked_at": "2026-10-12T10:49:49.602Z",
+  "finished": true
+}

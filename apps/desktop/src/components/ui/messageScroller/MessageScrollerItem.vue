@@ -46,9 +46,5 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex-shrink: 0;
 }
-/* ponytail: no `content-visibility: auto` here, unlike the upstream registry. The engine's
-   `measureContentHeight` takes `getBoundingClientRect().bottom` over every row and off-screen
-   rows would report their `contain-intrinsic-size` estimate instead of real height, which
-   under-reports content height and makes `scrollable.end` lie to auto-follow. Add it back only
-   alongside a measurement that reads `offsetHeight` from rendered rows. */
+/* Keep real row heights for precise history prepend/jump anchoring. */
 </style>

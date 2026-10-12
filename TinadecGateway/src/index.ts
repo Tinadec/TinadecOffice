@@ -650,6 +650,22 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapMessages(result.data);
   }, { detail: { summary: 'List messages', tags: ['Messages'], responses: { 200: externalJsonResponse('MessageList', 'Session messages.') } } })
+  .get('/api/v1/sessions/:sessionId/messages/page', async ({ params, query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URLSearchParams();
+    const q = query as Record<string, unknown>;
+    for (const key of ['limit', 'before_sequence', 'expected_revert_epoch']) if (q[key] !== undefined) search.set(key, String(q[key]));
+    const path = `/api/v1/sessions/${params.sessionId}/messages/page${search.size ? `?${search}` : ''}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Read a bounded message page', tags: ['Messages'], parameters: [
+    { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 100 } },
+    { name: 'before_sequence', in: 'query', schema: { type: 'integer', minimum: 1 }, description: 'Exclusive sequence cursor for older messages.' },
+    { name: 'expected_revert_epoch', in: 'query', schema: { type: 'integer', minimum: 0 }, description: '409 history_changed if messages were reverted since the previous page.' },
+  ], responses: { 200: externalJsonResponse('SessionMessagesPage', 'Latest messages or the page before an exclusive sequence cursor.') } } })
   .post('/api/v1/sessions/:sessionId/messages', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/messages`, { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -723,13 +739,9 @@ const app = new Elysia()
     setStatus(set, response.status);
     set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
     set.headers['cache-control'] = 'no-cache';
-    set.headers['connection'] = 'keep-alive';
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    // Preserve the upstream Response so client cancellation closes the stream through
-    // Fetch's normal response lifecycle instead of making Elysia release an already
-    // cancelled reader (ERR_STREAM_RELEASE_LOCK).
-    return new Response(response.body, { status: response.status, headers: response.headers });
+    return response;
   }, { detail: { summary: 'Run stream (SSE)', tags: ['Runs'], description: 'Durable SSE with id=seq and event=kind, Last-Event-ID / ?cursor= & ?after_seq resume. Kinds: ack/queued/assigned/steering/context_conflict/control/ephemeral_agent/delta/done/error. occurred_at is the durable journal timestamp; idle keep-alive is an SSE comment ": heartbeat" that never advances the cursor' } })
   .get('/api/v1/runs/:runId/task-nodes', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
@@ -834,7 +846,7 @@ const app = new Elysia()
   .get('/api/v1/sessions/:sessionId/tool-executions', async ({ params, query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
-    if ((query as Record<string,unknown>).run_id) search.set('runId', String((query as Record<string,unknown>).run_id));
+    if ((query as Record<string,unknown>).run_id) search.set('run_id', String((query as Record<string,unknown>).run_id));
     if ((query as Record<string,unknown>).limit) search.set('limit', String((query as Record<string,unknown>).limit));
     const suffix = search.toString() ? `?${search.toString()}` : '';
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/tool-executions${suffix}`, { headers });
@@ -843,6 +855,19 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Session tool executions', tags: ['Runs'] } })
+  .get('/api/v1/sessions/:sessionId/activity', async ({ params, query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URLSearchParams();
+    if ((query as Record<string, unknown>).run_ids !== undefined) search.set('run_ids', String((query as Record<string, unknown>).run_ids));
+    const path = `/api/v1/sessions/${params.sessionId}/activity${search.size ? `?${search}` : ''}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Read activity for loaded and active runs', tags: ['Runs'], parameters: [
+    { name: 'run_ids', in: 'query', schema: { type: 'string' }, description: 'Comma-separated run UUIDs, at most 200. Active runs are included.' },
+  ], responses: { 200: externalJsonResponse('SessionActivity', 'Run-filtered journal events and tool timeline.') } } })
   // What a tool actually produced. The timeline above carries only a one-line summary; this
   // reads the stored result body back so the transcript can show the real output.
   .get('/api/v1/tool-executions/:executionId/result', async ({ params, set, request }) => {
@@ -903,6 +928,7 @@ const app = new Elysia()
     const params = new URLSearchParams();
     const q = query as Record<string,unknown>;
     if (q.session_id) params.set('sessionId', String(q.session_id));
+    if (q.replay !== undefined) params.set('replay', String(q.replay));
     const cursor = (q.cursor as string) ?? (q.after_seq as string) ?? request.headers.get('last-event-id') ?? request.headers.get('Last-Event-ID');
     if (cursor) params.set('afterSeq', String(cursor));
     const response = await proxySse(`/api/v1/events?${params.toString()}`, { headers: { ...headers, ...(cursor ? { 'last-event-id': String(cursor) } : {}) }, signal: request.signal });
@@ -910,8 +936,10 @@ const app = new Elysia()
     set.headers['cache-control'] = 'no-cache';
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return new Response(response.body, { status: response.status, headers: response.headers });
-  }, { detail: { summary: 'Session events SSE', tags: ['System'], description: 'Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume' } })
+    return response;
+  }, { detail: { summary: 'Session events SSE', tags: ['System'], parameters: [
+    { name: 'replay', in: 'query', schema: { type: 'boolean', default: true }, description: 'False establishes a live subscription and emits stream.ready before the client snapshot.' },
+  ], description: 'Durable EventEnvelope feed. Live-only mode emits stream.ready and history.changed control frames without event IDs. Run-local sequences deduplicate snapshots and live events; Last-Event-ID / ?cursor remain available for legacy replay.' } })
   .get('/api/v1/approvals', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();
@@ -2464,12 +2492,8 @@ const app = new Elysia()
     });
     setStreamHeaders(set, response);
     setStatus(set, response.status);
-    // setStreamHeaders copies content-type only. Without forwarding the disposition too,
-    // Core's "this type is not safe to render inline" decision would be dropped here, and
-    // the security boundary would exist in Core but not on the path clients actually use.
-    const disposition = response.headers.get('content-disposition');
-    if (disposition) set.headers['content-disposition'] = disposition;
-    return response.body;
+    // The native Response retains Core's inline/attachment disposition and byte stream.
+    return response;
   }, { detail: { summary: 'Download attachment bytes', tags: ['Attachments'] } })
   .delete('/api/v1/attachments/:attachmentId', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
@@ -2490,7 +2514,7 @@ const app = new Elysia()
     setStatus(set, response.status);
     set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
     set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
-    return response.body;
+    return response;
   }, { detail: { summary: 'Session logs', tags: ['System'] } })
   .get('/api/v1/sessions/:sessionId/logs/stream', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
@@ -2504,7 +2528,7 @@ const app = new Elysia()
     setStatus(set, response.status);
     set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
     set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
-    return response.body;
+    return response;
   }, { detail: { summary: 'Stream session logs', tags: ['System'] } })
   .get('/api/v1/tool-runtime/health', async ({ set, request }) => {
     const headers = forwardHeaders(request);

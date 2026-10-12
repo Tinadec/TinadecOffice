@@ -328,6 +328,34 @@ public static class StorageEndpoints
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "SESSION_NOT_FOUND" }); }
         });
 
+        app.MapGet("/api/v1/sessions/{sessionId}/messages/page", async (string sessionId, int? limit, long? before_sequence,
+            long? expected_revert_epoch, ProjectSessionStore store, StorageLifecycleService lifecycle, IMessageAttachmentStore attachments, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
+            if (limit is < 1 or > 100 || before_sequence is < 1 || expected_revert_epoch is < 0)
+                return Results.BadRequest(new { code = "INVALID_MESSAGE_PAGE" });
+            try
+            {
+                StoredMessagePage page;
+                try { page = await store.ListMessagePageAsync(id, limit ?? 100, before_sequence, expected_revert_epoch, ct).ConfigureAwait(false); }
+                catch (SessionHistoryChangedException) when (before_sequence is null && expected_revert_epoch is null)
+                {
+                    // A first-page read may race one edit. Retry once; further edits are
+                    // a visible conflict, never an unbounded loading loop.
+                    page = await store.ListMessagePageAsync(id, limit ?? 100, cancellationToken: ct).ConfigureAwait(false);
+                }
+                var messageIds = page.Items.Select(x => x.Id).ToArray();
+                var claimed = (await attachments.ListForMessagesAsync(id, messageIds, ct).ConfigureAwait(false))
+                    .GroupBy(x => x.MessageId!.Value).ToDictionary(x => x.Key, x => x.ToArray());
+                var runs = await lifecycle.ListActivityRunsAsync(id, page.Items.Where(x => x.RunId != null).Select(x => x.RunId!.Value).Distinct().ToArray(), messageIds, ct).ConfigureAwait(false);
+                return Results.Ok(new SessionMessagesPageDto(page.Items.Select(message => ToMessage(message,
+                    claimed.TryGetValue(message.Id, out var rows) ? rows : [])).ToArray(), runs.Select(ToRun).ToArray(),
+                    page.HasMore, page.NextBeforeSequence, page.HistoryRevision, page.RevertEpoch));
+            }
+            catch (SessionHistoryChangedException ex) { return Results.Conflict(new { code = "history_changed", history_revision = ex.State.HistoryRevision, revert_epoch = ex.State.RevertEpoch }); }
+            catch (KeyNotFoundException) { return Results.NotFound(new { code = "SESSION_NOT_FOUND" }); }
+        }).Produces<SessionMessagesPageDto>();
+
         app.MapPost("/api/v1/sessions/{sessionId}/messages", async (string sessionId, CreateMessageRequest request, ProjectSessionStore store, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
@@ -365,7 +393,8 @@ public static class StorageEndpoints
             return Results.Ok((await lifecycle.ListRunsAsync(id, ct).ConfigureAwait(false)).Select(ToRun));
         });
 
-        app.MapGet("/api/v1/events", async (HttpContext context, string? sessionId, string? session_id, long? afterSeq, long? after_seq, StorageLifecycleService lifecycle, CancellationToken ct) =>
+        app.MapGet("/api/v1/events", async (HttpContext context, string? sessionId, string? session_id, long? afterSeq, long? after_seq, bool? replay,
+            StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
         {
             var selected = sessionId ?? session_id;
             Guid? selectedSessionId = null;
@@ -373,6 +402,11 @@ public static class StorageEndpoints
             {
                 if (!Guid.TryParse(selected, out var parsed)) { context.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
                 selectedSessionId = parsed;
+                if (await sessions.FindAsync(parsed, ct).ConfigureAwait(false) is null)
+                {
+                    context.Response.StatusCode = StatusCodes.Status404NotFound;
+                    return;
+                }
             }
             var cursor = afterSeq ?? after_seq ?? 0;
             if (context.Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
@@ -386,45 +420,62 @@ public static class StorageEndpoints
                 await context.Response.WriteAsJsonAsync(new { code = "INVALID_EVENT_CURSOR" }, ct).ConfigureAwait(false);
                 return;
             }
+            var requestedCursor = cursor;
             context.Response.StatusCode = StatusCodes.Status200OK;
             context.Response.ContentType = "text/event-stream";
             context.Response.Headers.CacheControl = "no-cache";
             context.Response.Headers["X-Accel-Buffering"] = "no";
             try
             {
-                // Event sequences are allocated per run, so the client-facing
-                // Last-Event-ID cursor cannot be used as a database key once a
-                // new run restarts at sequence one. The initial replay honors
-                // the cursor; follow cycles poll a timestamp watermark and
-                // de-duplicate by per-run sequence instead of rescanning the
-                // whole journal on every tick.
-                var lastSequenceByRun = new Dictionary<string, long>(StringComparer.Ordinal);
-                var unsequencedSeenIds = new HashSet<string>(StringComparer.Ordinal);
+                var watermarks = replay == false
+                    ? new Dictionary<Guid, long>(await lifecycle.GetEventWatermarksAsync(selectedSessionId, ct).ConfigureAwait(false))
+                    : new Dictionary<Guid, long>();
+                SessionHistoryState? history = selectedSessionId is { } session
+                    ? await sessions.GetHistoryStateAsync(session, ct).ConfigureAwait(false) : null;
                 var lastHeartbeat = DateTimeOffset.UtcNow;
-                var initialReplay = true;
-                var followSince = DateTimeOffset.MinValue;
+                var initialReplay = replay != false;
+
+                // Control frames carry no id and therefore never advance a business
+                // event cursor. The client can now snapshot while buffering live events.
+                if (replay == false)
+                {
+                    await WriteHistoryControlAsync(context, "stream.ready", selectedSessionId, history, ct).ConfigureAwait(false);
+                    await context.Response.Body.FlushAsync(ct).ConfigureAwait(false);
+                }
 
                 while (!ct.IsCancellationRequested)
                 {
                     var events = initialReplay
                         ? await lifecycle.ReplayEventsAsync(selectedSessionId, 0, ct).ConfigureAwait(false)
-                        : await lifecycle.FollowEventsAsync(selectedSessionId, followSince, ct).ConfigureAwait(false);
+                        : await lifecycle.FollowRunEventsAsync(selectedSessionId, watermarks, ct).ConfigureAwait(false);
                     var wrote = false;
                     foreach (var item in events)
                     {
-                        if (item.Timestamp > followSince) followSince = item.Timestamp - EventFollowOverlap;
                         var sequence = GetEventSequence(item);
-                        var runKey = item.RunId ?? string.Empty;
                         if (sequence is not null)
                         {
-                            if (lastSequenceByRun.TryGetValue(runKey, out var seen) && sequence.Value <= seen) continue;
-                            lastSequenceByRun[runKey] = sequence.Value;
-                            if (initialReplay && sequence.Value <= cursor) continue;
+                            if (initialReplay && Guid.TryParse(item.RunId, out var run))
+                                watermarks[run] = Math.Max(watermarks.GetValueOrDefault(run), sequence.Value);
+                            if (initialReplay && sequence.Value <= requestedCursor) continue;
                             if (sequence.Value > cursor) cursor = sequence.Value;
                         }
-                        else if (!unsequencedSeenIds.Add(item.EventId)) continue;
                         await WriteEventAsync(context, item, sequence, ct).ConfigureAwait(false);
                         wrote = true;
+                    }
+
+                    if (selectedSessionId is { } selectedId && history is not null)
+                    {
+                        var revision = await sessions.GetContextRevisionAsync(selectedId, ct).ConfigureAwait(false);
+                        if (revision != history.HistoryRevision)
+                        {
+                            var updated = await sessions.GetHistoryStateAsync(selectedId, ct).ConfigureAwait(false);
+                            if (updated.RevertEpoch != history.RevertEpoch)
+                            {
+                                await WriteHistoryControlAsync(context, "history.changed", selectedId, updated, ct).ConfigureAwait(false);
+                                wrote = true;
+                            }
+                            history = updated;
+                        }
                     }
 
                     var now = DateTimeOffset.UtcNow;
@@ -574,29 +625,13 @@ public static class StorageEndpoints
     /// without a second round-trip per row. content_reference deliberately does not: it is a
     /// path under the data root, and the download route addresses bytes by attachment id.
     /// </summary>
-    private static object ToMessage(StoredMessage message, IReadOnlyList<StoredAttachment>? attachments = null) => new
-    {
-        id = message.Id,
-        session_id = message.SessionId,
-        run_id = message.RunId,
-        role = message.Role,
-        content = message.Content,
-        created_at = message.CreatedAt,
-        attachments = (attachments ?? Array.Empty<StoredAttachment>()).Select(attachment => new
-        {
-            id = attachment.Id,
-            file_name = attachment.FileName,
-            media_type = attachment.MediaType,
-            content_length = attachment.ContentLength,
-            content_hash = attachment.ContentHash,
-            created_at = attachment.CreatedAt,
-            bound_at = attachment.BoundAt
-        }).ToArray()
-    };
-    private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
+    private static MessageReadDto ToMessage(StoredMessage message, IReadOnlyList<StoredAttachment>? attachments = null) =>
+        new(message.Id, message.SessionId, message.RunId, message.Sequence, message.Role, message.Content, message.CreatedAt,
+            (attachments ?? []).Select(x => new MessageAttachmentReadDto(x.Id, x.FileName, x.MediaType, x.ContentLength, x.ContentHash, x.CreatedAt, x.BoundAt)).ToArray());
+    internal static SessionRunReadDto ToRun(RunRecord run) => new(run.Id, run.SessionId, run.TriggerMessageId, run.Status,
+        run.Summary, run.TaskRevision, run.LastEventSequence, run.LastEventAt, run.CreatedAt, run.UpdatedAt, run.CompletedAt);
 
     private static readonly TimeSpan EventFollowPollInterval = TimeSpan.FromMilliseconds(200);
-    private static readonly TimeSpan EventFollowOverlap = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan EventHeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
@@ -608,6 +643,9 @@ public static class StorageEndpoints
 
     private static Task WriteHeartbeatAsync(HttpContext context, long cursor, CancellationToken cancellationToken) =>
         context.Response.WriteAsync($"event: heartbeat\ndata: {{\"after_seq\":{cursor}}}\n\n", cancellationToken);
+
+    private static Task WriteHistoryControlAsync(HttpContext context, string eventType, Guid? sessionId, SessionHistoryState? state, CancellationToken ct) =>
+        context.Response.WriteAsync($"event: {eventType}\ndata: {JsonSerializer.Serialize(new { session_id = sessionId, history_revision = state?.HistoryRevision, revert_epoch = state?.RevertEpoch }, SseJsonOptions)}\n\n", ct);
 
     private static long? GetEventSequence(EventEnvelope item)
     {

@@ -271,6 +271,10 @@ export default {
     },
   },
   chat: {
+    transcript: '对话内容',
+    loadOlderMessages: '加载更早消息',
+    loadingOlderMessages: '正在加载更早消息…',
+    retryMessages: '重新加载消息',
     title: 'Tinadec 会话',
     noProject: '未打开项目',
     placeholder: '默认与会议智能体对话，让它拆解任务、规划执行并调度其他智能体...',

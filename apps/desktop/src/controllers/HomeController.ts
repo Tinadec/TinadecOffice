@@ -20,11 +20,14 @@ import {
   type SessionDto,
   type ToolExecutionTimelineItemDto,
   type ToolDescriptorDto,
+  type SessionMessagePageDto,
+  type SessionPageRunDto,
 } from '@/api'
 import { basenameFromPath } from '@/format'
 import { getDispatchPref } from '@/lib/dispatchPref'
 import { attachmentsForSend, pendingAttachments, readyAttachmentCount, settleSentAttachments } from '@/lib/pendingAttachments'
 import { followSession, subscribeToSessionEvents, suspendFollowingSession } from '@/lib/sessionEventBus'
+import { createCoalescedRead } from '@/lib/coalescedRead'
 import { isAbortError } from '@/lib/isAbortError'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { projectRunReply } from '@/lib/runReply'
@@ -60,6 +63,10 @@ const viewMode = ref<SessionView>('flat')
 const visibleSessions = computed(() => sessions.value.filter(s => (s.view_mode ?? 'flat') === viewMode.value))
 const lastSessionByView: Record<SessionView, string | null> = { flat: null, space: null }
 const messages = ref<MessageDto[]>([])
+const hasMoreMessages = ref(false)
+const loadingOlderMessages = ref(false)
+const messagesLoading = ref(false)
+const messagesLoadError = ref<string | null>(null)
 const approvals = ref<ApprovalDto[]>([])
 const approvalRules = ref<ApprovalRuleDto[]>([])
 const events = ref<EventEnvelope[]>([])
@@ -241,6 +248,7 @@ async function ensureComposerSession(): Promise<string> {
 const recentEvents = computed(() => events.value.slice(-8).reverse())
 
 const sessionIdRef = computed(() => currentSession.value?.id ?? null)
+const agentActivityOwner = useAgentActivity(sessionIdRef, orchestration, { managedReads: true })
 const {
   activity: agentActivity,
   toolCalls: agentToolCalls,
@@ -248,7 +256,7 @@ const {
   turnActivities: agentTurnActivities,
   agentStates: agentStatesMap,
   progressEvents: agentProgressEvents,
-} = useAgentActivity(sessionIdRef, orchestration)
+} = agentActivityOwner
 
 const { notify, banner, dismissByKey } = useNotifications()
 
@@ -450,64 +458,163 @@ async function retryWorkspace(key: string) {
 
 let sessionRead = 0
 let sessionLoadAbort: AbortController | null = null
-async function loadMessagesAndApprovals() {
-  const read = ++sessionRead
-  sessionLoadAbort?.abort()
-  const loadAbort = new AbortController()
-  sessionLoadAbort = loadAbort
-  const { signal } = loadAbort
-  const session = selectedSessionId.value
-  const storage = selectedStorageId()
-  if (!canAccessBackend.value) { sessionLoadAbort = null; return }
+let olderAbort: AbortController | null = null
+let olderRead: Promise<void> | null = null
+let nextBeforeSequence: number | null = null
+let loadedMessagePage = false
+let revertEpoch: number | null = null
+let streamOwnership = 0
+const hydratedRuns = new Set<string>()
+const pendingActivityRuns = new Set<string>()
+type ReadGroup = 'messages' | 'approvals' | 'activity' | 'orchestration'
+
+function messageSequence(message: MessageDto) { return (message as MessageDto & { sequence?: number }).sequence ?? Number.MAX_SAFE_INTEGER }
+function acceptRuns(items: readonly SessionPageRunDto[], authoritative = false) {
+  const ids = new Set(items.map(run => run.id))
+  const merged = new Map(runs.value.filter(run => !authoritative || ids.has(run.id) || ['completed', 'failed', 'cancelled', 'awaiting_user'].includes(run.status)).map(run => [run.id, run]))
+  for (const run of items) merged.set(run.id, { id: run.id, status: run.status, user_message_id: run.trigger_message_id ?? run.user_message_id ?? null })
+  runs.value = [...merged.values()]
+  try { useRunStore().runs = runs.value as never } catch { /* Pinia may not yet be installed. */ }
+  attachActiveRuns()
+}
+function invalidateHistory(epoch: number | null = null) {
+  streamOwnership++
+  sessionRead++; sessionLoadAbort?.abort(); olderAbort?.abort(); sessionLoadAbort = null
+  reads.reset(); olderRead = null; loadingOlderMessages.value = false
+  messagesLoading.value = false
+  messages.value = messages.value.filter(message => message.id.startsWith('pending-'))
+  events.value = []
+  nextBeforeSequence = null; loadedMessagePage = false; hasMoreMessages.value = false; revertEpoch = epoch
+  hydratedRuns.clear(); pendingActivityRuns.clear(); runs.value = []; toolExecutions.value = []
+  agentActivityOwner.reset?.()
+  for (const stream of runStreams.values()) stream.disconnect()
+  runStreams.clear(); runText.clear(); provisionalReplies.clear(); streamingText.value = new Map(); syncWorking()
+}
+function acceptPage(page: SessionMessagePageDto, older: boolean) {
+  let first = !loadedMessagePage
+  if (revertEpoch !== null && page.revert_epoch !== revertEpoch) {
+    if (older) { invalidateHistory(page.revert_epoch); void retryMessages(); return false }
+    invalidateHistory(page.revert_epoch)
+    first = true
+  }
+  revertEpoch = page.revert_epoch
+  const merged = new Map(messages.value.map(message => [message.id, message]))
+  for (const message of page.items) merged.set(message.id, message)
+  messages.value = [...merged.values()].sort((a, b) => messageSequence(a) - messageSequence(b))
+  if (older || first) { nextBeforeSequence = page.next_before_sequence; hasMoreMessages.value = page.has_more }
+  loadedMessagePage = true
+  acceptRuns(page.runs, !older)
+  for (const run of page.runs) if (!hydratedRuns.has(run.id) || !['completed', 'failed', 'cancelled'].includes(run.status)) pendingActivityRuns.add(run.id)
+  if (pendingActivityRuns.size) void reads.request('activity').catch(error => notify.error(error, { title: '活动加载失败' }))
+  return true
+}
+
+async function readSessionGroups(groups: ReadonlySet<ReadGroup>) {
+  const session = selectedSessionId.value, storage = selectedStorageId(), generation = sessionRead
+  if (!session || !canAccessBackend.value) return
+  const bound = scopedApi(api, () => storage)
+  if (!sessionLoadAbort || sessionLoadAbort.signal.aborted) sessionLoadAbort = new AbortController()
+  const signal = sessionLoadAbort.signal
+  const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+  const current = () => !signal.aborted && generation === sessionRead && session === selectedSessionId.value && storage === selectedStorageId()
+  const jobs: Promise<void>[] = []
+  if (groups.has('messages')) {
+    messagesLoading.value = true; messagesLoadError.value = null
+    jobs.push(bound.listMessagePage(session, { limit: 100 }, requestSignal).then(page => {
+      if (current()) acceptPage(page, false)
+    }).catch(error => {
+      if (current() && !isAbortError(error)) { messagesLoadError.value = error instanceof Error ? error.message : String(error); throw error }
+    }).finally(() => { if (generation === sessionRead && session === selectedSessionId.value && storage === selectedStorageId()) messagesLoading.value = false }))
+  }
+  if (groups.has('approvals')) jobs.push(Promise.all([bound.listApprovals(session, undefined, requestSignal), bound.listApprovalRules(session, requestSignal)]).then(([items, rules]) => {
+    if (current()) { approvals.value = items; approvalRules.value = rules }
+  }))
+  if (groups.has('orchestration')) jobs.push(bound.getOrchestrationSnapshot(session, requestSignal).then(snapshot => { if (current()) orchestration.value = snapshot }))
+  if (groups.has('activity')) {
+    const ids = [...pendingActivityRuns]; pendingActivityRuns.clear()
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const batch = ids.slice(offset, offset + 100)
+      jobs.push(bound.getSessionActivity(session, batch, requestSignal).then(snapshot => {
+        if (!current()) return
+        agentActivityOwner.hydrate?.(snapshot.events, snapshot.tool_executions, batch)
+        for (const id of batch) hydratedRuns.add(id)
+        const retained = toolExecutions.value.filter(tool => !batch.includes(tool.run_id))
+        toolExecutions.value = [...retained, ...snapshot.tool_executions]
+        if (snapshot.runs.length) acceptRuns(snapshot.runs)
+      }).catch(error => { if (current()) for (const id of batch) pendingActivityRuns.add(id); throw error }))
+    }
+  }
+  const results = await Promise.allSettled(jobs)
+  if (!current()) return
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected' && !isAbortError(result.reason))
+  if (failure) throw failure.reason
+}
+const transcriptReads = createCoalescedRead<ReadGroup>(readSessionGroups)
+const auxiliaryReads = createCoalescedRead<ReadGroup>(readSessionGroups)
+const reads = {
+  request(...groups: ReadGroup[]) {
+    const transcript = groups.filter(group => group === 'messages' || group === 'activity')
+    const auxiliary = groups.filter(group => group === 'approvals' || group === 'orchestration')
+    return Promise.all([
+      ...(transcript.length ? [transcriptReads.request(...transcript)] : []),
+      ...(auxiliary.length ? [auxiliaryReads.request(...auxiliary)] : []),
+    ]).then(() => {})
+  },
+  reset() { transcriptReads.reset(); auxiliaryReads.reset() },
+}
+
+async function loadMessagesAndApprovals(snapshotOnly = false, recovering = false): Promise<void> {
   if (!selectedSessionId.value) {
-    sessionLoadAbort = null
-    messages.value = []
-    approvals.value = []
-    approvalRules.value = []
-    orchestration.value = null
-    toolExecutions.value = []
-    runs.value = []
+    messages.value = []; approvals.value = []; approvalRules.value = []; orchestration.value = null; toolExecutions.value = []; runs.value = []
     return
   }
-  const loaded = await Promise.all([
-    api.listMessages(session!, signal),
-    api.listApprovals(session!, undefined, signal),
-    api.listApprovalRules(session!, signal).catch(() => [] as ApprovalRuleDto[]),
-    api.getOrchestrationSnapshot(session!, signal),
-    api.listToolExecutions(session!, { limit: 12 }, signal),
-    // An unavailable roster is not an empty roster: keep suspended stream cursors.
-    api.listRuns(session!, signal),
-  ]).catch((error) => {
-    if (isAbortError(error) || session !== selectedSessionId.value || storage !== selectedStorageId() || read !== sessionRead) return null
-    throw error
-  }).finally(() => { if (sessionLoadAbort === loadAbort) sessionLoadAbort = null })
-  if (!loaded) return
-  const [messageList, approvalList, ruleList, orchestrationSnapshot, toolTimeline, runList] = loaded
-  if (session !== selectedSessionId.value || storage !== selectedStorageId() || read !== sessionRead) return
-  // Keep optimistic pending sends until the backend echoes them: the
-  // session-select reload races the first POST (new session has no messages
-  // yet), and wiping the optimistic append bounces the composer back to the
-  // hero position mid-dock instead of one immersive sink.
-  const pendingEcho = messages.value.filter(
-    (m) => m.id.startsWith('pending-') && !messageList.some((b) => b.role === 'user' && b.content === m.content),
-  )
-  messages.value = pendingEcho.length ? [...messageList, ...pendingEcho] : messageList
-  approvals.value = approvalList
-  approvalRules.value = ruleList
-  orchestration.value = orchestrationSnapshot
-  toolExecutions.value = toolTimeline
-  runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({
-    id: String(r.id), status: String(r.status ?? ''), user_message_id: r.trigger_message_id ?? r.user_message_id ?? null,
-  }))
-  // 状态源统一（问题 3 修复）：ChatHeader 的 run-pills 读 Pinia runStore.runs，而
-  // runStore.fetchRuns 此前只在无入口的 WorkbenchPage 调用 → Home 页 pills 恒空。
-  // 把 Home 已拉取的 run 列表（含 session_id，WorkbenchPage.control 依赖）同步进 store。
-  // HomeController 是模块级单例，可能早于 Pinia 安装被求值，故惰性获取 + 兜底。
-  try {
-    useRunStore().runs = (Array.isArray(runList) ? runList : []) as never
-  } catch { /* Pinia 尚未安装：pills 退回空态，不阻断聊天 */ }
-  attachActiveRuns()
-  if (sessionLoadAbort === loadAbort) sessionLoadAbort = null
+  const generation = sessionRead, session = selectedSessionId.value, storage = selectedStorageId()
+  const known = [...runs.value]
+  const currentScope = () => session === selectedSessionId.value && storage === selectedStorageId() && canAccessBackend.value
+  async function recoverGeneration() {
+    if (!recovering) return loadMessagesAndApprovals(snapshotOnly, true)
+    messagesLoadError.value = '会话历史再次更新，请重试读取。'
+    throw new Error(messagesLoadError.value)
+  }
+  let failure: unknown
+  const auxiliary = reads.request('approvals', 'orchestration').catch(error => {
+    if (generation !== sessionRead || session !== selectedSessionId.value || storage !== selectedStorageId()) return
+    if (snapshotOnly) { if (!isAbortError(error)) notify.error(error, { title: '会话辅助信息加载失败' }) }
+    else failure ??= error
+  })
+  try { await reads.request('messages') } catch (error) { failure = error }
+  if (!currentScope()) return
+  if (generation !== sessionRead) return recoverGeneration()
+  for (const run of known) pendingActivityRuns.add(run.id)
+  if (pendingActivityRuns.size) {
+    try { await reads.request('activity') } catch (error) { failure ??= error }
+  }
+  if (!currentScope()) return
+  if (generation !== sessionRead) return recoverGeneration()
+  if (!snapshotOnly) await auxiliary
+  if (failure) throw failure
+}
+async function loadOlderMessages(): Promise<void> {
+  if (olderRead) return olderRead
+  const before = nextBeforeSequence, epoch = revertEpoch
+  const session = selectedSessionId.value, storage = selectedStorageId(), generation = sessionRead
+  if (!session || before === null || !hasMoreMessages.value || !canAccessBackend.value) return
+  olderAbort = new AbortController(); const signal = olderAbort.signal
+  loadingOlderMessages.value = true; messagesLoadError.value = null
+  const current = () => !signal.aborted && generation === sessionRead && session === selectedSessionId.value && storage === selectedStorageId()
+  const request = scopedApi(api, () => storage).listMessagePage(session, { limit: 100, before_sequence: before, ...(epoch !== null ? { expected_revert_epoch: epoch } : {}) }, signal)
+    .then(page => { if (current()) acceptPage(page, true) })
+    .catch(error => {
+      if (!current() || isAbortError(error)) return
+      if ((error as { code?: string }).code === 'history_changed') { invalidateHistory(); void retryMessages(); return }
+      messagesLoadError.value = error instanceof Error ? error.message : String(error)
+    }).finally(() => { if (olderRead === request) { olderRead = null; loadingOlderMessages.value = false } })
+  olderRead = request
+  return request
+}
+async function retryMessages() {
+  try { await loadMessagesAndApprovals() }
+  catch (error) { if (!isAbortError(error)) notify.error(error, { title: '会话加载失败' }) }
 }
 
 
@@ -520,11 +627,12 @@ function attachRun(runId: string) {
   }
   const session = selectedSessionId.value
   const storage = selectedStorageId()
+  const owner = streamOwnership
   const handle = createRunStream({
     storageId: storage,
     runId,
     onActivity: (chunk) => {
-      if (session !== selectedSessionId.value || storage !== selectedStorageId()) return
+      if (owner !== streamOwnership || session !== selectedSessionId.value || storage !== selectedStorageId()) return
       // 活性信号：任意去重后的 chunk（含 ack/heartbeat）都刷新活动时间，供 UI 区分
       // 「链路活着但暂无输出」与「链路已断」。
       lastStreamActivityAt.value = Date.now()
@@ -538,7 +646,7 @@ function attachRun(runId: string) {
       }
     },
     onChunk: (chunk) => {
-      if (session !== selectedSessionId.value || storage !== selectedStorageId()) return
+      if (owner !== streamOwnership || session !== selectedSessionId.value || storage !== selectedStorageId()) return
       const reply = projectRunReply({ text: runText.get(runId) ?? '', provisional: provisionalReplies.has(runId) }, chunk)
       if (reply) {
         if (reply.provisional) provisionalReplies.add(runId)
@@ -561,6 +669,7 @@ function attachRun(runId: string) {
       }
     },
     onError: (error) => {
+      if (owner !== streamOwnership || session !== selectedSessionId.value || storage !== selectedStorageId()) return
       if (!navigator.onLine) invokeError.value = '网络已断开'
       else if (error.message) invokeError.value = error.message
     },
@@ -895,12 +1004,19 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
         ...(outgoing.attachmentIds.length > 0 ? { attachment_ids: outgoing.attachmentIds } : {}),
       })
       settleSentAttachments(outgoing)
+      if (isCurrent() && resp.message_id) {
+        const pendingId = `pending-${clientMessageId}`
+        const echoed = messages.value.some(message => message.id === resp.message_id)
+        messages.value = messages.value.filter(message => message.id !== pendingId || !echoed)
+          .map(message => message.id === pendingId ? { ...message, id: resp.message_id! } : message)
+      }
+      if (isCurrent() && resp.status === 'steering_injected') messages.value = messages.value.filter(message => message.id !== `pending-${clientMessageId}`)
       // An admitted interaction names its own turn; a queued one names the run it waits behind
       // and no turn — that run's status is not "queued", so it is left alone.
       const waitingBehind = resp.status === 'queued' && !resp.turn_id && Boolean(resp.interaction_id)
       if (isCurrent() && resp.run_id && !waitingBehind) {
         attachRun(resp.run_id)
-        runs.value = [{ id: resp.run_id, status: resp.status || 'planning' }, ...runs.value.filter((run) => run.id !== resp.run_id)]
+        runs.value = [{ id: resp.run_id, status: resp.status || 'planning', user_message_id: resp.message_id ?? null }, ...runs.value.filter((run) => run.id !== resp.run_id)]
       }
       if (isCurrent() && (waitingBehind || (!resp.run_id && resp.status === 'queued'))) {
         queuedMessages.value = [...queuedMessages.value, { id: clientMessageId, content: snapshotContent, interactionId: waitingBehind ? resp.interaction_id : undefined,
@@ -968,6 +1084,7 @@ async function editAndResend(payload: { id: string; content: string }) {
   invokeError.value = null
   try {
     await api.revertSessionMessage(sessionId, payload.id)
+    invalidateHistory()
   } catch (err) {
     const code = (err as { code?: unknown }).code
     const msg = err instanceof Error ? err.message : String(err)
@@ -1190,8 +1307,19 @@ function onEvent(handler: (event: EventEnvelope) => void): () => void {
 }
 
 async function handleSessionEvent(event: EventEnvelope) {
-  const bySeq = new Map(events.value.map((item) => [item.seq, item]))
-  bySeq.set(event.seq, event)
+  if (event.session_id && event.session_id !== selectedSessionId.value) return
+  if (event.type === 'stream.ready') {
+    const epoch = event.payload?.['revert_epoch']
+    if (typeof epoch === 'number' && revertEpoch !== null && epoch !== revertEpoch) invalidateHistory(epoch)
+    return loadMessagesAndApprovals(true)
+  }
+  if (event.type === 'history.changed') {
+    const epoch = event.payload?.['revert_epoch']
+    if (typeof epoch !== 'number' || epoch !== revertEpoch) invalidateHistory(typeof epoch === 'number' ? epoch : null)
+    return loadMessagesAndApprovals(true)
+  }
+  const bySeq = new Map(events.value.map((item) => [`${item.run_id}:${item.seq}`, item]))
+  bySeq.set(`${event.run_id}:${event.seq}`, event)
   events.value = [...bySeq.values()].sort((left, right) => left.seq - right.seq).slice(-80)
   // Core took a waiting message out of the queue: it runs now, was rejected, or was dequeued.
   if (event.type === 'interaction.queued_executed' || event.type === 'interaction.queue_cancelled' || event.type === 'interaction.queued_unreadable') {
@@ -1200,18 +1328,15 @@ async function handleSessionEvent(event: EventEnvelope) {
     const released = event.payload?.['released_run_id']
     if (event.type === 'interaction.queued_executed' && typeof released === 'string') attachRun(released)
   }
-  if (
-    event.type.startsWith('message.') ||
-    event.type.startsWith('approval.') ||
-    event.type.startsWith('tool.') ||
-    event.type.startsWith('run.') ||
-    event.type.startsWith('task') ||
-    event.type.startsWith('supervision.') ||
-    event.type.startsWith('context.') ||
-    event.type.startsWith('step.')
-  ) {
-    await loadMessagesAndApprovals()
+  const groups = new Set<ReadGroup>()
+  if (event.type.startsWith('message.') || event.type === 'user.response' || event.type.startsWith('interaction.') || event.type.startsWith('run.') || event.type === 'task.accepted' || event.type === 'task.cancelled') groups.add('messages')
+  if (event.type.startsWith('approval.') || event.type.startsWith('governance.permission')) groups.add('approvals')
+  if (event.type.startsWith('tool.') || event.type.startsWith('approval.') || event.type.startsWith('run.') || event.type.startsWith('task') || event.type.startsWith('step.')) {
+    if (event.run_id) pendingActivityRuns.add(event.run_id)
+    groups.add('activity')
   }
+  if (event.type.startsWith('run.') || event.type.startsWith('task') || event.type.startsWith('context.') || event.type.startsWith('step.') || event.type.startsWith('supervision.')) groups.add('orchestration')
+  if (groups.size) await reads.request(...groups)
 }
 
 watch(selectedProjectId, id => {
@@ -1221,7 +1346,7 @@ watch(selectedProjectId, id => {
 }, { flush: 'sync' })
 
 watch([selectedSessionId, selectedStorage], ([, storageId], [, previousStorage]) => {
-  sessionLoadAbort?.abort()
+  invalidateHistory()
   messages.value = storageId !== previousStorage ? [] : messages.value.filter((message) => message.session_id === selectedSessionId.value)
   orchestration.value = null
   approvals.value = []
@@ -1257,7 +1382,9 @@ watch(canAccessBackend, ready => {
   if (hostAccessStatus.value?.error?.code === 'desktop_restart_required' || hostAccessStatus.value?.error?.code === 'host_bridge_unavailable') {
     for (const key of ['home-load', 'home-doctor', 'home-readiness']) dismissByKey(key)
   }
-  initialRead++; sessionListRead++; sessionListAbort?.abort(); sessionLoadAbort?.abort()
+  initialRead++; sessionListRead++; sessionListAbort?.abort()
+  sessionRead++; sessionLoadAbort?.abort(); olderAbort?.abort(); reads.reset()
+  olderRead = null; loadingOlderMessages.value = false; messagesLoading.value = false
   for (const stream of runStreams.values()) stream.disconnect()
   suspendFollowingSession(currentSession.value ? selectionKey(currentSession.value) : selectedSessionId.value ?? '')
   runStreamsSuspended = true; working.value = false; busy.value = false
@@ -1278,7 +1405,7 @@ function start() {
   if (started) return
   started = true
   if (canAccessBackend.value) void loadInitial()
-  subscribeToSessionEvents(handleSessionEvent)
+  subscribeToSessionEvents(handleSessionEvent, { scope: selectedSessionId })
   followSession(currentSession.value ? selectionKey(currentSession.value) : selectedSessionId.value)
 }
 
@@ -1290,6 +1417,12 @@ export const homeController = {
   projects,
   sessions,
   messages,
+  hasMoreMessages,
+  loadingOlderMessages,
+  messagesLoading,
+  messagesLoadError,
+  loadOlderMessages,
+  retryMessages,
   approvals,
   approvalRules,
   events,

@@ -271,6 +271,52 @@ describe('useTerminal', () => {
       expect(secondTerm.dispose).not.toHaveBeenCalled()
     })
 
+    it.each(['resolve', 'reject'])('ignores the old snapshot and queued callbacks after re-attachment (%s)', async (outcome) => {
+      const terminal = installTerminalStub()
+      let resolveOld!: (value: unknown) => void
+      let rejectOld!: (cause: unknown) => void
+      terminal.snapshot.mockImplementationOnce(() => new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject }))
+      const { createTerminal, attachTerminal, getTerminal } = module.useTerminal()
+      await createTerminal({})
+      const first = createFakeTerminal()
+      attachTerminal('term-1', laidOutHost(), first as unknown as Terminal, { fit: vi.fn() } as unknown as FitAddon)
+      terminal.dataHandlers[0].cb('old-held')
+      const oldExit = terminal.onExit.mock.calls[0][1] as (code: number) => void
+      const second = createFakeTerminal()
+      attachTerminal('term-1', laidOutHost(), second as unknown as Terminal, { fit: vi.fn() } as unknown as FitAddon)
+      await flush()
+      if (outcome === 'resolve') resolveOld({ replay: 'old-replay', exited: true })
+      else rejectOld(new Error('old failure'))
+      terminal.dataHandlers[0].cb('old-queued')
+      oldExit(1)
+      await flush()
+      expect(first.writes).toEqual([])
+      expect(second.writes).toEqual([])
+      expect(getTerminal('term-1')?.exited).toBe(false)
+    })
+
+    it('revokes the attachment before subscriptions and the renderer are disposed', async () => {
+      const terminal = installTerminalStub()
+      const first = await attachOne(terminal)
+      const { getTerminal, detachTerminal } = module.useTerminal()
+      const assertDetached = () => expect(getTerminal('term-1')).toMatchObject({ term: null, fitAddon: null, ready: false })
+      terminal.dataHandlers[0].remover.mockImplementation(assertDetached)
+      vi.mocked(first.term.dispose).mockImplementation(assertDetached)
+      detachTerminal('term-1', first.term as unknown as Terminal)
+      expect(first.term.dispose).toHaveBeenCalledTimes(1)
+      detachTerminal('term-1')
+      expect(first.term.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    it('reports genuine fit errors for an owned visible terminal', async () => {
+      const terminal = installTerminalStub()
+      await attachOne(terminal)
+      const { getTerminal, fitTerminal } = module.useTerminal()
+      const failure = new TypeError("Cannot read properties of undefined (reading 'dimensions')")
+      vi.mocked(getTerminal('term-1')!.fitAddon!.fit).mockImplementationOnce(() => { throw failure })
+      expect(() => fitTerminal('term-1')).toThrow(failure)
+    })
+
     it('holds live output until the replay snapshot has been written', async () => {
       const terminal = installTerminalStub()
       let resolveSnapshot: (value: { replay: string; exited: boolean; exitCode: number | null }) => void = () => {}

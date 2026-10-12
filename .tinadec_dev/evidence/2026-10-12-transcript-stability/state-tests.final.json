@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-12",
+  "branch": "feat/flat-transcript-refactor",
+  "source_status": "production frozen after final state/API/event-bus review; subsequent test-only network isolation verified",
+  "runs": [
+    {
+      "command": "npx vitest run src/controllers/HomeController.test.ts src/pages/DetachedPanelPage.test.ts src/lib/sessionEventBus.test.ts",
+      "passed": 75,
+      "failed": 0,
+      "files_passed": 3,
+      "duration_seconds": 39.36,
+      "coverage_note": "Includes automatic reconnect revert-epoch handling and transfer fixture timing correction; predates the last same-session cross-storage regression."
+    },
+    {
+      "command": "npx vitest run src/lib/sessionEventBus.test.ts",
+      "passed": 15,
+      "failed": 0,
+      "files_passed": 1,
+      "duration_seconds": 7.14,
+      "coverage_note": "Final event-bus source, including same raw session ID resolving to a new storage scope and rejection of frames from the old source. Supersedes the event-bus portion of the preceding run."
+    },
+    {
+      "command": "npx vitest run src/controllers/HomeController.test.ts --maxWorkers=1",
+      "passed": 54,
+      "failed": 0,
+      "files_passed": 1,
+      "duration_seconds": 25.43,
+      "coverage_note": "Final Home test source, including test-only controlled SSE fetch and disabled reconnect. No real Gateway GET403 messages occurred. Supersedes the Home portion of the preceding runs."
+    }
+  ],
+  "counting_policy": "Runs overlap. Do not sum their test counts; the root agent's final serial full-suite run is authoritative for final totals.",
+  "fixture_correction": "Existing async session-transfer test advances fake time by a further 200ms after its original 1000ms window, allowing the additional bounded 40ms generation-recovery read to complete. Home controller tests inject a controlled empty SSE fetch and disable automatic reconnect while retaining the real stream reducer, preventing requests to a local Gateway. Production behavior was unchanged.",
+  "diff_check": {
+    "command": "git diff --check -- <state/API/event-bus files>",
+    "exit_code": 0,
+    "note": "Only existing LF-to-CRLF normalization warnings."
+  },
+  "key_regressions": [
+    "Activity event bursts coalesce reads instead of producing one REST request per event.",
+    "Auxiliary approvals/orchestration reads cannot hold the transcript snapshot barrier.",
+    "Scope changes and history invalidation reject late message/activity results.",
+    "A same-epoch history control still awaits a snapshot already loading after page-based invalidation.",
+    "Overlapping snapshot/live delivery yields activity steps 1,2,3 without loss or duplication.",
+    "Reconnect after offline history revert discards old buffered frames and deduplication state.",
+    "Detached panels reread the tail after reconnect and discover runs completed while disconnected.",
+    "Optimistic messages settle by persistent message ID, preserving repeated text and unrelated pending steering messages.",
+    "A send receipt arriving before the first page cannot erase the older-page cursor."
+  ],
+  "boundaries": "Unit/component tests and reducer benchmark only. Final typecheck, production build and real Electron acceptance are owned by the root agent; no whole-app or cross-platform claim here."
+}

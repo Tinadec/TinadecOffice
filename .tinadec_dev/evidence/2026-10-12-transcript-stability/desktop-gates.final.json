@@ -1,0 +1,90 @@
+{
+  "date": "2026-10-12",
+  "branch": "feat/flat-transcript-refactor",
+  "base_commit": "1b6b7673",
+  "full_suite": {
+    "command": "node node_modules/vitest/vitest.mjs run --maxWorkers=1",
+    "passed": 1396,
+    "failed": 0,
+    "skipped": 14,
+    "files_total": 154,
+    "files_passed": 153,
+    "files_skipped": 1,
+    "duration_seconds": 204.96,
+    "wrapper_duration_seconds": 207.626,
+    "log": ".tinadec_dev/tmp/transcript-vitest-verified-all.log",
+    "log_sha256": "052a79ab5d61025c5b79d5879dad91785b8cef5d75525cd52b204a91bc84ad12",
+    "receipt": "desktop-full-verified.json",
+    "checked_at": "2026-10-12T11:08:41.351Z"
+  },
+  "corrective_reruns": [
+    {
+      "files": [
+        "ToolResultView.test.ts",
+        "ToolWidgetFrame.test.ts",
+        "toolPresentation.test.ts"
+      ],
+      "passed": 32,
+      "failed": 0,
+      "duration_seconds": 20.65,
+      "covers": "Corrected source-tree guard, on-demand diff loading, widget height and fallback."
+    },
+    {
+      "files": [
+        "HomeController.test.ts"
+      ],
+      "passed": 54,
+      "failed": 0,
+      "duration_seconds": 25.43,
+      "covers": "Final Home state tests with controlled run stream fetch instead of requests to the user's Gateway."
+    }
+  ],
+  "counting_policy": "Latest complete final-source renderer suite1396 passed/14 skipped/0 failed. Previous full suites and targeted repeats are retained but never added to this count.",
+  "native_and_scripts": {
+    "passed": 193,
+    "failed": 0,
+    "skipped": 1,
+    "total": 194,
+    "log": ".tinadec_dev/tmp/transcript-native-all.log"
+  },
+  "typecheck": {
+    "command": "npm run typecheck -w @tinadec/desktop",
+    "exit_code": 0,
+    "log": ".tinadec_dev/tmp/transcript-typecheck-verified.log",
+    "schema_generated_from": "TinadecGateway/tests/__snapshots__/openapi.external.json"
+  },
+  "diagnostics": "One OrganizationPanel worker exceeded the default teardown budget; its assertions passed and no leak was established. Happy-dom cancellation diagnostics also occurred in the initial run. See test-teardown-readonly-audit.json.",
+  "previous_full_suite": {
+    "command": "npx vitest run --maxWorkers=1",
+    "passed": 1388,
+    "failed": 1,
+    "skipped": 14,
+    "files_total": 153,
+    "duration_seconds": 1447.56,
+    "single_failure": "Source-tree tool ID guard found a nonexistent ID in the newly added lazy DiffViewer test fixture. The fixture now uses measured provider ID replace_lines.",
+    "log": ".tinadec_dev/tmp/transcript-vitest-final-all.log",
+    "note": "This was a complete run followed by targeted corrections. It is not a claim that a later all-green full command was executed."
+  },
+  "previous_full_suite_before_final_review": {
+    "command": "node node_modules/vitest/vitest.mjs run --maxWorkers=1",
+    "passed": 1389,
+    "failed": 0,
+    "skipped": 14,
+    "files_total": 153,
+    "files_passed": 152,
+    "files_skipped": 1,
+    "duration_seconds": 2361.84,
+    "wrapper_duration_seconds": 2382.738,
+    "log": ".tinadec_dev/tmp/transcript-vitest-verified-all.log",
+    "log_sha256": "cb7162d27584f62a54604a04170c13a296890266fcd3c3b57ff9924e45be6caa",
+    "receipt": "desktop-full-verified.json",
+    "checked_at": "2026-10-12T09:16:30.929Z"
+  },
+  "final_review_targeted": {
+    "passed": 104,
+    "failed": 0,
+    "files": 7,
+    "receipt": "final-race-gates.json",
+    "typecheck_exit_code": 0
+  }
+}

@@ -275,7 +275,7 @@ export interface paths {
   "/api/v1/events": {
     /**
      * Session events SSE
-     * @description Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume
+     * @description Durable EventEnvelope feed. Live-only mode emits stream.ready and history.changed control frames without event IDs. Run-local sequences deduplicate snapshots and live events; Last-Event-ID / ?cursor remain available for legacy replay.
      */
     get: operations["getApiV1Events"];
   };
@@ -665,6 +665,10 @@ export interface paths {
     /** Update session title and run preferences */
     patch: operations["patchApiV1SessionsBySessionId"];
   };
+  "/api/v1/sessions/{sessionId}/activity": {
+    /** Read activity for loaded and active runs */
+    get: operations["getApiV1SessionsBySessionIdActivity"];
+  };
   "/api/v1/sessions/{sessionId}/archive": {
     /** Archive session */
     post: operations["postApiV1SessionsBySessionIdArchive"];
@@ -714,6 +718,10 @@ export interface paths {
     get: operations["getApiV1SessionsBySessionIdMessages"];
     /** Create message (compat) */
     post: operations["postApiV1SessionsBySessionIdMessages"];
+  };
+  "/api/v1/sessions/{sessionId}/messages/page": {
+    /** Read a bounded message page */
+    get: operations["getApiV1SessionsBySessionIdMessagesPage"];
   };
   "/api/v1/sessions/{sessionId}/messages/{messageId}/revert": {
     /** Revert conversation history to a message */
@@ -1613,6 +1621,7 @@ export interface components {
       id: string;
       role: string;
       run_id: string | null;
+      sequence: string | number;
       session_id: string;
       [key: string]: unknown;
     };
@@ -1906,6 +1915,24 @@ export interface components {
       view_mode: "flat" | "space";
       [key: string]: unknown;
     };
+    SessionActivity: {
+      events: ({
+          event_id: string;
+          event_type: string;
+          payload: {
+            [key: string]: unknown;
+          };
+          run_id: string | null;
+          session_id: string | null;
+          timestamp: string;
+          version: string;
+          [key: string]: unknown;
+        })[];
+      runs: components["schemas"]["Run"][];
+      tool_executions: {
+          [key: string]: unknown;
+        }[];
+    };
     SessionInteractionRequest: {
       attachment_ids?: string[];
       clear_meeting_model_override?: boolean;
@@ -1923,6 +1950,14 @@ export interface components {
       transcript_template?: "concise" | "standard" | "detailed" | "information";
     };
     SessionList: components["schemas"]["Session"][];
+    SessionMessagesPage: {
+      has_more: boolean;
+      history_revision: string | number;
+      items: components["schemas"]["Message"][];
+      next_before_sequence: number | null;
+      revert_epoch: string | number;
+      runs: components["schemas"]["Run"][];
+    };
     SessionTopologyDto: {
       /** Format: date-time */
       generated_at: string;
@@ -3784,9 +3819,15 @@ export interface operations {
   };
   /**
    * Session events SSE
-   * @description Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume
+   * @description Durable EventEnvelope feed. Live-only mode emits stream.ready and history.changed control frames without event IDs. Run-local sequences deduplicate snapshots and live events; Last-Event-ID / ?cursor remain available for legacy replay.
    */
   getApiV1Events: {
+    parameters: {
+      query?: {
+        /** @description False establishes a live subscription and emits stream.ready before the client snapshot. */
+        replay?: boolean;
+      };
+    };
     responses: {
       200: {
         content: never;
@@ -5133,6 +5174,26 @@ export interface operations {
       };
     };
   };
+  /** Read activity for loaded and active runs */
+  getApiV1SessionsBySessionIdActivity: {
+    parameters: {
+      query?: {
+        /** @description Comma-separated run UUIDs, at most 200. Active runs are included. */
+        run_ids?: string;
+      };
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Run-filtered journal events and tool timeline. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SessionActivity"];
+        };
+      };
+    };
+  };
   /** Archive session */
   postApiV1SessionsBySessionIdArchive: {
     parameters: {
@@ -5342,6 +5403,29 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** Read a bounded message page */
+  getApiV1SessionsBySessionIdMessagesPage: {
+    parameters: {
+      query?: {
+        limit?: number;
+        /** @description Exclusive sequence cursor for older messages. */
+        before_sequence?: number;
+        /** @description 409 history_changed if messages were reverted since the previous page. */
+        expected_revert_epoch?: number;
+      };
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Latest messages or the page before an exclusive sequence cursor. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SessionMessagesPage"];
+        };
       };
     };
   };

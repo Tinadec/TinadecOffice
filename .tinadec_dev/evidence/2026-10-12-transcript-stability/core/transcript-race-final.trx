@@ -1,0 +1,51 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="54f13c76-afe4-4649-b234-f10b71e2bc7d" name="lincu@LINSTATION 2026-10-12 12:28:10" runUser="LINSTATION\lincu" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-12T12:28:10.6627399+08:00" queuing="2026-10-12T12:28:10.6627412+08:00" start="2026-10-12T12:25:27.7437003+08:00" finish="2026-10-12T12:31:44.5955701+08:00" />
+  <TestSettings name="default" id="68ef2c7e-d6a0-45ec-ba7a-bf67a0fefb5c">
+    <Deployment runDeploymentRoot="lincu_LINSTATION_2026-10-12_12_28_10" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="74a587f1-7da0-48fd-8d55-cb8cd8aa8212" testId="b9cef4d8-ce0e-4845-aa0f-19d964c7976a" testName="TinadecCore.Api.Tests.StorageApiTests.Activity_OnlyRequestedAndActiveRunsAreReplayedAndTimelineIsBounded" computerName="LINSTATION" duration="00:01:02.2797291" startTime="2026-10-12T12:30:40.9954863+08:00" endTime="2026-10-12T12:31:43.3711980+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="74a587f1-7da0-48fd-8d55-cb8cd8aa8212" />
+    <UnitTestResult executionId="2b3db10c-039c-409a-939e-c0ab6f3c58c3" testId="7314903d-5b0e-223b-0913-63b429e0b365" testName="TinadecCore.Api.Tests.StorageApiTests.MessagePage_TenThousandRowsReadsOnlyLatestHundredBodies" computerName="LINSTATION" duration="00:02:26.1845583" startTime="2026-10-12T12:25:42.9028385+08:00" endTime="2026-10-12T12:28:09.5704004+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2b3db10c-039c-409a-939e-c0ab6f3c58c3" />
+    <UnitTestResult executionId="5cc5496b-0873-4cc3-ad24-b1e0d88c81f6" testId="8ac2eaa6-4f1e-10bf-55b2-8cef72605947" testName="TinadecCore.Api.Tests.StorageApiTests.MessagePage_ConcurrentRevertRetriesFirstPageOnlyOnce" computerName="LINSTATION" duration="00:02:30.3509411" startTime="2026-10-12T12:28:10.0781058+08:00" endTime="2026-10-12T12:30:40.8101276+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5cc5496b-0873-4cc3-ad24-b1e0d88c81f6" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="TinadecCore.Api.Tests.StorageApiTests.MessagePage_ConcurrentRevertRetriesFirstPageOnlyOnce" storage="c:\git\agent\tinadecoffice\.tinadec_dev\tmp\transcript-core-build\bin\tinadeccore.api.tests\debug\tinadeccore.api.tests.dll" id="8ac2eaa6-4f1e-10bf-55b2-8cef72605947">
+      <Execution id="5cc5496b-0873-4cc3-ad24-b1e0d88c81f6" />
+      <TestMethod codeBase="C:\git\agent\TinadecOffice\.tinadec_dev\tmp\transcript-core-build\bin\TinadecCore.Api.Tests\debug\TinadecCore.Api.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="TinadecCore.Api.Tests.StorageApiTests" name="MessagePage_ConcurrentRevertRetriesFirstPageOnlyOnce" />
+    </UnitTest>
+    <UnitTest name="TinadecCore.Api.Tests.StorageApiTests.Activity_OnlyRequestedAndActiveRunsAreReplayedAndTimelineIsBounded" storage="c:\git\agent\tinadecoffice\.tinadec_dev\tmp\transcript-core-build\bin\tinadeccore.api.tests\debug\tinadeccore.api.tests.dll" id="b9cef4d8-ce0e-4845-aa0f-19d964c7976a">
+      <Execution id="74a587f1-7da0-48fd-8d55-cb8cd8aa8212" />
+      <TestMethod codeBase="C:\git\agent\TinadecOffice\.tinadec_dev\tmp\transcript-core-build\bin\TinadecCore.Api.Tests\debug\TinadecCore.Api.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="TinadecCore.Api.Tests.StorageApiTests" name="Activity_OnlyRequestedAndActiveRunsAreReplayedAndTimelineIsBounded" />
+    </UnitTest>
+    <UnitTest name="TinadecCore.Api.Tests.StorageApiTests.MessagePage_TenThousandRowsReadsOnlyLatestHundredBodies" storage="c:\git\agent\tinadecoffice\.tinadec_dev\tmp\transcript-core-build\bin\tinadeccore.api.tests\debug\tinadeccore.api.tests.dll" id="7314903d-5b0e-223b-0913-63b429e0b365">
+      <Execution id="2b3db10c-039c-409a-939e-c0ab6f3c58c3" />
+      <TestMethod codeBase="C:\git\agent\TinadecOffice\.tinadec_dev\tmp\transcript-core-build\bin\TinadecCore.Api.Tests\debug\TinadecCore.Api.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="TinadecCore.Api.Tests.StorageApiTests" name="MessagePage_TenThousandRowsReadsOnlyLatestHundredBodies" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="b9cef4d8-ce0e-4845-aa0f-19d964c7976a" executionId="74a587f1-7da0-48fd-8d55-cb8cd8aa8212" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7314903d-5b0e-223b-0913-63b429e0b365" executionId="2b3db10c-039c-409a-939e-c0ab6f3c58c3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8ac2eaa6-4f1e-10bf-55b2-8cef72605947" executionId="5cc5496b-0873-4cc3-ad24-b1e0d88c81f6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="列表中未列出的结果" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="所有已加载的结果" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="3" executed="3" passed="3" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.11)&#xD;
+[xUnit.net 00:00:02.35]   Discovering: TinadecCore.Api.Tests&#xD;
+[xUnit.net 00:00:04.26]   Discovered:  TinadecCore.Api.Tests&#xD;
+[xUnit.net 00:00:04.83]   Starting:    TinadecCore.Api.Tests&#xD;
+[xUnit.net 00:06:06.15]   Finished:    TinadecCore.Api.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="LINSTATION" outcome="Warning" timestamp="2026-10-12T12:31:44.1667259+08:00">
+        <Text>数据收集器“Blame”消息: 所有测试都已运行完毕，将不生成序列文件。</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

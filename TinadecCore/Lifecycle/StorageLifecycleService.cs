@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
@@ -13,6 +14,7 @@ namespace TinadecCore.Lifecycle;
 public sealed class StorageLifecycleService : IStorageMigrationParticipant
 {
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> RunLocks = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> TaskSnapshotLocks = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const int StreamAppendMaxAttempts = 8;
     private readonly IDbContextFactory<LifecycleDbContext> _dbFactory;
@@ -144,19 +146,95 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         return new RunStartResultRecord(run, Existing: false);
     }
 
-    public async Task<IReadOnlyList<RunRecord>> ListRunsAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<RunRecord>> ListRunsAsync(Guid sessionId, CancellationToken cancellationToken = default,
+        IReadOnlyList<Guid>? revertedMessageIds = null, int? limit = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null) return [];
-        var runs = await db.Runs.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId).ToListAsync(cancellationToken).ConfigureAwait(false);
-        return runs.OrderByDescending(x => x.CreatedAt).ToList();
+        var query = db.Runs.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
+        if (revertedMessageIds is { Count: > 0 }) query = query.Where(x => !revertedMessageIds.Contains(x.TriggerMessageId)
+            || (x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled"));
+        // SQLite cannot order DateTimeOffset directly. Run creation writes UTC;
+        // its existing text representation has the same chronological ordering.
+        IQueryable<RunRecord> ordered = db.Database.IsSqlite()
+            ? query.OrderByDescending(x => x.CreatedAt.ToString())
+            : query.OrderByDescending(x => x.CreatedAt);
+        if (limit is { } count) ordered = ordered.Take(count);
+        return await ordered.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<RunRecord?> FindRunAsync(Guid runId, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         return await db.Runs.SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<RunRecord>> ListActivityRunsAsync(Guid sessionId, IReadOnlyList<Guid> runIds,
+        IReadOnlyList<Guid>? messageIds = null, CancellationToken cancellationToken = default,
+        IReadOnlyList<Guid>? revertedMessageIds = null)
+    {
+        var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return [];
+        messageIds ??= [];
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var query = db.Runs.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == session.TenantId
+            && x.WorkspaceId == session.WorkspaceId && (runIds.Contains(x.Id) || messageIds.Contains(x.TriggerMessageId)
+                || (x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled")));
+        if (revertedMessageIds is { Count: > 0 }) query = query.Where(x => !revertedMessageIds.Contains(x.TriggerMessageId)
+            || (x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled"));
+        var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return rows.OrderByDescending(x => x.CreatedAt).ToArray();
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, long>> GetEventWatermarksAsync(Guid? sessionId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var query = db.Runs.AsNoTracking().AsQueryable();
+        if (sessionId is { } id)
+        {
+            var session = await _sessions.FindAsync(id, cancellationToken).ConfigureAwait(false);
+            if (session is null) return new Dictionary<Guid, long>();
+            query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
+        }
+        return await query.Select(x => new { x.Id, x.LastEventSequence }).ToDictionaryAsync(x => x.Id, x => x.LastEventSequence, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<EventEnvelope>> ReplayRunEventsAsync(Guid sessionId, IReadOnlyList<Guid> runIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (runIds.Count == 0) return [];
+        var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return [];
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.EventIndex.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == session.TenantId
+            && x.WorkspaceId == session.WorkspaceId && runIds.Contains(x.RunId)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<EventEnvelope>> FollowRunEventsAsync(Guid? sessionId, IDictionary<Guid, long> afterByRun,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await GetEventWatermarksAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var changed = current.Where(x => x.Value > (afterByRun.TryGetValue(x.Key, out var after) ? after : 0)).ToArray();
+        if (changed.Length == 0) return [];
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // Each run owns its sequence. The disjunction retains that boundary in SQL and
+        // queries only changed runs; a timestamp projection must not scan all history.
+        var row = Expression.Parameter(typeof(EventIndexRecord), "row");
+        Expression predicate = Expression.Constant(false);
+        foreach (var item in changed)
+        {
+            var after = afterByRun.TryGetValue(item.Key, out var value) ? value : 0;
+            predicate = Expression.OrElse(predicate, Expression.AndAlso(
+                Expression.Equal(Expression.Property(row, nameof(EventIndexRecord.RunId)), Expression.Constant(item.Key)),
+                Expression.GreaterThan(Expression.Property(row, nameof(EventIndexRecord.Sequence)), Expression.Constant(after))));
+        }
+        var rows = await db.EventIndex.AsNoTracking().Where(Expression.Lambda<Func<EventIndexRecord, bool>>(predicate, row))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var events = await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+        foreach (var group in rows.GroupBy(x => x.RunId)) afterByRun[group.Key] = group.Max(x => x.Sequence);
+        return events;
     }
 
     public async Task AdvanceRunContextRevisionAsync(Guid runId, long contextRevision, CancellationToken cancellationToken = default)
@@ -471,10 +549,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         finally { gate.Release(); }
     }
 
-    public async Task<IReadOnlyList<EventEnvelope>> ReplayEventsAsync(Guid? sessionId, long afterSequence, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<EventEnvelope>> ReplayEventsAsync(Guid? sessionId, long afterSequence, CancellationToken cancellationToken = default,
+        Guid? runId = null, IReadOnlyList<string>? eventTypes = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var query = db.EventIndex.AsNoTracking().Where(x => x.Sequence > afterSequence);
+        if (runId is { } selectedRun) query = query.Where(x => x.RunId == selectedRun);
+        if (eventTypes is not null) query = query.Where(x => eventTypes.Contains(x.EventType));
         if (sessionId is { } id)
         {
             var session = await _sessions.FindAsync(id, cancellationToken).ConfigureAwait(false);
@@ -518,40 +599,43 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     {
         rows = rows.OrderBy(x => x.Timestamp).ThenBy(x => x.Sequence).ToList();
         var events = new List<EventEnvelope>(rows.Count);
-        foreach (var row in rows)
+        foreach (var group in rows.GroupBy(x => x.RunId))
         {
-            var filePath = _paths.EventLog(row.RunId);
+            var filePath = _paths.EventLog(group.Key);
             if (!File.Exists(filePath)) continue;
             await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            stream.Seek(row.ByteOffset, SeekOrigin.Begin);
-            var bytes = new byte[row.ByteLength];
-            var read = 0;
-            while (read < bytes.Length)
+            foreach (var row in group)
             {
-                var count = await stream.ReadAsync(bytes.AsMemory(read), cancellationToken).ConfigureAwait(false);
-                if (count == 0) break;
-                read += count;
+                stream.Seek(row.ByteOffset, SeekOrigin.Begin);
+                var bytes = new byte[row.ByteLength];
+                var read = 0;
+                while (read < bytes.Length)
+                {
+                    var count = await stream.ReadAsync(bytes.AsMemory(read), cancellationToken).ConfigureAwait(false);
+                    if (count == 0) break;
+                    read += count;
+                }
+                if (read != bytes.Length) continue;
+                EventFileRecord? record;
+                try
+                {
+                    record = JsonSerializer.Deserialize<EventFileRecord>(bytes, JsonOptions);
+                }
+                catch (JsonException)
+                {
+                    // 与 ReconcileAsync 同一容错口径：单个损坏/错位的事件行（追加写入途中
+                    // 进程被强杀，或 event_index 的 ByteOffset/ByteLength 与文件实际字节错位）
+                    // 不得让整个 replay/follow 端点 500——那会打断整条事件流，聊天与运行状态
+                    // 全部不可见。文件行本身通常仍合法（ReconcileAsync 启动时按换行重建索引会
+                    // 补齐缺失行），这里只跳过索引错位的单行并留痕，保持事件流可用。
+                    _diagnostics.Add($"Ignoring malformed JSONL record for run {row.RunId} at byte {row.ByteOffset}.");
+                    continue;
+                }
+                if (record is null) continue;
+                events.Add(new EventEnvelope { Version = record.Version, EventId = record.EventId.ToString(), EventType = record.EventType, Timestamp = record.Timestamp, SessionId = record.SessionId.ToString(), RunId = record.RunId.ToString(), Payload = new Dictionary<string, object?> { ["sequence"] = record.Sequence, ["summary"] = record.Summary, ["severity"] = record.Severity, ["payload"] = record.Payload } });
             }
-            if (read != bytes.Length) continue;
-            EventFileRecord? record;
-            try
-            {
-                record = JsonSerializer.Deserialize<EventFileRecord>(bytes, JsonOptions);
-            }
-            catch (JsonException)
-            {
-                // 与 ReconcileAsync 同一容错口径：单个损坏/错位的事件行（追加写入途中
-                // 进程被强杀，或 event_index 的 ByteOffset/ByteLength 与文件实际字节错位）
-                // 不得让整个 replay/follow 端点 500——那会打断整条事件流，聊天与运行状态
-                // 全部不可见。文件行本身通常仍合法（ReconcileAsync 启动时按换行重建索引会
-                // 补齐缺失行），这里只跳过索引错位的单行并留痕，保持事件流可用。
-                _diagnostics.Add($"Ignoring malformed JSONL record for run {row.RunId} at byte {row.ByteOffset}.");
-                continue;
-            }
-            if (record is null) continue;
-            events.Add(new EventEnvelope { Version = record.Version, EventId = record.EventId.ToString(), EventType = record.EventType, Timestamp = record.Timestamp, SessionId = record.SessionId.ToString(), RunId = record.RunId.ToString(), Payload = new Dictionary<string, object?> { ["sequence"] = record.Sequence, ["summary"] = record.Summary, ["severity"] = record.Severity, ["payload"] = record.Payload } });
         }
-        return events;
+        return events.OrderBy(x => x.Timestamp).ThenBy(x => Convert.ToInt64(x.Payload["sequence"])).ToList();
     }
 
     public async Task<IReadOnlyList<RunRecord>> ListNonTerminalRunsAsync(CancellationToken cancellationToken = default)
@@ -1410,6 +1494,14 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
 
     public async Task WriteTaskSnapshotAsync(Guid runId, TaskSnapshotFile snapshot, CancellationToken cancellationToken = default)
     {
+        var gate = TaskSnapshotLocks.GetOrAdd(runId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { await WriteTaskSnapshotCoreAsync(runId, snapshot, cancellationToken).ConfigureAwait(false); }
+        finally { gate.Release(); }
+    }
+
+    private async Task WriteTaskSnapshotCoreAsync(Guid runId, TaskSnapshotFile snapshot, CancellationToken cancellationToken)
+    {
         var path = _paths.TaskSnapshot(runId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -1428,27 +1520,37 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
 
     public async Task UpdateTaskAsync(Guid runId, object taskNode, CancellationToken cancellationToken = default)
     {
-        var path = _paths.TaskSnapshot(runId);
-        TaskSnapshotFile snapshot;
-        if (File.Exists(path))
+        // Read/modify/replace and its revision belong to one update. Readers share
+        // delete so Windows can replace the previous immutable file atomically.
+        var gate = TaskSnapshotLocks.GetOrAdd(runId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await using var s = File.OpenRead(path);
-            snapshot = JsonSerializer.DeserializeAsync<TaskSnapshotFile>(s, JsonOptions, cancellationToken).ConfigureAwait(false).GetAwaiter().GetResult() ?? new TaskSnapshotFile { RunId = runId };
+            var path = _paths.TaskSnapshot(runId);
+            TaskSnapshotFile snapshot;
+            if (File.Exists(path))
+            {
+                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                snapshot = await JsonSerializer.DeserializeAsync<TaskSnapshotFile>(stream, JsonOptions, cancellationToken).ConfigureAwait(false)
+                    ?? new TaskSnapshotFile { RunId = runId };
+            }
+            else
+            {
+                snapshot = new TaskSnapshotFile { RunId = runId };
+            }
+            snapshot.Tasks.Add(taskNode);
+            await WriteTaskSnapshotCoreAsync(runId, snapshot, cancellationToken).ConfigureAwait(false);
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var run = await db.Runs.SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
+            if (run != null)
+            {
+                run.TaskRevision++;
+                run.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
-        else
-        {
-            snapshot = new TaskSnapshotFile { RunId = runId };
-        }
-        snapshot.Tasks.Add(taskNode);
-        await WriteTaskSnapshotAsync(runId, snapshot, cancellationToken).ConfigureAwait(false);
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var run = await db.Runs.SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
-        if (run != null)
-        {
-            run.TaskRevision++;
-            run.UpdatedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
+        finally { gate.Release(); }
     }
 
     private async Task<FrozenRunConfiguration> ReadFrozenConfigurationAsync(RunRecord run, CancellationToken cancellationToken)

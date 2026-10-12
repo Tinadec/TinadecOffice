@@ -27,7 +27,7 @@ test('lock-in: a route that staged 201 and then failed answers 500, not 201', { 
     new Response('<html><body>bad gateway from an intermediate layer</body></html>', {
       status: 201,
       headers: { 'content-type': 'text/html' },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
 
   const response = await app.handle(
     new Request('http://gateway.local/api/v1/sessions/sess-1/attachments?filename=a.txt', {
@@ -49,7 +49,7 @@ test('lock-in: a route that staged 413 and then failed keeps 413', { concurrency
     new Response('<html>payload too large</html>', {
       status: 413,
       headers: { 'content-type': 'text/html' },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
 
   const response = await app.handle(
     new Request('http://gateway.local/api/v1/sessions/sess-1/attachments', {
@@ -67,7 +67,7 @@ test('lock-in: a route that staged 413 and then failed keeps 413', { concurrency
 test('an unreachable Core on an SSE route answers 502 ProblemDetails', { concurrency: false }, async () => {
   globalThis.fetch = (async () => {
     throw new Error('connect ECONNREFUSED 127.0.0.1:48731');
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 
   const response = await app.handle(
     new Request('http://gateway.local/api/v1/runs/run-1/stream'),
@@ -83,7 +83,7 @@ test('an unreachable Core on an SSE route answers 502 ProblemDetails', { concurr
 test('an unreachable Core on a streaming download answers 502, not 500', { concurrency: false }, async () => {
   globalThis.fetch = (async () => {
     throw new Error('connect ECONNREFUSED 127.0.0.1:48731');
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 
   const response = await app.handle(
     new Request('http://gateway.local/api/v1/attachments/att-1/content'),

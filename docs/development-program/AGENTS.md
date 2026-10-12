@@ -7,10 +7,14 @@
 沿用APP-HOME-107唯一任务，宿主启动、Core逐项挂载、Gateway错误投影与Desktop跨作用域读取分别交叉引用。证据与实际/模拟边界见 .tinadec_dev/reports/2026-10-10-interface-regression.zh-CN.md。目录、用户配置和测试包均保留；未宣称全平台完成。
 
 **Generated:** 2026-10-05
-**Last Updated:** 2026-10-11
-**Last Updated By:** APP-HOME-107 智能体目录性能、读取恢复及配置缓存契约；任务入口不复制。
-**Last Verified Commit:** df0977ff（本轮全部代码）；本轮证据、实际/夹具边界及测试对账见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md。
-**Branch:** main
+**Last Updated:** 2026-10-12
+**Last Updated By:** APP-HOME-108 对话流稳定性专项；各模块交叉引用唯一任务。
+**Last Verified Commit:** 1b6b7673 + 本轮工作树；证据与测试对账见 .tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md。
+**Branch:** feat/flat-transcript-refactor
+
+### 2026-10-12 对话流稳定性
+
+APP-HOME-108/F008持有终端崩溃、折叠活动/滚动回归、消息分页与事件读取专项；Memory/Lifecycle、Gateway session/streaming、共享Renderer与UIE交叉引用，不复制任务。报告单列实际Electron几何/终端、API/SQLite、受控Provider、完整测试/构建及外部凭据不可用边界。既有APP-HOME-101真实消息整体、空间组合、三平台与安装器不因专项自动完成。
 
 ### 2026-10-11 设置目录读取恢复
 

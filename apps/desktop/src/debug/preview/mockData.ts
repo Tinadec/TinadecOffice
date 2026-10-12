@@ -385,6 +385,7 @@ export function mockMessages(sessionId: string): MessageDto[] {
   return [
     {
       id: id('msg', 1),
+      sequence: 1,
       run_id: null,
       attachments: [MOCK_ATTACHMENT_SUMMARY],
       session_id: sessionId,
@@ -394,6 +395,7 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 2),
+      sequence: 2,
       run_id: null,
       attachments: [],
       session_id: sessionId,
@@ -403,6 +405,7 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 3),
+      sequence: 3,
       run_id: null,
       attachments: [],
       session_id: sessionId,
@@ -412,6 +415,7 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 4),
+      sequence: 4,
       run_id: null,
       attachments: [],
       session_id: sessionId,
@@ -421,6 +425,7 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 5),
+      sequence: 5,
       run_id: null,
       attachments: [],
       session_id: sessionId,
@@ -430,6 +435,7 @@ export function mockMessages(sessionId: string): MessageDto[] {
     },
     {
       id: id('msg', 6),
+      sequence: 6,
       run_id: null,
       attachments: [],
       session_id: sessionId,
@@ -446,6 +452,7 @@ export function mockManyMessages(sessionId: string): MessageDto[] {
   for (let i = 0; i < 8; i++) {
     extra.push({
       id: id('msg', 100 + i * 2),
+      sequence: 7 + i * 2,
       run_id: null,
       attachments: [],
       session_id: sessionId,
@@ -455,6 +462,7 @@ export function mockManyMessages(sessionId: string): MessageDto[] {
     })
     extra.push({
       id: id('msg', 101 + i * 2),
+      sequence: 8 + i * 2,
       run_id: null,
       attachments: [],
       session_id: sessionId,

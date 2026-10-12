@@ -11,6 +11,10 @@
 | CORE-MEMORY-F003 | 创建时固定平面/空间会话类型 | 已验收 | Core定向14/14（SQLite HTTP） | 历史null投影flat；未验证PostgreSQL | [报告](../../../../../.tinadec_dev/reports/2026-10-06-session-view-isolation.zh-CN.md) |
 | CORE-MEMORY-F004 | scope 内会话事实与宿主协调项目转移 | 部分实现 | SQLite双scope与迁移定向 | ProjectId稳定；副本宿主ID独立；迁移排空已受理队列，后续运行使用目标配置；关联事实删除由Runtime组合。 | [报告](../../../../../.tinadec_dev/reports/2026-10-09-storage-reconstruction.zh-CN.md)<br>[ProjectSessionStore](../../../../../TinadecCore/Memory/ProjectSessionStore.cs) |
 
+## 2026-10-12 对话流读取专项
+
+消息keyset SQL分页、公开sequence、页内附件和派生revert_epoch已实现。10000条历史测试把旧9900正文指向缺失对象，最近100页仍200；追加不失效、撤回冲突与并发读只重试一次由API定向验收。唯一任务[APP-HOME-108](../../app/home/TODO.md#app-home-108)，[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)区分SQLite/HTTP/平台范围；不改变F001整体审计结论。
+
 ## 状态词汇
 
 - 待核查：尚不能判断是否实现或缺失。

@@ -12,8 +12,10 @@ import { toolIconOf } from '@/lib/toolPresentation'
 import { foldSummary } from '@/lib/toolSentence'
 import { toolKindOf } from '@/lib/toolPresentation'
 import type { ToolCall } from '@/composables/useAgentActivity'
+import ToolCallCard from './ToolCallCard.vue'
 
-const props = defineProps<{ calls: ToolCall[] }>()
+const props = defineProps<{ calls: ToolCall[]; runId?: string | null; richViews?: boolean; allowWidget?: boolean }>()
+const emit = defineEmits<{ approve: [id: string]; reject: [id: string] }>()
 const { t } = useI18n()
 
 const expanded = ref(false)
@@ -49,9 +51,9 @@ const targets = computed(() => {
       <span v-if="targets.length" class="tool-group-targets">{{ targets.join('、') }}</span>
     </button>
     <ul v-if="expanded" class="tool-group-items">
-      <li v-for="call in calls" :key="call.id" :class="{ 'is-failed': call.status === 'failed' }">
-        <span class="tool-group-verb">{{ call.toolName }}</span>
-        <span class="tool-group-arg">{{ call.argsSummary }}</span>
+      <li v-for="call in calls" :key="call.id">
+        <ToolCallCard :tool-call="call" :run-id="call.runId ?? runId" :rich-views="richViews" :allow-widget="allowWidget"
+          @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
       </li>
     </ul>
   </div>
@@ -105,10 +107,7 @@ const targets = computed(() => {
   color: var(--text-chat-muted);
 }
 
-.tool-group-items li { display: flex; gap: 6px; min-width: 0; }
-.tool-group-items li.is-failed { color: var(--accent-danger); }
-.tool-group-verb { flex-shrink: 0; color: var(--text-secondary); }
-.tool-group-arg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-group-items li { min-width: 0; }
 
 @media (prefers-reduced-motion: reduce) { .tool-group-chevron { transition: none; } }
 </style>

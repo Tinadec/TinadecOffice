@@ -16,6 +16,7 @@ const session = 'sess-conversation-flow'
 function msg(id: string, role: 'user' | 'assistant', content: string, createdOffsetMin: number): MessageDto {
   return {
     id,
+    sequence: createdOffsetMin + 1,
     session_id: session,
     run_id: null,
     attachments: [],

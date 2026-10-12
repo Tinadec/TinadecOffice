@@ -1195,6 +1195,9 @@ describe('ComposerBar attachments', () => {
   })
 
   it('renders one chip per pending row with its size, state and named remove', async () => {
+    // The 120ms spinner delay must be controlled even while the whole suite is busy.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
     attachMock.list.value = [
       row({ clientId: 'c1' }),
       row({ clientId: 'c2', fileName: 'shot.png', mediaType: 'image/png', status: 'uploading', attachmentId: null }),
@@ -1220,6 +1223,7 @@ describe('ComposerBar attachments', () => {
     expect(chips[2]!.text()).toContain('33554432B')
     expect(wrapper.find('.composer-attachments').attributes('aria-live')).toBe('polite')
     wrapper.unmount()
+    } finally { vi.useRealTimers() }
   })
 
   it('removes a chip through the module instead of editing a local copy', async () => {

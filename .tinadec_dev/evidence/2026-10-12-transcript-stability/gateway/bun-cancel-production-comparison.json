@@ -1,0 +1,42 @@
+{
+  "platform": "win32",
+  "node": "v26.5.0",
+  "checked_at": "2026-10-12T07:44:16.690Z",
+  "requests_per_mode": 100,
+  "isolated_node_http_upstream": true,
+  "real_socket_disconnect": true,
+  "results": [
+    {
+      "mode": "elysia-chunked",
+      "completed": 100,
+      "exited": false,
+      "exitCode": null,
+      "abortErrors": 96,
+      "panic": false
+    },
+    {
+      "mode": "elysia-stripped",
+      "completed": 100,
+      "exited": false,
+      "exitCode": null,
+      "abortErrors": 0,
+      "panic": false
+    },
+    {
+      "mode": "elysia-production",
+      "completed": 100,
+      "exited": false,
+      "exitCode": null,
+      "abortErrors": 0,
+      "panic": false
+    },
+    {
+      "mode": "native",
+      "completed": 100,
+      "exited": false,
+      "exitCode": null,
+      "abortErrors": 0,
+      "panic": false
+    }
+  ]
+}

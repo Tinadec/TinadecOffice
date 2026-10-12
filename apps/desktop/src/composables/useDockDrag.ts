@@ -1,6 +1,6 @@
 import { ref, type Ref } from 'vue'
-import { resolveDockDrop, type DockDropZone, type DockPaneHitRect } from '@tinadec/ui'
-import type { UieDockPaneGeometry, UieSlotId } from '@tinadec/ui'
+import { resolveDockDrop, type DockDropZone, type DockPaneHitRect } from '../../../TinadecUI/src/engine/dockDrop'
+import type { UieDockPaneGeometry, UieSlotId } from '../../../TinadecUI/src/engine/types'
 
 // ---------------------------------------------------------------------------
 // useDockDrag — in-window tab drag state for the feature-panel dock.

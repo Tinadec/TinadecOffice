@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import TurnTimeline from './TurnTimeline.vue'
 import ToolResultView from './ToolResultView.vue'
 import ThinkingProcess from './ThinkingProcess.vue'
+import ToolCallCard from './ToolCallCard.vue'
+import { api } from '@/api'
 import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 import zh from '@/locales/zh-CN'
 
@@ -20,8 +22,6 @@ vi.mock('@/api', () => ({
   api: { getApprovalGates: vi.fn().mockResolvedValue(null), getToolExecutionResult: vi.fn() },
 }))
 
-// A write, not a read: quiet reads fold into a summary row by design, so the rich-result
-// view only ever hangs off a call that keeps its own line.
 const finished: ToolCall = {
   id: 'call-1', toolId: 'write_file', toolName: 'write_file', status: 'completed',
   startedAt: null, completedAt: null, durationMs: 12, argsSummary: 'src/graph.ts',
@@ -43,6 +43,19 @@ async function openBoth(wrapper: ReturnType<typeof mountWith>) {
 }
 
 describe('TurnTimeline conversation template', () => {
+  it.each(['read_file', 'ls', 'file_search'])('opens grouped %s results only when its call is opened', async (toolId) => {
+    vi.mocked(api.getToolExecutionResult).mockResolvedValue({ body: 'stored output' } as never)
+    const wrapper = mountWith({ toolCalls: [{ ...finished, toolId, toolName: toolId }], settled: true, richToolViews: true, allowToolWidget: true, runId: 'run-1' })
+    expect(wrapper.findComponent(ToolCallCard).exists()).toBe(false)
+    await wrapper.get('[data-testid="activity-toggle"]').trigger('click')
+    await wrapper.get('.tool-group-head').trigger('click')
+    expect(wrapper.getComponent(ToolCallCard).props()).toMatchObject({ runId: 'run-1', richViews: true, allowWidget: true })
+    expect(wrapper.findComponent(ToolResultView).exists()).toBe(false)
+    await wrapper.get('.tool-call-head').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('stored output')
+    wrapper.unmount()
+  })
   it('does not fetch a result for a row the reader has not opened', async () => {
     const wrapper = mountWith({ toolCalls: [finished], settled: true, richToolViews: true })
     await wrapper.get('[data-testid="activity-toggle"]').trigger('click')
@@ -78,7 +91,6 @@ describe('TurnTimeline subagent ownership', () => {
 
   it('renders an attributed step only inside its subagent card', async () => {
     const wrapper = mountWith({ thinkingSteps: attributed, settled: false })
-    await wrapper.get('[data-testid="activity-toggle"]').trigger('click')
     const cards = wrapper.findAll('[data-testid="subagent-card"]')
     expect(cards).toHaveLength(1)
     // Two folds: the turn's activity, then the card's own body.
@@ -91,7 +103,13 @@ describe('TurnTimeline subagent ownership', () => {
   it('still renders the fold when a subagent is the only activity', async () => {
     const wrapper = mountWith({ thinkingSteps: attributed, settled: false })
     expect(wrapper.find('[data-testid="activity-summary"]').exists()).toBe(true)
-    await wrapper.get('[data-testid="activity-toggle"]').trigger('click')
     expect(wrapper.findAll('[data-testid="subagent-card"]').length).toBe(1)
+  })
+
+  it('passes the actual run to a subagent call instead of the task grouping key', async () => {
+    const call = { ...finished, runId: 'run-child', taskId: 't1', handle: 'search#1' }
+    const wrapper = mountWith({ thinkingSteps: attributed, toolCalls: [call], runId: 'run-parent', settled: false })
+    await wrapper.get('.subagent-head').trigger('click')
+    expect(wrapper.getComponent(ToolCallCard).props('runId')).toBe('run-child')
   })
 })

@@ -11,7 +11,8 @@
  */
 
 import { getConfig } from './config.js';
-import { upstreamUnreachableResponse } from './upstreamFailure.js';
+import { rethrowCancellation, upstreamUnreachableResponse } from './upstreamFailure.js';
+import { createStreamProxyResponse } from './streamResponse.js';
 
 export type ToolRuntimeBody = Record<string, unknown> | string | undefined;
 
@@ -109,14 +110,16 @@ export async function proxyToolRuntimeSse(
 ): Promise<Response> {
   const url = toolRuntimeEndpoint(path);
   try {
-    return await fetch(url, {
+    return createStreamProxyResponse(await fetch(url, {
       ...init,
+      redirect: 'manual',
       headers: {
         accept: 'text/event-stream',
         ...(init?.headers ?? {}),
       },
-    });
+    }));
   } catch (error) {
+    rethrowCancellation(error, init?.signal);
     return upstreamUnreachableResponse('toolRuntime', url, error);
   }
 }
@@ -131,8 +134,9 @@ export async function proxyToolRuntimeStream(
 ): Promise<Response> {
   const url = toolRuntimeEndpoint(path);
   try {
-    return await fetch(url, init);
+    return createStreamProxyResponse(await fetch(url, { ...init, redirect: 'manual' }));
   } catch (error) {
+    rethrowCancellation(error, init?.signal);
     return upstreamUnreachableResponse('toolRuntime', url, error);
   }
 }

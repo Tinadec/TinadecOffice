@@ -1,0 +1,162 @@
+{
+  "measured_at": "2026-10-12T04:30:18.455Z",
+  "runtime": "v26.5.0",
+  "cpu": "Intel(R) Core(TM) Ultra 5 226V",
+  "workload": "Real useAgentActivity reducer, one accepted event plus context.packed records; no DOM paint or HTTP; three 1000-event warmups, seven alternating-size repetitions.",
+  "rest_reads": 0,
+  "summaries": [
+    {
+      "events": 1000,
+      "samples": 7,
+      "median_hydrate_ms": 285.55079999999725,
+      "median_duplicate_ms": 2.90060000000085,
+      "hydrate_microseconds_per_event": 285.55079999999725
+    },
+    {
+      "events": 2000,
+      "samples": 7,
+      "median_hydrate_ms": 613.193299999999,
+      "median_duplicate_ms": 13.532899999998335,
+      "hydrate_microseconds_per_event": 306.5966499999995
+    },
+    {
+      "events": 4000,
+      "samples": 7,
+      "median_hydrate_ms": 1291.5046000000002,
+      "median_duplicate_ms": 56.234700000000885,
+      "hydrate_microseconds_per_event": 322.87615
+    }
+  ],
+  "samples": [
+    {
+      "events": 1000,
+      "steps": 1000,
+      "hydrate_ms": 433.7079999999987,
+      "duplicate_ms": 27.196100000001024
+    },
+    {
+      "events": 2000,
+      "steps": 2000,
+      "hydrate_ms": 613.193299999999,
+      "duplicate_ms": 17.468000000000757
+    },
+    {
+      "events": 4000,
+      "steps": 4000,
+      "hydrate_ms": 1048.8344999999972,
+      "duplicate_ms": 11.12380000000121
+    },
+    {
+      "events": 4000,
+      "steps": 4000,
+      "hydrate_ms": 1291.5046000000002,
+      "duplicate_ms": 139.2103999999963
+    },
+    {
+      "events": 2000,
+      "steps": 2000,
+      "hydrate_ms": 682.2914000000019,
+      "duplicate_ms": 13.532899999998335
+    },
+    {
+      "events": 1000,
+      "steps": 1000,
+      "hydrate_ms": 285.55079999999725,
+      "duplicate_ms": 4.479200000001583
+    },
+    {
+      "events": 1000,
+      "steps": 1000,
+      "hydrate_ms": 247.14630000000034,
+      "duplicate_ms": 2.768500000005588
+    },
+    {
+      "events": 2000,
+      "steps": 2000,
+      "hydrate_ms": 632.2882000000027,
+      "duplicate_ms": 133.72909999999683
+    },
+    {
+      "events": 4000,
+      "steps": 4000,
+      "hydrate_ms": 1676.6774000000005,
+      "duplicate_ms": 26.93789999999717
+    },
+    {
+      "events": 4000,
+      "steps": 4000,
+      "hydrate_ms": 994.5077000000019,
+      "duplicate_ms": 358.9059999999954
+    },
+    {
+      "events": 2000,
+      "steps": 2000,
+      "hydrate_ms": 506.44200000000274,
+      "duplicate_ms": 7.054199999998673
+    },
+    {
+      "events": 1000,
+      "steps": 1000,
+      "hydrate_ms": 174.5118999999977,
+      "duplicate_ms": 1.8812999999936437
+    },
+    {
+      "events": 1000,
+      "steps": 1000,
+      "hydrate_ms": 287.7260000000024,
+      "duplicate_ms": 4.212299999999232
+    },
+    {
+      "events": 2000,
+      "steps": 2000,
+      "hydrate_ms": 386.50450000000274,
+      "duplicate_ms": 7.776299999997718
+    },
+    {
+      "events": 4000,
+      "steps": 4000,
+      "hydrate_ms": 1705.6391999999978,
+      "duplicate_ms": 183.7644999999975
+    },
+    {
+      "events": 4000,
+      "steps": 4000,
+      "hydrate_ms": 1993.7137000000002,
+      "duplicate_ms": 16.313200000004144
+    },
+    {
+      "events": 2000,
+      "steps": 2000,
+      "hydrate_ms": 829.4634000000005,
+      "duplicate_ms": 4.230499999997846
+    },
+    {
+      "events": 1000,
+      "steps": 1000,
+      "hydrate_ms": 207.01000000000204,
+      "duplicate_ms": 2.90060000000085
+    },
+    {
+      "events": 1000,
+      "steps": 1000,
+      "hydrate_ms": 298.18709999999555,
+      "duplicate_ms": 1.7443999999959487
+    },
+    {
+      "events": 2000,
+      "steps": 2000,
+      "hydrate_ms": 307.52990000000136,
+      "duplicate_ms": 139.130799999999
+    },
+    {
+      "events": 4000,
+      "steps": 4000,
+      "hydrate_ms": 958.7289999999994,
+      "duplicate_ms": 56.234700000000885
+    }
+  ],
+  "doubling_ratios": [
+    2.1474052953099934,
+    2.106194898085159
+  ]
+}

@@ -17,6 +17,7 @@ import { groupStatus, groupTargets, type SubAgentGroup } from '@/lib/subAgents'
 const props = defineProps<{
   group: SubAgentGroup
   defaultOpen?: boolean
+  runId?: string | null
   /** Forwarded to the calls this instance made, exactly as the turn forwards them to its own. */
   richViews?: boolean
   allowWidget?: boolean
@@ -54,7 +55,7 @@ const roleLabel = computed(() => props.group.slug ?? null)
       <!-- The calls this instance made, which is what makes the card a record of its work rather
            than only of its thoughts. Pending approvals are deliberately not here — they stay on the
            turn's spine so the decision is never behind a fold. -->
-      <ToolCallCard v-for="call in group.calls" :key="call.id" :tool-call="call" :run-id="group.key"
+      <ToolCallCard v-for="call in group.calls" :key="call.id" :tool-call="call" :run-id="call.runId ?? runId"
         :rich-views="richViews" :allow-widget="allowWidget"
         @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
     </div>

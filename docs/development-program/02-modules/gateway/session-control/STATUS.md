@@ -9,6 +9,10 @@
 | GW-SESSIONS-F001 | 项目、会话、interaction 与 run 控制薄代理 | 源码可见 | 命令设置子面专项Gateway80/80通过，其余模块仍需逐项验收 | 设置/清除标记/修订/空间选项透传Core；会话响应统一映射。总体控制面不因子面验证视为全部完成。 | [TinadecGateway/src/index.ts](../../../../../TinadecGateway/src/index.ts)<br>[命令专项](../../../../../.tinadec_dev/reports/2026-10-08-command-panel.zh-CN.md) |
 | GW-SESSIONS-F002 | 会话类型创建转发和列表映射 | 已验收 | Gateway全量78/78 | Gateway不拥有第二份分类状态；需同步部署Core | [报告](../../../../../.tinadec_dev/reports/2026-10-06-session-view-isolation.zh-CN.md) |
 
+## 2026-10-12 分页公开契约
+
+分页游标/撤回epoch与按run活动薄代理、sequence及OpenAPI已同步，Gateway107/107通过。唯一任务[APP-HOME-108](../../app/home/TODO.md#app-home-108)，[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)区分app.handle上游替身与隔离真实HTTP；GW-SESSIONS-F001总体控制面仍未整体验收。
+
 ## 状态词汇
 
 - 待核查：尚不能判断是否实现或缺失。

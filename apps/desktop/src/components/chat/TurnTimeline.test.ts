@@ -95,6 +95,7 @@ describe('TurnTimeline activity summary', () => {
     const wrapper = mount(TurnTimeline, { props: { toolCalls: [call], settled: true }, global: { plugins: [i18n] } })
     expect(wrapper.find('[data-testid="activity-summary"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="activity-toggle"]').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[data-testid="activity-details"]').exists()).toBe(false)
   })
 
   it('lets the reader open it, and never re-folds under them afterwards', async () => {
@@ -126,7 +127,6 @@ describe('TurnTimeline activity summary', () => {
     expect(wrapper.get('[data-testid="activity-toggle"]').attributes('aria-expanded')).toBe('false')
     // The approval's buttons are outside the collapsed region, so they survive the fold.
     expect(wrapper.find('.tool-call-approve-btn').exists()).toBe(true)
-    const collapsed = wrapper.get('[data-testid="activity-details"]')
-    expect(collapsed.find('.tool-call-approve-btn').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="activity-details"]').exists()).toBe(false)
   })
 })

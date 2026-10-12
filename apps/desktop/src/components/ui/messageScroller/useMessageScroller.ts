@@ -151,16 +151,15 @@ function measureContentHeight({
   spacer: HTMLElement | null
   viewport: HTMLElement
 }): number {
-  const children = getMessageChildren(content, spacer)
   const padding = getPadding(content)
+  // Rows are in normal document flow. The last row already includes the height
+  // of every preceding row; the tail spacer must not count as message content.
+  let last = content.lastElementChild
+  if (last && last === spacer) last = last.previousElementSibling
+  if (!(last instanceof HTMLElement)) return padding.start + padding.end
   const viewportRect = viewport.getBoundingClientRect()
-  const scrollTop = viewport.scrollTop
-  let height = padding.start + padding.end
-  for (const child of children) {
-    const rect = child.getBoundingClientRect()
-    height = Math.max(height, rect.bottom - viewportRect.top + scrollTop + padding.end)
-  }
-  return height
+  return Math.max(padding.start + padding.end,
+    last.getBoundingClientRect().bottom - viewportRect.top + viewport.scrollTop + padding.end)
 }
 
 function maxScrollTop(element: HTMLElement): number {
@@ -238,37 +237,66 @@ function computeScrollable({
 }
 
 function computeVisibility({
-  content,
+  children,
+  anchors,
+  rowIndexes,
+  messageElements,
   scrollMargin,
   scrollPreviousItemPeek,
-  spacer,
   viewport,
   visibleMessageIds,
 }: {
-  content: HTMLElement | null
+  children: HTMLElement[]
+  anchors: HTMLElement[]
+  rowIndexes: WeakMap<HTMLElement, number>
+  messageElements: Map<string, HTMLElement>
   scrollMargin: number
   scrollPreviousItemPeek: number
-  spacer: HTMLElement | null
   viewport: HTMLElement | null
   visibleMessageIds: Set<string>
 }): MessageScrollerVisibilityState {
-  if (!content || !viewport) return EMPTY_VISIBILITY
+  if (!viewport || children.length === 0) return EMPTY_VISIBILITY
   const viewportRect = viewport.getBoundingClientRect()
   const anchorLine = viewportRect.top + scrollMargin + scrollPreviousItemPeek
   const noIntersectionObserver = typeof IntersectionObserver === "undefined"
   const visible: string[] = []
   let currentAnchorId: string | null = null
 
-  for (const child of getMessageChildren(content, spacer)) {
-    const messageId = child.dataset.messageId
-    if (!messageId) continue
-    const isAnchor = child.dataset.scrollAnchor === "true"
-    const rect = isAnchor || noIntersectionObserver ? child.getBoundingClientRect() : null
-    const isVisible = noIntersectionObserver && rect
-      ? rect.bottom > anchorLine && rect.top < viewportRect.bottom
-      : visibleMessageIds.has(messageId)
-    if (isVisible) visible.push(messageId)
-    if (isAnchor && rect && rect.top <= anchorLine + SCROLL_EPSILON) currentAnchorId = messageId
+  if (noIntersectionObserver) {
+    // Binary search the visible range instead of measuring all historical rows.
+    let lo = 0, hi = children.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (children[mid]!.getBoundingClientRect().bottom <= anchorLine) lo = mid + 1
+      else hi = mid
+    }
+    const start = lo
+    hi = children.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (children[mid]!.getBoundingClientRect().top < viewportRect.bottom) lo = mid + 1
+      else hi = mid
+    }
+    for (let i = start; i < lo; i++) {
+      const id = children[i]!.dataset.messageId
+      if (id) visible.push(id)
+    }
+  } else {
+    visible.push(...[...visibleMessageIds].filter(id => messageElements.has(id)).sort((a, b) =>
+      (rowIndexes.get(messageElements.get(a)!) ?? 0) - (rowIndexes.get(messageElements.get(b)!) ?? 0)))
+  }
+  const first = visible[0] ? messageElements.get(visible[0]) : null
+  if (first) {
+    const index = rowIndexes.get(first) ?? 0
+    let lo = 0, hi = anchors.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if ((rowIndexes.get(anchors[mid]!) ?? 0) <= index) lo = mid + 1
+      else hi = mid
+    }
+    let anchor = anchors[lo - 1]
+    if (anchor && anchor.getBoundingClientRect().top > anchorLine + SCROLL_EPSILON) anchor = anchors[lo - 2]
+    currentAnchorId = anchor?.dataset.messageId ?? null
   }
 
   return visible.length === 0 && currentAnchorId === null
@@ -309,21 +337,38 @@ function findLastAnchor(elements: HTMLElement[]): HTMLElement | null {
 }
 
 function findFirstVisibleMessage({
-  content,
-  spacer,
+  children,
   viewport,
+  visibleMessageIds,
+  messageElements,
+  rowIndexes,
 }: {
-  content: HTMLElement
-  spacer: HTMLElement | null
+  children: HTMLElement[]
   viewport: HTMLElement
+  visibleMessageIds: Set<string>
+  messageElements: Map<string, HTMLElement>
+  rowIndexes: WeakMap<HTMLElement, number>
 }): HTMLElement | null {
   const viewportRect = viewport.getBoundingClientRect()
-  for (const child of getMessageChildren(content, spacer)) {
-    if (!child.dataset.messageId) continue
-    const rect = child.getBoundingClientRect()
-    if (rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) return child
+  let observed: HTMLElement | null = null
+  for (const id of visibleMessageIds) {
+    const element = messageElements.get(id)
+    if (element && (!observed || (rowIndexes.get(element) ?? 0) < (rowIndexes.get(observed) ?? 0))) observed = element
   }
-  return null
+  if (observed) {
+    const rect = observed.getBoundingClientRect()
+    if (rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) return observed
+  }
+  // IntersectionObserver can trail a programmatic scroll by one frame. Search
+  // the ordered rows in logarithmic time until its new entries arrive.
+  let lo = 0, hi = children.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (children[mid]!.getBoundingClientRect().bottom <= viewportRect.top) lo = mid + 1
+    else hi = mid
+  }
+  const row = children[lo]
+  return row?.dataset.messageId && row.getBoundingClientRect().top < viewportRect.bottom ? row : null
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +445,9 @@ function createEngine(props: MessageScrollerProviderProps) {
   let visibilityObserver: IntersectionObserver | null = null
   let visibilityConsumers = 0
   const messageElements = new Map<string, HTMLElement>()
+  let children: HTMLElement[] = []
+  let anchors: HTMLElement[] = []
+  let rowIndexes = new WeakMap<HTMLElement, number>()
   const visibleMessageIds = new Set<string>()
   const handledScrollAnchors = new WeakSet<HTMLElement>()
 
@@ -462,6 +510,7 @@ function createEngine(props: MessageScrollerProviderProps) {
       stateFrame = window.requestAnimationFrame(() => {
         stateFrame = null
         commitScrollState()
+        capturePrependAnchor()
       })
     }
   }
@@ -473,10 +522,12 @@ function createEngine(props: MessageScrollerProviderProps) {
         visibilityFrame = null
         if (visibilityConsumers > 0) {
           const next = computeVisibility({
-            content,
+            children,
+            anchors,
+            rowIndexes,
+            messageElements,
             scrollMargin: scrollMargin(),
             scrollPreviousItemPeek: scrollPreviousItemPeek(),
-            spacer,
             viewport,
             visibleMessageIds,
           })
@@ -642,7 +693,7 @@ function createEngine(props: MessageScrollerProviderProps) {
       prependRestore = null
       return
     }
-    const element = findFirstVisibleMessage({ content, spacer, viewport })
+    const element = findFirstVisibleMessage({ children, viewport, visibleMessageIds, messageElements, rowIndexes })
     prependRestore = element ? { element, viewportTop: getRelativeTop(element, viewport) } : null
   }
 
@@ -736,7 +787,9 @@ function createEngine(props: MessageScrollerProviderProps) {
 
   function handleContentChange() {
     if (!content) return
-    const children = getMessageChildren(content, spacer)
+    children = getMessageChildren(content, spacer)
+    anchors = children.filter(child => child.dataset.scrollAnchor === "true")
+    rowIndexes = new WeakMap(children.map((child, index) => [child, index]))
     const previousCount = itemCount
     const previousFirst = firstItem
     itemCount = children.length
@@ -768,7 +821,7 @@ function createEngine(props: MessageScrollerProviderProps) {
   // --- visibility observation ------------------------------------------------
 
   function observeVisibility() {
-    if (!viewport || visibilityConsumers === 0) return
+    if (!viewport || (!preserveScrollOnPrepend && visibilityConsumers === 0)) return
     if (typeof IntersectionObserver === "undefined") {
       scheduleVisibilitySync()
       return
@@ -815,7 +868,7 @@ function createEngine(props: MessageScrollerProviderProps) {
 
   function releaseVisibility() {
     visibilityConsumers -= 1
-    if (visibilityConsumers === 0) unobserveVisibility()
+    if (visibilityConsumers === 0 && !preserveScrollOnPrepend) unobserveVisibility()
   }
 
   const registerMessage: RegisterMessage = (messageId, element, previousElement) => {
@@ -853,6 +906,7 @@ function createEngine(props: MessageScrollerProviderProps) {
 
   function setContentElement(element: HTMLElement | null) {
     content = element
+    if (!element) { children = []; anchors = []; rowIndexes = new WeakMap() }
   }
 
   function setSpacerElement(element: HTMLElement | null) {
@@ -862,12 +916,13 @@ function createEngine(props: MessageScrollerProviderProps) {
 
   function setPreserveScrollOnPrepend(value: boolean) {
     preserveScrollOnPrepend = value
+    if (value) observeVisibility()
+    else if (visibilityConsumers === 0) unobserveVisibility()
   }
 
   function syncAfterScroll() {
-    commitScrollState()
+    scheduleStateCommit()
     scheduleVisibilitySync()
-    capturePrependAnchor()
   }
 
   function onAutoScrollChange() {

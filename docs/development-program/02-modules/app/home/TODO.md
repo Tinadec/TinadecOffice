@@ -6,6 +6,34 @@
 
 状态：待核查 / 未开始 / 待方案 / 进行中 / 阻塞 / 待验收 / 已完成 / 不做 / 已被替代。优先级是初始建议，可在逐模块分析后调整。
 
+<a id="app-home-108"></a>
+
+### APP-HOME-108 对话流稳定性、分页与事件读取
+
+- 类型：实现
+- 状态：进行中
+- 优先级：P0
+- 主责模块：APP-HOME
+- 前置依赖：复用现有 Core Memory/Lifecycle、Gateway HTTP/SSE、UIE、MarkdownRender 与 xterm；无数据库迁移
+- 关联功能：APP-HOME-F008；CORE-MEMORY、CORE-LIFECYCLE、GW-SESSIONS、GW-STREAMING、APP-RENDERER 和 UIE Components 交叉引用，不复制任务
+- 实施与证据：[稳定性报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)
+
+**问题、目标与触及范围**
+
+修复 xterm 延迟 dimensions 回调和挂载归属竞态、折叠活动常驻、逐行滚动测量；正文先显示最近100条，向上补100条。活动仅读当前消息页相关与活跃 run，按批归约；SSE 先 ready 后快照并缓冲去重，撤回 epoch 使旧页失效，事件按类别单飞合并。保留分支功能、用户 dev.mjs 修改、原数据与正常错误记录。
+
+**验收条件**
+
+- [x] 固定 xterm6/fit0.11/web-links0.12，卸载撤归属/取消定时器与观察器，迟到快照不得写新实例。
+- [x] 折叠活动按需挂载，读取/搜索工具分组可看结果；子智能体真实 runId、widget:height 与普通正文回退有回归。
+- [x] 5000行真实 Electron 滚动每帧布局读取不超过20次，上翻补100行锚点不位移；storage+session 切换重建滚动实例。
+- [x] Core 10000行只读取最新100条正文、keyset游标与撤回 epoch；Gateway/OpenAPI/生成类型同步。
+- [x] 100工具事件合并为一次活动读取，正文先于辅助请求显示；迟到旧页、快照失败与撤回屏障有组件回归。
+- [ ] 真实隔离 Core/Gateway、受控Provider及Electron宿主验证发送/恢复终端/会话与窗格操作，单列夹具替代边界。
+- [ ] Desktop完整测试、类型检查、生产构建及相关Core/Gateway回归通过，完成报告与状态对账。
+
+真实外部模型凭据当前 credential_missing，须在可用后单独复验；受控Provider不折算外部模型、安装器或三平台验收。
+
 <a id="app-home-107"></a>
 
 ### APP-HOME-107 侧边栏与多文件夹工作区

@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-12",
+  "log": ".tinadec_dev/tmp/transcript-vitest-final-all.log",
+  "organization_panel": {
+    "observed": "Vitest reported worker termination exceeding its default 10000ms teardown timeout (log line 49).",
+    "verified_source": [
+      "OrganizationPanel.test.ts completely replaces @/api with vi.mock; no importOriginal fallback.",
+      "All mounted wrappers are unmounted in afterEach before restoring real timers (test lines 97-100).",
+      "OrganizationPanel.vue owns one 5000ms interval (line 471), cleared by onBeforeUnmount (line 480).",
+      "OrganizationPanel.vue and its test have no changes in this work item and do not import the session event bus.",
+      "Mounted member/room/report/topology content and the UI input/button/textarea primitives have no direct network fetch. Evidence and environment sections are not mounted by these tests."
+    ],
+    "conclusion": "No evidenced API or timer leak found by source inspection. The termination warning alone cannot establish a production transcript regression.",
+    "action": "No production, OrganizationPanel test, timeout, or assertion changes made."
+  },
+  "happy_dom_fetch_abort": {
+    "observed": "Nine repeated Fetch.onAsyncTaskManagerAbort stacks at final log line 80 onwards; the same stacks exist in the earlier transcript-vitest-all.log at line 79 onwards.",
+    "verified_source": "Vitest teardownWindow awaits happyDOM.abort before closing its test window (node_modules/vitest/dist/chunks/index.DC7d2Pf8.js lines 329-333).",
+    "conclusion": "The stacks establish pending Happy DOM fetch cancellation during environment teardown, but contain neither URL nor originating test. Subsequent worker messages separate these stacks from the earlier OrganizationPanel warning. Exact test ownership remains unproven.",
+    "action": "No speculative production or unrelated test changes."
+  },
+  "home_controller_gateway_requests": {
+    "observed": "Four GET requests to localhost:48730 for run-trigger/run-snapshot/run-both/run-neither returned 403 (final log lines 9-12).",
+    "root_cause": "The run-link normalization fixture supplies four executing runs (HomeController.test.ts around line 191). It mocks @/api but originally left createRunStream real. acceptRuns attaches active streams; createRunStream defaults to real fetch (runStream.ts line 137) and requests the local Gateway (line 190).",
+    "test_only_fix": "HomeController.test.ts now wraps importOriginal createRunStream with a controlled empty text/event-stream Response and autoReconnect:false. The real stream reducer remains in use; the existing recovery spy still wraps this factory.",
+    "verification": "git diff --check passed. npx vitest run src/controllers/HomeController.test.ts --maxWorkers=1 passed all 54 tests in 25.43s, with no real Gateway GET403 messages."
+  },
+  "limitations": "Read-only attribution audit, except the explicitly authorized HomeController test network isolation. No additional heavy tests or product edits."
+}

@@ -32,8 +32,24 @@ const subscriptions = new Set<Subscription>()
 let source: EventSource | null = null
 let paused = false
 let sourceStorageId: string | null = null
+let connection = 0
+let snapshotRead = 0
+let historyEpoch: number | null = null
+let buffering = false
+let buffered: EventEnvelope[] = []
+const seen = new Set<string>()
 
-function deliver(event: EventEnvelope) {
+function eventKey(event: EventEnvelope): string | null {
+  if (event.run_id && event.seq > 0) return `${event.run_id}:${event.seq}`
+  return typeof (event as unknown as Record<string, unknown>).event_id === 'string'
+    ? String((event as unknown as Record<string, unknown>).event_id) : null
+}
+
+// Activity snapshots hydrate their own reducer. Only frames delivered through this
+// bus enter `seen`: later snapshots cannot suppress pending message/status refreshes.
+
+function deliver(event: EventEnvelope): Promise<void> {
+  const outcomes: Promise<unknown>[] = []
   for (const subscription of [...subscriptions]) {
     if (subscription.scope) {
       const wanted = subscription.scope.value
@@ -48,11 +64,35 @@ function deliver(event: EventEnvelope) {
       const outcome = subscription.handler(event)
       // Handlers that reload state do it asynchronously; a rejection inside one of them
       // must not come back as an unhandled rejection on the window's only pipeline.
-      if (outcome instanceof Promise) outcome.catch(() => {})
+      if (outcome instanceof Promise) outcomes.push(outcome.catch(() => {}))
     } catch {
       // One broken subscriber must not take the window's only event pipeline with it.
     }
   }
+  return Promise.all(outcomes).then(() => {})
+}
+
+function receive(event: EventEnvelope, owner: number) {
+  if (owner !== connection) return
+  if (event.type === 'stream.ready' || event.type === 'history.changed') {
+    const epoch = event.payload?.['revert_epoch']
+    if (event.type === 'history.changed' || (typeof epoch === 'number' && historyEpoch !== null && epoch !== historyEpoch)) { buffered = []; seen.clear() }
+    if (typeof epoch === 'number') historyEpoch = epoch
+    const read = ++snapshotRead
+    buffering = true
+    void deliver(event).finally(() => {
+      if (owner !== connection || read !== snapshotRead) return
+      buffering = false
+      const pending = buffered; buffered = []
+      for (const frame of pending) receive(frame, owner)
+    })
+    return
+  }
+  if (buffering) { buffered.push(event); return }
+  const key = eventKey(event)
+  if (key && seen.has(key)) return
+  if (key) seen.add(key)
+  void deliver(event)
 }
 
 function open() {
@@ -60,7 +100,8 @@ function open() {
   if (subscriptions.size === 0 || paused || !canAccessBackend.value) return
   try {
     sourceStorageId = followed.value ? sessionStorageId(followed.value) : selectedStorageId()
-    source = api.connectEvents(followed.value, deliver)
+    const owner = connection
+    source = api.connectEvents(followed.value, event => receive(event, owner), { replay: false })
   } catch {
     // A stream that cannot start is a degraded live view, not a dead panel: the
     // REST reads that seeded it stay valid.
@@ -69,13 +110,15 @@ function open() {
 }
 
 function close() {
+  connection++; snapshotRead++; historyEpoch = null; buffering = false; buffered = []; seen.clear()
   source?.close()
   source = null
 }
 
 /** Point this window's stream at a session. Null is the unfiltered feed. */
 export function followSession(sessionId: string | null): void {
-  if (followed.value === sessionId && !paused) return
+  const storageId = sessionId ? sessionStorageId(sessionId) : selectedStorageId()
+  if (followed.value === sessionId && sourceStorageId === storageId && !paused) return
   paused = false
   followed.value = sessionId
   open()

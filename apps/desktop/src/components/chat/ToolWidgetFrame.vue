@@ -31,6 +31,7 @@ const props = defineProps<{
   html: string | null | undefined
   title: string
 }>()
+const emit = defineEmits<{ ready: [value: boolean] }>()
 
 const { t } = useI18n()
 
@@ -74,12 +75,14 @@ let generation = 0
 
 function releaseToken(value: string | null) {
   const release = window.tinadec?.releaseToolWidget
-  if (release && value) void release(value)
+  if (release && value) void release(value).catch(() => {})
 }
 
 async function mount(html: string | null | undefined) {
   const register = window.tinadec?.registerToolWidget
   const mine = ++generation
+  emit('ready', false)
+  height.value = 320
   // Whatever the previous call registered is now superseded.
   releaseToken(token.value)
   token.value = null
@@ -122,6 +125,19 @@ onBeforeUnmount(() => {
 })
 
 const showFrame = computed(() => Boolean(url.value))
+
+function loaded(event: Event) {
+  if (!disposed && event.target === frame.value && url.value) emit('ready', true)
+}
+
+function failedToLoad(event: Event) {
+  if (disposed || event.target !== frame.value) return
+  failure.value = t('widget.refused')
+  emit('ready', false)
+  releaseToken(token.value)
+  token.value = null
+  url.value = null
+}
 </script>
 
 <template>
@@ -141,6 +157,8 @@ const showFrame = computed(() => Boolean(url.value))
       sandbox="allow-scripts"
       referrerpolicy="no-referrer"
       loading="lazy"
+      @load="loaded"
+      @error="failedToLoad"
       data-testid="tool-widget-frame"
     />
   </div>

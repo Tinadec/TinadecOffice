@@ -2,6 +2,7 @@ export interface ExternalMessageDto {
   id: string;
   session_id: string;
   run_id: string | null;
+  sequence: number;
   role: string;
   content: string;
   created_at: string | null;
@@ -17,6 +18,7 @@ export function mapMessage(core: unknown): ExternalMessageDto | null {
     id,
     session_id: String(core.session_id ?? core.sessionId ?? ''),
     run_id: (core.run_id as string) ?? (core.runId as string) ?? null,
+    sequence: Number(core.sequence ?? 0),
     role: String(core.role ?? ''),
     content: String(core.content ?? ''),
     created_at: (core.created_at as string) ?? null,

@@ -90,10 +90,15 @@ test('session mapper and interaction transport preserve Core spatial choices and
 
 test('the session projection carries the conversation template, defaulting an unknown one', () => {
   const withTemplate = mapSession({ id: 's1', transcript_template: 'detailed' });
+  assert.ok(withTemplate);
   assert.equal(withTemplate.transcript_template, 'detailed');
 
   // A row written before the setting existed reads as standard rather than as undefined:
   // the desktop gates the rich tool views on this value, and an absent one would decide it.
-  assert.equal(mapSession({ id: 's2' }).transcript_template, 'standard');
-  assert.equal(mapSession({ id: 's3', transcript_template: 'verbose' }).transcript_template, 'standard');
+  const legacy = mapSession({ id: 's2' });
+  assert.ok(legacy);
+  assert.equal(legacy.transcript_template, 'standard');
+  const unknown = mapSession({ id: 's3', transcript_template: 'verbose' });
+  assert.ok(unknown);
+  assert.equal(unknown.transcript_template, 'standard');
 });

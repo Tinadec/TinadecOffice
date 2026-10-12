@@ -68,7 +68,7 @@ test('a Core mcp_server_not_found reaches the client as itself, not as conflict'
     new Response(
       JSON.stringify({ code: 'mcp_server_not_found', message: 'No MCP server named ' + "'nope' is configured." }),
       { status: 404, headers: { 'content-type': 'application/json' } },
-    )) as typeof fetch;
+    )) as unknown as typeof fetch;
 
   const response = await app.handle(new Request('http://gateway.local/api/v1/mcp/servers/nope/tools'));
   assert.equal(response.status, 404);
@@ -84,7 +84,7 @@ test('the phantom MCP control surface is gone from the gateway itself', async ()
   globalThis.fetch = (async () => {
     forwarded += 1;
     return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 
   const phantom: Array<[string, string]> = [
     ['POST', '/api/v1/mcp/servers/github/connect'],

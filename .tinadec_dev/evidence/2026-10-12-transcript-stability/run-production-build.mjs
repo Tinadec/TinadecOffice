@@ -1,0 +1,13 @@
+import { spawn } from 'node:child_process';
+import { openSync, writeFileSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+const repo = resolve(import.meta.dirname, '../../..');
+const logPath = resolve(repo, '.tinadec_dev/tmp/transcript-vite-final.log');
+const receiptPath = resolve(repo, '.tinadec_dev/evidence/2026-10-12-transcript-stability/production-build.json');
+const fd = openSync(logPath, 'w');
+const started = Date.now();
+const child = spawn(process.execPath, [resolve(repo, 'node_modules/vite/bin/vite.js'), 'build', '--config', resolve(repo, '.tinadec_dev/evidence/2026-10-12-transcript-stability/production-vite-observe.mjs')], { cwd: resolve(repo, 'apps/desktop'), env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=8192' }, stdio: ['ignore', fd, fd], windowsHide: true });
+let timedOut = false;
+const timer = setTimeout(() => { timedOut = true; spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); }, 2400000);
+child.once('error', error => { clearTimeout(timer); writeFileSync(receiptPath, JSON.stringify({accepted:false,error:String(error),checked_at:new Date().toISOString()},null,2)); process.exitCode=1; });
+child.once('exit', (code, signal) => { clearTimeout(timer); const log=readFileSync(logPath,'utf8'); const receipt={accepted:code===0&&!timedOut, exit_code:code, signal, timed_out:timedOut, duration_seconds:(Date.now()-started)/1000, command:'vite build --config .tinadec_dev/evidence/2026-10-12-transcript-stability/production-vite-observe.mjs', config:'Unmodified production Vite config with a post-transform progress observer only', node_options:'--max-old-space-size=8192', log:'.tinadec_dev/tmp/transcript-vite-final.log', final_output:log.slice(-9000), checked_at:new Date().toISOString()}; writeFileSync(receiptPath,JSON.stringify(receipt,null,2)); console.log(JSON.stringify({accepted:receipt.accepted,exit_code:code,timed_out:timedOut,duration_seconds:receipt.duration_seconds})); process.exitCode=receipt.accepted?0:1; });

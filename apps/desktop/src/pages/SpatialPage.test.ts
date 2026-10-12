@@ -107,7 +107,7 @@ vi.mock('@vue-flow/background', () => ({ Background: { template: '<span />' } })
 vi.mock('@vue-flow/node-resizer', () => ({ NodeResizer: { template: '<span />' } }))
 
 const message = (run_id: string, content: string, session_id = 's'): MessageDto => ({
-  id: `message-${run_id}`, session_id, role: 'user', run_id, content, created_at: '', attachments: [],
+  id: `message-${run_id}`, sequence: 1, session_id, role: 'user', run_id, content, created_at: '', attachments: [],
 })
 const task = (task_id: string, extra: Partial<TopologyTaskDto> = {}): TopologyTaskDto => ({
   task_id, task_key: task_id, title: `Task ${task_id}`, status: 'running', dependencies: [], write_scope: [],

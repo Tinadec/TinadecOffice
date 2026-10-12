@@ -7,6 +7,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   preserveScrollOnPrepend: true,
 })
+const emit = defineEmits<{ 'reach-start': [] }>()
 
 const {
   autoscrolling,
@@ -23,7 +24,20 @@ const viewportRef = useTemplateRef<HTMLElement>('viewport')
 watch(() => props.preserveScrollOnPrepend, setPreserveScrollOnPrepend, { immediate: true })
 
 function onKeyDown(event: KeyboardEvent) {
-  if (SCROLL_KEYS.has(event.key)) userScrollIntent()
+  if (SCROLL_KEYS.has(event.key)) { readerGesture = true; userScrollIntent() }
+}
+let readerGesture = false
+function onReaderScroll() { readerGesture = true; userScrollIntent() }
+function onWheel(event: WheelEvent) {
+  onReaderScroll()
+  if (event.deltaY < 0 && (viewportRef.value?.scrollTop ?? 0) <= 8) emit('reach-start')
+}
+function onScroll() {
+  syncAfterScroll()
+  if (readerGesture && (viewportRef.value?.scrollTop ?? 0) <= 8) {
+    readerGesture = false
+    emit('reach-start')
+  }
 }
 
 let resizeObserver: ResizeObserver | null = null
@@ -64,9 +78,10 @@ onBeforeUnmount(() => {
     tabindex="0"
     :data-scrollable="scrollableAttr"
     :data-active="autoscrolling ? '' : undefined"
-    @scroll="syncAfterScroll()"
-    @wheel="userScrollIntent()"
-    @touchmove="userScrollIntent()"
+    @scroll="onScroll"
+    @wheel="onWheel"
+    @touchmove="onReaderScroll"
+    @pointerdown.self="onReaderScroll"
     @keydown="onKeyDown"
   >
     <slot />

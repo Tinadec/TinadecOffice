@@ -69,7 +69,7 @@ function buildFallback(message: string): void {
     'margin:0;padding:12px;overflow:auto;max-height:180px;font-size:12px;line-height:1.5;' +
     'font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text-secondary,#9aa0aa);' +
     'background:var(--bg-primary,#0a0e14);border-radius:8px;white-space:pre-wrap;word-break:break-all;'
-  pre.textContent = message.slice(0, 2000)
+  pre.textContent = message
 
   const reloadBtn = document.createElement('button')
   reloadBtn.type = 'button'
@@ -105,9 +105,11 @@ function buildFallback(message: string): void {
 export function installRendererErrorFallback(app: { config: { errorHandler?: unknown } }): (err: unknown, ctx?: ErrorContext, fatal?: boolean) => void {
   const report = (err: unknown, ctx: ErrorContext = {}, fatal = false): void => {
     const message = messageOf(err)
-    const detail = ctx.detail ?? (ctx.source === 'vue' && err && typeof err === 'object' ? '' : '')
-    console.error('[renderer] uncaught:', message, { source: ctx.source, detail })
-    if (fatal && typeof document !== 'undefined') buildFallback(message)
+    const detail = ctx.detail ?? ''
+    const stack = err && typeof err === 'object' && 'stack' in err && typeof err.stack === 'string' ? err.stack : message
+    const diagnostic = [stack, ctx.source ? `source=${ctx.source}` : '', detail].filter(Boolean).join('\n')
+    console.error('[renderer] uncaught:', err, { source: ctx.source, detail, stack })
+    if (fatal && typeof document !== 'undefined') buildFallback(diagnostic)
   }
 
   if (installed) return report
@@ -115,13 +117,13 @@ export function installRendererErrorFallback(app: { config: { errorHandler?: unk
 
   app.config.errorHandler = (err: unknown, instance: unknown, info: string) => {
     const name = componentNameOf(instance)
-    report(err, { source: 'vue', detail: name ? `component=<${name}>` : info }, true)
+    report(err, { source: 'vue', detail: [name ? `component=<${name}>` : '', info].filter(Boolean).join('; ') }, true)
   }
 
   if (typeof window !== 'undefined') {
     window.addEventListener('error', (e) => {
       // Ignore asset-load failures (no error object); report real script errors.
-      if (e.error) report(e.error, { source: 'window', detail: `${e.filename}:${e.lineno}` }, true)
+      if (e.error) report(e.error, { source: 'window', detail: `${e.filename}:${e.lineno}:${e.colno}` }, true)
     })
     window.addEventListener('unhandledrejection', (e) => {
       // Log only — background async failures must not cover the whole window.

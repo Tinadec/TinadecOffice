@@ -197,6 +197,7 @@ function agentRoleLabel(agentType: string): string {
 export function useAgentActivity(
   sessionId: Ref<string | null>,
   orchestration?: Ref<OrchestrationSnapshotDto | null>,
+  options: { managedReads?: boolean } = {},
 ) {
   const activity = ref<AgentActivity>({ ...DEFAULT_ACTIVITY })
   const supervisionReview = ref<SupervisionReview | null>(null)
@@ -223,13 +224,29 @@ export function useAgentActivity(
   const toolReads = new Map<string, number>()
   const supervisionReviews = ref(new Map<string, SupervisionReview>())
   const seenEvents = new Set<string>()
-  let latestSelectedSequence = 0
+  let hydrating = false
+  const stepIndexes = new WeakMap<ThinkingStep[], Map<string, number>>()
+  function stepIndex() {
+    const list = thinkingSteps.value
+    let index = stepIndexes.get(list)
+    if (!index) { index = new Map(list.map((step, position) => [step.id, position])); stepIndexes.set(list, index) }
+    return index
+  }
+  function upsertStep(step: ThinkingStep) {
+    const index = stepIndex(), position = index.get(step.id)
+    if (position === undefined) { index.set(step.id, thinkingSteps.value.length); thinkingSteps.value.push(step) }
+    else thinkingSteps.value[position] = step
+  }
+
+  function appendSteps(sequence: number, ...steps: ThinkingStep[]) {
+    for (const step of steps) upsertStep({ ...step, seq: step.seq ?? sequence })
+  }
 
   function saveTurn() {
     const id = activity.value.runId
     if (!id) return
     turns.value[id] = {
-      activity: { ...activity.value }, thinkingSteps: thinkingSteps.value,
+      activity: activity.value, thinkingSteps: thinkingSteps.value,
       toolCalls: toolCalls.value, agentStates: agentStates.value, progressEvents: progressEvents.value,
     }
   }
@@ -262,7 +279,6 @@ export function useAgentActivity(
     supervisionReviews.value.clear()
     toolReads.clear()
     seenEvents.clear()
-    latestSelectedSequence = 0
     activity.value = { ...DEFAULT_ACTIVITY }
     toolCalls.value = []
     thinkingSteps.value = []
@@ -299,9 +315,7 @@ export function useAgentActivity(
     currentTask: string | null = null,
   ) {
     const existing = agentStates.value[agentId]
-    agentStates.value = {
-      ...agentStates.value,
-      [agentId]: {
+    agentStates.value[agentId] = {
         agentId,
         agentName,
         agentLayer,
@@ -309,8 +323,7 @@ export function useAgentActivity(
         status,
         lastActiveAt: new Date().toISOString(),
         currentTask: currentTask ?? existing?.currentTask ?? null,
-      },
-    }
+      }
   }
 
   function processRunStarted(event: EventEnvelope) {
@@ -329,17 +342,14 @@ export function useAgentActivity(
       activeAgentRole: '会议智能体',
       lastUpdated: event.ts,
     }
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-run`,
         type: 'run_started',
         title: '编排运行已启动',
         description: summary ?? '智能体开始分析用户意图',
         timestamp: event.ts,
         durationMs: null,
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'play', '编排运行已启动')
   }
 
@@ -357,9 +367,7 @@ export function useAgentActivity(
       totalNodes: nodeCount,
       lastUpdated: event.ts,
     }
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-graph`,
         type: 'task_graph',
         title: '任务图已创建',
@@ -371,8 +379,7 @@ export function useAgentActivity(
           ? new Date(event.ts).getTime() - new Date(lastRunStartedAt).getTime()
           : null,
         details: { nodeCount, title },
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'network', `创建了 ${nodeCount} 个任务节点`)
   }
 
@@ -394,9 +401,7 @@ export function useAgentActivity(
 
     updateAgentState(agentId, agentName, agentLayer, agentType, 'active', taskTitle)
 
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-assign`,
         type: 'agent_assignment',
         title: `${agentName} 已分配任务`,
@@ -404,8 +409,7 @@ export function useAgentActivity(
         timestamp: event.ts,
         durationMs: null,
         details: { agentId, agentLayer, agentType },
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'user-check', `${agentName} 接受了任务分配`)
   }
 
@@ -428,9 +432,7 @@ export function useAgentActivity(
       updateAgentState(agentId, agentName, agentLayer, agentType, 'completed')
     }
 
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-step`,
         type: 'step_result',
         title: `${agentName} 完成步骤`,
@@ -438,8 +440,7 @@ export function useAgentActivity(
         timestamp: event.ts,
         durationMs: null,
         details: { status },
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'check-circle', `${agentName} 完成了一个步骤`)
   }
 
@@ -457,9 +458,7 @@ export function useAgentActivity(
     const summary = extractString(event.payload, 'summary') ?? reasons.join('；')
     const recommendation = extractString(event.payload, 'recommendation') ?? ''
 
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-supervision`,
         type: 'supervision',
         title: decision ? `监督发现 · ${decision}` : `监督发现 · ${severity}`,
@@ -469,8 +468,7 @@ export function useAgentActivity(
         severity,
         category,
         details: { recommendation, decision, reasons },
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'shield', `监督检查：${category || severity}`)
   }
 
@@ -505,9 +503,7 @@ export function useAgentActivity(
     const tokenBudget = extractNumber(event.payload, 'token_budget')
     const compressionRatio = extractNumber(event.payload, 'compression_ratio')
 
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-context`,
         type: 'context_pack',
         title: '上下文包已创建',
@@ -518,8 +514,7 @@ export function useAgentActivity(
         timestamp: event.ts,
         durationMs: null,
         details: { tokenBudget, compressionRatio },
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'package', '上下文包已压缩')
   }
 
@@ -619,9 +614,7 @@ export function useAgentActivity(
       // failed / outcome_unknown: name the category, because "the tool failed" gives
       // a reader nothing to act on and the category is what the model acted on.
       const label = category ? `${toolId} 失败（${category}）` : `${toolId} 失败`
-      thinkingSteps.value = [
-        ...thinkingSteps.value,
-        {
+      appendSteps(event.seq, {
           id: `${event.seq}-tool-${event.type}`,
           type: 'tool',
           title: event.type === 'tool.execution.outcome_unknown' ? '工具结果未知' : '工具执行失败',
@@ -630,8 +623,7 @@ export function useAgentActivity(
           durationMs: null,
           severity: 'warning',
           details: { toolId, category },
-        },
-      ]
+        })
       addProgressEvent(event.seq, event.type, 'alert-triangle', label)
     }
 
@@ -647,9 +639,7 @@ export function useAgentActivity(
       status: 'error',
       lastUpdated: event.ts,
     }
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-run-failed`,
         type: 'run',
         title: '运行失败',
@@ -658,16 +648,13 @@ export function useAgentActivity(
         durationMs: null,
         severity: 'error',
         details: { category },
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'x', `运行失败${category ? `：${category}` : ''}`)
   }
 
   function processMeetingFallback(event: EventEnvelope) {
     const category = extractString(event.payload, 'error_category') ?? ''
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      {
+    appendSteps(event.seq, {
         id: `${event.seq}-meeting-fallback`,
         type: 'run',
         title: '最终汇总已降级',
@@ -678,8 +665,7 @@ export function useAgentActivity(
         durationMs: null,
         severity: 'warning',
         category,
-      },
-    ]
+      })
     addProgressEvent(event.seq, event.type, 'alert-triangle', '最终汇总模型不可用，已返回执行证据')
   }
 
@@ -722,9 +708,7 @@ export function useAgentActivity(
     }
     if (event.type === 'worker.blocked') {
       updateAgentState(slug, slug, 'execution', slug, 'waiting')
-      thinkingSteps.value = [
-        ...thinkingSteps.value,
-        {
+      appendSteps(event.seq, {
           id: `${event.seq}-worker-blocked`,
           type: 'step_result',
           title: `${slug} 未完成任务`,
@@ -734,8 +718,7 @@ export function useAgentActivity(
           severity: 'warning',
           category: 'blocked',
           details: { slug },
-        },
-      ]
+        })
       addProgressEvent(event.seq, event.type, 'alert-triangle', message || `${slug} 的任务受阻`)
       return
     }
@@ -791,10 +774,7 @@ export function useAgentActivity(
         icon = 'check-circle'
     }
     activity.value = { ...activity.value, lastUpdated: event.ts }
-    thinkingSteps.value = [
-      ...thinkingSteps.value,
-      { id: `${event.seq}-${event.type}`, timestamp: event.ts, durationMs: null, ...step },
-    ]
+    appendSteps(event.seq, { id: `${event.seq}-${event.type}`, timestamp: event.ts, durationMs: null, ...step })
     addProgressEvent(event.seq, event.type, icon, step.description ? `${step.title}：${step.description}` : step.title)
   }
 
@@ -824,9 +804,7 @@ export function useAgentActivity(
       handle: extractString(payload, 'handle'),
       taskId: extractString(payload, 'task_id'),
     }
-    thinkingSteps.value = thinkingSteps.value.some((item) => item.id === id)
-      ? thinkingSteps.value.map((item) => item.id === id ? step : item)
-      : [...thinkingSteps.value, step]
+    upsertStep({ ...step, seq: event.seq })
     activity.value = { ...activity.value, lastUpdated: event.ts }
     const current = steps.find((item) => item.status === 'in_progress')
     addProgressEvent(event.seq, event.type, 'list-checks', current ? `${who}：${current.step}` : `${who} 更新了计划`)
@@ -897,7 +875,8 @@ export function useAgentActivity(
       case 'model.output.interrupted': {
         const id = extractString(event.payload, 'response_id')
         if (!id) break
-        const existing = thinkingSteps.value.find((step) => step.id === id)
+        const position = stepIndex().get(id)
+        const existing = position === undefined ? undefined : thinkingSteps.value[position]
         const delta = extractString(event.payload, 'delta') ?? ''
         // A thought the user cut off ended; it did not fail.
         const status = event.type === 'model.output.completed' || event.type === 'model.output.interrupted' ? 'completed'
@@ -915,9 +894,7 @@ export function useAgentActivity(
         // Only the provider's explicit reasoning channel is a reasoning text. Internal
         // planning JSON, prompts and tool arguments never become a "thought" here.
         if (event.payload?.channel === 'reasoning') step.description += delta
-        thinkingSteps.value = existing
-          ? thinkingSteps.value.map((item) => item.id === id ? step : item)
-          : [...thinkingSteps.value, step]
+        upsertStep(step)
         break
       }
       // Lifecycle. The real Core names come first; run.started is kept because the
@@ -1042,7 +1019,17 @@ export function useAgentActivity(
     try {
       const items = await api.listToolExecutions(session, { run_id: runId, limit: 200 })
       if (epoch !== generation || session !== sessionId.value || toolReads.get(runId) !== read) return
-      const calls = items.filter((item) => item.run_id === runId)
+      applyToolExecutions(items, [runId])
+    } catch {
+      // Preserve the latest authoritative timeline after a failed read.
+    }
+  }
+
+  function applyToolExecutions(items: readonly ToolExecutionTimelineItemDto[], runIds: readonly string[]) {
+    const byRun = new Map<string, ToolExecutionTimelineItemDto[]>()
+    for (const item of items) { const group = byRun.get(item.run_id) ?? []; group.push(item); byRun.set(item.run_id, group) }
+    for (const runId of runIds) {
+      const calls = (byRun.get(runId) ?? [])
         .map((item: ToolExecutionTimelineItemDto): ToolCall => ({
           runId,
           id: item.id,
@@ -1061,13 +1048,11 @@ export function useAgentActivity(
           // Core's task attribution, if it named one; `subAgents` turns this into a handle.
           taskId: item.task_id ?? null,
           risk: item.risk,
-        }))        .sort((a, b) => a.seq - b.seq)
+        })).sort((a, b) => a.seq - b.seq)
       if (activity.value.runId === runId) {
         toolCalls.value = calls
         saveTurn()
       } else if (turns.value[runId]) turns.value[runId].toolCalls = calls
-    } catch {
-      // ignore fetch errors
     }
   }
 
@@ -1154,24 +1139,30 @@ export function useAgentActivity(
   }
 
   function handleSessionEvent(event: EventEnvelope) {
+    if (event.type === 'stream.ready' || event.type === 'history.changed') return
     const runId = event.run_id ?? extractString(event.payload, 'run_id')
     const key = `${runId}:${event.seq}:${event.type}`
     if (seenEvents.has(key)) return
     seenEvents.add(key)
     const previous = activity.value.runId
     const known = runId ? !!turns.value[runId] : false
-    const historical = event.seq < latestSelectedSequence
+    const historical = Boolean(activity.value.runStartedAt && event.ts < activity.value.runStartedAt)
     if (runId && previous !== runId) {
       saveTurn()
       selectTurn(runId)
     }
     processEvent(event)
+    const last = thinkingSteps.value.at(-1)
+    if (last && last.seq == null) last.seq = event.seq
     if (['task.cancelled', 'run.failed', 'user.response'].includes(event.type)) {
       thinkingSteps.value = thinkingSteps.value.map((step) => step.status === 'running'
         ? { ...step, status: event.type === 'user.response' ? 'completed' : 'failed' } : step)
     }
-    thinkingSteps.value = thinkingSteps.value.map((step) => step.seq == null ? { ...step, seq: event.seq } : step)
-    saveTurn()
+    if (!hydrating) {
+      // Existing plan/reasoning steps are updated in place; only newly appended
+      // steps need their event sequence, rather than rescanning the whole turn.
+      saveTurn()
+    }
     if (
       event.type.startsWith('tool.') ||
       event.type.startsWith('approval.') ||
@@ -1179,10 +1170,33 @@ export function useAgentActivity(
       event.type.startsWith('step.') ||
       event.type.startsWith('task')
     ) {
-      void refreshToolExecutions()
+      if (!hydrating && !options.managedReads) {
+        void refreshToolExecutions()
+      }
     }
     if ((known || historical) && previous && previous !== runId) selectTurn(previous)
-    else latestSelectedSequence = Math.max(latestSelectedSequence, event.seq)
+  }
+
+  /** Apply one bounded history snapshot without event-driven REST reads. */
+  function hydrate(events: readonly EventEnvelope[], tools: readonly ToolExecutionTimelineItemDto[], runIds: readonly string[]) {
+    const selected = activity.value.runId
+    const byRun = new Map<string, EventEnvelope[]>()
+    for (const event of events) {
+      const id = event.run_id ?? extractString(event.payload, 'run_id')
+      if (!id) continue
+      const group = byRun.get(id) ?? []; group.push(event); byRun.set(id, group)
+    }
+    hydrating = true
+    try {
+      saveTurn()
+      for (const [id, group] of byRun) {
+        selectTurn(id)
+        for (const event of group.sort((a, b) => a.seq - b.seq)) handleSessionEvent(event)
+        saveTurn()
+      }
+      applyToolExecutions(tools, runIds)
+      if (selected && turns.value[selected]) selectTurn(selected)
+    } finally { hydrating = false }
   }
 
   function connect() {
@@ -1236,6 +1250,7 @@ export function useAgentActivity(
     agentStates,
     progressEvents,
     reset,
+    hydrate,
     refreshToolExecutions,
   }
 }

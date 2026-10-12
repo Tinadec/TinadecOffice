@@ -12,12 +12,14 @@
  * preformatted text rather than pretending to understand it. It never renders HTML or executes
  * anything from the payload — the model and the tools do not get to produce markup here.
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import type { ToolExecutionResultDto } from '@/api'
-import DiffViewer from '@/components/git/DiffViewer.vue'
 import ToolWidgetFrame from './ToolWidgetFrame.vue'
+
+// Ordinary file/search results do not need the Monaco diff editor.
+const DiffViewer = defineAsyncComponent(() => import('@/components/git/DiffViewer.vue'))
 
 const props = defineProps<{
   executionId: string
@@ -35,6 +37,7 @@ const { t } = useI18n()
 const result = ref<ToolExecutionResultDto | null>(null)
 const failure = ref<string | null>(null)
 const loading = ref(false)
+const widgetReady = ref(false)
 
 /**
  * Aborted on every re-run, so a slow response for a previous execution cannot land on the current
@@ -43,7 +46,10 @@ const loading = ref(false)
 let inFlight: AbortController | null = null
 async function load() {
   inFlight?.abort()
-  if (!props.executionId) { result.value = null; return }
+  result.value = null
+  failure.value = null
+  widgetReady.value = false
+  if (!props.executionId) { inFlight = null; loading.value = false; return }
   const controller = new AbortController()
   inFlight = controller
   loading.value = true
@@ -120,15 +126,17 @@ const truncatedLabel = computed(() => result.value?.truncated
     <p v-else-if="failure" class="tool-result-note is-error" role="alert">{{ failure }}</p>
     <template v-else-if="result">
       <p v-if="truncatedLabel" class="tool-result-note is-warning">{{ truncatedLabel }}</p>
-      <p v-if="!result.body" class="tool-result-note">{{ t('agent.resultEmpty') }}</p>
+      <p v-if="!result.body && !widgetReady" class="tool-result-note">{{ t('agent.resultEmpty') }}</p>
       <!-- The tool's own view. Rendered before the generic shapes so a tool that authored HTML
            decides how its result reads, and only when the reader asked for that tier. -->
       <ToolWidgetFrame
         v-if="allowWidget && result.widget_html"
         :html="result.widget_html"
         :title="toolId"
+        @ready="widgetReady = $event"
       />
-      <DiffViewer v-else-if="diffText" :diff-text="diffText" :file-path="result.tool_id" />
+      <template v-if="!allowWidget || !result.widget_html || !widgetReady">
+      <DiffViewer v-if="diffText" :diff-text="diffText" :file-path="result.tool_id" />
       <ul v-else-if="listValues.length" class="tool-result-list">
         <li v-for="(item, index) in listValues" :key="index">{{ item }}</li>
       </ul>
@@ -139,6 +147,7 @@ const truncatedLabel = computed(() => result.value?.truncated
         </template>
       </dl>
       <pre v-else class="tool-result-raw">{{ rawText }}</pre>
+      </template>
     </template>
   </div>
 </template>

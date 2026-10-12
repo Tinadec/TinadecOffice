@@ -9,7 +9,7 @@
  * panel (replay + follow), where the user has a full-size view and can type to
  * help the agent finish.
  */
-import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -18,7 +18,7 @@ import { api, type EventEnvelope } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { useTerminal } from '@/composables/useTerminal'
 import { createAgentTerminalSource } from '@/composables/useTerminalSource'
-import { useUie } from '@tinadec/ui'
+import { useUie } from '../../../../TinadecUI/src/components/useUie'
 import { useNotifications } from '@/composables/useNotifications'
 
 const props = defineProps<{
@@ -34,7 +34,7 @@ const props = defineProps<{
 
 const { notify } = useNotifications()
 const { openAgentTerminal } = useTerminal()
-const openSpaceTerminal = inject<() => void>('space:open-terminal')
+const openSpaceTerminal = inject<(() => void) | undefined>('space:open-terminal', undefined)
 
 const containerRef = ref<HTMLElement | null>(null)
 const terminalSessionId = ref<string | null>(null)
@@ -47,9 +47,13 @@ let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let source: ReturnType<typeof createAgentTerminalSource> | null = null
 let unsubscribeEvents: (() => void) | null = null
+let inputDisposable: { dispose: () => void } | null = null
+let resizeObserver: ResizeObserver | null = null
+let disposed = false
 const captured: EventEnvelope[] = []
 const capturedSeqs = new Set<number>()
 let backfilling = false
+let registryRequest: AbortController | null = null
 
 function payloadOf(event: EventEnvelope): Record<string, unknown> {
   return event.payload && typeof event.payload === 'object' ? (event.payload as Record<string, unknown>) : {}
@@ -75,23 +79,37 @@ function capture(event: EventEnvelope): boolean {
 
 /** Correlate this execution with its run and terminal session from the stream. */
 function inspect(event: EventEnvelope) {
+  if (disposed) return
   if (!event.type.startsWith('terminal.')) return
   if (!belongsTo(event)) return
 
   capture(event)
+  const runId = runIdOf(event)
+  if (runId) associateRun(runId)
   const sessionId = payloadOf(event).terminal_session_id
   if (!terminalSessionId.value && typeof sessionId === 'string') {
     terminalSessionId.value = sessionId
     attachSession(sessionId)
   }
-  if (!resolvedRunId.value) {
-    const runId = runIdOf(event)
-    if (runId) {
-      resolvedRunId.value = runId
-      if (!terminalSessionId.value) void backfillSession()
-    }
-  }
+  if (!terminalSessionId.value) void backfillSession()
 }
+
+function associateRun(runId: string) {
+  if (disposed || runId === resolvedRunId.value) return
+  source?.dispose()
+  source = null
+  inputDisposable?.dispose()
+  inputDisposable = null
+  resolvedRunId.value = runId
+  registryRequest?.abort()
+  if (terminalSessionId.value) attachSession(terminalSessionId.value)
+}
+watch(() => props.runId, (runId) => {
+  if (runId && !resolvedRunId.value) {
+    associateRun(runId)
+    void backfillSession()
+  }
+})
 
 /**
  * Mount-time association recovery. The live listener only sees events emitted
@@ -105,10 +123,8 @@ function seedFromRecentEvents(): void {
     if (!event.type.startsWith('terminal.')) continue
     if (!belongsTo(event)) continue
     if (!capture(event)) continue
-    if (!resolvedRunId.value) {
-      const runId = runIdOf(event)
-      if (runId) resolvedRunId.value = runId
-    }
+    const runId = runIdOf(event)
+    if (runId) associateRun(runId)
     const sessionId = payloadOf(event).terminal_session_id
     if (!terminalSessionId.value && typeof sessionId === 'string') {
       terminalSessionId.value = sessionId
@@ -120,9 +136,13 @@ async function backfillSession(): Promise<void> {
   const runId = resolvedRunId.value
   if (!runId || terminalSessionId.value || backfilling) return
   backfilling = true
+  const request = new AbortController()
+  registryRequest = request
+  const executionId = props.executionId
   try {
-    const sessions = await api.listTerminalSessions(runId)
-    const match = sessions.find((session) => session.execution_id === props.executionId)
+    const sessions = await api.listTerminalSessions(runId, request.signal)
+    if (disposed || request.signal.aborted || resolvedRunId.value !== runId || props.executionId !== executionId || terminalSessionId.value) return
+    const match = sessions.find((session) => session.execution_id === executionId)
     if (match) {
       terminalSessionId.value = match.terminal_session_id
       if (!match.live) exited.value = true
@@ -132,11 +152,15 @@ async function backfillSession(): Promise<void> {
     // Best effort: a later live event can still associate the session.
   } finally {
     backfilling = false
+    if (registryRequest === request) registryRequest = null
+    if (!disposed && !terminalSessionId.value && resolvedRunId.value !== runId) void backfillSession()
   }
 }
 
 function attachSession(sessionId: string) {
-  if (!term || source) return
+  if (disposed || !term || source) return
+  registryRequest?.abort()
+  const attachedTerm = term
   source = createAgentTerminalSource({
     terminalSessionId: sessionId,
     runId: resolvedRunId.value ?? undefined,
@@ -148,12 +172,12 @@ function attachSession(sessionId: string) {
     kill: (id) => api.killTerminalSession(id),
   })
   source.attach({
-    onData: (data) => term?.write(data),
+    onData: (data) => { if (!disposed && term === attachedTerm) attachedTerm.write(data) },
     onStatus: (status) => {
-      if (status === 'exited' || status === 'killed') exited.value = true
+      if (!disposed && (status === 'exited' || status === 'killed')) exited.value = true
     },
   })
-  term.onData((data) => source?.write(data))
+  inputDisposable = term.onData((data) => { if (!disposed) source?.write(data) })
 }
 
 /** Jump: open the same session as a full-size panel tab. */
@@ -258,11 +282,14 @@ onMounted(() => {
   term.loadAddon(fitAddon)
   term.open(containerRef.value)
   term.write(`\x1b[90m$ ${props.command}\x1b[0m\r\n`)
-  try {
-    fitAddon.fit()
-  } catch {
-    // Container may not have dimensions yet.
+  const fit = () => {
+    const host = containerRef.value
+    if (disposed || !term || !host?.isConnected || host.clientWidth <= 0 || host.clientHeight <= 0) return
+    fitAddon?.fit()
   }
+  fit()
+  resizeObserver = new ResizeObserver(fit)
+  resizeObserver.observe(containerRef.value)
 
   unsubscribeEvents = homeController.onEvent(inspect)
   seedFromRecentEvents()
@@ -271,17 +298,23 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  registryRequest?.abort()
+  registryRequest = null
+  resizeObserver?.disconnect()
+  resizeObserver = null
   unsubscribeEvents?.()
   unsubscribeEvents = null
-  source?.detach()
+  inputDisposable?.dispose()
+  inputDisposable = null
+  source?.dispose()
   source = null
-  try {
-    term?.dispose()
-  } catch {
-    // Ignore double-dispose.
-  }
+  const attachedTerm = term
   term = null
   fitAddon = null
+  captured.length = 0
+  capturedSeqs.clear()
+  attachedTerm?.dispose()
 })
 </script>
 
@@ -407,7 +440,7 @@ onBeforeUnmount(() => {
   background: var(--bg-primary);
 }
 
-.terminal-call-body :deep(.xterm-viewport) {
+.terminal-call-body :deep(.xterm-scrollable-element) {
   background-color: var(--bg-primary) !important;
 }
 </style>

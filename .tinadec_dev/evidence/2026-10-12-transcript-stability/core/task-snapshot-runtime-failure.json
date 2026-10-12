@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-12",
+  "attempt": "transcript-real-a05df27fac",
+  "accepted": false,
+  "completed_rounds": 5,
+  "failed_round": 6,
+  "run_id": "7c416389-2338-403a-84a5-eb56c89a3a7c",
+  "run_status": "failed",
+  "last_event_sequence": 14,
+  "frontend_errors": [],
+  "fallback": false,
+  "frontend_error_message": null,
+  "exception": "2026-10-12T06:45:26.6341187+00:00 Error TinadecCore.DmaEA.FullDuplexRunEngine: Full-duplex run 7c416389-2338-403a-84a5-eb56c89a3a7c failed in durable engine.\nSystem.IO.IOException: 无法删除要被替换的文件。\r\n   at System.IO.FileSystem.ReplaceFile(String sourceFullPath, String destFullPath, String destBackupFullPath, Boolean ignoreMetadataErrors)\r\n   at TinadecCore.Lifecycle.StorageLifecycleService.WriteTaskSnapshotAsync(Guid runId, TaskSnapshotFile snapshot, CancellationToken cancellationToken) in C:\\git\\agent\\TinadecOffice\\TinadecCore\\Lifecycle\\StorageLifecycleService.cs:line 1507\r\n   at TinadecCore.Lifecycle.StorageLifecycleService.UpdateTaskAsync(Guid runId, Object taskNode, CancellationToken cancellationToken) in C:\\git\\agent\\TinadecOffice\\TinadecCore\\Lifecycle\\StorageLifecycleService.cs:line 1526\r\n   at TinadecCore.Lifecycle.LifecycleManager.UpdateTaskSnapshotAsync(Guid runId, Object taskNode, CancellationToken cancellationToken) in C:\\git\\agent\\TinadecOffice\\TinadecCore\\Lifecycle\\LifecycleModuleRegistrar.cs:line 267\r\n   at TinadecCore.DmaEA.FullDuplexRunEngine.ApplyTaskResultAsync(RunState run, FrozenRunConfigurationV1 configuration, Guid runId, FullDuplexCheckpointV1 checkpoint, TaskExecutionResult execution, CancellationToken cancellationToken) in C:\\git\\agent\\TinadecOffice\\TinadecCore\\DmaEA\\FullDuplexRunEngine.cs:line 3607\r\n   at TinadecCore.DmaEA.FullDuplexRunEngine.ExecuteReadyTasksAsync(RunState run, FrozenRunConfigurationV1 configuration, FullDuplexCheckpointV1 checkpoint, CancellationToken cancellationToken) in C:\\git\\agent\\TinadecOffice\\TinadecCore\\DmaEA\\FullDuplexRunEngine.cs:line 1501\r\n   at TinadecCore.DmaEA.FullDuplexRunEngine.ExecuteRunAsync(Guid runId, CancellationToken stoppingToken) in C:\\git\\agent\\TinadecOffice\\TinadecCore\\DmaEA\\FullDuplexRunEngine.cs:line 674\n",
+  "baseline_findings": [
+    "HEAD UpdateTaskAsync opens snapshot with File.OpenRead (no FileShare.Delete).",
+    "Read/modify/replace and TaskRevision updates have no per-run synchronization.",
+    "Snapshot deserialization blocks synchronously on an async operation.",
+    "The exact conflicting reader handle was not captured. The observed File.Replace failure is not a renderer exception."
+  ],
+  "correction": "Serialize snapshot read/modify/replace/revision by run, allow delete sharing for immutable reads, await deserialization. No exception suppression or unbounded retry.",
+  "source_log": ".tinadec_dev/tmp/transcript-real-a05df27fac/user/logs/core.log",
+  "new_regression": "StorageApiTests.TaskSnapshots_ConcurrentUpdatesPreserveEveryTaskAndAllowHeldReaders"
+}

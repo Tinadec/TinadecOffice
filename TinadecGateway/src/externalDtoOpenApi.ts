@@ -121,6 +121,7 @@ const message = t.Object({
   id: t.String(),
   session_id: t.String(),
   run_id: nullableString(),
+  sequence: t.Integer(),
   role: t.String(),
   content: t.String(),
   created_at: nullableString(),
@@ -478,6 +479,15 @@ export const externalDtoSchemas = {
   SessionList: t.Array(componentRef('Session')),
   Message: message,
   MessageList: t.Array(componentRef('Message')),
+  SessionMessagesPage: t.Object({
+    items: t.Array(componentRef('Message')), runs: t.Array(componentRef('Run')),
+    has_more: t.Boolean(), next_before_sequence: nullableInteger(), history_revision: t.Integer(), revert_epoch: t.Integer(),
+  }, { additionalProperties: false }),
+  SessionActivity: t.Object({
+    events: t.Array(t.Object({ version: t.String(), event_id: t.String(), event_type: t.String(), timestamp: t.String(),
+      session_id: nullableString(), run_id: nullableString(), payload: jsonObject() }, { additionalProperties: true })),
+    tool_executions: t.Array(jsonObject()), runs: t.Array(componentRef('Run')),
+  }, { additionalProperties: false }),
   MessageAttachment: attachment,
   MessageAttachmentSummary: messageAttachmentSummary,
   MessageAttachmentList: t.Array(componentRef('MessageAttachment')),

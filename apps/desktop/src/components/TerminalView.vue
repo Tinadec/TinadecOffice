@@ -12,7 +12,7 @@
  * - Focus management
  * - Proper cleanup on unmount
  */
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -40,6 +40,9 @@ const containerRef = ref<HTMLElement | null>(null)
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
+let focusTimer: ReturnType<typeof setTimeout> | null = null
+let mountedTerminalId: string | null = null
+const ownsAttachment = () => !!term && !!mountedTerminalId && getTerminal(mountedTerminalId)?.term === term
 
 // ---- xterm.js options ----
 
@@ -73,21 +76,38 @@ onMounted(() => {
   term.loadAddon(new WebLinksAddon())
 
   // Attach to the terminal backend
-  attachTerminal(props.terminalId, containerRef.value, term, fitAddon)
+  mountedTerminalId = props.terminalId
+  try {
+    if (!attachTerminal(mountedTerminalId, containerRef.value, term, fitAddon)) {
+      term.dispose()
+      term = null
+      fitAddon = null
+      mountedTerminalId = null
+      return
+    }
+  } catch (error) {
+    if (mountedTerminalId) detachTerminal(mountedTerminalId, term)
+    throw error
+  }
 
   // Set up ResizeObserver for auto-fitting. Goes through `fitTerminal` so the
   // zero-size guard applies: this host is `display:none` whenever its card is not
   // the active tab, and fitting against that would shrink the PTY to 2×1.
-  resizeObserver = new ResizeObserver(() => fitTerminal(props.terminalId))
+  resizeObserver = new ResizeObserver(() => {
+    if (ownsAttachment()) fitTerminal(mountedTerminalId!)
+  })
   resizeObserver.observe(containerRef.value)
 
   // Focus the terminal after a short delay to ensure it's ready
-  setTimeout(() => {
-    focusTerminal(props.terminalId)
+  focusTimer = setTimeout(() => {
+    focusTimer = null
+    if (ownsAttachment()) focusTerminal(mountedTerminalId!)
   }, 100)
 })
 
-onUnmounted(() => {
+onBeforeUnmount(() => {
+  if (focusTimer !== null) clearTimeout(focusTimer)
+  focusTimer = null
   // Clean up ResizeObserver
   if (resizeObserver) {
     resizeObserver.disconnect()
@@ -98,10 +118,11 @@ onUnmounted(() => {
   // shell: closing a tab, collapsing the feature column, a route change and a
   // detach all unmount here. Detach the listeners and xterm and leave the process
   // running; explicit close/restart/Ctrl+W still reach closeTerminal().
-  detachTerminal(props.terminalId, term)
+  if (mountedTerminalId) detachTerminal(mountedTerminalId, term)
 
   term = null
   fitAddon = null
+  mountedTerminalId = null
 })
 
 // ---- Watch for terminal exit ----
@@ -118,8 +139,8 @@ watch(
 // ---- Public methods (exposed via template ref) ----
 
 defineExpose({
-  fit: () => fitTerminal(props.terminalId),
-  focus: () => focusTerminal(props.terminalId),
+  fit: () => { if (ownsAttachment()) fitTerminal(mountedTerminalId!) },
+  focus: () => { if (ownsAttachment()) focusTerminal(mountedTerminalId!) },
 })
 </script>
 
@@ -150,9 +171,8 @@ defineExpose({
   padding: 0;
 }
 
-.terminal-view :deep(.xterm-viewport) {
+.terminal-view :deep(.xterm-scrollable-element) {
   background-color: var(--bg-primary) !important;
-  overflow-y: auto !important;
 }
 
 .terminal-view :deep(.xterm-screen) {
@@ -163,21 +183,17 @@ defineExpose({
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
 }
 
-/* Thin scrollbar for terminal */
-.terminal-view :deep(.xterm-viewport::-webkit-scrollbar) {
-  width: 6px;
-}
-
-.terminal-view :deep(.xterm-viewport::-webkit-scrollbar-thumb) {
+/* xterm 6 owns scrolling and renders its scrollbar rather than a native viewport. */
+.terminal-view :deep(.xterm .slider) {
   background: rgba(125, 133, 144, 0.3);
   border-radius: 3px;
 }
 
-.terminal-view :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+.terminal-view :deep(.xterm .slider:hover) {
   background: rgba(125, 133, 144, 0.5);
 }
 
-.terminal-view :deep(.xterm-viewport::-webkit-scrollbar-track) {
+.terminal-view :deep(.xterm .scrollbar) {
   background: transparent;
 }
 </style>

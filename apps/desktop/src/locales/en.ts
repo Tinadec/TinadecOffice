@@ -273,6 +273,10 @@ export default {
     },
   },
   chat: {
+    transcript: 'Conversation',
+    loadOlderMessages: 'Load earlier messages',
+    loadingOlderMessages: 'Loading earlier messages…',
+    retryMessages: 'Retry loading messages',
     title: 'Tinadec session',
     noProject: 'No project opened',
     placeholder: 'Talk to the Meeting Agent by default. It will split the task, plan execution, and dispatch other agents.',

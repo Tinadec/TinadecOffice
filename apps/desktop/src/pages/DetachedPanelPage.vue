@@ -8,6 +8,8 @@ import { setSelectedStorage, registerSessionStorage, scopedApi } from '@/lib/sto
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
+import { createCoalescedRead } from '@/lib/coalescedRead'
+import { isAbortError } from '@/lib/isAbortError'
 import { useNotifications } from '@/composables/useNotifications'
 import GitPanel from '@/components/GitPanel.vue'
 import ApprovalTab from '@/components/ApprovalTab.vue'
@@ -61,54 +63,111 @@ const shellCommand = ref('npm test')
 const busy = ref(false)
 
 const sessionIdRef = computed(() => sessionId.value)
+const activityOwner = useAgentActivity(sessionIdRef, orchestration, { managedReads: true })
 const {
   activity: agentActivity,
   thinkingSteps: agentThinkingSteps,
   agentStates: agentStatesMap,
   progressEvents: agentProgressEvents,
-} = useAgentActivity(sessionIdRef, orchestration)
+} = activityOwner
 
 let unsubscribeEvents: (() => void) | null = null
-
-async function loadData() {
-  // Doctor/readiness are runtime-wide, not session-scoped.
-  if (tabType.value === 'doctor') {
-    const [report, receipt] = await Promise.all([
-      api.doctor().catch(() => null),
-      api.readiness().catch(() => null),
-    ])
-    doctor.value = report
-    readiness.value = receipt
+let readEpoch = 0
+let readAbort = new AbortController()
+let disposed = false
+type PanelRead = 'approvals' | 'activity' | 'orchestration' | 'doctor'
+const activityRuns = new Set<string>()
+let activityNeedsPage = true
+let revertEpoch: number | null = null
+async function readPanelGroups(groups: ReadonlySet<PanelRead>) {
+  const epoch = readEpoch, session = sessionId.value, storage = storageId.value, type = tabType.value
+  const signal = readAbort.signal
+  const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+  const current = () => !disposed && !signal.aborted && epoch === readEpoch && session === sessionId.value && storage === storageId.value && type === tabType.value
+  const jobs: Promise<void>[] = []
+  if (groups.has('doctor')) jobs.push(Promise.all([api.doctor(), api.readiness()]).then(([report, receipt]) => { if (current()) { doctor.value = report; readiness.value = receipt } }))
+  if (session && groups.has('approvals')) jobs.push(Promise.all([api.listApprovals(session, undefined, requestSignal), api.listApprovalRules(session, requestSignal)]).then(([items, rules]) => { if (current()) { approvals.value = items; approvalRules.value = rules } }))
+  if (session && groups.has('orchestration')) jobs.push(api.getOrchestrationSnapshot(session, requestSignal).then(snapshot => { if (current()) orchestration.value = snapshot }))
+  if (session && groups.has('activity')) {
+    jobs.push((async () => {
+      if (activityNeedsPage) {
+        let page = await api.listMessagePage(session, { limit: 100 }, requestSignal)
+        if (!current()) return
+        if (revertEpoch !== null && page.revert_epoch !== revertEpoch) {
+          // One recovery belongs to this read lane and deadline. Do not recursively
+          // start a new lane when another window keeps editing the history.
+          const expectedEpoch = page.revert_epoch
+          page = await api.listMessagePage(session, { limit: 100 }, requestSignal)
+          if (!current()) return
+          if (page.revert_epoch !== expectedEpoch) throw new Error('会话历史再次更新，请重试读取。')
+          resetPanelHistory(page.revert_epoch)
+        }
+        revertEpoch = page.revert_epoch; activityNeedsPage = false
+        for (const run of page.runs) activityRuns.add(run.id)
+      }
+      const ids = [...activityRuns], activityJobs: Promise<void>[] = []
+      for (let offset = 0; offset < ids.length; offset += 100) {
+        const batch = ids.slice(offset, offset + 100)
+        activityJobs.push(api.getSessionActivity(session, batch, requestSignal).then(snapshot => {
+          if (!current()) return
+          activityOwner.hydrate(snapshot.events, snapshot.tool_executions, batch)
+          const retained = toolExecutions.value.filter(tool => !batch.includes(tool.run_id))
+          toolExecutions.value = [...retained, ...snapshot.tool_executions]
+        }))
+      }
+      const results = await Promise.allSettled(activityJobs)
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failure) throw failure.reason
+    })())
   }
-  if (!sessionId.value) {
-    loading.value = false
-    return
-  }
+  const results = await Promise.allSettled(jobs)
+  if (!current()) return
+  loading.value = false
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected' && !isAbortError(result.reason))
+  if (failure) throw failure.reason
+  dismissByKey('detached-panel')
+}
+const activityReads = createCoalescedRead<PanelRead>(readPanelGroups)
+const auxiliaryReads = createCoalescedRead<PanelRead>(readPanelGroups)
+const panelReads = {
+  request(...groups: PanelRead[]) {
+    const activity = groups.filter(group => group === 'activity')
+    const auxiliary = groups.filter(group => group !== 'activity')
+    return Promise.all([
+      ...(activity.length ? [activityReads.request(...activity)] : []),
+      ...(auxiliary.length ? [auxiliaryReads.request(...auxiliary)] : []),
+    ]).then(() => {})
+  },
+  reset() { activityReads.reset(); auxiliaryReads.reset() },
+}
 
-  try {
-    const [approvalList, ruleList, orchestrationSnapshot, toolTimeline] = await Promise.all([
-      api.listApprovals(sessionId.value),
-      api.listApprovalRules(sessionId.value).catch(() => [] as ApprovalRuleDto[]),
-      api.getOrchestrationSnapshot(sessionId.value).catch(() => null),
-      api.listToolExecutions(sessionId.value, { limit: 12 }).catch(() => []),
-    ])
-
-    approvals.value = approvalList
-    approvalRules.value = ruleList
-    orchestration.value = orchestrationSnapshot
-    toolExecutions.value = toolTimeline
-    dismissByKey('detached-panel')
-  } catch (err) {
-    status.error({
-      key: 'detached-panel',
-      title: t('context.loadError'),
-      message: err instanceof Error ? err.message : String(err),
-      source: 'panel',
-      action: { label: t('context.retry'), run: loadData }
-    })
-  } finally {
-    loading.value = false
+async function loadData(snapshotOnly = false) {
+  const groups: PanelRead[] = tabType.value === 'doctor' ? ['doctor']
+    : tabType.value === 'approval' || tabType.value === 'git' ? ['approvals']
+      : tabType.value === 'orchestration' ? ['orchestration', 'activity']
+        : tabType.value === 'agent' ? ['activity'] : []
+  if (!groups.length) { loading.value = false; return }
+  const epoch = readEpoch
+  async function read(wanted: PanelRead[]) {
+    try {
+      await panelReads.request(...wanted)
+    } catch (err) {
+      if (disposed || epoch !== readEpoch || isAbortError(err)) return
+      status.error({
+        key: 'detached-panel',
+        title: t('context.loadError'),
+        message: err instanceof Error ? err.message : String(err),
+        source: 'panel',
+        action: { label: t('context.retry'), run: () => loadData() }
+      })
+    } finally {
+      if (!disposed && epoch === readEpoch) loading.value = false
+    }
   }
+  if (!snapshotOnly) return read(groups)
+  const auxiliary = groups.filter(group => group !== 'activity')
+  if (auxiliary.length) void read(auxiliary)
+  if (groups.includes('activity')) await read(['activity'])
 }
 
 function connectSSE() {
@@ -120,21 +179,31 @@ function connectSSE() {
   if (!sessionId.value) return
 
   unsubscribeEvents = subscribeToSessionEvents(async (event) => {
+    if (event.type === 'stream.ready' || event.type === 'history.changed') {
+      const epoch = event.payload?.['revert_epoch']
+      const changed = event.type === 'history.changed' || (typeof epoch === 'number' && revertEpoch !== null && epoch !== revertEpoch)
+      resetPanelReads()
+      if (changed) resetPanelHistory(typeof epoch === 'number' ? epoch : null)
+      else { activityNeedsPage = true; if (typeof epoch === 'number') revertEpoch = epoch }
+      return loadData(true)
+    }
     events.value = [...events.value.slice(-79), event].sort((a, b) => a.seq - b.seq)
 
-    if (
-      event.type.startsWith('message.') ||
-      event.type.startsWith('approval.') ||
-      event.type.startsWith('tool.') ||
-      event.type.startsWith('run.') ||
-      event.type.startsWith('task') ||
-      event.type.startsWith('supervision.') ||
-      event.type.startsWith('context.') ||
-      event.type.startsWith('step.')
-    ) {
-      await loadData()
-    }
+    if (event.run_id) activityRuns.add(event.run_id)
+    const groups: PanelRead[] = []
+    if ((tabType.value === 'approval' || tabType.value === 'git') && (event.type.startsWith('approval.') || event.type.startsWith('governance.permission'))) groups.push('approvals')
+    if ((tabType.value === 'agent' || tabType.value === 'orchestration') && (event.type.startsWith('tool.') || event.type.startsWith('run.') || event.type.startsWith('task') || event.type.startsWith('step.'))) groups.push('activity')
+    if (tabType.value === 'orchestration' && (event.type.startsWith('run.') || event.type.startsWith('task') || event.type.startsWith('context.') || event.type.startsWith('step.'))) groups.push('orchestration')
+    if (groups.length) await panelReads.request(...groups)
   }, { scope: sessionId })
+}
+
+function resetPanelReads() {
+  readEpoch++; readAbort.abort(); readAbort = new AbortController(); panelReads.reset()
+}
+function resetPanelHistory(epoch: number | null = null) {
+  activityNeedsPage = true; revertEpoch = epoch
+  activityRuns.clear(); activityOwner.reset(); toolExecutions.value = []; orchestration.value = null; events.value = []
 }
 
 // ---- Window controls ----
@@ -226,8 +295,9 @@ function recordApproval(approval: ApprovalDto) {
 
 onMounted(async () => {
   applyInitialTheme?.()
-  await loadData()
   connectSSE()
+  await loadData()
+  if (disposed) return
 
   removeThemeListener = window.tinadec?.onPanelThemeChanged?.((data) => {
     if (data.theme) {
@@ -240,11 +310,16 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true; readEpoch++; readAbort.abort(); panelReads.reset()
   unsubscribeEvents?.()
   removeThemeListener?.()
 })
 
-watch(sessionId, () => {
+watch([sessionId, storageId, tabType], () => {
+  resetPanelReads()
+  setSelectedStorage(storageId.value)
+  if (sessionId.value) registerSessionStorage(sessionId.value, storageId.value)
+  resetPanelHistory(); approvals.value = []; approvalRules.value = []
   loading.value = true
   void loadData()
   connectSSE()

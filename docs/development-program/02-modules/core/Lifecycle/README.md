@@ -4,6 +4,10 @@
 
 本模块目前处于**初始源码清点**，还未完成逐功能审计；下列介绍继承总图中已核对的职责，初始状态区分源码能力、范围与缺口。
 
+## 2026-10-12 活动与增量事件读取
+
+StorageLifecycleService按请求run及活跃run筛选活动，SQL约束保留tenant/workspace/session。日志物化按run复用文件句柄，工具时间线run_id/limit实际生效。live-only SSE建立每run水位后发送stream.ready，只查水位变化run的新事件；历史撤回发无业务cursor的history.changed。统一任务[APP-HOME-108](../../app/home/TODO.md#app-home-108)，[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)记录相关事件/跨窗口与隔离运行证据。
+
 ## 文档入口
 
 - [模块架构与边界](ARCHITECTURE.md) · [模块SVG](architecture.svg)

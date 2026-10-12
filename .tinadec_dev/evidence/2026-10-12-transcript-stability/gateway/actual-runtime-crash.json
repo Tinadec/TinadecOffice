@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-12",
+  "accepted": false,
+  "owned_root": "transcript-real-78a051c7d5",
+  "completed_rounds": 1,
+  "failure_round": 2,
+  "frontend_errors": [],
+  "frontend_fallback": false,
+  "host_state": "unavailable",
+  "runtime": "Bun v1.3.14 Windows x64",
+  "panic": "Internal assertion failure",
+  "gateway_native_crash": "Bun v1.3.14 (0d9b296a) Windows x64\nWindows v.win11_dt\nCPU: sse42 avx avx2\nArgs: \"bun\" \"src/index.ts\"\nFeatures: abort_signal(10) bunfig fetch(128) http_server jsc transpiler_cache(4) tsconfig \nBuiltins: \"bun:main\" \"node:crypto\" \nElapsed: 790099ms | User: 2890ms | Sys: 1953ms\nRSS: 25.76MB | Peak: 88.00MB | Commit: 0.30GB | Faults: 45058 | Machine: 16.78GB\n\npanic(main thread): Internal assertion failure\noh no: Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n https://bun.report/1.3.14/wa10d9b296gDglooC+7xB+inB2hukf438sxB0zt0xB6/+t1Bq6gqwB6j/pwBgww7Ji1j0sBqq6+kBs3pqlB2ml7kBwsj2kBugqBinNoo4ixDCYKERNEL32.DLLu4mLCSntdll.dll4ulrBA0eNrzzCtJLcpLzFFILC5OLSrJzM9TSEvMzCktSgUAiSkKPg\n\n\n",
+  "first_round": {
+    "index": 1,
+    "content": "你好",
+    "elapsedMs": 69231,
+    "optimisticVisibleMs": 3304.5,
+    "admittedMs": 32354.799999952316,
+    "sessionId": "e01e9cc2-c037-450a-b091-243f2b7d9cff",
+    "runId": "e9359ba9-09af-479d-968c-ab9973ba5020",
+    "messageIds": [
+      "43307fe3-a0ab-4aad-81c7-f9009f15250c",
+      "38f9e251-48ad-4a70-9f68-d433d466a988",
+      "f7a6bfc1-65e4-459c-b413-4e4e2f830bc3"
+    ],
+    "messageRoles": [
+      "user",
+      "tool_evidence",
+      "assistant"
+    ],
+    "liveReplyUpdates": 1,
+    "errorCount": 0
+  },
+  "boundary": "No panic stack reader identity inferred; preceding expected AbortErrors do not alone establish causation. No external model or original user storage used."
+}

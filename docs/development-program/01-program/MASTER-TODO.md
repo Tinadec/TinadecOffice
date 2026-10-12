@@ -7,7 +7,7 @@
 | 待核查 | 72 |
 | 未开始 | 16 |
 | 待方案 | 10 |
-| 进行中 | 3 |
+| 进行中 | 4 |
 | 阻塞 | 0 |
 | 待验收 | 3 |
 | 已完成 | 25 |
@@ -18,6 +18,7 @@
 
 | Task ID | 任务 | 类型 | 状态 | 优先级 | 主责 |
 | --- | --- | --- | --- | --- | --- |
+| [APP-HOME-108](../02-modules/app/home/TODO.md#app-home-108) | 对话流稳定性、分页与事件读取 | 实现 | 进行中 | P0 | APP-HOME |
 | [CORE-PERSISTENCE-101](../02-modules/core/Persistence/TODO.md#core-persistence-101) | 修复配置过滤唯一索引与活动版本来源校验 | 实现 | 已完成 | P0 | CORE-PERSISTENCE |
 | [X-DATA-104](../02-modules/cross-cutting/data-security/TODO.md#x-data-104) | 作用域存储、TOML 配置和资源生命周期重构及平台验收 | 实现 | 进行中 | P0 | X-DATA |
 | [APP-CODE-001](../02-modules/app/code/TODO.md#app-code-001) | 完成 Code / 编程工作台 的逐功能审计与模块图精化 | 核查 | 待核查 | P1 | APP-CODE |

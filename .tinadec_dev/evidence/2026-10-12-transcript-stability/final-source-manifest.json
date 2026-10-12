@@ -1,0 +1,83 @@
+{
+  "checked_at": "2026-10-12T11:07:59.805Z",
+  "branch": "feat/flat-transcript-refactor",
+  "base": "1b6b7673",
+  "files": [
+    {
+      "path": "apps/desktop/src/controllers/HomeController.ts",
+      "sha256": "0250cf4916b016a0ba93546aad043c32ec5bc58a4efcf39a8a53cf88f38eb8db"
+    },
+    {
+      "path": "apps/desktop/src/lib/sessionEventBus.ts",
+      "sha256": "368c898ed7dce97e0e2eba0509211fe2273882006c530892326adecba6e61d21"
+    },
+    {
+      "path": "apps/desktop/src/pages/DetachedPanelPage.vue",
+      "sha256": "b6e12edc925b700aa07d5f151602a3ab125fce82cbb08109ddba264513a47a86"
+    },
+    {
+      "path": "apps/desktop/src/composables/useTerminal.ts",
+      "sha256": "93f6096e8c058abc9256c0dd93d24385320bc3ff177cf9ef6f18bbe18e2abca3"
+    },
+    {
+      "path": "apps/desktop/src/components/TerminalView.vue",
+      "sha256": "564167aa85ba5b5abd5335d30cac2154706a3d1732fddf164204c4ada2e1a679"
+    },
+    {
+      "path": "apps/desktop/src/components/chat/TerminalCallBlock.vue",
+      "sha256": "557b58d9ea5a875765eb04693fd0282d6f33675dbe37ffc1b1395bfea3cc1c65"
+    },
+    {
+      "path": "apps/desktop/src/components/chat/ToolCallCard.vue",
+      "sha256": "b1fff284fa19baf902ef14c7775607ab02980bd80017dc6cae5d5462b77544ed"
+    },
+    {
+      "path": "apps/desktop/src/components/chat/ToolResultView.vue",
+      "sha256": "fdb2d757d8aac04a84f2ec4e8743a6a1b144492a8506452ad4581eb87efbd3a7"
+    },
+    {
+      "path": "apps/desktop/src/composables/useAgentActivity.ts",
+      "sha256": "69b4ff7a1661525be3eb642c8e3d2aeb9d8b900b41ab314ea3061072813e3bec"
+    },
+    {
+      "path": "apps/desktop/src/components/ui/messageScroller/useMessageScroller.ts",
+      "sha256": "dfd50e9f3ed4a37621ea35f5aa0a66eabea2e99f2345ca1ecd5ac80921e2f05c"
+    },
+    {
+      "path": "TinadecCore/Lifecycle/StorageLifecycleService.cs",
+      "sha256": "35c47e5a6346225f15333b2772c048e7dea29025b78f881d7b5c27bdb50ba6f8"
+    },
+    {
+      "path": "TinadecCore/Memory/ProjectSessionStore.cs",
+      "sha256": "761ef6004f0a74e979594cb0eb9dac56b17f5d43f278aa01cd27de7694555d68"
+    },
+    {
+      "path": "TinadecCore/AspNetCore/Endpoints/StorageEndpoints.cs",
+      "sha256": "67081d60d1979270871e3d01f587085c690d1a93f8fec15b0fdbacaad3e3788d"
+    },
+    {
+      "path": "TinadecCore/AspNetCore/Endpoints/DmaeaEndpoints.cs",
+      "sha256": "9bc7e2ac7baad448bfa14a384b5bb187b800e0f7472a12c13f1f987e8d47665f"
+    },
+    {
+      "path": "TinadecGateway/src/streamResponse.ts",
+      "sha256": "4a09dd97db3515b4cd26017acdbf871122adf6ac4c147de4abccc4a094aa905a"
+    },
+    {
+      "path": "TinadecGateway/src/coreClient.ts",
+      "sha256": "f5b4a043ab14a3f8ff2cd8e8817a21c653accf507735e876e05ad7a520c86827"
+    },
+    {
+      "path": "TinadecGateway/src/streaming.ts",
+      "sha256": "46a84c436a6b75ef66f1a49c4fb212778e1cec967065ffbc8b6fa6bc49e2f5c7"
+    },
+    {
+      "path": "TinadecGateway/src/toolRuntimeClient.ts",
+      "sha256": "b45c3ddb65783bf2b7d693c65d1384494c2f313991d4ce8b2530ddbbbb654173"
+    },
+    {
+      "path": "TinadecGateway/src/upstreamFailure.ts",
+      "sha256": "32ed1e9ef04448266157a7880204d8b96ca083453b422149c52e667f4a35ea70"
+    }
+  ]
+}

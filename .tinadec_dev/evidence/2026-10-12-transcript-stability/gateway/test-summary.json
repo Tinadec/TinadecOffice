@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-12",
+  "branch": "feat/flat-transcript-refactor",
+  "base_commit": "1b6b7673",
+  "bun": "1.3.14 (0d9b296a)",
+  "elysia": "1.4.29",
+  "platform": "Windows x64",
+  "full_tests": {
+    "total": 113,
+    "passed": 113,
+    "log_sha256": "a8e70fe1bcb20b70f41aff4ebd936e3ad151e30a8ffc9b06d783f72ea7f0a520",
+    "failed": 0,
+    "files": 18,
+    "log": ".tinadec_dev/tmp/transcript-gateway-final-all.log",
+    "checked_at": "2026-10-12T11:01:47.839Z"
+  },
+  "targeted_tests": {
+    "total": 4,
+    "passed": 4,
+    "log_sha256": "25daeeafbb37db1cd7beb5afd8ec9e38c8c12c1ab69d34e2927a7a1c75ae0bf6",
+    "failed": 0
+  },
+  "initial_targeted_failure": "The first targeted run asserted Response.body reference identity for a string-backed Bun Response. Bun exposes a distinct lazy body wrapper; that identity assertion was removed. The meaningful before-EOF, cancellation and failure propagation checks remain.",
+  "socket_comparison": "bun-cancel-production-comparison.json",
+  "panic_scope": {
+    "reproduced_in_small_probe": false,
+    "symbols": [
+      "weak_ptr.zig:43 get",
+      "RequestContext.zig:700 onAbort",
+      "Response.zig:196 handle",
+      "uWS HttpContext.onClose",
+      "Windows libuv poll"
+    ],
+    "elimination_not_yet_established": true,
+    "observed_in_actual_app": true
+  },
+  "artifacts": [
+    {
+      "file": "TinadecGateway/src/streamResponse.ts",
+      "sha256": "4a09dd97db3515b4cd26017acdbf871122adf6ac4c147de4abccc4a094aa905a"
+    },
+    {
+      "file": "TinadecGateway/src/streamResponse.test.ts",
+      "sha256": "d3786c4c7d173ba7141b157d79d06854daa13d59a2ca3dcec643d9cacfba659c"
+    },
+    {
+      "file": ".tinadec_dev/evidence/2026-10-12-transcript-stability/gateway/bun-cancel-probe.mjs",
+      "sha256": "a0c97fc88b152580246cd62e9e00dbaed883f053e0e6ce7976826e18dc5482be"
+    },
+    {
+      "file": ".tinadec_dev/evidence/2026-10-12-transcript-stability/gateway/bun-cancel-production-comparison.json",
+      "sha256": "e987ddc4337d13f86dade0e71d82ee22aa8b7ff8c39dd1abe64e464e1558080e"
+    },
+    {
+      "file": ".tinadec_dev/evidence/2026-10-12-transcript-stability/gateway/bun-cancel-original-comparison.json",
+      "sha256": "eaeb08ad74314f9505235c7f2c454a4289b5163bd40c190e5f3f648989ce793b"
+    }
+  ],
+  "typecheck": {
+    "exit_code": 0,
+    "diagnostics": 0,
+    "stage": "Final product and tests; fake fetch Bun preconnect casts and nullable mapping fixtures corrected",
+    "log": ".tinadec_dev/tmp/transcript-gateway-typecheck-final.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "checked_at": "2026-10-12T11:01:47.838Z"
+  },
+  "stream_regressions_in_full_suite": 6,
+  "followup_transport_validation": "Two additional tests cover generic/Core/ToolRuntime cancellation versus unavailable upstream and manual redirects with host credentials. Final full suite113/113 includes all6 new stream tests.",
+  "previous_typecheck": {
+    "exit_code": 2,
+    "log_sha256": "9a7d8a11ba8d911522ab7714a799cbb9c9b559ef1e13dc26e6a99821ffbeada3",
+    "files": [
+      "src/composerModeProxy.test.ts",
+      "src/coreClient.test.ts",
+      "src/errorStatus.test.ts",
+      "src/healthProxy.test.ts",
+      "src/marketProxy.test.ts",
+      "src/mcpProxy.test.ts",
+      "src/runtimeProxy.test.ts",
+      "src/toolsSettingsProxy.test.ts",
+      "src/transcriptReadProxy.test.ts"
+    ],
+    "new_helper_or_product_diagnostics": 0,
+    "diagnostics": 28,
+    "stage": "Run after native-response framing change and before the final shared-cancellation/manual-redirect followup; not rerun after that followup."
+  },
+  "previous_typecheck_after_final_transport": {
+    "exit_code": 2,
+    "log": ".tinadec_dev/tmp/transcript-gateway-typecheck-final.log",
+    "diagnostics": 28,
+    "files": [
+      "TinadecGateway/src/composerModeProxy.test.ts",
+      "TinadecGateway/src/coreClient.test.ts",
+      "TinadecGateway/src/errorStatus.test.ts",
+      "TinadecGateway/src/healthProxy.test.ts",
+      "TinadecGateway/src/marketProxy.test.ts",
+      "TinadecGateway/src/mcpProxy.test.ts",
+      "TinadecGateway/src/runtimeProxy.test.ts",
+      "TinadecGateway/src/toolsSettingsProxy.test.ts",
+      "TinadecGateway/src/transcriptReadProxy.test.ts"
+    ],
+    "stage": "Final shared-cancellation/manual-redirect source rechecked on 2026-10-12",
+    "log_sha256": "9a3a2441f0b38728bdf7464e3f5a5ccd36793578309a5a2f97b411bd1dc5b4e3"
+  }
+}

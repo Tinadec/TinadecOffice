@@ -28,14 +28,14 @@ test('tools settings/resource proxy forwards exact paths, project scope, sparse 
 });
 test('Skills file preview and governed delete preserve package fields, binary bytes and action receipts', async () => {
   const payload = { resource_id: 'resource-1', scope: 'shared', package_hash: 'sha256:pack', package_files: [{ path: 'references/guide.md', content_hash: 'sha256:file', size_bytes: 4 }], source: 'skill_git', version: 'commit', commit: 'a'.repeat(40), availability: 'available', files: { 'references/guide.md': 'dGVzdA==' }, user_action_id: 'action-1', action_status: 'awaiting_user' };
-  globalThis.fetch = (async () => Response.json(payload, { headers: { etag: '"3"' } })) as typeof fetch;
+  globalThis.fetch = (async () => Response.json(payload, { headers: { etag: '"3"' } })) as unknown as typeof fetch;
   for (const [method, path] of [['GET', '/api/v1/tools/skills/resource-1/files?path=references%2Fguide.md'], ['DELETE', '/api/v1/tools/skills/resource-1?project_id=p1']] as const) {
     const response = await app.handle(new Request(`http://gateway.local${path}`, { method, headers: { 'if-match': '"3"' } }));
     assert.equal(response.status, 200); assert.equal(response.headers.get('etag'), '"3"'); assert.deepEqual(await response.json(), payload);
   }
 });
 test('tools proxy preserves Core validation and concurrency failure details', async () => {
-  globalThis.fetch = (async () => Response.json({ code: 'tool_settings_conflict', detail: 'Draft remains available.' }, { status: 412, headers: { 'content-type': 'application/problem+json' } })) as typeof fetch;
+  globalThis.fetch = (async () => Response.json({ code: 'tool_settings_conflict', detail: 'Draft remains available.' }, { status: 412, headers: { 'content-type': 'application/problem+json' } })) as unknown as typeof fetch;
   const response = await app.handle(new Request('http://gateway.local/api/v1/tools/settings/defaults', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ settings: {} }) }));
   assert.equal(response.status, 412); assert.equal(response.headers.get('content-type'), 'application/problem+json'); assert.equal((await response.json() as { code: string }).code, 'tool_settings_conflict');
 });

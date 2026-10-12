@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
@@ -103,7 +104,8 @@ public static class DmaeaEndpoints
             var session = await sessions.FindAsync(sessionGuid, ct);
             if (session is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
 
-            var runs = await lifecycle.ListRunsAsync(sessionGuid, ct);
+            var revertedMessages = await sessions.ListRevertedMessageIdsAsync(sessionGuid, ct);
+            var runs = await lifecycle.ListRunsAsync(sessionGuid, ct, revertedMessages, limit: 1);
             var run = runs.FirstOrDefault();
             FrozenRunConfigurationV1? frozenRun = null;
             if (run is not null && await manager.GetFrozenRunConfigurationAsync(run.Id.ToString(), ct) is { } frozen)
@@ -124,7 +126,7 @@ public static class DmaeaEndpoints
                     : ProjectFrozenGraph(frozenRun, snapshotJson);
             }
             if (run is null) return Results.Json(new { run = (object?)null, graph = declaredGraph, nodes = Array.Empty<object>(), lanes = Array.Empty<object>(), flows = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
-            var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
+            var events = await lifecycle.ReplayRunEventsAsync(sessionGuid, [run.Id], ct);
             var checkpointRow = await lifecycle.GetCurrentRunCheckpointAsync(run.Id, ct);
             FullDuplexCheckpointV1? checkpoint = null;
             if (checkpointRow is not null)
@@ -241,13 +243,35 @@ public static class DmaeaEndpoints
             });
         });
 
-        app.MapGet("/api/v1/sessions/{sessionId}/tool-executions", async (string sessionId, StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
+        app.MapGet("/api/v1/sessions/{sessionId}/activity", async (string sessionId, string? run_ids,
+            StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
+            if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND" });
+            var parsed = new List<Guid>();
+            foreach (var text in (run_ids ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!Guid.TryParse(text, out var id)) return Results.BadRequest(new { code = "INVALID_RUN_ID" });
+                if (!parsed.Contains(id)) parsed.Add(id);
+            }
+            if (parsed.Count > 200) return Results.BadRequest(new { code = "TOO_MANY_RUNS" });
+            var revertedMessages = await sessions.ListRevertedMessageIdsAsync(sessionGuid, ct);
+            var runs = await lifecycle.ListActivityRunsAsync(sessionGuid, parsed, cancellationToken: ct, revertedMessageIds: revertedMessages);
+            var events = await lifecycle.ReplayRunEventsAsync(sessionGuid, runs.Select(x => x.Id).ToArray(), ct);
+            return Results.Ok(new SessionActivityDto(events, BuildToolExecutionTimeline(events, sessionId), runs.Select(StorageEndpoints.ToRun).ToArray()));
+        }).Produces<SessionActivityDto>();
+
+        app.MapGet("/api/v1/sessions/{sessionId}/tool-executions", async (string sessionId, Guid? run_id, Guid? runId, int? limit, StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
-            var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
+            if (limit is < 1 or > 200) return Results.BadRequest(new { code = "INVALID_TOOL_TIMELINE_LIMIT" });
+            var selectedRun = run_id ?? runId;
+            var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct, selectedRun,
+                ["step.result.created", "task.assigned", "tool.execution.requested", "tool.execution.completed",
+                 "tool.execution.failed", "tool.execution.outcome_unknown", "approval.requested", "approval.decided", "governance.permission_decided"]);
             var items = BuildToolExecutionTimeline(events, sessionId);
-            return Results.Ok(items);
+            return Results.Ok(limit is { } bounded ? items.TakeLast(bounded).ToArray() : items);
         });
 
         // What a tool actually produced. The timeline above projects a one-line summary and the
@@ -378,7 +402,7 @@ public static class DmaeaEndpoints
                     taskLaneById.TryAdd(task.TaskId.ToString(), LaneOfTask(task));
                 }
             }
-            var events = (await lifecycle.ReplayEventsAsync(run.SessionId, 0, ct)).Where(e => e.RunId == runGuid.ToString()).ToList();
+            var events = await lifecycle.ReplayRunEventsAsync(run.SessionId, [runGuid], ct);
             // Agent display names for the run's instances (plan 配置体验改造 B)：
             // 前端不再显示 role/slug/GUID 兜底。
             var agentInstanceRows = await instances.ListByRunAsync(runGuid, ct);
@@ -865,11 +889,11 @@ public static class DmaeaEndpoints
             if (e.Timestamp > row.UpdatedAt) row.UpdatedAt = e.Timestamp;
         }
 
-        var projected = new List<(long Sequence, object Item)>();
+        var projected = new List<(DateTimeOffset Timestamp, long Sequence, object Item)>();
         foreach (var e in relevant.Where(e => e.EventType is "step.result.created" or "task.assigned"))
         {
             var sequence = EventSequence(e.Payload);
-            projected.Add((sequence, new
+            projected.Add((e.Timestamp, sequence, new
             {
                 id = PayloadString(e.Payload, "task_node_id"),
                 run_id = PayloadString(e.Payload, "run_id") ?? string.Empty,
@@ -899,7 +923,7 @@ public static class DmaeaEndpoints
 
         foreach (var row in toolRows.Values)
         {
-            projected.Add((row.RequestedSeq, new
+            projected.Add((row.RequestedAt, row.RequestedSeq, new
             {
                 id = row.Id,
                 run_id = row.RunId,
@@ -929,7 +953,7 @@ public static class DmaeaEndpoints
             }));
         }
 
-        return projected.OrderBy(item => item.Sequence).Select(item => item.Item).ToList();
+        return projected.OrderBy(item => item.Timestamp).ThenBy(item => item.Sequence).Select(item => item.Item).ToList();
     }
 
     private static long EventSequence(IReadOnlyDictionary<string, object?> payload)

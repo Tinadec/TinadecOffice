@@ -106,6 +106,28 @@ export interface SessionHistoryRevertDto {
   history_revision: number;
 }
 
+export interface SessionMessagePageDto {
+  items: MessageDto[];
+  runs: SessionPageRunDto[];
+  has_more: boolean;
+  next_before_sequence: number | null;
+  history_revision: number;
+  revert_epoch: number;
+}
+export interface SessionPageRunDto {
+  id: string;
+  status: string;
+  trigger_message_id?: string | null;
+  user_message_id?: string | null;
+  latest_event_sequence?: number;
+  session_id?: string;
+}
+export interface SessionActivityDto {
+  events: EventEnvelope[];
+  tool_executions: ToolExecutionTimelineItemDto[];
+  runs: SessionPageRunDto[];
+}
+
 export interface ApprovalDto {
   id: string;
   session_id?: string | null;
@@ -3015,6 +3037,12 @@ export const api = {
     method: 'PATCH', body: JSON.stringify(settings),
   }),
   listMessages: (sessionId: string, signal?: AbortSignal) => request<MessageDto[]>(`/api/v1/sessions/${sessionId}/messages`, { signal, cache: 'no-store' }),
+  listMessagePage: (sessionId: string, params: { before_sequence?: number; expected_revert_epoch?: number; limit?: number } = {}, signal?: AbortSignal) =>
+    request<SessionMessagePageDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/page${querySuffix(params)}`, { signal, cache: 'no-store' }),
+  async getSessionActivity(sessionId: string, runIds: string[], signal?: AbortSignal): Promise<SessionActivityDto> {
+    const snapshot = await request<SessionActivityDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/activity${querySuffix({ run_ids: [...new Set(runIds)].join(',') })}`, { signal, cache: 'no-store' });
+    return { ...snapshot, events: snapshot.events.map(event => normalizeEventEnvelope(event as unknown as Record<string, unknown>)) };
+  },
   postMessage: (sessionId: string, content: string) => request<MessageDto>(`/api/v1/sessions/${sessionId}/messages`, {
     method: 'POST',
     body: JSON.stringify({ content })
@@ -3545,12 +3573,14 @@ export const api = {
     onError,
   ),
 
-  connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void): EventSource {
-    const params = sessionId ? `?session_id=${encodeURIComponent(selectionIdentity(sessionId).id)}` : '';
+  connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void, options: { replay?: boolean } = {}): EventSource {
+    const params = querySuffix({ ...(sessionId ? { session_id: selectionIdentity(sessionId).id } : {}), ...(options.replay === false ? { replay: 'false' } : {}) });
     const source = new ScopedEventSource(`${gatewayUrl}/api/v1/events${params}`, sessionStorageId(sessionId));
     const handle = (message: MessageEvent) => {
       try {
-        onEvent(normalizeEventEnvelope(JSON.parse(message.data), message.lastEventId));
+        const raw = JSON.parse(message.data);
+        const control = message.type === 'stream.ready' || message.type === 'history.changed';
+        onEvent(normalizeEventEnvelope(control && !raw.event_type && !raw.type ? { type: message.type, session_id: raw.session_id, payload: raw } : raw, control ? null : message.lastEventId));
       } catch {
         // Malformed SSE frames must not crash the renderer (rendererErrorFallback watches window errors).
       }
@@ -3563,13 +3593,14 @@ export const api = {
     for (const eventType of CORE_EVENT_TYPES) {
       source.addEventListener(eventType, handle as EventListener);
     }
+    for (const eventType of ['stream.ready', 'history.changed']) source.addEventListener(eventType, handle as EventListener);
     return source as unknown as EventSource;
   },
 
   /** Terminal sessions Core has admitted for a run (agent terminal panel source). */
-  async listTerminalSessions(runId: string): Promise<TerminalSessionDto[]> {
+  async listTerminalSessions(runId: string, signal?: AbortSignal): Promise<TerminalSessionDto[]> {
     return request<TerminalSessionDto[]>(
-      `/api/v1/terminals?run_id=${encodeURIComponent(runId)}`,
+      `/api/v1/terminals?run_id=${encodeURIComponent(runId)}`, { signal },
     );
   },
 

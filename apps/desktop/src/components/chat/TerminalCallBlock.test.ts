@@ -29,8 +29,11 @@ vi.mock('@xterm/xterm', () => {
     loadAddon(): void {}
     open(): void {}
     write(data: string): void { this.writes.push(data) }
-    onData(cb: (data: string) => void): void { this.inputHandlers.push(cb) }
-    dispose(): void {}
+    onData(cb: (data: string) => void) {
+      this.inputHandlers.push(cb)
+      return { dispose: () => { this.inputHandlers = this.inputHandlers.filter((handler) => handler !== cb) } }
+    }
+    dispose = vi.fn()
   }
   return { Terminal: FakeTerminal }
 })
@@ -66,7 +69,7 @@ vi.mock('@/composables/useNotifications', () => ({
   useNotifications: () => ({ notify: { info: h.notifyInfo, error: h.notifyError } }),
 }))
 
-vi.mock('@tinadec/ui', () => ({
+vi.mock('../../../../TinadecUI/src/components/useUie', () => ({
   useUie: () => ({
     bus: { dispatch: h.dispatch },
     scope: { value: 'scope' },
@@ -98,6 +101,32 @@ afterEach(() => {
 })
 
 describe('TerminalCallBlock', () => {
+  it('does not associate a delayed registry reply after unmount', async () => {
+    let resolveRegistry!: (value: unknown) => void
+    h.listTerminalSessions.mockImplementationOnce(() => new Promise((resolve) => { resolveRegistry = resolve }))
+    const wrapper = mount(TerminalCallBlock, { props: { executionId: 'exec-late', command: 'echo test', runId: 'run-1' } })
+    const instances = (Terminal as unknown as { instances: Array<{ dispose: ReturnType<typeof vi.fn>; inputHandlers: unknown[] }> }).instances
+    const term = instances.at(-1)!
+    wrapper.unmount()
+    expect((h.listTerminalSessions.mock.calls.at(-1)![1] as AbortSignal).aborted).toBe(true)
+    resolveRegistry([{ terminal_session_id: 'late', execution_id: 'exec-late', live: true }])
+    await flushPromises()
+    expect(h.handlers.size).toBe(0)
+    expect(term.inputHandlers).toHaveLength(0)
+    expect(term.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves the event run before attaching its output source', async () => {
+    h.listTerminalSessions.mockResolvedValue([])
+    const wrapper = mount(TerminalCallBlock, { props: { executionId: 'exec-run', command: 'echo test', status: 'running', runId: 'wrong-task-key' } })
+    await flushPromises()
+    emit(terminalEvent(1, 'terminal.stdout', { execution_id: 'exec-run', terminal_session_id: 'ts-run', run_id: 'actual-run', data: 'real output' }))
+    await flushPromises()
+    expect(lastTermWrites()).toContain('real output')
+    await wrapper.get('button').trigger('click')
+    expect(h.controlRun).toHaveBeenCalledWith('actual-run', 'pause')
+    wrapper.unmount()
+  })
   it('backfills the terminal session from the Core registry when the command predates mount', async () => {
     h.listTerminalSessions.mockResolvedValue([
       {
@@ -118,7 +147,7 @@ describe('TerminalCallBlock', () => {
     })
     await flushPromises()
 
-    expect(h.listTerminalSessions).toHaveBeenCalledWith('run-1')
+    expect(h.listTerminalSessions).toHaveBeenCalledWith('run-1', expect.any(AbortSignal))
     const openButton = wrapper.findAll('button').find((b) => b.text().includes('在功能面板打开'))!
     await openButton.trigger('click')
     // Without the backfill this falls back to the "session not established" info notice.

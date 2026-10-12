@@ -1,0 +1,119 @@
+{
+  "date": "2026-10-12",
+  "owned_root": ".tinadec_dev/tmp/transcript-real-83151d1b70",
+  "mode": "read-only stopped isolated services",
+  "database": {
+    "runs": [
+      {
+        "id": "BC1CC422-F8B3-4D08-8833-82C20DBDF5BD",
+        "status": "awaiting_user",
+        "summary": "Supervision requires user review before this run can finish.",
+        "last_event_sequence": 46,
+        "completed_at": null
+      }
+    ],
+    "message_counts": [
+      {
+        "role": "user",
+        "count": 1
+      }
+    ],
+    "run_stream": [
+      {
+        "sequence": 1,
+        "kind": "ack"
+      },
+      {
+        "sequence": 2,
+        "kind": "queued"
+      }
+    ],
+    "latest_checkpoint": [
+      {
+        "revision": 23,
+        "phase": "awaiting_user"
+      }
+    ],
+    "invocation_count": [
+      {
+        "count": 12
+      }
+    ]
+  },
+  "event_count": 46,
+  "key_events": [
+    {
+      "sequence": 14,
+      "type": "worker.blocked",
+      "status": "blocked",
+      "decision": null,
+      "revision_round": null,
+      "summary": "executor：任务 fixture-task-1 已完成。已核对成功标准：(1) 任务完成叙述已生成；(2) 证据摘要已就绪，等待 supervisor 判定。\nMissing criterion evidence: executor 输出任务完成叙述; supervisor 给出 pass 判定"
+    },
+    {
+      "sequence": 19,
+      "type": "supervision.completed",
+      "status": null,
+      "decision": "revise",
+      "revision_round": 0,
+      "summary": "Supervision decision: revise."
+    },
+    {
+      "sequence": 28,
+      "type": "worker.blocked",
+      "status": "blocked",
+      "decision": null,
+      "revision_round": null,
+      "summary": "executor：任务 fixture-task-1 已完成。已核对成功标准：(1) 任务完成叙述已生成；(2) 证据摘要已就绪，等待 supervisor 判定。\nMissing criterion evidence: executor 输出任务完成叙述; supervisor 给出 pass 判定"
+    },
+    {
+      "sequence": 32,
+      "type": "supervision.completed",
+      "status": null,
+      "decision": "revise",
+      "revision_round": 1,
+      "summary": "Supervision decision: revise."
+    },
+    {
+      "sequence": 41,
+      "type": "worker.blocked",
+      "status": "blocked",
+      "decision": null,
+      "revision_round": null,
+      "summary": "executor：任务 fixture-task-1 已完成。已核对成功标准：(1) 任务完成叙述已生成；(2) 证据摘要已就绪，等待 supervisor 判定。\nMissing criterion evidence: executor 输出任务完成叙述; supervisor 给出 pass 判定"
+    },
+    {
+      "sequence": 45,
+      "type": "supervision.completed",
+      "status": null,
+      "decision": "escalate",
+      "revision_round": 2,
+      "summary": "Supervision decision: escalate."
+    },
+    {
+      "sequence": 46,
+      "type": "supervision.user_review.requested",
+      "status": null,
+      "decision": "escalate",
+      "revision_round": null,
+      "summary": "Supervision escalated the run and is waiting for a user decision."
+    }
+  ],
+  "worker_basis": [
+    "worker_outcome:blocked:missing_marker",
+    "missing_criterion_evidence:executor 输出任务完成叙述",
+    "missing_criterion_evidence:supervisor 给出 pass 判定"
+  ],
+  "provider_http_200_count": 12,
+  "conclusion": "The controlled fixture did not satisfy the current worker outcome/evidence protocol. Core correctly revised then awaited user review; no assistant history row or answer stream was produced. This attempt does not demonstrate a completed-run SSE projection defect.",
+  "source": [
+    "scripts/model-fixture.mjs",
+    "TinadecCore/DmaEA/WorkerOutcomeProtocol.cs",
+    "TinadecCore/DmaEA/FullDuplexRunEngine.cs:6783"
+  ],
+  "boundaries": [
+    "No product source changes, services, builds or tests in this diagnosis",
+    "Provider 200 responses alone do not prove valid task completion",
+    "Renderer acceptance must be rerun with an owned provider that satisfies concrete controlled criteria"
+  ]
+}

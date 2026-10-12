@@ -613,8 +613,59 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
 
     async Task<IReadOnlyList<ConversationMessage>> IConversationStore.ListMessagesAsync(Guid sessionId, int? limit, CancellationToken cancellationToken)
     {
-        var messages = await ListMessagesAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        return messages.TakeLast(Math.Max(0, limit ?? messages.Count)).Select(ToConversationMessage).ToArray();
+        if (limit is null) return (await ListMessagesAsync(sessionId, cancellationToken).ConfigureAwait(false)).Select(ToConversationMessage).ToArray();
+        await EnsureSessionExistsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.Messages.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == scope.TenantId
+            && x.WorkspaceId == scope.WorkspaceId && x.RevertedAt == null)
+            .OrderByDescending(x => x.Sequence).Take(Math.Max(0, limit.Value)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var messages = new List<ConversationMessage>(rows.Count);
+        foreach (var row in rows.OrderBy(x => x.Sequence)) messages.Add(ToConversationMessage(await ToStoredMessageAsync(row, cancellationToken).ConfigureAwait(false)));
+        return messages;
+    }
+
+    public async Task<SessionHistoryState> GetHistoryStateAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        var scope = _tenantContext.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.Sessions.AsNoTracking()
+            .Where(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .Select(x => new SessionHistoryState(x.HistoryRevision, db.Messages.LongCount(m => m.SessionId == sessionId
+                && m.TenantId == scope.TenantId && m.WorkspaceId == scope.WorkspaceId && m.RevertedAt != null)))
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? throw new KeyNotFoundException("Session was not found.");
+    }
+
+    public async Task<IReadOnlyList<Guid>> ListRevertedMessageIdsAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        // ponytail: ID-only bridge between module databases; bound candidate IDs
+        // if very large reverted histories make this metadata read significant.
+        var scope = _tenantContext.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.Messages.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == scope.TenantId
+            && x.WorkspaceId == scope.WorkspaceId && x.RevertedAt != null)
+            .Select(x => x.Id).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<StoredMessagePage> ListMessagePageAsync(Guid sessionId, int limit = 100, long? beforeSequence = null,
+        long? expectedRevertEpoch = null, CancellationToken cancellationToken = default)
+    {
+        var state = await GetHistoryStateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (expectedRevertEpoch is { } expected && expected != state.RevertEpoch) throw new SessionHistoryChangedException(state);
+        var scope = _tenantContext.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var query = db.Messages.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == scope.TenantId
+            && x.WorkspaceId == scope.WorkspaceId && x.RevertedAt == null);
+        if (beforeSequence is { } before) query = query.Where(x => x.Sequence < before);
+        var bounded = Math.Clamp(limit, 1, 100);
+        var rows = await query.OrderByDescending(x => x.Sequence).Take(bounded + 1).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var hasMore = rows.Count > bounded;
+        var selected = rows.Take(bounded).Reverse().ToArray();
+        var messages = new List<StoredMessage>(selected.Length);
+        foreach (var row in selected) messages.Add(await ToStoredMessageAsync(row, cancellationToken).ConfigureAwait(false));
+        var current = await GetHistoryStateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (current.RevertEpoch != state.RevertEpoch) throw new SessionHistoryChangedException(current);
+        return new StoredMessagePage(messages, hasMore, hasMore ? selected[0].Sequence : null, state.HistoryRevision, state.RevertEpoch);
     }
 
     Task<SessionHistoryRevert> IConversationStore.RevertHistoryAsync(Guid sessionId, Guid fromMessageId, CancellationToken cancellationToken) =>
@@ -1155,6 +1206,13 @@ public sealed class SessionHistoryFile
     public Guid SessionId { get; set; }
     public long Revision { get; set; }
     public List<StoredMessage> Messages { get; set; } = [];
+}
+
+public sealed record SessionHistoryState(long HistoryRevision, long RevertEpoch);
+public sealed record StoredMessagePage(IReadOnlyList<StoredMessage> Items, bool HasMore, long? NextBeforeSequence, long HistoryRevision, long RevertEpoch);
+public sealed class SessionHistoryChangedException(SessionHistoryState state) : Exception("Session history was reverted while reading.")
+{
+    public SessionHistoryState State { get; } = state;
 }
 
 public sealed class StoredMessage

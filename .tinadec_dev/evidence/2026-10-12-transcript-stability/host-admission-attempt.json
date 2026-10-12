@@ -1,0 +1,93 @@
+{
+  "accepted": false,
+  "checked_at": "2026-10-12T08:39:17.921Z",
+  "owned_root": "transcript-real-44080340c2",
+  "completed_rounds": [
+    {
+      "index": 1,
+      "content": "你好",
+      "elapsedMs": 135523,
+      "optimisticVisibleMs": 14007.300000071526,
+      "admittedMs": 68435.89999997616,
+      "sessionId": "e230f405-ab56-4e9d-9bee-980b9d4392a7",
+      "runId": "abf7dbce-b1aa-41bc-824e-520fc4ea93c8",
+      "messageIds": [
+        "b8a4fa88-4999-4d05-bb8d-a7c80c2af65c",
+        "ce5059e3-bbf3-4d40-bd8e-74cb776ffe8b",
+        "054a9bb4-0e0d-4748-ad13-4f53e08f9b7e"
+      ],
+      "messageRoles": [
+        "user",
+        "tool_evidence",
+        "assistant"
+      ],
+      "liveReplyUpdates": 1,
+      "errorCount": 0
+    },
+    {
+      "index": 2,
+      "content": "你好，第二个会话",
+      "elapsedMs": 61847,
+      "optimisticVisibleMs": 849.3999999761581,
+      "admittedMs": 25926.899999976158,
+      "sessionId": "39685b6e-eb87-45ed-a6e9-40af856400d3",
+      "runId": "e104f625-d58f-460d-9338-75d5167058ca",
+      "messageIds": [
+        "3d9d91ce-8fe6-4f40-afe4-534a53efde1a",
+        "1f4902a2-f70f-42d4-bff3-fc61d2db5e16",
+        "c74cbf1a-4463-4c87-9f88-16e0a315cd48"
+      ],
+      "messageRoles": [
+        "user",
+        "tool_evidence",
+        "assistant"
+      ],
+      "liveReplyUpdates": 1,
+      "errorCount": 0
+    },
+    {
+      "index": 3,
+      "content": "你好，受控首发 3",
+      "elapsedMs": 71282,
+      "optimisticVisibleMs": 1254.1000000238419,
+      "admittedMs": 28202.100000023842,
+      "sessionId": "4d60af80-f6b0-45dc-a02f-83bbe414440c",
+      "runId": "0a535ac3-a216-4f31-9253-f88284978780",
+      "messageIds": [
+        "f2640875-a581-4a1e-9639-2d42b8ee4b42",
+        "69a340ce-0906-4fdd-bb3a-43d531095556",
+        "42321472-afaf-4d27-81ea-3983dfb2d727"
+      ],
+      "messageRoles": [
+        "user",
+        "tool_evidence",
+        "assistant"
+      ],
+      "liveReplyUpdates": 1,
+      "errorCount": 0
+    }
+  ],
+  "failed_round": {
+    "index": 4,
+    "started": 1161620.1999999285,
+    "errorCount": 0,
+    "updateStart": 3,
+    "optimisticVisibleMs": 6152.5,
+    "admittedMs": 6192.899999976158
+  },
+  "host_state_at_capture": "ready",
+  "invoke_error": "The local services are temporarily unavailable. Retry the host connection.",
+  "messages": [
+    {
+      "id": "pending-b0915add-f76e-480c-9131-2081e9654861",
+      "role": "user",
+      "textLength": 9
+    }
+  ],
+  "runs": [],
+  "frontend_errors": [],
+  "fallback": false,
+  "http_errors": [],
+  "no_bun_panic": true,
+  "boundary": "No host proof failure cause was captured; default 2-second endpoint proof budget under resource contention is a hypothesis, not a measured failure reason. Writes were not replayed."
+}

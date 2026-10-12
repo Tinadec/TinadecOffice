@@ -1,0 +1,161 @@
+{
+  "date": "2026-10-12",
+  "branch": "feat/flat-transcript-refactor",
+  "base_commit": "1b6b7673",
+  "database": "isolated temporary-root SQLite",
+  "unique_core_tests": 15,
+  "passed_core_tests": 15,
+  "rounds": [
+    {
+      "file": "transcript-focused.trx",
+      "counters": {
+        "total": 10,
+        "passed": 9,
+        "failed": 1
+      },
+      "sha256": "b885871a6b3bf782f52254b2571b0eb632a9d169908c6fd6eed1179ced03bbac"
+    },
+    {
+      "file": "transcript-race-final.trx",
+      "counters": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0
+      },
+      "sha256": "ab298a476828123fd91deed296f4c42db454032efdf9e74619ce2f0fe78fa8e4"
+    },
+    {
+      "file": "transcript-receipt-final.trx",
+      "counters": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "sha256": "a024c253b579a0a9bb9be23edac3ec35727d24556f49a103ba476c1375fc29a6"
+    },
+    {
+      "file": "transcript-reverted-runs-final.trx",
+      "counters": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "sha256": "ac1c8313a676174cd648d8825f3a6f07a4c8e9deb96b8f73acf53d98099a8c1f"
+    },
+    {
+      "file": "task-snapshot-final.trx",
+      "counters": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "sha256": "b03e81cc380ac9ff72dfaa7e0a863e5543b173ccd0de0abad5cfcd54f109135a"
+    }
+  ],
+  "results": [
+    {
+      "name": "TinadecCore.Api.Tests.CoreOpenApiSnapshotTests.CoreOpenApi_Snapshot_TitleContainsCore_AndFileBaseline",
+      "outcome": "Passed",
+      "duration": "00:01:03.0366072",
+      "round": "transcript-focused.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.CoreOpenApiSnapshotTests.ScopelessTestingHost_UsesPackagedRuntimeAndPublishesOpenApi",
+      "outcome": "Passed",
+      "duration": "00:00:44.3969392",
+      "round": "transcript-focused.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.FullDuplexEndpointTests.Interactions_AdmissionReceipt_CarriesCursorAndIdempotentReplayReturnsSameRun",
+      "outcome": "Passed",
+      "duration": "00:02:04.8108820",
+      "round": "transcript-receipt-final.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.FullDuplexEndpointTests.Interactions_QueuedBehindActiveRunLimit_PersistsDirectiveMessageAndEvent",
+      "outcome": "Passed",
+      "duration": "00:02:39.0819577",
+      "round": "transcript-receipt-final.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.Activity_OnlyRequestedAndActiveRunsAreReplayedAndTimelineIsBounded",
+      "outcome": "Passed",
+      "duration": "00:00:21.0974414",
+      "round": "transcript-reverted-runs-final.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.ContextProvider_UsesOnlyTheRequestedSessionHistory",
+      "outcome": "Passed",
+      "duration": "00:01:16.3242705",
+      "round": "transcript-focused.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.DebugSnapshot_PersistsTenantScopedRunTaskAndEventProjection",
+      "outcome": "Passed",
+      "duration": "00:00:39.1839967",
+      "round": "task-snapshot-final.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.EventsLiveOnly_ReadyBeforeSnapshotThenNewRunAndHistoryControl",
+      "outcome": "Passed",
+      "duration": "00:00:33.7368605",
+      "round": "transcript-focused.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.EventsSse_ReplaysThenFollowsDurableEventsWithHeartbeatAndCursor",
+      "outcome": "Passed",
+      "duration": "00:01:32.5604972",
+      "round": "transcript-focused.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.MessagePage_ConcurrentRevertRetriesFirstPageOnlyOnce",
+      "outcome": "Passed",
+      "duration": "00:02:30.3509411",
+      "round": "transcript-race-final.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.MessagePage_KeysetAppendAndRevertAreIndependent",
+      "outcome": "Passed",
+      "duration": "00:02:33.1816114",
+      "round": "transcript-focused.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.MessagePage_TenThousandRowsReadsOnlyLatestHundredBodies",
+      "outcome": "Passed",
+      "duration": "00:02:26.1845583",
+      "round": "transcript-race-final.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.RevertedHistory_SessionSnapshotsExcludeOldRunsButRunAuditRemainsReadable",
+      "outcome": "Passed",
+      "duration": "00:00:43.9877603",
+      "round": "transcript-reverted-runs-final.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.RunEvents_AreIndexedReplayedAndRemainBelowDataRoot",
+      "outcome": "Passed",
+      "duration": "00:00:39.3159232",
+      "round": "transcript-focused.trx"
+    },
+    {
+      "name": "TinadecCore.Api.Tests.StorageApiTests.TaskSnapshots_ConcurrentUpdatesPreserveEveryTaskAndAllowHeldReaders",
+      "outcome": "Passed",
+      "duration": "00:01:25.1850887",
+      "round": "task-snapshot-final.trx"
+    }
+  ],
+  "gateway": {
+    "passed": 113,
+    "failed": 0,
+    "files": 18,
+    "log": ".tinadec_dev/tmp/transcript-gateway-stream-final.log",
+    "summary": ".tinadec_dev/evidence/2026-10-12-transcript-stability/gateway/test-summary.json",
+    "typecheck": "28 test-only diagnostics; no new helper or product diagnostics. Overall Gateway tsc did not pass."
+  },
+  "boundaries": [
+    "Focused Core tests only, not full Core suite",
+    "No PostgreSQL or Linux/macOS runtime acceptance in these results",
+    "No external model credentials or user storage used"
+  ],
+  "initial_fixture_failure": "The first focused round had a new race fixture failure because its temporary body directory was not created. The fixture was corrected and its final retry passed; final per-test outcomes below use the last run."
+}

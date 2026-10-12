@@ -1,5 +1,28 @@
 # Home / 会话、对话与投递：模块架构
 
+## 对话分页与快照屏障（2026-10-12）
+
+以下箭头是 HomeController、sessionEventBus、StorageEndpoints 和 ProjectSessionStore 的当前调用。唯一任务为 [APP-HOME-108](TODO.md#app-home-108)。
+
+```mermaid
+flowchart LR
+  bus["sessionEventBus replay=false"] --> ready["stream.ready / history.changed"]
+  ready --> home["HomeController / 固定scope与generation"]
+  bus --> buffer["快照期间缓冲 / run+seq去重"]
+  home --> page["Gateway messages/page"]
+  page --> sql["Core SQL Sequence小于cursor / Take101"]
+  sql --> body["仅100条正文 / 页内附件与相关run"]
+  body --> display["正文独立显示 / 上翻锚定"]
+  home --> activity["activity run_ids批读"]
+  activity --> reduce["useAgentActivity批量归约"]
+  reduce --> buffer
+  display --> scroller["每帧合并 / 末行测高 / 可见锚点"]
+  ready --> epoch["撤回epoch变化取消旧页"]
+  epoch --> home
+```
+
+消息数组旧接口继续存在。审批和编排独立更新；同类事件读取单飞、读取期间变化仅保留一次后续刷新。分页不以普通追加的history_revision拒绝旧页；revert_epoch变化才使旧页失效。服务端每run水位只查询变化运行的新事件，日志按run复用文件句柄。客户端上翻与旧流回调均检查会话、存储与归属。
+
 ## 工作区目录与交互（2026-10-10）
 
 下图表示本轮实际调用与状态归属。新建/编辑统一窗口，项目行折叠留在本机列表，不触发业务上下文切换；运行与工具冻结归 Core。契约及唯一任务见 [APP-HOME-107](TODO.md#app-home-107)。

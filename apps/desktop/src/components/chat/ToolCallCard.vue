@@ -10,7 +10,7 @@ import TerminalCallBlock from './TerminalCallBlock.vue'
 import ToolResultView from './ToolResultView.vue'
 import ApprovalGateStatus from '@/components/approval/ApprovalGateStatus.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   toolCall: ToolCall
   runId?: string | null
   /**
@@ -21,7 +21,7 @@ const props = defineProps<{
   richViews?: boolean
   /** True only under the "information" template; forwarded to the result view. */
   allowWidget?: boolean
-}>()
+}>(), { richViews: true })
 const emit = defineEmits<{ approve: [approvalId: string]; reject: [approvalId: string] }>()
 const { t } = useI18n()
 const expanded = ref(false)
@@ -77,7 +77,7 @@ const toolIcon = computed(() => {
       </template>
       <div :id="detailsId" class="tool-call-details">
         <pre v-if="toolCall.argsSummary">{{ toolCall.argsSummary }}</pre>
-        <TerminalCallBlock v-if="isShellCall" :execution-id="toolCall.id" :command="toolCall.argsSummary"
+        <TerminalCallBlock v-if="isShellCall && toolCall.status !== 'completed' && toolCall.status !== 'failed'" :execution-id="toolCall.id" :command="toolCall.argsSummary"
           :run-id="runId ?? toolCall.runId" :status="toolCall.status" />
         <!-- The stored result, read back on open. Only for a finished call: a running one has
              no payload yet, and a parked one must not fetch before the decision. -->

@@ -31,6 +31,12 @@
 | --- | --- | --- | --- | --- | --- |
 | APP-HOME-F007 | 工作区标题、纯折叠项目行、近期会话/手动排序及多源目录创建、编辑、授权冻结 | 源码可见 | Desktop62/62与类型，Windows Core62/1明确skip、Tools40/40、资源34/34、Gateway6/6；Electron43.3.0 原生目录多选与真实隔离 Core/Gateway；Linux Core28/28、内核Tools28/28，PostgreSQL18.6空库/既有扩展实测 | Windows 低权限 Shell、macOS与本轮 CI 待验收；不是完整 App、真实模型或安装包验收，平台返回型用例不当作 OS 证据 | [APP-HOME-107](TODO.md#app-home-107)、[契约](../../../../workspaces.zh-CN.md)、[报告](../../../../../.tinadec_dev/reports/2026-10-10-sidebar-workspaces.zh-CN.md) |
 
+## 2026-10-12 对话流稳定性
+
+| Feature ID | 功能/能力 | 实现判断 | 本轮验证层级 | 边界与剩余问题 | 证据 |
+| --- | --- | --- | --- | --- | --- |
+| APP-HOME-F008 | 最近100条正文、按页活动、实时快照屏障、撤回恢复与有界滚动 | 部分实现 | 100轮生产组件首发、每轮10delta零异常；5000行真实布局6次rect/补100锚点0px；Desktop最终冻结源码完整1396通过/0失败/14跳过，154文件；类型和lockfile门禁通过；Core15个不同定向（含并发快照）及Gateway113/113/类型通过，重复测试不相加 | 最终生产构建与隔离真实宿主验收待完成；外部模型凭据缺失，跨平台/安装器独立 | [APP-HOME-108](TODO.md#app-home-108)、[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md) |
+
 ## 状态词汇
 
 - 待核查：尚不能判断是否实现或缺失。

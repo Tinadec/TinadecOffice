@@ -1,5 +1,13 @@
 # GATEWAY KNOWLEDGE
 
+## 2026-10-12 Transcript page and activity proxies
+
+Gateway forwards messages/page limit/before_sequence/expected_revert_epoch, activity run_ids, and events replay to Core; it owns no pagination, history epoch or activity reducer. Message DTOs expose sequence; interaction receipts preserve message_id for exact optimistic settlement. External OpenAPI and Desktop generated types move together. SSE control frames retain Core framing/cancellation. Final full Gateway113/113 and actual HTTP versus mock boundaries are recorded under APP-HOME-108 in `.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md`.
+
+Core and Tool Runtime SSE/stream transports share `createStreamProxyResponse`: remove hop-by-hop and Connection-declared headers, retain status, body and end-to-end metadata, return Response from run/events/logs/download routes. Elysia1.4.29 wraps even a Response in a second reader when transfer-encoding=chunked without content-length; keeping the upstream framing activates its abort/iterator-return/releaseLock path. Windows/Bun1.3.14 real sockets,100 reads then disconnects per mode: original framing produced96 AbortErrors, manual strip/production helper/native Bun each0. The separate observed Bun panic symbolizes to RequestContext.onAbort/response weak-pointer lookup; the small comparison did not reproduce panic and does not establish its elimination. Six stream regressions and the final full113 suite pass. The final Gateway tsc now passes after25 fake-fetch casts account for Bun preconnect typing and3 nullable mapping fixtures are explicitly asserted; product code and tsconfig are unchanged by those fixture corrections. The final complete113 suite was rerun and passed. Evidence is `.tinadec_dev/evidence/2026-10-12-transcript-stability/gateway/`. No Bun upgrade or exception suppression is part of this change.
+
+Generic streaming and Tool Runtime SSE/stream force redirect:manual, matching Core transports so supplied host headers are not forwarded to a redirect target. Their fetch-stage caller cancellation/AbortError uses the shared rethrowCancellation guard, preserving the original rejection while ordinary unavailable upstreams retain502 ProblemDetails. Tool Runtime JSON routing is outside this followup.
+
 ## 2026-10-10 Interface regression and public error contract
 
 Gateway now preserves normalized lower snake case Core refusal codes without a per-code whitelist; legacy uppercase constants keep their documented mapping. Invalid/missing codes fall back by HTTP status (5xx `internal_error`, otherwise `invalid_request`). Only public category/retryable/actions/trace_id and narrow diagnostics are projected; arbitrary upstream extensions are not spread. Project availability errors retain recovery fields, and an unreadable project has `lifecycle_status: null` rather than an invented active state. Raw scope roster carries nullable workspace and per-row availability, so one bad registration does not erase ready rows.
@@ -22,10 +30,10 @@ The root-owned isolated acceptance additionally used real Core/Gateway and Elect
 
 scope-enabled Core所有业务API需要privatehost凭据，health/challenge为公开例外；Gateway不得从本身env为匿名loopback签发。JSON/raw/cursor SSE都必须保留请求已有hostheader，403 host_authorization_required需保留诊断code。Gateway自身host-challenge仅返回nonce/角色绑定HMAC，不发送key或业务facts；无key503，nonce限定单43字符base64url。OpenAPI全局私有security scheme与两个公开例外同步描述。
 
-**Last Updated:** 2026-10-10
-**Last Updated By:** APP-HOME-107 接口回归：规范公开错误投影、AgentPack失败ETag、工作区可用性与nullable契约；隔离真实证据单列。
-**Last Verified Commit:** 607b7406（本轮五组代码提交）+ 文档工作树；Windows证据与未验收边界见 .tinadec_dev/reports/2026-10-10-interface-regression.zh-CN.md。
-**Branch:** main
+**Last Updated:** 2026-10-12
+**Last Updated By:** APP-HOME-108 分页、活动、live-only SSE及流取消的传输头修复。
+**Last Verified Commit:** 1b6b7673 + 本轮工作树；测试与真实HTTP范围见 .tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md。
+**Branch:** feat/flat-transcript-refactor
 
 ## 2026-10-08 Tools settings proxy
 

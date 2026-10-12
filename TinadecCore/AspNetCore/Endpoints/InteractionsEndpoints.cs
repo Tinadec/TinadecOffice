@@ -432,7 +432,7 @@ public static class InteractionsEndpoints
                     var replayBind = await BindAttachmentsAsync(replayMessageId).ConfigureAwait(false);
                     if (replayBind is not null) return replayBind;
                 }
-                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{replay.Id}", new { interaction_id = replay.Id, session_id = sessionId, run_id = replay.RunId, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = "replayed queued interaction", client_message_id = clientMessageId, context_revision = replayRevision, stream_cursor = replayCursor, correlation_id = clientMessageId });
+                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{replay.Id}", new { interaction_id = replay.Id, session_id = sessionId, run_id = replay.RunId, message_id = replay.MessageId, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = "replayed queued interaction", client_message_id = clientMessageId, context_revision = replayRevision, stream_cursor = replayCursor, correlation_id = clientMessageId });
             }
 
             var runs = await lifecycle.ListRunsAsync(sessionId, ct);
@@ -527,7 +527,7 @@ public static class InteractionsEndpoints
                 }, "Interaction queued behind the active run", "info", cancellationToken: ct).ConfigureAwait(false);
                 var overflowRevision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false);
                 var overflowCursor = await RunStreamCursorAsync(lifecycleDbFactory, activeRun.Id, ct).ConfigureAwait(false);
-                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{directive.Id}", new { interaction_id = directive.Id, session_id = sessionId, run_id = activeRun.Id, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message, client_message_id = clientMessageId, context_revision = overflowRevision, stream_cursor = overflowCursor, correlation_id = clientMessageId });
+                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{directive.Id}", new { interaction_id = directive.Id, session_id = sessionId, run_id = activeRun.Id, message_id = message.Id, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message, client_message_id = clientMessageId, context_revision = overflowRevision, stream_cursor = overflowCursor, correlation_id = clientMessageId });
             }
         }
         catch (RunAdmissionException ex) when (ex.Code == "CONTEXT_REVISION_CONFLICT")
@@ -580,7 +580,7 @@ public static class InteractionsEndpoints
         }
         var status = admissionStatus;
         var admissionCursor = await RunStreamCursorAsync(lifecycleDbFactory, admission.RunId, ct).ConfigureAwait(false);
-        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, client_message_id = clientMessageId, context_revision = admission.ContextRevision, stream_cursor = admissionCursor, correlation_id = clientMessageId });
+        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, message_id = admission.MessageId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, client_message_id = clientMessageId, context_revision = admission.ContextRevision, stream_cursor = admissionCursor, correlation_id = clientMessageId });
     }
 
     private static IResult TinaChatInputLocked(HttpRequest request) => Results.Problem(

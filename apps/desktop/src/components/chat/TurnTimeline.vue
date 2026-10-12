@@ -113,21 +113,21 @@ async function decideSupervision(option: SupervisionDecisionOption) {
         <span v-if="failedCount" class="activity-summary-failed">{{ t('agent.activityFailed', { count: failedCount }) }}</span>
         <span v-if="activityState" class="activity-summary-state">{{ activityState }}</span>
       </button>
-      <!-- Rows stay mounted while collapsed so they remain findable and the height
-           transition has something to animate; `inert` keeps them out of the tab order
-           and off the pointer, which a zero-height region would otherwise still capture. -->
-      <div class="activity-collapse" :class="{ open: expanded }" :inert="!expanded" data-testid="activity-details">
+      <!-- Historic turns must not construct hidden thoughts, tools or terminals. -->
+      <div v-if="expanded" class="activity-collapse open" data-testid="activity-details">
         <div>
           <div class="activity-details">
             <template v-for="row in details" :key="row.id">
               <ThinkingProcess v-if="row.kind === 'thinking'" :steps="row.steps" />
-              <ToolGroupSummary v-else-if="row.kind === 'toolGroup'" :calls="row.calls" />
+              <ToolGroupSummary v-else-if="row.kind === 'toolGroup'" :calls="row.calls" :run-id="runId"
+                :rich-views="richToolViews" :allow-widget="allowToolWidget"
+                @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
               <ToolCallCard v-else-if="row.kind === 'tool'" :tool-call="row.call" :run-id="runId"
                 :rich-views="richToolViews" :allow-widget="allowToolWidget"
                 @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
             </template>
             <!-- A dispatched instance keeps its own block, after the turn's own rows. -->
-            <SubAgentCard v-for="group in subAgents" :key="group.key" :group="group"
+            <SubAgentCard v-for="group in subAgents" :key="group.key" :group="group" :run-id="runId"
               :rich-views="richToolViews" :allow-widget="allowToolWidget"
               @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
           </div>

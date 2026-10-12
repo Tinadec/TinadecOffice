@@ -1,0 +1,63 @@
+{
+  "passed": true,
+  "real_production_components": [
+    "TerminalView",
+    "TerminalCallBlock",
+    "useTerminal",
+    "useTerminalSource",
+    "ChatPanel",
+    "MessageList",
+    "MessageItem",
+    "LiveTurnBlock",
+    "MarkdownRender",
+    "TurnTimeline",
+    "useMessageScroller"
+  ],
+  "transport": "isolated fixture, no real PTY/Core",
+  "xterm": "6.0.0",
+  "records": [
+    {
+      "step": "snapshot_attachment_identity",
+      "cols": 91,
+      "rows": 12,
+      "stale_output": false
+    },
+    {
+      "step": "local_lifecycle",
+      "cycles": 100,
+      "theme_zoom_resize_fit_dispose": true,
+      "listeners": 0
+    },
+    {
+      "step": "agent_lifecycle",
+      "cycles": 100,
+      "disposed_registry_requests": 100,
+      "listeners": 0
+    },
+    {
+      "step": "production_chatpanel_first_send",
+      "cycles": 100,
+      "streaming_deltas_per_cycle": 10,
+      "existing_terminal": true,
+      "elapsed_ms": 9965,
+      "boundaries": [
+        "ComposerBar/ChatHeader/WelcomeScreen peripheral UI",
+        "controller/network fixture"
+      ],
+      "settled_hidden_activity": false
+    },
+    {
+      "step": "production_scroller_real_geometry",
+      "rows": 5000,
+      "coalesced_scroll_events": 100,
+      "bounding_rect_reads": 6,
+      "prepend_rows": 100,
+      "anchor_displacement_px": 0,
+      "native_paging_header_add_px": 0,
+      "native_paging_header_remove_px": 0
+    }
+  ],
+  "errors": [],
+  "electron": "43.3.0",
+  "checked_at": "2026-10-12T04:40:33.537Z"
+}

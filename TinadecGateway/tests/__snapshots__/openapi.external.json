@@ -2180,6 +2180,18 @@
             "nullable": true,
             "type": "string"
           },
+          "sequence": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
           "session_id": {
             "type": "string"
           }
@@ -2188,6 +2200,7 @@
           "id",
           "session_id",
           "run_id",
+          "sequence",
           "role",
           "content",
           "created_at",
@@ -3435,6 +3448,72 @@
         ],
         "type": "object"
       },
+      "SessionActivity": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "event_id": {
+                  "type": "string"
+                },
+                "event_type": {
+                  "type": "string"
+                },
+                "payload": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "run_id": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "session_id": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "version",
+                "event_id",
+                "event_type",
+                "timestamp",
+                "session_id",
+                "run_id",
+                "payload"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "type": "array"
+          },
+          "tool_executions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "events",
+          "tool_executions",
+          "runs"
+        ],
+        "type": "object"
+      },
       "SessionInteractionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3560,6 +3639,63 @@
           "$ref": "#/components/schemas/Session"
         },
         "type": "array"
+      },
+      "SessionMessagesPage": {
+        "additionalProperties": false,
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "history_revision": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "type": "array"
+          },
+          "next_before_sequence": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "revert_epoch": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "runs",
+          "has_more",
+          "next_before_sequence",
+          "history_revision",
+          "revert_epoch"
+        ],
+        "type": "object"
       },
       "SessionTopologyDto": {
         "properties": {
@@ -8433,8 +8569,19 @@
     },
     "/api/v1/events": {
       "get": {
-        "description": "Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume",
+        "description": "Durable EventEnvelope feed. Live-only mode emits stream.ready and history.changed control frames without event IDs. Run-local sequences deduplicate snapshots and live events; Last-Event-ID / ?cursor remain available for legacy replay.",
         "operationId": "getApiV1Events",
+        "parameters": [
+          {
+            "description": "False establishes a live subscription and emits stream.ready before the client snapshot.",
+            "in": "query",
+            "name": "replay",
+            "schema": {
+              "default": true,
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {}
         },
@@ -10835,6 +10982,45 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/activity": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdActivity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated run UUIDs, at most 200. Active runs are included.",
+            "in": "query",
+            "name": "run_ids",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionActivity"
+                }
+              }
+            },
+            "description": "Run-filtered journal events and tool timeline."
+          }
+        },
+        "summary": "Read activity for loaded and active runs",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/archive": {
       "post": {
         "operationId": "postApiV1SessionsBySessionIdArchive",
@@ -11270,6 +11456,65 @@
           "200": {}
         },
         "summary": "Create message (compat)",
+        "tags": [
+          "Messages"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/messages/page": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdMessagesPage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Exclusive sequence cursor for older messages.",
+            "in": "query",
+            "name": "before_sequence",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "409 history_changed if messages were reverted since the previous page.",
+            "in": "query",
+            "name": "expected_revert_epoch",
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMessagesPage"
+                }
+              }
+            },
+            "description": "Latest messages or the page before an exclusive sequence cursor."
+          }
+        },
+        "summary": "Read a bounded message page",
         "tags": [
           "Messages"
         ]

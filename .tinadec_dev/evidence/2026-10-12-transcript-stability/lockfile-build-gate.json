@@ -1,0 +1,8 @@
+{
+  "accepted": true,
+  "command": "node scripts/check-lockfile-natives.mjs",
+  "cwd": "apps/desktop",
+  "exit_code": 0,
+  "output": "win-x64: every build-time native package is declared, locked and installable.",
+  "checked_at": "2026-10-12T07:43:18.269Z"
+}

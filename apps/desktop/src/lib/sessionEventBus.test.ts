@@ -59,6 +59,89 @@ afterEach(() => {
 })
 
 describe('sessionEventBus', () => {
+  it('buffers through the snapshot and delivers each live run and sequence once', async () => {
+    bus.followSession('s-1')
+    let finish!: () => void
+    const seen: EventEnvelope[] = []
+    const release = bus.subscribeToSessionEvents(e => {
+      if (e.type === 'stream.ready') return new Promise<void>(resolve => { finish = resolve })
+      seen.push(e)
+    })
+    expect(connect.mock.calls[0]?.[2]).toEqual({ replay: false })
+    emit(event('stream.ready', 's-1', 0))
+    const snap = { ...event('tool.execution.completed', 's-1', 1), run_id: 'old-run' }
+    const next = { ...event('task.accepted', 's-1', 1), run_id: 'new-run' }
+    emit(snap); emit(snap); emit(next)
+    expect(seen).toEqual([])
+    finish(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    expect(seen).toEqual([snap, next])
+    release()
+  })
+  it('releases buffered live frames when a snapshot read fails', async () => {
+    bus.followSession('s-1')
+    const seen: EventEnvelope[] = []
+    const release = bus.subscribeToSessionEvents(e => {
+      if (e.type === 'stream.ready') return Promise.reject(new Error('snapshot unavailable'))
+      seen.push(e)
+    })
+    emit(event('stream.ready', 's-1', 0)); emit({ ...event('task.accepted', 's-1'), run_id: 'new' })
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    expect(seen).toHaveLength(1)
+    release()
+  })
+  it('keeps the new history snapshot barrier after the old snapshot completes', async () => {
+    bus.followSession('s-1')
+    let ready!: () => void, changed!: () => void
+    const seen: EventEnvelope[] = []
+    const release = bus.subscribeToSessionEvents(e => {
+      if (e.type === 'stream.ready') return new Promise<void>(resolve => { ready = resolve })
+      if (e.type === 'history.changed') return new Promise<void>(resolve => { changed = resolve })
+      seen.push(e)
+    })
+    emit(event('stream.ready', 's-1', 0))
+    emit({ ...event('tool.execution.completed', 's-1', 1), run_id: 'reverted' })
+    emit(event('history.changed', 's-1', 0))
+    const latest = { ...event('task.accepted', 's-1', 1), run_id: 'latest' }
+    emit(latest)
+    ready(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    expect(seen).toEqual([])
+    changed(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    expect(seen).toEqual([latest])
+    release()
+  })
+  it('discards old buffered events when an automatic reconnect reports a newer history epoch', async () => {
+    bus.followSession('s-1')
+    const snapshots: Array<() => void> = [], seen: EventEnvelope[] = []
+    const release = bus.subscribeToSessionEvents(e => {
+      if (e.type === 'stream.ready') return new Promise<void>(resolve => { snapshots.push(resolve) })
+      seen.push(e)
+    })
+    emit({ ...event('stream.ready', 's-1', 0), payload: { revert_epoch: 1 } })
+    emit({ ...event('tool.execution.completed', 's-1', 1), run_id: 'reverted' })
+    emit({ ...event('stream.ready', 's-1', 0), payload: { revert_epoch: 2 } })
+    const retained = { ...event('task.accepted', 's-1', 1), run_id: 'retained' }
+    emit(retained)
+    snapshots[0]!(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    expect(seen).toEqual([])
+    snapshots[1]!(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    expect(seen).toEqual([retained])
+    release()
+  })
+  it('replaces a raw session feed when the same session id resolves to another storage scope', async () => {
+    const storage = await import('./storageScope')
+    storage.setSelectedStorage('original'); storage.registerSessionStorage('same', 'original')
+    bus.followSession('same')
+    const seen: EventEnvelope[] = [], release = bus.subscribeToSessionEvents(e => { seen.push(e) }, { scope: ref('same') })
+    storage.setSelectedStorage('copy'); storage.registerSessionStorage('same', 'copy')
+    bus.followSession('same')
+    expect(connect).toHaveBeenCalledTimes(2)
+    expect(liveSources[0]!.closed).toBe(1)
+    deliveries[0]!({ ...event('task.accepted', 'same'), run_id: 'original-run' })
+    const copied = { ...event('task.accepted', 'same'), run_id: 'copy-run' }
+    deliveries[1]!(copied)
+    expect(seen).toEqual([copied])
+    release()
+  })
   it('does not open a preview stream and reconnects reads only after host authentication', async () => {
     const { setHostAccessStatus } = await import('./hostAccess')
     setHostAccessStatus({ state: 'preview', managed: false })

@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-12",
+  "status": "passed_exclusive_rerun",
+  "first_attempt": "aborted_by_4m_test_watchdog_while_machine_resource_pressure",
+  "attempted_test": "RevertedHistory_SessionSnapshotsExcludeOldRunsButRunAuditRemainsReadable",
+  "passed_new_tests": 1,
+  "first_attempt_log": ".tinadec_dev/tmp/transcript-core-reverted-runs-final.log",
+  "sqlite_translation_review": {
+    "source": "https://raw.githubusercontent.com/dotnet/efcore/v10.0.0/src/EFCore.Sqlite.Core/Query/Internal/Translators/SqliteObjectToStringTranslator.cs",
+    "supports": "DateTimeOffset.ToString converts to string SQL expression",
+    "application_invariant": "Run creation assigns DateTimeOffset.UtcNow",
+    "migration": "none"
+  },
+  "changes": [
+    "session orchestration SQL orders eligible runs and takes one",
+    "session activity excludes reverted terminal trigger runs",
+    "active run exception preserved",
+    "independent run orchestration and original runs list retain audit facts"
+  ],
+  "scope": "isolated SQLite HTTP; not user data or external model",
+  "final_rerun_tests": 2,
+  "final_log": ".tinadec_dev/tmp/transcript-core-reverted-runs-exclusive.log",
+  "final_trx": "transcript-reverted-runs-final.trx",
+  "production_api": ".tinadec_dev/tmp/transcript-core-build/bin/TinadecCore.Api/debug"
+}

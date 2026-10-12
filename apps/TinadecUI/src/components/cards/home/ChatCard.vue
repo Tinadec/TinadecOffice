@@ -8,6 +8,10 @@ const c = homeController
 <template>
   <ChatPanel
     :messages="c.messages.value"
+    :has-more-messages="c.hasMoreMessages.value"
+    :loading-older-messages="c.loadingOlderMessages.value"
+    :messages-loading="c.messagesLoading.value"
+    :messages-load-error="c.messagesLoadError.value"
     :sessions="c.sessions.value"
     :projects="c.projects.value"
     :current-session="c.currentSession.value"
@@ -41,5 +45,7 @@ const c = homeController
     @reject="c.decideApprovalById($event, 'rejected')"
     @edit-message="c.editAndResend($event)"
     @stop="c.stopRun()"
+    @load-older="c.loadOlderMessages()"
+    @retry-messages="c.retryMessages()"
   />
 </template>

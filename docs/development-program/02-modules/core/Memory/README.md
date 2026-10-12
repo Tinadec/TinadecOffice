@@ -4,6 +4,10 @@
 
 本模块目前处于**初始源码清点**，还未完成逐功能审计；下列介绍继承总图中已核对的职责，初始状态区分源码能力、范围与缺口。
 
+## 2026-10-12 消息分页
+
+ProjectSessionStore保留数组读取，并新增按scope/session/sequence的排他游标分页：SQL Take101，仅物化100条正文，再升序返回。页内附件使用SQL MessageIds筛选。revert_epoch从已撤回行数派生，读前/后检查；普通追加保持旧游标可用，首页最多重读一次。统一任务[APP-HOME-108](../../app/home/TODO.md#app-home-108)，[证据报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)记录SQLite及真实HTTP范围，不推算整体记忆完成度。
+
 ## 文档入口
 
 - [模块架构与边界](ARCHITECTURE.md) · [模块SVG](architecture.svg)

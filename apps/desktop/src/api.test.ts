@@ -169,6 +169,23 @@ describe('connectEvents normalization', () => {
       vi.unstubAllGlobals()
     }
   })
+  it('normalizes snapshot controls without inheriting the previous journal cursor', () => {
+    FakeEventSource.instances = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+    try {
+      const received: EventEnvelope[] = []
+      api.connectEvents('s-1', event => received.push(event), { replay: false })
+      const source = FakeEventSource.instances[0]
+      expect(source.url).toContain('replay=false')
+      const payload = { session_id: 's-1', history_revision: 40, revert_epoch: 2 }
+      source.emit('stream.ready', JSON.stringify(payload), '900')
+      source.emit('history.changed', JSON.stringify({ ...payload, revert_epoch: 3 }), '900')
+      expect(received.map(event => ({ type: event.type, seq: event.seq, session: event.session_id, payload: event.payload }))).toEqual([
+        { type: 'stream.ready', seq: 0, session: 's-1', payload },
+        { type: 'history.changed', seq: 0, session: 's-1', payload: { ...payload, revert_epoch: 3 } },
+      ])
+    } finally { vi.unstubAllGlobals() }
+  })
 })
 
 

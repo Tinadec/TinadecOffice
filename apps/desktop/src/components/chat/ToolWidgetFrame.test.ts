@@ -79,4 +79,29 @@ describe('ToolWidgetFrame', () => {
     wrapper.unmount()
     expect(releaseToolWidget).toHaveBeenCalledWith('tok')
   })
+
+  it('accepts bounded widget height only from its own frame', async () => {
+    withBridge()
+    const wrapper = mount(ToolWidgetFrame, { props: { html: '<p>hi</p>', title: 'tool' }, global: { plugins: [i18n] } })
+    await vi.waitFor(() => expect(wrapper.find('iframe').exists()).toBe(true))
+    const element = wrapper.get('iframe').element as HTMLIFrameElement
+    // happy-dom creates no browsing context for this detached sandboxed custom-scheme iframe.
+    const ownWindow = {} as Window
+    Object.defineProperty(element, 'contentWindow', { value: ownWindow })
+    const send = async (source: MessageEventSource | null, height: number, type = 'widget:height') => {
+      window.dispatchEvent(new MessageEvent('message', { source, data: { type, height } }))
+      await wrapper.vm.$nextTick()
+    }
+    await send(window, 800)
+    expect(element.style.height).toBe('320px')
+    await send(ownWindow, Infinity)
+    expect(element.style.height).toBe('320px')
+    await send(ownWindow, 700, 'height')
+    expect(element.style.height).toBe('320px')
+    await send(ownWindow, 2000)
+    expect(element.style.height).toBe('900px')
+    await send(ownWindow, 50)
+    expect(element.style.height).toBe('120px')
+    wrapper.unmount()
+  })
 })

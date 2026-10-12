@@ -18,17 +18,17 @@ test('Core transports preserve caller cancellation and AbortError without fabric
     const controller = new AbortController();
     const reason = new Error('caller cancelled');
     controller.abort(reason);
-    globalThis.fetch = (async () => { throw reason; }) as typeof fetch;
+    globalThis.fetch = (async () => { throw reason; }) as unknown as typeof fetch;
     await assert.rejects(transport.call(controller.signal), error => error === reason, transport.name);
 
     const aborted = new DOMException('cancelled fetch', 'AbortError');
-    globalThis.fetch = (async () => { throw aborted; }) as typeof fetch;
+    globalThis.fetch = (async () => { throw aborted; }) as unknown as typeof fetch;
     await assert.rejects(transport.call(), error => error === aborted, transport.name);
   }
 });
 
 test('Core transports still report unavailable upstreams as 502', { concurrency: false }, async () => {
-  globalThis.fetch = (async () => { throw new TypeError('connection refused'); }) as typeof fetch;
+  globalThis.fetch = (async () => { throw new TypeError('connection refused'); }) as unknown as typeof fetch;
   for (const transport of transports) {
     const result = await transport.call();
     assert.equal(result.status, 502, transport.name);

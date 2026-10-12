@@ -1,5 +1,15 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-12 Transcript stability and reads
+
+APP-HOME-108 owns this repair. xterm is pinned to6.0.0/fit0.11.0/web-links0.12.0, attachment callbacks validate the actual terminal object, and detach revokes ownership before cleanup/dispose. Terminal timers/resize observers and late registry reads are cancelled. Collapsed activity mounts on demand; tool groups reuse result cards, SubAgentCard uses the run identity, and a widget replaces ordinary content only after successful loading. Error fallback retains full stack/source/component diagnostics.
+
+Home reads the newest100 messages independently of approvals/orchestration/activity, prepends100 by exclusive sequence, and resets the scroller by storage+session. `sessionEventBus` follows with replay=false, buffers through ready/history snapshot barriers and deduplicates run+seq. History epoch cancellation rejects late pages; same-category reads coalesce with one pending follow-up. `useAgentActivity.hydrate` reduces batches without per-event array rebuilding or REST. Actual Electron geometry/terminal checks, controlled-provider scope and final gates are recorded in `.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md`; real external credentials remain unavailable.
+
+UIE反向引用的Desktop叶模块直读源模块，避免通过`@tinadec/ui`总barrel再载入自身：`useDockDrag`用`engine/dockDrop`与`engine/types`，`TerminalCallBlock`用`components/useUie`，对应测试mock同路径。其他消费者继续使用公共入口；无子路径alias时使用相对源路径。两条循环chunk风险已据源依赖确认，不能将其直接写成生产构建超时的已证原因。
+
+会话快照读lane使用30秒局部HTTP期限，归属仍由原owner signal验证；超时保已加载正文/显示错误并释放事件屏障，重试只读。活动hydrate只在自身按run+seq去重，不向总线提前登记seen，避免旧正文页与刚完成run之间漏掉完成刷新。有效可见终端fit不再blanket catch；dimensions等真正内部错误进入正常报告。
+
 ## 2026-10-11 Settings read recovery
 
 `backendRequest.ts` owns bounded GET/HEAD transport recovery for api.ts and generated/client.ts: 250/750ms, three attempts total, response body transport included, each attempt revalidates host access with captured storage identity. HTTP/JSON failures and mutations are never replayed; a lost write response becomes backend_write_outcome_unknown without retry. Binary/SSE paths retain their existing owners.
@@ -52,12 +62,12 @@ The deb keeps Electron's existing dependency list and explicitly requires `libca
 
 当前实现见 `STORAGE.md`。Electron 启动采用统一用户根与稳定 desktop.toml bootstrap；userData/state 与 sessionData/cache 分离，panel/UIE/pets 归属 state。Gateway API 和 fetch-SSE 捕获 storage identity。存储设置支持路径、stats、预览清理、TOML CAS；Agent 整存储写权限仅由 main IPC 注入私有宿主 token，普通 API 不授予。此段为本次工作树行为，下方历史平台路径不再是当前约定。
 
-scope-enabled Core 全部业务 API 要求私有宿主头，health/challenge 两个公开探针除外。main 先验证 Core/Gateway nonce/角色绑定 HMAC，不能按公开指纹复用伪服务；验证后仅为登记主/panel/debug 主frame在精确入口访问固定local API签发，导航/iframe/未知窗口/远程均不继承，重验失败撤权。敏感IPC同样复核主frame。dev共享启动key，仅Electron保留、Vite剥除，main收到后移除env；默认不开放CDP。Electron43.3.0隔离夹具已验证HTTP/SSE、HMAC、主/辅助路由、iframe拒绝、导航/端点撤权及redirect剥离，不替代完整产品UI或安装验收。
+scope-enabled Core 全部业务 API 要求私有宿主头，health/challenge 两个公开探针除外。main 先验证 Core/Gateway nonce/角色绑定 HMAC，不能按公开指纹复用伪服务；验证后仅为登记主/panel/debug 主frame在精确入口访问固定local API签发，导航/iframe/未知窗口/远程均不继承，重验失败撤权。敏感IPC同样复核主frame。dev共享启动key，仅Electron保留、Vite剥除，main收到后移除env；基线开发启动器默认不开放CDP；本机用户既有`scripts/dev.mjs`修改开启loopback9222，本轮保留原有9增3删，非本修复新增。Electron43.3.0隔离夹具已验证HTTP/SSE、HMAC、主/辅助路由、iframe拒绝、导航/端点撤权及redirect剥离，不替代完整产品UI或安装验收。
 
-**Last Updated:** 2026-10-11
-**Last Updated By:** APP-HOME-107 智能体/模型目录读取恢复、草稿保护与共享传输。
-**Last Verified Commit:** df0977ff（Settings及共享读取修复）；本轮证据和全量首跑/局部复跑对账见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md。
-**Branch:** main
+**Last Updated:** 2026-10-12
+**Last Updated By:** APP-HOME-108 终端归属、对话分页与UIE依赖防环。
+**Last Verified Commit:** 1b6b7673 + 本轮工作树；证据与最终测试对账见 .tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md。
+**Branch:** feat/flat-transcript-refactor
 
 ### 2026-10-08 工具设置
 

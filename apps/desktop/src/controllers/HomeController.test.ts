@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ref, nextTick } from 'vue'
-import { flushPromises } from '@vue/test-utils'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { effectScope, ref, nextTick } from 'vue'
+import { flushPromises as flushPendingPromises } from '@vue/test-utils'
+import type { SessionActivityDto } from '@/api'
+async function flushPromises() { await new Promise(resolve => setTimeout(resolve, 100)); await flushPendingPromises() }
 
 const h = vi.hoisted(() => ({
   createUserToolActionForPath: vi.fn(),
@@ -11,14 +13,16 @@ const h = vi.hoisted(() => ({
   listSessions: vi.fn(async (_project?: string, _signal?: AbortSignal, _storage?: string) => []),
   readWorkspace: vi.fn(),
   createSession: vi.fn(),
-  listMessages: vi.fn(async () => []),
+  listMessages: vi.fn(async (_id?: string, _signal?: AbortSignal) => []),
+  listMessagePage: vi.fn(),
+  getSessionActivity: vi.fn(async (): Promise<SessionActivityDto> => ({ events: [], tool_executions: [], runs: [] })),
   revertSessionMessage: vi.fn(),
   listApprovals: vi.fn(async () => []),
   listApprovalRules: vi.fn(async () => []),
   getOrchestrationSnapshot: vi.fn(async () => null),
   listToolExecutions: vi.fn(async () => []),
-  listRuns: vi.fn(async () => []),
-  connectEvents: vi.fn(() => ({ close: vi.fn(), disconnect: vi.fn() })),
+  listRuns: vi.fn(async (_id?: string, _signal?: AbortSignal) => []),
+  connectEvents: vi.fn((_id?: string | null, _handler?: (event: unknown) => void) => ({ close: vi.fn(), disconnect: vi.fn() })),
   createInteraction: vi.fn(async (_sessionId: string, _body: Record<string, unknown>) => ({ run_id: null, status: 'accepted' })),
   cancelInteraction: vi.fn(async () => ({ status: 'cancelled' })),
   updateSessionTitle: vi.fn(async (id: string, title: string) => ({ id, title })),
@@ -26,6 +30,7 @@ const h = vi.hoisted(() => ({
   migrateSession: vi.fn(), getSessionTransfer: vi.fn(),
   task: vi.fn(() => ({ id: 'transfer-task', update: vi.fn(), succeed: vi.fn(), fail: vi.fn(), dismiss: vi.fn() })),
   notifyError: vi.fn(),
+  hydrate: vi.fn(), resetActivity: vi.fn(),
   bannerError: vi.fn(),
   dismissByKey: vi.fn(),
 }))
@@ -65,6 +70,8 @@ vi.mock('@/api', () => ({
     readWorkspace: h.readWorkspace,
     createSession: h.createSession,
     listMessages: h.listMessages,
+    listMessagePage: (...args: unknown[]) => h.listMessagePage(...args),
+    getSessionActivity: h.getSessionActivity,
     revertSessionMessage: h.revertSessionMessage,
     listApprovals: h.listApprovals,
     listApprovalRules: h.listApprovalRules,
@@ -96,13 +103,30 @@ vi.mock('@/composables/useAgentActivity', () => ({
     thinkingSteps: ref([]),
     agentStates: ref({}),
     progressEvents: ref([]),
+    hydrate: (...args: unknown[]) => h.hydrate(...args),
+    reset: () => h.resetActivity(),
   }),
 }))
+
+// Keep the real stream reducer, but controller fixtures never contact a local Gateway.
+vi.mock('@/lib/runStream', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/runStream')>()
+  return { ...actual, createRunStream: (options: durableStream.RunStreamOptions) => actual.createRunStream({
+    ...options, autoReconnect: false,
+    fetchImpl: async () => new Response('', { headers: { 'content-type': 'text/event-stream' } }),
+  }) }
+})
 
 import { homeController } from './HomeController'
 import { setHostAccessStatus } from '@/lib/hostAccess'
 import { ApiError } from '@/lib/apiError'
 import * as durableStream from '@/lib/runStream'
+
+const defaultMessagePage = async (id: string, _params: unknown, signal?: AbortSignal) => ({
+  items: await h.listMessages(id, signal), runs: await h.listRuns(id, signal),
+  has_more: false, next_before_sequence: null, history_revision: 0, revert_epoch: 0,
+})
+h.listMessagePage.mockImplementation(defaultMessagePage)
 
 function seedProject(): void {
   homeController.projects.value = [
@@ -122,6 +146,7 @@ function seedProject(): void {
 
 afterEach(() => {
   vi.clearAllMocks()
+  h.listMessagePage.mockImplementation(defaultMessagePage)
 })
 
 describe('HomeController session families', () => {
@@ -229,7 +254,7 @@ describe('HomeController session read ownership', () => {
     let resolve!: (value: never[]) => void
     h.listMessages.mockImplementationOnce(() => new Promise<never[]>((done) => { resolve = done }))
     homeController.setSelectedSession('slow-session')
-    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 60))
     h.listMessages.mockResolvedValue([{ id: 'new-message', session_id: 'new-session', role: 'user', content: 'new' }] as never[])
     homeController.setSelectedSession('new-session')
     await flushPromises()
@@ -930,9 +955,248 @@ describe('HomeController independent storage scopes', () => {
       await homeController.migrateSession('user::transfer-session', 'target-scope::transfer-project')
       expect(h.migrateSession).toHaveBeenCalledWith(source.id, { target_storage_id: 'target-scope', target_project_id: target.id })
       await vi.advanceTimersByTimeAsync(1000)
+      await vi.advanceTimersByTimeAsync(200) // Target snapshot lanes settle before the completion toast.
       expect(h.getSessionTransfer).toHaveBeenCalledWith('transfer-1')
       expect(homeController.currentSession.value?.storage_id).toBe('target-scope')
       expect(h.task.mock.results.at(-1)?.value.succeed).toHaveBeenCalled()
     } finally { vi.useRealTimers(); homeController.setSelectedProject(null) }
+  })
+})
+
+describe('HomeController bounded transcript reads', () => {
+  beforeAll(async () => {
+    setHostAccessStatus({ state: 'ready', managed: true })
+    homeController.start()
+    await flushPromises()
+  })
+  const rows = (from: number, to: number, session = 'paged-session') => Array.from({ length: to - from + 1 }, (_, index) => ({ id: `m-${index + from}`, sequence: index + from, session_id: session, run_id: null, role: 'user', content: `Message ${index + from}`, created_at: '', attachments: [] }))
+  const page = (items: unknown[], more = false, before: number | null = null, epoch = 0) => ({ items, runs: [], has_more: more, next_before_sequence: before, history_revision: 1000, revert_epoch: epoch })
+  async function select() {
+    homeController.setSelectedProject(null)
+    homeController.sessions.value = [{ id: 'paged-session', project_id: null, view_mode: 'flat' }] as never
+    homeController.setSelectedSession('paged-session')
+    await new Promise(resolve => setTimeout(resolve, 65))
+  }
+  it('shows the newest 100 before auxiliary reads finish and prepends stable history', async () => {
+    let finish!: (items: never[]) => void
+    h.listApprovals.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    h.listMessagePage.mockImplementation(async (_id, params: { before_sequence?: number }) => params.before_sequence ? page(rows(1, 100)) : page(rows(101, 200), true, 101))
+    await select()
+    expect(homeController.messages.value).toHaveLength(100)
+    expect(homeController.messagesLoading.value).toBe(false)
+    expect(homeController.hasMoreMessages.value).toBe(true)
+    await homeController.loadOlderMessages()
+    expect(homeController.messages.value.map(message => message.id)).toEqual(rows(1, 200).map(message => message.id))
+    expect(homeController.hasMoreMessages.value).toBe(false)
+    expect(h.listMessagePage).toHaveBeenLastCalledWith('paged-session', { limit: 100, before_sequence: 101, expected_revert_epoch: 0 }, expect.any(AbortSignal))
+    finish([]); await flushPromises()
+    homeController.setSelectedProject(null); await flushPromises()
+  })
+  it('rejects late older pages after a history change and resets the paging cursor', async () => {
+    h.listMessagePage.mockResolvedValue(page(rows(101, 200), true, 101))
+    await select()
+    let finish!: (value: unknown) => void
+    h.listMessagePage.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const older = homeController.loadOlderMessages()
+    h.listMessagePage.mockResolvedValue(page(rows(201, 201), false, null, 100))
+    const deliver = h.connectEvents.mock.calls.at(-1)?.[1]
+    expect(deliver).toBeTypeOf('function')
+    deliver!({ type: 'diagnostic.before-revert', session_id: 'paged-session', run_id: 'old-run', seq: 1, payload: {} })
+    expect(homeController.events.value).toHaveLength(1)
+    deliver!({ v: '1', type: 'history.changed', session_id: 'paged-session', seq: 0, ts: '', request_id: '', trace_id: '', capabilities: [], payload: { revert_epoch: 100 } })
+    await flushPromises()
+    finish(page(rows(1, 100), false, null, 0)); await older
+    expect(homeController.messages.value.map(message => message.id)).toEqual(['m-201'])
+    expect(homeController.hasMoreMessages.value).toBe(false)
+    expect(homeController.loadingOlderMessages.value).toBe(false)
+    expect(homeController.events.value).toEqual([])
+    homeController.setSelectedProject(null); await flushPromises()
+  })
+  it('coalesces 100 tool events into one activity request without rereading messages', async () => {
+    h.listMessagePage.mockResolvedValue(page(rows(101, 200), true, 101))
+    await select(); await flushPromises()
+    const messagesBefore = h.listMessagePage.mock.calls.length, activitiesBefore = h.getSessionActivity.mock.calls.length
+    const deliver = h.connectEvents.mock.calls.at(-1)?.[1]
+    for (let seq = 1; seq <= 100; seq++) deliver!({ v: '1', type: 'tool.execution.completed', session_id: 'paged-session', run_id: 'burst-run', seq, ts: '', request_id: '', trace_id: '', capabilities: [], payload: {} })
+    await flushPromises()
+    expect(h.listMessagePage.mock.calls.length).toBe(messagesBefore)
+    expect(h.getSessionActivity.mock.calls.length - activitiesBefore).toBe(1)
+    homeController.setSelectedProject(null); await flushPromises()
+    expect(homeController.events.value).toEqual([])
+  })
+  it('handles a failed tail refresh after an older-page history conflict without repeating requests', async () => {
+    h.listMessagePage.mockResolvedValue(page(rows(101, 200), true, 101))
+    await select(); await flushPromises()
+    const before = h.listMessagePage.mock.calls.length
+    h.listMessagePage.mockRejectedValueOnce(Object.assign(new Error('History changed'), { status: 409, code: 'history_changed' }))
+      .mockRejectedValueOnce(new Error('Tail unavailable'))
+    await expect(homeController.loadOlderMessages()).resolves.toBeUndefined()
+    await flushPromises()
+    expect(homeController.messagesLoadError.value).toBe('Tail unavailable')
+    expect(homeController.messagesLoading.value).toBe(false)
+    expect(homeController.loadingOlderMessages.value).toBe(false)
+    expect(homeController.hasMoreMessages.value).toBe(false)
+    expect(h.notifyError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Tail unavailable' }), { title: '会话加载失败' })
+    await flushPromises()
+    expect(h.listMessagePage.mock.calls.length - before).toBe(2)
+    homeController.setSelectedProject(null); await flushPromises()
+  })
+  it('releases live delivery after the transcript snapshot while an auxiliary read remains pending', async () => {
+    let finish!: (items: never[]) => void
+    h.listApprovals.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    h.listMessagePage.mockResolvedValue({ ...page(rows(101, 200)), runs: [{ id: 'snapshot-run', status: 'completed' }] })
+    await select(); await flushPromises()
+    const received: string[] = []
+    const unsubscribe = homeController.onEvent(event => received.push(event.type))
+    const deliver = h.connectEvents.mock.calls.at(-1)?.[1]
+    deliver!({ type: 'stream.ready', session_id: 'paged-session', seq: 0, payload: { revert_epoch: 0 } })
+    deliver!({ type: 'tool.execution.completed', session_id: 'paged-session', run_id: 'live-run', seq: 1, payload: {} })
+    await flushPromises(); await flushPromises()
+    expect(received).toContain('tool.execution.completed')
+    expect(h.getSessionActivity).toHaveBeenCalledWith('paged-session', expect.arrayContaining(['snapshot-run']), expect.any(AbortSignal))
+    finish([]); await flushPromises(); unsubscribe()
+    homeController.setSelectedProject(null); await flushPromises()
+  })
+  it('refreshes a stale message page when its buffered completion also appears in the activity snapshot', async () => {
+    const user = rows(1, 1)[0]
+    const run = { id: 'snapshot-completed-run', status: 'completed', trigger_message_id: user.id }
+    const stalePage = { ...page([user]), runs: [run] }
+    h.listMessagePage.mockResolvedValue(stalePage)
+    await select(); await flushPromises()
+    const before = h.listMessagePage.mock.calls.length
+    const completion = { v: '1', type: 'user.response', session_id: 'paged-session', run_id: run.id,
+      seq: 401, ts: '', request_id: '', trace_id: '', capabilities: [], payload: {} }
+    const answer = { ...user, id: 'completed-answer', sequence: 2, run_id: run.id, role: 'assistant', content: '已完成' }
+    // Core reads bodies before its associated run projection. A run can finish in
+    // between, so a completed run does not make these older bodies authoritative.
+    h.listMessagePage.mockResolvedValueOnce(stalePage).mockResolvedValue({ ...page([user, answer]), runs: [run] })
+    let finish!: (snapshot: SessionActivityDto) => void
+    h.getSessionActivity.mockImplementationOnce(() => new Promise<SessionActivityDto>(resolve => { finish = resolve }))
+    const deliver = h.connectEvents.mock.calls.at(-1)?.[1]
+    deliver!({ type: 'stream.ready', session_id: 'paged-session', seq: 0, payload: { revert_epoch: 0 } })
+    deliver!(completion)
+    await flushPromises()
+    expect(homeController.messages.value.map(message => message.id)).toEqual([user.id])
+    finish({ events: [completion], tool_executions: [], runs: [run] })
+    await flushPromises(); await flushPromises()
+    expect(homeController.messages.value.map(message => message.id)).toEqual([user.id, answer.id])
+    expect(h.listMessagePage.mock.calls.length - before).toBe(2)
+    homeController.setSelectedProject(null); await flushPromises()
+  })
+  it('releases a timed-out snapshot barrier, keeps existing messages and allows a later retry', async () => {
+    const retained = rows(1, 1)
+    h.listMessagePage.mockResolvedValue(page(retained))
+    await select(); await flushPromises()
+    const received: string[] = []
+    const unsubscribe = homeController.onEvent(event => received.push(event.type))
+    const deliver = h.connectEvents.mock.calls.at(-1)?.[1]
+    vi.useFakeTimers()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('Snapshot read timed out', 'TimeoutError')), milliseconds)
+      return controller.signal
+    })
+    try {
+      h.listMessagePage.mockImplementationOnce((_session, _params, signal: AbortSignal) => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      }))
+      deliver!({ type: 'stream.ready', session_id: 'paged-session', seq: 0, payload: { revert_epoch: 0 } })
+      deliver!({ type: 'diagnostic.during-snapshot', session_id: 'paged-session', run_id: 'deadline-run', seq: 1, payload: {} })
+      await vi.advanceTimersByTimeAsync(40)
+      expect(received).not.toContain('diagnostic.during-snapshot')
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(received).toContain('diagnostic.during-snapshot')
+      expect(homeController.messages.value.map(message => message.id)).toEqual(['m-1'])
+      expect(homeController.messagesLoadError.value).toBe('Snapshot read timed out')
+      expect(homeController.messagesLoading.value).toBe(false)
+      h.listMessagePage.mockResolvedValue(page(rows(1, 2)))
+      const retry = homeController.retryMessages()
+      await vi.advanceTimersByTimeAsync(100)
+      await retry
+      expect(homeController.messages.value.map(message => message.id)).toEqual(['m-1', 'm-2'])
+      expect(homeController.messagesLoadError.value).toBeNull()
+    } finally {
+      timeout.mockRestore(); vi.useRealTimers(); unsubscribe()
+      homeController.setSelectedProject(null); await flushPromises()
+    }
+  })
+  it('keeps a repeated optimistic message when a pre-admission snapshot contains the same words', async () => {
+    const older = { ...rows(1, 1)[0], content: '你好' }
+    h.listMessagePage.mockResolvedValue(page([older]))
+    await select(); await flushPromises()
+    let finish!: (receipt: { run_id: null; status: string; message_id: string }) => void
+    h.createInteraction.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    homeController.updateDraft('你好')
+    const sending = homeController.sendMessage({ dispatch_mode: 'parallel' })
+    await nextTick(); await flushPromises()
+    expect(homeController.messages.value.filter(message => message.content === '你好')).toHaveLength(2)
+    await homeController.loadMessagesAndApprovals()
+    expect(homeController.messages.value.filter(message => message.content === '你好')).toHaveLength(2)
+    expect(homeController.messages.value.some(message => message.id.startsWith('pending-'))).toBe(true)
+    const accepted = { ...older, id: 'accepted-repeat', sequence: 2 }
+    h.listMessagePage.mockResolvedValue(page([older, accepted]))
+    finish({ run_id: null, status: 'message_only', message_id: accepted.id }); await sending
+    expect(homeController.messages.value.map(message => message.id)).toEqual([older.id, accepted.id])
+    homeController.setSelectedProject(null); await flushPromises()
+  })
+  it('settles the exact optimistic bubble after a steering receipt without appending a transcript message', async () => {
+    h.listMessagePage.mockResolvedValue(page(rows(1, 1)))
+    await select(); await flushPromises()
+    homeController.updateDraft('转向这一步')
+    h.createInteraction.mockResolvedValueOnce({ status: 'steering_injected', run_id: null } as never)
+    await homeController.sendMessage({ dispatch_mode: 'insert', target_run_id: 'steered-run' })
+    expect(homeController.messages.value.map(message => message.id)).toEqual(['m-1'])
+    homeController.setSelectedProject(null); await flushPromises()
+  })
+  it('keeps the live barrier until a page with a newer epoch and its activity snapshot are applied', async () => {
+    h.listMessagePage.mockResolvedValue(page(rows(101, 200)))
+    await select(); await flushPromises()
+    const actual = await vi.importActual<typeof import('../composables/useAgentActivity')>('../composables/useAgentActivity')
+    const scope = effectScope()
+    const activity = scope.run(() => actual.useAgentActivity(ref<string | null>('paged-session'), undefined, { managedReads: true }))!
+    h.hydrate.mockImplementation(activity.hydrate); h.resetActivity.mockImplementation(activity.reset)
+    const seen: string[] = [], unsubscribe = homeController.onEvent(event => seen.push(event.type))
+    const event = (type: string, seq: number) => ({ v: '1', type, session_id: 'paged-session', run_id: 'restored-run', seq, ts: '', request_id: '', trace_id: '', capabilities: [], payload: {} })
+    let finish!: (snapshot: SessionActivityDto) => void
+    h.getSessionActivity.mockImplementationOnce(() => new Promise<SessionActivityDto>(resolve => { finish = resolve }))
+    const run = { id: 'restored-run', status: 'completed' }
+    h.listMessagePage.mockResolvedValue({ ...page(rows(201, 202), false, null, 2), runs: [run] })
+    const deliver = h.connectEvents.mock.calls.at(-1)?.[1]
+    try {
+      deliver!({ type: 'stream.ready', session_id: 'paged-session', seq: 0, payload: { revert_epoch: 1 } })
+      deliver!(event('context.packed', 3))
+      await flushPromises()
+      expect(seen).not.toContain('context.packed')
+      deliver!({ type: 'history.changed', session_id: 'paged-session', seq: 0, payload: { revert_epoch: 2 } })
+      await flushPromises()
+      expect(seen).not.toContain('context.packed')
+      deliver!(event('context.packed', 3))
+      finish({ events: [event('task.accepted', 1), event('context.packed', 2)], tool_executions: [], runs: [run] })
+      await flushPromises(); await flushPromises()
+      expect(seen).toContain('context.packed')
+      expect(activity.turnActivities.value['restored-run']?.thinkingSteps?.map(step => step.seq)).toEqual([1, 2, 3])
+    } finally {
+      unsubscribe(); scope.stop(); h.hydrate.mockReset(); h.resetActivity.mockReset()
+      homeController.setSelectedProject(null); await flushPromises()
+    }
+  })
+  it('keeps the first paging cursor when an admission receipt settles before the first page returns', async () => {
+    let finish!: (result: unknown) => void
+    const newest = rows(101, 200)
+    h.listMessagePage.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      .mockResolvedValue(page(newest, true, 101))
+    await select()
+    homeController.updateDraft(newest.at(-1)!.content)
+    h.createInteraction.mockResolvedValueOnce({ run_id: null, status: 'message_only', message_id: newest.at(-1)!.id } as never)
+    const sending = homeController.sendMessage({ dispatch_mode: 'parallel' })
+    await nextTick(); await flushPromises()
+    expect(homeController.messages.value.map(message => message.id)).toEqual(['m-200'])
+    finish(page(newest, true, 101)); await sending
+    expect(homeController.hasMoreMessages.value).toBe(true)
+    h.listMessagePage.mockResolvedValueOnce(page(rows(1, 100)))
+    await homeController.loadOlderMessages()
+    expect(h.listMessagePage).toHaveBeenLastCalledWith('paged-session', { limit: 100, before_sequence: 101, expected_revert_epoch: 0 }, expect.any(AbortSignal))
+    expect(homeController.messages.value).toHaveLength(200)
+    homeController.setSelectedProject(null); await flushPromises()
   })
 })

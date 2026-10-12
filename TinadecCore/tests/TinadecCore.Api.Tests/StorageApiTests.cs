@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -777,7 +778,8 @@ public sealed partial class StorageApiTests : IAsyncLifetime
     private sealed class StorageFactory : IsolatedApiFactory
     {
         private readonly string _root;
-        public StorageFactory(string root) => _root = root;
+        private readonly Action<IServiceCollection>? _configureServices;
+        public StorageFactory(string root, Action<IServiceCollection>? configureServices = null) => (_root, _configureServices) = (root, configureServices);
 
         protected override void ConfigureIsolatedWebHost(IWebHostBuilder builder)
         {
@@ -792,6 +794,7 @@ public sealed partial class StorageApiTests : IAsyncLifetime
                 ["TinadecPersistence:DataRoot"] = Path.Combine(_root, "data"),
                 ["Logging:LogLevel:Default"] = "Warning"
             }));
+            if (_configureServices is not null) builder.ConfigureTestServices(_configureServices);
         }
     }
 

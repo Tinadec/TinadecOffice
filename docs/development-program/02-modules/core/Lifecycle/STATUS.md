@@ -10,6 +10,12 @@
 | CORE-LIFECYCLE-F002 | 父子 run 字段与父控制级联 | 部分实现 | 本轮静态核对；未做功能验收 | ParentRunId、ParentTaskId、RunKind 与级联已有；task_dispatch 仍未因此形成完整独立执行子 run。 | [TinadecCore/Lifecycle/LifecycleModuleRegistrar.cs:81](../../../../../TinadecCore/Lifecycle/LifecycleModuleRegistrar.cs#L81)<br>[TinadecCore/Lifecycle/StorageLifecycleService.cs:356](../../../../../TinadecCore/Lifecycle/StorageLifecycleService.cs#L356) |
 | CORE-LIFECYCLE-F003 | 每scope运行事实、诊断日志与生命周期隔离 | 部分实现 | SQLite scope、文件删除/导出与日志预算定向 | 运行日志保留为data事实；诊断logs独立有界。恢复/转移/GC由Runtime参与者组合；会话不按时间自动删除。 | [生命周期组合](../../../../../TinadecCore/Runtime/ProjectSessionLifecycleService.cs)<br>[对账报告](../../../../../.tinadec_dev/reports/2026-10-09-storage-reconstruction.zh-CN.md) |
 
+## 2026-10-12 按run活动与水位
+
+按页相关/活跃run批读、日志句柄复用、工具筛选与live-only水位查询已实现。真实HTTP定向覆盖ready先于快照、新run seq1不受旧run seq压制以及另一窗口撤回history.changed；证据与最终回归见[APP-HOME-108](../../app/home/TODO.md#app-home-108)及[报告](../../../../../.tinadec_dev/reports/2026-10-12-transcript-stability.zh-CN.md)。F001整体持久化/恢复与其他平台继续独立。
+
+实际受控Provider/Electron循环还暴露Windows任务快照原子替换IO故障；现同run完整RMW与TaskRevision更新串行，异步读允许删除共享。24并发更新、持有旧读句柄及既有Debug投影两测试通过，完整任务/版本及无临时文件均核对；[TRX](../../../../../.tinadec_dev/evidence/2026-10-12-transcript-stability/core/task-snapshot-final.trx)。精确冲突句柄未知，文件/DB跨提交的一致性与锁存活至scope卸载边界保留；不是全量恢复或100轮应用验收完成。
+
 ## 状态词汇
 
 - 待核查：尚不能判断是否实现或缺失。

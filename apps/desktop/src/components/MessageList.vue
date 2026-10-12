@@ -5,6 +5,7 @@ import type { MessageDto } from '../api'
 import MessageItem from './MessageItem.vue'
 import LiveTurnBlock from './chat/LiveTurnBlock.vue'
 import MarkdownRender from './MarkdownRender.vue'
+import { UiButton } from './ui'
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -35,12 +36,18 @@ const props = defineProps<{
   richToolViews?: boolean
   /** True only under the "information" template; reaches the one component that mounts a frame. */
   allowToolWidget?: boolean
+  hasMoreMessages?: boolean
+  loadingOlderMessages?: boolean
+  messagesLoading?: boolean
+  messagesLoadError?: string | null
 }>()
 
 const emit = defineEmits<{
   approve: [approvalId: string]
   reject: [approvalId: string]
   edit: [payload: { id: string; content: string }]
+  'load-older': []
+  'retry-messages': []
 }>()
 </script>
 
@@ -57,7 +64,16 @@ const emit = defineEmits<{
   -->
   <MessageScrollerProvider auto-scroll default-scroll-position="last-anchor">
     <MessageScroller>
-      <MessageScrollerViewport>
+      <MessageScrollerViewport @reach-start="hasMoreMessages && !loadingOlderMessages && emit('load-older')">
+        <div v-if="hasMoreMessages || messagesLoadError" class="flex flex-col items-center gap-2 py-2">
+          <UiButton v-if="hasMoreMessages" variant="ghost" size="sm" :disabled="loadingOlderMessages"
+            :aria-busy="loadingOlderMessages || undefined" @click="emit('load-older')">
+            {{ t(loadingOlderMessages ? 'chat.loadingOlderMessages' : 'chat.loadOlderMessages') }}
+          </UiButton>
+          <p v-if="messagesLoadError" role="status" class="text-muted-foreground">{{ messagesLoadError }}</p>
+          <UiButton v-if="messagesLoadError" variant="ghost" size="sm" :disabled="messagesLoading"
+            @click="emit('retry-messages')">{{ t('chat.retryMessages') }}</UiButton>
+        </div>
         <MessageScrollerContent>
           <MessageScrollerItem
             v-for="(message, index) in messages"
@@ -96,9 +112,9 @@ const emit = defineEmits<{
           <div v-if="streamingReply" class="message-content assistant" data-testid="chat-streaming-reply">
             <MarkdownRender :content="streamingReply" />
           </div>
-          <div v-if="messages.length === 0" class="empty-state">
+          <div v-if="messages.length === 0 && !messagesLoadError" class="empty-state" role="status">
             <Bot :size="20" />
-            <span>{{ t('chat.ready') }}</span>
+            <span>{{ t(messagesLoading ? 'common.loading' : 'chat.ready') }}</span>
           </div>
         </MessageScrollerContent>
       </MessageScrollerViewport>

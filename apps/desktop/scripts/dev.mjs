@@ -154,9 +154,15 @@ async function main() {
     ? "[dev] Vite and the shared backend are ready, starting Electron..."
     : "[dev] Vite is ready, starting the Electron recovery interface...");
 
-  const electronProcess = isWindows
-    ? spawn("npx electron .", [], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true))
-    : spawn("npx", ["electron", "."], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true));
+  // The UI-automation MCP servers (and the port guard, which already reserves 9222 for "Electron
+  // DevTools") expect a debugging endpoint on every dev launch, and without this flag the app is
+  // unreachable: an attach attempt just reports "no Electron applications found". Loopback only,
+  // and dev-only by construction — the packaged app never runs through this launcher.
+  const electronProcess = spawn(
+    "npx",
+    ["electron", ".", "--remote-debugging-port=9222", "--remote-debugging-address=127.0.0.1"],
+    createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true),
+  );
 
   electronProcess.stdout.on("data", (data) => {
     process.stdout.write(`[electron] ${data}`);

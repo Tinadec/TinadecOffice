@@ -8,7 +8,7 @@ const input = {
   orchestration: null, turns: {}, streamingReply: '',
 }
 const message = (id: string, role: 'user' | 'assistant', content: string, run_id?: string, session_id = 's'): MessageDto =>
-  ({ id, session_id, role, content, created_at: '', attachments: [], run_id: run_id ?? null })
+  ({ id, sequence: 1, session_id, role, content, created_at: '', attachments: [], run_id: run_id ?? null })
 const task = (task_id: string, extra: Partial<TopologyTaskDto> = {}): TopologyTaskDto =>
   ({ task_id, task_key: task_id, title: `Work ${task_id}`, status: 'pending', dependencies: [], write_scope: [], ...extra })
 const run = (run_id: string, tasks: TopologyTaskDto[] = [], extra: Partial<TopologyRunDto> = {}): TopologyRunDto =>
