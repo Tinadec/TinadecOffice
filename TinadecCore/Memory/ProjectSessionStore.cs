@@ -153,9 +153,15 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
 
         SessionRecord ValidateBoundSession(SessionRecord existing)
         {
+            // Every input that decides how the conversation behaves belongs here. The template is one
+            // of them: a caller reusing a stable id with a different one would otherwise be handed
+            // the old session and told nothing, and would reasonably believe the new template took
+            // effect. Normalize the same way creation does, so an explicit "standard" and an omitted
+            // template are the same request rather than a spurious conflict.
             if (existing.TenantId != scope.TenantId || existing.WorkspaceId != scope.WorkspaceId
                 || existing.ProjectId != projectId || existing.ModeVersionId != modeVersionId
                 || (existing.ViewMode ?? "flat") != viewMode
+                || (existing.TranscriptTemplate ?? "standard") != (transcriptTemplate ?? "standard")
                 || existing.ConversationNodeKey != conversationNodeKey || existing.ConversationTemplateSlug != conversationTemplateSlug
                 || existing.LifecycleStatus != LifecycleStatuses.Active)
                 throw new InvalidOperationException("The stable session identifier is already bound to different inputs.");

@@ -22,6 +22,9 @@ import {
 	toolsReadinessUrl,
 	harnessManifestUrl,
 	smokePorts,
+	newSmokeHostControlToken,
+	smokeHeaders,
+	SMOKE_HOST_CONTROL_ENV,
 	validateCoreHealth,
 	validateGatewayHealth,
 	validateCoreReadiness,
@@ -75,12 +78,12 @@ async function assertPortsAvailable(ports, phase) {
 	}
 }
 
-async function probeJson(url, timeoutMs = 1_000) {
+async function probeJson(url, timeoutMs = 1_000, headers = null) {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const response = await fetch(url, {
-			headers: { accept: "application/json", "cache-control": "no-store" },
+			headers: headers ?? { accept: "application/json", "cache-control": "no-store" },
 			signal: controller.signal,
 		});
 		let value = null;
@@ -95,7 +98,7 @@ async function probeJson(url, timeoutMs = 1_000) {
 	}
 }
 
-async function waitForJson(url, validate, label, child, timeoutMs) {
+async function waitForJson(url, validate, label, child, timeoutMs, headers = null) {
 	const deadline = Date.now() + timeoutMs;
 	let lastStatus = "unreachable";
 	while (Date.now() < deadline) {
@@ -104,7 +107,7 @@ async function waitForJson(url, validate, label, child, timeoutMs) {
 				`Electron exited with code ${String(child.exitCode)} before ${label} was ready.`,
 			);
 		}
-		const response = await probeJson(url);
+		const response = await probeJson(url, 1_000, headers);
 		lastStatus = `HTTP ${response.status}`;
 		if (response.ok && validate(response.value)) return response.value;
 		await delay(250);
@@ -147,7 +150,7 @@ function printDiagnostics(logPaths, label, electronPid, stdout, stderr) {
 	}
 }
 
-function sanitizedEnvironment(profile, temporary) {
+export function sanitizedEnvironment(profile, temporary, hostControlToken) {
 	const systemRoot =
 		process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows";
 	const profileRoot = parse(profile).root;
@@ -157,6 +160,9 @@ function sanitizedEnvironment(profile, temporary) {
 			process.env.COMSPEC ?? join(systemRoot, "System32", "cmd.exe"),
 		HOME: profile,
     TINADEC_HOME: join(profile, ".tinadec"),
+    // The packaged host mints this and passes it to the Core/Gateway children it spawns; the
+    // smoke supplies it so those services accept the smoke's own readiness probes.
+    [SMOKE_HOST_CONTROL_ENV]: hostControlToken,
 		HOMEDRIVE: profileRoot.slice(0, Math.max(2, profileRoot.length - 1)),
 		HOMEPATH: profile.slice(profileRoot.length) || "\\",
 		LOCALAPPDATA: join(profile, "AppData", "Local"),
@@ -249,6 +255,7 @@ export async function runPackagedWindowsSmoke(options = {}) {
 			120_000,
 	);
 	const cleanup = options.cleanup ?? process.env.TINADEC_SMOKE_KEEP_ROOT !== "1";
+	const hostControlToken = newSmokeHostControlToken();
 	const userData = join(smokeRoot, "user-data");
 	const profile = join(smokeRoot, "profile");
 	const temporary = join(smokeRoot, "temp");
@@ -265,6 +272,7 @@ export async function runPackagedWindowsSmoke(options = {}) {
 	let stdout = "";
 	let stderr = "";
 	let smokeError;
+	const results = {};
 	let coreHealth;
 	let gatewayHealth;
 	let coreReadiness;
@@ -303,7 +311,7 @@ export async function runPackagedWindowsSmoke(options = {}) {
 			],
 			{
 				cwd: dirname(executable),
-				env: sanitizedEnvironment(profile, temporary),
+				env: sanitizedEnvironment(profile, temporary, hostControlToken),
 				stdio: ["ignore", "pipe", "pipe"],
 				windowsHide: true,
 			},
@@ -337,48 +345,25 @@ export async function runPackagedWindowsSmoke(options = {}) {
 		console.log(`Gateway log: ${logPaths.gateway}`);
 		console.log(`Electron logs: ${logPaths.electronStdout}; ${logPaths.electronStderr}`);
 
-		coreHealth = await waitForJson(
-			coreHealthUrl,
-			validateCoreHealth,
-			"Core health",
-			child,
-			timeoutMs,
-		);
-		gatewayHealth = await waitForJson(
-			gatewayHealthUrl,
-			validateGatewayHealth,
-			"Gateway health",
-			child,
-			timeoutMs,
-		);
-		coreReadiness = await waitForJson(
-			coreReadinessUrl,
-			validateCoreReadiness,
-			"Core readiness",
-			child,
-			timeoutMs,
-		);
-		toolsManifest = await waitForJson(
-			toolsManifestUrl,
-			validateToolsManifest,
-			"bundled tools manifest",
-			child,
-			timeoutMs,
-		);
-		toolsReadiness = await waitForJson(
-			toolsReadinessUrl,
-			validateToolsReadiness,
-			"bundled tools readiness",
-			child,
-			timeoutMs,
-		);
-		harnessManifest = await waitForJson(
-			harnessManifestUrl,
-			validateHarnessManifest,
-			"bundled harness manifest",
-			child,
-			timeoutMs,
-		);
+		// Walked from the shared list rather than re-listing the calls here: a hand-copied sequence
+		// is how one leg ends up asserting something different from the other, and it is how this
+		// smoke kept probing protected routes with no credential after the host gate landed.
+		for (const check of smokeChecks) {
+			results[check.key] = await waitForJson(
+				check.url,
+				check.validate,
+				check.label,
+				child,
+				timeoutMs,
+				smokeHeaders(hostControlToken, { public: check.public }),
+			);
+		}
+		coreHealth = results.coreHealth;
+		gatewayHealth = results.gatewayHealth;
+		coreReadiness = results.coreReadiness;
+		toolsManifest = results.toolsManifest;
+		toolsReadiness = results.toolsReadiness;
+		harnessManifest = results.harnessManifest;
 		console.log(
 			`${label} smoke passed (Core ${coreHealth.version}, readiness ${coreReadiness.status}, tools ${toolsManifest.length}).`,
 		);

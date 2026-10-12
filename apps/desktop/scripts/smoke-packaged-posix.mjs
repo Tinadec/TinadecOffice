@@ -13,7 +13,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { hostRuntimeTarget } from "./runtimeTargets.mjs";
-import { smokeChecks, smokePorts } from "./smokeAssertions.mjs";
+import {
+	smokeChecks,
+	smokePorts,
+	newSmokeHostControlToken,
+	smokeHeaders,
+	SMOKE_HOST_CONTROL_ENV,
+} from "./smokeAssertions.mjs";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptsDir, "..");
@@ -56,10 +62,13 @@ export function electronSmokeArgs(userDataDir, target) {
 
 /// A profile with nothing in it but the app's own paths. `HOME` is redirected so the packaged app
 /// cannot read the developer's or the runner's real settings, caches, or model credentials.
-export function sanitizedPosixEnvironment({ profile, temporary, inheritedPath, display, xauthority }) {
+export function sanitizedPosixEnvironment({ profile, temporary, inheritedPath, display, xauthority, hostControlToken }) {
 	return {
 		HOME: profile,
     TINADEC_HOME: join(profile, ".tinadec"),
+    // The packaged host mints this and passes it to the Core/Gateway children it spawns; the
+    // smoke supplies it so those services accept the smoke's own readiness probes.
+    ...(hostControlToken ? { [SMOKE_HOST_CONTROL_ENV]: hostControlToken } : {}),
 		USER: process.env.USER ?? "tinadec-smoke",
 		LOGNAME: process.env.USER ?? "tinadec-smoke",
 		XDG_DATA_HOME: join(profile, ".local", "share"),
@@ -117,12 +126,12 @@ async function assertPortsAvailable(ports, phase) {
 	}
 }
 
-async function probeJson(url, timeoutMs = 1_000) {
+async function probeJson(url, timeoutMs = 1_000, headers = null) {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const response = await fetch(url, {
-			headers: { accept: "application/json", "cache-control": "no-store" },
+			headers: headers ?? { accept: "application/json", "cache-control": "no-store" },
 			signal: controller.signal,
 		});
 		let value = null;
@@ -137,7 +146,7 @@ async function probeJson(url, timeoutMs = 1_000) {
 	}
 }
 
-async function waitForJson(check, child, timeoutMs) {
+async function waitForJson(check, child, timeoutMs, headers = null) {
 	const deadline = Date.now() + timeoutMs;
 	let lastStatus = "unreachable";
 	while (Date.now() < deadline) {
@@ -148,7 +157,7 @@ async function waitForJson(check, child, timeoutMs) {
 				} before ${check.label} was ready.`,
 			);
 		}
-		const response = await probeJson(check.url);
+		const response = await probeJson(check.url, 1_000, headers);
 		lastStatus = `HTTP ${response.status}`;
 		if (response.ok && check.validate(response.value)) return response.value;
 		await delay(250);
@@ -331,11 +340,12 @@ export async function runPackagedPosixSmoke(options = {}) {
 	let stderr = "";
 	let smokeError;
 	const results = {};
+	const hostControlToken = newSmokeHostControlToken();
 
 	try {
 		child = spawn(executable, electronSmokeArgs(userData, target), {
 			cwd: dirname(executable),
-			env: sanitizedPosixEnvironment({ profile, temporary, inheritedPath: process.env.PATH, display: process.env.DISPLAY, xauthority: process.env.XAUTHORITY }),
+			env: sanitizedPosixEnvironment({ profile, temporary, inheritedPath: process.env.PATH, display: process.env.DISPLAY, xauthority: process.env.XAUTHORITY, hostControlToken }),
 			stdio: ["ignore", "pipe", "pipe"],
 			detached: true,
 		});
@@ -356,7 +366,7 @@ export async function runPackagedPosixSmoke(options = {}) {
 		console.log(`Core log: ${logPaths.core}`);
 
 		for (const check of smokeChecks) {
-			results[check.key] = await waitForJson(check, child, timeoutMs);
+			results[check.key] = await waitForJson(check, child, timeoutMs, smokeHeaders(hostControlToken, { public: check.public }));
 		}
 		console.log(
 			`${label} smoke passed (Core ${results.coreHealth.version}, readiness ${results.coreReadiness.status}, tools ${results.toolsManifest.length}).`,

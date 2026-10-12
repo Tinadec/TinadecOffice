@@ -89,9 +89,12 @@ const newSessionSettings = ref<Record<SessionView, ComposerSettings>>({ flat: ne
 const settingsWrites = new Map<string, Promise<boolean>>()
 const settingsPending = ref<Record<string, number>>({})
 const settingsErrors = ref<Record<string, string | null>>({})
-// `user_message_id` is Core's `trigger_message_id` as the Gateway's external DTO spells it,
-// and it is the only exact run→message link: the user message itself carries no run (Core
-// appends it before the run exists), so the transcript pairs them by this or by reading order.
+// The run→message link, normalized to `user_message_id`. Both spellings are Core's
+// `Run.TriggerMessageId`: the orchestration snapshot calls it `user_message_id`, the run list calls
+// it `trigger_message_id`. Reading only one left the other undefined, and a transcript that cannot
+// pair a run with its message falls back to reading order — which is exactly what goes wrong with
+// two parallel runs. It is the only exact link: the user message itself carries no run, because
+// Core appends it before the run exists.
 const runs = ref<Array<{ id: string; status: string; user_message_id?: string | null }>>([])
 /**
  * Messages waiting in the session's queue. `interactionId` is set when Core holds the message
@@ -494,7 +497,7 @@ async function loadMessagesAndApprovals() {
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
   runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({
-    id: String(r.id), status: String(r.status ?? ''), user_message_id: r.user_message_id ?? null,
+    id: String(r.id), status: String(r.status ?? ''), user_message_id: r.trigger_message_id ?? r.user_message_id ?? null,
   }))
   // 状态源统一（问题 3 修复）：ChatHeader 的 run-pills 读 Pinia runStore.runs，而
   // runStore.fetchRuns 此前只在无入口的 WorkbenchPage 调用 → Home 页 pills 恒空。

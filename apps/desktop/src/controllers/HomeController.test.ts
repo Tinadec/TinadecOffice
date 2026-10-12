@@ -161,6 +161,36 @@ describe('HomeController session families', () => {
     expect(homeController.selectedSessionId.value).toBe('flat-family')
     h.listSessions.mockResolvedValue([])
   })
+
+  /**
+   * The run→message link. Core spells it `trigger_message_id` on `/sessions/{id}/runs` and
+   * `user_message_id` on the orchestration snapshot; the desktop reads the run list, so reading the
+   * other spelling left every run unpaired and the transcript fell back to reading order — which is
+   * exactly what misattributes answers when two runs are in flight.
+   */
+  it('normalizes both run-id spellings so a run is paired with its trigger message', async () => {
+    homeController.setViewMode('flat')
+    homeController.setSelectedProject(null)
+    h.listSessions.mockResolvedValue([])
+    h.listRuns.mockResolvedValue([
+      { id: 'run-trigger', status: 'executing', trigger_message_id: 'm-1' },
+      { id: 'run-snapshot', status: 'executing', user_message_id: 'm-2' },
+      { id: 'run-both', status: 'executing', trigger_message_id: 'm-3', user_message_id: 'm-ignored' },
+      { id: 'run-neither', status: 'executing' },
+    ] as never)
+    homeController.selectedSessionId.value = 'session-runs'
+    await flushPromises()
+    expect(homeController.runs.value).toEqual([
+      { id: 'run-trigger', status: 'executing', user_message_id: 'm-1' },
+      { id: 'run-snapshot', status: 'executing', user_message_id: 'm-2' },
+      { id: 'run-both', status: 'executing', user_message_id: 'm-3' },
+      { id: 'run-neither', status: 'executing', user_message_id: null },
+    ])
+    h.listRuns.mockResolvedValue([])
+    homeController.selectedSessionId.value = null
+    await flushPromises()
+  })
+
   it('freezes creation family across a mode switch while awaiting the server', async () => {
     homeController.sessions.value = familySessions
     homeController.setSelectedProject(null)

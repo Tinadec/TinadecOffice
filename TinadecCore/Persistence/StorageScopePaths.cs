@@ -33,7 +33,24 @@ public static class StorageScopePaths
         return result;
     }
 
-    public static void RejectLinks(string root, string? destination = null)
+    /// <summary>
+    /// The scope root, and every entry inside it, must be a real directory.
+    ///
+    /// The walk deliberately starts at the root rather than at the volume root: on macOS `/var` is
+    /// a symlink to `/private/var`, so starting above the scope rejected the host's own layout —
+    /// every temp-rooted scope tripped on an ancestor the user never chose and cannot change. The
+    /// claim is "nothing in the storage tree is a link"; where the tree happens to live is the
+    /// platform's business, and <see cref="Contained"/> already re-roots every owned path under it.
+    /// The root itself is still checked, so a scope registered on a symlink is still refused.
+    /// </summary>
+    /// <param name="isReparsePoint">
+    /// Injection seam, the same shape <see cref="WorkspacePathSpelling.Canonical"/> uses. An
+    /// unprivileged Windows account cannot create a symlink or junction, so a test that had to make
+    /// a real one would silently pass here while proving nothing — which is how the macOS half of
+    /// this rule went unverified until CI. Tests pass a fake so the rule is pinned on every host;
+    /// production passes null and asks the file system.
+    /// </param>
+    public static void RejectLinks(string root, string? destination = null, Func<string, bool>? isReparsePoint = null)
     {
         var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         var target = Path.GetFullPath(destination ?? root);
@@ -41,18 +58,27 @@ public static class StorageScopePaths
         if (!string.Equals(fullRoot, Path.TrimEndingDirectorySeparator(target), comparison)
             && !target.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison))
             throw new InvalidOperationException("The path escaped its storage scope.");
-        var current = Path.GetPathRoot(target)!;
-        foreach (var segment in Path.GetRelativePath(current, target).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        RejectLink(fullRoot, isReparsePoint);
+        var current = fullRoot;
+        foreach (var segment in Path.GetRelativePath(fullRoot, target).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
-            if (segment == ".") continue;
+            if (segment is "." or "..") continue;
             current = Path.Combine(current, segment);
-            try
-            {
-                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                    throw new InvalidOperationException("Owned storage must not contain symbolic links or junctions: " + current);
-            }
-            catch (FileNotFoundException) { }
-            catch (DirectoryNotFoundException) { }
+            RejectLink(current, isReparsePoint);
         }
+    }
+
+    private static void RejectLink(string path, Func<string, bool>? isReparsePoint)
+    {
+        try
+        {
+            var linked = isReparsePoint is null
+                ? (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0
+                : isReparsePoint(path);
+            if (linked)
+                throw new InvalidOperationException("Owned storage must not contain symbolic links or junctions: " + path);
+        }
+        catch (FileNotFoundException) { }
+        catch (DirectoryNotFoundException) { }
     }
 }

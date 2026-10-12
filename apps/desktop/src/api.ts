@@ -1763,7 +1763,16 @@ export interface PromptContextPreviewDto {
 export interface OrchestrationRunDto {
   id: string;
   session_id: string;
+  /**
+   * The user message this run was admitted for.
+   *
+   * The orchestration snapshot spells it `user_message_id`; the run list spells it
+   * `trigger_message_id`. Both are Core's `Run.TriggerMessageId`. Declaring only the first meant
+   * `/sessions/{id}/runs` — the source the transcript pairs turns with — read `undefined` for every
+   * run, and the pairing silently fell back to reading order.
+   */
   user_message_id?: string | null;
+  trigger_message_id?: string | null;
   status: string;
   summary: string;
   created_at: string;

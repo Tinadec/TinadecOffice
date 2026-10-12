@@ -7,6 +7,8 @@
 /// The URLs are the same on every platform because the packaged app owns the loopback topology:
 /// Gateway on 48730, Core on 48731, and the tool runtime on 48732.
 
+import { randomBytes } from "node:crypto";
+
 export const coreHealthUrl = "http://127.0.0.1:48731/api/v1/health";
 export const coreReadinessUrl = "http://127.0.0.1:48731/api/v1/readiness";
 export const gatewayHealthUrl = "http://127.0.0.1:48730/api/v1/health";
@@ -18,6 +20,36 @@ export const harnessManifestUrl = "http://127.0.0.1:48730/api/v1/harness/manifes
 /// runtime the packaged app spawns, so "ports freed" is only a real teardown proof if it is in the
 /// list.
 export const smokePorts = [48730, 48731, 48732];
+
+/// The credential the packaged host mints for its own child services.
+///
+/// Every mounted API request is a host operation, and Core refuses one that cannot present this
+/// (`host_authorization_required`). A smoke that probes readiness without it does not measure a
+/// broken build: it measures its own omission, and every leg times out on HTTP 403 while Core and
+/// Gateway are demonstrably up in their logs.
+///
+/// Core and Gateway inherit the token from the Electron main process that spawned them, so the
+/// smoke supplies it in the child environment and echoes the same value back in the header.
+export const SMOKE_HOST_CONTROL_ENV = "TINADEC_HOST_CONTROL_TOKEN";
+
+/// The header name, spelled the way Core reads it.
+export const SMOKE_HOST_CONTROL_HEADER = "x-tinadec-host-control";
+
+/// A fresh 32-byte key per run, in the shape `createHostControl` accepts.
+export function newSmokeHostControlToken() {
+	return randomBytes(32).toString("base64url");
+}
+
+/// Request headers for a probe that is a trusted host operation. Health stays public, so it is
+/// deliberately not gated on the token — that is what lets a smoke distinguish "Core never came up"
+/// from "Core is up and refused us".
+export function smokeHeaders(token, { public: isPublic = false } = {}) {
+	return {
+		accept: "application/json",
+		"cache-control": "no-store",
+		...(token && !isPublic ? { [SMOKE_HOST_CONTROL_HEADER]: token } : {}),
+	};
+}
 
 export function validateCoreHealth(value) {
 	return (
@@ -63,9 +95,14 @@ export function validateHarnessManifest(value) {
 
 /// The ordered checks, so a new leg cannot skip one by forgetting to copy a call. Each entry names
 /// itself the way the log should, because "timeout waiting for HTTP 200" tells a builder nothing.
+///
+/// `public: true` marks the two health routes Core leaves ungated. They come first and stay open on
+/// purpose: if every probe were authenticated, a wrong token and a dead Core would both read as
+/// "timed out", and the smoke could not say which. Credentialed checks come after, so a 403 there
+/// means the token is wrong, not that the product is broken.
 export const smokeChecks = [
-	{ url: coreHealthUrl, validate: validateCoreHealth, label: "Core health", key: "coreHealth" },
-	{ url: gatewayHealthUrl, validate: validateGatewayHealth, label: "Gateway health", key: "gatewayHealth" },
+	{ url: coreHealthUrl, validate: validateCoreHealth, label: "Core health", key: "coreHealth", public: true },
+	{ url: gatewayHealthUrl, validate: validateGatewayHealth, label: "Gateway health", key: "gatewayHealth", public: true },
 	{ url: coreReadinessUrl, validate: validateCoreReadiness, label: "Core readiness", key: "coreReadiness" },
 	{ url: toolsManifestUrl, validate: validateToolsManifest, label: "bundled tools manifest", key: "toolsManifest" },
 	{ url: toolsReadinessUrl, validate: validateToolsReadiness, label: "bundled tools readiness", key: "toolsReadiness" },

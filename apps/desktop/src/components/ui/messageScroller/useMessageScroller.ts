@@ -19,6 +19,7 @@
  */
 import type { ComputedRef, InjectionKey, Ref, ShallowRef } from "vue"
 import { computed, getCurrentScope, inject, onMounted, onScopeDispose, provide, shallowRef, watch } from "vue"
+import { classifyScroll, SCROLL_EPSILON } from "./scrollIntent"
 
 export type MessageScrollerDefaultScrollPosition = "start" | "end" | "last-anchor"
 export type MessageScrollerButtonDirection = "start" | "end"
@@ -51,7 +52,6 @@ export interface MessageScrollerProviderProps {
 const DEFAULT_SCROLL_EDGE_THRESHOLD = 8
 const DEFAULT_SCROLL_PREVIOUS_ITEM_PEEK = 64
 const DEFAULT_SCROLL_MARGIN = 0
-const SCROLL_EPSILON = 0.5
 const AUTOSCROLLING_TIMEOUT = 180
 
 export const SCROLL_KEYS = new Set([
@@ -378,6 +378,13 @@ function createEngine(props: MessageScrollerProviderProps) {
    * `autoscrolling` only covers "the engine is animating", which is a different claim.
    */
   let userDriven = false
+  /**
+   * Where the engine last asked the viewport to go, or null when it is not scrolling. This is how a
+   * native scrollbar drag is told apart from the engine's own animation: both arrive as the same
+   * `scroll` event, so the only thing that can distinguish them is whether the movement is closing
+   * in on a target the engine set. Cleared on arrival, so the next movement is judged afresh.
+   */
+  let engineTarget: number | null = null
   let streamingTurn: HTMLElement | null = null
   let firstItem: HTMLElement | null = null
   let itemCount = 0
@@ -409,31 +416,37 @@ function createEngine(props: MessageScrollerProviderProps) {
   function updateModeFromScroll(next: MessageScrollerScrollable) {
     const scrollTop = viewport?.scrollTop ?? 0
     const scrolledUp = scrollTop < lastScrollTop - SCROLL_EPSILON
+    // Credit the movement before reading it, because a reader's drag and the engine's own
+    // animation both arrive here as the same `scroll` event. See `scrollIntent.ts`.
+    if (classifyScroll({ scrollTop, previousScrollTop: lastScrollTop, engineTarget }) === "reader") userDriven = true
+    if (engineTarget !== null && Math.abs(engineTarget - scrollTop) <= SCROLL_EPSILON) engineTarget = null
     lastScrollTop = scrollTop
-    if (autoScroll() && !next.end && mode !== "settling-jump" && mode !== "anchored-to-message") {
-      // Sticking to the bottom is only the right default while the reader is not driving. Two
-      // cases reach here that the `autoscrolling` guard below cannot exclude, because both happen
-      // *after* the reader acted:
-      //   - dragging the native scrollbar enters only through `scroll`, never through the wheel /
-      //     touch / key listeners, so nothing marked the reader as driving;
-      //   - a drag that stops within one edge threshold of the bottom leaves `end` false, which
-      //     re-entered following-bottom on top of `userScrollIntent()`.
-      // `userDriven` records real intent and is cleared by an explicit scroll-to-end, so a
-      // programmatic re-anchor has to ask for the bottom again rather than inherit it.
-      if (!userDriven) mode = "following-bottom"
+    // Whether the engine may take the live edge back. A jump to a message and the settle that
+    // follows it own the viewport until they finish.
+    const canFollow = autoScroll() && mode !== "settling-jump" && mode !== "anchored-to-message"
+
+    // The reader's intent outranks the default, so it is decided first. Checking the follow case
+    // ahead of it (as this did) short-circuits on exactly the state that matters: a drag that stops
+    // within one edge threshold of the bottom reads as `end: false`, so it took the follow branch,
+    // found `userDriven` set, changed nothing, and never reached the branch below that hands
+    // control back — the viewport stayed stuck following while the reader was holding it.
+    if (userDriven) {
+      // Arriving at the live edge by hand hands control back to the engine, which is what lets a
+      // later streamed chunk follow again. Gated on not scrolling up so the small upward nudge
+      // that begins a gesture near the bottom is not mistaken for arriving there.
+      if (canFollow && !next.end && !scrolledUp) {
+        userDriven = false
+        mode = "following-bottom"
+      } else if (canFollow || mode === "following-bottom") {
+        mode = "free-scrolling"
+      }
+      return
+    }
+
+    if (canFollow && !next.end) {
+      mode = "following-bottom"
     } else if (mode === "following-bottom" && next.end && scrolledUp && !autoscrolling.value) {
       mode = "free-scrolling"
-    } else if (mode === "following-bottom" && userDriven) {
-      // The reader left the live edge without crossing the threshold in this measurement.
-      mode = "free-scrolling"
-    } else if (userDriven && !next.end && !scrolledUp) {
-      // The reader scrolled back down to the live edge by hand. Returning to following-bottom is
-      // what makes a later streamed chunk follow them again; without it the viewport stays in
-      // free-scrolling, `end` reads false, the jump button stays hidden and nothing follows.
-      // Gated on not scrolling up, so the small upward nudge that starts a gesture near the bottom
-      // is not mistaken for arriving there.
-      userDriven = false
-      if (autoScroll() && mode !== "settling-jump" && mode !== "anchored-to-message") mode = "following-bottom"
     }
   }
 
@@ -512,10 +525,14 @@ function createEngine(props: MessageScrollerProviderProps) {
     const target = Math.max(0, top)
     if (Math.abs(viewport.scrollTop - target) <= SCROLL_EPSILON) {
       viewport.scrollTop = target
+      engineTarget = null
       commitScrollState()
       return
     }
     if (isAutoscrolling) setAutoscrolling(true)
+    // Record the destination before the browser starts moving, because every `scroll` event the
+    // animation emits is checked against it (including the frames after `scrollTo` has returned).
+    engineTarget = target
     viewport.scrollTo({ top: target, behavior })
     scheduleStateCommit()
   }
@@ -609,6 +626,10 @@ function createEngine(props: MessageScrollerProviderProps) {
     if (!prependRestore || !viewport || !prependRestore.element.isConnected) return false
     const delta = getRelativeTop(prependRestore.element, viewport) - prependRestore.viewportTop
     if (Math.abs(delta) <= SCROLL_EPSILON) return false
+    // Holding the reader's place while history is inserted above is the engine moving the
+    // viewport, even though the delta comes from the layout rather than from a target. Claim the
+    // movement so the resulting `scroll` event is not read as a drag.
+    engineTarget = viewport.scrollTop + delta
     viewport.scrollTop += delta
     prependRestore.viewportTop = getRelativeTop(prependRestore.element, viewport)
     scheduleStateCommit()

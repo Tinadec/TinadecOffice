@@ -13,7 +13,9 @@ import {
 	posixDataRoot,
 	sanitizedPosixEnvironment,
 } from "./smoke-packaged-posix.mjs";
+import { sanitizedEnvironment } from "./smoke-packaged-windows.mjs";
 import { smokeChecks, smokePorts, validateGatewayHealth, validateHarnessManifest, validateToolsManifest } from "./smokeAssertions.mjs";
+import { newSmokeHostControlToken, smokeHeaders, SMOKE_HOST_CONTROL_ENV, SMOKE_HOST_CONTROL_HEADER } from "./smokeAssertions.mjs";
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const posixScript = readFileSync(join(desktopDir, "scripts", "smoke-packaged-posix.mjs"), "utf8");
@@ -114,6 +116,49 @@ test("Both smokes read the contract from one module, and it covers every service
 		],
 	);
 	assert.deepEqual(smokePorts, [48730, 48731, 48732]);
+});
+
+/// Core refuses every mounted request that cannot present the trusted host credential, so a smoke
+/// that probes readiness anonymously measures its own omission: all three legs timed out on HTTP 403
+/// for four days while Core and Gateway were demonstrably up in their own logs. The credential is
+/// minted by the packaged host and inherited by the services it spawns, so the smoke has to supply
+/// it in the child environment and echo it back on the probes.
+test("Every protected probe carries the host credential, and health does not need one", () => {
+	const token = newSmokeHostControlToken();
+	assert.match(token, /^[A-Za-z0-9_-]{43,256}$/, "the shape createHostControl accepts");
+
+	assert.equal(smokeHeaders(token, { public: true })[SMOKE_HOST_CONTROL_HEADER], undefined);
+	assert.equal(smokeHeaders(token)[SMOKE_HOST_CONTROL_HEADER], token);
+
+	// Health must stay anonymous: if every probe were credentialed, a wrong token and a Core that
+	// never started would both read as "timed out", and the log could not say which happened.
+	const byLabel = new Map(smokeChecks.map((check) => [check.label, check]));
+	assert.equal(byLabel.get("Core health").public, true);
+	assert.equal(byLabel.get("Gateway health").public, true);
+	for (const check of smokeChecks) {
+		if (check.public) continue;
+		assert.notEqual(
+			smokeHeaders(token, { public: check.public })[SMOKE_HOST_CONTROL_HEADER],
+			undefined,
+			`${check.label} is a mounted Core route and must present the credential`,
+		);
+	}
+
+	// The credential has to reach the child, because Core and Gateway inherit it from the process
+	// the smoke starts rather than reading it from disk.
+	for (const [name, env] of [
+		["windows", sanitizedEnvironment("C:\\p", "C:\\t", token)],
+		["posix", sanitizedPosixEnvironment({ profile: "/p", temporary: "/t", hostControlToken: token })],
+	]) {
+		assert.equal(env[SMOKE_HOST_CONTROL_ENV], token, `${name} must hand the credential to the child`);
+	}
+});
+
+test("A smoke started without a credential is still describable rather than silently wrong", () => {
+	// Omitting the token is how this broke; the helper must not invent one, or a caller that forgot
+	// it would look like a caller that passed it.
+	const env = sanitizedPosixEnvironment({ profile: "/p", temporary: "/t" });
+	assert.equal(SMOKE_HOST_CONTROL_ENV in env, false);
 });
 
 test("The POSIX smoke is wired for both legs and refuses Windows", () => {
