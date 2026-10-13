@@ -2138,6 +2138,27 @@ retry: '重试',
   },
   // 平面对话流（APP-HOME-108）。动词里的对象用 {subject}。
   conversation: {
+    group: {
+      exploring: '正在探索', explored: '已探索',
+      files: '{count} 个文件', searches: '{count} 次搜索',
+      lists: '{count} 个目录', thoughts: '{count} 段思考',
+    },
+    reasoning: { thinking: '正在思考', thoughtFor: '思考了 {duration}' },
+    agents: {
+      working: '{count} 个智能体工作中…',
+      status: { waiting: '等待', running: '进行中', awaiting_approval: '待审批', completed: '完成', failed: '失败', blocked: '受阻', cancelled: '已取消' },
+    },
+    wait: { waiting: '等待 {names}', resolved: '已收到 {names} 的结果' },
+    plan: { updated: '更新了计划 · {done}/{total}' },
+    supervision: { revise: '监督要求修改', escalate: '监督需要你决定' },
+    marker: {
+      compacted: '上下文已压缩', interrupted: '已被新消息打断', model_retry: '模型繁忙，正在重试（{retry}/{limit}）',
+      model_recovered: '模型已恢复', recovered: '重启后已恢复', workspace_bound: '已绑定工作区：{root}',
+      response_fallback: '未经协调者直接作答', run_failed: '已停止：{reason}', run_failed_unknown: '因错误已停止',
+      run_cancelled: '已停止', worker_interrupted: '智能体已被打断',
+    },
+    approval: { title: '需要审批', requestedBy: '{name} 请求', command: '命令', directory: '目录', target: '目标' },
+    turn: { workedFor: '已工作 {duration}', toolCount: '工具 {count} 次', sending: '发送中…' },
     tool: {
       read: { active: '正在读取 {subject}', done: '读取 {subject}', failed: '无法读取 {subject}' },
       list: { active: '正在列出 {subject}', done: '列出 {subject}', failed: '无法列出 {subject}' },

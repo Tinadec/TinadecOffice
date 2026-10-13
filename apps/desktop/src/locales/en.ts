@@ -2141,6 +2141,27 @@ retry: 'Retry',
   },
   // Flat conversation feed (APP-HOME-108). Verbs take the subject as {subject}.
   conversation: {
+    group: {
+      exploring: 'Exploring', explored: 'Explored',
+      files: '{count} file | {count} files', searches: '{count} search | {count} searches',
+      lists: '{count} folder | {count} folders', thoughts: '{count} thought | {count} thoughts',
+    },
+    reasoning: { thinking: 'Thinking', thoughtFor: 'Thought for {duration}' },
+    agents: {
+      working: '{count} agent working… | {count} agents working…',
+      status: { waiting: 'Waiting', running: 'Working', awaiting_approval: 'Needs approval', completed: 'Done', failed: 'Failed', blocked: 'Blocked', cancelled: 'Cancelled' },
+    },
+    wait: { waiting: 'Waiting for {names}', resolved: 'Got results from {names}' },
+    plan: { updated: 'Updated plan · {done}/{total}' },
+    supervision: { revise: 'Supervision asked for changes', escalate: 'Supervision needs your decision' },
+    marker: {
+      compacted: 'Context compacted', interrupted: 'Interrupted by a new message', model_retry: 'Model busy, retrying ({retry}/{limit})',
+      model_recovered: 'Model recovered', recovered: 'Resumed after restart', workspace_bound: 'Workspace attached: {root}',
+      response_fallback: 'Answered without the coordinator', run_failed: 'Stopped: {reason}', run_failed_unknown: 'Stopped by an error',
+      run_cancelled: 'Stopped', worker_interrupted: 'Agent interrupted',
+    },
+    approval: { title: 'Approval needed', requestedBy: 'Requested by {name}', command: 'Command', directory: 'Directory', target: 'Target' },
+    turn: { workedFor: 'Worked for {duration}', toolCount: '{count} tool | {count} tools', sending: 'Sending…' },
     tool: {
       read: { active: 'Reading {subject}', done: 'Read {subject}', failed: 'Could not read {subject}' },
       list: { active: 'Listing {subject}', done: 'Listed {subject}', failed: 'Could not list {subject}' },

@@ -1,0 +1,57 @@
+/*
+ * Shared styles of the flat conversation feed (APP-HOME-108). Activity rows carry no border
+ * or background; cards exist only for approvals, sub-agents, attachments and code islands.
+ */
+@layer components {
+  .conversation-card {
+    padding: 10px 12px;
+    border: 1px solid var(--border-card);
+    border-radius: 10px;
+    background: var(--surface-section);
+  }
+
+  .conversation-glyph {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  .conversation-glyph.is-done { color: var(--accent-success); }
+  .conversation-glyph.is-failed { color: var(--accent-danger); }
+
+  .conversation-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 6px;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+  }
+  .conversation-icon-button:hover,
+  .conversation-icon-button:focus-visible { color: var(--text-primary); background: var(--surface-hover); }
+  .conversation-icon-button:focus-visible { outline: 1px solid hsl(var(--ring)); }
+
+  .conversation-text-button {
+    min-height: 26px;
+    padding: 3px 10px;
+    border: 1px solid var(--border-card);
+    border-radius: 6px;
+    color: var(--text-primary);
+    background: var(--surface-raised);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .conversation-text-button:hover { background: var(--surface-hover); }
+  .conversation-text-button:focus-visible { outline: 1px solid hsl(var(--ring)); }
+  .conversation-text-button.is-primary {
+    border-color: transparent;
+    color: hsl(var(--primary-foreground));
+    background: var(--accent-primary);
+  }
+  .conversation-text-button.is-primary:hover { background: color-mix(in srgb, var(--accent-primary) 88%, black); }
+  .conversation-text-button:disabled { opacity: 0.5; cursor: default; }
+}

@@ -2,6 +2,7 @@
 @import "tailwindcss";
 @import "./animations/page-transitions.css";
 @import "./components/ui/conversation-primitives.css";
+@import "./components/conversation/conversation.css";
 
 @theme {
   --color-border: hsl(var(--border));

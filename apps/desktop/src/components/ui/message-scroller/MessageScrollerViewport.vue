@@ -7,6 +7,8 @@ import { SCROLL_KEYS, useMessageScrollerContext } from "./useMessageScroller"
 const props = withDefaults(defineProps<{
   class?: HTMLAttributes["class"]
   preserveScrollOnPrepend?: boolean
+  /** Accessible name of the scroll region; upstream hard-coded the English "Messages". */
+  label?: string
 }>(), {
   preserveScrollOnPrepend: true,
 })
@@ -58,7 +60,7 @@ onBeforeUnmount(() => {
     ref="viewport"
     data-slot="message-scroller-viewport"
     role="region"
-    aria-label="Messages"
+    :aria-label="label ?? 'Messages'"
     :tabindex="0"
     :data-scrollable="scrollableAttr"
     :data-autoscrolling="autoscrolling ? '' : undefined"

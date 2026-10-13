@@ -58,6 +58,8 @@ const panelSources = import.meta.glob(
     // whole time the pencil was wired to a stub. ChatPanel itself is not listed —
     // it labels nothing and translates no key.
     './../components/MessageItem.vue',
+    // The flat conversation feed (APP-HOME-108).
+    './../components/conversation/**/*.vue',
     './../components/MessageList.vue',
     './../components/ComposerBar.vue',
     './../components/ComposerCommandPanel.vue',
