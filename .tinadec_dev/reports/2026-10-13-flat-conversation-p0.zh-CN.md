@@ -1,4 +1,4 @@
-# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语、P3 骨架接入、P4 活动组件与 P5 子智能体
+# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语、P3 骨架接入、P4 活动组件、P5 子智能体与 P6 附件/待办/旧路径性能
 
 日期：2026-10-13 · 分支：`feat/flat-conversation-v2`（基于 `ab42b02`）· 环境：Linux 开发容器（2 核 / 5 GB，.NET 10.0.401、Bun 1.4.3、Node 24.21）。计划见 [`plans/claude/2026-10-13-flat-conversation-v2.md`](../plans/claude/2026-10-13-flat-conversation-v2.md)，任务见 `docs/development-program/02-modules/app/home/TODO.md#app-home-108`。
 
@@ -68,6 +68,12 @@
 - **右栏** `SubAgentsCard`（TinadecUI `cards/index.ts` 注册 `subAgents`：singleton、可移动、可关闭、本轮不可分离；`featureCatalog.ts` 加入口）内含 Desktop 的 `SubAgentsPanel`：本会话所有 run 的子智能体名册（运行中在前，listbox 键盘可选）+ 选中者详情（同一 `SubAgentCard`，展开、无 ⤢），读同一个 `conversationFeed`。选择保存在 `lib/conversation/selection.ts`，⤢ 写入后 `openCard subAgents`；未选时默认第一个。
 - 顺带：`HomeGitPlacement.test.ts` 的网格卡片数改为相对目录长度（Git 由状态卡替代），不再写死；目录测试改为 10 项。
 
+## P6 改了什么
+
+- **发送框附件**：chip 改用 attachment 原语五态。`pendingAttachments` 的 `uploading/ready/failed` 经 `attachmentDisplayState` 映射为 `uploading/done/error`；选择文件后若还在为草稿会话建会话，先以 `idle` 显示所选文件。图片上传中显示本地预览（`URL.createObjectURL`，移除/发送/换会话时逐一 `revokeObjectURL`），未完成时变暗；svg 与非图片从不预览。失败原因写在描述里（文字，不只靠颜色）。文件名经 `fileNameParts` 截断主干、保留扩展名，转录中的附件卡同样处理。chip 内 spinner 为 `decorative`（条带本身是 polite live region）。原有附件安全测试与 Send 规则不变。
+- **`AgentTodosStatus`**：输入框上方胶囊「计划 1/3 · 编写测试」，取最新活动 run 自身的计划（无则取子智能体的），点击原位展开清单，run 落定即消失。
+- **旧路径性能**（空间模式仍用的 `useAgentActivity`）：工具时间线读取按 run 合并——首个 tool/approval/task 事件在 300ms 后读一次，窗口内后续事件搭车，持续事件流不会被无限推迟；初始重放期间不发任何请求，只记下有工具事件的 run，Core 重放后的 heartbeat（无则 2s 兜底）到达后每个 run 读一次；切会话/卸载清掉待发读取。测试：重放 40 个工具事件横跨 2 个 run → 重放期 0 次、之后 2 次（旧路径为每事件 1 次，即 40 次）；关掉重放闸门后对应两条测试变红。显式 `refreshToolExecutions()` 仍立即读取。
+
 ## 验证（本机实测）
 
 | 范围 | 结果 |
@@ -94,6 +100,8 @@
 | Desktop 全量 vitest（P4 后） | 1413 通过 / 14 skip，154 文件；`vue-tsc` 0 错误；TinadecUI 187/187；Tailwind 编译新规则 |
 | P5 `SubAgents.test.ts`（并行两卡一组、组头、就地展开活动与摘要、审批不在卡内、⤢ 选中并打开卡片、面板显示同一选中项、运行中在前、默认首个、空态） | 6/6 |
 | Desktop 全量 vitest（P5 后） | 1419 通过 / 14 skip，155 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
+| P6 定向（`pendingAttachments` 45、`ComposerBar` 77、`useAgentActivity` 22、`AgentTodosStatus` 3） | 全部通过 |
+| Desktop 全量 vitest（P6 后） | 1440 通过 / 14 skip，156 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
 
 ## 既有失败与边界
 

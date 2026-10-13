@@ -16,7 +16,7 @@
 - 主责模块：APP-HOME
 - 前置依赖：复用会话 SSE、`ApprovalEvidenceProjector` 脱敏投影、reka-ui 2.11、`MarkdownRender`、`useTerminal.openAgentTerminal`；不复用已判定失败的 PR #43 代码
 - 关联功能：APP-HOME-F002；CORE-TOOLS（工具时间线与结果预览端点）、GATEWAY（薄代理）交叉引用此任务；空间模式本轮不迁移
-- 契约与证据：[计划](../../../../../.tinadec_dev/plans/claude/2026-10-13-flat-conversation-v2.md)、[P0–P5 报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)
+- 契约与证据：[计划](../../../../../.tinadec_dev/plans/claude/2026-10-13-flat-conversation-v2.md)、[P0–P6 报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)
 
 **问题、目标与触及范围**
 
@@ -30,7 +30,7 @@
 - [x] P3：`ConversationView` 骨架接入 `ChatPanel`（`ChatCard` 传入 `conversation`；Debug Studio 画廊未传时仍回退 `MessageList`，P7 迁移后删除回退）；`MessageList.test.ts` 的首轮无回答仍有审批、活动只挂所属回合、编辑重发三条、附件安全五条均在 `ConversationView.test.ts` 重建并通过；监督裁决抽成共享 `SupervisionGate`。
 - [x] P4：推理块（全文、分节标题、半截标题压住、超长渐隐）、探索组（读搜折叠、写入/命令独占）、工具行（计时、✓/✗ 原因、脱敏参数、shell 实时尾部、改动文件、惰性预览、在终端面板打开）、审批卡（批准/本次运行都批准/拒绝/改为这样做/命令前缀规则、⌘↵/⌘⌫/Esc、延迟 spinner）、待办（6 条后折叠、改写高亮）、按 run 的工作区折叠（运行中展开+状态行、落定收成摘要、手动开合后不再自动）；失败原因提到折叠外。监督样式未改（空间模式共用）。
 - [x] P5：子智能体紧凑卡（`handle · 显示名`、状态徽标、L 形任务行、进行中最新一步 shimmer、就地展开自身活动与 Markdown 摘要）、`AgentGroup`（≥2 运行中「N 个智能体工作中…」）、右栏 `SubAgentsCard`（TinadecUI 注册 `subAgents`，singleton、可移动、本轮不可分离，功能目录加入口；名册运行中在前，详情为同一组件同一 feed）；⤢ 写入 `conversationSelection` 并 `openCard subAgents`；子智能体审批仍提到回合层。
-- [ ] P6：发送框附件状态机、`AgentTodosStatus`、旧 `refreshToolExecutions` 按 run 尾随合并且重放期 REST 调用为 0。
+- [x] P6：发送框附件改用 attachment 五态（会话准备中 idle、上传中带本地图片预览并变暗、done、error 写明原因；svg 不预览；文件名保扩展名截断，转录同样处理）；输入框上方 `AgentTodosStatus` 胶囊（活动 run 自身计划优先、可展开、落定即消失）；空间模式仍用的 `useAgentActivity` 工具时间线读取按 run 300ms 合并、重放期 0 次、heartbeat 后每个有工具事件的 run 读一次（40 个历史事件/2 个 run：旧路径 40 次 → 2 次）。
 - [ ] P7：双语 i18n、减弱动效、窄宽、Debug Studio 预览、删除无引用旧组件、文档与报告。
 
 **当前边界**

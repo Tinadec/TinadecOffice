@@ -1,5 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-13 Composer attachments, plan capsule, activity reads (APP-HOME-108 P6)
+
+Composer chips are `ui/attachment` instances: `attachmentDisplayState()` maps `uploading/ready/failed` to the primitive's states, picks waiting on draft-session creation render as `idle`, and image rows carry a local `previewUrl` object URL that `pendingAttachments` revokes on remove, send and session change (never for svg). `fileNameParts()` keeps extensions readable in both the composer and the transcript. `AgentTodosStatus` sits above the composer inside `ChatPanel` when `conversation` is given. `useAgentActivity` no longer reads the tool timeline per event: reads are coalesced per run (`TOOL_REFRESH_DELAY_MS` = 300) and suppressed during the initial replay until the session stream's heartbeat (`REPLAY_FALLBACK_MS` = 2000); tests must emit `heartbeat` and advance timers before expecting a read.
+
 ## 2026-10-13 Sub-agents in the flat feed (APP-HOME-108 P5)
 
 `agents` nodes render as `AgentGroup` → `SubAgentCard` (compact, expands in place to its own `TurnActivity` and Markdown summary). The card's ⤢ writes `lib/conversation/selection.ts` (`conversationSelection`) and dispatches `openCard subAgents`; TinadecUI's `subAgents` descriptor (singleton, movable, not detachable) wraps `components/conversation/SubAgentsPanel.vue`, which reads the same `homeController.conversationFeed`. `SubAgentCard` ↔ `TurnActivity` import each other (nested sub-agents); this works because both resolve at render time. Catalog-size assertions should be relative to `FEATURE_CATALOG.length`.
