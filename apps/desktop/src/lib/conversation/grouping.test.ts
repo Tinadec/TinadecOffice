@@ -84,3 +84,17 @@ describe('isCompactAnswer', () => {
     expect(isCompactAnswer(`  ${'x'.repeat(GROUP_TEXT_MAX_CHARS)}  \n`, 0, 2)).toBe(true)
   })
 })
+
+describe('isCompactAnswer and rich answers', () => {
+  it('never folds a diagram, image, table, code or math, however short', () => {
+    for (const content of [
+      '```mermaid\nflowchart LR\n  A --> B\n```',
+      '![chart](https://example.test/a.png)',
+      '| a | b |\n| - | - |\n| 1 | 2 |',
+      '~~~\nnpm test\n~~~',
+      '$$\na^2\n$$',
+      'See <img src="x.png">',
+    ]) expect(isCompactAnswer(content, 0, 2), content).toBe(false)
+    expect(isCompactAnswer('Checking `useResults` callers | then the tests.', 0, 2)).toBe(true)
+  })
+})

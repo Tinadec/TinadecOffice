@@ -173,4 +173,46 @@ export function nextDayStopped(): FeedFixture {
   }
 }
 
-export const FEED_FIXTURES = [simpleAnswer, exploreEditShell, pendingApproval, parallelSubAgents, failedRun, interruptedRun, compactedRun, nextDayStopped]
+/** An inline image, so the fixture needs no network: a small labelled chart. */
+const CHART_IMAGE = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120"><rect width="320" height="120" rx="8" fill="#2d6cdf"/><rect x="24" y="60" width="40" height="40" fill="#fff"/><rect x="84" y="40" width="40" height="60" fill="#fff"/><rect x="144" y="24" width="40" height="76" fill="#fff"/><text x="204" y="70" fill="#fff" font-family="sans-serif" font-size="16">p95 latency</text></svg>')
+
+/**
+ * Answers that carry more than prose: a short interim answer that is only a diagram, then a
+ * reply with a Markdown image, a mermaid flowchart and a table.
+ */
+export function richAnswer(): FeedFixture {
+  const s = new EventScript()
+  s.thought('run-1', 'resp-1', '**Sketching the flow**\nShow it before describing it.')
+  const sketchAt = s.events.at(-1)!.ts
+  s.toolCall('run-1', 'e-1', 'read_file', { resource_path: '/w/src/send.ts' }).toolDone('run-1', 'e-1', 'read_file')
+  const events = s.events
+  return {
+    name: 'rich-answer',
+    messages: [
+      message('m-1', 'user', 'How does a message get sent?', '2026-10-13T09:00:00Z'),
+      message('m-2', 'assistant', '```mermaid\nflowchart LR\n  Composer --> Gateway --> Core\n```', sketchAt, 'run-1'),
+      message('m-3', 'assistant', [
+        'The composer posts an interaction; Core admits it and starts a run.',
+        '',
+        `![Send latency](${CHART_IMAGE})`,
+        '',
+        '```mermaid',
+        'flowchart TD',
+        '  A[Composer] -->|POST /interactions| B(Gateway)',
+        '  B --> C{Core admits?}',
+        '  C -->|yes| D[Run starts]',
+        '  C -->|queued| E[Waits in queue]',
+        '```',
+        '',
+        '| Step | Owner |',
+        '| --- | --- |',
+        '| Admit | Core |',
+        '| Stream | Gateway |',
+      ].join('\n'), events.at(-1)!.ts, 'run-1'),
+    ],
+    runs: [runRow('run-1', 'completed', 'm-1', events)],
+    events,
+  }
+}
+
+export const FEED_FIXTURES = [simpleAnswer, exploreEditShell, pendingApproval, parallelSubAgents, failedRun, interruptedRun, compactedRun, nextDayStopped, richAnswer]

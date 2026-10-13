@@ -237,5 +237,12 @@ export const GROUP_TEXT_MAX_CHARS = 150
  * last answer of a turn is the reply itself and is never compacted.
  */
 export function isCompactAnswer(content: string, index: number, count: number): boolean {
-  return index < count - 1 && content.trim().length <= GROUP_TEXT_MAX_CHARS
+  return index < count - 1 && content.trim().length <= GROUP_TEXT_MAX_CHARS && !RICH_MARKDOWN.test(content)
 }
+
+/**
+ * Only prose folds into a note. A code fence (a mermaid diagram is one), an image, a table
+ * or display math is the point of the answer however short its source is, and clamping it
+ * to two lines of small text would hide it.
+ */
+const RICH_MARKDOWN = /(^|\n)\s*(```|~~~|\$\$|\|.*\|)|!\[[^\]]*\]\(|<img\b/i
