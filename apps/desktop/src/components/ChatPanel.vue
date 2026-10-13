@@ -2,13 +2,17 @@
 import { computed, ref, nextTick, watch } from 'vue'
 import ChatHeader from './ChatHeader.vue'
 import MessageList from './MessageList.vue'
+import ConversationView from './conversation/ConversationView.vue'
 import ComposerBar from './ComposerBar.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { ComposerSubmitOptions, SessionSettingsUpdate, MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
 import type { ComposerSettings } from '@/lib/composerSettings'
 import type { PermissionLevel } from '@/types/mode'
-import type { ThinkingStep, ToolCall, TurnActivity } from '@/composables/useAgentActivity'
+import type { SupervisionReview, ThinkingStep, ToolCall, TurnActivity } from '@/composables/useAgentActivity'
+import type { ConversationFeed } from '@/composables/useConversationFeed'
+import type { ApprovalDto } from '../api'
+import type { TurnRunInput } from '@/lib/conversation/turns'
 
 const props = defineProps<{
   messages: MessageDto[]
@@ -41,6 +45,19 @@ const props = defineProps<{
   streamingReply?: string
   /** True while a run can still be cancelled — drives the composer's stop button. */
   canStop?: boolean
+  /**
+   * The flat feed's inputs (APP-HOME-108). When present the transcript is the new
+   * ConversationView; without it (Debug Studio gallery) the legacy MessageList renders
+   * from the single-turn props until the gallery moves over in P7.
+   */
+  conversation?: {
+    feed: ConversationFeed
+    runs: readonly TurnRunInput[]
+    streamingReplies?: Readonly<Record<string, string>>
+    approvals?: readonly ApprovalDto[]
+    supervisionReviews?: Readonly<Record<string, SupervisionReview | null | undefined>>
+    workspaceRoot?: string | null
+  }
 }>()
 
 const emit = defineEmits<{
@@ -173,7 +190,21 @@ function handleReject(approvalId: string) {
       <!-- Active chat panel: transparent so background layer shows through -->
       <div v-else key="chat-active" class="chat-active-panel" style="background: transparent !important; border: none !important; box-shadow: none !important;">
         <ChatHeader :current-session="currentSession" />
+        <ConversationView
+          v-if="conversation"
+          :messages="messages"
+          :runs="conversation.runs"
+          :feed="conversation.feed"
+          :streaming-replies="conversation.streamingReplies"
+          :approvals="conversation.approvals"
+          :supervision-reviews="conversation.supervisionReviews"
+          :workspace-root="conversation.workspaceRoot"
+          @approve="handleApprove"
+          @reject="handleReject"
+          @edit="emit('edit-message', $event)"
+        />
         <MessageList
+          v-else
           :messages="messages"
           :activity-by-message="activityByMessage"
           :live-turn="liveTurn"
