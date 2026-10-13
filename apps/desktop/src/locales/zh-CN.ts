@@ -2136,4 +2136,19 @@ retry: '重试',
     clearTerminal: '清空终端',
     hint: '作用于选中内容',
   },
+  // 平面对话流（APP-HOME-108）。动词里的对象用 {subject}。
+  conversation: {
+    tool: {
+      read: { active: '正在读取 {subject}', done: '读取 {subject}', failed: '无法读取 {subject}' },
+      list: { active: '正在列出 {subject}', done: '列出 {subject}', failed: '无法列出 {subject}' },
+      search: { active: '正在搜索 {subject}', done: '搜索 {subject}', failed: '搜索失败：{subject}' },
+      edit: { active: '正在编辑 {subject}', done: '编辑 {subject}', failed: '无法编辑 {subject}' },
+      run: { active: '正在运行 {subject}', done: '运行 {subject}', failed: '运行失败：{subject}' },
+      git: { active: '正在执行 {subject}', done: '执行 {subject}', failed: '执行失败：{subject}' },
+      mcp: { active: '正在调用 {subject}', done: '调用 {subject}', failed: '调用失败：{subject}' },
+      fetch: { active: '正在获取 {subject}', done: '获取 {subject}', failed: '无法获取 {subject}' },
+      workspace: { active: '正在创建工作区 {subject}', done: '创建工作区 {subject}', failed: '无法创建工作区 {subject}' },
+      other: { active: '正在使用 {subject}', done: '使用 {subject}', failed: '{subject} 失败' },
+    },
+  },
 }

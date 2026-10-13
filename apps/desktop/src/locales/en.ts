@@ -2139,4 +2139,19 @@ retry: 'Retry',
     clearTerminal: 'Clear terminal',
     hint: 'Applies to the selected text',
   },
+  // Flat conversation feed (APP-HOME-108). Verbs take the subject as {subject}.
+  conversation: {
+    tool: {
+      read: { active: 'Reading {subject}', done: 'Read {subject}', failed: 'Could not read {subject}' },
+      list: { active: 'Listing {subject}', done: 'Listed {subject}', failed: 'Could not list {subject}' },
+      search: { active: 'Searching {subject}', done: 'Searched {subject}', failed: 'Search failed: {subject}' },
+      edit: { active: 'Editing {subject}', done: 'Edited {subject}', failed: 'Could not edit {subject}' },
+      run: { active: 'Running {subject}', done: 'Ran {subject}', failed: 'Failed: {subject}' },
+      git: { active: 'Running {subject}', done: 'Ran {subject}', failed: 'Failed: {subject}' },
+      mcp: { active: 'Calling {subject}', done: 'Called {subject}', failed: 'Call failed: {subject}' },
+      fetch: { active: 'Fetching {subject}', done: 'Fetched {subject}', failed: 'Could not fetch {subject}' },
+      workspace: { active: 'Creating workspace {subject}', done: 'Created workspace {subject}', failed: 'Could not create workspace {subject}' },
+      other: { active: 'Using {subject}', done: 'Used {subject}', failed: '{subject} failed' },
+    },
+  },
 }
