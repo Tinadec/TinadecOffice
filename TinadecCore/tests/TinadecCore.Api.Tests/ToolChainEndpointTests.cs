@@ -55,6 +55,67 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// A call the policy parks returned before the dispatcher announced it, so the event
+    /// log had no <c>tool.execution.requested</c> line for exactly the calls waiting on a
+    /// person. The feed now reads that line for its sentence data; pin that it exists while
+    /// the call is parked, carries the evidence projection (not the bytes), and that the
+    /// timeline filters by run.
+    /// </summary>
+    [RequiresTinadecToolsFact]
+    public async Task ParkedWriteCall_IsAnnouncedWithSentenceData_AndTheTimelineFiltersByRun()
+    {
+        var workspace = Path.Combine(_root, "workspace");
+        Directory.CreateDirectory(workspace);
+        var script = new ToolScriptedClient()
+            .WhenPlanner("[{\"task_key\":\"write-probe\",\"title\":\"写探针文件\",\"description\":\"创建 probe.txt\",\"success_criteria\":[\"文件存在\"],\"dependencies\":[],\"required_capabilities\":[\"tool.file\"],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("文件已写入。");
+
+        _factory = new ToolChainFactory(_root, script);
+        var client = _factory.CreateClient();
+        var packDetail = await InstallToolChainPackAsync(client);
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Tool project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new
+        {
+            project_id = project.GetProperty("id").GetGuid(),
+            title = "Tool session",
+            mode_version_id = ToolChainPackModeVersionId(packDetail, "default-mode")
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "写一个文件", client_message_id = "tool-park-1" });
+        var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        var runId = ack.GetProperty("run_id").GetGuid();
+        await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+
+        var runTimeline = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?run_id={runId}");
+        var parked = Assert.Single(runTimeline!, item => item.GetProperty("tool_id").GetString() == "write_file");
+        Assert.Equal("waiting_approval", parked.GetProperty("status").GetString());
+        Assert.Equal("tool.execution.requested", parked.GetProperty("event_types")[0].GetString());
+        Assert.EndsWith("probe.txt", parked.GetProperty("resource_path").GetString(), StringComparison.Ordinal);
+        Assert.Contains("probe.txt", parked.GetProperty("arguments_summary").GetString(), StringComparison.Ordinal);
+        // write_file names no search term; null fields are omitted on the wire.
+        Assert.False(parked.TryGetProperty("query", out _));
+        Assert.True(Guid.TryParse(parked.GetProperty("task_id").GetString(), out _));
+        Assert.True(Guid.TryParse(parked.GetProperty("agent_instance_id").GetString(), out _));
+        Assert.DoesNotContain("hello", parked.GetRawText(), StringComparison.Ordinal);
+
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?run_id={Guid.NewGuid()}"))!);
+        Assert.Equal(runTimeline!.Length, (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?runId={runId}"))!.Length);
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?limit=1"))!);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"/api/v1/sessions/{sessionId}/tool-executions?run_id=nope")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"/api/v1/sessions/{sessionId}/tool-executions?limit=0")).StatusCode);
+
+        // A parked call is not terminal: evidence yes, preview not yet.
+        var preview = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tool-executions/{parked.GetProperty("id").GetString()}/preview");
+        Assert.Equal(JsonValueKind.Null, preview.GetProperty("preview").ValueKind);
+        Assert.Contains("probe.txt", preview.GetProperty("arguments").GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("hello", preview.GetRawText(), StringComparison.Ordinal);
+
+        await client.PostAsJsonAsync($"/api/v1/runs/{runId}/control", new { action = "cancel" });
+    }
+
     [RequiresTinadecToolsFact]
     public async Task WorkerWriteFile_RequestsApproval_ApprovedThenExecuted_RunCompletes()
     {
@@ -126,8 +187,10 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         {
             var orchestrationState = await client.GetStringAsync($"/api/v1/runs/{runId}/orchestration");
             var executionState = await client.GetStringAsync($"/api/v1/sessions/{sessionId}/tool-executions");
+            // What the tool itself answered — an embedded failure is otherwise just "completed".
+            var resultPreview = await client.GetStringAsync($"/api/v1/tool-executions/{executionId}/preview");
             throw new TimeoutException(
-                $"Run {runId} did not complete after approval.\nOrchestration: {orchestrationState}\nToolExecutions: {executionState}",
+                $"Run {runId} did not complete after approval.\nOrchestration: {orchestrationState}\nToolExecutions: {executionState}\nResultPreview: {resultPreview}",
                 ex);
         }
         var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
@@ -148,6 +211,40 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         Assert.Contains("approval.requested", timelineEventTypes);
         Assert.Contains("governance.permission_decided", timelineEventTypes);
         Assert.Contains("tool.execution.completed", timelineEventTypes);
+
+        // The feed renders the row as a sentence: it gets the approval evidence projection
+        // (the target, never the bytes written) plus the task and agent that made the call.
+        Assert.EndsWith("probe.txt", writeExecution.GetProperty("resource_path").GetString(), StringComparison.Ordinal);
+        Assert.Contains("probe.txt", writeExecution.GetProperty("arguments_summary").GetString(), StringComparison.Ordinal);
+        Assert.True(Guid.TryParse(writeExecution.GetProperty("task_id").GetString(), out _));
+        Assert.True(Guid.TryParse(writeExecution.GetProperty("agent_instance_id").GetString(), out _));
+        Assert.DoesNotContain("hello", writeExecution.GetRawText(), StringComparison.Ordinal);
+
+        // run_id narrows to that run; a run that made no calls answers an empty list; limit keeps the latest.
+        var runTimeline = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?run_id={runId}");
+        Assert.Contains(runTimeline!, item => item.GetProperty("id").GetString() == executionId.ToString());
+        Assert.All(runTimeline!, item => Assert.Equal(runId.ToString(), item.GetProperty("run_id").GetString()));
+        var otherRun = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?run_id={Guid.NewGuid()}");
+        Assert.Empty(otherRun!);
+        var legacyName = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?runId={runId}");
+        Assert.Equal(runTimeline!.Length, legacyName!.Length);
+        var limited = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions?limit=1");
+        Assert.Equal(timeline[^1].GetProperty("id").GetString(), Assert.Single(limited!).GetProperty("id").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"/api/v1/sessions/{sessionId}/tool-executions?run_id=nope")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"/api/v1/sessions/{sessionId}/tool-executions?limit=0")).StatusCode);
+
+        // The bounded result preview of the same finished call: evidence arguments, never the written bytes.
+        var previewResponse = await client.GetAsync($"/api/v1/tool-executions/{executionId}/preview");
+        Assert.Equal(HttpStatusCode.OK, previewResponse.StatusCode);
+        Assert.Equal("no-store", previewResponse.Headers.CacheControl?.ToString());
+        var preview = await previewResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(executionId.ToString(), preview.GetProperty("execution_id").GetString());
+        Assert.Equal(runId.ToString(), preview.GetProperty("run_id").GetString());
+        Assert.Equal("write_file", preview.GetProperty("tool_id").GetString());
+        Assert.Equal("completed", preview.GetProperty("status").GetString());
+        Assert.Contains("filepath", preview.GetProperty("arguments").GetRawText(), StringComparison.Ordinal);
+        Assert.Equal("json", preview.GetProperty("preview").GetProperty("kind").GetString());
+        Assert.DoesNotContain("hello", await previewResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
         Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());

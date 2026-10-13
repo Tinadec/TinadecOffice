@@ -30,6 +30,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapUserToolActionEndpoints();
         endpoints.MapDirectToolEndpoints();
         endpoints.MapTerminalEndpoints();
+        endpoints.MapToolExecutionPreviewEndpoints();
         endpoints.MapMcpEndpoints();
         endpoints.MapToolSettingsEndpoints();
         endpoints.MapToolSkillEndpoints();

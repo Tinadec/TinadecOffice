@@ -1879,6 +1879,7 @@
         "type": "object"
       },
       "JsonElement": {},
+      "JsonNode": {},
       "MarketCatalogEntryDto": {
         "properties": {
           "catalog_id": {
@@ -5715,6 +5716,79 @@
         },
         "type": "object"
       },
+      "ToolExecutionPreviewDto": {
+        "properties": {
+          "arguments": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonNode"
+              }
+            ]
+          },
+          "error_category": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "preview": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ToolResultPreviewDto"
+              }
+            ]
+          },
+          "result_length": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "safe_error_message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "tool_success": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ToolExecutionRecoveryDecisionRequestDto": {
         "properties": {
           "decision": {
@@ -5829,6 +5903,55 @@
         },
         "type": "object"
       },
+      "ToolPreviewEntryDto": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ToolPreviewLineDto": {
+        "properties": {
+          "is_match": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "line_number": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ToolReadRootDto": {
         "properties": {
           "path": {
@@ -5858,6 +5981,102 @@
           },
           "status": {
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ToolResultPreviewDto": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ToolPreviewEntryDto"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "exit_code": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "language": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ToolPreviewLineDto"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "stderr": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "stdout": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "text": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "timed_out": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "total_count": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonNode"
+              }
+            ]
           }
         },
         "type": "object"
@@ -13623,6 +13842,57 @@
         ]
       }
     },
+    "/api/v1/tool-executions/{executionId}/preview": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "executionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolExecutionPreviewDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "summary": "Bounded result preview of one tool execution",
+        "tags": [
+          "ToolExecutions"
+        ]
+      }
+    },
     "/api/v1/tool-executions/{id}/recovery-decision": {
       "post": {
         "parameters": [
@@ -15219,6 +15489,9 @@
     },
     {
       "name": "InteractionsEndpoints"
+    },
+    {
+      "name": "ToolExecutions"
     },
     {
       "name": "Attachments"
