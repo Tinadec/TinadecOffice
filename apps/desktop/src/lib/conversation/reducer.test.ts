@@ -38,6 +38,7 @@ describe('tools', () => {
     const shell = run.byId.get('e-6') as ToolEntry
     expect(shell).toMatchObject({ toolId: 'shell', command: 'npm test', status: 'completed', exitCode: 0, toolSuccess: true })
     expect(shell.output).toEqual(['PASS a.test.ts', 'PASS b.test.ts'])
+    expect(shell.terminalSessionId).toBe('t-1')
     const search = run.byId.get('e-1') as ToolEntry
     expect(search).toMatchObject({ query: 'useResults', resourcePath: '/w/src' })
   })

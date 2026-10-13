@@ -50,6 +50,8 @@ export interface ToolEntry {
   output: string[]
   outputPartial: string
   outputDropped: number
+  /** The agent terminal session a shell call streams into, once its first frame names it. */
+  terminalSessionId: string | null
   changedPaths: string[]
   startedAt: string
   endedAt: string | null
@@ -271,6 +273,7 @@ function tool(record: RunActivity, executionId: string, event: EventEnvelope, pa
     output: [],
     outputPartial: '',
     outputDropped: 0,
+    terminalSessionId: null,
     changedPaths: [],
     startedAt: event.ts,
     endedAt: null,
@@ -489,13 +492,16 @@ function reduce(record: RunActivity, event: EventEnvelope, payload: Payload): bo
       const executionId = str(payload, 'execution_id')
       const data = str(payload, 'data')
       if (!executionId || data === null) return false
-      appendOutput(tool(record, executionId, event, payload), data)
+      const entry = tool(record, executionId, event, payload)
+      entry.terminalSessionId ??= str(payload, 'terminal_session_id')
+      appendOutput(entry, data)
       return true
     }
     case 'terminal.exit': {
       const executionId = str(payload, 'execution_id')
       if (!executionId) return false
       const entry = tool(record, executionId, event, payload)
+      entry.terminalSessionId ??= str(payload, 'terminal_session_id')
       entry.exitCode = num(payload, 'exit_code')
       entry.timedOut = bool(payload, 'timed_out') ?? false
       return true

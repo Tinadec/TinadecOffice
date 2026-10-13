@@ -65,7 +65,7 @@ function placeholderEntry(approval: ApprovalDto): ToolEntry {
     argumentsSummary: approval.summary, resourcePath: approval.resource_path ?? null,
     command: approval.command ?? null, cwd: approval.cwd ?? null, query: null,
     toolSuccess: null, errorCategory: null, exitCode: null, timedOut: false,
-    output: [], outputPartial: '', outputDropped: 0, changedPaths: [], startedAt: approval.created_at, endedAt: null,
+    output: [], outputPartial: '', outputDropped: 0, terminalSessionId: null, changedPaths: [], startedAt: approval.created_at, endedAt: null,
   }
 }
 
