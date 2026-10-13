@@ -4,7 +4,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ApprovalDto } from '@/api'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
-import { groupRun, type GroupedRun } from '@/lib/conversation/grouping'
+import { groupRun, isCompactAnswer, type GroupedRun } from '@/lib/conversation/grouping'
 import type { RunActivity, ToolEntry } from '@/lib/conversation/reducer'
 import { isLiveRunStatus, type ConversationTurn } from '@/lib/conversation/turns'
 import { elapsedMs } from '@/lib/conversation/format'
@@ -146,6 +146,7 @@ const toolCount = computed(() => {
       :worked-ms="index === answers.length - 1 ? workedMs : null"
       :tool-count="index === answers.length - 1 ? toolCount : 0"
       :last="last && index === answers.length - 1"
+      :compact="isCompactAnswer(answer.content, index, answers.length)"
     />
     <div v-if="canRetry" class="conversation-retry">
       <button type="button" class="conversation-text-button" :title="t('conversation.turn.retryHint')" data-testid="turn-retry" @click="retry">

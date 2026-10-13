@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvents, createFeedState } from './reducer'
-import { groupRun, type ActivityGroupNode } from './grouping'
+import { GROUP_TEXT_MAX_CHARS, groupRun, isCompactAnswer, type ActivityGroupNode } from './grouping'
 import { EventScript } from './fixtures/builder'
 import { compactedRun, exploreEditShell, parallelSubAgents, pendingApproval, simpleAnswer } from './fixtures'
 
@@ -68,5 +68,19 @@ describe('groupRun', () => {
     s.emit('run-1', 'supervision.completed', { decision: 'revise', reasons: ['tests missing'] })
     expect(grouped(s.events).nodes.map((n) => n.type === 'supervision' && n.entry.decision)).toEqual(['revise'])
     expect(grouped(compactedRun().events).nodes.map((n) => n.type)).toEqual(['reasoning', 'marker'])
+  })
+})
+
+describe('isCompactAnswer', () => {
+  it('compacts short interim answers and never the last one', () => {
+    expect(isCompactAnswer('Let me check the tests first.', 0, 2)).toBe(true)
+    expect(isCompactAnswer('Done.', 1, 2)).toBe(false)
+    expect(isCompactAnswer('Done.', 0, 1)).toBe(false)
+  })
+
+  it('keeps a long interim answer whole, counting characters not bytes', () => {
+    expect(isCompactAnswer('好'.repeat(GROUP_TEXT_MAX_CHARS), 0, 2)).toBe(true)
+    expect(isCompactAnswer('x'.repeat(GROUP_TEXT_MAX_CHARS + 1), 0, 2)).toBe(false)
+    expect(isCompactAnswer(`  ${'x'.repeat(GROUP_TEXT_MAX_CHARS)}  \n`, 0, 2)).toBe(true)
   })
 })

@@ -260,6 +260,9 @@ describe('dynamic feed labels', () => {
 describe('ConversationView turn states (APP-HOME-108 follow-up)', () => {
   const run = (id: string, status: string, trigger: string, at = '2026-10-13T09:00:01Z') =>
     ({ id, status, trigger_message_id: trigger, created_at: at, updated_at: at })
+  const answer = (id: string, content: string, runId: string, at = '2026-10-13T09:00:05Z') =>
+    ({ id, session_id: 's', role: 'assistant', content, created_at: at, run_id: runId, attachments: [] }) as MessageDto
+
   it('puts a failed last turn back in the composer through edit, without resending', async () => {
     const wrapper = mountView(failedRun())
     await wrapper.get('[data-testid="turn-retry"]').trigger('click')
@@ -297,6 +300,26 @@ describe('ConversationView turn states (APP-HOME-108 follow-up)', () => {
     expect(lines[0]!.attributes('role')).toBe('separator')
     const turns = wrapper.findAll('[data-testid="conversation-turn"]')
     expect(turns[2]!.element.previousElementSibling).toBe(lines[0]!.element)
+    wrapper.unmount()
+  })
+
+  it('compacts short interim answers and keeps the last answer whole', () => {
+    const fixture: FeedFixture = {
+      name: 'interim',
+      messages: [
+        user('u1', 'Fix it'),
+        answer('a1', 'Let me check the tests first.', 'r1', '2026-10-13T09:00:03Z'),
+        answer('a2', 'Fixed.', 'r1', '2026-10-13T09:00:09Z'),
+      ],
+      runs: [run('r1', 'completed', 'u1')],
+      events: [],
+    }
+    const wrapper = mountView(fixture)
+    const answers = wrapper.findAll('[data-testid="assistant-answer"]')
+    expect(answers).toHaveLength(2)
+    expect(answers[0]!.classes()).toContain('is-compact')
+    expect(answers[0]!.attributes('title')).toBe('Let me check the tests first.')
+    expect(answers[1]!.classes()).not.toContain('is-compact')
     wrapper.unmount()
   })
 

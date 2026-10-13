@@ -227,3 +227,15 @@ export function groupRun(record: RunActivity, live: boolean): GroupedRun {
   const running = context.agents.filter((node) => node.status === 'running' || node.status === 'awaiting_approval').length
   return { nodes, approvals: context.approvals, agents: context.agents, running }
 }
+
+/** Longest interim answer that still reads as a note between steps (Qoder's groupText). */
+export const GROUP_TEXT_MAX_CHARS = 150
+
+/**
+ * Whether an answer of a turn shows as a compact two-line note. A turn that answers more than
+ * once ("Let me check the tests first.") keeps its short interim lines out of the way; the
+ * last answer of a turn is the reply itself and is never compacted.
+ */
+export function isCompactAnswer(content: string, index: number, count: number): boolean {
+  return index < count - 1 && content.trim().length <= GROUP_TEXT_MAX_CHARS
+}

@@ -20,6 +20,8 @@ const props = defineProps<{
   workedMs?: number | null
   toolCount?: number
   last?: boolean
+  /** A short interim answer between steps: clamped to two quiet lines, the full text on hover. */
+  compact?: boolean
 }>()
 const { t, locale } = useI18n()
 
@@ -36,12 +38,12 @@ function copy() {
 </script>
 
 <template>
-  <div class="conversation-answer" :class="{ 'is-last': last }" :aria-busy="streaming ? 'true' : undefined" :data-testid="streaming ? 'chat-streaming-reply' : 'assistant-answer'">
+  <div class="conversation-answer" :class="{ 'is-last': last, 'is-compact': compact }" :title="compact ? content : undefined" :aria-busy="streaming ? 'true' : undefined" :data-testid="streaming ? 'chat-streaming-reply' : 'assistant-answer'">
     <div class="message-content assistant">
       <MarkdownRender :content="shown" />
       <span v-if="streaming" class="conversation-caret" aria-hidden="true" />
     </div>
-    <div v-if="!streaming" class="conversation-answer-footer">
+    <div v-if="!streaming && !compact" class="conversation-answer-footer">
       <button type="button" class="conversation-icon-button" :aria-label="t(copied ? 'chat.copied' : 'chat.copy')" :title="t(copied ? 'chat.copied' : 'chat.copy')" @click="copy">
         <Check v-if="copied" :size="12" aria-hidden="true" />
         <Copy v-else :size="12" aria-hidden="true" />
@@ -59,6 +61,10 @@ function copy() {
 .conversation-answer.is-last .conversation-answer-footer,
 .conversation-answer:hover .conversation-answer-footer,
 .conversation-answer:focus-within .conversation-answer-footer { opacity: 1; }
+/* The markdown body sets its own size and colour, so the compact note restyles it directly.
+   No footer: an interim note is not where the turn's time and tool count belong. */
+.conversation-answer.is-compact :deep(.markdown-body) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.conversation-answer.is-compact :deep(.markdown-body p) { margin: 0; }
 .conversation-caret { display: inline-block; width: 2px; height: 1em; margin-left: 1px; vertical-align: text-bottom; background: currentColor; animation: conversation-caret 1s steps(1) infinite; }
 @keyframes conversation-caret { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
