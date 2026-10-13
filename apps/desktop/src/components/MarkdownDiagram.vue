@@ -31,6 +31,16 @@ function serialised<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
+/** Narrowest a diagram may shrink to, as a share of the width mermaid laid it out at. */
+const MIN_DIAGRAM_SCALE = 0.8
+
+/** Mermaid writes the laid-out width as the svg's inline max-width; null when it is absent. */
+export function diagramMinWidth(svg: string): string | null {
+  const match = /<svg\b[^>]*\bstyle="[^"]*max-width:\s*([\d.]+)px/.exec(svg)
+  const width = match ? Number(match[1]) : NaN
+  return Number.isFinite(width) && width > 0 ? `${Math.round(width * MIN_DIAGRAM_SCALE)}px` : null
+}
+
 function nextDiagramId(): string {
   diagramCounter += 1
   return `md-diagram-${diagramCounter}`
@@ -38,7 +48,7 @@ function nextDiagramId(): string {
 </script>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { TriangleAlert } from '@lucide/vue'
 
@@ -55,6 +65,7 @@ const MAX_DIAGRAM_CHARS = 20000
 const SETTLE_MS = 250
 
 const svg = ref('')
+const minWidth = computed(() => diagramMinWidth(svg.value))
 const failed = ref(false)
 const container = ref<HTMLElement | null>(null)
 
@@ -163,6 +174,8 @@ onBeforeUnmount(() => {
     <div
       v-if="svg"
       class="markdown-diagram-svg"
+      :style="minWidth ? { '--diagram-min-width': minWidth } : undefined"
+      tabindex="0"
       role="img"
       :aria-label="t('chat.markdownDiagram')"
       v-html="svg"

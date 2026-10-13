@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import mermaid, { type ParseResult } from 'mermaid'
-import MarkdownDiagram from './MarkdownDiagram.vue'
+import MarkdownDiagram, { diagramMinWidth } from './MarkdownDiagram.vue'
 
 vi.mock('mermaid', () => ({
   default: {
@@ -84,6 +84,18 @@ describe('MarkdownDiagram', () => {
     await flushPromises()
     expect(diagram.render).not.toHaveBeenCalled()
     expect(wrapper.find('.markdown-diagram-note').exists()).toBe(true)
+    wrapper.unmount()
+  })
+})
+
+describe('diagram width on a narrow column', () => {
+  it('lets a diagram shrink to 80% of its laid-out width, then scroll', async () => {
+    expect(diagramMinWidth('<svg id="d" width="100%" style="max-width: 640px;" viewBox="0 0 640 900">')).toBe('512px')
+    expect(diagramMinWidth('<svg id="d" viewBox="0 0 10 10">')).toBeNull()
+    diagram.render.mockResolvedValueOnce({ svg: '<svg style="max-width: 400px;"></svg>' } as never)
+    const wrapper = render(SOURCE)
+    await flushPromises()
+    expect(wrapper.get('.markdown-diagram-svg').attributes('style')).toContain('--diagram-min-width: 320px')
     wrapper.unmount()
   })
 })

@@ -3226,17 +3226,22 @@ margin-top: 4px;
   border-left: 0;
 }
 
-/* Mermaid diagrams: the rendered SVG is centred in the card, scrolls sideways when
-   the graph is wider than the conversation, and falls back to its own source. */
+/* Mermaid diagrams: the rendered SVG is centred in the card and shrinks with a narrow
+   column only down to --diagram-min-width (80% of its natural width, labels stay ~10px);
+   past that it scrolls sideways instead of turning into unreadable text. Centred with
+   auto margins, not justify-content, so an overflowing diagram still scrolls to its left
+   edge. Falls back to its own source. */
 .markdown-diagram-svg {
   display: flex;
-  justify-content: center;
   padding: 12px;
   overflow-x: auto;
 }
 
 .markdown-diagram-svg svg {
+  flex: none;
+  margin-inline: auto;
   max-width: 100%;
+  min-width: var(--diagram-min-width, 0);
   height: auto;
 }
 
