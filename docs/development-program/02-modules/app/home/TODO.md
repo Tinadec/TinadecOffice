@@ -16,7 +16,7 @@
 - 主责模块：APP-HOME
 - 前置依赖：复用会话 SSE、`ApprovalEvidenceProjector` 脱敏投影、reka-ui 2.11、`MarkdownRender`、`useTerminal.openAgentTerminal`；不复用已判定失败的 PR #43 代码
 - 关联功能：APP-HOME-F002；CORE-TOOLS（工具时间线与结果预览端点）、GATEWAY（薄代理）交叉引用此任务；空间模式本轮不迁移
-- 契约与证据：[计划](../../../../../.tinadec_dev/plans/claude/2026-10-13-flat-conversation-v2.md)、[P0/P1 报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)
+- 契约与证据：[计划](../../../../../.tinadec_dev/plans/claude/2026-10-13-flat-conversation-v2.md)、[P0–P2 报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)
 
 **问题、目标与触及范围**
 
@@ -26,7 +26,7 @@
 
 - [x] P0：`tool.execution.requested` 在授权判断前发出并携带审批同源的脱敏句子数据；工具时间线透传 task/agent/错误类别并真正按 `run_id`/`limit` 过滤；有界结果预览端点通过安全审查清单；Gateway 薄代理、三份契约同步，`check:drift` 干净。
 - [x] P1：reducer/grouping/turns/toolSentence/format 单测；2000 条事件 hydrate 一次发布且 < 300ms（实测含构造 6ms）；`useConversationFeed` 以重放后 heartbeat 一次发布，尚未挂到 HomeController（P3 接入时挂载，避免无人读取的第二个订阅者）。
-- [ ] P2：Attachment 五态、Spinner 延迟/最短显示、Marker、Collapsible 卸载、scroller 锚定/跟随组件测试。
+- [x] P2：Attachment 五态、Spinner 延迟/最短显示（假时钟）、Marker 角色、Collapsible 卸载、scroller 跟随/上翻不抢/新回合锚定组件测试；scroller 每次更新只测最后一行、可见锚点与二分定位的首个可见行（200/1000 行一次滚动+追加 <50 次行测量，上游实测 1600/1997）。
 - [ ] P3：`ConversationView` 接入 `ChatPanel`，迁移 `MessageList.test.ts` 全部行为。
 - [ ] P4：推理块、分层工具行、审批卡、待办、监督、工具预览的展开/收起与惰性加载行为。
 - [ ] P5：子智能体卡、AgentGroup 与右栏 `SubAgentsCard`。

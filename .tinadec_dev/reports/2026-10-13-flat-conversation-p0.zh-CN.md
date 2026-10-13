@@ -1,4 +1,4 @@
-# APP-HOME-108 平面对话流 v2：P0 后端增量与 P1 数据层
+# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层与 P2 UI 原语
 
 日期：2026-10-13 · 分支：`feat/flat-conversation-v2`（基于 `ab42b02`）· 环境：Linux 开发容器（2 核 / 5 GB，.NET 10.0.401、Bun 1.4.3、Node 24.21）。计划见 [`plans/claude/2026-10-13-flat-conversation-v2.md`](../plans/claude/2026-10-13-flat-conversation-v2.md)，任务见 `docs/development-program/02-modules/app/home/TODO.md#app-home-108`。
 
@@ -35,6 +35,14 @@
 - `toolSentence.ts`（复用 `toolKindOf/toolIconOf`，只出 i18n key；`conversation.tool.*` 中英已加入 locale）、`format.ts`（时长、钟点、跨天标签）、`fixtures/`（七个场景，按 Core 真实载荷键构造，非录制；供测试与后续 Debug Studio 共用）。
 - `composables/useConversationFeed.ts`：复用 `sessionEventBus` 同一连接；初始重放期间不发布，Core 重放后写出的 `event: heartbeat` 到达时一次发布（2 s 兜底）；切会话重置并丢弃旧批次。`api.connectEvents` 与 `sessionEventBus` 新增 `onHeartbeat`（此前该命名帧没有监听器，被浏览器直接丢弃）。尚未挂到 `HomeController`，留待 P3 有读者时挂载。
 
+## P2 改了什么
+
+- **原语移植**：`apps/desktop/src/components/ui/{marker,message,bubble,attachment,spinner,message-scroller,collapsible}/` 移植自 `unovue/shadcn-vue` `registry/bases/reka/ui`（`b251d9f`，MIT，已记入 `NOTICE`）。组件文件保留上游 `cn-*` 类名以便对照；样式统一在 `components/ui/conversation-primitives.css`，用本项目的 surface/text/accent token 重写（不依赖 nova 调色板与 `dark:` 变体）：只有附件是卡片（`--surface-section` + `--border-card` + 10px，无阴影），用户气泡为 tinted 软底无边框，正文 13px / 活动 12px / meta 11px。
+- **改动点**：`Spinner` 直接用 lucide `Loader2Icon`（`role=status`，减弱动效改脉冲）；`AttachmentAction` 与 `MessageScrollerButton` 不再依赖 registry Button（本项目无 `icon-xs/icon-sm`），改为原生按钮；修正上游 `AttachmentTrigger.vue` 未导入 `Primitive`。`reka-ui@2.11.0` 显式加入 Desktop 依赖（此前只是被 TinadecUI 提升到根 `node_modules`）。旧 `ui/collapsible.vue` 与 `UiCollapsible` 导出保留给空间模式。
+- **scroller 测量**：上游 `measureContentHeight` 每次提交测所有行，`capturePrependAnchor` 每次滚动与内容变化从第一行逐行测到可见行（未订阅可见性时没有 IntersectionObserver）。改为：内容高度只测最后一行；当前锚点只测可见锚点（可见区之前的锚点无需读布局）；首个可见行二分查找。stubbed 布局实测一次滚动+追加：上游 200 行 1600 次、1000 行 1997 次行测量；本分支均 <50（测试在上游实现上变红）。
+- **composables**：`useDelayedLoading`（150ms 才出现、至少停 400ms，恢复工作时不闪）、`useElapsed`（共享 1s ticker，无订阅即停）、`useSmoothText`（约 90 字/秒；落后超过 0.3s 时按当时积压定速追平，结束时 0.12s 冲刷；历史首帧完整；只控节奏，不碰 MarkdownRender）、`useToolPreview`（展开时惰性取、仅终态、按 execution 缓存与并发合并、失败可重试）、`useAgentDirectory`（读一次 `/api/v1/agents`，失败退回 slug、下次重试，`handle#n` 保留序号）。
+- **shimmer**：`.chat-shimmer` 泛化为基于 `currentColor` 的 `.shimmer`（2s）与单次收尾的 `.shimmer-once`；`.chat-shimmer` 保留原配色与 2.4s 作为别名，空间模式不变；减弱动效下全部静止为实色。
+
 ## 验证（本机实测）
 
 | 范围 | 结果 |
@@ -50,8 +58,12 @@
 | Gateway `bun test src` | 105/105 |
 | Desktop 定向（api、HomeController、useAgentActivity×2、sessionEventBus、conversation、useConversationFeed、locales） | 全部通过；`vue-tsc --noEmit` 0 错误；`check:drift` 退出 0 |
 | hydrate 基准（≥2000 事件一批） | 单次发布，整例含构造 6 ms |
+| P2 原语组件测试（Attachment 五态、Spinner 延迟/最短显示、Marker、Collapsible、Message/Bubble） | 12/12 |
+| P2 scroller 测试（跟随、上翻不抢、锚定、200/1000 行测量上限） | 5/5；替换回上游 `useMessageScroller.ts` 时测量用例 2 例变红 |
+| P2 composable 测试 | 10/10 |
+| Desktop 全量 vitest（P2 后） | 1378 通过 / 14 skip（既有 `NotificationIslandHost`），151 文件；`vue-tsc` 0 错误；Tailwind 编译 `styles.css` 产出新规则 |
 
 ## 既有失败与边界
 
 - `ToolChainEndpointTests.WorkerWriteFile_RequestsApproval_ApprovedThenExecuted_RunCompletes` 在未改动的 `ab42b02` 上同样失败（`git worktree` 基线实测），`main` 的 posix-core CI 也红。新预览端点给出原因：工具子进程报 `Only paths inside the authorized source folders () may be written`——Linux 上 `ToolExecutionContext.WorkspaceRoots` 为空、可写根又不是工作区。属多文件夹工作区链路（APP-HOME-107），本轮不修；P0 的新断言因此另以驻留审批时刻的独立用例覆盖，原用例里的新断言只在其能跑完的平台上执行。
-- 未在 Windows 实机、真实模型或 Electron 中验证；UI 阶段 P2–P7 尚未开始。
+- 未在 Windows 实机、真实模型或 Electron 中验证；P2 原语尚无页面使用者，视觉只经 Tailwind 编译与组件 DOM 断言，未做截图；P3–P7 尚未开始。
