@@ -2141,6 +2141,7 @@ retry: '重试',
   },
   // 平面对话流（APP-HOME-108）。动词里的对象用 {subject}。
   conversation: {
+    listSeparator: '、',
     group: {
       exploring: '正在探索', explored: '已探索',
       files: '{count} 个文件', searches: '{count} 次搜索',
@@ -2168,6 +2169,7 @@ retry: '重试',
     },
     turn: { workedFor: '已工作 {duration}', toolCount: '工具 {count} 次', sending: '发送中…', edits: '编辑 {count} 处', commands: '运行 {count} 条命令' },
     tool: {
+      terminalTitle: '智能体终端',
       exitCode: '退出码 {code}', changedFiles: '改动的文件', openInTerminal: '在终端面板打开',
       terminalNotReady: '终端会话尚未建立，稍候再试', terminalOpenedInList: '已加入终端面板',
       preview: { loading: '正在加载结果…', failed: '无法加载结果', truncated: '已截断显示', withheld: '结果不显示', withheldSensitive: '不显示：该文件可能含凭据', exitCode: '退出码 {code}', timedOut: '已超时' },

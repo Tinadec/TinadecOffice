@@ -39,7 +39,7 @@ const label = computed(() => {
 <template>
   <Collapsible v-model:open="open" class="conversation-reasoning" data-testid="reasoning-block">
     <CollapsibleTrigger class="conversation-fold-trigger" :data-live="thinking ? 'true' : undefined">
-      <Spinner v-if="showSpinner" class="conversation-glyph" />
+      <Spinner decorative v-if="showSpinner" class="conversation-glyph" />
       <Brain v-else class="conversation-glyph" aria-hidden="true" />
       <span :class="{ shimmer: thinking }" :role="thinking ? 'status' : undefined">{{ label }}</span>
       <span v-if="thinking && elapsed !== null" class="conversation-fold-meta">{{ formatDuration(elapsed, lang) }}</span>

@@ -23,7 +23,7 @@ const { t } = useI18n()
 const { displayName } = useAgentDirectory()
 
 function waitNames(entry: WaitEntry): string {
-  return entry.awaited.map((item) => displayName(item.handle ?? item.taskKey)).filter(Boolean).join('、')
+  return entry.awaited.map((item) => displayName(item.handle ?? item.taskKey)).filter(Boolean).join(t('conversation.listSeparator'))
 }
 </script>
 

@@ -21,7 +21,7 @@ export function describeEntry(entry: FeedEntry | null, t: Translate, workspaceRo
       return latestReasoningTitle(entry.text) ?? t('conversation.reasoning.thinking')
     case 'wait':
       return t(entry.status === 'waiting' ? 'conversation.wait.waiting' : 'conversation.wait.resolved', {
-        names: entry.awaited.map((item) => item.handle ?? item.taskKey).filter(Boolean).join('、'),
+        names: entry.awaited.map((item) => item.handle ?? item.taskKey).filter(Boolean).join(t('conversation.listSeparator')),
       })
     case 'plan': {
       const current = entry.steps.find((step) => step.status === 'in_progress')

@@ -55,6 +55,8 @@ const current = computed(() => plan.value?.steps.find((step) => step.status === 
 
 <style scoped>
 .conversation-todos-status { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; max-width: 852px; margin: 0 auto; padding: 0 16px 6px; }
+:global(.chat-narrow) .conversation-todos-status { padding-inline: 10px; }
+:global(.chat-ultra) .conversation-todos-status { padding-inline: 6px; }
 .conversation-todos-status-list { width: 100%; max-height: 14rem; overflow: auto; }
 .conversation-todos-capsule { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 24px; padding: 2px 10px; border: 1px solid var(--border-card); border-radius: 999px; color: var(--text-secondary); background: var(--surface-section); font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer; }
 .conversation-todos-capsule:hover { background: var(--surface-hover); }

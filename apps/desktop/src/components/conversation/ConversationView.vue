@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Bot } from '@lucide/vue'
 import { computed } from 'vue'
+import { usePreferredReducedMotion } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import type { ApprovalDto, MessageDto } from '@/api'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
@@ -26,6 +27,9 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ edit: [payload: { id: string; content: string }] }>()
 const { t } = useI18n()
+// Reduced motion is a second design, not a slower one: jumps are instant.
+const motion = usePreferredReducedMotion()
+const jumpBehavior = computed<ScrollBehavior>(() => (motion.value === 'reduce' ? 'auto' : 'smooth'))
 
 // tool_evidence is the model's own checkpoint of tool results; the activity area is the
 // one user-facing view of tool work, so it never reaches the transcript.
@@ -69,7 +73,7 @@ const turns = computed(() => {
           <span>{{ t('chat.ready') }}</span>
         </div>
       </MessageScrollerViewport>
-      <MessageScrollerButton :label="t('chat.jumpToLatest')" data-testid="jump-to-latest" />
+      <MessageScrollerButton :label="t('chat.jumpToLatest')" :behavior="jumpBehavior" data-testid="jump-to-latest" />
     </MessageScroller>
   </MessageScrollerProvider>
 </template>
@@ -77,5 +81,7 @@ const turns = computed(() => {
 <style scoped>
 .conversation-view { flex: 1; min-height: 0; }
 .conversation-content { gap: 24px; width: 100%; max-width: 852px; margin: 0 auto; padding: 16px 16px 24px; }
+:global(.chat-narrow) .conversation-content { gap: 18px; padding: 12px 10px 18px; }
+:global(.chat-ultra) .conversation-content { gap: 14px; padding: 8px 6px 14px; }
 .conversation-empty { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; color: var(--text-muted); font-size: 13px; }
 </style>

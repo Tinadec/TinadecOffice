@@ -2144,6 +2144,7 @@ retry: 'Retry',
   },
   // Flat conversation feed (APP-HOME-108). Verbs take the subject as {subject}.
   conversation: {
+    listSeparator: ', ',
     group: {
       exploring: 'Exploring', explored: 'Explored',
       files: '{count} file | {count} files', searches: '{count} search | {count} searches',
@@ -2171,6 +2172,7 @@ retry: 'Retry',
     },
     turn: { workedFor: 'Worked for {duration}', toolCount: '{count} tool | {count} tools', sending: 'Sending…', edits: '{count} edit | {count} edits', commands: '{count} command | {count} commands' },
     tool: {
+      terminalTitle: 'Agent terminal',
       exitCode: 'exit {code}', changedFiles: 'Changed files', openInTerminal: 'Open in terminal panel',
       terminalNotReady: 'The terminal session is not ready yet', terminalOpenedInList: 'Added to the terminal panel',
       preview: { loading: 'Loading result…', failed: 'Could not load the result', truncated: 'Shortened to fit', withheld: 'Result not shown', withheldSensitive: 'Not shown: this file may hold credentials', exitCode: 'Exit code {code}', timedOut: 'Timed out' },

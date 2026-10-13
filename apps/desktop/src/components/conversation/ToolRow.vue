@@ -77,7 +77,7 @@ function openInTerminal() {
     terminalSessionId: sessionId,
     runId: props.runId,
     command: props.entry.command ?? undefined,
-    title: props.entry.command?.slice(0, 40) || 'Agent terminal',
+    title: props.entry.command?.slice(0, 40) || t('conversation.tool.terminalTitle'),
     source: createAgentTerminalSource({
       terminalSessionId: sessionId,
       runId: props.runId,
@@ -94,7 +94,7 @@ function openInTerminal() {
     return
   }
   uie.bus.dispatch({
-    command: { type: 'openCard', scope: uie.scope.value, descriptorId: 'terminal', slotId: 'right', title: props.entry.command?.slice(0, 24) || 'Agent terminal' },
+    command: { type: 'openCard', scope: uie.scope.value, descriptorId: 'terminal', slotId: 'right', title: props.entry.command?.slice(0, 24) || t('conversation.tool.terminalTitle') },
     source: 'user',
     expectedRevision: uie.snapshot.value.revision,
   })
@@ -104,7 +104,7 @@ function openInTerminal() {
 <template>
   <Collapsible v-model:open="open" class="conversation-tool" :data-phase="phase" data-testid="tool-row">
     <CollapsibleTrigger class="conversation-fold-trigger">
-      <Spinner v-if="showSpinner" class="conversation-glyph" />
+      <Spinner decorative v-if="showSpinner" class="conversation-glyph" />
       <X v-else-if="phase === 'failed'" class="conversation-glyph is-failed" aria-hidden="true" />
       <component :is="sentence.icon" v-else class="conversation-glyph" aria-hidden="true" />
       <span class="conversation-tool-sentence" data-testid="tool-sentence">{{ t(verbKey(sentence.verb, phase), { subject }) }}</span>
@@ -122,7 +122,7 @@ function openInTerminal() {
         <ul v-if="entry.changedPaths.length" class="conversation-tool-changes" role="list" :aria-label="t('conversation.tool.changedFiles')">
           <li v-for="path in entry.changedPaths" :key="path">{{ displayPath(path, workspaceRoot) }}</li>
         </ul>
-        <p v-if="previewSpinner" class="conversation-preview-caption"><Spinner class="conversation-glyph" /> {{ t('conversation.tool.preview.loading') }}</p>
+        <p v-if="previewSpinner" class="conversation-preview-caption"><Spinner decorative class="conversation-glyph" /> {{ t('conversation.tool.preview.loading') }}</p>
         <p v-else-if="error" class="conversation-preview-caption">{{ t('conversation.tool.preview.failed') }}
           <button type="button" class="conversation-link-button" @click="load">{{ t('common.refresh') }}</button>
         </p>

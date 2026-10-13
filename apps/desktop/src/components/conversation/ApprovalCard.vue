@@ -125,17 +125,17 @@ function onKeydown(event: KeyboardEvent) {
     </div>
     <div v-else-if="approvalId" class="conversation-approval-actions">
       <button type="button" class="conversation-text-button is-primary" :disabled="busy" data-testid="approval-approve" :title="t('conversation.approval.approveShortcut')" @click="approve">
-        <Spinner v-if="showSpinner && pending === 'approve'" class="conversation-meta-glyph" />{{ t('approval.approve') }}
+        <Spinner decorative v-if="showSpinner && pending === 'approve'" class="conversation-meta-glyph" />{{ t('approval.approve') }}
       </button>
       <button type="button" class="conversation-text-button" :disabled="busy" data-testid="approval-approve-run" @click="approveRun">
-        <Spinner v-if="showSpinner && pending === 'approveRun'" class="conversation-meta-glyph" />{{ t('conversation.approval.approveRun') }}
+        <Spinner decorative v-if="showSpinner && pending === 'approveRun'" class="conversation-meta-glyph" />{{ t('conversation.approval.approveRun') }}
       </button>
       <button type="button" class="conversation-text-button" :disabled="busy" data-testid="approval-reject" :title="t('conversation.approval.rejectShortcut')" @click="reject">
-        <Spinner v-if="showSpinner && pending === 'reject'" class="conversation-meta-glyph" />{{ t('approval.reject') }}
+        <Spinner decorative v-if="showSpinner && pending === 'reject'" class="conversation-meta-glyph" />{{ t('approval.reject') }}
       </button>
       <button type="button" class="conversation-text-button" :disabled="busy" data-testid="approval-instead" @click="openCorrection">{{ t('conversation.approval.instead') }}</button>
       <button v-if="commandPrefix" type="button" class="conversation-link-button" :disabled="busy" data-testid="approval-allow-prefix" @click="allowPrefix">
-        <Spinner v-if="showSpinner && pending === 'rule'" class="conversation-meta-glyph" />{{ t('conversation.approval.allowPrefix', { prefix: commandPrefix }) }}
+        <Spinner decorative v-if="showSpinner && pending === 'rule'" class="conversation-meta-glyph" />{{ t('conversation.approval.allowPrefix', { prefix: commandPrefix }) }}
       </button>
     </div>
   </section>
@@ -152,6 +152,7 @@ function onKeydown(event: KeyboardEvent) {
 .conversation-approval-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .conversation-approval-facts code { font-size: 12px; white-space: pre-wrap; }
 .conversation-approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+:global(.chat-ultra) .conversation-approval-facts { grid-template-columns: 1fr; }
 .conversation-approval-correction { display: flex; flex-direction: column; gap: 6px; }
 .conversation-approval-actions .conversation-text-button { display: inline-flex; align-items: center; gap: 4px; }
 </style>

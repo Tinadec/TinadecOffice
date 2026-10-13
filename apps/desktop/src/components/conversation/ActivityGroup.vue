@@ -79,7 +79,7 @@ function toolText(entry: ToolEntry): string {
 <template>
   <Collapsible v-model:open="open" class="conversation-group" data-testid="activity-group" :data-exploring="node.exploring ? 'true' : undefined">
     <CollapsibleTrigger class="conversation-fold-trigger">
-      <Spinner v-if="showSpinner" class="conversation-glyph" />
+      <Spinner decorative v-if="showSpinner" class="conversation-glyph" />
       <Brain v-else-if="node.thinkingOnly" class="conversation-glyph" aria-hidden="true" />
       <CircleCheck v-else class="conversation-glyph" aria-hidden="true" />
       <span :class="{ shimmer: node.exploring }" data-testid="group-label">{{ label }}</span>
@@ -95,7 +95,7 @@ function toolText(entry: ToolEntry): string {
           <span v-else-if="line.kind === 'tool'">└ {{ toolText(line.entry) }}</span>
           <span v-else class="conversation-group-wait">
             <Hourglass class="conversation-meta-glyph" aria-hidden="true" />
-            {{ t(line.entry.status === 'waiting' ? 'conversation.wait.waiting' : 'conversation.wait.resolved', { names: line.entry.awaited.map((item) => displayName(item.handle ?? item.taskKey)).join('、') }) }}
+            {{ t(line.entry.status === 'waiting' ? 'conversation.wait.waiting' : 'conversation.wait.resolved', { names: line.entry.awaited.map((item) => displayName(item.handle ?? item.taskKey)).join(t('conversation.listSeparator')) }) }}
           </span>
         </li>
       </ul>

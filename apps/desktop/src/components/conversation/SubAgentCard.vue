@@ -70,7 +70,7 @@ function openInPanel() {
         data-testid="sub-agent-toggle"
         @click="open = !open"
       >
-        <Spinner v-if="showSpinner" class="conversation-glyph" />
+        <Spinner decorative v-if="showSpinner" class="conversation-glyph" />
         <Bot v-else class="conversation-glyph" aria-hidden="true" />
         <span class="conversation-sub-agent-name" :class="{ shimmer: working }">{{ name }}</span>
         <span class="conversation-sub-agent-badge" :data-status="node.status">{{ t(`conversation.agents.status.${node.status}`) }}</span>

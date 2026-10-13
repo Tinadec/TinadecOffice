@@ -71,7 +71,7 @@ const summary = computed(() => {
   <Collapsible v-model:open="open" class="conversation-work" :data-live="live ? 'true' : undefined" data-testid="turn-work">
     <CollapsibleTrigger class="conversation-fold-trigger conversation-work-trigger">
       <template v-if="live">
-        <Spinner class="conversation-glyph" />
+        <Spinner decorative class="conversation-glyph" />
         <span class="shimmer" role="status" data-testid="turn-status">{{ status }}</span>
         <span v-if="elapsed !== null" class="conversation-fold-meta">{{ formatDuration(elapsed, lang) }}</span>
       </template>

@@ -141,3 +141,8 @@
   .conversation-fold-chevron { transition: none; }
   .conversation-fold-content[data-state] { animation: none; }
 }
+
+/* Narrow (<560px) and ultra-narrow (<400px) chat columns, set by ChatPanel. */
+.chat-narrow .cn-bubble { max-width: 92%; }
+.chat-ultra .cn-bubble { max-width: 100%; }
+.chat-ultra .conversation-sub-agent-latest { display: none; }
