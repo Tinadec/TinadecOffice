@@ -4,7 +4,7 @@
  * ChatPanel、GitPanel、CodePage、SettingsPage、MarketPage 直接挂载真实组件/页面，
  * 数据来自 apiBridge 注入的 mock api（按场景响应式切换）。
  */
-import { computed, defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, ref, shallowRef } from 'vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import ConversationPreview from './ConversationPreview.vue'
 import PreviewIslandCard from './PreviewIslandCard.vue'
@@ -22,7 +22,8 @@ import {
 } from '@lucide/vue'
 import type { PermissionLevel } from '@/types/mode'
 import type { MockDataBundle } from './mockData'
-import { mockThinkingSteps, mockToolCalls } from './mockData'
+import { exploreEditShell } from '@/lib/conversation/fixtures'
+import { applyEvents, createFeedState } from '@/lib/conversation/reducer'
 
 const props = defineProps<{
   pageName: string
@@ -36,8 +37,16 @@ const currentPermission = ref<PermissionLevel>('default')
 const selectedProjectId = ref<string | null>(null)
 const selectedSessionId = ref<string | null>(null)
 
-const previewThinkingSteps = mockThinkingSteps()
-const previewToolCalls = mockToolCalls()
+// The chat preview renders a recorded-shape session through the real feed: the same
+// fixture the data-layer tests use, reduced by the real reducer.
+const chatFixture = exploreEditShell()
+const chatFeedState = createFeedState()
+applyEvents(chatFeedState, chatFixture.events)
+const chatConversation = {
+  feed: { state: shallowRef(chatFeedState), revision: ref(1), hydrated: ref(true) },
+  runs: chatFixture.runs,
+  workspaceRoot: '/w',
+}
 
 function ensureSelection() {
   if (props.data.projects.length > 0 && !selectedProjectId.value) {
@@ -78,7 +87,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
           </div>
         </template>
         <ChatPanel
-          :messages="data.messages"
+          :messages="data.messages.length ? chatFixture.messages : []"
           :sessions="data.sessions"
           :projects="data.projects"
           :current-session="currentSession"
@@ -90,8 +99,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
           :draft="draft"
           :mode-version-id="currentModeVersionId"
           :permission="currentPermission"
-          :thinking-steps="previewThinkingSteps"
-          :tool-calls="previewToolCalls"
+          :conversation="chatConversation"
           @update:draft="draft = $event"
           @update:mode-version-id="currentModeVersionId = $event"
           @update:permission="currentPermission = $event"
@@ -99,13 +107,13 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
       </PreviewIslandCard>
     </div>
 
-    <!-- ==================== ConversationFlow：真实 MessageList ==================== -->
+    <!-- ==================== ConversationFlow：真实 ConversationView ==================== -->
     <div v-else-if="pageName === 'ConversationFlow'" class="conversation-flow-preview">
       <PreviewIslandCard variant="raised" padding="none" class="conversation-island">
         <template #header>
           <div class="preview-island-header">
             <MessagesSquare :size="14" />
-            <span>对话消息流（真实 MessageList）</span>
+            <span>对话消息流（真实 ConversationView）</span>
           </div>
         </template>
         <ConversationPreview />

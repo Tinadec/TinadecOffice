@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, watch } from 'vue'
 import ChatHeader from './ChatHeader.vue'
-import MessageList from './MessageList.vue'
 import ConversationView from './conversation/ConversationView.vue'
 import AgentTodosStatus from './conversation/AgentTodosStatus.vue'
 import ComposerBar from './ComposerBar.vue'
@@ -10,7 +9,7 @@ import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { ComposerSubmitOptions, SessionSettingsUpdate, MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
 import type { ComposerSettings } from '@/lib/composerSettings'
 import type { PermissionLevel } from '@/types/mode'
-import type { SupervisionReview, ThinkingStep, ToolCall, TurnActivity } from '@/composables/useAgentActivity'
+import type { SupervisionReview } from '@/composables/useAgentActivity'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
 import type { ApprovalDto } from '../api'
 import type { TurnRunInput } from '@/lib/conversation/turns'
@@ -30,28 +29,18 @@ const props = defineProps<{
   composerSettings?: ComposerSettings
   settingsSaving?: boolean
   settingsError?: string | null
-  /** Activity of the most recent run, owned by HomePage. ChatPanel decides
-      whether it belongs to the live turn or to the message that answered. */
-  thinkingSteps?: ThinkingStep[]
-  toolCalls?: ToolCall[]
-  turnActivities?: Record<string, TurnActivity>
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
   // new: pass runs for insert picker
   runsForComposer?: Array<{ id: string; status: string }>
-  /**
-   * Live text of the run currently in flight. The controller accumulated it per
-   * delta but nothing rendered it, so the reply appeared only once it was persisted.
-   */
-  streamingReply?: string
   /** True while a run can still be cancelled — drives the composer's stop button. */
   canStop?: boolean
   /**
-   * The flat feed's inputs (APP-HOME-108). When present the transcript is the new
-   * ConversationView; without it (Debug Studio gallery) the legacy MessageList renders
-   * from the single-turn props until the gallery moves over in P7.
+   * The flat feed's inputs (APP-HOME-108): session messages are paired with these runs and
+   * the event-sourced feed into turns by ConversationView. Activity, approvals and streaming
+   * answers all come from here; ChatPanel derives none of them itself.
    */
-  conversation?: {
+  conversation: {
     feed: ConversationFeed
     runs: readonly TurnRunInput[]
     streamingReplies?: Readonly<Record<string, string>>
@@ -69,8 +58,6 @@ const emit = defineEmits<{
   'welcome-send': [payload: ComposerSubmitOptions & { content: string }]
   'create-project': []
   'select-project': [id: string | null]
-  'approve': [approvalId: string]
-  'reject': [approvalId: string]
   'edit-message': [payload: { id: string; content: string }]
   'stop': []
 }>()
@@ -91,40 +78,6 @@ const conversationRef = ref<HTMLElement | null>(null)
 const { mode: chatMode } = useChatResponsiveMode(conversationRef)
 
 const hero = computed(() => props.messages.length === 0)
-
-const lastAssistantId = computed(() => {
-  for (let i = props.messages.length - 1; i >= 0; i--) {
-    if (props.messages[i].role === 'assistant') return props.messages[i].id
-  }
-  return null
-})
-
-const hasActivity = computed(
-  () => (props.thinkingSteps?.length ?? 0) > 0 || (props.toolCalls?.length ?? 0) > 0,
-)
-
-/**
- * Production supplies run-keyed activity; only standalone gallery callers use the
- * single-turn props. Busy is a transport state, never an ownership key: sending a
- * second message must not move the previous run's activity to the new live turn.
- */
-const liveTurn = computed(() =>
-  !props.turnActivities && hasActivity.value && (props.busy || !lastAssistantId.value)
-    ? { thinkingSteps: props.thinkingSteps, toolCalls: props.toolCalls }
-    : undefined,
-)
-
-const activityByMessage = computed(() => props.turnActivities
-  ? Object.fromEntries(props.messages.filter((m) => m.role === 'assistant' && m.run_id && props.turnActivities?.[m.run_id])
-    .map((m) => [m.id, props.turnActivities![m.run_id!]]))
-  : hasActivity.value && !props.busy && lastAssistantId.value
-    ? { [lastAssistantId.value]: { thinkingSteps: props.thinkingSteps, toolCalls: props.toolCalls } }
-    : undefined,
-)
-
-const liveTurns = computed(() => props.turnActivities
-  ? Object.values(props.turnActivities).filter((turn) => !props.messages.some((m) => m.role === 'assistant' && m.run_id === turn.runId))
-  : undefined)
 
 const modeVersionId = ref<string | null>(null)
 function selectMode(value: string | null) {
@@ -169,13 +122,6 @@ watch(hero, async () => {
   )
 })
 
-function handleApprove(approvalId: string) {
-  emit('approve', approvalId)
-}
-
-function handleReject(approvalId: string) {
-  emit('reject', approvalId)
-}
 </script>
 
 <template>
@@ -192,7 +138,6 @@ function handleReject(approvalId: string) {
       <div v-else key="chat-active" class="chat-active-panel" style="background: transparent !important; border: none !important; box-shadow: none !important;">
         <ChatHeader :current-session="currentSession" />
         <ConversationView
-          v-if="conversation"
           :messages="messages"
           :runs="conversation.runs"
           :feed="conversation.feed"
@@ -202,18 +147,7 @@ function handleReject(approvalId: string) {
           :workspace-root="conversation.workspaceRoot"
           @edit="emit('edit-message', $event)"
         />
-        <AgentTodosStatus v-if="conversation" :feed="conversation.feed" :runs="conversation.runs" />
-        <MessageList
-          v-else
-          :messages="messages"
-          :activity-by-message="activityByMessage"
-          :live-turn="liveTurn"
-          :live-turns="liveTurns"
-          :streaming-reply="streamingReply"
-          @approve="handleApprove"
-          @reject="handleReject"
-          @edit="emit('edit-message', $event)"
-        />
+        <AgentTodosStatus :feed="conversation.feed" :runs="conversation.runs" />
       </div>
     </Transition>
 

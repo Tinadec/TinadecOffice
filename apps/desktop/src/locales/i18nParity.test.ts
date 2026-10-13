@@ -53,14 +53,9 @@ const panelSources = import.meta.glob(
     './../components/TaskGraphPanel.vue',
     './../components/organization/**/*.vue',
     './../components/TerminalPanel.vue',
-    // The chat surface ships through TinadecUI's ChatCard, not a page, so nothing
-    // else proved its keys exist: chat.copy/chat.edit rendered as raw keys for the
-    // whole time the pencil was wired to a stub. ChatPanel itself is not listed —
-    // it labels nothing and translates no key.
-    './../components/MessageItem.vue',
-    // The flat conversation feed (APP-HOME-108).
+    // The chat surface ships through TinadecUI's ChatCard, not a page, so nothing else proves
+    // its keys exist: the flat conversation feed (APP-HOME-108). ChatPanel itself labels nothing.
     './../components/conversation/**/*.vue',
-    './../components/MessageList.vue',
     './../components/ComposerBar.vue',
     './../components/ComposerCommandPanel.vue',
     './../components/ApprovalTab.vue',

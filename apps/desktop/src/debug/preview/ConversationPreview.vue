@@ -1,86 +1,52 @@
 <script setup lang="ts">
 /**
- * 对话消息流预览
- * 展示消息视觉语言的完整示例：用户气泡、思考过程单行、
- * 五种状态的工具调用行（含等待审批）、Markdown 正文、
- * 消息末尾 hover 揭示的时间戳。通过 activityByMessage
- * 把思考/工具活动分配到对应的 assistant 消息。
+ * 对话消息流预览：用真实的 ConversationView 渲染共享 fixtures（与数据层测试同一批事件序列）。
+ * 每个场景都是一整段会话——消息、run 行、Core 会写出的会话 SSE 事件——经真实 reducer 归约，
+ * 所以这里看到的就是平面模式在同样事件下的样子：简单问答、探索+编辑+shell、待审批、
+ * 并行子智能体、失败、打断、上下文压缩。
  */
-import { computed } from 'vue'
-import MessageList from '@/components/MessageList.vue'
-import type { MessageDto } from '@/api'
-import { mockThinkingSteps, mockToolCalls } from './mockData'
+import { computed, ref, shallowRef } from 'vue'
+import ConversationView from '@/components/conversation/ConversationView.vue'
+import type { ConversationFeed } from '@/composables/useConversationFeed'
+import { FEED_FIXTURES } from '@/lib/conversation/fixtures'
+import { applyEvents, createFeedState } from '@/lib/conversation/reducer'
 
-const session = 'sess-conversation-flow'
+const scenarios = FEED_FIXTURES.map((make) => make())
+const selected = ref(scenarios[0]!.name)
+const scenario = computed(() => scenarios.find((item) => item.name === selected.value) ?? scenarios[0]!)
 
-function msg(id: string, role: 'user' | 'assistant', content: string, createdOffsetMin: number): MessageDto {
-  return {
-    id,
-    session_id: session,
-    run_id: null,
-    attachments: [],
-    role,
-    content,
-    created_at: new Date(Date.parse('2026-08-24T10:00:00Z') + createdOffsetMin * 60_000).toISOString(),
-  }
-}
-
-const messages: MessageDto[] = [
-  msg('cfm-001', 'user', '帮我重构编排引擎的任务图构建逻辑，要求支持动态依赖解析。', 0),
-  msg(
-    'cfm-002',
-    'assistant',
-    [
-      '已经完成依赖解析模块的重构，要点如下：',
-      '',
-      '1. **拓扑排序**改为 Kahn 算法的稳定序实现，相同优先级保持声明顺序；',
-      '2. 新增 `cycleGuard.ts`，在建图阶段拒绝自环与重复边；',
-      '3. `TaskGraphBuilder.resolveDependencies()` 现在增量更新，不再整图重算。',
-      '',
-      '```ts',
-      'const graph = await builder.build(nodes, {',
-      '  stableTopoOrder: true,',
-      '  onCycle: \'reject\',',
-      '})',
-      '```',
-      '',
-      '12 个单测全部通过，还有一处新建文件等待你的批准。',
-    ].join('\n'),
-    2,
-  ),
-  msg('cfm-003', 'user', '补丁和主干冲突了吗？把冲突文件先列出来。', 6),
-  msg(
-    'cfm-004',
-    'assistant',
-    '是的，`cycleGuard.ts` 与主干上周的防御性校验改动冲突。冲突文件清单如下，需要你批准新建文件后我再继续变基：\n\n- `src/core/dmaea/cycleGuard.ts`（新建，待批准）\n- `src/core/dmaea/TaskGraphBuilder.ts`（已自动合并）',
-    8,
-  ),
-  msg('cfm-005', 'assistant', '等你处理完审批我会继续。也可以直接在右侧「审批」面板里批量放行本轮的全部写入操作。', 12),
-]
-
-const allToolCalls = mockToolCalls()
-const allThinkingSteps = mockThinkingSteps()
-
-const activityByMessage = computed(() => ({
-  // 第一条助手消息：完整思考 + 已完成/失败/运行中的工具行
-  'cfm-002': {
-    thinkingSteps: allThinkingSteps,
-    toolCalls: allToolCalls.filter((c) => ['completed', 'failed', 'running'].includes(c.status)),
-  },
-  // 第二条助手消息：等待审批的工具行
-  'cfm-004': {
-    thinkingSteps: allThinkingSteps.slice(0, 3),
-    toolCalls: allToolCalls.filter((c) => c.status === 'waiting_approval'),
-  },
-}))
+const feed = computed<ConversationFeed>(() => {
+  const state = createFeedState()
+  applyEvents(state, scenario.value.events)
+  return { state: shallowRef(state), revision: ref(1), hydrated: ref(true) }
+})
 </script>
 
 <template>
   <div class="conversation-preview">
-    <div class="conversation-preview-inner">
-      <MessageList :messages="messages" :activity-by-message="activityByMessage" />
+    <div class="conversation-preview-scenarios" role="radiogroup" aria-label="场景">
+      <button
+        v-for="item in scenarios"
+        :key="item.name"
+        type="button"
+        role="radio"
+        class="conversation-preview-scenario"
+        :aria-checked="item.name === selected"
+        @click="selected = item.name"
+      >
+        {{ item.name }}
+      </button>
     </div>
-    <div class="conversation-preview-hint">示例对话 · hover 助手消息可看到末尾时间戳，点击工具行展开详情</div>
+    <div class="conversation-preview-inner">
+      <ConversationView
+        :key="scenario.name"
+        :messages="scenario.messages"
+        :runs="scenario.runs"
+        :feed="feed"
+        workspace-root="/w"
+      />
+    </div>
+    <div class="conversation-preview-hint">fixtures 与 src/lib/conversation 测试共用 · 运行中场景的工作区展开，已完成场景收成摘要，点击可展开</div>
   </div>
 </template>
 
@@ -92,15 +58,33 @@ const activityByMessage = computed(() => ({
   min-height: 0;
 }
 
+.conversation-preview-scenarios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px 0;
+}
+
+.conversation-preview-scenario {
+  padding: 2px 10px;
+  border: 1px solid var(--border-card);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.conversation-preview-scenario[aria-checked='true'] {
+  color: var(--text-primary);
+  background: var(--surface-selected);
+}
+
 .conversation-preview-inner {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.conversation-preview-inner :deep(.message-stream-inner) {
-  max-width: 720px;
 }
 
 .conversation-preview-hint {

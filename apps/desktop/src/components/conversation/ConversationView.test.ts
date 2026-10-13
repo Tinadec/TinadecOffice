@@ -12,8 +12,7 @@ import { exploreEditShell, failedRun, parallelSubAgents, pendingApproval, simple
 import type { ConversationFeed } from '@/composables/useConversationFeed'
 
 /**
- * The flat feed's behaviour, migrated from MessageList.test.ts (which keeps covering the
- * legacy list the Debug Studio gallery still renders): the first turn shows its tool work and
+ * The flat feed's behaviour, migrated from the deleted MessageList.test.ts: the first turn shows its tool work and
  * approval before any answer exists, activity belongs to the turn that ran it, edit-and-resend
  * keeps its rules, and the attachment strip keeps its security properties.
  */
