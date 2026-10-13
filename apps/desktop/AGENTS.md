@@ -1,5 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-13 Flat conversation data layer (APP-HOME-108 P1)
+
+`src/lib/conversation/` is the new flat feed's pure data layer: `reducer.ts` (session SSE only, per-run versioned records, dedup by run+seq+type, Core's tool status fold, shell output tail, sub-agent directory from `task.dispatched`/`worker.*`), `grouping.ts` (quiet steps fold, pending approvals lifted out incl. sub-agents', dispatches grouped and recursed), `turns.ts` (pairs by `trigger_message_id`), `toolSentence.ts` (i18n keys under `conversation.tool.*`, reuses `toolPresentation`), `format.ts`, and `fixtures/` built from Core's real payload keys. `useConversationFeed` publishes the initial replay once on Core's post-replay `event: heartbeat`, which `api.connectEvents(…, onHeartbeat)` and `subscribeToSessionEvents({ onHeartbeat })` now forward (the named frame used to be dropped — it is not an EventEnvelope and is not in `CORE_EVENT_TYPES`). Not yet mounted on `HomeController`; the old `MessageList`/`useAgentActivity` path is unchanged. `listToolExecutions` callers in `HomeController`/`DetachedPanelPage` no longer pass `limit: 12`: Core now honors limit, and the stats/timeline panels count the whole session.
+
 ## 2026-10-11 Settings read recovery
 
 `backendRequest.ts` owns bounded GET/HEAD transport recovery for api.ts and generated/client.ts: 250/750ms, three attempts total, response body transport included, each attempt revalidates host access with captured storage identity. HTTP/JSON failures and mutations are never replayed; a lost write response becomes backend_write_outcome_unknown without retry. Binary/SSE paths retain their existing owners.

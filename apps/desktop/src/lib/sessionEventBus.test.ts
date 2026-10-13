@@ -231,3 +231,17 @@ function sourceFiles(dir: string): string[] {
   }
   return found
 }
+
+describe('post-replay heartbeat', () => {
+  it('reaches subscribers whose session is open, and survives one that throws', () => {
+    const heartbeats: string[] = []
+    bus.followSession('s-1')
+    bus.subscribeToSessionEvents(() => {}, { scope: ref('s-1'), onHeartbeat: () => heartbeats.push('open') })
+    bus.subscribeToSessionEvents(() => {}, { scope: ref(null), onHeartbeat: () => heartbeats.push('closed') })
+    bus.subscribeToSessionEvents(() => {}, { onHeartbeat: () => { throw new Error('boom') } })
+    const onHeartbeat = connect.mock.calls.at(-1)![2]
+    expect(onHeartbeat).toBeTypeOf('function')
+    onHeartbeat!()
+    expect(heartbeats).toEqual(['open'])
+  })
+})

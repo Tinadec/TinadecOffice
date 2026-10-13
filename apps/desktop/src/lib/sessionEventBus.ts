@@ -26,6 +26,7 @@ const { canAccessBackend } = useHostAccess()
 interface Subscription {
   handler: Handler
   scope?: Ref<string | null>
+  onHeartbeat?: () => void
 }
 
 const subscriptions = new Set<Subscription>()
@@ -55,12 +56,27 @@ function deliver(event: EventEnvelope) {
   }
 }
 
+/**
+ * Core sends a heartbeat right after the initial durable replay (and every 15s after), so
+ * the first one after a (re)connect tells a subscriber that history has been delivered.
+ */
+function heartbeat() {
+  for (const subscription of [...subscriptions]) {
+    if (subscription.scope && !subscription.scope.value) continue
+    try {
+      subscription.onHeartbeat?.()
+    } catch {
+      // Same isolation as deliver().
+    }
+  }
+}
+
 function open() {
   close()
   if (subscriptions.size === 0 || paused || !canAccessBackend.value) return
   try {
     sourceStorageId = followed.value ? sessionStorageId(followed.value) : selectedStorageId()
-    source = api.connectEvents(followed.value, deliver)
+    source = api.connectEvents(followed.value, deliver, heartbeat)
   } catch {
     // A stream that cannot start is a degraded live view, not a dead panel: the
     // REST reads that seeded it stay valid.
@@ -103,9 +119,9 @@ export function suspendFollowingStorage(storageId: string): () => void {
  */
 export function subscribeToSessionEvents(
   handler: Handler,
-  options: { scope?: Ref<string | null> } = {},
+  options: { scope?: Ref<string | null>; onHeartbeat?: () => void } = {},
 ): () => void {
-  const subscription: Subscription = { handler, scope: options.scope }
+  const subscription: Subscription = { handler, scope: options.scope, onHeartbeat: options.onHeartbeat }
   subscriptions.add(subscription)
   if (!source) open()
   return () => {

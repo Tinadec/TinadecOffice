@@ -3516,7 +3516,12 @@ export const api = {
     onError,
   ),
 
-  connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void): EventSource {
+  /**
+   * `onHeartbeat` receives Core's named `heartbeat` frame. Core writes one right after the
+   * initial durable replay and then every 15s, so the first one marks "history is loaded".
+   * It is not an EventEnvelope and is deliberately not in CORE_EVENT_TYPES.
+   */
+  connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void, onHeartbeat?: () => void): EventSource {
     const params = sessionId ? `?session_id=${encodeURIComponent(selectionIdentity(sessionId).id)}` : '';
     const source = new ScopedEventSource(`${gatewayUrl}/api/v1/events${params}`, sessionStorageId(sessionId));
     const handle = (message: MessageEvent) => {
@@ -3534,6 +3539,7 @@ export const api = {
     for (const eventType of CORE_EVENT_TYPES) {
       source.addEventListener(eventType, handle as EventListener);
     }
+    if (onHeartbeat) source.addEventListener('heartbeat', (() => { try { onHeartbeat() } catch { /* see above */ } }) as EventListener);
     return source as unknown as EventSource;
   },
 
