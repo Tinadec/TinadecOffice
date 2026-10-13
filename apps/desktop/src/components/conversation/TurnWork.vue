@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Spinner } from '@/components/ui/spinner'
 import { useAutoDisclosure } from '@/composables/useAutoDisclosure'
+import { useJustSettled } from '@/composables/useJustSettled'
 import { useElapsed } from '@/composables/useElapsed'
 import { feedLocale, formatDuration } from '@/lib/conversation/format'
 import type { FeedNode } from '@/lib/conversation/grouping'
@@ -33,6 +34,8 @@ const { t, locale } = useI18n()
 const lang = computed(() => feedLocale(locale.value))
 
 const { open } = useAutoDisclosure(toRef(() => props.live))
+// The summary that replaces the status line sweeps once, only when this run finished in view.
+const justSettled = useJustSettled(toRef(() => props.live))
 const elapsed = useElapsed(toRef(() => props.activity.firstAt), toRef(() => (props.live ? null : props.activity.lastAt)))
 
 function isLive(entry: FeedEntry): boolean {
@@ -75,7 +78,7 @@ const summary = computed(() => {
         <span class="shimmer" role="status" data-testid="turn-status">{{ status }}</span>
         <span v-if="elapsed !== null" class="conversation-fold-meta">{{ formatDuration(elapsed, lang) }}</span>
       </template>
-      <span v-else data-testid="turn-summary">{{ summary }}</span>
+      <span v-else :class="{ 'shimmer-once': justSettled }" data-testid="turn-summary">{{ summary }}</span>
       <ChevronRight class="conversation-fold-chevron" aria-hidden="true" />
     </CollapsibleTrigger>
     <CollapsibleContent class="conversation-fold-content">

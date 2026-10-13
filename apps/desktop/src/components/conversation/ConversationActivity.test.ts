@@ -79,6 +79,8 @@ describe('turn work fold', () => {
     await flush()
     expect(wrapper.find('[data-testid="turn-status"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="turn-summary"]').text()).toContain('Worked for')
+    // Finished in view: the summary sweeps once.
+    expect(wrapper.get('[data-testid="turn-summary"]').classes()).toContain('shimmer-once')
     expect(wrapper.find('[data-testid="tool-sentence"]').exists()).toBe(false)
 
     // The reader opens it; a later change of the run no longer folds it.
@@ -93,6 +95,8 @@ describe('turn work fold', () => {
     const fixture = exploreEditShell()
     const wrapper = track(mount(ConversationView, { props: { messages: fixture.messages, runs: fixture.runs, feed: feedOf(fixture.events) }, global, attachTo: document.body }))
     const summary = wrapper.get('[data-testid="turn-summary"]').text().split(' · ')[0]!
+    // History is already still: no sweep.
+    expect(wrapper.get('[data-testid="turn-summary"]').classes()).not.toContain('shimmer-once')
     expect(summary).toMatch(/^Worked for /)
     expect(wrapper.get('[data-testid="assistant-answer"]').text()).toContain(summary)
   })
@@ -138,12 +142,14 @@ describe('ReasoningBlock', () => {
     await wrapper.setProps({ entry: entry({ status: 'completed', endedAt: '2026-10-13T09:00:12Z' }) })
     await flush()
     expect(wrapper.get('[data-slot="collapsible-trigger"]').text()).toContain('Thought for 12s')
+    expect(wrapper.get('[data-testid="reasoning-label"]').classes()).toEqual(['shimmer-once'])
     expect(wrapper.find('.conversation-reasoning-text').exists()).toBe(false)
   })
 
   it('stays open after the reader opens it, even when the thought ends', async () => {
     const wrapper = track(mount(ReasoningBlock, { props: { entry: entry({ status: 'completed', endedAt: '2026-10-13T09:00:03Z' }) }, global }))
     expect(wrapper.find('.conversation-reasoning-text').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="reasoning-label"]').classes()).not.toContain('shimmer-once')
     await wrapper.get('[data-slot="collapsible-trigger"]').trigger('click')
     await flush()
     await wrapper.setProps({ entry: entry({ status: 'completed', endedAt: '2026-10-13T09:00:04Z', text: '**Checking callers**\nLook in graph.ts\nand b.ts' }) })
