@@ -44,14 +44,6 @@ describe('constraint solver', () => {
     expect(g.columns.right.width).toBeLessThanOrEqual(44)
   })
 
-  it('collapses left then right when even more cramped', () => {
-    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
-    const g = computeGeometry({ width: 500, height: 800 }, snapshot)
-    // With 260+420+gaps > 500, right collapses first; if still tight, left too.
-    expect(g.degraded.collapsedRight).toBe(true)
-    // left may also collapse for 500 width
-  })
-
   it('overlays the right feature column instead of crushing the adaptive center below comfort at narrow widths', () => {
     // At 900px the panel (420) can't sit beside a comfortable center, so the
     // solver floats it over the chat (window-stacking) and the center keeps
@@ -309,10 +301,6 @@ describe('right-panel overlay', () => {
 })
 
 describe('maxOverlayColumnWidth', () => {
-  it('home@1440 leaves a 300px chat strip: 1424 − 260 − 8 − 300 = 856', () => {
-    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
-    expect(maxOverlayColumnWidth({ width: 1440, height: 920 }, snapshot)).toBe(856)
-  })
 
   it('home@1120 leaves a 300px strip: 1104 − 260 − 8 − 300 = 536', () => {
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })

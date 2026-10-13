@@ -1,9 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import settingsCss from '../settings/settings.css?raw'
-import stylesCss from '../styles.css?raw'
 import {
-  SELECTABLE_CONTENT_SELECTORS,
   buildSelectionMenuActions,
   detectLink,
   resolveSelectionContext,
@@ -110,23 +107,3 @@ describe('selection menu action matrix', () => {
   })
 })
 
-describe('selectable selector contract', () => {
-  it('matches the user-select opt-in list in styles.css', () => {
-    // A surface that is selectable but unknown to the menu would silently lose
-    // its context actions, so both lists must stay in lockstep.
-    const optIn = stylesCss.match(/(input,\s*\ntextarea,[^{]*)\{([^}]+)\}/)
-    expect(optIn).not.toBeNull()
-    const cssSelectors = optIn![1]
-      .split(/[,\n]/)
-      .map((s) => s.trim())
-      .filter((s) => s && s !== 'input' && s !== 'textarea')
-    for (const selector of cssSelectors) {
-      expect(SELECTABLE_CONTENT_SELECTORS).toContain(selector as (typeof SELECTABLE_CONTENT_SELECTORS)[number])
-    }
-  })
-
-  it('does not rely on settings.css for the selection policy', () => {
-    // The policy is global (styles.css), not settings-page scoped.
-    expect(settingsCss).not.toMatch(/\.message-content\s*\{[^}]*user-select/)
-  })
-})

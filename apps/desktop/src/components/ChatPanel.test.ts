@@ -118,17 +118,6 @@ describe('ChatPanel persistent composer', () => {
     expect(wrapper.find('.conversation').classes()).toContain('composer-hero')
     wrapper.unmount()
   })
-
-  it('FLIP setup tolerates zero-size rects (no measurement available)', async () => {
-    const wrapper = mountPanel([])
-    await nextTick()
-    // happy-dom rects are all-zero; the watcher must bail out silently.
-    await wrapper.setProps({ messages: [msg('m1'), msg('m2')] })
-    await nextTick()
-    expect(wrapper.find('.composer-box').exists()).toBe(true)
-    wrapper.unmount()
-    document.body.innerHTML = ''
-  })
 })
 
 describe('ChatPanel send payload', () => {

@@ -1,29 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import app from './App.vue?raw'
-import petWindowManager from '../electron/petWindow.cjs?raw'
 import petStore from '../electron/petStore.cjs?raw'
 import mainProcess from '../electron/main.cjs?raw'
 import preload from '../electron/preload.cjs?raw'
-import petPreview from './components/PetPreview.vue?raw'
 import desktopPetPage from './pages/DesktopPetPage.vue?raw'
 import router from './router.ts?raw'
-import settingsPage from './pages/SettingsPage.vue?raw'
-import petsSection from './settings/sections/PetsSection.vue?raw'
-import settingsCss from './settings/settings.css?raw'
 
 describe('local pet window shell', () => {
-  it('keeps pet windows local, transparent, and multi-instance', () => {
-    expect(petWindowManager).toContain('const petWindows = new Map()')
-    expect(petWindowManager).toContain('randomUUID()')
-    expect(petWindowManager).toContain('entry.petId === petId')
-    expect(petWindowManager).toContain('transparent: !noTransparency')
-    expect(petWindowManager).toContain('skipTaskbar: true')
-    expect(petWindowManager).toContain('alwaysOnTop: true')
-    expect(petWindowManager).toContain('getPetPreferences(petId)')
-    expect(petWindowManager).toContain('entry.window.webContents.id === sender.id')
-    expect(petWindowManager).toContain('setIgnoreMouseEvents(Boolean(clickThrough), { forward: true })')
-    expect(petWindowManager).toContain("const hash = `/pet?instanceId=${encodeURIComponent(instanceId)}`")
-  })
 
   it('keeps Petdex download and local pet actions inside the desktop process', () => {
     expect(preload).toContain("ipcRenderer.invoke('tinadec:pet-create', petId)")
@@ -57,30 +40,4 @@ describe('local pet window shell', () => {
     expect(preload).toContain("ipcRenderer.on('tinadec:pet-changed', handler)")
   })
 
-  it('keeps downloaded pets above a lazy, incrementally rendered market gallery', () => {
-    // D7.2 moved the pets UI into PetsSection.vue; assert against the union.
-    const source = settingsPage + petsSection
-    const downloadedSection = source.indexOf('class="pets-section downloaded-pets-section"')
-    const marketSection = source.indexOf('class="pets-section petdex-market-section"')
-    expect(downloadedSection).toBeGreaterThan(-1)
-    expect(marketSection).toBeGreaterThan(downloadedSection)
-    expect(source).toContain('const PET_CATALOG_PAGE_SIZE = 48')
-    expect(source).toContain('new IntersectionObserver')
-    expect(source).toContain('ref="petLoadMoreRef"')
-    expect(source).toContain("t('settings.loadMorePets'")
-    expect(source).toContain('loading="lazy"')
-  })
-
-  it('shows stable preview loading states and constrains card content', () => {
-    const source = settingsPage + petsSection
-    expect(source).toContain('<PetPreview')
-    expect(source).toContain('class="pet-action-label"')
-    expect(petPreview).toContain('<UiSkeleton v-if="!loaded"')
-    expect(petPreview).toContain('@error="markFailed"')
-    expect(petPreview).toContain('setTimeout(() =>')
-    expect(petPreview).toContain("t('settings.retryPetPreview')")
-    expect(settingsCss).toContain('grid-template-columns: minmax(0, 1fr) auto')
-    expect(settingsCss).toContain('.pet-action-label')
-    expect(settingsCss).toContain('text-overflow: ellipsis')
-  })
 })

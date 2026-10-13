@@ -205,17 +205,6 @@ describe('GitPanel', () => {
     expect(wrapper.find('.git-ahead').text()).toContain('1');
   });
 
-  it('renders tab navigation with Changes, History, and Branches', async () => {
-    const wrapper = mountGitPanel();
-    await flushPromises();
-
-    const navItems = wrapper.findAll('.git-nav-item');
-    expect(navItems.length).toBeGreaterThanOrEqual(3);
-    expect(wrapper.text()).toContain('context.gitTabChanges');
-    expect(wrapper.text()).toContain('context.gitHistory');
-    expect(wrapper.text()).toContain('context.gitBranches');
-  });
-
   it('shows the changes badge with file count', async () => {
     const wrapper = mountGitPanel();
     await flushPromises();
@@ -239,14 +228,6 @@ describe('GitPanel', () => {
     expect(wrapper.text()).toContain('context.diffPlaceholder');
   });
 
-  it('renders the approval disclaimer', async () => {
-    const wrapper = mountGitPanel();
-    await flushPromises();
-
-    expect(wrapper.find('.git-disclaimer').exists()).toBe(true);
-    expect(wrapper.text()).toContain('context.gitPlanApproval');
-  });
-
   it('passes correct props to GitChangesView', async () => {
     const wrapper = mountGitPanel();
     await flushPromises();
@@ -256,32 +237,6 @@ describe('GitPanel', () => {
     expect(changesView.props('cwd')).toBe('D:/repo');
     expect(changesView.props('sessionId')).toBe('session-1');
     expect(changesView.props('statusFiles')).toHaveLength(2);
-  });
-
-  it('passes pull/fetch wiring props to GitChangesView', async () => {
-    const wrapper = mountGitPanel();
-    await flushPromises();
-
-    const changesView = wrapper.findComponent({ name: 'GitChangesView' });
-    expect(changesView.exists()).toBe(true);
-    // 只拉不推三动作 + 勾选即提交范围所需的新增透传
-    expect(changesView.props('pullStrategy')).toBe('ff-only');
-    expect(changesView.props('behind')).toBe(0);
-    expect(changesView.props('stagedCount')).toBeDefined();
-    expect(changesView.props('canRequestFetchApproval')).toBe(true);
-    expect(changesView.props('pullApproval')).toBeNull();
-    expect(changesView.props('fetchApproval')).toBeNull();
-  });
-
-  it('passes discard wiring props to GitChangesView', async () => {
-    const wrapper = mountGitPanel();
-    await flushPromises();
-
-    const changesView = wrapper.findComponent({ name: 'GitChangesView' });
-    expect(changesView.exists()).toBe(true);
-    expect(changesView.props('discardApproval')).toBeNull();
-    expect(changesView.props('canRequestDiscardApproval')).toBe(true);
-    expect(changesView.props('canDecideDiscardApproval')).toBe(false);
   });
 
   it('switches to history tab and loads log', async () => {

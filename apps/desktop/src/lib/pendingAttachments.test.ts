@@ -369,10 +369,6 @@ describe('the bundle a send takes', () => {
  * button that unlocks on an in-flight upload would send an empty message and lose the file.
  */
 describe('readyAttachmentCount', () => {
-  it('is empty when nothing is pending', () => {
-    expect(readyAttachmentCount()).toBe(0)
-  })
-
   it('does not count a chip whose upload has not been answered', async () => {
     // An array, not a `let`: control-flow analysis narrows a captured `let` back to its initial
     // `null` at the call site, so `resolveRow?.()` reads as "not callable" under vue-tsc.

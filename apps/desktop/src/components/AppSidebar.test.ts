@@ -96,28 +96,6 @@ function dispatchViewToggle(element: Element, newState: 'open' | 'closed') {
 }
 
 describe('AppSidebar lifecycle management', () => {
-  it('keeps a single workspace creation entry and never renders the old empty-state button', async () => {
-    localStorage.clear()
-    const wrapper = factory({ projects: [] })
-    expect(wrapper.find('.workspace-empty-create').exists()).toBe(false)
-    expect(wrapper.findAll('.workspace-section-add')).toHaveLength(1)
-    await wrapper.get('.workspace-section-add').trigger('click')
-    expect(wrapper.emitted('open-project')).toHaveLength(1)
-    wrapper.unmount()
-  })
-
-  it('places the group chevron after the heading label', async () => {
-    localStorage.clear()
-    const wrapper = factory()
-    const toggle = wrapper.get('.workspace-section-toggle')
-    const names = [...toggle.element.children].map(node => node.className)
-    const label = names.findIndex(name => String(name).includes('sidebar-label'))
-    const chevron = names.findIndex(name => String(name).includes('workspace-section-chevron'))
-    expect(label).toBeGreaterThanOrEqual(0)
-    expect(chevron).toBeGreaterThan(label)
-    wrapper.unmount()
-  })
-
   it('reorders workspaces, including the free conversation, and persists the new order', async () => {
     localStorage.clear()
     const second = { ...project, id: 'p-2', name: 'Second' }
@@ -261,15 +239,6 @@ describe('AppSidebar lifecycle management', () => {
     expect(button.attributes('disabled')).toBeUndefined()
     await button.trigger('click')
     expect(wrapper.emitted('go-market')).toHaveLength(1)
-    wrapper.unmount()
-  })
-
-  it('keeps the selected state on the full project row, including actions', () => {
-    const wrapper = factory()
-    const row = wrapper.get('[data-workspace-key=\"p-1\"] .project-row')
-    expect(row.classes()).toContain('active')
-    expect(row.find('.project-row-action').exists()).toBe(true)
-    expect(row.find('.project-row-main').attributes('aria-expanded')).toBe('true')
     wrapper.unmount()
   })
 

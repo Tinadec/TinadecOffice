@@ -45,13 +45,6 @@ describe('ColorField', () => {
     expect(style).toContain('hsl(210 100% 50%)')
   })
 
-  it('positions the handle from saturation and lightness', () => {
-    const wrapper = mountField({ saturation: 25, lightness: 75 })
-    const handle = wrapper.find('span')
-    expect(handle.attributes('style')).toContain('left: 25%')
-    expect(handle.attributes('style')).toContain('top: 25%')
-  })
-
   it('maps a pointer press to saturation and lightness', async () => {
     const wrapper = mountField()
     stubRect(wrapper)

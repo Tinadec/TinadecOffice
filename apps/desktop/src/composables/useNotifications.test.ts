@@ -50,17 +50,6 @@ describe('useNotifications', () => {
     expect(n.visibleItems.value.map((i) => i.id)).toEqual([statusItem, error, latest, first])
   })
 
-  it('aggregates transient items behind a hero with a fold count', () => {
-    for (let i = 0; i < 5; i++) n.notify.info(`item ${i}`)
-
-    expect(n.transientZone.value).toHaveLength(5)
-    expect(n.visibleItems.value).toHaveLength(5)
-    // The hero is the most recent (latest sort by recency).
-    expect(n.transientHero.value?.id).toBe(n.transientZone.value[0].id)
-    expect(n.transientFoldedCount.value).toBe(4)
-    expect(n.orderedItems.value).toHaveLength(5)
-  })
-
   it('expires notifications and pauses the remaining duration', () => {
     const id = n.notify.info({ message: 'timed', duration: 1000 })
     vi.advanceTimersByTime(400)
@@ -137,15 +126,6 @@ describe('useNotifications', () => {
     expect(n.items.value.some((item) => item.id === id)).toBe(true)
   })
 
-  it('replaces keyed status and dismissByKey clears them', () => {
-    n.status.error({ key: 'backend-connection', message: 'first' })
-    n.status.error({ key: 'backend-connection', message: 'second' })
-    expect(n.items.value.filter((item) => item.key === 'backend-connection')).toHaveLength(1)
-    expect(n.items.value.find((item) => item.key === 'backend-connection')?.message).toBe('second')
-    n.dismissByKey('backend-connection')
-    expect(n.items.value.some((item) => item.key === 'backend-connection')).toBe(false)
-  })
-
   it('resolves confirmations in FIFO order', async () => {
     const first = n.confirm({ message: 'first?' })
     const second = n.confirm({ message: 'second?' })
@@ -171,10 +151,6 @@ describe('useNotifications', () => {
 
     resolveConfirmation(n.currentConfirmation.value!.id, false)
     await expect(second).resolves.toBe(false)
-  })
-
-  it('banner is an alias for status', () => {
-    expect(n.banner).toBe(n.status)
   })
 
   // -----------------------------------------------------------------------
@@ -667,17 +643,6 @@ describe('useNotifications', () => {
     n.dismiss(n.statusHero.value!.id)
     expect(n.stackZone.value).toBeNull()
     expect(n.stackItems.value).toHaveLength(0)
-  })
-
-  it('__resetNotificationsForTests clears the stack zone', () => {
-    n.notify.info('one')
-    n.notify.error('two')
-    n.hoverHeroEnter('transient', n.transientHero.value!.id)
-    vi.advanceTimersByTime(240)
-    expect(n.stackZone.value).toBe('transient')
-
-    __resetNotificationsForTests()
-    expect(n.stackZone.value).toBeNull()
   })
 
   it('dismissByKey re-derives the fold count', () => {

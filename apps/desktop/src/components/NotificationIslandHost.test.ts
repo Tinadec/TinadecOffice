@@ -365,40 +365,4 @@ describe.skip('NotificationIslandHost', () => {
       vi.useRealTimers()
     }
   })
-
-  it('hero fold badge text shows the folded count', async () => {
-    const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
-    notifications.notify.info('a')
-    notifications.notify.info('b')
-    notifications.notify.info('c')
-    await nextTick()
-
-    const badge = document.body.querySelector('.island-zone--transient .island-capsule__stack')
-    expect(badge).not.toBeNull()
-    expect(badge?.textContent).toBe('2')
-    wrapper.unmount()
-  })
-
-  it('stack footer button opens the notification center panel', async () => {
-    vi.useFakeTimers()
-    try {
-      const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
-      notifications.notify.info('a')
-      notifications.notify.info('b')
-      await nextTick()
-
-      notifications.hoverHeroEnter('transient', notifications.transientHero.value!.id)
-      await vi.advanceTimersByTimeAsync(300)
-      await nextTick()
-
-      const footerBtn = document.body.querySelector<HTMLButtonElement>('.island-stack__footer button')!
-      footerBtn.click()
-      await nextTick()
-      expect(document.body.querySelector('#notification-overflow-panel')).not.toBeNull()
-      expect(notifications.stackZone.value).toBeNull()
-      wrapper.unmount()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
 })

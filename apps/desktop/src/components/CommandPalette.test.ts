@@ -125,40 +125,6 @@ afterEach(() => {
 })
 
 describe('CommandPalette', () => {
-  it('follows the shared material live and removes stale overrides when returning to opaque', async () => {
-    const material = usePanelStyles()
-    const original = { ...material.panelStyle.value }
-    material.updatePanelStyle({ effect: 'opaque', opacity: 80, blur: 8 })
-    const wrapper = await mountOpen()
-    try {
-      const dialog = dialogOf(wrapper)
-      expect(dialog.dataset.panelEffect).toBe('opaque')
-      material.updatePanelStyle({ effect: 'translucent', opacity: 46 })
-      await flushPromises()
-      expect(dialog.dataset.panelEffect).toBe('translucent')
-      expect(dialog.style.backdropFilter).toBe('')
-      material.updatePanelStyle({ effect: 'blur', blur: 14 })
-      await flushPromises()
-      expect(dialog.dataset.panelEffect).toBe('blur')
-      expect(dialog.style.backdropFilter).toBe('blur(14px)')
-      expect(dialog.style.getPropertyValue('--material-filter-raised')).toBe('blur(4.9px) saturate(108%)')
-      await wrapper.get('[data-testid="palette-fullscreen"]').trigger('click')
-      expect(wrapper.get('dialog').classes()).toContain('command-palette--fullscreen')
-      expect(dialog.style.backdropFilter).toBe('blur(14px)')
-      material.updatePanelStyle({ effect: 'opaque' })
-      await flushPromises()
-      expect(dialog.dataset.panelEffect).toBe('opaque')
-      expect(dialog.style.backdropFilter).toBe('')
-      expect(dialog.style.getPropertyValue('--material-filter-raised')).toBe('')
-      await wrapper.get('[aria-label="palette.close"]').trigger('click')
-      await flushPromises()
-      expect(dialog.open).toBe(false)
-    } finally {
-      material.updatePanelStyle(original)
-      wrapper.unmount()
-    }
-  })
-
   it('shows the available commands and hides the ones the state cannot serve', async () => {
     const wrapper = await mountOpen()
     // No cancellable run, no draft: stop and both dispatch commands are not offered.

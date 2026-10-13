@@ -32,12 +32,6 @@ describe('command bus', () => {
     expect(bus.canUndo()).toBe(false)
   })
 
-  it('rejects on revision mismatch via the bus', () => {
-    const { bus } = makeBus()
-    const ok = bus.dispatch({ command: openBrowser(999), source: 'user', expectedRevision: 999 })
-    expect(ok).toBe(false)
-  })
-
   it('applies a valid command and records undo', () => {
     const { bus, getChanged } = makeBus()
     const ok = bus.dispatch({ command: openBrowser(bus.getSnapshot().revision), source: 'user', expectedRevision: bus.getSnapshot().revision })

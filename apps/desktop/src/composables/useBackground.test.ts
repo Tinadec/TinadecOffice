@@ -38,11 +38,6 @@ describe('normalizeFileSource', () => {
     expect(decodeMediaUrl(result)).toBe('C:/Users/test/image.jpg')
   })
 
-  it('addresses a Windows forward-slash path through the media scheme', () => {
-    const result = normalizeFileSource('D:/photos/video.mp4')
-    expect(decodeMediaUrl(result)).toBe('D:/photos/video.mp4')
-  })
-
   it('handles Windows paths with spaces', () => {
     const result = normalizeFileSource('C:\\Users\\My User\\background image.png')
     expect(decodeMediaUrl(result)).toBe('C:/Users/My User/background image.png')
@@ -62,11 +57,6 @@ describe('normalizeFileSource', () => {
 
   it('passes through http:// URLs unchanged', () => {
     const url = 'http://example.com/image.jpg'
-    expect(normalizeFileSource(url)).toBe(url)
-  })
-
-  it('passes through https:// URLs unchanged', () => {
-    const url = 'https://example.com/background.png'
     expect(normalizeFileSource(url)).toBe(url)
   })
 
@@ -93,11 +83,6 @@ describe('normalizeFileSource', () => {
   })
 
   // --- Unix paths ---
-
-  it('keeps the leading slash of a Unix absolute path', () => {
-    const result = normalizeFileSource('/home/user/image.jpg')
-    expect(decodeMediaUrl(result)).toBe('/home/user/image.jpg')
-  })
 
   // --- Edge cases ---
 

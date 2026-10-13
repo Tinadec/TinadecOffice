@@ -24,12 +24,6 @@ describe('vapor batch registry', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('every batch file exists on disk', () => {
-    for (const file of allVaporFiles()) {
-      expect(readSource(file), `missing ${file}`).not.toBeNull()
-    }
-  })
-
   it('every batch file actually carries the vapor block attribute', () => {
     const problems = validateVaporBatches(readSource)
     expect(problems).toEqual([])

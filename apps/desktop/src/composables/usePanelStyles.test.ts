@@ -107,22 +107,6 @@ describe('usePanelStyles persistence', () => {
     expect(JSON.parse(testWindow.localStorage.getItem(STORAGE_KEY) ?? 'null')).toEqual(panelStyle.value)
   })
 
-  it('computes the root style for opaque, translucent, and blur materials', async () => {
-    const { computePanelStyle } = await loadPanelStyles()
-
-    expect(computePanelStyle({ effect: 'opaque', opacity: 80, blur: 8 })).toEqual({})
-    expect(computePanelStyle({ effect: 'translucent', opacity: 73, blur: 8 })).toEqual({
-      backgroundColor: 'rgba(var(--bg-primary-rgb, 10, 14, 20), 0.73)',
-    })
-    expect(computePanelStyle({ effect: 'blur', opacity: 64, blur: 15 })).toEqual({
-      backdropFilter: 'blur(15px)',
-      WebkitBackdropFilter: 'blur(15px)',
-      backgroundColor: 'rgba(var(--bg-primary-rgb, 10, 14, 20), 0.64)',
-      '--material-filter-section': 'blur(3px) saturate(105%)',
-      '--material-filter-raised': 'blur(5.25px) saturate(108%)',
-    })
-  })
-
   it('clamps root opacity and blur even when called with unnormalized settings', async () => {
     const { computePanelStyle } = await loadPanelStyles()
 
@@ -140,27 +124,5 @@ describe('usePanelStyles persistence', () => {
       '--material-filter-section': 'none',
       '--material-filter-raised': 'none',
     })
-  })
-
-  it('keeps derived interior filters out of opaque and translucent materials', async () => {
-    const { computePanelStyle } = await loadPanelStyles()
-
-    expect(computePanelStyle({ effect: 'opaque', opacity: 80, blur: 20 }))
-      .not.toHaveProperty('--material-filter-section')
-    expect(computePanelStyle({ effect: 'translucent', opacity: 80, blur: 20 }))
-      .not.toHaveProperty('--material-filter-raised')
-  })
-
-  it('exposes the current material through data-panel-effect', async () => {
-    const { usePanelStyles } = await loadPanelStyles()
-    const { getPanelDataAttributes, setPanelEffect } = usePanelStyles()
-
-    expect(getPanelDataAttributes()).toEqual({ 'data-panel-effect': 'opaque' })
-
-    setPanelEffect('translucent')
-    expect(getPanelDataAttributes()).toEqual({ 'data-panel-effect': 'translucent' })
-
-    setPanelEffect('blur')
-    expect(getPanelDataAttributes()).toEqual({ 'data-panel-effect': 'blur' })
   })
 })

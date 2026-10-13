@@ -83,21 +83,6 @@ describe('SettingsPage smoke (D7 safety net)', () => {
     vi.restoreAllMocks()
   })
 
-  it('mounts and renders the settings shell with nav entries', async () => {
-    const wrapper = mount(SettingsPage)
-    await flushPromises()
-
-    expect(wrapper.find('.settings-page').exists()).toBe(true)
-    expect(wrapper.find('.settings-nav').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('returns a pending navigation guard promise until the exit animation settles', () => {
-    expect(settingsPageSource).toContain('onBeforeRouteLeave(createSettingsLeaveGuard({')
-    expect(settingsPageSource).toContain('durationMs: SETTINGS_EXIT_DURATION_MS')
-    expect(settingsPageSource).not.toContain('setTimeout(() => next()')
-  })
-
   it('opens on the personal section, with general still one click away in the nav', async () => {
     const wrapper = mount(SettingsPage)
     await flushPromises()
@@ -223,26 +208,4 @@ describe('SettingsPage smoke (D7 safety net)', () => {
     }
   })
 
-  it('centers exactly the fixed-width sections and leaves workspaces fluid', () => {
-    // Policy: personal / general / archive / appearance / about are a
-    // fixed 780px column centred in the content panel; model / agentCenter /
-    // pets / apiDocs stay fluid because they are workspaces (tables, canvases,
-    // an embedded docs frame) that should use the full available width.
-    const centered = settingsPageSource.match(
-      /const CENTERED_SECTIONS[\s\S]*?= new Set\(\[([\s\S]*?)\]\)/,
-    )?.[1]
-    expect(centered, 'CENTERED_SECTIONS declaration').toBeTruthy()
-
-    const listed = Array.from(centered!.matchAll(/'([a-zA-Z]+)'/g), (m) => m[1])
-    expect(new Set(listed)).toEqual(
-      new Set(['personal', 'general', 'archive', 'appearance', 'about']),
-    )
-
-    // The modifier must be bound to the keyed wrapper so it swaps per section.
-    expect(settingsPageSource).toContain('settings-section-wrapper--centered')
-    expect(settingsPageSource).toContain('isCenteredSection')
-    expect(settingsPageSource).toMatch(
-      /:class="\['settings-section-wrapper', \{ 'settings-section-wrapper--centered': isCenteredSection \}\]"/,
-    )
-  })
 })

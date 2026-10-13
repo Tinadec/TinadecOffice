@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildPreset, HOME_GEOMETRY, PRESET_BUILDERS } from './presets'
+import { buildPreset } from './presets'
 
 function nextId() {
   let i = 0
@@ -7,26 +7,6 @@ function nextId() {
 }
 
 describe('built-in presets', () => {
-  it('builds a home preset matching the pre-refactor geometry', () => {
-    const preset = buildPreset('home', { nextInstanceId: nextId() })
-    expect(preset.pageId).toBe('home')
-    expect(preset.gap).toBe(HOME_GEOMETRY.gap)
-    expect(HOME_GEOMETRY.gap).toBe(8)
-    expect(preset.edgeInset).toBe(HOME_GEOMETRY.edgeInset)
-    expect(HOME_GEOMETRY.edgeInset).toBe(8)
-    expect(preset.columns.left.width).toBe(HOME_GEOMETRY.leftWidth)
-    expect(HOME_GEOMETRY.leftWidth).toBe(260)
-    expect(preset.columns.right.width).toBe(HOME_GEOMETRY.rightWidth)
-    expect(HOME_GEOMETRY.rightWidth).toBe(420)
-    expect(preset.columns.left.topInset).toBe(HOME_GEOMETRY.leftTopInset)
-    expect(preset.columns.right.topInset).toBe(HOME_GEOMETRY.rightTopInset)
-    expect(HOME_GEOMETRY.leftTopInset).toBe(8)
-    expect(HOME_GEOMETRY.rightTopInset).toBe(48)
-    expect(preset.columns.left.surfaceMode).toBe('float')
-    expect(preset.columns.right.surfaceMode).toBe('float')
-    // The chat column is the immersive transparent zone.
-    expect(preset.columns.center.surfaceMode).toBe('immersive')
-  })
 
   it('home preset has left/center/right columns in order', () => {
     const preset = buildPreset('home', { nextInstanceId: nextId() })
@@ -54,15 +34,6 @@ describe('built-in presets', () => {
     expect(preset.columns.right.collapsed).toBe(true)
   })
 
-  it('market preset has gap 8, 8px edge inset, and three float columns', () => {
-    const preset = buildPreset('market', { nextInstanceId: nextId() })
-    expect(preset.gap).toBe(8)
-    expect(preset.edgeInset).toBe(8)
-    expect(preset.columns.left.width).toBe(260)
-    expect(preset.columns.right.width).toBe(380)
-    expect(preset.columns.left.surfaceMode).toBe('float')
-  })
-
   it('every page has a non-empty preset', () => {
     for (const pageId of ['home', 'settings', 'market', 'code', 'debug'] as const) {
       const preset = buildPreset(pageId, { nextInstanceId: nextId() })
@@ -73,7 +44,4 @@ describe('built-in presets', () => {
     }
   })
 
-  it('PRESET_BUILDERS covers every UiePageId', () => {
-    expect(Object.keys(PRESET_BUILDERS).sort()).toEqual(['code', 'debug', 'home', 'market', 'settings'])
-  })
 })

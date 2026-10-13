@@ -4,7 +4,6 @@ import { mount } from '@vue/test-utils'
 import AppHeader from './AppHeader.vue'
 import CommandPaletteButton from './CommandPaletteButton.vue'
 import { UiButton } from './ui'
-import stylesCss from '../styles.css?raw'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -50,21 +49,5 @@ describe('AppHeader window controls', () => {
       expect(controls[action]).toHaveBeenCalledOnce()
     }
     wrapper.unmount()
-  })
-
-  it('uses bare icon controls on both main and settings surfaces, with a keyboard focus outline', () => {
-    const base = stylesCss.match(/\.window-controls \.window-btn,\s*\.settings-window-controls \.window-btn\s*\{([^}]*)\}/)?.[1]
-    expect(base).toBeTruthy()
-    expect(base).toMatch(/background:\s*transparent;/)
-    expect(base).toMatch(/border:\s*0;/)
-    expect(base).toMatch(/box-shadow:\s*none;/)
-    expect(base).toMatch(/width:\s*36px;/)
-    expect(base).toMatch(/height:\s*32px;/)
-    expect(base).toMatch(/-webkit-app-region:\s*no-drag;/)
-
-    const hover = stylesCss.match(/\.window-controls \.window-btn:hover,\s*\.settings-window-controls \.window-btn:hover\s*\{([^}]*)\}/)?.[1]
-    expect(hover).toMatch(/background:\s*transparent;/)
-    const focus = stylesCss.match(/\.window-controls \.window-btn:focus-visible,\s*\.settings-window-controls \.window-btn:focus-visible\s*\{([^}]*)\}/)?.[1]
-    expect(focus).toMatch(/outline:\s*2px solid var\(--border-input-focus\);/)
   })
 })

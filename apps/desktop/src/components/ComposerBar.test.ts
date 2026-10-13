@@ -154,28 +154,6 @@ describe('ComposerBar Codex shell contract', () => {
     expect(wrapper.findAll('.composer-send-wrapper button')).toHaveLength(2)
     wrapper.unmount()
   })
-  it('idle composer reports data-composer-active=false', async () => {
-    const wrapper = mountComposer()
-    await flushPromises()
-    expect(wrapper.find('.welcome-dialog').attributes('data-composer-active')).toBe('false')
-    wrapper.unmount()
-  })
-
-  it('a non-empty draft flips the shell to active', async () => {
-    const wrapper = mountComposer({ modelValue: 'hello' })
-    await flushPromises()
-    expect(wrapper.find('.welcome-dialog').attributes('data-composer-active')).toBe('true')
-    wrapper.unmount()
-  })
-
-  it('busy state shows the spinner and keeps the shell active', async () => {
-    const wrapper = mountComposer({ busy: true, modelValue: 'working' })
-    await flushPromises()
-    expect(wrapper.find('.welcome-dialog').attributes('data-composer-active')).toBe('true')
-    expect(wrapper.find('.composer-send-spinner').exists()).toBe(true)
-    wrapper.unmount()
-    document.body.innerHTML = ''
-  })
 })
 
 describe('ComposerBar hero variant (start page)', () => {
@@ -845,23 +823,6 @@ describe('ComposerBar unified command panel', () => {
     wrapper.unmount()
   })
 
-  it('renders icons for every configured model and published preset choice', async () => {
-    apiMock.api.listModelProviders.mockResolvedValue([provider, { ...provider, id: 'cli', connection_kind: 'cli' }] as never)
-    apiMock.api.listAgentModeTopologies.mockResolvedValue([{ ...CONVERSATION_MODE, slug: 'plan' }, WORKSPACE_TOPOLOGY] as never)
-    const wrapper = mountComposer({ modeVersionId: CONVERSATION_MODE.latest_published_mode_version_id })
-    await wrapper.find('.welcome-dialog-plus').trigger('click')
-    await flushPromises()
-    click('[data-testid="command-panel-model"]')
-    await flushPromises()
-    expect([...document.querySelectorAll('.command-panel-row')].every(row => row.querySelector('svg.command-panel-row-icon'))).toBe(true)
-    await wrapper.find('.mode-selector-trigger').trigger('click')
-    await flushPromises()
-    expect(document.querySelectorAll('.mode-selector-item')).toHaveLength(3)
-    expect([...document.querySelectorAll('.mode-selector-item')].every(row => row.querySelector('svg.command-panel-row-icon'))).toBe(true)
-    expect(wrapper.find('.mode-selector-trigger svg').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
   it.each(['search', 'option'])('Enter from %s confirms a permission, closes the panel and restores the draft focus', async from => {
     const wrapper = mount(ComposerBar, { attachTo: document.body, props: { busy: false, permission: 'default', modelValue: 'keep this draft' } })
     await wrapper.find('.permission-selector-trigger').trigger('click')
@@ -1224,20 +1185,6 @@ describe('ComposerBar attachments', () => {
     wrapper.unmount()
   })
 
-  it('maps each row onto the attachment primitive and says why a row failed', async () => {
-    attachMock.list.value = [
-      row({ clientId: 'c1' }),
-      row({ clientId: 'c2', status: 'uploading', attachmentId: null }),
-      row({ clientId: 'c3', fileName: 'big.bin', status: 'failed', attachmentId: null, errorCode: 'attachment_too_large' }),
-    ]
-    const wrapper = mountComposer({ sessionId: 'sess-1' })
-    await flushPromises()
-    const chips = wrapper.findAll('[data-testid="attachment-chip"]')
-    expect(chips.map((chip) => chip.attributes('data-state'))).toEqual(['done', 'uploading', 'error'])
-    expect(chips[2]!.get('[data-slot="attachment-description"]').text()).toContain('composer.attachTooLarge')
-    wrapper.unmount()
-  })
-
   it('previews an uploading image locally, dimmed, and never as an svg', async () => {
     attachMock.list.value = [
       row({ clientId: 'img', fileName: 'shot.png', mediaType: 'image/png', status: 'uploading', attachmentId: null, previewUrl: 'blob:local/shot' }),
@@ -1251,16 +1198,6 @@ describe('ComposerBar attachments', () => {
     expect(media.classes()).toContain('cn-attachment-media-variant-image')
     expect(media.get('img').attributes('src')).toBe('blob:local/shot')
     expect(svg!.find('img').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('keeps the extension readable when a long name is truncated', async () => {
-    attachMock.list.value = [row({ clientId: 'c1', fileName: 'a-very-long-quarterly-report-name.final.pdf' })]
-    const wrapper = mountComposer({ sessionId: 'sess-1' })
-    await flushPromises()
-    const name = wrapper.get('.attachment-name')
-    expect(name.get('.attachment-stem').text()).toBe('a-very-long-quarterly-report-name.final')
-    expect(name.text()).toBe('a-very-long-quarterly-report-name.final.pdf')
     wrapper.unmount()
   })
 

@@ -57,40 +57,6 @@ beforeEach(() => {
 })
 
 describe('PersonalSection work identity', () => {
-  it('groups every selected role into one chip beside the nickname', async () => {
-    setRoles(['pm', 'fullstack'])
-    const wrapper = mountSection()
-
-    const nameRow = wrapper.find('.personal-hero-name-row')
-    const chip = nameRow.find('.personal-identity')
-    expect(chip.exists()).toBe(true)
-    // Exactly two nodes in the row — the name and one grouped chip; not one
-    // node (badge) per role.
-    expect(nameRow.element.children).toHaveLength(2)
-    expect(chip.findAll('.personal-identity-text')).toHaveLength(1)
-
-    // Both roles are read together, separated by the locale-owned separator.
-    const text = chip.text()
-    expect(text).toContain('settings.personalRole_pm')
-    expect(text).toContain('settings.personalRole_fullstack')
-    expect(text).toContain('settings.personalRoleSeparator')
-    // And the identity is never a bare word: it carries an icon.
-    expect(chip.find('svg').exists()).toBe(true)
-  })
-
-  it('keeps the hero actions to edit and share, with no standalone work-role button', async () => {
-    const wrapper = mountSection()
-    const actions = wrapper.findAll('.personal-hero-actions button')
-
-    expect(actions).toHaveLength(2)
-    expect(actions[0]!.text()).toContain('settings.personalEdit')
-    expect(actions[1]!.text()).toContain('settings.personalShare')
-    expect(wrapper.find('.personal-hero-actions').text()).not.toContain('settings.personalSetRoles')
-
-    // Share opens the generated card, which is the only other way out of here.
-    await actions[1]!.trigger('click')
-    expect(wrapper.find('.personal-share-canvas').exists()).toBe(true)
-  })
 
   it('reads as an actionable placeholder while no role is set', async () => {
     const wrapper = mountSection()

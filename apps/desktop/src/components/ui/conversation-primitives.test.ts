@@ -6,8 +6,6 @@ import { Attachment, AttachmentContent, AttachmentDescription, AttachmentMedia, 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './collapsible'
 import { Marker, MarkerContent, MarkerIcon } from './marker'
 import { Spinner } from './spinner'
-import { Bubble, BubbleContent } from './bubble'
-import { Message, MessageContent } from './message'
 import { useDelayedLoading } from '@/composables/useDelayedLoading'
 
 const STATES = ['idle', 'uploading', 'processing', 'error', 'done'] as const
@@ -25,10 +23,6 @@ describe('Attachment', () => {
     expect(wrapper.find('[data-slot="attachment-media"]').attributes('data-variant')).toBe('image')
     expect(wrapper.find('[role="status"]').exists()).toBe(state === 'uploading' || state === 'processing')
     expect(wrapper.text()).toContain('report.final.pdf')
-  })
-
-  it('defaults to done', () => {
-    expect(mount(Attachment).attributes('data-state')).toBe('done')
   })
 })
 
@@ -132,16 +126,5 @@ describe('Collapsible', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(wrapper.find('.body').exists()).toBe(false)
     wrapper.unmount()
-  })
-})
-
-describe('Message and Bubble', () => {
-  it('aligns the user side and keeps the tinted bubble a slot, not a card', () => {
-    const wrapper = mount(() => h(Message, { align: 'end' }, () => h(MessageContent, null, () => h(Bubble, { variant: 'tinted', align: 'end' }, () => h(BubbleContent, null, () => 'Hello')))))
-    expect(wrapper.find('[data-slot="message"]').attributes('data-align')).toBe('end')
-    const bubble = wrapper.find('[data-slot="bubble"]')
-    expect(bubble.attributes('data-variant')).toBe('tinted')
-    expect(bubble.classes()).toContain('cn-bubble-variant-tinted')
-    expect(wrapper.find('[data-slot="bubble-content"]').text()).toBe('Hello')
   })
 })

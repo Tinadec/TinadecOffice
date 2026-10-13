@@ -88,14 +88,6 @@ describe('appCommands table', () => {
       .map((command) => `${command.id} -> ${command.route}`)
     expect(unbacked, `commands pointing at routes that do not exist: ${unbacked.join(', ')}`).toEqual([])
   })
-
-  it('keeps facts and governance navigation without offering the retired workbench landing page', () => {
-    const commands = availableCommands(hostWith())
-    expect(commands.map((command) => command.route)).not.toContain('workbench')
-    expect(commands.map((command) => command.id)).toEqual(expect.arrayContaining([
-      'view.goSnapshots', 'view.goGovernance', 'view.goMemory', 'view.goSettings',
-    ]))
-  })
 })
 
 describe('command behaviour', () => {

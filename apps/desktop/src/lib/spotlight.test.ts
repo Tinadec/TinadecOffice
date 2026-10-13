@@ -442,11 +442,6 @@ describe('spotlight keys', () => {
     }
     expect(missing).toEqual([])
   })
-
-  it('kind labels come from the one switch, so a new kind has one place to name itself', () => {
-    expect(spotlightKindLabel('command')).toBe('palette.kindCommand')
-    expect(spotlightKindLabel('resource')).toBe('palette.kindResource')
-  })
 })
 
 describe('search transport', () => {

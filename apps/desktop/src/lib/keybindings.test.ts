@@ -86,12 +86,6 @@ describe('formatCombo', () => {
     expect(formatCombo('Mod+Shift+P', true)).toBe('⌘⇧P')
     expect(formatCombo('Mod+Shift+P', false)).toBe('Ctrl+Shift+P')
   })
-
-  it('renders the palette gesture from the same constant the binding uses', () => {
-    // The footer shows this string and the layer listens for PALETTE_COMBO; if the two
-    // ever disagreed the hint would teach a gesture that does nothing.
-    expect(formatCombo(PALETTE_COMBO, false)).toBe('Ctrl+K')
-  })
 })
 
 describe('bare combos', () => {

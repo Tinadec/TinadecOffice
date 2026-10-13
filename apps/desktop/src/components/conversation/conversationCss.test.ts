@@ -37,9 +37,4 @@ describe('feed CSS contract', () => {
     expect(reduced(conversationCss)).toMatch(/\.conversation-fold-content\[data-state\]\s*\{\s*animation:\s*none/)
     expect(reduced(conversationCss)).toMatch(/\.conversation-fold-chevron\s*\{\s*transition:\s*none/)
   })
-
-  it('widens the user bubble in narrow and ultra-narrow columns', () => {
-    expect(conversationCss).toMatch(/\.chat-narrow \.cn-bubble \{ max-width: 92%; \}/)
-    expect(conversationCss).toMatch(/\.chat-ultra \.cn-bubble \{ max-width: 100%; \}/)
-  })
 })

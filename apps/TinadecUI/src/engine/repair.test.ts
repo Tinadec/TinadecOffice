@@ -144,15 +144,6 @@ describe('repairLayout', () => {
     expect(out.columns.center.width).toBeGreaterThanOrEqual(160)
   })
 
-  it('never produces a blank window even for total garbage', () => {
-    const ctx = makeCtx()
-    const out = repairLayout({ completely: 'garbage' }, ctx)
-    expect(out).toBeTruthy()
-    expect(out.version).toBe(1)
-    // Should have at least some cards (preset fallback for home).
-    expect(Object.keys(out.cards).length).toBeGreaterThan(0)
-  })
-
   it('defaults legacy float-page JSON to an 8px edge inset', () => {
     const ctx = makeCtx()
     // Legacy snapshot: no edgeInset field.

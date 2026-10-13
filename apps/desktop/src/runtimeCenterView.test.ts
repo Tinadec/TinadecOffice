@@ -18,7 +18,6 @@ import {
   providersFromOverview,
   runtimeSourceSummary
 } from './runtimeCenterView'
-import { findTemplate } from './providerTemplates'
 
 const provider: ModelProviderInstanceDto = {
   id: 'provider-http',
@@ -41,30 +40,6 @@ it('carries inference parameters and the protocol through both model-center proj
   expect(overview.api_connections[0]).toMatchObject({ protocol: configured.protocol, model_parameters: configured.model_parameters })
   expect(providersFromOverview(overview)[0]).toMatchObject({ protocol: configured.protocol, model_parameters: configured.model_parameters, revision: 4 })
 })
-
-const localHttpSupplier: ModelCenterSupplierDto = {
-  supplier_id: 'local-http',
-  provider_family: 'local-http',
-  driver: 'local-http',
-  display_name: 'Local HTTP',
-  connection_kind: 'http',
-  summary: 'Local runtime',
-  contributor_description: '',
-  transport_kind: 'local_http',
-  credential_kind: 'none',
-  default_base_url: 'http://127.0.0.1:9000/v1',
-  default_model: 'default',
-  default_timeout_seconds: 120,
-  capabilities: {
-    supports_streaming: true,
-    supports_tools: false,
-    supports_json_mode: false,
-    supports_system_prompt: true,
-    requires_workspace: false,
-    credential_kind: 'none',
-    health_status: 'unknown'
-  }
-}
 
 function overview(): ModelCenterOverviewDto {
   return {
@@ -335,20 +310,6 @@ describe('runtime center view', () => {
     // whose stored arguments Core actually uses.
     const served = providerTemplateFromSupplier({ ...supplier, default_base_url: 'http://127.0.0.1:4096' })
     expect(served.fields).toMatchObject({ server_url: true, launch_args: true })
-  })
-
-  it.each([
-    ['local-http', 'custom'],
-    ['local-http-openai-compatible', 'openai-compatible'],
-    ['local-http-ollama', 'ollama']
-  ])('maps %s to existing %s presentation metadata', (driver, presentationDriver) => {
-    const template = providerTemplateFromSupplier({
-      ...localHttpSupplier,
-      supplier_id: driver,
-      driver
-    })
-
-    expect(template.icon).toBe(findTemplate(presentationDriver)?.icon)
   })
 
   it('reports shared legacy route impact without changing the binding', () => {

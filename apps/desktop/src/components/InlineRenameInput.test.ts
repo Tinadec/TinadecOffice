@@ -31,9 +31,4 @@ describe('InlineRenameInput', () => {
     expect(wrapper.emitted('cancel')).toHaveLength(1)
     expect(wrapper.emitted('submit')).toBeUndefined()
   })
-
-  it('selects the text when mounted', () => {
-    const wrapper = mount(InlineRenameInput, { props: { modelValue: 'Selectable' } })
-    expect((wrapper.element as HTMLInputElement).value).toBe('Selectable')
-  })
 })

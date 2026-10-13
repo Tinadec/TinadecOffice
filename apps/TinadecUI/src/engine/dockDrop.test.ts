@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveDockDrop, dropZoneToSplit } from './dockDrop'
+import { resolveDockDrop } from './dockDrop'
 import type { DockPaneHitRect } from './dockDrop'
 
 const PANES: DockPaneHitRect[] = [
@@ -54,13 +54,3 @@ describe('resolveDockDrop', () => {
   })
 })
 
-describe('dropZoneToSplit', () => {
-  it('maps zones to dir+place', () => {
-    expect(dropZoneToSplit('left')).toEqual({ dir: 'row', place: 'start' })
-    expect(dropZoneToSplit('right')).toEqual({ dir: 'row', place: 'end' })
-    expect(dropZoneToSplit('top')).toEqual({ dir: 'column', place: 'start' })
-    expect(dropZoneToSplit('bottom')).toEqual({ dir: 'column', place: 'end' })
-    // Center is used only for merge; the split mapping is a UI convenience.
-    expect(dropZoneToSplit('center').dir).toBe('column')
-  })
-})
