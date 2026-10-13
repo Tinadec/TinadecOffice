@@ -28,6 +28,36 @@ export interface PendingAttachment {
    * same projection a reload would. Null while uploading or after a failure.
    */
   storedRow: MessageAttachmentDto | null
+  /**
+   * An object URL of the picked image, so the chip shows the picture while it uploads.
+   * Local to this window, never sent anywhere, revoked when the row leaves the strip.
+   * Null for non-images and for svg (which is never rendered as an image here).
+   */
+  previewUrl: string | null
+}
+
+/** The five states of the attachment primitive (`components/ui/attachment`). */
+export type AttachmentDisplayState = 'idle' | 'uploading' | 'processing' | 'error' | 'done'
+
+/** How a pending row reads on screen: in flight, attached, or refused. */
+export function attachmentDisplayState(status: PendingAttachmentStatus): AttachmentDisplayState {
+  return status === 'ready' ? 'done' : status === 'failed' ? 'error' : 'uploading'
+}
+
+function previewFor(file: AttachableFile): string | null {
+  const type = file.type || ''
+  if (!type.startsWith('image/') || type === 'image/svg+xml') return null
+  if (typeof Blob === 'undefined' || !(file instanceof Blob)) return null
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return null
+  try {
+    return URL.createObjectURL(file)
+  } catch {
+    return null
+  }
+}
+
+function releasePreview(item: PendingAttachment) {
+  if (item.previewUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(item.previewUrl)
 }
 
 /**
@@ -80,6 +110,7 @@ export function reconcileSession(sessionId: string | null) {
     .filter((item) => item.attachmentId)
     .map((item) => item.attachmentId as string)
   ownerSessionId = sessionId
+  pending.value.forEach(releasePreview)
   pending.value = []
   for (const id of uploaded) void deleteQuietly(id)
 }
@@ -113,6 +144,7 @@ export function attachFiles(
         attachmentId: null,
         errorCode: null,
         storedRow: null,
+        previewUrl: previewFor(file),
       },
     ]
     return uploadOne(clientId, file, sessionId)
@@ -163,6 +195,7 @@ async function deleteQuietly(attachmentId: string) {
 export function removePendingAttachment(clientId: string): Promise<void> {
   const target = pending.value.find((item) => item.clientId === clientId)
   if (!target) return Promise.resolve()
+  releasePreview(target)
   pending.value = pending.value.filter((item) => item.clientId !== clientId)
   return target.attachmentId ? deleteQuietly(target.attachmentId) : Promise.resolve()
 }
@@ -221,7 +254,20 @@ export function attachmentsForSend(): OutgoingAttachments {
  */
 export function settleSentAttachments(outgoing: OutgoingAttachments): void {
   if (outgoing.clientIds.length === 0) return
+  // The optimistic bubble shows these through the Gateway route; the local preview is done.
+  pending.value.filter((item) => outgoing.clientIds.includes(item.clientId)).forEach(releasePreview)
   pending.value = pending.value.filter((item) => !outgoing.clientIds.includes(item.clientId))
+}
+
+/**
+ * A file name split so the stem can be truncated while the extension stays readable
+ * ("quarterly-report-final….pdf"). Dotfiles and names without an extension keep it all
+ * in the stem; an extension longer than 8 characters is not treated as one.
+ */
+export function fileNameParts(name: string): { stem: string; extension: string } {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0 || dot === name.length - 1 || name.length - dot > 9) return { stem: name, extension: '' }
+  return { stem: name.slice(0, dot), extension: name.slice(dot) }
 }
 
 const UNITS = ['B', 'KB', 'MB', 'GB']

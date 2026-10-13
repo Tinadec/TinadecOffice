@@ -4,7 +4,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type MessageDto } from '@/api'
 import type { MessageAttachmentSummaryDto } from '@/generated/client'
-import { formatAttachmentBytes } from '@/lib/pendingAttachments'
+import { fileNameParts, formatAttachmentBytes } from '@/lib/pendingAttachments'
 import { feedLocale, formatClock } from '@/lib/conversation/format'
 import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
@@ -103,7 +103,7 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
             <FileText v-else aria-hidden="true" />
           </AttachmentMedia>
           <AttachmentContent>
-            <AttachmentTitle class="conversation-attachment-name">{{ attachment.file_name }}</AttachmentTitle>
+            <AttachmentTitle class="conversation-attachment-name"><span class="conversation-attachment-stem">{{ fileNameParts(attachment.file_name).stem }}</span>{{ fileNameParts(attachment.file_name).extension }}</AttachmentTitle>
             <AttachmentDescription>{{ formatAttachmentBytes(attachment.content_length) }}</AttachmentDescription>
           </AttachmentContent>
           <AttachmentTrigger as="a" :href="url(attachment)" :download="attachment.file_name" :title="attachment.file_name" :aria-label="attachment.file_name" />
@@ -129,7 +129,8 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
 .conversation-user-content { display: flex; flex-direction: column; align-items: flex-end; width: 100%; }
 .conversation-user-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .conversation-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; }
-.conversation-attachment-name { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-attachment-name { display: flex; max-width: 14rem; min-width: 0; white-space: nowrap; }
+.conversation-attachment-stem { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .conversation-hover-meta { display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1); }
 .conversation-user:hover .conversation-hover-meta,
 .conversation-user:focus-within .conversation-hover-meta { opacity: 1; }

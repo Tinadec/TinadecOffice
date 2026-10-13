@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Plus, Settings, Sparkles, Square } from '@lucide/vue'
+import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Plus, Settings, Sparkles, Square, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, useId, type Component, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { UiButton, UiSelectField } from '@/components/ui'
 import ComposerCommandPanel from './ComposerCommandPanel.vue'
+import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from '@/components/ui/attachment'
+import { Spinner } from '@/components/ui/spinner'
 import type { PermissionLevel } from '@/types/mode'
 import type { MeetingModelOverrideDto, ProjectDto, SpaceOptionsDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
@@ -16,6 +18,8 @@ import { defaultSpaceOptions } from '@/lib/composerSettings'
 import { completeMentionToken, filterMentionEntries, parseMentionToken, type MentionToken } from '@/lib/fileMentions'
 import {
   attachFiles,
+  attachmentDisplayState,
+  fileNameParts,
   formatAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
   pendingAttachments,
@@ -103,6 +107,11 @@ const projectPortalStyle = computed(() => {
   return { ...placement, '--project-menu-max-height': maxHeight ?? '320px' }
 })
 const attachmentPreparing = ref(false)
+/**
+ * Files picked while the draft session is still being created. They have no row yet, so
+ * they show as idle attachments until the upload starts (or the pick is abandoned).
+ */
+const preparingFiles = ref<Array<{ key: string; name: string; size: number; type: string }>>([])
 const attachmentError = ref<string | null>(null)
 let disposed = false
 
@@ -393,13 +402,17 @@ async function onFilesPicked(event: Event) {
   const spatial = props.spatial
   attachmentError.value = null
   attachmentPreparing.value = true
+  if (!props.sessionId) preparingFiles.value = files.map((file, index) => ({ key: `${index}:${file.name}`, name: file.name, size: file.size, type: file.type }))
   try {
     const sessionId = props.sessionId ?? await homeController.ensureComposerSession()
     if (disposed || projectId !== props.selectedProjectId || spatial !== props.spatial || props.sessionId && props.sessionId !== sessionId) return
     await attachFiles(files, sessionId)
   } catch (error) {
     if (!disposed) attachmentError.value = `${t('commandPanel.attachmentError')} ${error instanceof Error ? error.message : String(error)}`
-  } finally { attachmentPreparing.value = false }
+  } finally {
+    attachmentPreparing.value = false
+    preparingFiles.value = []
+  }
 }
 
 function dropAttachment(clientId: string) {
@@ -632,24 +645,54 @@ function confirmSteer(id: string, interrupt = false) {
         </div>
       </div>
 
-      <div v-if="attachments.length" class="composer-attachments" role="list" aria-live="polite" :aria-label="t('composer.attachments')">
-        <div
+      <!-- The attachment primitive's five states: idle while the draft session is being made,
+           uploading (an image previews locally, dimmed), done, or error with the reason in words. -->
+      <AttachmentGroup v-if="attachments.length || preparingFiles.length" class="composer-attachments" role="list" aria-live="polite" :aria-label="t('composer.attachments')">
+        <Attachment
+          v-for="pick in preparingFiles"
+          :key="pick.key"
+          state="idle"
+          size="xs"
+          class="attachment-chip is-idle"
+          role="listitem"
+          data-testid="attachment-chip"
+        >
+          <AttachmentMedia><component :is="pick.type.startsWith('image/') ? Image : FileText" aria-hidden="true" /></AttachmentMedia>
+          <AttachmentContent class="attachment-content">
+            <AttachmentTitle class="attachment-name"><span class="attachment-stem">{{ fileNameParts(pick.name).stem }}</span>{{ fileNameParts(pick.name).extension }}</AttachmentTitle>
+            <AttachmentDescription><span class="attachment-meta">{{ formatAttachmentBytes(pick.size) }}</span> <span class="attachment-state">{{ t('composer.attachPreparing') }}</span></AttachmentDescription>
+          </AttachmentContent>
+        </Attachment>
+        <Attachment
           v-for="item in attachments"
           :key="item.clientId"
+          :state="attachmentDisplayState(item.status)"
+          size="xs"
           class="attachment-chip"
           :class="`is-${item.status}`"
           role="listitem"
           :title="attachmentHint(item)"
           data-testid="attachment-chip"
         >
-          <component :is="item.mediaType.startsWith('image/') ? Image : FileText" :size="12" class="attachment-icon" aria-hidden="true" />
-          <span class="attachment-name">{{ item.fileName }}</span>
-          <span class="attachment-meta">{{ formatAttachmentBytes(item.size) }}</span>
-          <span v-if="item.status === 'uploading'" class="attachment-spinner" aria-hidden="true" />
-          <span v-if="item.status !== 'ready'" class="attachment-state">{{ attachmentHint(item) }}</span>
-          <button class="attachment-remove" :aria-label="t('composer.removeAttachment', { name: item.fileName })" @click="dropAttachment(item.clientId)">×</button>
-        </div>
-      </div>
+          <AttachmentMedia :variant="item.previewUrl ? 'image' : 'icon'">
+            <img v-if="item.previewUrl" :src="item.previewUrl" alt="" />
+            <component :is="item.mediaType.startsWith('image/') ? Image : FileText" v-else aria-hidden="true" />
+            <Spinner v-if="item.status === 'uploading'" decorative class="attachment-spinner" />
+          </AttachmentMedia>
+          <AttachmentContent class="attachment-content">
+            <AttachmentTitle class="attachment-name"><span class="attachment-stem">{{ fileNameParts(item.fileName).stem }}</span>{{ fileNameParts(item.fileName).extension }}</AttachmentTitle>
+            <AttachmentDescription>
+              <span class="attachment-meta">{{ formatAttachmentBytes(item.size) }}</span>
+              <span v-if="item.status !== 'ready'" class="attachment-state"> {{ attachmentHint(item) }}</span>
+            </AttachmentDescription>
+          </AttachmentContent>
+          <AttachmentActions>
+            <AttachmentAction class="attachment-remove" :aria-label="t('composer.removeAttachment', { name: item.fileName })" @click="dropAttachment(item.clientId)">
+              <X aria-hidden="true" />
+            </AttachmentAction>
+          </AttachmentActions>
+        </Attachment>
+      </AttachmentGroup>
 
       <div class="welcome-dialog-main">
         <div class="welcome-dialog-plus-wrapper">
@@ -1019,63 +1062,28 @@ function confirmSteer(id: string, interrupt = false) {
   display: none;
 }
 .attachment-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   max-width: 100%;
-  border: 1px solid var(--border-muted);
-  border-radius: 999px;
-  background: var(--surface-raised);
-  padding: 3px 4px 3px 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
 }
-.attachment-chip.is-uploading {
-  border-style: dashed;
-}
-.attachment-chip.is-failed {
-  border-color: var(--accent-danger);
-  color: var(--accent-danger);
-}
-.attachment-icon {
-  flex-shrink: 0;
-  color: var(--text-muted);
+.attachment-content {
+  min-width: 0;
 }
 .attachment-name {
+  display: flex;
   max-width: 180px;
+  min-width: 0;
+  white-space: nowrap;
+}
+/* The stem truncates; the extension stays readable. */
+.attachment-stem {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
 }
 .attachment-meta {
-  flex-shrink: 0;
   color: var(--text-muted);
-}
-.attachment-state {
-  flex-shrink: 0;
 }
 .attachment-spinner {
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--border-muted);
-  border-top-color: var(--text-primary);
-  border-radius: 50%;
-  animation: composer-spin 0.8s linear infinite;
-}
-.attachment-remove {
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px 6px;
-  border-radius: 999px;
-}
-.attachment-remove:hover {
-  background: var(--bg-hover);
+  position: absolute;
   color: var(--text-primary);
 }
 .plus-menu-item:disabled {

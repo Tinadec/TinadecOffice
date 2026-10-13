@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { api } from '@/api'
 import type { MessageAttachmentDto } from '@/generated/client'
 import {
+  attachmentDisplayState,
   attachmentsForSend,
   attachFiles,
+  fileNameParts,
   formatAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
   pendingAttachments,
@@ -409,5 +411,66 @@ describe('readyAttachmentCount', () => {
     settleSentAttachments(attachmentsForSend())
 
     expect(readyAttachmentCount()).toBe(0)
+  })
+})
+
+describe('local image preview', () => {
+  function image(name: string, type: string): AttachableFile {
+    return new File([new Uint8Array([1, 2, 3])], name, { type })
+  }
+
+  it('previews a picked image while it uploads and releases it when the chip goes', async () => {
+    const created = vi.spyOn(URL, 'createObjectURL')
+    const revoked = vi.spyOn(URL, 'revokeObjectURL')
+    let finish!: () => void
+    upload.mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve(storedRow('img-1')) }))
+    const done = attachFiles([image('shot.png', 'image/png')], 'sess-1')
+    const [chip] = pendingAttachments.value
+    expect(chip!.previewUrl).toMatch(/^blob:/)
+    expect(created).toHaveBeenCalledTimes(1)
+    await tick()
+    finish()
+    await done
+    await removePendingAttachment(chip!.clientId)
+    expect(revoked).toHaveBeenCalledWith(chip!.previewUrl)
+    created.mockRestore()
+    revoked.mockRestore()
+  })
+
+  it('never previews svg or a non-image, which stay icons', async () => {
+    await attachFiles([image('diagram.svg', 'image/svg+xml'), image('notes.txt', 'text/plain'), file()], 'sess-1')
+    expect(pendingAttachments.value.map((item) => item.previewUrl)).toEqual([null, null, null])
+  })
+
+  it('releases previews when a send carries the chips or the session changes', async () => {
+    const revoked = vi.spyOn(URL, 'revokeObjectURL')
+    await attachFiles([image('a.png', 'image/png')], 'sess-1')
+    const sent = pendingAttachments.value[0]!.previewUrl
+    settleSentAttachments(attachmentsForSend())
+    expect(revoked).toHaveBeenCalledWith(sent)
+    await attachFiles([image('b.png', 'image/png')], 'sess-1')
+    const dropped = pendingAttachments.value[0]!.previewUrl
+    reconcileSession('sess-2')
+    expect(revoked).toHaveBeenCalledWith(dropped)
+    revoked.mockRestore()
+  })
+
+  it('maps chip states onto the attachment primitive', () => {
+    expect(attachmentDisplayState('uploading')).toBe('uploading')
+    expect(attachmentDisplayState('ready')).toBe('done')
+    expect(attachmentDisplayState('failed')).toBe('error')
+  })
+})
+
+describe('fileNameParts', () => {
+  it.each([
+    ['report.final.pdf', 'report.final', '.pdf'],
+    ['README', 'README', ''],
+    ['.env', '.env', ''],
+    ['archive.', 'archive.', ''],
+    ['data.verylongextension', 'data.verylongextension', ''],
+    ['shot.jpeg', 'shot', '.jpeg'],
+  ])('%s', (name, stem, extension) => {
+    expect(fileNameParts(name)).toEqual({ stem, extension })
   })
 })

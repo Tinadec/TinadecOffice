@@ -78,10 +78,14 @@ const attachMock = vi.hoisted(() => ({
   TOO_LARGE_CODE: 'attachment_too_large',
 }))
 
-vi.mock('@/lib/pendingAttachments', async () => {
+vi.mock('@/lib/pendingAttachments', async (importOriginal) => {
   const { ref } = await import('vue')
+  // The pure helpers are the real ones; only the stateful strip and its I/O are doubles.
+  const actual = await importOriginal<typeof import('@/lib/pendingAttachments')>()
   attachMock.list = ref<PendingAttachment[]>([])
   return {
+    attachmentDisplayState: actual.attachmentDisplayState,
+    fileNameParts: actual.fileNameParts,
     pendingAttachments: attachMock.list,
     attachFiles: attachMock.attachFiles,
     removePendingAttachment: attachMock.removePendingAttachment,
@@ -1103,6 +1107,7 @@ describe('ComposerBar attachments', () => {
       attachmentId: 'row-1',
       errorCode: null,
       storedRow: null,
+      previewUrl: null,
       ...overrides,
     }
   }
@@ -1216,6 +1221,65 @@ describe('ComposerBar attachments', () => {
     expect(chips[2]!.text()).toContain('composer.attachTooLarge')
     expect(chips[2]!.text()).toContain('33554432B')
     expect(wrapper.find('.composer-attachments').attributes('aria-live')).toBe('polite')
+    wrapper.unmount()
+  })
+
+  it('maps each row onto the attachment primitive and says why a row failed', async () => {
+    attachMock.list.value = [
+      row({ clientId: 'c1' }),
+      row({ clientId: 'c2', status: 'uploading', attachmentId: null }),
+      row({ clientId: 'c3', fileName: 'big.bin', status: 'failed', attachmentId: null, errorCode: 'attachment_too_large' }),
+    ]
+    const wrapper = mountComposer({ sessionId: 'sess-1' })
+    await flushPromises()
+    const chips = wrapper.findAll('[data-testid="attachment-chip"]')
+    expect(chips.map((chip) => chip.attributes('data-state'))).toEqual(['done', 'uploading', 'error'])
+    expect(chips[2]!.get('[data-slot="attachment-description"]').text()).toContain('composer.attachTooLarge')
+    wrapper.unmount()
+  })
+
+  it('previews an uploading image locally, dimmed, and never as an svg', async () => {
+    attachMock.list.value = [
+      row({ clientId: 'img', fileName: 'shot.png', mediaType: 'image/png', status: 'uploading', attachmentId: null, previewUrl: 'blob:local/shot' }),
+      row({ clientId: 'svg', fileName: 'diagram.svg', mediaType: 'image/svg+xml', status: 'uploading', attachmentId: null }),
+    ]
+    const wrapper = mountComposer({ sessionId: 'sess-1' })
+    await flushPromises()
+    const [image, svg] = wrapper.findAll('[data-testid="attachment-chip"]')
+    const media = image!.get('[data-slot="attachment-media"]')
+    expect(media.attributes('data-variant')).toBe('image')
+    expect(media.classes()).toContain('cn-attachment-media-variant-image')
+    expect(media.get('img').attributes('src')).toBe('blob:local/shot')
+    expect(svg!.find('img').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the extension readable when a long name is truncated', async () => {
+    attachMock.list.value = [row({ clientId: 'c1', fileName: 'a-very-long-quarterly-report-name.final.pdf' })]
+    const wrapper = mountComposer({ sessionId: 'sess-1' })
+    await flushPromises()
+    const name = wrapper.get('.attachment-name')
+    expect(name.get('.attachment-stem').text()).toBe('a-very-long-quarterly-report-name.final')
+    expect(name.text()).toBe('a-very-long-quarterly-report-name.final.pdf')
+    wrapper.unmount()
+  })
+
+  it('shows picked files as idle while the draft session is being created', async () => {
+    let createSession!: (id: string) => void
+    homeMock.ensureComposerSession.mockImplementationOnce(() => new Promise((resolve) => { createSession = resolve }))
+    const wrapper = mountComposer()
+    await flushPromises()
+    const input = fileInput(wrapper)
+    Object.defineProperty(input, 'files', { value: [{ name: 'first.txt', type: 'text/plain', size: 3 }], configurable: true })
+    await wrapper.find('[data-testid="composer-file-input"]').trigger('change')
+    await flushPromises()
+    const idle = wrapper.get('[data-testid="attachment-chip"]')
+    expect(idle.attributes('data-state')).toBe('idle')
+    expect(idle.text()).toContain('first.txt')
+    expect(idle.text()).toContain('composer.attachPreparing')
+    createSession('draft-session')
+    await flushPromises()
+    expect(wrapper.find('[data-state="idle"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

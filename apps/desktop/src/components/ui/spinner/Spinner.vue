@@ -7,6 +7,11 @@ const props = defineProps<{
   class?: HTMLAttributes["class"]
   /** Accessible name; the spinner is a status region. */
   label?: string
+  /**
+   * Inside a region that already announces its state (a polite list, a labelled button),
+   * a second status would be read twice; a decorative spinner is hidden from assistive tech.
+   */
+  decorative?: boolean
 }>()
 </script>
 
@@ -14,8 +19,9 @@ const props = defineProps<{
   <!-- Reduced motion swaps the spin for a gentle pulse rather than freezing the glyph. -->
   <Loader2Icon
     data-slot="spinner"
-    role="status"
-    :aria-label="label ?? 'Loading'"
+    :role="decorative ? undefined : 'status'"
+    :aria-label="decorative ? undefined : (label ?? 'Loading')"
+    :aria-hidden="decorative ? 'true' : undefined"
     :class="cn('size-3.5 animate-spin motion-reduce:animate-pulse', props.class)"
   />
 </template>
