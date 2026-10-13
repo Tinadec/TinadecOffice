@@ -1,0 +1,24 @@
+/root/.tools/pw/out/w1169-dark-simple-answer.png
+/root/.tools/pw/out/w1169-dark-explore-edit-shell.png
+/root/.tools/pw/out/w1169-dark-pending-approval.png
+/root/.tools/pw/out/w1169-dark-parallel-sub-agents.png
+/root/.tools/pw/out/w1169-dark-failed-run.png
+/root/.tools/pw/out/w1169-dark-interrupted-run.png
+/root/.tools/pw/out/w1169-dark-compacted-run.png
+/root/.tools/pw/out/w1169-dark-explore-edit-shell-expanded.png
+/root/.tools/pw/out/w800-dark-explore-edit-shell.png
+/root/.tools/pw/out/w800-dark-pending-approval.png
+/root/.tools/pw/out/w800-dark-parallel-sub-agents.png
+/root/.tools/pw/out/w520-dark-explore-edit-shell.png
+/root/.tools/pw/out/w520-dark-pending-approval.png
+/root/.tools/pw/out/w520-dark-parallel-sub-agents.png
+/root/.tools/pw/out/w380-dark-explore-edit-shell.png
+/root/.tools/pw/out/w380-dark-pending-approval.png
+/root/.tools/pw/out/w380-dark-parallel-sub-agents.png
+/root/.tools/pw/out/w1169-light-explore-edit-shell.png
+/root/.tools/pw/out/w1169-light-pending-approval.png
+/root/.tools/pw/out/w1169-light-parallel-sub-agents.png
+/root/.tools/pw/out/w1169-opaque-pending-approval.png
+/root/.tools/pw/out/w1169-opaque-parallel-sub-agents.png
+reduced-motion animations: {"shimmer":"none","spinner":"pulse","fold":"none"}
+normal animations: {"shimmer":"shimmer-sweep","spinner":"spin"}

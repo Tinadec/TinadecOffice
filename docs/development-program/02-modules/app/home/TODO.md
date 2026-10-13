@@ -11,7 +11,7 @@
 ### APP-HOME-108 平面模式对话流重构 v2
 
 - 类型：实现
-- 状态：进行中
+- 状态：待验收
 - 优先级：P1
 - 主责模块：APP-HOME
 - 前置依赖：复用会话 SSE、`ApprovalEvidenceProjector` 脱敏投影、reka-ui 2.11、`MarkdownRender`、`useTerminal.openAgentTerminal`；不复用已判定失败的 PR #43 代码
@@ -31,11 +31,11 @@
 - [x] P4：推理块（全文、分节标题、半截标题压住、超长渐隐）、探索组（读搜折叠、写入/命令独占）、工具行（计时、✓/✗ 原因、脱敏参数、shell 实时尾部、改动文件、惰性预览、在终端面板打开）、审批卡（批准/本次运行都批准/拒绝/改为这样做/命令前缀规则、⌘↵/⌘⌫/Esc、延迟 spinner）、待办（6 条后折叠、改写高亮）、按 run 的工作区折叠（运行中展开+状态行、落定收成摘要、手动开合后不再自动）；失败原因提到折叠外。监督样式未改（空间模式共用）。
 - [x] P5：子智能体紧凑卡（`handle · 显示名`、状态徽标、L 形任务行、进行中最新一步 shimmer、就地展开自身活动与 Markdown 摘要）、`AgentGroup`（≥2 运行中「N 个智能体工作中…」）、右栏 `SubAgentsCard`（TinadecUI 注册 `subAgents`，singleton、可移动、本轮不可分离，功能目录加入口；名册运行中在前，详情为同一组件同一 feed）；⤢ 写入 `conversationSelection` 并 `openCard subAgents`；子智能体审批仍提到回合层。
 - [x] P6：发送框附件改用 attachment 五态（会话准备中 idle、上传中带本地图片预览并变暗、done、error 写明原因；svg 不预览；文件名保扩展名截断，转录同样处理）；输入框上方 `AgentTodosStatus` 胶囊（活动 run 自身计划优先、可展开、落定即消失）；空间模式仍用的 `useAgentActivity` 工具时间线读取按 run 300ms 合并、重放期 0 次、heartbeat 后每个有工具事件的 run 读一次（40 个历史事件/2 个 run：旧路径 40 次 → 2 次）。
-- [ ] P7：双语 i18n、减弱动效、窄宽、Debug Studio 预览、删除无引用旧组件、文档与报告。
+- [x] P7：双语 i18n（新组件 spinner 均为装饰、列表分隔符与终端标题本地化，`components/conversation/**` 在 i18nParity）、减弱动效（跳底瞬时、按钮过渡关闭，折叠/shimmer/spinner 计算样式实测）、窄/超窄（`chat-narrow/chat-ultra` 规则，380px 实拍）、Debug Studio「对话消息流」改为 fixtures 场景选择器 + 真实 `ConversationView`、「聊天面板」用 fixture feed；删除 `MessageList/MessageItem/LiveTurnBlock` 与 `ChatPanel` 回退；无头 Chromium 截图矩阵发现并修复 shimmer 文本不可见与脚注时长不一致；文档与报告。
 
 **当前边界**
 
-P0 在 Linux 开发容器验证；该环境下 `ToolChainEndpointTests.WorkerWriteFile_*` 等用例在未改动的 `main` 上即失败（工具子进程的可写源目录为空，见 P0 报告），新增断言因此另以驻留审批时刻的独立端到端用例覆盖。Windows 实机、真实模型与 UI 阶段尚未开始。
+全部阶段在 Linux 开发机完成：Core/Gateway/Desktop 测试、类型检查、Tailwind 编译，以及无头 Chromium 对 Vite 渲染端（无 Electron/Core/Gateway）的 Debug Studio 预览截图矩阵（7 场景 × 1169/800/520/380 × 暗/亮 × 毛玻璃/不透明，证据 `.tinadec_dev/evidence/2026-10-13-flat-conversation/`）。待验收：Electron 实机窗口、真实模型的 Team 模式链路（派发子智能体 + shell 审批）、Windows/macOS 渲染；Linux 上 `ToolChainEndpointTests.WorkerWriteFile_*` 等在未改动 `main` 上即失败（工具子进程可写源目录为空），见报告。
 
 <a id="app-home-107"></a>
 
@@ -251,7 +251,7 @@ P0 在 Linux 开发容器验证；该环境下 `ToolChainEndpointTests.WorkerWri
 **初始证据**
 
 - [apps/desktop/src/controllers/HomeController.ts](../../../../../apps/desktop/src/controllers/HomeController.ts)
-- [apps/desktop/src/components/chat/LiveTurnBlock.vue](../../../../../apps/desktop/src/components/chat/LiveTurnBlock.vue)
+- [apps/desktop/src/components/conversation/ConversationTurn.vue](../../../../../apps/desktop/src/components/conversation/ConversationTurn.vue)（原 `chat/LiveTurnBlock.vue`，2026-10-13 随 APP-HOME-108 删除）
 
 **历史任务映射**
 

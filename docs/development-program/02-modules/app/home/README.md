@@ -39,7 +39,7 @@
 
 - [apps/desktop/src/controllers/HomeController.ts:22](../../../../../apps/desktop/src/controllers/HomeController.ts#L22)
 - [apps/desktop/src/controllers/HomeController.ts](../../../../../apps/desktop/src/controllers/HomeController.ts)
-- [apps/desktop/src/components/chat/LiveTurnBlock.vue](../../../../../apps/desktop/src/components/chat/LiveTurnBlock.vue)
+- [apps/desktop/src/components/conversation/ConversationView.vue](../../../../../apps/desktop/src/components/conversation/ConversationView.vue)（平面对话流，取代已删除的 `MessageList`/`LiveTurnBlock`，APP-HOME-108）
 - [apps/desktop/src/pages/HomePage.vue](../../../../../apps/desktop/src/pages/HomePage.vue)
 - [apps/desktop/src/App.vue](../../../../../apps/desktop/src/App.vue)
 - [apps/desktop/src/components/ComposerBar.vue](../../../../../apps/desktop/src/components/ComposerBar.vue)

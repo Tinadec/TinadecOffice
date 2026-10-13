@@ -78,7 +78,7 @@ flowchart LR
   island --> scroll["块内滚动 / 表格列对齐"]
 ```
 
-来源：[MessageList.vue](../../../../../apps/desktop/src/components/MessageList.vue)、[MessageItem.vue](../../../../../apps/desktop/src/components/MessageItem.vue)、[MarkdownRender.vue](../../../../../apps/desktop/src/components/MarkdownRender.vue)、[UiIslandCard](../../../../../apps/desktop/src/components/ui/island-card.vue)、[全局样式](../../../../../apps/desktop/src/styles.css)。用户消息仍为文本插值；Core继续拥有持久消息与模型流，Desktop仅负责正文展示。已完成块的HTML不变时，Vue保留其DOM与表格焦点；未完成块继续更新。
+来源：[AssistantAnswer.vue](../../../../../apps/desktop/src/components/conversation/AssistantAnswer.vue)（2026-10-13 起取代已删除的 `MessageList`/`MessageItem`，APP-HOME-108）、[MarkdownRender.vue](../../../../../apps/desktop/src/components/MarkdownRender.vue)、[UiIslandCard](../../../../../apps/desktop/src/components/ui/island-card.vue)、[全局样式](../../../../../apps/desktop/src/styles.css)。用户消息仍为文本插值；Core继续拥有持久消息与模型流，Desktop仅负责正文展示。已完成块的HTML不变时，Vue保留其DOM与表格焦点；未完成块继续更新。
 
 ## 2026-10-10 宿主恢复与跨作用域历史读取
 

@@ -1,6 +1,10 @@
-# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语、P3 骨架接入、P4 活动组件、P5 子智能体与 P6 附件/待办/旧路径性能
+# APP-HOME-108 平面对话流 v2：P0–P7 实施与验收报告
 
 日期：2026-10-13 · 分支：`feat/flat-conversation-v2`（基于 `ab42b02`）· 环境：Linux 开发容器（2 核 / 5 GB，.NET 10.0.401、Bun 1.4.3、Node 24.21）。计划见 [`plans/claude/2026-10-13-flat-conversation-v2.md`](../plans/claude/2026-10-13-flat-conversation-v2.md)，任务见 `docs/development-program/02-modules/app/home/TODO.md#app-home-108`。
+
+## 结论
+
+平面模式对话流按计划 P0–P7 全部落地，分支 `feat/flat-conversation-v2`：回合结构（用户消息 → 工作区 → 不折叠的回答 → 脚注）、审批常显、子智能体卡与右栏面板、事件溯源数据层、有界结果预览端点。旧的 `MessageList/MessageItem/LiveTurnBlock` 已删除；空间模式按约定未迁移。验证在 Linux 开发机完成，含无头 Chromium 对真实组件的截图矩阵；Electron 实机、真实模型 Team 链路与 Windows/macOS 尚待验收（见末节）。
 
 ## P0 改了什么
 
@@ -74,6 +78,22 @@
 - **`AgentTodosStatus`**：输入框上方胶囊「计划 1/3 · 编写测试」，取最新活动 run 自身的计划（无则取子智能体的），点击原位展开清单，run 落定即消失。
 - **旧路径性能**（空间模式仍用的 `useAgentActivity`）：工具时间线读取按 run 合并——首个 tool/approval/task 事件在 300ms 后读一次，窗口内后续事件搭车，持续事件流不会被无限推迟；初始重放期间不发任何请求，只记下有工具事件的 run，Core 重放后的 heartbeat（无则 2s 兜底）到达后每个 run 读一次；切会话/卸载清掉待发读取。测试：重放 40 个工具事件横跨 2 个 run → 重放期 0 次、之后 2 次（旧路径为每事件 1 次，即 40 次）；关掉重放闸门后对应两条测试变红。显式 `refreshToolExecutions()` 仍立即读取。
 
+## P7 改了什么
+
+- **i18n**：新组件中的 spinner 一律 `decorative`（旁边总有说明文字，默认英文 `aria-label="Loading"` 会被重复且错语种播报）；等待名单分隔符 `conversation.listSeparator`（中「、」英「, 」）；终端标签标题本地化；`components/conversation/**` 在 `i18nParity`，动态拼接的 marker/状态另有存在性断言。
+- **减弱动效**：跳底按钮在 `prefers-reduced-motion` 下瞬时滚动且关闭过渡；折叠、chevron、shimmer、光标、悬停揭示均静止。无头 Chromium 计算样式实测：常规 `shimmer-sweep` / `spin`，减弱动效下 `none` / `pulse` / 折叠 `none`。
+- **窄宽**：`chat-narrow`（<560px）/`chat-ultra`（<400px）下内容边距收紧、用户气泡 92%/100%、审批事实单列、子智能体最新步骤隐藏、计划胶囊边距收紧；380px 实拍确认类名生效与换行。
+- **Debug Studio**：「对话消息流」改为 fixtures 场景选择器 + 真实 `ConversationView`（与数据层测试同一批事件）；「聊天面板」以 fixture feed 渲染真实 `ChatPanel`。`ChatPanel` 的 `conversation` 输入变为必填，删除 `MessageList` 回退与单回合活动/流式/审批事件属性，`ChatCard` 同步。
+- **删除**：`MessageList.vue`、`MessageItem.vue`、`chat/LiveTurnBlock.vue` 与 `MessageList.test.ts`（行为已于 P3 迁入 `ConversationView.test.ts`）；开发工程中指向它们的链接与初始清点证据改指继任组件。
+- **截图矩阵发现并修复的两个缺陷**：
+  1. shimmer 文本在动画大部分时间不可见——文字本身透明、由 200% 宽渐变着色，旧关键帧 `-200% → 200%` 把渐变移出文字框；改为 `100% → 0%`。空间模式沿用的 `.chat-shimmer` 同样受影响，一并修复。新增 `conversationCss.test.ts` 钉住关键帧位置范围。
+  2. 同一回合摘要写「已工作 3 秒」、回答脚注写「已工作 5 秒」——脚注按用户消息时间计；改为与摘要同一跨度（首尾活动），新增断言。
+- **构建**：`vite build` 在 `NODE_OPTIONS=--max-old-space-size=4096` 下 57 秒完成（退出 0）。
+
+## 视觉验收（无头 Chromium）
+
+只启动 Vite 渲染端（无 Electron/Core/Gateway），以桩 `window.tinadec.getAppConfig` 打开 Debug Studio。矩阵：7 个场景 × 1169/800/520/380 × 暗/亮 × 毛玻璃/不透明（关键场景），另含已落定回合展开态、`ChatPanel` 1169/380。截图、harness 脚本与计算样式见 [`evidence/2026-10-13-flat-conversation/`](../evidence/2026-10-13-flat-conversation/README.md)。harness 仅为环境隐藏了无后端时出现的通知岛与宿主不一致横幅，并以「先宽后窄」到达窄宽（Debug Studio 自身标签栏在 ~800px 下隐藏「预览」）。
+
 ## 验证（本机实测）
 
 | 范围 | 结果 |
@@ -102,8 +122,12 @@
 | Desktop 全量 vitest（P5 后） | 1419 通过 / 14 skip，155 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
 | P6 定向（`pendingAttachments` 45、`ComposerBar` 77、`useAgentActivity` 22、`AgentTodosStatus` 3） | 全部通过 |
 | Desktop 全量 vitest（P6 后） | 1440 通过 / 14 skip，156 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
+| Desktop 全量 vitest（P7 后，删除旧组件测试 15 例、新增 5 例） | 1430 通过 / 14 skip，156 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
+| `vite build`（4 GB 堆） | 57 秒，退出 0 |
 
 ## 既有失败与边界
 
-- `ToolChainEndpointTests.WorkerWriteFile_RequestsApproval_ApprovedThenExecuted_RunCompletes` 在未改动的 `ab42b02` 上同样失败（`git worktree` 基线实测），`main` 的 posix-core CI 也红。新预览端点给出原因：工具子进程报 `Only paths inside the authorized source folders () may be written`——Linux 上 `ToolExecutionContext.WorkspaceRoots` 为空、可写根又不是工作区。属多文件夹工作区链路（APP-HOME-107），本轮不修；P0 的新断言因此另以驻留审批时刻的独立用例覆盖，原用例里的新断言只在其能跑完的平台上执行。
-- 未在 Windows 实机、真实模型或 Electron 中验证。本机无 Electron 二进制与显示，浏览器版 Vite 预览无法访问受管后端，P3 新视图只经组件 DOM 断言与类型检查，未做截图；计划的实机与截图验收在 P7。
+- `ToolChainEndpointTests.WorkerWriteFile_RequestsApproval_ApprovedThenExecuted_RunCompletes` 等在未改动的 `ab42b02` 上同样失败（`git worktree` 基线实测），`main` 的 posix-core CI 也红。新预览端点给出原因：工具子进程报 `Only paths inside the authorized source folders () may be written`——Linux 上 `ToolExecutionContext.WorkspaceRoots` 为空、可写根又不是工作区。属多文件夹工作区链路（APP-HOME-107），本轮不修；P0 的新断言另以驻留审批时刻的独立用例覆盖。
+- `ChatPanel.test.ts` 运行时打印的 `ECONNREFUSED 127.0.0.1:48730` 来自未打桩的真实 `ComposerBar`，改动前的提交上同样出现 16 次，测试本身通过。
+- **待验收**：Electron 实机窗口（本机无 Electron 二进制与显示）、真实模型下 Team 模式派发子智能体 + shell 审批的完整链路、Windows/macOS 渲染与字体。建议在本地 `npm run dev` 后打开 Debug Studio「对话消息流」逐场景过一遍，再跑一次真实会话。
+- 未在本轮：空间模式迁移、消息分页、编辑的 +/− 行数与改动审阅卡、HTML widget、SSE 重放屏障协议（计划「不在本轮」）。

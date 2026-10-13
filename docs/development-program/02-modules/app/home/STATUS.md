@@ -7,7 +7,7 @@
 | Feature ID | 功能/能力 | 实现判断 | 本轮验证层级 | 边界与剩余问题 | 证据 |
 | --- | --- | --- | --- | --- | --- |
 | APP-HOME-F001 | 项目、会话、附件及 queued/parallel/insert 消息投递协调 | 源码可见 | 本轮静态核对；未做功能验收 | 发送前记录权限；队列晋升保留模式、模型、权限和附件。本轮仅静态核对源码，未运行业务测试或产品验收。 | [apps/desktop/src/controllers/HomeController.ts](../../../../../apps/desktop/src/controllers/HomeController.ts) |
-| APP-HOME-F002 | 按 run 归属的活动、首轮 live block、审批与监督裁决入口 | 源码可见 | 本轮静态核对；未做功能验收 | 界面实现存在，真实并行与三个监督决策本轮未验收。 | [apps/desktop/src/controllers/HomeController.ts](../../../../../apps/desktop/src/controllers/HomeController.ts)<br>[apps/desktop/src/components/chat/LiveTurnBlock.vue](../../../../../apps/desktop/src/components/chat/LiveTurnBlock.vue) |
+| APP-HOME-F002 | 按 run 归属的活动、首轮 live block、审批与监督裁决入口 | 源码可见 | 本轮静态核对；未做功能验收 | 平面模式已由 APP-HOME-F008 的回合结构取代（`LiveTurnBlock`/`MessageList` 于 2026-10-13 删除），空间模式仍用 `useAgentActivity`；真实并行与三个监督决策未验收。 | [apps/desktop/src/controllers/HomeController.ts](../../../../../apps/desktop/src/controllers/HomeController.ts)<br>[apps/desktop/src/components/conversation/ConversationTurn.vue](../../../../../apps/desktop/src/components/conversation/ConversationTurn.vue) |
 | APP-HOME-F003 | Home 初始布局就绪与 splash 入场同步 | 源码可见 | 本轮静态核对；未做功能验收 | 最新修复已有历史专项验证；本轮未重跑，不重复登记为未修缺陷。 | [apps/desktop/src/pages/HomePage.vue](../../../../../apps/desktop/src/pages/HomePage.vue)<br>[apps/desktop/src/App.vue](../../../../../apps/desktop/src/App.vue)<br>[docs/home-entry-motion-2026-10-05.zh-CN.md](../../../../home-entry-motion-2026-10-05.zh-CN.md) |
 | APP-HOME-F004 | AI历史/流式正文的Markdown显示、岛屿卡片与扩展语法 | 已验收 | 2026-10-08：Electron 夹具 passed（真实剪贴板、MathML、Mermaid、三宽度）、定向 23、Desktop 全量 1028 passed/14 skipped、类型检查通过；生产 vite build 本轮未取证 | 岛屿与卡片细节、代码高亮与复制、公式、脚注、提示块、标题锚点、Mermaid 均已接通；非真实模型或完整 App E2E，外链打开仍未处理，Mermaid 未 Worker 化。 | [APP-HOME-103](TODO.md#app-home-103)<br>[APP-HOME-105](TODO.md#app-home-105)<br>[扩展语法报告](../../../../../.tinadec_dev/reports/2026-10-08-markdown-extended-syntax.zh-CN.md) |
 
@@ -30,6 +30,12 @@
 | Feature ID | 功能/能力 | 实现判断 | 本轮验证层级 | 边界与剩余问题 | 证据 |
 | --- | --- | --- | --- | --- | --- |
 | APP-HOME-F007 | 工作区标题、纯折叠项目行、近期会话/手动排序及多源目录创建、编辑、授权冻结 | 源码可见 | Desktop62/62与类型，Windows Core62/1明确skip、Tools40/40、资源34/34、Gateway6/6；Electron43.3.0 原生目录多选与真实隔离 Core/Gateway；Linux Core28/28、内核Tools28/28，PostgreSQL18.6空库/既有扩展实测 | Windows 低权限 Shell、macOS与本轮 CI 待验收；不是完整 App、真实模型或安装包验收，平台返回型用例不当作 OS 证据 | [APP-HOME-107](TODO.md#app-home-107)、[契约](../../../../workspaces.zh-CN.md)、[报告](../../../../../.tinadec_dev/reports/2026-10-10-sidebar-workspaces.zh-CN.md) |
+
+## 2026-10-13 平面对话流 v2
+
+| Feature ID | 功能/能力 | 实现判断 | 本轮验证层级 | 边界与剩余问题 | 证据 |
+| --- | --- | --- | --- | --- | --- |
+| APP-HOME-F008 | 平面对话流回合结构：用户消息 → 工作区（推理、分层工具行、子智能体、系统行；运行中展开、落定收成摘要）→ 不折叠的回答 → 脚注；审批常显；事件溯源数据层与有界结果预览 | 源码可见 | Linux：Desktop 全量 vitest、`vue-tsc`、TinadecUI、Gateway、Core 定向/全量（既有 Linux 失败另列）；无头 Chromium 截图矩阵与减弱动效计算样式 | Electron 实机、真实模型 Team 链路、Windows/macOS 未验收；空间模式未迁移（本轮约定） | [APP-HOME-108](TODO.md#app-home-108)、[报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)、[截图证据](../../../../../.tinadec_dev/evidence/2026-10-13-flat-conversation/README.md) |
 
 ## 状态词汇
 

@@ -1,5 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-13 Flat conversation wrap-up (APP-HOME-108 P7)
+
+`MessageList.vue`, `MessageItem.vue` and `chat/LiveTurnBlock.vue` are deleted; entries further down that describe them are history. `ChatPanel` now requires `conversation` and renders only `ConversationView` (+ `AgentTodosStatus`); its old single-turn props and approve/reject events are gone. Debug Studio's "对话消息流" preview is a fixture scenario picker over the real `ConversationView`. Feed spinners are `decorative`; name lists join with `conversation.listSeparator`. The shimmer keyframes must keep `background-position` within 0%..100% (`conversationCss.test.ts`) — outside that the transparent text has no paint. Headless screenshots of the previews: run only the Vite renderer, stub `window.tinadec.getAppConfig` to enable Debug Studio (`.tinadec_dev/evidence/2026-10-13-flat-conversation/harness`).
+
 ## 2026-10-13 Composer attachments, plan capsule, activity reads (APP-HOME-108 P6)
 
 Composer chips are `ui/attachment` instances: `attachmentDisplayState()` maps `uploading/ready/failed` to the primitive's states, picks waiting on draft-session creation render as `idle`, and image rows carry a local `previewUrl` object URL that `pendingAttachments` revokes on remove, send and session change (never for svg). `fileNameParts()` keeps extensions readable in both the composer and the transcript. `AgentTodosStatus` sits above the composer inside `ChatPanel` when `conversation` is given. `useAgentActivity` no longer reads the tool timeline per event: reads are coalesced per run (`TOOL_REFRESH_DELAY_MS` = 300) and suppressed during the initial replay until the session stream's heartbeat (`REPLAY_FALLBACK_MS` = 2000); tests must emit `heartbeat` and advance timers before expecting a read.

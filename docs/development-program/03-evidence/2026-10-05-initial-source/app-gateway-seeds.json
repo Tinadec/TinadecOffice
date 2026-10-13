@@ -14,7 +14,7 @@
         "state": "源码可见",
         "evidence": [
           "apps/desktop/src/controllers/HomeController.ts",
-          "apps/desktop/src/components/chat/LiveTurnBlock.vue"
+          "apps/desktop/src/components/conversation/ConversationTurn.vue"
         ],
         "boundary": "界面实现存在，真实并行与三个监督决策本轮未验收。"
       },
@@ -44,7 +44,7 @@
         ],
         "evidence": [
           "apps/desktop/src/controllers/HomeController.ts",
-          "apps/desktop/src/components/chat/LiveTurnBlock.vue"
+          "apps/desktop/src/components/conversation/ConversationTurn.vue"
         ],
         "legacy": [
           {
