@@ -4724,14 +4724,18 @@ Triggered by the page-level transition on the parent .settings-page. */
   -webkit-text-fill-color: var(--text-primary);
 }
 
+/* The text itself is transparent and painted by a 200%-wide gradient, so the gradient must
+   cover the text box for the whole cycle: 100% -> 0% sweeps the highlight across it. The old
+   -200% -> 200% sweep left the gradient outside the box for most of the cycle, which made the
+   label invisible (seen in the APP-HOME-108 screenshots). */
 @keyframes shimmer-sweep {
-  from { background-position: -200% 0; }
-  to { background-position: 200% 0; }
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
 }
 
 @keyframes shimmer-once {
-  0% { background-position: -200% 0; }
-  99% { background-position: 200% 0; -webkit-text-fill-color: transparent; }
+  0% { background-position: 100% 0; }
+  99% { background-position: 0% 0; -webkit-text-fill-color: transparent; }
   100% { background-image: none; -webkit-text-fill-color: currentColor; }
 }
 

@@ -89,6 +89,14 @@ describe('turn work fold', () => {
     expect(wrapper.findAll('[data-testid="tool-sentence"]').length).toBeGreaterThan(0)
   })
 
+  it('reports the same "worked for" in the answer footer as in the work summary', () => {
+    const fixture = exploreEditShell()
+    const wrapper = track(mount(ConversationView, { props: { messages: fixture.messages, runs: fixture.runs, feed: feedOf(fixture.events) }, global, attachTo: document.body }))
+    const summary = wrapper.get('[data-testid="turn-summary"]').text().split(' · ')[0]!
+    expect(summary).toMatch(/^Worked for /)
+    expect(wrapper.get('[data-testid="assistant-answer"]').text()).toContain(summary)
+  })
+
   it('folds reads and searches together and gives edits and commands their own lines', () => {
     const fixture = exploreEditShell()
     const wrapper = track(mount(ConversationView, { props: { messages: fixture.messages.slice(0, 1), runs: [{ ...fixture.runs[0]!, status: 'executing' }], feed: feedOf(fixture.events), workspaceRoot: '/w' }, global, attachTo: document.body }))

@@ -68,7 +68,17 @@ function placeholderEntry(approval: ApprovalDto): ToolEntry {
 }
 
 const answers = computed(() => props.turn.answers.filter((message) => message.role === 'assistant'))
-const workedMs = computed(() => (props.turn.endedAt ? elapsedMs(props.turn.startedAt, props.turn.endedAt) : null))
+/**
+ * The same span the folded work summary shows (first to last activity of the turn's runs), so
+ * "Worked for" means one number in both places; message timestamps only when nothing ran.
+ */
+const workedMs = computed(() => {
+  void props.revision
+  if (!props.turn.endedAt) return null
+  const starts = props.turn.runs.map(({ activity }) => activity?.firstAt).filter((at): at is string => !!at).sort()
+  const ends = props.turn.runs.map(({ activity }) => activity?.lastAt).filter((at): at is string => !!at).sort()
+  return starts.length && ends.length ? elapsedMs(starts[0], ends.at(-1)) : elapsedMs(props.turn.startedAt, props.turn.endedAt)
+})
 const toolCount = computed(() => {
   void props.revision
   return props.turn.runs.reduce((sum, { activity }) => sum + (activity?.entries.filter((entry) => entry.kind === 'tool').length ?? 0), 0)
