@@ -4673,39 +4673,65 @@ Triggered by the page-level transition on the parent .settings-page. */
    Codex `.loading-shimmer` (text-clipped sweep that freezes on hover) and
    Claude `timeline-status-rise` / `timeline-reveal` (rise-in label, 0fr↔1fr
    grid-row collapse). ------------------------------------------------------------------ */
+/* `.shimmer` sweeps a highlight over the element's own text colour, so any label can use
+   it (APP-HOME-108); `.shimmer-once` runs a single pass and settles into solid text.
+   `.chat-shimmer` keeps its original colours and pace for the space-mode cards. */
+.shimmer,
+.shimmer-once,
 .chat-shimmer {
-  --chat-shimmer-base: var(--text-chat-muted);
-  --chat-shimmer-hi: var(--text-primary);
+  --shimmer-base: color-mix(in srgb, currentColor 55%, transparent);
+  --shimmer-hi: currentColor;
   background-image: linear-gradient(
     90deg,
-    var(--chat-shimmer-base) 0%,
-    var(--chat-shimmer-base) 35%,
-    var(--chat-shimmer-hi) 50%,
-    var(--chat-shimmer-base) 65%,
-    var(--chat-shimmer-base) 100%
+    var(--shimmer-base) 0%,
+    var(--shimmer-base) 35%,
+    var(--shimmer-hi) 50%,
+    var(--shimmer-base) 65%,
+    var(--shimmer-base) 100%
   );
   background-size: 200% 100%;
   background-repeat: no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  animation: shimmer-sweep 2s linear infinite;
+}
+
+.chat-shimmer {
+  --shimmer-base: var(--text-chat-muted);
+  --shimmer-hi: var(--text-primary);
   /* The glow rides the sweep: drop-shadow is cast from the painted glyphs,
      so the bright band carries its halo across the text with it. */
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--chat-shimmer-hi) 30%, transparent));
-  animation: chat-shimmer-sweep 2.4s linear infinite;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--shimmer-hi) 30%, transparent));
+  animation-duration: 2.4s;
+}
+
+.shimmer-once {
+  animation: shimmer-once 2s linear 1 forwards;
 }
 
 /* Hover freezes the sweep into solid readable text (Codex behaviour). */
+.shimmer:hover,
 .chat-shimmer:hover {
   animation: none;
   background-image: none;
   filter: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+.chat-shimmer:hover {
   -webkit-text-fill-color: var(--text-primary);
 }
 
-@keyframes chat-shimmer-sweep {
+@keyframes shimmer-sweep {
   from { background-position: -200% 0; }
   to { background-position: 200% 0; }
+}
+
+@keyframes shimmer-once {
+  0% { background-position: -200% 0; }
+  99% { background-position: 200% 0; -webkit-text-fill-color: transparent; }
+  100% { background-image: none; -webkit-text-fill-color: currentColor; }
 }
 
 /* Borderless expand/collapse: animate grid-template-rows 0fr↔1fr instead of
@@ -4739,6 +4765,13 @@ Triggered by the page-level transition on the parent .settings-page. */
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .shimmer,
+  .shimmer-once {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+
   .chat-shimmer {
     animation: none;
     background-image: none;
