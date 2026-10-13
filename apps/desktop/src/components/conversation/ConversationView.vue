@@ -10,8 +10,9 @@ import type { ConversationFeed } from '@/composables/useConversationFeed'
 import { buildTurns, type TurnRunInput } from '@/lib/conversation/turns'
 import { crossesDay, dayLabel, feedLocale } from '@/lib/conversation/format'
 import { Marker, MarkerContent } from '@/components/ui/marker'
-import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller'
+import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller'
 import ConversationTurn from './ConversationTurn.vue'
+import JumpToLatest from './JumpToLatest.vue'
 
 /**
  * The flat conversation feed: one scroller row per turn, the user's message anchoring
@@ -104,7 +105,7 @@ const dayBreaks = computed(() => {
         <Bot :size="20" aria-hidden="true" />
         <span>{{ t('chat.ready') }}</span>
       </div>
-      <MessageScrollerButton :label="t('chat.jumpToLatest')" :behavior="jumpBehavior" data-testid="jump-to-latest" />
+      <JumpToLatest :turns="turns" :behavior="jumpBehavior" />
     </MessageScroller>
   </MessageScrollerProvider>
 </template>
