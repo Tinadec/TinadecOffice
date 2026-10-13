@@ -1,5 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-13 Sub-agents in the flat feed (APP-HOME-108 P5)
+
+`agents` nodes render as `AgentGroup` → `SubAgentCard` (compact, expands in place to its own `TurnActivity` and Markdown summary). The card's ⤢ writes `lib/conversation/selection.ts` (`conversationSelection`) and dispatches `openCard subAgents`; TinadecUI's `subAgents` descriptor (singleton, movable, not detachable) wraps `components/conversation/SubAgentsPanel.vue`, which reads the same `homeController.conversationFeed`. `SubAgentCard` ↔ `TurnActivity` import each other (nested sub-agents); this works because both resolve at render time. Catalog-size assertions should be relative to `FEATURE_CATALOG.length`.
+
 ## 2026-10-13 Flat conversation activity (APP-HOME-108 P4)
 
 Each run's work is a `TurnWork` fold driven by `useAutoDisclosure` (`open = userToggled ? manual : live`): open with a `role=status` line while live, folded to a summary when settled. Inside, `TurnActivity` renders `ReasoningBlock`, `ActivityGroup`, `ToolRow` (+ `ToolPreview`, lazy via `useToolPreview`), `AgentTodos` and markers; approvals and a run's failure reason are rendered by `ConversationTurn` outside every fold. `ApprovalCard` decides through `homeController.decideApprovalById/createApprovalRule` and `api.createInteraction` itself; `ConversationView` no longer emits approve/reject. reka's `CollapsibleContent` keeps its (hidden) wrapper and unmounts the children — assert on the children, not the wrapper. Fold/code/link styles are in `components/conversation/conversation.css`. `SupervisionGate` keeps its look because space mode shares it.

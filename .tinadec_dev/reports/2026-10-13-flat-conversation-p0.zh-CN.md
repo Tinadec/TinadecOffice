@@ -1,4 +1,4 @@
-# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语、P3 骨架接入与 P4 活动组件
+# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语、P3 骨架接入、P4 活动组件与 P5 子智能体
 
 日期：2026-10-13 · 分支：`feat/flat-conversation-v2`（基于 `ab42b02`）· 环境：Linux 开发容器（2 核 / 5 GB，.NET 10.0.401、Bun 1.4.3、Node 24.21）。计划见 [`plans/claude/2026-10-13-flat-conversation-v2.md`](../plans/claude/2026-10-13-flat-conversation-v2.md)，任务见 `docs/development-program/02-modules/app/home/TODO.md#app-home-108`。
 
@@ -61,6 +61,13 @@
 - **审批卡** `ApprovalCard`：批准、本次运行都批准（`scope:'run'`）、拒绝、改为这样做（拒绝 + `insert` 进该 run）、shell 的「始终允许以 X 开头的命令」（`command_prefix` 规则后批准本次）；⌘/Ctrl+Enter 批准、⌘/Ctrl+Backspace 拒绝、Esc 关闭改写框；按钮进行中用延迟 spinner；保留 `ApprovalGateStatus`。决定直接经 `homeController`，不再经 `ChatPanel` 事件。
 - **待办** `AgentTodos`：6 条后折叠，与上一版相比新增/改写的步骤高亮并显示说明。
 
+## P5 改了什么
+
+- **对话流内** `SubAgentCard`：紧凑卡（卡片样式之一）显示 `handle · 显示名`、状态徽标（等待/进行中/待审批/完成/失败/受阻/已取消，完成 .85、取消 .6 透明度）、L 形连接线任务标题、进行中时最新一步（shimmer）；点击就地展开它自己的分组活动（同一套 `TurnActivity`）与 `worker.completed` 摘要（Markdown）；⤢「在面板打开」。它的审批仍由回合提出（不在卡内）。
+- `AgentGroup`：连续派发成组，≥2 个运行中时组头「2 个智能体工作中…」。
+- **右栏** `SubAgentsCard`（TinadecUI `cards/index.ts` 注册 `subAgents`：singleton、可移动、可关闭、本轮不可分离；`featureCatalog.ts` 加入口）内含 Desktop 的 `SubAgentsPanel`：本会话所有 run 的子智能体名册（运行中在前，listbox 键盘可选）+ 选中者详情（同一 `SubAgentCard`，展开、无 ⤢），读同一个 `conversationFeed`。选择保存在 `lib/conversation/selection.ts`，⤢ 写入后 `openCard subAgents`；未选时默认第一个。
+- 顺带：`HomeGitPlacement.test.ts` 的网格卡片数改为相对目录长度（Git 由状态卡替代），不再写死；目录测试改为 10 项。
+
 ## 验证（本机实测）
 
 | 范围 | 结果 |
@@ -85,6 +92,8 @@
 | TinadecUI vitest | 187/187 |
 | P4 `ConversationActivity.test.ts`（运行中展开/落定收起/手动后不再自动、读搜折叠写入独占、审批在折叠外含子智能体、推理块、预览惰性且仅终态、失败原因、审批四种动作与快捷键、待办）+ reasoning/disclosure 单测 | 全部通过；conversation 相关 85/85 |
 | Desktop 全量 vitest（P4 后） | 1413 通过 / 14 skip，154 文件；`vue-tsc` 0 错误；TinadecUI 187/187；Tailwind 编译新规则 |
+| P5 `SubAgents.test.ts`（并行两卡一组、组头、就地展开活动与摘要、审批不在卡内、⤢ 选中并打开卡片、面板显示同一选中项、运行中在前、默认首个、空态） | 6/6 |
+| Desktop 全量 vitest（P5 后） | 1419 通过 / 14 skip，155 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
 
 ## 既有失败与边界
 
