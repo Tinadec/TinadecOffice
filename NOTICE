@@ -57,6 +57,10 @@ or via `dotnet list package --include-transitive` / NuGet.org:
   Electron (43.3.0) + @electron/rebuild (4.2.0)        : MIT
   Tailwind CSS (4.3.0) + @tailwindcss/vite             : MIT
   shadcn-vue / shadcn primitives                       : MIT
+    (conversation primitives in apps/desktop/src/components/ui/{marker,message,
+     bubble,attachment,spinner,message-scroller,collapsible} ported from
+     unovue/shadcn-vue registry/bases/reka/ui at b251d9f, Copyright (c) 2023 unovue)
+  reka-ui (2.11.0)                                     : MIT
   lucide-vue / lucide-react + simple-icons             : ISC / CC0-1.0
   @lobehub/icons-static-svg (1.94.0)                   : MIT (brand SVGs)
   monaco-editor (0.55.1) + @monaco-editor/loader       : MIT
