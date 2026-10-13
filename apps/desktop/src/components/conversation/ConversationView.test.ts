@@ -134,12 +134,12 @@ describe('ConversationView turns', () => {
 
   it('names the sub-agent that asked for an approval and lifts it to the turn', () => {
     const wrapper = mountView(parallelSubAgents())
-    const agents = wrapper.findAll('[data-testid="sub-agent"]')
+    const agents = wrapper.findAll('[data-testid="sub-agent-card"]')
     expect(agents).toHaveLength(2)
     expect(agents[1]!.text()).toContain('Needs approval')
     const card = wrapper.get('[data-testid="approval-card"]')
     expect(card.text()).toContain('global_engineering #1')
-    expect(card.element.closest('[data-testid="sub-agent"]')).toBeNull()
+    expect(card.element.closest('[data-testid="sub-agent-card"]')).toBeNull()
     wrapper.unmount()
   })
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Hourglass, Users } from '@lucide/vue'
+import { Hourglass } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useAgentDirectory } from '@/composables/useAgentDirectory'
 import type { FeedNode } from '@/lib/conversation/grouping'
@@ -9,13 +9,14 @@ import ActivityGroup from './ActivityGroup.vue'
 import ReasoningBlock from './ReasoningBlock.vue'
 import ToolRow from './ToolRow.vue'
 import AgentTodos from './AgentTodos.vue'
+import AgentGroup from './AgentGroup.vue'
 
 defineOptions({ name: 'TurnActivity' })
 
 /**
  * The work area of a run: reasoning blocks, folded exploration groups, one line per loud
  * tool call, plans, waits, sub-agents and system lines. Rows have no border and no
- * background; status is carried by the glyph. Sub-agents get their card in P5.
+ * background; status is carried by the glyph. Parallel dispatches render as an AgentGroup.
  */
 defineProps<{ nodes: FeedNode[]; runId: string; workspaceRoot?: string | null }>()
 const { t } = useI18n()
@@ -35,30 +36,15 @@ function waitNames(entry: WaitEntry): string {
       <ToolRow v-else-if="node.type === 'tool'" :entry="node.entry" :run-id="runId" :workspace-root="workspaceRoot" />
       <template v-else-if="node.type === 'wait'">
         <Hourglass class="conversation-glyph" aria-hidden="true" />
-        <span>{{ t(node.entry.status === 'waiting' ? 'conversation.wait.waiting' : 'conversation.wait.resolved', { names: waitNames(node.entry) }) }}</span>
+        <span>{{ node.entry.status === 'waiting' ? t('conversation.wait.waiting', { names: waitNames(node.entry) }) : t('conversation.wait.resolved', { names: waitNames(node.entry) }) }}</span>
       </template>
       <AgentTodos v-else-if="node.type === 'plan'" :entry="node.entry" />
-      <template v-else-if="node.type === 'agents'">
-        <div class="conversation-agents">
-          <div class="conversation-activity-row">
-            <Users class="conversation-glyph" aria-hidden="true" />
-            <span>{{ t('conversation.agents.working', { count: node.agents.length }, node.agents.length) }}</span>
-          </div>
-          <div v-for="agent in node.agents" :key="agent.agent.taskId" class="conversation-agent" data-testid="sub-agent">
-            <div class="conversation-activity-row">
-              <span class="conversation-agent-name">{{ displayName(agent.agent.handle ?? agent.agent.agentSlug) }}</span>
-              <span class="conversation-agent-status" :data-status="agent.status">{{ t(`conversation.agents.status.${agent.status}`) }}</span>
-            </div>
-            <p v-if="agent.agent.title" class="conversation-agent-title">{{ agent.agent.title }}</p>
-            <TurnActivity v-if="agent.nodes.length" :nodes="agent.nodes" :run-id="runId" :workspace-root="workspaceRoot" class="conversation-agent-activity" />
-          </div>
-        </div>
-      </template>
+      <AgentGroup v-else-if="node.type === 'agents'" :agents="node.agents" :run-id="runId" :workspace-root="workspaceRoot" />
       <template v-else-if="node.type === 'marker'">
         <TurnMarker :type="node.entry.type" :data="node.entry.data" />
       </template>
       <template v-else-if="node.type === 'supervision'">
-        <span>{{ t(node.entry.decision === 'revise' ? 'conversation.supervision.revise' : 'conversation.supervision.escalate') }}</span>
+        <span>{{ node.entry.decision === 'revise' ? t('conversation.supervision.revise') : t('conversation.supervision.escalate') }}</span>
       </template>
     </li>
   </ul>
@@ -67,12 +53,5 @@ function waitNames(entry: WaitEntry): string {
 <style scoped>
 .conversation-activity { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--text-secondary); }
 .conversation-activity-row { display: flex; align-items: center; gap: 6px; min-height: 22px; min-width: 0; }
-.conversation-activity-row > [data-slot='collapsible'], .conversation-activity-row > .conversation-todos, .conversation-activity-row > .conversation-agents { flex: 1; min-width: 0; }
-.conversation-agents { display: flex; flex-direction: column; gap: 4px; width: 100%; }
-.conversation-agent { padding-left: 20px; border-left: 1px solid var(--border-card); }
-.conversation-agent-name { color: var(--text-primary); }
-.conversation-agent-status { font-size: 11px; color: var(--text-muted); }
-.conversation-agent-status[data-status='failed'], .conversation-agent-status[data-status='blocked'] { color: var(--accent-danger); }
-.conversation-agent-status[data-status='awaiting_approval'] { color: var(--accent-warning); }
-.conversation-agent-title { margin: 0; font-size: 12px; color: var(--text-muted); }
+.conversation-activity-row > [data-slot='collapsible'], .conversation-activity-row > .conversation-todos, .conversation-activity-row > .conversation-agent-group { flex: 1; min-width: 0; }
 </style>
