@@ -256,3 +256,35 @@ describe('dynamic feed labels', () => {
     }
   })
 })
+
+describe('ConversationView turn states (APP-HOME-108 follow-up)', () => {
+  it('shows a skeleton only when loading outlasts 200ms, and no "ready" placeholder meanwhile', async () => {
+    vi.useFakeTimers()
+    try {
+      const empty: FeedFixture = { name: 'empty', messages: [], runs: [], events: [] }
+      const wrapper = mountView(empty, { loading: true })
+      expect(wrapper.find('[data-testid="conversation-skeleton"]').exists()).toBe(false)
+      expect(wrapper.find('.conversation-empty').exists()).toBe(false)
+      await vi.advanceTimersByTimeAsync(200)
+      expect(wrapper.find('[data-testid="conversation-skeleton"]').attributes('role')).toBe('status')
+      // Real turns replace it at once.
+      await wrapper.setProps({ loading: false, messages: simpleAnswer().messages })
+      expect(wrapper.find('[data-testid="conversation-skeleton"]').exists()).toBe(false)
+      expect(wrapper.findAll('[data-testid="conversation-turn"]')).toHaveLength(1)
+      wrapper.unmount()
+
+      // An empty session: the skeleton holds its 500ms minimum, then the placeholder shows.
+      const blank = mountView(empty, { loading: true })
+      await vi.advanceTimersByTimeAsync(200)
+      await blank.setProps({ loading: false })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(blank.find('[data-testid="conversation-skeleton"]').exists()).toBe(true)
+      await vi.advanceTimersByTimeAsync(400)
+      expect(blank.find('[data-testid="conversation-skeleton"]').exists()).toBe(false)
+      expect(blank.find('.conversation-empty').exists()).toBe(true)
+      blank.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

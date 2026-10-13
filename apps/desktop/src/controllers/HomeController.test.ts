@@ -209,6 +209,26 @@ describe('HomeController session read ownership', () => {
     h.listMessages.mockResolvedValue([])
   })
 
+  it('marks the transcript loading until the newest session read lands, not a stale one', async () => {
+    let resolveSlow!: (value: never[]) => void
+    let resolveNew!: (value: never[]) => void
+    h.listMessages.mockImplementationOnce(() => new Promise<never[]>((done) => { resolveSlow = done }))
+    homeController.setSelectedSession('slow-session-2')
+    await nextTick()
+    expect(homeController.transcriptLoading.value).toBe(true)
+    h.listMessages.mockImplementationOnce(() => new Promise<never[]>((done) => { resolveNew = done }))
+    homeController.setSelectedSession('new-session-2')
+    await nextTick()
+    resolveSlow([] as never[])
+    await flushPromises()
+    // The stale read finishing says nothing about the session on screen.
+    expect(homeController.transcriptLoading.value).toBe(true)
+    resolveNew([{ id: 'm', session_id: 'new-session-2', role: 'user', content: 'hi' }] as never[])
+    await flushPromises()
+    expect(homeController.transcriptLoading.value).toBe(false)
+    h.listMessages.mockResolvedValue([])
+  })
+
   it('does not let a late session roster restore the old selection after creating a new session', async () => {
     let resolveRoster!: (value: never[]) => void
     let staleSignal!: AbortSignal

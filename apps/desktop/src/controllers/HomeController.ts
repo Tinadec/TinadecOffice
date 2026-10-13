@@ -452,7 +452,24 @@ async function retryWorkspace(key: string) {
 
 let sessionRead = 0
 let sessionLoadAbort: AbortController | null = null
+/**
+ * True from a session switch until that session's transcript has loaded, when the switch
+ * left nothing to show. The flat feed shows a skeleton instead of flashing the welcome
+ * screen (and bouncing the composer to the centre and back) for a session that has history.
+ */
+const transcriptLoading = ref(false)
+
 async function loadMessagesAndApprovals() {
+  const read = sessionRead + 1
+  try {
+    await readMessagesAndApprovals()
+  } finally {
+    // Only the newest read may end the loading state; an older one finishing late must not.
+    if (sessionRead === read) transcriptLoading.value = false
+  }
+}
+
+async function readMessagesAndApprovals() {
   const read = ++sessionRead
   sessionLoadAbort?.abort()
   const loadAbort = new AbortController()
@@ -1226,6 +1243,7 @@ watch(selectedProjectId, id => {
 watch([selectedSessionId, selectedStorage], ([, storageId], [, previousStorage]) => {
   sessionLoadAbort?.abort()
   messages.value = storageId !== previousStorage ? [] : messages.value.filter((message) => message.session_id === selectedSessionId.value)
+  transcriptLoading.value = Boolean(selectedSessionId.value) && messages.value.length === 0
   orchestration.value = null
   approvals.value = []
   toolExecutions.value = []
@@ -1376,6 +1394,7 @@ export const homeController = {
   streamingReply,
   streamingReplies,
   conversationFeed,
+  transcriptLoading,
   agentTurnActivities,
   recordApproval,
   loadMessagesAndApprovals,

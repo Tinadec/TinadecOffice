@@ -13,6 +13,8 @@ import { applyEvents, createFeedState } from '@/lib/conversation/reducer'
 
 const scenarios = FEED_FIXTURES.map((make) => make())
 const selected = ref(scenarios[0]!.name)
+/** Stands in for a session switch whose transcript has not arrived: the skeleton after 200ms. */
+const loading = ref(false)
 const scenario = computed(() => scenarios.find((item) => item.name === selected.value) ?? scenarios[0]!)
 
 const feed = computed<ConversationFeed>(() => {
@@ -36,12 +38,14 @@ const feed = computed<ConversationFeed>(() => {
       >
         {{ item.name }}
       </button>
+      <button type="button" class="conversation-preview-scenario" role="switch" :aria-checked="loading" @click="loading = !loading">加载中</button>
     </div>
     <div class="conversation-preview-inner">
       <ConversationView
         :key="scenario.name"
-        :messages="scenario.messages"
-        :runs="scenario.runs"
+        :messages="loading ? [] : scenario.messages"
+        :runs="loading ? [] : scenario.runs"
+        :loading="loading"
         :feed="feed"
         workspace-root="/w"
       />

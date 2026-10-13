@@ -2170,7 +2170,7 @@ retry: 'Retry',
       approveRun: 'Approve for this run', instead: 'Do this instead…', insteadPlaceholder: 'Tell the agent what to do instead', sendInstead: 'Send instead',
       allowPrefix: 'Always allow commands starting with {prefix}', approveShortcut: 'Approve (⌘/Ctrl+Enter)', rejectShortcut: 'Reject (⌘/Ctrl+Backspace)', failed: 'Could not apply the decision',
     },
-    turn: { workedFor: 'Worked for {duration}', toolCount: '{count} tool | {count} tools', sending: 'Sending…', edits: '{count} edit | {count} edits', commands: '{count} command | {count} commands' },
+    turn: { workedFor: 'Worked for {duration}', toolCount: '{count} tool | {count} tools', sending: 'Sending…', edits: '{count} edit | {count} edits', commands: '{count} command | {count} commands', loading: 'Loading conversation…' },
     tool: {
       terminalTitle: 'Agent terminal',
       exitCode: 'exit {code}', changedFiles: 'Changed files', openInTerminal: 'Open in terminal panel',

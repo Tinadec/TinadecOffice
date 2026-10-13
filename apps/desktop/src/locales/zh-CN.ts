@@ -2167,7 +2167,7 @@ retry: '重试',
       approveRun: '本次运行都批准', instead: '改为这样做…', insteadPlaceholder: '告诉智能体改做什么', sendInstead: '改为这样做',
       allowPrefix: '始终允许以 {prefix} 开头的命令', approveShortcut: '批准（⌘/Ctrl+Enter）', rejectShortcut: '拒绝（⌘/Ctrl+Backspace）', failed: '决定未能生效',
     },
-    turn: { workedFor: '已工作 {duration}', toolCount: '工具 {count} 次', sending: '发送中…', edits: '编辑 {count} 处', commands: '运行 {count} 条命令' },
+    turn: { workedFor: '已工作 {duration}', toolCount: '工具 {count} 次', sending: '发送中…', edits: '编辑 {count} 处', commands: '运行 {count} 条命令', loading: '正在加载对话…' },
     tool: {
       terminalTitle: '智能体终端',
       exitCode: '退出码 {code}', changedFiles: '改动的文件', openInTerminal: '在终端面板打开',

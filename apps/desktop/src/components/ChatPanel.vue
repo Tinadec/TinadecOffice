@@ -36,6 +36,11 @@ const props = defineProps<{
   /** True while a run can still be cancelled — drives the composer's stop button. */
   canStop?: boolean
   /**
+   * The selected session's transcript is still loading. The panel stays docked (with a
+   * skeleton) instead of flashing the welcome screen for a session that has history.
+   */
+  loading?: boolean
+  /**
    * The flat feed's inputs (APP-HOME-108): session messages are paired with these runs and
    * the event-sourced feed into turns by ConversationView. Activity, approvals and streaming
    * answers all come from here; ChatPanel derives none of them itself.
@@ -77,7 +82,7 @@ function onWelcomeSubmit(payload: ComposerSubmitOptions & { content: string }) {
 const conversationRef = ref<HTMLElement | null>(null)
 const { mode: chatMode } = useChatResponsiveMode(conversationRef)
 
-const hero = computed(() => props.messages.length === 0)
+const hero = computed(() => props.messages.length === 0 && !props.loading)
 
 const modeVersionId = ref<string | null>(null)
 function selectMode(value: string | null) {
@@ -145,6 +150,7 @@ watch(hero, async () => {
           :approvals="conversation.approvals"
           :supervision-reviews="conversation.supervisionReviews"
           :workspace-root="conversation.workspaceRoot"
+          :loading="loading"
           @edit="emit('edit-message', $event)"
         />
         <AgentTodosStatus :feed="conversation.feed" :runs="conversation.runs" />

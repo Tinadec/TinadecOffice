@@ -36,6 +36,7 @@ const conversation = computed(() => ({
     :runs-for-composer="c.runs.value"
     :can-stop="Boolean(c.stoppableRunId.value)"
     :conversation="conversation"
+    :loading="c.transcriptLoading.value"
     @update:draft="c.updateDraft($event)"
     @update:permission="c.updatePermission($event)"
     @update:settings="c.updateComposerSettings($event)"

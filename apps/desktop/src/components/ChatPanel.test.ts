@@ -107,6 +107,18 @@ describe('ChatPanel persistent composer', () => {
     wrapper.unmount()
   })
 
+  it('stays docked while a switched-to session is still loading its transcript', async () => {
+    const wrapper = mountPanel([msg('m1')])
+    await nextTick()
+    // Switching sessions empties the list before the new transcript arrives.
+    await wrapper.setProps({ messages: [], loading: true })
+    expect(wrapper.find('.conversation').classes()).not.toContain('composer-hero')
+    // An existing session that turns out to be empty rises to the start page once loaded.
+    await wrapper.setProps({ loading: false })
+    expect(wrapper.find('.conversation').classes()).toContain('composer-hero')
+    wrapper.unmount()
+  })
+
   it('FLIP setup tolerates zero-size rects (no measurement available)', async () => {
     const wrapper = mountPanel([])
     await nextTick()

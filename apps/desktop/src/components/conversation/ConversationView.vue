@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { Bot } from '@lucide/vue'
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
 import { usePreferredReducedMotion } from '@vueuse/core'
+import { useDelayedLoading } from '@/composables/useDelayedLoading'
 import { useI18n } from 'vue-i18n'
 import type { ApprovalDto, MessageDto } from '@/api'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
@@ -24,11 +25,14 @@ const props = defineProps<{
   approvals?: readonly ApprovalDto[]
   supervisionReviews?: Readonly<Record<string, SupervisionReview | null | undefined>>
   workspaceRoot?: string | null
+  /** The transcript is still loading: after 200ms a skeleton stands in, for at least 500ms. */
+  loading?: boolean
 }>()
 const emit = defineEmits<{ edit: [payload: { id: string; content: string }] }>()
 const { t } = useI18n()
 // Reduced motion is a second design, not a slower one: jumps are instant.
 const motion = usePreferredReducedMotion()
+const showSkeleton = useDelayedLoading(toRef(() => Boolean(props.loading)), { delayMs: 200, minimumMs: 500 })
 const jumpBehavior = computed<ScrollBehavior>(() => (motion.value === 'reduce' ? 'auto' : 'smooth'))
 
 // tool_evidence is the model's own checkpoint of tool results; the activity area is the
@@ -68,11 +72,21 @@ const turns = computed(() => {
             />
           </MessageScrollerItem>
         </MessageScrollerContent>
-        <div v-if="turns.length === 0" class="conversation-empty">
-          <Bot :size="20" aria-hidden="true" />
-          <span>{{ t('chat.ready') }}</span>
-        </div>
       </MessageScrollerViewport>
+      <!-- Over the viewport, not inside it: the scroller content fills the viewport's height.
+           The skeleton has a turn's shape (a right-aligned bubble, then answer lines) so
+           nothing jumps when the real transcript replaces it. -->
+      <div v-if="showSkeleton && turns.length === 0" class="conversation-skeleton" role="status" :aria-label="t('conversation.turn.loading')" data-testid="conversation-skeleton">
+        <div v-for="row in 2" :key="row" class="conversation-skeleton-turn">
+          <span class="conversation-skeleton-bar is-bubble" />
+          <span class="conversation-skeleton-bar is-line" />
+          <span class="conversation-skeleton-bar is-line is-short" />
+        </div>
+      </div>
+      <div v-else-if="turns.length === 0 && !loading" class="conversation-empty">
+        <Bot :size="20" aria-hidden="true" />
+        <span>{{ t('chat.ready') }}</span>
+      </div>
       <MessageScrollerButton :label="t('chat.jumpToLatest')" :behavior="jumpBehavior" data-testid="jump-to-latest" />
     </MessageScroller>
   </MessageScrollerProvider>
@@ -83,5 +97,13 @@ const turns = computed(() => {
 .conversation-content { gap: 24px; width: 100%; max-width: 852px; margin: 0 auto; padding: 16px 16px 24px; }
 :global(.chat-narrow) .conversation-content { gap: 18px; padding: 12px 10px 18px; }
 :global(.chat-ultra) .conversation-content { gap: 14px; padding: 8px 6px 14px; }
-.conversation-empty { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; color: var(--text-muted); font-size: 13px; }
+.conversation-skeleton { position: absolute; inset: 0 0 auto; display: flex; flex-direction: column; gap: 24px; width: 100%; max-width: 852px; margin: 0 auto; padding: 16px; }
+.conversation-skeleton-turn { display: flex; flex-direction: column; gap: 8px; }
+.conversation-skeleton-bar { display: block; height: 12px; border-radius: 6px; background: color-mix(in srgb, var(--text-primary) 9%, transparent); animation: conversation-skeleton-pulse 1.4s ease-in-out infinite; }
+.conversation-skeleton-bar.is-bubble { align-self: flex-end; width: 40%; height: 32px; border-radius: 10px; }
+.conversation-skeleton-bar.is-line { width: 80%; }
+.conversation-skeleton-bar.is-short { width: 55%; }
+@keyframes conversation-skeleton-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .conversation-skeleton-bar { animation: none; } }
+.conversation-empty { position: absolute; inset: 0; pointer-events: none; display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; color: var(--text-muted); font-size: 13px; }
 </style>
