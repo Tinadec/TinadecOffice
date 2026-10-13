@@ -7,7 +7,7 @@
 | 待核查 | 72 |
 | 未开始 | 16 |
 | 待方案 | 10 |
-| 进行中 | 3 |
+| 进行中 | 4 |
 | 阻塞 | 0 |
 | 待验收 | 3 |
 | 已完成 | 26 |
@@ -29,6 +29,7 @@
 | [APP-HOME-105](../02-modules/app/home/TODO.md#app-home-105) | 对话流 Markdown 扩展语法与卡片细节 | 实现 | 已完成 | P1 | APP-HOME |
 | [APP-HOME-106](../02-modules/app/home/TODO.md#app-home-106) | 项目选择器长列表与模式、权限展开指示 | 实现 | 已完成 | P1 | APP-HOME |
 | [APP-HOME-107](../02-modules/app/home/TODO.md#app-home-107) | 侧边栏与多文件夹工作区 | 实现 | 待验收 | P1 | APP-HOME |
+| [APP-HOME-108](../02-modules/app/home/TODO.md#app-home-108) | 平面模式对话流重构 v2 | 实现 | 进行中 | P1 | APP-HOME |
 | [APP-PACKS-102](../02-modules/app/agent-packs/TODO.md#app-packs-102) | 保留配置校验诊断与 GraphSeedPack 安装失败状态 | 实现 | 已完成 | P1 | APP-PACKS |
 | [APP-RENDERER-101](../02-modules/app/shared-renderer/TODO.md#app-renderer-101) | 复验 API 包装后的取消错误语义 | 核查 | 待核查 | P1 | APP-RENDERER |
 | [APP-RENDERER-102](../02-modules/app/shared-renderer/TODO.md#app-renderer-102) | 复验窄宽度布局中的发送主操作 | 核查 | 待核查 | P1 | APP-RENDERER |

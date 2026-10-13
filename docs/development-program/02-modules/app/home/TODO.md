@@ -6,6 +6,37 @@
 
 状态：待核查 / 未开始 / 待方案 / 进行中 / 阻塞 / 待验收 / 已完成 / 不做 / 已被替代。优先级是初始建议，可在逐模块分析后调整。
 
+<a id="app-home-108"></a>
+
+### APP-HOME-108 平面模式对话流重构 v2
+
+- 类型：实现
+- 状态：进行中
+- 优先级：P1
+- 主责模块：APP-HOME
+- 前置依赖：复用会话 SSE、`ApprovalEvidenceProjector` 脱敏投影、reka-ui 2.11、`MarkdownRender`、`useTerminal.openAgentTerminal`；不复用已判定失败的 PR #43 代码
+- 关联功能：APP-HOME-F002；CORE-TOOLS（工具时间线与结果预览端点）、GATEWAY（薄代理）交叉引用此任务；空间模式本轮不迁移
+- 契约与证据：[计划](../../../../../.tinadec_dev/plans/claude/2026-10-13-flat-conversation-v2.md)、[P0/P1 报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)
+
+**问题、目标与触及范围**
+
+平面对话流把思维链截成 160 字尾部、工具行没有可读的动作句子、所有活动压进一个默认收起的折叠、多智能体只剩一条推理步骤，并且每个工具事件都触发一次整会话重放的 REST 请求。目标是回合结构：用户消息 → 工作区（思维链、分层工具调用、子智能体、系统事件行；运行中展开、完成收成一行摘要）→ 永不折叠的回答正文 → 脚注，需要人处理的审批永远可见。阶段 P0 后端最小增量，P1 数据层，P2 UI 原语，P3 骨架接入，P4 活动组件，P5 子智能体，P6 附件状态机与旧路径性能合并，P7 收尾。
+
+**验收条件**
+
+- [x] P0：`tool.execution.requested` 在授权判断前发出并携带审批同源的脱敏句子数据；工具时间线透传 task/agent/错误类别并真正按 `run_id`/`limit` 过滤；有界结果预览端点通过安全审查清单；Gateway 薄代理、三份契约同步，`check:drift` 干净。
+- [x] P1：reducer/grouping/turns/toolSentence/format 单测；2000 条事件 hydrate 一次发布且 < 300ms（实测含构造 6ms）；`useConversationFeed` 以重放后 heartbeat 一次发布，尚未挂到 HomeController（P3 接入时挂载，避免无人读取的第二个订阅者）。
+- [ ] P2：Attachment 五态、Spinner 延迟/最短显示、Marker、Collapsible 卸载、scroller 锚定/跟随组件测试。
+- [ ] P3：`ConversationView` 接入 `ChatPanel`，迁移 `MessageList.test.ts` 全部行为。
+- [ ] P4：推理块、分层工具行、审批卡、待办、监督、工具预览的展开/收起与惰性加载行为。
+- [ ] P5：子智能体卡、AgentGroup 与右栏 `SubAgentsCard`。
+- [ ] P6：发送框附件状态机、`AgentTodosStatus`、旧 `refreshToolExecutions` 按 run 尾随合并且重放期 REST 调用为 0。
+- [ ] P7：双语 i18n、减弱动效、窄宽、Debug Studio 预览、删除无引用旧组件、文档与报告。
+
+**当前边界**
+
+P0 在 Linux 开发容器验证；该环境下 `ToolChainEndpointTests.WorkerWriteFile_*` 等用例在未改动的 `main` 上即失败（工具子进程的可写源目录为空，见 P0 报告），新增断言因此另以驻留审批时刻的独立端到端用例覆盖。Windows 实机、真实模型与 UI 阶段尚未开始。
+
 <a id="app-home-107"></a>
 
 ### APP-HOME-107 侧边栏与多文件夹工作区
