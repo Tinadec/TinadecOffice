@@ -146,4 +146,31 @@ export function compactedRun(): FeedFixture {
   }
 }
 
-export const FEED_FIXTURES = [simpleAnswer, exploreEditShell, pendingApproval, parallelSubAgents, failedRun, interruptedRun, compactedRun]
+/**
+ * A session carried over to the next morning: yesterday's turn answered twice (a short interim
+ * note, then the reply), today's turn stopped by the user — a date line, a compact note, retry.
+ */
+export function nextDayStopped(): FeedFixture {
+  const s = new EventScript('session-1', Date.parse('2026-10-12T15:00:00Z'))
+  s.thought('run-1', 'resp-1', '**Checking the tests**\nRun them before touching anything.')
+  s.toolCall('run-1', 'e-1', 'shell', { command: 'npm test' }).toolDone('run-1', 'e-1', 'shell')
+  const interimAt = s.events.at(-1)!.ts
+  s.toolCall('run-1', 'e-2', 'replace_lines', { resource_path: '/w/src/a.ts' }).toolDone('run-1', 'e-2', 'replace_lines')
+  const doneAt = s.events.at(-1)!.ts
+  const today = new EventScript('session-1', Date.parse('2026-10-13T09:00:00Z'))
+  today.thought('run-2', 'resp-2', '**Planning the rename**\nList every caller first.')
+  const events = [...s.events, ...today.events]
+  return {
+    name: 'next-day-stopped',
+    messages: [
+      message('m-1', 'user', 'Fix the flaky test', '2026-10-12T15:00:00Z'),
+      message('m-2', 'assistant', 'The tests pass locally; the flake is a timer. Fixing that next.', interimAt, 'run-1'),
+      message('m-3', 'assistant', 'Fixed: the test now waits on the fake clock instead of real time.', doneAt, 'run-1'),
+      message('m-4', 'user', 'Now rename useResults to useSearchResults', '2026-10-13T09:00:00Z'),
+    ],
+    runs: [runRow('run-1', 'completed', 'm-1', s.events), runRow('run-2', 'cancelled', 'm-4', today.events)],
+    events,
+  }
+}
+
+export const FEED_FIXTURES = [simpleAnswer, exploreEditShell, pendingApproval, parallelSubAgents, failedRun, interruptedRun, compactedRun, nextDayStopped]
