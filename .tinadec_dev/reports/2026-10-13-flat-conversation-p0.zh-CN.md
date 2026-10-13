@@ -1,4 +1,4 @@
-# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层与 P2 UI 原语
+# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语与 P3 骨架接入
 
 日期：2026-10-13 · 分支：`feat/flat-conversation-v2`（基于 `ab42b02`）· 环境：Linux 开发容器（2 核 / 5 GB，.NET 10.0.401、Bun 1.4.3、Node 24.21）。计划见 [`plans/claude/2026-10-13-flat-conversation-v2.md`](../plans/claude/2026-10-13-flat-conversation-v2.md)，任务见 `docs/development-program/02-modules/app/home/TODO.md#app-home-108`。
 
@@ -43,6 +43,14 @@
 - **composables**：`useDelayedLoading`（150ms 才出现、至少停 400ms，恢复工作时不闪）、`useElapsed`（共享 1s ticker，无订阅即停）、`useSmoothText`（约 90 字/秒；落后超过 0.3s 时按当时积压定速追平，结束时 0.12s 冲刷；历史首帧完整；只控节奏，不碰 MarkdownRender）、`useToolPreview`（展开时惰性取、仅终态、按 execution 缓存与并发合并、失败可重试）、`useAgentDirectory`（读一次 `/api/v1/agents`，失败退回 slug、下次重试，`handle#n` 保留序号）。
 - **shimmer**：`.chat-shimmer` 泛化为基于 `currentColor` 的 `.shimmer`（2s）与单次收尾的 `.shimmer-once`；`.chat-shimmer` 保留原配色与 2.4s 作为别名，空间模式不变；减弱动效下全部静止为实色。
 
+## P3 改了什么
+
+- **数据接线**：`HomeController` 的 run 列表保留 `trigger_message_id / created_at / updated_at`（此前只留 `{id,status}`，配对只能靠猜）；手写镜像 `OrchestrationRunDto` 补 `trigger_message_id`（Gateway `runMapper` 早已透传）。`useConversationFeed` 在一个与窗口同寿命的独立 effect scope 中挂载并导出为 `homeController.conversationFeed`。`turns.ts`：刚准入、只知道 id 的 run 归入最新回合，而不是因时间缺失被排到最前。
+- **组件骨架**（`components/conversation/`）：`ConversationView`（P2 scroller，每回合一行，用户消息为锚点，跳底按钮）、`ConversationTurn`、`UserMessage`（tinted 气泡、悬停复制/编辑/时间、附件改用 attachment 原语且保持网关按 id 路由、svg 不作缩略图、不出存储路径）、`TurnActivity`（骨架：组/工具句子/推理/等待/计划/子智能体/marker 各一行）、`ApprovalCard`（流外常显、显示 Core evidence 的命令/目录/目标与请求者；对 Core 已列出但 feed 尚未见到的待审批也照样显示）、`AssistantAnswer`（永不折叠，流式经 `useSmoothText`，脚注复制·时间·工作时长·工具次数）、`TurnMarker`（失败原因写成文字）。共享样式 `conversation.css`。
+- **监督裁决**：从 `TurnTimeline` 原样抽成 `SupervisionGate`，空间模式与平面 feed 共用；`continue→resume`、`correct` 走 insert 不变。升级原因与选项仍由 `useAgentActivity` 提供（空间模式仍在用）。
+- **接入**：`ChatPanel` 新增可选 `conversation` 输入，有则渲染 `ConversationView`；`ChatCard` 从控制器提供。Debug Studio 画廊未提供时仍走 `MessageList`，P7 迁移画廊后删除回退。`MessageScrollerViewport` 的可访问名改为参数（上游硬编码英文 "Messages"）。
+- **i18n**：新增 `conversation.*` 中英文案；`components/conversation/**` 纳入 `i18nParity`；动态拼接的 marker 类型与子智能体状态另有双语存在性断言。
+
 ## 验证（本机实测）
 
 | 范围 | 结果 |
@@ -62,8 +70,11 @@
 | P2 scroller 测试（跟随、上翻不抢、锚定、200/1000 行测量上限） | 5/5；替换回上游 `useMessageScroller.ts` 时测量用例 2 例变红 |
 | P2 composable 测试 | 10/10 |
 | Desktop 全量 vitest（P2 后） | 1378 通过 / 14 skip（既有 `NotificationIslandHost`），151 文件；`vue-tsc` 0 错误；Tailwind 编译 `styles.css` 产出新规则 |
+| P3 `ConversationView.test.ts`（迁移 MessageList 行为 + 子智能体审批提升、失败原因、流式、动态文案） | 17/17 |
+| Desktop 全量 vitest（P3 后） | 1396 通过 / 14 skip，152 文件；`vue-tsc` 0 错误（含 TinadecUI 源） |
+| TinadecUI vitest | 187/187 |
 
 ## 既有失败与边界
 
 - `ToolChainEndpointTests.WorkerWriteFile_RequestsApproval_ApprovedThenExecuted_RunCompletes` 在未改动的 `ab42b02` 上同样失败（`git worktree` 基线实测），`main` 的 posix-core CI 也红。新预览端点给出原因：工具子进程报 `Only paths inside the authorized source folders () may be written`——Linux 上 `ToolExecutionContext.WorkspaceRoots` 为空、可写根又不是工作区。属多文件夹工作区链路（APP-HOME-107），本轮不修；P0 的新断言因此另以驻留审批时刻的独立用例覆盖，原用例里的新断言只在其能跑完的平台上执行。
-- 未在 Windows 实机、真实模型或 Electron 中验证；P2 原语尚无页面使用者，视觉只经 Tailwind 编译与组件 DOM 断言，未做截图；P3–P7 尚未开始。
+- 未在 Windows 实机、真实模型或 Electron 中验证。本机无 Electron 二进制与显示，浏览器版 Vite 预览无法访问受管后端，P3 新视图只经组件 DOM 断言与类型检查，未做截图；计划的实机与截图验收在 P7。

@@ -1,5 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-13 Flat conversation view (APP-HOME-108 P3)
+
+`ChatPanel` renders `components/conversation/ConversationView.vue` when given its optional `conversation` input (`ChatCard` passes feed, runs, streaming replies, approvals, supervision reviews and the workspace root from `homeController`); without it — the Debug Studio gallery — it still renders `MessageList` until P7. `homeController.conversationFeed` is the mounted `useConversationFeed`; `homeController.runs` now keeps `trigger_message_id`/`created_at`/`updated_at`. Supervision escalations render through the shared `conversation/SupervisionGate.vue` (also used by space-mode `TurnTimeline`) and still come from `useAgentActivity`. `TurnActivity.vue` is a one-line-per-node skeleton that P4 replaces. Keys live under `conversation.*`; `components/conversation/**` is in `i18nParity`.
+
 ## 2026-10-13 Conversation UI primitives (APP-HOME-108 P2)
 
 `components/ui/{marker,message,bubble,attachment,spinner,message-scroller,collapsible}/` are ported from shadcn-vue's reka base (b251d9f) with upstream `cn-*` class names kept; their only styles live in `components/ui/conversation-primitives.css` (imported from `styles.css`), written against this app's tokens — do not add nova palette classes. Import them from the folder (`@/components/ui/collapsible`); the flat `ui/collapsible.vue`/`UiCollapsible` stays for space mode. `useMessageScroller.ts` deviates from upstream on purpose: content height reads only the last row, the current anchor reads only visible anchors, and the first visible row is found by bisection (`message-scroller.test.ts` pins the read count and fails on the upstream file). Composables `useDelayedLoading`/`useElapsed`/`useSmoothText`/`useToolPreview`/`useAgentDirectory` back the coming feed. `.shimmer`/`.shimmer-once` are the generic shimmer; `.chat-shimmer` is an alias with its old colours. `reka-ui@2.11.0` is now a direct Desktop dependency.
