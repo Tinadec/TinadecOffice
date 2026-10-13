@@ -19,6 +19,12 @@ Debug Studio's own tab bar hides its Preview tab below ~800px.
 - `screenshots/chatpanel-w1169.png`, `chatpanel-w380.png` — the real ChatPanel; at 380px it
   carries `chat-narrow chat-ultra`.
 - `screenshots/shimmer-phase-1.png` — the shimmer mid-sweep after the keyframe fix.
+- `screenshots/followup-w{1169,380,300}-next-day-stopped.png` — the follow-up items: the date
+  line between yesterday's and today's turn, yesterday's short interim answer as a clamped
+  two-line note, today's stopped turn with its retry button (`harness/followup.mjs`; at 300px
+  the note ends in an ellipsis).
+- `screenshots/followup-w{1169,380}-loading-skeleton.png` — the transcript skeleton shown by
+  the preview's "加载中" switch after its 200ms delay.
 - `computed-styles.txt` — computed `animation-name` with and without `prefers-reduced-motion`.
 - `harness/*.mjs` — the scripts (they import `playwright` from a tools directory outside the repo).
 
@@ -27,4 +33,9 @@ invisible for most of the animation cycle (keyframes moved the text-painting gra
 text box; also affected space mode's `.chat-shimmer`), and the answer footer reported a different
 "worked for" duration than the turn's work summary.
 
-Not covered: the Electron window itself, real model runs, Windows/macOS rendering.
+Defects the follow-up captures found and fixed before commit: the compact note kept full-size
+text because the markdown body sets its own size and colour, and the skeleton rendered below the
+fold because the scroller content fills the viewport height (it is now drawn over the viewport).
+
+Not covered: the Electron window itself, real model runs, Windows/macOS rendering, the unread
+count under real scrolling (its component test stubs the scroller state).

@@ -35,7 +35,7 @@
 
 | Feature ID | 功能/能力 | 实现判断 | 本轮验证层级 | 边界与剩余问题 | 证据 |
 | --- | --- | --- | --- | --- | --- |
-| APP-HOME-F008 | 平面对话流回合结构：用户消息 → 工作区（推理、分层工具行、子智能体、系统行；运行中展开、落定收成摘要）→ 不折叠的回答 → 脚注；审批常显；事件溯源数据层与有界结果预览 | 源码可见 | Linux：Desktop 全量 vitest、`vue-tsc`、TinadecUI、Gateway、Core 定向/全量（既有 Linux 失败另列）；无头 Chromium 截图矩阵与减弱动效计算样式 | Electron 实机、真实模型 Team 链路、Windows/macOS 未验收；空间模式未迁移（本轮约定） | [APP-HOME-108](TODO.md#app-home-108)、[报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)、[截图证据](../../../../../.tinadec_dev/evidence/2026-10-13-flat-conversation/README.md) |
+| APP-HOME-F008 | 平面对话流回合结构：用户消息 → 工作区（推理、分层工具行、子智能体、系统行；运行中展开、落定收成摘要）→ 不折叠的回答 → 脚注；审批常显；事件溯源数据层与有界结果预览 | 源码可见 | Linux：Desktop 全量 vitest、`vue-tsc`、TinadecUI、Gateway、Core 定向/全量（既有 Linux 失败另列）；无头 Chromium 截图矩阵与减弱动效计算样式（代替计划的实机截图与 `vue-mcp`）；首版漏做的重试、日期分隔、未读回合数、切换骨架、groupText、shimmer-once 已补齐并有测试 | Electron 实机、真实模型 Team 链路、Windows/macOS 未验收；未读回合数的真实滚动只能实机看；空间模式未迁移（本轮约定） | [APP-HOME-108](TODO.md#app-home-108)、[报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)、[截图证据](../../../../../.tinadec_dev/evidence/2026-10-13-flat-conversation/README.md) |
 
 ## 状态词汇
 

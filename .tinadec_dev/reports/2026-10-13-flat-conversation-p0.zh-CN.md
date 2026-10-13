@@ -4,7 +4,11 @@
 
 ## 结论
 
-平面模式对话流按计划 P0–P7 全部落地，分支 `feat/flat-conversation-v2`：回合结构（用户消息 → 工作区 → 不折叠的回答 → 脚注）、审批常显、子智能体卡与右栏面板、事件溯源数据层、有界结果预览端点。旧的 `MessageList/MessageItem/LiveTurnBlock` 已删除；空间模式按约定未迁移。验证在 Linux 开发机完成，含无头 Chromium 对真实组件的截图矩阵；Electron 实机、真实模型 Team 链路与 Windows/macOS 尚待验收（见末节）。
+平面模式对话流按计划 P0–P7 实施，分支 `feat/flat-conversation-v2`：回合结构（用户消息 → 工作区 → 不折叠的回答 → 脚注）、审批常显、子智能体卡与右栏面板、事件溯源数据层、有界结果预览端点。旧的 `MessageList/MessageItem/LiveTurnBlock` 已删除；空间模式按约定未迁移。
+
+首版报告曾写「全部落地」，不准确：逐条对照计划后有 6 项细节当时没有做——失败/停止回合的「重试」、跨天日期分隔、跳底按钮的未读回合数、会话切换正文骨架（200/500）、`groupText`（≤150 字的中间回答压成两行）、`.shimmer-once`（只在刚完成时扫一次）。这 6 项已在后续提交补齐，各带测试，见「补齐」一节。
+
+与计划验证方式的偏差：计划要求 `npm run dev` 实机截图并用 `vue-mcp` 查组件树。本机没有 Electron 二进制和显示，截图改为无头 Chromium 对 Vite 渲染端（无 Core/Gateway）；「折叠后无活动 DOM」改由 DOM 测试断言（reka 保留隐藏的外层元素、卸载其子节点），没有用 `vue-mcp`。Electron 实机、真实模型 Team 链路与 Windows/macOS 仍待验收（见末节）。
 
 ## P0 改了什么
 
@@ -90,6 +94,16 @@
   2. 同一回合摘要写「已工作 3 秒」、回答脚注写「已工作 5 秒」——脚注按用户消息时间计；改为与摘要同一跨度（首尾活动），新增断言。
 - **构建**：`vite build` 在 `NODE_OPTIONS=--max-old-space-size=4096` 下 57 秒完成（退出 0）。
 
+## 补齐（首版遗漏的计划细节）
+
+- **重试**：最后一个回合失败或被停止时，在失败/停止行下给出「重试」。它沿用编辑重发：`edit` 事件带原消息 id 与原文，`editAndResend` 截断到该消息并把原文放回输入框，不自动重发。只给最后一个回合（更早的回合重试会截掉其后的历史），也不给 Core 尚未确认的 `pending-` 乐观行。
+- **跨天日期分隔**：相邻两个回合跨越本地日期时，后一回合上方画一条 `Marker variant="separator"` 日期线（`dayLabel`：今天/昨天/星期X/月日，跨年带年份），第一个回合上方不画；放在回合行内，滚动锚点仍是该回合。
+- **未读回合数**：新组件 `JumpToLatest` 在 scroller provider 内读 `scrollable.end`，只计读者上翻期间追加在下方的回合；首次加载的历史、换成另一会话的列表、自己发送的 `pending-` 回合、乐观行换成 Core id 都不计；回到底部清零。按钮有数时变成胶囊「↓ 2 条新消息」，可访问名同步。
+- **会话切换骨架**：`HomeController.transcriptLoading`——选中会话且本地无消息时置真，只由最新一次读取结束时清除（旧读取晚到不清）。`ChatPanel` 加载期间不回欢迎页；`ConversationView` 用 `useDelayedLoading(200/500)` 显示回合形状的骨架（右侧气泡 + 两行），覆盖在视口上（scroller 内容区占满视口高度，放在其后会被挤出可见区）。已知取舍：一个确实为空的既有会话，加载期间先停在对话布局，加载完再升回欢迎页。
+- **groupText**：同一回合有多条回答时，非最后一条且 ≤150 字（按字符、去首尾空白）的回答显示为两行截断的弱化小字，悬停 `title` 看全文，不带脚注；最后一条永不压缩（`isCompactAnswer`）。
+- **shimmer-once**：`useJustSettled` 只在 live → 完成的那一刻为真；推理块的「思考了 N 秒」与工作区摘要在本页看着完成时扫一次，挂载时已完成的历史不扫，减弱动效下不动。
+- Debug Studio「对话消息流」新增场景 `next-day-stopped`（昨天的回合两次作答、今天的回合被停止）与「加载中」开关。
+
 ## 视觉验收（无头 Chromium）
 
 只启动 Vite 渲染端（无 Electron/Core/Gateway），以桩 `window.tinadec.getAppConfig` 打开 Debug Studio。矩阵：7 个场景 × 1169/800/520/380 × 暗/亮 × 毛玻璃/不透明（关键场景），另含已落定回合展开态、`ChatPanel` 1169/380。截图、harness 脚本与计算样式见 [`evidence/2026-10-13-flat-conversation/`](../evidence/2026-10-13-flat-conversation/README.md)。harness 仅为环境隐藏了无后端时出现的通知岛与宿主不一致横幅，并以「先宽后窄」到达窄宽（Debug Studio 自身标签栏在 ~800px 下隐藏「预览」）。
@@ -124,10 +138,15 @@
 | Desktop 全量 vitest（P6 后） | 1440 通过 / 14 skip，156 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
 | Desktop 全量 vitest（P7 后，删除旧组件测试 15 例、新增 5 例） | 1430 通过 / 14 skip，156 文件；`vue-tsc` 0 错误；TinadecUI 187/187 |
 | `vite build`（4 GB 堆） | 57 秒，退出 0 |
+| 补齐：`ConversationView.test.ts`（重试只在最后的失败/停止回合且发出原文、日期线位置、中间回答压缩、骨架 200ms 出现/真实回合立即替换/空会话保持 500ms）、`JumpToLatest.test.ts`（上翻计数、贴底不计、历史/换会话/自己发送/换 id 不计、回底清零）、`ChatPanel.test.ts`（加载中不回欢迎页）、`HomeController.test.ts`（旧读取晚到不清加载态；去掉该判断时用例变红）、`grouping.test.ts`（`isCompactAnswer`）、`useJustSettled.test.ts`、`ConversationActivity.test.ts`（完成时 `shimmer-once`、历史无） | 全部通过 |
+| Desktop 全量 vitest（补齐后） | 1458 例：1444 通过 / 14 skip，159 文件（158 通过、1 skip）；`vue-tsc` 0 错误（含 TinadecUI 源）；TinadecUI 187/187 |
+| 补齐截图（`next-day-stopped`、「加载中」，1169/380/300） | 日期线 1 条、压缩回答 2 行截断带省略号、重试 1 个、无横向溢出、骨架可见、0 页面错误 |
 
 ## 既有失败与边界
 
 - `ToolChainEndpointTests.WorkerWriteFile_RequestsApproval_ApprovedThenExecuted_RunCompletes` 等在未改动的 `ab42b02` 上同样失败（`git worktree` 基线实测），`main` 的 posix-core CI 也红。新预览端点给出原因：工具子进程报 `Only paths inside the authorized source folders () may be written`——Linux 上 `ToolExecutionContext.WorkspaceRoots` 为空、可写根又不是工作区。属多文件夹工作区链路（APP-HOME-107），本轮不修；P0 的新断言另以驻留审批时刻的独立用例覆盖。
 - `ChatPanel.test.ts` 运行时打印的 `ECONNREFUSED 127.0.0.1:48730` 来自未打桩的真实 `ComposerBar`，改动前的提交上同样出现 16 次，测试本身通过。
 - **待验收**：Electron 实机窗口（本机无 Electron 二进制与显示）、真实模型下 Team 模式派发子智能体 + shell 审批的完整链路、Windows/macOS 渲染与字体。建议在本地 `npm run dev` 后打开 Debug Studio「对话消息流」逐场景过一遍，再跑一次真实会话。
+- 会话切换骨架的取舍：确实为空的既有会话在加载期间先停在对话布局（显示骨架），加载完成后再升回欢迎页；有历史的会话不再闪一次欢迎页。
+- 未读回合数在 happy-dom 中无法测量滚动，组件测试对 `scrollable` 打桩；真实滚动下的计数只在实机验收时能看到。
 - 未在本轮：空间模式迁移、消息分页、编辑的 +/− 行数与改动审阅卡、HTML widget、SSE 重放屏障协议（计划「不在本轮」）。

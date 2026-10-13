@@ -16,7 +16,7 @@
 - 主责模块：APP-HOME
 - 前置依赖：复用会话 SSE、`ApprovalEvidenceProjector` 脱敏投影、reka-ui 2.11、`MarkdownRender`、`useTerminal.openAgentTerminal`；不复用已判定失败的 PR #43 代码
 - 关联功能：APP-HOME-F002；CORE-TOOLS（工具时间线与结果预览端点）、GATEWAY（薄代理）交叉引用此任务；空间模式本轮不迁移
-- 契约与证据：[计划](../../../../../.tinadec_dev/plans/claude/2026-10-13-flat-conversation-v2.md)、[P0–P6 报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)
+- 契约与证据：[计划](../../../../../.tinadec_dev/plans/claude/2026-10-13-flat-conversation-v2.md)、[P0–P7 与补齐报告](../../../../../.tinadec_dev/reports/2026-10-13-flat-conversation-p0.zh-CN.md)
 
 **问题、目标与触及范围**
 
@@ -32,10 +32,11 @@
 - [x] P5：子智能体紧凑卡（`handle · 显示名`、状态徽标、L 形任务行、进行中最新一步 shimmer、就地展开自身活动与 Markdown 摘要）、`AgentGroup`（≥2 运行中「N 个智能体工作中…」）、右栏 `SubAgentsCard`（TinadecUI 注册 `subAgents`，singleton、可移动、本轮不可分离，功能目录加入口；名册运行中在前，详情为同一组件同一 feed）；⤢ 写入 `conversationSelection` 并 `openCard subAgents`；子智能体审批仍提到回合层。
 - [x] P6：发送框附件改用 attachment 五态（会话准备中 idle、上传中带本地图片预览并变暗、done、error 写明原因；svg 不预览；文件名保扩展名截断，转录同样处理）；输入框上方 `AgentTodosStatus` 胶囊（活动 run 自身计划优先、可展开、落定即消失）；空间模式仍用的 `useAgentActivity` 工具时间线读取按 run 300ms 合并、重放期 0 次、heartbeat 后每个有工具事件的 run 读一次（40 个历史事件/2 个 run：旧路径 40 次 → 2 次）。
 - [x] P7：双语 i18n（新组件 spinner 均为装饰、列表分隔符与终端标题本地化，`components/conversation/**` 在 i18nParity）、减弱动效（跳底瞬时、按钮过渡关闭，折叠/shimmer/spinner 计算样式实测）、窄/超窄（`chat-narrow/chat-ultra` 规则，380px 实拍）、Debug Studio「对话消息流」改为 fixtures 场景选择器 + 真实 `ConversationView`、「聊天面板」用 fixture feed；删除 `MessageList/MessageItem/LiveTurnBlock` 与 `ChatPanel` 回退；无头 Chromium 截图矩阵发现并修复 shimmer 文本不可见与脚注时长不一致；文档与报告。
+- [x] 补齐（首版报告误写「全部落地」，逐条对照计划后补做）：最后一个失败/停止回合的「重试」（原文回填输入框，沿用 `editAndResend` 不自动重发）、跨天日期分隔、跳底按钮未读回合数、会话切换正文骨架（`transcriptLoading` + 200/500，加载中不回欢迎页）、`groupText`（≤150 字中间回答两行截断、最后一条不压）、`.shimmer-once`（仅 live→完成时扫一次，历史不扫）；各有组件/单元测试，Debug Studio 增 `next-day-stopped` 场景与「加载中」开关并补截图。
 
 **当前边界**
 
-全部阶段在 Linux 开发机完成：Core/Gateway/Desktop 测试、类型检查、Tailwind 编译，以及无头 Chromium 对 Vite 渲染端（无 Electron/Core/Gateway）的 Debug Studio 预览截图矩阵（7 场景 × 1169/800/520/380 × 暗/亮 × 毛玻璃/不透明，证据 `.tinadec_dev/evidence/2026-10-13-flat-conversation/`）。待验收：Electron 实机窗口、真实模型的 Team 模式链路（派发子智能体 + shell 审批）、Windows/macOS 渲染；Linux 上 `ToolChainEndpointTests.WorkerWriteFile_*` 等在未改动 `main` 上即失败（工具子进程可写源目录为空），见报告。
+计划 P0–P7 与上述补齐在 Linux 开发机完成。与计划验证方式的偏差：没有 `npm run dev` 实机与 `vue-mcp`——截图用无头 Chromium 对 Vite 渲染端，「折叠后无活动 DOM」由 DOM 测试断言。已完成的验证：Core/Gateway/Desktop 测试、类型检查、Tailwind 编译，以及无头 Chromium 对 Vite 渲染端（无 Electron/Core/Gateway）的 Debug Studio 预览截图矩阵（7 场景 × 1169/800/520/380 × 暗/亮 × 毛玻璃/不透明，证据 `.tinadec_dev/evidence/2026-10-13-flat-conversation/`）。待验收：Electron 实机窗口、真实模型的 Team 模式链路（派发子智能体 + shell 审批）、Windows/macOS 渲染；Linux 上 `ToolChainEndpointTests.WorkerWriteFile_*` 等在未改动 `main` 上即失败（工具子进程可写源目录为空），见报告。
 
 <a id="app-home-107"></a>
 
