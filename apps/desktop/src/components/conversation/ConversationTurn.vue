@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RotateCcw } from '@lucide/vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ApprovalDto } from '@/api'
@@ -79,6 +80,17 @@ const workedMs = computed(() => {
   const ends = props.turn.runs.map(({ activity }) => activity?.lastAt).filter((at): at is string => !!at).sort()
   return starts.length && ends.length ? elapsedMs(starts[0], ends.at(-1)) : elapsedMs(props.turn.startedAt, props.turn.endedAt)
 })
+/**
+ * A failed or stopped last turn offers to try again: the original words go back into the
+ * composer (edit-and-resend's revert, never an automatic resend). Only the last turn — an
+ * older one would cut the history after it — and only once Core holds the message.
+ */
+const canRetry = computed(() => Boolean(props.last && props.turn.user && !props.turn.user.id.startsWith('pending-')
+  && (props.turn.phase === 'failed' || props.turn.phase === 'cancelled')))
+function retry() {
+  const user = props.turn.user
+  if (user) emit('edit', { id: user.id, content: user.content })
+}
 const toolCount = computed(() => {
   void props.revision
   return props.turn.runs.reduce((sum, { activity }) => sum + (activity?.entries.filter((entry) => entry.kind === 'tool').length ?? 0), 0)
@@ -135,11 +147,18 @@ const toolCount = computed(() => {
       :tool-count="index === answers.length - 1 ? toolCount : 0"
       :last="last && index === answers.length - 1"
     />
+    <div v-if="canRetry" class="conversation-retry">
+      <button type="button" class="conversation-text-button" :title="t('conversation.turn.retryHint')" data-testid="turn-retry" @click="retry">
+        <RotateCcw :size="12" aria-hidden="true" />{{ t('conversation.turn.retry') }}
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .conversation-turn { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .conversation-approvals { display: flex; flex-direction: column; gap: 8px; }
+.conversation-retry { display: flex; }
+.conversation-retry .conversation-text-button { display: inline-flex; align-items: center; gap: 4px; }
 .conversation-sending { margin: 0; align-self: flex-end; font-size: 11px; color: var(--text-muted); }
 </style>

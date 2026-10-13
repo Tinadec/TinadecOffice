@@ -258,6 +258,28 @@ describe('dynamic feed labels', () => {
 })
 
 describe('ConversationView turn states (APP-HOME-108 follow-up)', () => {
+  const run = (id: string, status: string, trigger: string, at = '2026-10-13T09:00:01Z') =>
+    ({ id, status, trigger_message_id: trigger, created_at: at, updated_at: at })
+  it('puts a failed last turn back in the composer through edit, without resending', async () => {
+    const wrapper = mountView(failedRun())
+    await wrapper.get('[data-testid="turn-retry"]').trigger('click')
+    expect(wrapper.emitted('edit')).toEqual([[{ id: 'm-1', content: 'Anything' }]])
+    wrapper.unmount()
+  })
+
+  it('offers retry on a stopped last turn, never on an older one or an optimistic row', () => {
+    const stopped: FeedFixture = { name: 'stopped', messages: [user('u1', 'first'), user('u2', 'second', { created_at: '2026-10-13T09:01:00Z' })], runs: [run('r1', 'cancelled', 'u1'), run('r2', 'cancelled', 'u2', '2026-10-13T09:01:01Z')], events: [] }
+    const wrapper = mountView(stopped)
+    const turns = wrapper.findAll('[data-testid="conversation-turn"]')
+    expect(turns[0]!.find('[data-testid="turn-retry"]').exists()).toBe(false)
+    expect(turns[1]!.find('[data-testid="turn-retry"]').exists()).toBe(true)
+    wrapper.unmount()
+
+    const settled = mountView({ ...simpleAnswer() })
+    expect(settled.find('[data-testid="turn-retry"]').exists()).toBe(false)
+    settled.unmount()
+  })
+
   it('shows a skeleton only when loading outlasts 200ms, and no "ready" placeholder meanwhile', async () => {
     vi.useFakeTimers()
     try {
