@@ -90,7 +90,7 @@ async function loadData() {
       api.listApprovals(sessionId.value),
       api.listApprovalRules(sessionId.value).catch(() => [] as ApprovalRuleDto[]),
       api.getOrchestrationSnapshot(sessionId.value).catch(() => null),
-      api.listToolExecutions(sessionId.value, { limit: 12 }).catch(() => []),
+      api.listToolExecutions(sessionId.value).catch(() => []),
     ])
 
     approvals.value = approvalList

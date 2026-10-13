@@ -696,3 +696,45 @@ test('memory review failures keep their 4xx meaning instead of collapsing to con
     assert.equal(problem.instance, testCase.path.split('?')[0]);
   }
 });
+
+test('session tool executions forward run_id and limit under their snake_case names', { concurrency: false }, async () => {
+  let url = '';
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    url = String(input);
+    return new Response('[]', { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const response = await app.handle(new Request('http://gateway.local/api/v1/sessions/s-1/tool-executions?run_id=r-1&limit=20'));
+  assert.equal(response.status, 200);
+  const forwarded = new URL(url);
+  assert.equal(forwarded.pathname, '/api/v1/sessions/s-1/tool-executions');
+  assert.equal(forwarded.searchParams.get('run_id'), 'r-1');
+  assert.equal(forwarded.searchParams.get('runId'), null);
+  assert.equal(forwarded.searchParams.get('limit'), '20');
+});
+
+test('tool execution preview is a no-store passthrough that keeps Core problem codes', { concurrency: false }, async () => {
+  const body = { execution_id: 'e-1', run_id: 'r-1', tool_id: 'read_file', status: 'completed', arguments: { filepath: 'a.ts' }, preview: { kind: 'file_lines', lines: [{ line_number: 1, text: 'x' }] }, truncated: false };
+  let url = '';
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    url = String(input);
+    return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const ok = await app.handle(new Request('http://gateway.local/api/v1/tool-executions/e-1/preview?max_bytes=4096'));
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await ok.json(), body);
+  assert.equal(new URL(url).pathname, '/api/v1/tool-executions/e-1/preview');
+  assert.equal(new URL(url).searchParams.get('max_bytes'), '4096');
+
+  await app.handle(new Request('http://gateway.local/api/v1/tool-executions/e-1/preview'));
+  assert.equal(new URL(url).search, '');
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({ code: 'tool_execution_not_found', detail: 'Tool execution was not found.' }), { status: 404, headers: { 'content-type': 'application/problem+json' } })) as typeof fetch;
+  const missing = await app.handle(new Request('http://gateway.local/api/v1/tool-executions/e-2/preview'));
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers.get('content-type'), 'application/problem+json');
+  assert.equal(missing.headers.get('cache-control'), 'no-store');
+  const problem = await missing.json() as Record<string, unknown>;
+  assert.equal(problem.code, 'tool_execution_not_found');
+  assert.equal(problem.instance, '/api/v1/tool-executions/e-2/preview');
+});

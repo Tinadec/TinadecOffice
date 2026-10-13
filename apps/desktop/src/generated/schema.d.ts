@@ -910,6 +910,10 @@ export interface paths {
     get: operations["getApiV1Tina-chatWorkspace-policy"];
     put: operations["putApiV1Tina-chatWorkspace-policy"];
   };
+  "/api/v1/tool-executions/{executionId}/preview": {
+    /** Bounded result preview of one tool execution */
+    get: operations["getApiV1Tool-executionsByExecutionIdPreview"];
+  };
   "/api/v1/tool-layer-readiness": {
     /** Tool layer readiness */
     get: operations["getApiV1Tool-layer-readiness"];
@@ -2475,6 +2479,22 @@ export interface components {
       /** @enum {string} */
       status: "available" | "unavailable";
     };
+    ToolExecutionPreview: {
+      arguments: {
+        [key: string]: unknown;
+      } | null;
+      error_category?: string | null;
+      execution_id: string;
+      preview: components["schemas"]["ToolResultPreview"] | null;
+      result_length?: number | null;
+      run_id: string;
+      safe_error_message?: string | null;
+      status: string;
+      task_id?: string | null;
+      tool_id: string;
+      tool_success?: boolean | null;
+      truncated: boolean;
+    };
     ToolMcpResource: {
       args: string[];
       command: string;
@@ -2494,6 +2514,17 @@ export interface components {
       updated_at?: string;
     };
     ToolMcpResourceList: components["schemas"]["ToolMcpResource"][];
+    ToolPreviewEntry: {
+      name: string;
+      size?: string | number;
+      type: string;
+    };
+    ToolPreviewLine: {
+      is_match?: boolean;
+      line_number?: string | number;
+      path?: string;
+      text: string;
+    };
     ToolResourceDiagnostic: {
       /** @enum {string} */
       kind: "mcp" | "skills" | "host";
@@ -2502,6 +2533,22 @@ export interface components {
       resource_id?: string | null;
       /** @enum {string} */
       status: "missing" | "invalid" | "disabled" | "import_failed" | "unavailable";
+    };
+    ToolResultPreview: {
+      entries?: components["schemas"]["ToolPreviewEntry"][];
+      exit_code?: string | number;
+      /** @enum {string} */
+      kind: "file_lines" | "search_matches" | "directory" | "command_output" | "text" | "json" | "withheld";
+      language?: string;
+      lines?: components["schemas"]["ToolPreviewLine"][];
+      path?: string;
+      reason?: string;
+      stderr?: string;
+      stdout?: string;
+      text?: string;
+      timed_out?: boolean;
+      total_count?: string | number;
+      value?: unknown;
     };
     ToolSettingsDocument: {
       agent_definition_id?: string | null;
@@ -6477,6 +6524,22 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["TinaChatWorkspacePolicyDto"];
+        };
+      };
+    };
+  };
+  /** Bounded result preview of one tool execution */
+  "getApiV1Tool-executionsByExecutionIdPreview": {
+    parameters: {
+      path: {
+        executionId: string;
+      };
+    };
+    responses: {
+      /** @description Redacted arguments and a bounded preview of what the call returned. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolExecutionPreview"];
         };
       };
     };

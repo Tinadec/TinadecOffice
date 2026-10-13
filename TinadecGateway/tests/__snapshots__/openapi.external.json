@@ -5761,6 +5761,70 @@
         ],
         "type": "object"
       },
+      "ToolExecutionPreview": {
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "error_category": {
+            "nullable": true,
+            "type": "string"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolResultPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result_length": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "safe_error_message": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "tool_success": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "execution_id",
+          "run_id",
+          "tool_id",
+          "status",
+          "arguments",
+          "preview",
+          "truncated"
+        ],
+        "type": "object"
+      },
       "ToolMcpResource": {
         "properties": {
           "args": {
@@ -5834,6 +5898,62 @@
         },
         "type": "array"
       },
+      "ToolPreviewEntry": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "ToolPreviewLine": {
+        "properties": {
+          "is_match": {
+            "type": "boolean"
+          },
+          "line_number": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
       "ToolResourceDiagnostic": {
         "properties": {
           "kind": {
@@ -5867,6 +5987,84 @@
           "kind",
           "status",
           "reason"
+        ],
+        "type": "object"
+      },
+      "ToolResultPreview": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ToolPreviewEntry"
+            },
+            "type": "array"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "file_lines",
+              "search_matches",
+              "directory",
+              "command_output",
+              "text",
+              "json",
+              "withheld"
+            ],
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ToolPreviewLine"
+            },
+            "type": "array"
+          },
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "timed_out": {
+            "type": "boolean"
+          },
+          "total_count": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "value": {}
+        },
+        "required": [
+          "kind"
         ],
         "type": "object"
       },
@@ -13885,6 +14083,37 @@
         },
         "tags": [
           "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tool-executions/{executionId}/preview": {
+      "get": {
+        "operationId": "getApiV1Tool-executionsByExecutionIdPreview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "executionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolExecutionPreview"
+                }
+              }
+            },
+            "description": "Redacted arguments and a bounded preview of what the call returned."
+          }
+        },
+        "summary": "Bounded result preview of one tool execution",
+        "tags": [
+          "Runs"
         ]
       }
     },

@@ -465,7 +465,9 @@ async function loadMessagesAndApprovals() {
     api.listApprovals(session!, undefined, signal),
     api.listApprovalRules(session!, signal).catch(() => [] as ApprovalRuleDto[]),
     api.getOrchestrationSnapshot(session!, signal),
-    api.listToolExecutions(session!, { limit: 12 }, signal),
+    // No limit: the tool stats and timeline panels count the whole session. Core ignored
+    // `limit` until it gained run/limit filtering; passing 12 now would cap their totals.
+    api.listToolExecutions(session!, {}, signal),
     // An unavailable roster is not an empty roster: keep suspended stream cursors.
     api.listRuns(session!, signal),
   ]).catch((error) => {

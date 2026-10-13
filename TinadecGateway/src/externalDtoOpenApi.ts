@@ -461,6 +461,55 @@ const marketInstallationList = t.Object({
   installations: t.Array(componentRef('MarketInstallation')),
 }, { additionalProperties: true });
 
+/**
+ * The bounded result preview of one finished tool call. `preview.kind` picks which members are
+ * present; `preview` is null while the call is still running and when a finished call stored no
+ * result. `arguments` is Core's approval-evidence projection, never the stored parameters.
+ */
+const toolPreviewLine = t.Object({
+  path: t.Optional(t.String()),
+  line_number: t.Optional(t.Integer()),
+  text: t.String(),
+  is_match: t.Optional(t.Boolean()),
+});
+
+const toolPreviewEntry = t.Object({
+  name: t.String(),
+  type: t.String(),
+  size: t.Optional(t.Integer()),
+});
+
+const toolResultPreview = t.Object({
+  kind: t.Unsafe({ type: 'string', enum: ['file_lines', 'search_matches', 'directory', 'command_output', 'text', 'json', 'withheld'] }),
+  path: t.Optional(t.String()),
+  lines: t.Optional(t.Array(componentRef('ToolPreviewLine'))),
+  entries: t.Optional(t.Array(componentRef('ToolPreviewEntry'))),
+  total_count: t.Optional(t.Integer()),
+  stdout: t.Optional(t.String()),
+  stderr: t.Optional(t.String()),
+  exit_code: t.Optional(t.Integer()),
+  timed_out: t.Optional(t.Boolean()),
+  text: t.Optional(t.String()),
+  language: t.Optional(t.String()),
+  value: t.Optional(t.Unknown()),
+  reason: t.Optional(t.String()),
+});
+
+const toolExecutionPreview = t.Object({
+  execution_id: t.String(),
+  run_id: t.String(),
+  task_id: t.Optional(nullableString()),
+  tool_id: t.String(),
+  status: t.String(),
+  tool_success: t.Optional(t.Unsafe({ type: 'boolean', nullable: true })),
+  error_category: t.Optional(nullableString()),
+  safe_error_message: t.Optional(nullableString()),
+  arguments: nullableJsonObject(),
+  result_length: t.Optional(nullableInteger()),
+  preview: nullableRef('ToolResultPreview'),
+  truncated: t.Boolean(),
+});
+
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
   SpaceOptions: spaceOptions,
@@ -501,6 +550,10 @@ export const externalDtoSchemas = {
   MarketInstallationList: marketInstallationList,
   Health: health,
   PreAuthorization: preAuthorization,
+  ToolPreviewLine: toolPreviewLine,
+  ToolPreviewEntry: toolPreviewEntry,
+  ToolResultPreview: toolResultPreview,
+  ToolExecutionPreview: toolExecutionPreview,
 };
 
 export function externalJsonResponse(schemaName: string, description: string) {

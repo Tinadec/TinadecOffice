@@ -834,7 +834,7 @@ const app = new Elysia()
   .get('/api/v1/sessions/:sessionId/tool-executions', async ({ params, query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
-    if ((query as Record<string,unknown>).run_id) search.set('runId', String((query as Record<string,unknown>).run_id));
+    if ((query as Record<string,unknown>).run_id) search.set('run_id', String((query as Record<string,unknown>).run_id));
     if ((query as Record<string,unknown>).limit) search.set('limit', String((query as Record<string,unknown>).limit));
     const suffix = search.toString() ? `?${search.toString()}` : '';
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/tool-executions${suffix}`, { headers });
@@ -843,6 +843,20 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Session tool executions', tags: ['Runs'] } })
+  // Pure passthrough: Core owns scoping, redaction and the byte budget. Never cached here —
+  // a preview may contain workspace content, and Core marks it no-store.
+  .get('/api/v1/tool-executions/:executionId/preview', async ({ params, query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const maxBytes = (query as Record<string, unknown>).max_bytes;
+    const suffix = maxBytes === undefined || maxBytes === '' ? '' : `?${new URLSearchParams({ max_bytes: String(maxBytes) })}`;
+    const path = `/api/v1/tool-executions/${encodeURIComponent(params.executionId)}/preview`;
+    const result = await proxyJson(`${path}${suffix}`, { headers });
+    setStatus(set, result.status);
+    set.headers['cache-control'] = 'no-store';
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Bounded result preview of one tool execution', tags: ['Runs'], responses: { 200: externalJsonResponse('ToolExecutionPreview', 'Redacted arguments and a bounded preview of what the call returned.') } } })
   .get('/api/v1/sessions/:sessionId/runs', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/runs`, { headers });

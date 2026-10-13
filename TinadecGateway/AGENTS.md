@@ -1,5 +1,9 @@
 # GATEWAY KNOWLEDGE
 
+## 2026-10-13 Tool execution preview proxy (APP-HOME-108 P0)
+
+`GET /api/v1/sessions/:sessionId/tool-executions` forwarded `run_id` as `runId`, which Core never read; it now forwards `run_id` and `limit` under their own names (Core still accepts `runId`). New pure passthrough `GET /api/v1/tool-executions/:executionId/preview` forwards only `max_bytes`, sets `cache-control: no-store` on success and failure, and maps errors through `mapCoreErrorToExternal` (Core's `tool_execution_not_found` survives). Scoping, redaction and the byte budget are Core's; Gateway never reshapes or caches the body. Documentation DTOs `ToolExecutionPreview/ToolResultPreview/ToolPreviewLine/ToolPreviewEntry` live in `externalDtoOpenApi.ts`; external snapshot and Desktop `schema.d.ts` regenerated together.
+
 ## 2026-10-10 Interface regression and public error contract
 
 Gateway now preserves normalized lower snake case Core refusal codes without a per-code whitelist; legacy uppercase constants keep their documented mapping. Invalid/missing codes fall back by HTTP status (5xx `internal_error`, otherwise `invalid_request`). Only public category/retryable/actions/trace_id and narrow diagnostics are projected; arbitrary upstream extensions are not spread. Project availability errors retain recovery fields, and an unreadable project has `lifecycle_status: null` rather than an invented active state. Raw scope roster carries nullable workspace and per-row availability, so one bad registration does not erase ready rows.
