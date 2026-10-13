@@ -205,6 +205,32 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 LaneKey: request.LaneKey), cancellationToken).ConfigureAwait(false);
             var execution = preparation.Execution;
 
+            // Announced once, as soon as the execution is durable and before governance answers:
+            // a call the policy parks, blocks or denies returns early below, and used to leave
+            // no "requested" line at all — exactly the calls a reader most needs to see.
+            if (!preparation.Existing)
+            {
+                // The conversation feed renders each call as a sentence ("Read src/a.ts", "Ran npm test").
+                // It gets the same redacted projection an approval shows — never the raw parameters.
+                var evidence = ApprovalEvidenceProjector.Project(descriptor.Entry.Id, execution.ParametersJson);
+                await AppendEventAsync(scope.RunId, "tool.execution.requested", $"Tool '{descriptor.Entry.Id}' requested.", new
+                {
+                    execution_id = execution.Id,
+                    task_id = scope.TaskId,
+                    agent_instance_id = scope.AgentInstanceId,
+                    tool_id = descriptor.Entry.Id,
+                    requires_approval = execution.RequiresApproval,
+                    mutates_workspace = execution.MutatesWorkspace,
+                    risk = execution.Risk,
+                    lane_key = execution.LaneKey,
+                    arguments_summary = evidence.Summary,
+                    resource_path = evidence.ResourcePath,
+                    command = evidence.Command,
+                    cwd = evidence.WorkingDirectory,
+                    query = ApprovalEvidenceProjector.QueryOf(evidence)
+                }, cancellationToken, scope.TaskId, descriptor.Entry.Id).ConfigureAwait(false);
+            }
+
             // High-risk writes receive the same pre-write snapshot guard as
             // explicit user actions. The execution was persisted first, so a
             // snapshot failure can durably block it without calling the provider.
@@ -307,18 +333,6 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
 
             if (!preparation.Existing)
             {
-                await AppendEventAsync(scope.RunId, "tool.execution.requested", $"Tool '{descriptor.Entry.Id}' requested.", new
-                {
-                    execution_id = execution.Id,
-                    task_id = scope.TaskId,
-                    agent_instance_id = scope.AgentInstanceId,
-                    tool_id = descriptor.Entry.Id,
-                    requires_approval = execution.RequiresApproval,
-                    mutates_workspace = execution.MutatesWorkspace,
-                    risk = execution.Risk,
-                    lane_key = execution.LaneKey
-                }, cancellationToken, scope.TaskId, descriptor.Entry.Id).ConfigureAwait(false);
-
                 if (execution.RequiresApproval)
                 {
                     await AppendEventAsync(scope.RunId, "approval.requested", $"Approval requested for tool '{descriptor.Entry.Id}'.", new

@@ -62,6 +62,35 @@ public static class ApprovalEvidenceProjector
         "nonce_material", "private_key",
     };
 
+    private static readonly string[] QueryKeys = ["pattern", "query", "q"];
+
+    /// <summary>
+    /// The search term of a call (<c>file_search</c>'s pattern, an MCP or web query), read back out of
+    /// the already-redacted, already-truncated projection so it can never carry more than the approval does.
+    /// Null when the call names none.
+    /// </summary>
+    public static string? QueryOf(ApprovalEvidence evidence)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(evidence.Arguments);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            foreach (var key in QueryKeys)
+            {
+                if (document.RootElement.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
+                    return value.GetString();
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>One secret-key table for every projection that leaves Core (approvals and result previews).</summary>
+    internal static bool IsSecretKey(string name) => SecretKeys.Contains(name);
+
     private static readonly string[] CommandKeys = ["command", "executable", "script"];
 
     private static readonly string[] WorkingDirectoryKeys = ["cwd", "working_directory", "workdir"];

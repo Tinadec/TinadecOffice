@@ -486,6 +486,22 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     }
 
     /// <summary>
+    /// One run's events inside one session, filtered in the index query so a caller that
+    /// asks about a single run does not materialise the whole session journal.
+    /// </summary>
+    public async Task<IReadOnlyList<EventEnvelope>> ReplayRunEventsAsync(Guid sessionId, Guid runId, CancellationToken cancellationToken = default)
+    {
+        var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return [];
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.EventIndex.AsNoTracking()
+            .Where(x => x.SessionId == sessionId && x.RunId == runId
+                && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Incremental follow query for long-lived SSE loops. The watermark is a
     /// wall-clock lower bound on the event index, so each call reads only rows
     /// committed at or after that instant instead of rescanning the whole

@@ -21,6 +21,8 @@ namespace TinadecCore.AspNetCore.Endpoints;
 /// </summary>
 public static class DmaeaEndpoints
 {
+    private const int MaxToolExecutionLimit = 1000;
+
     public static IEndpointRouteBuilder MapDmaeaEndpoints(this IEndpointRouteBuilder app)
     {
         // POST /sessions/{sessionId}/invoke-stream was retired (plan §4.3 item 4):
@@ -235,13 +237,32 @@ public static class DmaeaEndpoints
             });
         });
 
-        app.MapGet("/api/v1/sessions/{sessionId}/tool-executions", async (string sessionId, StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
+        // run_id narrows the replay to one run in the index query; limit keeps the most recent
+        // rows (still in sequence order). runId is accepted for clients written before snake_case.
+        app.MapGet("/api/v1/sessions/{sessionId}/tool-executions", async (string sessionId, HttpRequest request, StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
+            var runText = request.Query["run_id"].FirstOrDefault() ?? request.Query["runId"].FirstOrDefault();
+            Guid? runGuid = null;
+            if (!string.IsNullOrWhiteSpace(runText))
+            {
+                if (!Guid.TryParse(runText, out var parsedRun)) return Results.BadRequest(new { code = "INVALID_RUN_ID" });
+                runGuid = parsedRun;
+            }
+            int? limit = null;
+            var limitText = request.Query["limit"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(limitText))
+            {
+                if (!int.TryParse(limitText, out var parsedLimit) || parsedLimit < 1) return Results.BadRequest(new { code = "INVALID_LIMIT" });
+                limit = Math.Min(parsedLimit, MaxToolExecutionLimit);
+            }
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
-            var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
+            var events = runGuid is { } run
+                ? await lifecycle.ReplayRunEventsAsync(sessionGuid, run, ct)
+                : await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
             var items = BuildToolExecutionTimeline(events, sessionId);
-            return Results.Ok(items);
+            IReadOnlyList<object> page = limit is { } take && items.Count > take ? items.Skip(items.Count - take).ToList() : items;
+            return Results.Ok(page);
         });
 
         app.MapGet("/api/v1/sessions/{sessionId}/task-nodes", async (string sessionId, StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
@@ -802,6 +823,20 @@ public static class DmaeaEndpoints
 
             var summary = EventSummary(e.Payload);
             if (!string.IsNullOrWhiteSpace(summary)) row.Summary = summary;
+            row.TaskId = PayloadString(e.Payload, "task_id") ?? row.TaskId;
+            row.AgentInstanceId = PayloadString(e.Payload, "agent_instance_id") ?? row.AgentInstanceId;
+            if (e.EventType == "tool.execution.requested")
+            {
+                // Sentence data for the conversation feed: the approval evidence projection,
+                // stamped onto the request event, never the raw parameters.
+                row.ArgumentsSummary = PayloadString(e.Payload, "arguments_summary") ?? row.ArgumentsSummary;
+                row.ResourcePath = PayloadString(e.Payload, "resource_path") ?? row.ResourcePath;
+                row.Command = PayloadString(e.Payload, "command") ?? row.Command;
+                row.Cwd = PayloadString(e.Payload, "cwd") ?? row.Cwd;
+                row.Query = PayloadString(e.Payload, "query") ?? row.Query;
+            }
+            if (e.EventType is "tool.execution.failed" or "tool.execution.outcome_unknown")
+                row.ErrorCategory = PayloadString(e.Payload, "error_category") ?? PayloadString(e.Payload, "category") ?? row.ErrorCategory;
             var toolSuccess = PayloadBool(e.Payload, "tool_success");
             if (toolSuccess is not null) row.ToolSuccess = toolSuccess;
 
@@ -885,7 +920,15 @@ public static class DmaeaEndpoints
                 updated_seq = row.UpdatedSeq,
                 event_types = row.EventTypes.ToArray(),
                 checkpoint_summary = string.Empty,
-                tool_success = row.ToolSuccess
+                tool_success = row.ToolSuccess,
+                task_id = row.TaskId,
+                agent_instance_id = row.AgentInstanceId,
+                error_category = row.ErrorCategory,
+                arguments_summary = row.ArgumentsSummary,
+                resource_path = row.ResourcePath,
+                command = row.Command,
+                cwd = row.Cwd,
+                query = row.Query
             }));
         }
 
@@ -924,6 +967,14 @@ public static class DmaeaEndpoints
         public string? ApprovalId { get; set; }
         public string Summary { get; set; } = string.Empty;
         public bool? ToolSuccess { get; set; }
+        public string? TaskId { get; set; }
+        public string? AgentInstanceId { get; set; }
+        public string? ErrorCategory { get; set; }
+        public string? ArgumentsSummary { get; set; }
+        public string? ResourcePath { get; set; }
+        public string? Command { get; set; }
+        public string? Cwd { get; set; }
+        public string? Query { get; set; }
         public DateTimeOffset RequestedAt { get; set; }
         public DateTimeOffset UpdatedAt { get; set; }
         public long RequestedSeq { get; set; }

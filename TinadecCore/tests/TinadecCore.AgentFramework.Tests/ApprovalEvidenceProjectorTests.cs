@@ -166,4 +166,19 @@ public sealed class ApprovalEvidenceProjectorTests
         Assert.Equal("sandbox_reset", evidence.Summary);
         Assert.Equal("{}", evidence.Arguments);
     }
+
+    [Fact]
+    public void QueryOf_ReadsTheSearchTermFromTheRedactedProjection()
+    {
+        var search = ApprovalEvidenceProjector.Project("file_search", """{"pattern":"useResults","path":"src"}""");
+        var long_ = ApprovalEvidenceProjector.Project("mcp_search", "{\"query\":\"" + new string('q', 600) + "\"}");
+        var none = ApprovalEvidenceProjector.Project("read_file", """{"filepath":"a.ts"}""");
+        var unparsed = ApprovalEvidenceProjector.Project("file_search", "not json");
+
+        Assert.Equal("useResults", ApprovalEvidenceProjector.QueryOf(search));
+        Assert.Equal("src", search.ResourcePath);
+        Assert.EndsWith("…[truncated]", ApprovalEvidenceProjector.QueryOf(long_), StringComparison.Ordinal);
+        Assert.Null(ApprovalEvidenceProjector.QueryOf(none));
+        Assert.Null(ApprovalEvidenceProjector.QueryOf(unparsed));
+    }
 }
