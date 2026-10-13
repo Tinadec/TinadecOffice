@@ -4,11 +4,11 @@ import { useI18n } from 'vue-i18n'
 import type { ApprovalDto } from '@/api'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
 import { groupRun, type GroupedRun } from '@/lib/conversation/grouping'
-import type { ToolEntry } from '@/lib/conversation/reducer'
+import type { RunActivity, ToolEntry } from '@/lib/conversation/reducer'
 import { isLiveRunStatus, type ConversationTurn } from '@/lib/conversation/turns'
 import { elapsedMs } from '@/lib/conversation/format'
 import UserMessage from './UserMessage.vue'
-import TurnActivity from './TurnActivity.vue'
+import TurnWork from './TurnWork.vue'
 import ApprovalCard from './ApprovalCard.vue'
 import AssistantAnswer from './AssistantAnswer.vue'
 import TurnMarker from './TurnMarker.vue'
@@ -27,16 +27,14 @@ const props = defineProps<{
   workspaceRoot?: string | null
   last?: boolean
 }>()
-const emit = defineEmits<{
-  approve: [approvalId: string]
-  reject: [approvalId: string]
-  edit: [payload: { id: string; content: string }]
-}>()
+const emit = defineEmits<{ edit: [payload: { id: string; content: string }] }>()
 const { t } = useI18n()
 
 interface RunView {
   id: string
   status: string
+  live: boolean
+  activity: RunActivity | null
   grouped: GroupedRun | null
   /** Approvals Core lists for this run that the feed has not seen (yet): still shown. */
   orphanApprovals: ApprovalDto[]
@@ -52,7 +50,7 @@ const runs = computed<RunView[]>(() => {
     const known = new Set(grouped?.approvals.map((approval) => approval.entry.approvalId).filter(Boolean))
     const orphanApprovals = props.approvals.filter((approval) =>
       approval.run_id === run.id && approval.status === 'pending' && !known.has(approval.id))
-    return { id: run.id, status: run.status, grouped, orphanApprovals, streamingText }
+    return { id: run.id, status: run.status, live: isLiveRunStatus(run.status), activity, grouped, orphanApprovals, streamingText }
   })
 })
 
@@ -83,7 +81,15 @@ const toolCount = computed(() => {
     <p v-if="turn.phase === 'sending'" class="conversation-sending" role="status">{{ t('conversation.turn.sending') }}</p>
 
     <template v-for="run in runs" :key="run.id">
-      <TurnActivity v-if="run.grouped?.nodes.length" :nodes="run.grouped.nodes" :workspace-root="workspaceRoot" />
+      <TurnWork
+        v-if="run.activity && run.grouped?.nodes.length"
+        :activity="run.activity"
+        :nodes="run.grouped.nodes"
+        :live="run.live"
+        :run-id="run.id"
+        :revision="revision"
+        :workspace-root="workspaceRoot"
+      />
       <div v-if="run.grouped?.approvals.length || run.orphanApprovals.length" class="conversation-approvals" aria-live="polite">
         <ApprovalCard
           v-for="pending in run.grouped?.approvals ?? []"
@@ -91,21 +97,21 @@ const toolCount = computed(() => {
           :entry="pending.entry"
           :requester="pending.requester"
           :approval="pending.entry.approvalId ? approvalsById.get(pending.entry.approvalId) : null"
+          :run-id="run.id"
           :workspace-root="workspaceRoot"
-          @approve="emit('approve', $event)"
-          @reject="emit('reject', $event)"
         />
         <ApprovalCard
           v-for="approval in run.orphanApprovals"
           :key="approval.id"
           :entry="placeholderEntry(approval)"
           :approval="approval"
+          :run-id="run.id"
           :workspace-root="workspaceRoot"
-          @approve="emit('approve', $event)"
-          @reject="emit('reject', $event)"
         />
       </div>
       <SupervisionGate :review="supervisionReviews?.[run.id]" />
+      <!-- Why a run stopped is never folded away with its work. -->
+      <TurnMarker v-if="run.activity?.failure" type="run_failed" :data="{ category: run.activity.failure.category, message: run.activity.failure.message }" />
       <TurnMarker v-if="run.status === 'cancelled'" type="run_cancelled" />
       <AssistantAnswer v-if="run.streamingText && !answers.some((answer) => answer.run_id === run.id)" :content="run.streamingText" streaming />
     </template>

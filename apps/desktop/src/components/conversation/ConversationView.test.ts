@@ -17,7 +17,13 @@ import type { ConversationFeed } from '@/composables/useConversationFeed'
  * approval before any answer exists, activity belongs to the turn that ran it, edit-and-resend
  * keeps its rules, and the attachment strip keeps its security properties.
  */
-vi.mock('@/controllers/HomeController', () => ({ homeController: { currentSession: { value: { id: 'session-1' } } } }))
+const controller = vi.hoisted(() => ({
+  currentSession: { value: { id: 'session-1' } },
+  decideApprovalById: vi.fn(async () => {}),
+  createApprovalRule: vi.fn(async () => {}),
+  onEvent: vi.fn(() => () => {}),
+}))
+vi.mock('@/controllers/HomeController', () => ({ homeController: controller }))
 vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => ({ notify: { error: vi.fn() } }) }))
 const apiMock = vi.hoisted(() => ({
   attachmentContentUrl: (id: string) => `http://gateway.test/api/v1/attachments/${id}/content`,
@@ -51,6 +57,10 @@ const user = (id: string, content = `user ${id}`, over: Partial<MessageDto> = {}
 
 afterEach(() => { document.body.innerHTML = '' })
 
+const flush = async () => {
+  for (let i = 0; i < 3; i += 1) { await nextTick(); await Promise.resolve() }
+}
+
 describe('ConversationView turns', () => {
   it('keeps the tool evidence checkpoint out of the visible transcript', () => {
     const fixture = simpleAnswer()
@@ -67,10 +77,12 @@ describe('ConversationView turns', () => {
     const card = wrapper.get('[data-testid="approval-card"]')
     expect(card.text()).toContain('git push origin main')
     expect(card.text()).toContain('/w')
+    controller.decideApprovalById.mockClear()
     await card.get('[data-testid="approval-approve"]').trigger('click')
+    await flush()
     await card.get('[data-testid="approval-reject"]').trigger('click')
-    expect(wrapper.emitted('approve')).toEqual([['p-1']])
-    expect(wrapper.emitted('reject')).toEqual([['p-1']])
+    await flush()
+    expect(controller.decideApprovalById.mock.calls).toEqual([['p-1', 'approved'], ['p-1', 'rejected']])
     wrapper.unmount()
   })
 
@@ -84,7 +96,7 @@ describe('ConversationView turns', () => {
     wrapper.unmount()
   })
 
-  it('puts activity on the turn that ran it, not on every assistant answer', () => {
+  it('puts activity on the turn that ran it, not on every assistant answer', async () => {
     const first = simpleAnswer()
     const second = exploreEditShell()
     const fixture: FeedFixture = {
@@ -101,8 +113,13 @@ describe('ConversationView turns', () => {
     const turns = wrapper.findAll('[data-testid="conversation-turn"]')
     expect(turns).toHaveLength(2)
     expect(turns[0]!.findAll('[data-testid="tool-row"]')).toHaveLength(0)
-    expect(turns[1]!.findAll('[data-testid="tool-row"]').map((row) => row.text())).toEqual(['Edited src/a.ts', 'Ran npm test'])
-    expect(turns[1]!.text()).toContain('Explored 2 files · 1 search · 1 folder')
+    // A settled turn folds its work into one summary line; opening it shows the rows.
+    expect(turns[1]!.get('[data-testid="turn-summary"]').text()).toMatch(/^Worked for .* · 2 files · 1 edit · 1 command$/)
+    expect(turns[1]!.find('[data-testid="tool-row"]').exists()).toBe(false)
+    await turns[1]!.get('[data-testid="turn-work"] > [data-slot="collapsible-trigger"]').trigger('click')
+    await flush()
+    expect(turns[1]!.findAll('[data-testid="tool-sentence"]').map((row) => row.text())).toEqual(['Edited src/a.ts', 'Ran npm test'])
+    expect(turns[1]!.get('[data-testid="group-label"]').text()).toBe('Explored 2 files · 1 search · 1 folder')
     wrapper.unmount()
   })
 

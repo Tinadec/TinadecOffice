@@ -24,11 +24,7 @@ const props = defineProps<{
   supervisionReviews?: Readonly<Record<string, SupervisionReview | null | undefined>>
   workspaceRoot?: string | null
 }>()
-const emit = defineEmits<{
-  approve: [approvalId: string]
-  reject: [approvalId: string]
-  edit: [payload: { id: string; content: string }]
-}>()
+const emit = defineEmits<{ edit: [payload: { id: string; content: string }] }>()
 const { t } = useI18n()
 
 // tool_evidence is the model's own checkpoint of tool results; the activity area is the
@@ -64,8 +60,6 @@ const turns = computed(() => {
               :supervision-reviews="supervisionReviews"
               :workspace-root="workspaceRoot"
               :last="index === turns.length - 1"
-              @approve="emit('approve', $event)"
-              @reject="emit('reject', $event)"
               @edit="emit('edit', $event)"
             />
           </MessageScrollerItem>

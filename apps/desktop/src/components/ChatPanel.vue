@@ -199,8 +199,6 @@ function handleReject(approvalId: string) {
           :approvals="conversation.approvals"
           :supervision-reviews="conversation.supervisionReviews"
           :workspace-root="conversation.workspaceRoot"
-          @approve="handleApprove"
-          @reject="handleReject"
           @edit="emit('edit-message', $event)"
         />
         <MessageList
