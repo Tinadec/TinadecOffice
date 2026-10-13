@@ -1,5 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-13 Flat conversation activity (APP-HOME-108 P4)
+
+Each run's work is a `TurnWork` fold driven by `useAutoDisclosure` (`open = userToggled ? manual : live`): open with a `role=status` line while live, folded to a summary when settled. Inside, `TurnActivity` renders `ReasoningBlock`, `ActivityGroup`, `ToolRow` (+ `ToolPreview`, lazy via `useToolPreview`), `AgentTodos` and markers; approvals and a run's failure reason are rendered by `ConversationTurn` outside every fold. `ApprovalCard` decides through `homeController.decideApprovalById/createApprovalRule` and `api.createInteraction` itself; `ConversationView` no longer emits approve/reject. reka's `CollapsibleContent` keeps its (hidden) wrapper and unmounts the children — assert on the children, not the wrapper. Fold/code/link styles are in `components/conversation/conversation.css`. `SupervisionGate` keeps its look because space mode shares it.
+
 ## 2026-10-13 Flat conversation view (APP-HOME-108 P3)
 
 `ChatPanel` renders `components/conversation/ConversationView.vue` when given its optional `conversation` input (`ChatCard` passes feed, runs, streaming replies, approvals, supervision reviews and the workspace root from `homeController`); without it — the Debug Studio gallery — it still renders `MessageList` until P7. `homeController.conversationFeed` is the mounted `useConversationFeed`; `homeController.runs` now keeps `trigger_message_id`/`created_at`/`updated_at`. Supervision escalations render through the shared `conversation/SupervisionGate.vue` (also used by space-mode `TurnTimeline`) and still come from `useAgentActivity`. `TurnActivity.vue` is a one-line-per-node skeleton that P4 replaces. Keys live under `conversation.*`; `components/conversation/**` is in `i18nParity`.

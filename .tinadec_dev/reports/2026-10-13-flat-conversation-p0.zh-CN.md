@@ -1,4 +1,4 @@
-# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语与 P3 骨架接入
+# APP-HOME-108 平面对话流 v2：P0 后端增量、P1 数据层、P2 UI 原语、P3 骨架接入与 P4 活动组件
 
 日期：2026-10-13 · 分支：`feat/flat-conversation-v2`（基于 `ab42b02`）· 环境：Linux 开发容器（2 核 / 5 GB，.NET 10.0.401、Bun 1.4.3、Node 24.21）。计划见 [`plans/claude/2026-10-13-flat-conversation-v2.md`](../plans/claude/2026-10-13-flat-conversation-v2.md)，任务见 `docs/development-program/02-modules/app/home/TODO.md#app-home-108`。
 
@@ -51,6 +51,16 @@
 - **接入**：`ChatPanel` 新增可选 `conversation` 输入，有则渲染 `ConversationView`；`ChatCard` 从控制器提供。Debug Studio 画廊未提供时仍走 `MessageList`，P7 迁移画廊后删除回退。`MessageScrollerViewport` 的可访问名改为参数（上游硬编码英文 "Messages"）。
 - **i18n**：新增 `conversation.*` 中英文案；`components/conversation/**` 纳入 `i18nParity`；动态拼接的 marker 类型与子智能体状态另有双语存在性断言。
 
+## P4 改了什么
+
+- **展开模型**：`useAutoDisclosure`——`open = 用户已开合 ? 用户选择 : live`；reka collapsible 收起时卸载内容（保留隐藏的外层元素）。
+- **按 run 的工作区** `TurnWork`：运行中展开，顶部状态行（spinner + 当前步骤 shimmer + 计时，`role=status`，回合唯一的 polite 播报）；落定后收成一行摘要「已工作 1 分 20 秒 · 2 个文件 · 编辑 1 处 · 运行 1 条命令」；审批与失败原因不在折叠内。
+- **推理块** `ReasoningBlock`：完整推理而非尾部 160 字；粗体行成小节，最新闭合标题作状态行，半截标题压到闭合；思考中展开、结束收成「思考了 12 秒」；超长限高渐隐 + 展开全部。
+- **探索组** `ActivityGroup`：连续读/搜/列/思考/等待成一行「已探索 2 个文件 · 1 次搜索 · 1 个目录」，活回合末尾组展开；组内 Codex 式紧凑行，连续读取合并为「读取 a.ts, b.ts」。
+- **工具行** `ToolRow` + `ToolPreview`：一行句子 + 运行计时 / ✓ 时长 / ✗ 原因（退出码或错误类别）；展开显示脱敏参数、shell 实时尾部（来自事件，对话流内不挂 xterm）、改动文件、B2 预览（展开且终态才取，按 execution 缓存）；shell 可「在终端面板打开」，复用 `openAgentTerminal` 并以本行尾部作初始回放。reducer 新增 `terminalSessionId`。
+- **审批卡** `ApprovalCard`：批准、本次运行都批准（`scope:'run'`）、拒绝、改为这样做（拒绝 + `insert` 进该 run）、shell 的「始终允许以 X 开头的命令」（`command_prefix` 规则后批准本次）；⌘/Ctrl+Enter 批准、⌘/Ctrl+Backspace 拒绝、Esc 关闭改写框；按钮进行中用延迟 spinner；保留 `ApprovalGateStatus`。决定直接经 `homeController`，不再经 `ChatPanel` 事件。
+- **待办** `AgentTodos`：6 条后折叠，与上一版相比新增/改写的步骤高亮并显示说明。
+
 ## 验证（本机实测）
 
 | 范围 | 结果 |
@@ -73,6 +83,8 @@
 | P3 `ConversationView.test.ts`（迁移 MessageList 行为 + 子智能体审批提升、失败原因、流式、动态文案） | 17/17 |
 | Desktop 全量 vitest（P3 后） | 1396 通过 / 14 skip，152 文件；`vue-tsc` 0 错误（含 TinadecUI 源） |
 | TinadecUI vitest | 187/187 |
+| P4 `ConversationActivity.test.ts`（运行中展开/落定收起/手动后不再自动、读搜折叠写入独占、审批在折叠外含子智能体、推理块、预览惰性且仅终态、失败原因、审批四种动作与快捷键、待办）+ reasoning/disclosure 单测 | 全部通过；conversation 相关 85/85 |
+| Desktop 全量 vitest（P4 后） | 1413 通过 / 14 skip，154 文件；`vue-tsc` 0 错误；TinadecUI 187/187；Tailwind 编译新规则 |
 
 ## 既有失败与边界
 
