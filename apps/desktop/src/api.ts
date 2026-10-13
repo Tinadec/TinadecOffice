@@ -1757,6 +1757,8 @@ export interface OrchestrationRunDto {
   id: string;
   session_id: string;
   user_message_id?: string | null;
+  /** The user message that started this run (Core `RunRecord.TriggerMessageId`). */
+  trigger_message_id?: string | null;
   status: string;
   summary: string;
   created_at: string;

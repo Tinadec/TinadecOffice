@@ -47,6 +47,15 @@ describe('buildTurns', () => {
     expect(turns.map((t) => [t.user?.id ?? null, t.runs.map((r) => r.run.id)])).toEqual([[null, ['early']], ['u1', ['late']]])
   })
 
+  it('puts a run known only by id (just admitted) into the newest turn', () => {
+    const turns = buildTurns({
+      messages: [msg('u1', 'user', '2026-10-13T09:00:00Z'), msg('pending-2', 'user', '2026-10-13T09:05:00Z')],
+      runs: [{ id: 'old', status: 'completed', trigger_message_id: 'u1', created_at: '2026-10-13T09:00:01Z' }, { id: 'new', status: 'planning' }],
+      feed: createFeedState(),
+    })
+    expect(turns.map((t) => [t.user?.id, t.runs.map((r) => r.run.id), t.phase])).toEqual([['u1', ['old'], 'settled'], ['pending-2', ['new'], 'running']])
+  })
+
   it('derives the phase: sending, awaiting, running, failed, cancelled', () => {
     const sending = buildTurns({ messages: [msg('pending-1', 'user', '2026-10-13T09:00:00Z')], runs: [], feed: createFeedState() })
     expect(sending[0]!.phase).toBe('sending')

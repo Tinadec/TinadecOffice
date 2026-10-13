@@ -93,9 +93,13 @@ export function buildTurns({ messages, runs, feed, streaming }: BuildTurnsInput)
     return found
   }
 
-  for (const run of [...runs].sort((a, b) => time(a.created_at) - time(b.created_at))) {
+  const runTime = (run: TurnRunInput) => (run.created_at ? time(run.created_at) : Number.POSITIVE_INFINITY)
+  for (const run of [...runs].sort((a, b) => runTime(a) - runTime(b))) {
+    // A run admitted moments ago is known only by id until the run list reloads: it
+    // belongs to the newest turn, not before everything as a missing time would sort it.
+    const at = run.created_at ? time(run.created_at) : Number.POSITIVE_INFINITY
     const turn = (run.trigger_message_id ? byUserMessage.get(run.trigger_message_id) : undefined)
-      ?? precedingTurn(time(run.created_at))
+      ?? precedingTurn(at)
       ?? (() => {
         const own: ConversationTurn = { id: `turn:run:${run.id}`, user: null, runs: [], answers: [], phase: 'settled', startedAt: run.created_at ?? null, endedAt: null }
         turns.push(own)
