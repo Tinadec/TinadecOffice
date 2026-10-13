@@ -7,9 +7,11 @@ export type ComposerPage = 'root' | 'model' | 'mode' | 'permission' | 'workflow'
 export type SpaceToggle = Exclude<keyof SpaceOptionsDto, 'workflow_mode_version_id'>
 
 // Metadata only: session ownership and all mutations remain in HomeController.
+// The model row is the default model (the model center's chat route), one value for every
+// conversation — not a per-conversation choice.
 // Existing run/session commands still come from appCommands and their shared handlers.
 export const composerSettings = [
-  { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'model 模型 对话模型', page: 'model' },
+  { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'model default 模型 默认模型', page: 'model' },
   { id: 'mode', label: 'commandPanel.mode', hint: 'commandPanel.modeHint', keywords: 'mode preset plan solo 模式 预设 计划', page: 'mode', surface: 'flat' },
   { id: 'permission', label: 'commandPanel.permission', hint: 'permission.nextRunHint', keywords: 'permission approval 权限 审批', page: 'permission' },
   { id: 'plan', label: 'commandPanel.plan', hint: 'commandPanel.planHint', keywords: 'plan planning 计划 规划', toggle: 'plan_first', surface: 'space' },

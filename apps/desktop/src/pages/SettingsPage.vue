@@ -51,6 +51,7 @@ import AboutSection from '@/settings/sections/AboutSection.vue'
 import ArchiveTrashSection from '@/settings/sections/ArchiveTrashSection.vue'
 import GeneralSection from '@/settings/sections/GeneralSection.vue'
 import StorageSection from '@/settings/sections/StorageSection.vue'
+import ModelScopeNotice from '@/settings/sections/ModelScopeNotice.vue'
 import ApiDocsSection from '@/settings/sections/ApiDocsSection.vue'
 import AppearanceSection from '@/settings/sections/AppearanceSection.vue'
 import PersonalSection from '@/settings/sections/PersonalSection.vue'
@@ -2027,6 +2028,7 @@ import '../settings/settings.css'
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
         <p v-if="activeSection === 'model' || activeSection === 'agentCenter'" class="quiet" role="status">{{ t('settings.userConfigurationSource') }}</p>
+        <ModelScopeNotice v-if="activeSection === 'model' && canAccessBackend" />
         <p v-if="(activeSection === 'model' || activeSection === 'agentCenter') && !canAccessBackend" class="quiet" role="status">{{ hostReason }}</p>
         <Transition name="section-fade" mode="out-in">
         <div

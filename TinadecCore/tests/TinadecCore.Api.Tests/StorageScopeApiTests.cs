@@ -380,6 +380,89 @@ public sealed class StorageScopeApiTests : IAsyncLifetime
         Assert.Single(await restarted.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions?project_id={projectId}") ?? []);
     }
 
+    private static async Task<JsonElement> InScopeAsync(HttpClient client, HttpMethod method, string path, string storageId, object? body = null)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("X-Tinadec-Storage-Id", storageId);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        var response = await client.SendAsync(request);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        return response.StatusCode == HttpStatusCode.NoContent ? default : await response.Content.ReadFromJsonAsync<JsonElement>();
+    }
+
+    private static async Task<JsonElement> CreateUserProviderAsync(HttpClient client, string name) =>
+        await InScopeAsync(client, HttpMethod.Post, "/api/v1/model-providers", "user",
+            new { driver = "openai", display_name = name, base_url = "http://localhost", model = name + "-model", api_key = "test" });
+
+    private static async Task<string[]> ProviderNamesAsync(HttpClient client, string storageId) =>
+        (await InScopeAsync(client, HttpMethod.Get, "/api/v1/model-providers", storageId)).EnumerateArray()
+            .Select(row => row.GetProperty("display_name").GetString()!).ToArray();
+
+    /// <summary>
+    /// The reported bug: a model set up in the model center (user scope) was missing in a
+    /// workspace, and one deleted there stayed in use, because a workspace ran on a copy of
+    /// models.toml taken when it was created. A new workspace now runs on the user's file.
+    /// </summary>
+    [Fact]
+    public async Task NewWorkspace_RunsOnTheUserModels_SoModelCenterEditsAndDeletionsReachIt()
+    {
+        using var client = _factory!.CreateClient();
+        var scope = await OpenAsync(client, "follows");
+        var id = scope.GetProperty("storage_id").GetString()!;
+        Assert.True(scope.GetProperty("follow_user_models").GetBoolean());
+
+        var provider = await CreateUserProviderAsync(client, "Added later");
+        Assert.Contains("Added later", await ProviderNamesAsync(client, id));
+
+        using (var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/model-providers/{provider.GetProperty("id").GetGuid()}?force=true"))
+        {
+            delete.Headers.Add("X-Tinadec-Storage-Id", "user");
+            delete.Headers.TryAddWithoutValidation("If-Match", $"\"{provider.GetProperty("revision").GetInt64()}\"");
+            Assert.True((await client.SendAsync(delete)).IsSuccessStatusCode);
+        }
+        Assert.DoesNotContain("Added later", await ProviderNamesAsync(client, id));
+
+        var userDocument = await InScopeAsync(client, HttpMethod.Get, "/api/v1/configuration/documents/models", "user");
+        var workspaceDocument = await InScopeAsync(client, HttpMethod.Get, "/api/v1/configuration/documents/models", id);
+        Assert.Equal(userDocument.GetProperty("path").GetString(), workspaceDocument.GetProperty("path").GetString());
+        // Other modules keep the workspace's own files.
+        var tools = await InScopeAsync(client, HttpMethod.Get, "/api/v1/configuration/documents/tools", id);
+        Assert.StartsWith(scope.GetProperty("storage_root").GetString()!, tools.GetProperty("path").GetString()!);
+    }
+
+    [Fact]
+    public async Task Workspace_CanKeepItsOwnModels_AndFollowTheUserAgain_AcrossRestart()
+    {
+        using var client = _factory!.CreateClient();
+        var id = (await OpenAsync(client, "switches")).GetProperty("storage_id").GetString()!;
+
+        await InScopeAsync(client, HttpMethod.Post, $"/api/v1/storage/scopes/{id}/model-source", "user", new { follow_user = false });
+        await CreateUserProviderAsync(client, "Only in user");
+        Assert.DoesNotContain("Only in user", await ProviderNamesAsync(client, id));
+        var own = await InScopeAsync(client, HttpMethod.Get, "/api/v1/configuration/documents/models", id);
+        Assert.StartsWith(Path.Combine(_root, "switches"), own.GetProperty("path").GetString()!);
+
+        await InScopeAsync(client, HttpMethod.Post, $"/api/v1/storage/scopes/{id}/model-source", "user", new { follow_user = true });
+        Assert.Contains("Only in user", await ProviderNamesAsync(client, id));
+
+        // The choice lives in this machine's host registration and survives a restart.
+        await _factory.DisposeAsync();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        _factory = new(_root, _token);
+        using var restarted = _factory.CreateClient();
+        var scopes = await InScopeAsync(restarted, HttpMethod.Get, "/api/v1/storage/scopes", "user");
+        Assert.True(scopes.EnumerateArray().Single(row => row.GetProperty("storage_id").GetString() == id).GetProperty("follow_user_models").GetBoolean());
+        Assert.Contains("Only in user", await ProviderNamesAsync(restarted, id));
+    }
+
+    [Fact]
+    public async Task UserScope_HasNoModelSourceToSwitch()
+    {
+        using var client = _factory!.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/v1/storage/scopes/user/model-source", new { follow_user = false });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private async Task<JsonElement> OpenAsync(HttpClient client, string name)
     {
         var path = Path.Combine(_root, name); Directory.CreateDirectory(path);

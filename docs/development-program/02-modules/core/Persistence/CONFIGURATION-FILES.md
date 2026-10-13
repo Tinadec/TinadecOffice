@@ -10,6 +10,8 @@
 
 用户配置位于 `~/.tinadec/config`，项目配置位于项目的 `.tinadec/config`，或 Host 注册的外部存储根的 `config`。代码通过 `IScopeStorageLocations.Config` 取路径，不从打开项目的 CWD 或安装目录发现配置。项目初始化复制用户配置与资源后拥有独立来源；后续用户编辑不再覆盖该项目。
 
+**例外：模型配置（2026-10-13，APP-SETTINGS-105）。** 工作区可以“使用用户的模型配置”：此时它的 `models.toml` 文档经 `IConfigurationDocumentRedirects` 指向 user 作用域的同一个文件，读取、校验、写锁与条件保存都在用户根完成，工作区 SQL 只是该文件的又一份投影。模型中心（永远编辑 user 作用域）新增、修改或删除的供应商与路由因此对这些工作区立即生效。该选择是本机宿主登记里的 `follow_user_models`，不写入项目文件；本轮之后在本机新初始化的工作区默认使用用户模型，此前已有的工作区和带着自有 `.tinadec` 配置进入的项目保持独立副本。`POST /api/v1/storage/scopes/{id}/model-source { follow_user }` 切换：有运行中任务时拒绝（409），新来源无法投影时自动切回原来源；工作区自己的 `models.toml` 从不删除，切回即恢复。其余模块文件（agents/tools/mcp/prompts/skills/runtime/storage/logging）规则不变。
+
 托管 graph 注册 `IScopeConfigurationDocuments` 后，`runtime.toml` 必须来自该 scope，缺失文件不能用显式 Profile 或打包基线绕过。未启用配置编辑权威的嵌入宿主即使提供 Persistence locations，也保持 `TinadecAgent:ProfileConfigPath` → 随包 `Configuration/default-agent-runtime.toml` 的来源顺序；这是一份嵌入基线，不创建用户配置或从历史路径迁移。来源判断依赖端口实际注册，不能只看目录端口存在或可缺省的布尔配置。
 
 | 文件 | 编辑权威与消费者 |

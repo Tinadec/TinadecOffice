@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { ArrowLeft, Check, ChevronRight, Cloud, Cpu, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Sparkles, Terminal, Users, Workflow, X } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronRight, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, Sparkles, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { api, type AgentModeTopologyDto, type MeetingModelOverrideDto, type ModelProviderInstanceDto, type SpaceOptionsDto } from '@/api'
+import { api, type AgentModeTopologyDto, type SpaceOptionsDto } from '@/api'
 import type { PermissionLevel } from '@/types/mode'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { composerSettings, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
 import { defaultSpaceOptions } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
+import type { DefaultModel } from '@/composables/useDefaultModel'
 
 const props = defineProps<{
   open: boolean
@@ -19,8 +20,10 @@ const props = defineProps<{
   canAttach: boolean
   permission: PermissionLevel
   modeVersionId?: string | null
-  meetingModelOverride?: MeetingModelOverrideDto | null
   spaceOptions?: SpaceOptionsDto | null
+  /** The default model (chat route); its page switches it for every conversation. */
+  defaultModel?: DefaultModel
+  defaultModelLabel?: string
   settingsSaving?: boolean
   settingsError?: string | null
   commandHost: CommandHost
@@ -33,8 +36,8 @@ const emit = defineEmits<{
   'send-as-text': []
   'update:modeVersionId': [value: string | null]
   'update:permission': [value: PermissionLevel]
-  'update:meetingModelOverride': [value: MeetingModelOverrideDto | null]
   'update:spaceOptions': [value: SpaceOptionsDto]
+  'manage-models': []
   'mode-label': [value: string, unavailable: boolean, icon: Component]
 }>()
 
@@ -51,10 +54,8 @@ const query = ref('')
 const rootQuery = ref('')
 const index = ref(0)
 const modes = ref<AgentModeTopologyDto[]>([])
-const providers = ref<ModelProviderInstanceDto[]>([])
 const loading = ref(false)
 const modeError = ref(false)
-const modelError = ref(false)
 const space = computed(() => props.spaceOptions ?? defaultSpaceOptions())
 let loadSequence = 0
 let anchorObserver: ResizeObserver | null = null
@@ -107,17 +108,11 @@ watch([selectedMode, () => props.modeVersionId, loading], () => {
   emit('mode-label', selectedMode.value?.display_name ?? t('chat.followDefault'), !!props.modeVersionId && !selectedMode.value && !loading.value, selectedMode.value ? modeIcon(selectedMode.value.slug) : Layers)
 }, { immediate: true })
 const workflowName = computed(() => availableModes.value.find(mode => mode.latest_published_mode_version_id === space.value.workflow_mode_version_id)?.display_name)
-const currentModelName = computed(() => {
-  const override = props.meetingModelOverride
-  if (!override) return t('chat.followDefault')
-  const provider = providers.value.find(item => item.id === override.provider_instance_id)
-  return override.model || provider?.display_name || override.provider_instance_id
-})
 const currentPermission = computed(() => permissionChoices.find(choice => choice.value === props.permission)!)
 const permissionName = computed(() => t(currentPermission.value.label))
 const title = computed(() => page.value === 'root' ? t('composer.commands') : t(`commandPanel.${page.value}`))
 const activeQuery = computed(() => page.value === 'root' && props.slashQuery != null ? props.slashQuery : query.value)
-const catalogError = computed(() => page.value === 'model' ? modelError.value : ['mode', 'workflow'].includes(page.value) ? modeError.value : false)
+const catalogError = computed(() => ['mode', 'workflow'].includes(page.value) ? modeError.value : false)
 
 interface Row {
   id: string
@@ -178,23 +173,18 @@ const allRows = computed<Row[]>(() => {
     disabled: props.settingsSaving, run: () => emit('update:permission', choice.value),
   }))
   if (page.value === 'mode' || page.value === 'workflow') return modeRows(page.value === 'workflow')
-  if (page.value === 'model') return [{
-    id: 'default', label: t('chat.followDefault'), hint: t('commandPanel.defaultModelHint'), checked: !props.meetingModelOverride,
-    icon: Sparkles,
-    disabled: props.settingsSaving, run: () => emit('update:meetingModelOverride', null),
-  }, ...providers.value.filter(provider => provider.enabled).flatMap(provider => {
-    const models = [...new Set([...(provider.models ?? []), ...(provider.model ? [provider.model] : [])])]
-    // Harnesses can intentionally leave their model unset and choose their own default.
-    const choices: Array<string | null> = models.length ? models : provider.connection_kind === 'cli' || provider.channel ? [null] : []
-    return choices.map(model => ({
-      id: `${provider.id}:${model ?? ''}`, label: model ?? provider.display_name,
-      icon: provider.connection_kind === 'cli' || provider.channel ? Terminal : provider.connection_kind === 'local-server' ? Cpu : Cloud,
-      hint: model ? provider.display_name : t('commandPanel.providerDefault'), keywords: provider.id,
-      checked: props.meetingModelOverride?.provider_instance_id === provider.id && (props.meetingModelOverride.model ?? null) === model,
-      disabled: props.settingsSaving,
-      run: () => emit('update:meetingModelOverride', { provider_instance_id: provider.id, model }),
+  if (page.value === 'model') {
+    const model = props.defaultModel
+    const choices: Row[] = (model?.models.value ?? []).map(row => ({
+      id: `${row.provider_instance_id}:${row.model_id}`, label: row.display_name || row.model_id,
+      hint: row.provider_display_name ?? undefined, keywords: `${row.model_id} ${row.provider_display_name ?? ''}`, icon: Sparkles,
+      checked: model?.isCurrent(row.provider_instance_id, row.model_id) ?? false, disabled: model?.busy.value ?? false,
+      run: () => { void model?.choose(row.provider_instance_id, row.model_id) },
     }))
-  })]
+    if (model?.loaded.value && !choices.length)
+      choices.push({ id: 'no-models', label: t('composer.modelSwitch.empty'), icon: Sparkles, disabled: true, run: () => {} })
+    return [...choices, { id: 'manage-models', label: t('composer.modelSwitch.manage'), icon: Settings, run: () => emit('manage-models') }]
+  }
   const rows: Row[] = [
     { id: 'image', label: t('chat.addImage'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: 'image picture 图片', icon: Image, disabled: !props.canAttach, testId: 'composer-attach-image', run: () => emit('attach', 'image/*') },
     { id: 'file', label: t('chat.addFile'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: 'file attachment 文件 附件', icon: FileText, disabled: !props.canAttach, testId: 'composer-attach-file', run: () => emit('attach', '') },
@@ -203,7 +193,7 @@ const allRows = computed<Row[]>(() => {
     if ('surface' in setting && (setting.surface === 'space') !== Boolean(props.spatial)) continue
     const toggle = 'toggle' in setting ? setting.toggle : null
     const submenu = 'page' in setting ? setting.page : null
-    const currentValue = setting.id === 'model' ? currentModelName.value : setting.id === 'mode' ? selectedMode.value?.display_name ?? t('chat.followDefault') : setting.id === 'permission' ? permissionName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
+    const currentValue = setting.id === 'model' ? props.defaultModelLabel : setting.id === 'mode' ? selectedMode.value?.display_name ?? t('chat.followDefault') : setting.id === 'permission' ? permissionName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
     rows.push({
       id: setting.id, label: t(setting.label), hint: t(setting.hint),
       keywords: setting.keywords,
@@ -313,13 +303,12 @@ function place() {
 async function loadCatalogs() {
   const sequence = ++loadSequence
   loading.value = true
-  const results = await Promise.allSettled([api.listAgentModeTopologies(), api.listModelProviders()])
+  void props.defaultModel?.load()
+  const results = await Promise.allSettled([api.listAgentModeTopologies()])
   if (sequence !== loadSequence) return
-  const [modeResult, providerResult] = results
+  const [modeResult] = results
   modeError.value = modeResult.status === 'rejected'
-  modelError.value = providerResult.status === 'rejected'
   if (modeResult.status === 'fulfilled') modes.value = Array.isArray(modeResult.value) ? modeResult.value : []
-  if (providerResult.status === 'fulfilled') providers.value = Array.isArray(providerResult.value) ? providerResult.value : []
   loading.value = false
 }
 watch(() => props.open, async open => {
@@ -414,7 +403,7 @@ defineExpose({ keydown, activate, page, selectPage })
         <p v-if="page === 'workflow'" class="command-panel-note">{{ t('commandPanel.workflowRequirement') }}</p>
       </div>
       </div>
-      <footer class="command-panel-footer" :class="{ 'has-error': settingsError }" :role="settingsError ? 'alert' : 'status'">{{ settingsError || (settingsSaving ? t('commandPanel.saving') : t('commandPanel.nextTask')) }}</footer>
+      <footer class="command-panel-footer" :class="{ 'has-error': settingsError }" :role="settingsError ? 'alert' : 'status'">{{ settingsError || (settingsSaving ? t('commandPanel.saving') : t(page === 'model' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask')) }}</footer>
     </section>
   </Teleport>
 </template>

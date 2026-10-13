@@ -5,7 +5,9 @@ export interface StorageScopeDto {
   category?: import('@/lib/apiError').ApiErrorCategory; retryable?: boolean; actions?: import('@/lib/apiError').ApiErrorActionKind[]
   workspace?: import('@/lib/workspaces').WorkspaceDefinition | null
   storage_id: string; scope_kind: string; project_id?: string | null; project_root?: string | null
-  storage_root: string; backend: string; external: boolean; allow_storage_write?: boolean; postgres_connection_reference?: string | null; restart_required?: boolean; requested_storage_root?: string
+  storage_root: string; backend: string; external: boolean; allow_storage_write?: boolean;
+  /** The workspace runs on the user scope's models.toml (true for the user scope); false: its own copy. */
+  follow_user_models?: boolean; postgres_connection_reference?: string | null; restart_required?: boolean; requested_storage_root?: string
   paths: Record<string, string>; diagnostics?: StorageDiagnostic[]
 }
 export interface StorageStatsDto { storage_id: string; categories: Array<{ category: string; path: string; size_bytes: number; file_count: number; clearable: boolean }>; diagnostics: StorageDiagnostic[] }

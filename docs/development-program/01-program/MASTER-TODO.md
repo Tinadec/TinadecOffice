@@ -7,7 +7,7 @@
 | 待核查 | 72 |
 | 未开始 | 16 |
 | 待方案 | 10 |
-| 进行中 | 3 |
+| 进行中 | 4 |
 | 阻塞 | 0 |
 | 待验收 | 4 |
 | 已完成 | 26 |
@@ -39,6 +39,7 @@
 | [APP-SETTINGS-101](../02-modules/app/settings/TODO.md#app-settings-101) | 验收配置发布到真实供应商与冻结 run 的生效范围 | 验收 | 未开始 | P1 | APP-SETTINGS |
 | [APP-SETTINGS-102](../02-modules/app/settings/TODO.md#app-settings-102) | 提供工具及 Agent 工具配置设置 | 实现 | 已完成 | P1 | APP-SETTINGS |
 | [APP-SETTINGS-103](../02-modules/app/settings/TODO.md#app-settings-103) | Skills 包安装与资源管理界面 | 实现 | 已完成 | P1 | APP-SETTINGS |
+| [APP-SETTINGS-105](../02-modules/app/settings/TODO.md#app-settings-105) | 统一模型来源：模型中心、工作区配置、会话固定模型与命令面板 | 实现 | 进行中 | P1 | APP-SETTINGS |
 | [APP-UIE-COMPONENTS-101](../02-modules/app/uie-components/TODO.md#app-uie-components-101) | 明确窗格合并与面板收起动作 | 实现 | 已完成 | P1 | APP-UIE-COMPONENTS |
 | [CORE-AGENT-CONFIG-002](../02-modules/core/AgentConfiguration/TODO.md#core-agent-config-002) | 将 scope TOML 建立为配置编辑唯一权威 | 实现 | 已完成 | P1 | CORE-AGENT-CONFIG |
 | [CORE-AGENT-CONFIG-003](../02-modules/core/AgentConfiguration/TODO.md#core-agent-config-003) | 完成 Linux 与真实 PostgreSQL 配置 scope 验收 | 验收 | 待验收 | P1 | CORE-AGENT-CONFIG |

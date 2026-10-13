@@ -4053,6 +4053,32 @@
         ],
         "type": "object"
       },
+      "StorageModelSource": {
+        "properties": {
+          "follow_user_models": {
+            "type": "boolean"
+          },
+          "storage_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "storage_id",
+          "follow_user_models"
+        ],
+        "type": "object"
+      },
+      "StorageModelSourceRequest": {
+        "properties": {
+          "follow_user": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "follow_user"
+        ],
+        "type": "object"
+      },
       "StorageOpenRequest": {
         "properties": {
           "backend": {
@@ -4140,6 +4166,10 @@
             "type": "array"
           },
           "external": {
+            "type": "boolean"
+          },
+          "follow_user_models": {
+            "description": "The workspace runs on the user scope models.toml (always true for the user scope); false when it keeps its own copy.",
             "type": "boolean"
           },
           "paths": {
@@ -12636,6 +12666,64 @@
           }
         },
         "summary": "POST /api/v1/storage/scopes/:storageId/export",
+        "tags": [
+          "Storage"
+        ]
+      }
+    },
+    "/api/v1/storage/scopes/{storageId}/model-source": {
+      "post": {
+        "operationId": "postApiV1StorageScopesByStorageIdModel-source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "storageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tinadec-Storage-Id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Scope-enabled Core requires a private trusted host credential for reads, previews, writes, and lifecycle actions. Never expose it to an Agent or renderer.",
+            "in": "header",
+            "name": "X-Tinadec-Host-Control",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageModelSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageModelSource"
+                }
+              }
+            },
+            "description": "Core storage/configuration result"
+          }
+        },
+        "summary": "POST /api/v1/storage/scopes/:storageId/model-source",
         "tags": [
           "Storage"
         ]

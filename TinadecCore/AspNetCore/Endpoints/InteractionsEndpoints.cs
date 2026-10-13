@@ -110,7 +110,18 @@ public static class InteractionsEndpoints
         if (clearModelOverride && hasExplicitModelOverride)
             return Results.BadRequest(new { code = "invalid_model_override", message = "Cannot set and clear meeting_model_override together." });
         if (!clearModelOverride && meetingModelOverride is null && session.MeetingModelOverride is { } sessionModel)
-            meetingModelOverride = new MeetingModelOverrideDto { ProviderInstanceId = sessionModel.ProviderInstanceId, Model = sessionModel.Model };
+        {
+            // The session's saved choice may name a provider deleted since, or one this storage
+            // scope never had. It is then not carried into the run (nor echoed back): the run
+            // uses the default route. The saved choice stays on the session for the UI to show.
+            var saved = new MeetingModelOverrideDto { ProviderInstanceId = sessionModel.ProviderInstanceId, Model = sessionModel.Model };
+            try
+            {
+                await modelResolver.PreviewAsync(new ModelResolutionPreviewRequestDto { MeetingModelOverride = saved }, ct).ConfigureAwait(false);
+                meetingModelOverride = saved;
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidDataException) { }
+        }
         var permissionMode = session.PermissionMode;
         if (el.TryGetProperty("permission_mode", out var pm))
         {

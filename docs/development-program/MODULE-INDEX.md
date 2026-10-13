@@ -12,7 +12,7 @@
 | APP-HOME | [Home / 会话、对话与投递](02-modules/app/home/README.md) | 初始源码清点；逐功能审计未完成 | 8 | 3 | [9项](02-modules/app/home/TODO.md) |
 | APP-CODE | [Code / 编程工作台](02-modules/app/code/README.md) | 初始源码清点；逐功能审计未完成 | 1 | 0 | [2项](02-modules/app/code/TODO.md) |
 | APP-DATA | [Workbench / 治理与数据页面](02-modules/app/data-pages/README.md) | 初始源码清点；逐功能审计未完成 | 2 | 0 | [2项](02-modules/app/data-pages/TODO.md) |
-| APP-SETTINGS | [Settings / 配置中心](02-modules/app/settings/README.md) | 初始源码清点；逐功能审计未完成 | 4 | 3 | [5项](02-modules/app/settings/TODO.md) |
+| APP-SETTINGS | [Settings / 配置中心](02-modules/app/settings/README.md) | 初始源码清点；逐功能审计未完成 | 4 | 3 | [6项](02-modules/app/settings/TODO.md) |
 | APP-MARKET | [Market / 市场](02-modules/app/market/README.md) | 初始源码清点；逐功能审计未完成 | 2 | 0 | [2项](02-modules/app/market/TODO.md) |
 | APP-DEBUG | [Debug Studio / 调试界面](02-modules/app/debug-studio/README.md) | 初始源码清点；逐功能审计未完成 | 2 | 1 | [3项](02-modules/app/debug-studio/TODO.md) |
 | APP-UIE-ENGINE | [TinadecUI / UIE Engine](02-modules/app/uie-engine/README.md) | 初始源码清点；逐功能审计未完成 | 2 | 1 | [1项](02-modules/app/uie-engine/TODO.md) |

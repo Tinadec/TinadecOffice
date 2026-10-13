@@ -37,6 +37,7 @@ test('storage and TOML routes preserve scope, CAS, Core errors, and bytes', asyn
     ['POST', '/api/v1/storage/scopes/project-scope/content-collect', { preview_id: 'content-preview' }],
     ['POST', '/api/v1/storage/scopes/project-scope/storage-delete-preview', undefined],
     ['POST', '/api/v1/storage/scopes/project-scope/storage-delete', { preview_id: 'delete-preview' }],
+    ['POST', '/api/v1/storage/scopes/project-scope/model-source', { follow_user: true }],
     ['GET', '/api/v1/session-transfers/transfer-id', undefined],
     ['PUT', '/api/v1/configuration/documents/tools', { text: 'enabled = true\n' }],
     ['POST', '/api/v1/configuration/documents/tools/validate', { text: 'enabled = true\n' }],

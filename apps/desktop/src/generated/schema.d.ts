@@ -818,6 +818,10 @@ export interface paths {
     /** POST /api/v1/storage/scopes/:storageId/export */
     post: operations["postApiV1StorageScopesByStorageIdExport"];
   };
+  "/api/v1/storage/scopes/{storageId}/model-source": {
+    /** POST /api/v1/storage/scopes/:storageId/model-source */
+    post: operations["postApiV1StorageScopesByStorageIdModel-source"];
+  };
   "/api/v1/storage/scopes/{storageId}/stats": {
     /** GET /api/v1/storage/scopes/:storageId/stats */
     get: operations["getApiV1StorageScopesByStorageIdStats"];
@@ -2071,6 +2075,13 @@ export interface components {
       scope: components["schemas"]["StorageScope"];
       storage_id: string;
     };
+    StorageModelSource: {
+      follow_user_models: boolean;
+      storage_id: string;
+    };
+    StorageModelSourceRequest: {
+      follow_user: boolean;
+    };
     StorageOpenRequest: {
       backend?: string;
       color?: string;
@@ -2098,6 +2109,8 @@ export interface components {
           [key: string]: unknown;
         }[];
       external: boolean;
+      /** @description The workspace runs on the user scope models.toml (always true for the user scope); false when it keeps its own copy. */
+      follow_user_models?: boolean;
       paths: {
         [key: string]: string;
       };
@@ -5921,6 +5934,32 @@ export interface operations {
       200: {
         content: {
           "application/zip": string;
+        };
+      };
+    };
+  };
+  /** POST /api/v1/storage/scopes/:storageId/model-source */
+  "postApiV1StorageScopesByStorageIdModel-source": {
+    parameters: {
+      header: {
+        "X-Tinadec-Storage-Id"?: string;
+        /** @description Scope-enabled Core requires a private trusted host credential for reads, previews, writes, and lifecycle actions. Never expose it to an Agent or renderer. */
+        "X-Tinadec-Host-Control": string;
+      };
+      path: {
+        storageId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StorageModelSourceRequest"];
+      };
+    };
+    responses: {
+      /** @description Core storage/configuration result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["StorageModelSource"];
         };
       };
     };

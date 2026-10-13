@@ -7,8 +7,10 @@ import { UiButton, UiSelectField } from '@/components/ui'
 import ComposerCommandPanel from './ComposerCommandPanel.vue'
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from '@/components/ui/attachment'
 import { Spinner } from '@/components/ui/spinner'
+import { useDefaultModel } from '@/composables/useDefaultModel'
+import { requestSettingsSection } from '@/lib/pageRequests'
 import type { PermissionLevel } from '@/types/mode'
-import type { MeetingModelOverrideDto, ProjectDto, SpaceOptionsDto } from '@/api'
+import type { MeetingModelOverrideDto, ModelProviderInstanceDto, ProjectDto, SpaceOptionsDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { selectionKey, selectedStorage } from '@/lib/storageScope'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
@@ -165,6 +167,15 @@ const slashQuery = computed(() => commandsDismissed.value ? null : composerSlash
 const commandPanelOpen = computed(() => showPlusMenu.value || slashQuery.value !== null)
 const modePanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'mode')
 const permissionPanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'permission')
+const modelPanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'model')
+const defaultModel = useDefaultModel()
+// Unknown reads as the neutral row name, never as "no default model".
+const defaultModelLabel = computed(() => defaultModel.name.value === undefined ? t('commandPanel.model')
+  : defaultModel.name.value ?? t('composer.modelSwitch.none'))
+function manageModels() {
+  requestSettingsSection('model')
+  if (router.currentRoute.value.name !== 'settings') void router.push({ name: 'settings' })
+}
 watch(() => props.modelValue, (value) => {
   commandsDismissed.value = false
   if (!showPlusMenu.value && composerSlashQuery(value) !== null) commandPage.value = 'root'
@@ -219,6 +230,37 @@ function consumeSettingsSlash() {
 function changeMode(value: string | null) { consumeSettingsSlash(); emit('update:modeVersionId', value) }
 function changePermission(value: PermissionLevel) { consumeSettingsSlash(); emit('update:permission', value) }
 function changeModel(value: MeetingModelOverrideDto | null) { consumeSettingsSlash(); emit('update:meetingModelOverride', value) }
+
+/*
+ * The composer no longer picks a model: the conversation model is the model center's chat
+ * route. A conversation pinned to a model earlier keeps that choice, so it is shown here —
+ * it must never override the model center unseen — and one click returns it to the default.
+ * Its provider is checked in the current storage scope: deleted, disabled, or never present
+ * in this workspace's own models.toml, it is named unavailable (Core already runs the
+ * default route then) rather than shown as if it were in use.
+ */
+const pinnedProviders = ref<ModelProviderInstanceDto[] | null>(null)
+let pinnedRead = 0
+watch(() => [props.meetingModelOverride?.provider_instance_id, selectedStorage.value] as const, async ([providerId]) => {
+  const read = ++pinnedRead
+  pinnedProviders.value = null
+  if (!providerId) return
+  try {
+    const rows = await api.listModelProviders()
+    if (read === pinnedRead) pinnedProviders.value = Array.isArray(rows) ? rows : []
+  } catch { /* unknown: shown as pinned, not as unavailable */ }
+}, { immediate: true })
+const pinnedUnavailable = computed(() => {
+  const pinned = props.meetingModelOverride
+  if (!pinned || !pinnedProviders.value) return false
+  const provider = pinnedProviders.value.find(row => row.id === pinned.provider_instance_id)
+  return !provider || !provider.enabled
+})
+const pinnedName = computed(() => {
+  const pinned = props.meetingModelOverride
+  if (!pinned) return ''
+  return pinned.model || pinnedProviders.value?.find(row => row.id === pinned.provider_instance_id)?.display_name || t('composer.pinnedModelUnknown')
+})
 function changeSpaceOptions(value: SpaceOptionsDto) { consumeSettingsSlash(); emit('update:spaceOptions', value) }
 
 function updateDraft(value: string) {
@@ -508,6 +550,7 @@ function handleClickOutside(event: MouseEvent) {
 }
 
 onMounted(() => {
+  void defaultModel.load()
   document.addEventListener('click', handleClickOutside)
   // A draft can arrive pre-filled (edit-and-resend, a restored session), and the
   // modelValue watcher does not fire for a value that was never changed.
@@ -605,7 +648,16 @@ function confirmSteer(id: string, interrupt = false) {
     <div v-if="settingsError && !commandPanelOpen" class="composer-error" role="alert">{{ settingsError }}</div>
     <div v-if="attachmentError" class="composer-error" role="alert">{{ attachmentError }}</div>
     <div v-if="meetingModelOverride || enabledSpaceLabels.length" class="composer-settings-summary">
-      <button v-if="meetingModelOverride" @click="openCommandPanel('model')">{{ meetingModelOverride.model || t('commandPanel.model') }}</button>
+      <button
+        v-if="meetingModelOverride"
+        type="button"
+        class="composer-pinned-model"
+        :class="{ 'is-unavailable': pinnedUnavailable }"
+        :title="t(pinnedUnavailable ? 'composer.pinnedModelUnavailableHint' : 'composer.pinnedModelHint')"
+        :disabled="settingsSaving"
+        data-testid="composer-pinned-model"
+        @click="changeModel(null)"
+      >{{ t(pinnedUnavailable ? 'composer.pinnedModelUnavailable' : 'composer.pinnedModel', { model: pinnedName }) }}</button>
       <button v-for="label in enabledSpaceLabels.slice(0, 2)" :key="label" @click="openCommandPanel()">{{ label }}</button>
       <button v-if="enabledSpaceLabels.length > 2" @click="openCommandPanel()">+{{ enabledSpaceLabels.length - 2 }}</button>
     </div>
@@ -796,6 +848,7 @@ function confirmSteer(id: string, interrupt = false) {
           ><component :is="modeGlyph" :size="14" /><span class="mode-selector-label">{{ modeLabel }}</span><span v-if="modeUnavailable" class="mode-selector-stale" :title="t('chat.modeUnavailable')">⚠</span><ChevronDown :size="12" class="mode-selector-chevron" :class="{ 'is-expanded': modePanelExpanded }" aria-hidden="true" /></button>
           <slot v-if="spatial" name="capabilities" />
           <button class="permission-selector-trigger" type="button" :title="t('permission.nextRunHint')" aria-haspopup="dialog" :aria-expanded="permissionPanelExpanded" @click="openCommandPanel('permission')"><component :is="permissionChoice.icon" :size="14" class="composer-permission-icon" :data-risk="permissionChoice.risk" aria-hidden="true" /><span class="permission-selector-label">{{ permissionLabel }}</span><ChevronDown :size="12" class="permission-selector-chevron" :class="{ 'is-expanded': permissionPanelExpanded }" aria-hidden="true" /></button>
+          <button class="permission-selector-trigger model-selector-trigger" type="button" :title="t('commandPanel.modelHint')" aria-haspopup="dialog" :aria-expanded="modelPanelExpanded" data-testid="composer-model-trigger" @click="openCommandPanel('model')"><Sparkles :size="14" aria-hidden="true" /><span class="permission-selector-label">{{ defaultModelLabel }}</span><ChevronDown :size="12" class="permission-selector-chevron" :class="{ 'is-expanded': modelPanelExpanded }" aria-hidden="true" /></button>
           <button
             ref="projectTriggerRef"
             class="project-dropdown-trigger"
@@ -833,8 +886,9 @@ function confirmSteer(id: string, interrupt = false) {
       :can-attach="canAttach"
       :permission="permission"
       :mode-version-id="modeVersionId"
-      :meeting-model-override="meetingModelOverride"
       :space-options="spaceOptions"
+      :default-model="defaultModel"
+      :default-model-label="defaultModelLabel"
       :settings-saving="settingsSaving"
       :settings-error="settingsError"
       :command-host="commandHost"
@@ -845,8 +899,8 @@ function confirmSteer(id: string, interrupt = false) {
       @send-as-text="closeCommandPanel(); submit(undefined, true)"
       @update:mode-version-id="changeMode"
       @update:permission="changePermission"
-      @update:meeting-model-override="changeModel"
       @update:space-options="changeSpaceOptions"
+      @manage-models="manageModels"
       @mode-label="(label, unavailable, icon) => { modeLabel = label; modeUnavailable = unavailable; modeGlyph = icon }"
     />
 
@@ -929,6 +983,7 @@ function confirmSteer(id: string, interrupt = false) {
 .composer-settings-summary { display: flex; align-items: center; gap: 6px; padding: 0 8px 6px; flex-wrap: wrap; }
 .composer-settings-summary button { background: var(--surface-section); border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 8px; font-size: 11px; color: var(--text-secondary); cursor: pointer; }
 .composer-settings-summary button:hover { background: var(--surface-hover); }
+.composer-settings-summary .composer-pinned-model.is-unavailable { color: var(--accent-warning); border-color: color-mix(in srgb, var(--accent-warning) 40%, transparent); }
 .composer-error {
   display: flex;
   align-items: center;

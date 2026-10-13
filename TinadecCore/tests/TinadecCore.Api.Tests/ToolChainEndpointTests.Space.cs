@@ -161,6 +161,50 @@ public sealed partial class ToolChainEndpointTests
         Assert.All(root.ModelPlan.Candidates, candidate => Assert.NotEqual("later-model", candidate.Model));
     }
 
+    /// <summary>
+    /// A session keeps the model it was pinned to after that provider is deleted in the model
+    /// center (or in a scope that never had it). Its next task used to fail at freeze with
+    /// "Provider '…' was not found"; it now falls back to the default route. A live provider
+    /// is still honoured, so the fallback is not simply ignoring every saved choice.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionModelOverride_OfADeletedProvider_FallsBackToTheDefaultRoute(bool deleteProvider)
+    {
+        var fixture = await SpaceFixtureAsync(new ToolScriptedClient(), new FakeToolProvider());
+        var providerResponse = await fixture.Client.PostAsJsonAsync("/api/v1/model-providers", new
+        { driver = "openai", display_name = "Pinned", base_url = "http://localhost", model = "pinned-model", api_key = "test" });
+        Assert.True(providerResponse.IsSuccessStatusCode, await providerResponse.Content.ReadAsStringAsync());
+        var provider = await providerResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var providerId = provider.GetProperty("id").GetGuid();
+        var pinned = await fixture.Client.PatchAsJsonAsync($"/api/v1/sessions/{fixture.Session}", new
+        { meeting_model_override = new { provider_instance_id = providerId, model = "pinned-model" } });
+        Assert.True(pinned.IsSuccessStatusCode, await pinned.Content.ReadAsStringAsync());
+        if (deleteProvider)
+        {
+            using var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/model-providers/{providerId}?force=true");
+            delete.Headers.TryAddWithoutValidation("If-Match", $"\"{provider.GetProperty("revision").GetInt64()}\"");
+            var deleted = await fixture.Client.SendAsync(delete);
+            Assert.True(deleted.IsSuccessStatusCode, await deleted.Content.ReadAsStringAsync());
+        }
+
+        var frozen = await _factory!.Services.GetRequiredService<IAgentRuntimeConfigurationResolver>().ResolveSubmissionAsync(
+            new FullDuplexInvocation(fixture.Session, "Next task", "next-task", "default", null, null, SpaceOptions: new()));
+
+        var root = frozen.OperationAgents.Single(agent => agent.Id == frozen.Graph!.ConversationTemplateSlug);
+        if (deleteProvider)
+        {
+            Assert.NotEqual("session_override", root.ModelPlan!.StrategySource);
+            Assert.All(root.ModelPlan.Candidates, candidate => Assert.NotEqual(providerId, candidate.ProviderInstanceId));
+        }
+        else
+        {
+            Assert.Equal("session_override", root.ModelPlan!.StrategySource);
+            Assert.Equal(providerId, Assert.Single(root.ModelPlan.Candidates).ProviderInstanceId);
+        }
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]

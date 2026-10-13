@@ -17,6 +17,7 @@ export const storageSchemas = {
     category: ref('ErrorCategory'), retryable: { type: 'boolean' }, actions: { type: 'array', items: ref('ErrorRecoveryAction') },
     storage_root: string, backend: string, external: { type: 'boolean' }, paths: { type: 'object', additionalProperties: string },
     diagnostics: { type: 'array', items: diagnostic }, allow_storage_write: { type: 'boolean' },
+    follow_user_models: { type: 'boolean', description: 'The workspace runs on the user scope models.toml (always true for the user scope); false when it keeps its own copy.' },
     postgres_connection_reference: { ...string, nullable: true }, restart_required: { type: 'boolean' }, requested_storage_root: string,
   }, required: ['storage_id', 'scope_kind', 'storage_root', 'backend', 'external', 'paths', 'workspace', 'availability'] },
   StorageScopeList: { type: 'array', items: ref('StorageScope') },
@@ -29,6 +30,7 @@ export const storageSchemas = {
   ConfigurationDocument: { type: 'object', properties: { document_id: string, path: string, text: string, content_hash: string, diagnostics: { type: 'array', items: diagnostic }, version: { type: 'integer' } }, required: ['document_id', 'path', 'text', 'content_hash', 'diagnostics', 'version'] },
   ConfigurationValidation: { type: 'object', properties: { valid: { type: 'boolean' }, diagnostics: { type: 'array', items: diagnostic } }, required: ['valid', 'diagnostics'] },
   StorageWritePolicy: { type: 'object', properties: { storage_id: string, allow_storage_write: { type: 'boolean' } }, required: ['storage_id', 'allow_storage_write'] },
+  StorageModelSource: { type: 'object', properties: { storage_id: string, follow_user_models: { type: 'boolean' } }, required: ['storage_id', 'follow_user_models'] },
   StorageDiagnostics: { type: 'object', properties: { storage_id: string, scope: ref('StorageScope'), diagnostics: { type: 'array', items: diagnostic }, configuration: { type: 'object', additionalProperties: true } }, required: ['storage_id', 'scope', 'diagnostics', 'configuration'] },
   StorageOpenRequest: { type: 'object', properties: { project_path: string, name: string, backend: string, storage_root: string, postgres_connection_reference: string,
     roots: { type: 'array', items: ref('WorkspaceRoot') }, primary_root_id: string, icon: string, color: string }, required: ['project_path'] },
@@ -36,6 +38,7 @@ export const storageSchemas = {
   StoragePreviewApplyRequest: { type: 'object', properties: { preview_id: string }, required: ['preview_id'] },
   StorageCleanupRequest: { type: 'object', properties: { category: { type: 'string', enum: ['cache', 'temp', 'logs'] } }, required: ['category'] },
   StorageWritePolicyRequest: { type: 'object', properties: { allow_storage_write: { type: 'boolean' } }, required: ['allow_storage_write'] },
+  StorageModelSourceRequest: { type: 'object', properties: { follow_user: { type: 'boolean' } }, required: ['follow_user'] },
   ConfigurationTextRequest: { type: 'object', properties: { text: string }, required: ['text'] },
   SessionTransferRequest: { type: 'object', properties: { target_storage_id: string, target_project_id: string }, required: ['target_storage_id'] },
 };
@@ -58,6 +61,7 @@ export function registerStorageRoutes(app: AnyElysia, forwardHeaders: (request: 
     ['POST', '/api/v1/storage/scopes/:storageId/storage-delete'],
     ['POST', '/api/v1/storage/scopes/:storageId/configure', 'StorageScope'],
     ['POST', '/api/v1/storage/scopes/:storageId/write-policy', 'StorageWritePolicy'],
+    ['POST', '/api/v1/storage/scopes/:storageId/model-source', 'StorageModelSource'],
     ['POST', '/api/v1/storage/scopes/:storageId/close'],
     ['DELETE', '/api/v1/storage/scopes/:storageId'],
     ['POST', '/api/v1/storage/scopes/:storageId/export'],
@@ -73,6 +77,7 @@ export function registerStorageRoutes(app: AnyElysia, forwardHeaders: (request: 
     if (path.endsWith('/workspace') && method === 'PUT') return 'WorkspaceEditRequest';
     if (path.endsWith('/configure')) return 'StorageConfigureRequest';
     if (path.endsWith('/write-policy')) return 'StorageWritePolicyRequest';
+    if (path.endsWith('/model-source')) return 'StorageModelSourceRequest';
     if (path.endsWith('/cleanup-preview')) return 'StorageCleanupRequest';
     if (path.endsWith('/cleanup') || path.endsWith('/content-collect') || path.endsWith('/storage-delete')) return 'StoragePreviewApplyRequest';
     if (path.includes('/configuration/') && (method === 'PUT' || path.endsWith('/validate'))) return 'ConfigurationTextRequest';

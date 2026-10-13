@@ -48,7 +48,7 @@ public sealed class StorageRuntimeLease : IAsyncDisposable
 }
 
 /// <summary>Host-owned mounts. Connections, singleton stores and hosted workers never change their scope.</summary>
-public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorkspaceRegistry, IAsyncDisposable
+public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorkspaceRegistry, IWorkspaceModelSourceRegistry, IAsyncDisposable
 {
     private readonly IServiceProvider _host;
     private readonly IConfiguration _configuration;
@@ -142,8 +142,10 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
                         workspace: requestedWorkspace).ConfigureAwait(false);
                     var definition = WorkspaceDefinitionFile.Read(scope, requestedWorkspace.Name);
                     RequireSelectedRoots(definition, requestedWorkspace, request.Roots is not null, projectRoot);
+                    // A workspace initialized here runs on the user's models; a project that arrives with
+                    // its own .tinadec configuration keeps it until switched in the model center.
                     _registrations[scope.StorageId] = new(scope, _identity.PrincipalId, false, definition.Name,
-                        definition.Roots, definition.PrimaryRootId);
+                        definition.Roots, definition.PrimaryRootId, FollowUserModels: manifest is null);
                 }
                 await SaveRegistrationsAsync(ct).ConfigureAwait(false);
             }
@@ -268,6 +270,42 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
         await StopRuntimeAsync(runtime, ct).ConfigureAwait(false);
         _mounts.TryRemove(runtime.Scope.StorageId, out _);
         _runtimes.TryRemove(new KeyValuePair<string, Runtime>(runtime.Scope.StorageId, runtime));
+    }
+
+    public bool FollowsUserModels(string storageId) => storageId == "user" || GetRegistration(storageId).FollowUserModels;
+
+    public async Task SetFollowsUserModelsAsync(string storageId, bool followUser, CancellationToken ct = default)
+    {
+        if (storageId == "user") throw new ArgumentException("The user scope is the source of user models.");
+        if (GetRegistration(storageId).FollowUserModels == followUser) return;
+        // The service graph is built per mount, so the change takes effect on a fresh mount. Work in
+        // flight keeps the runtime open; rather than wait on it, the switch is refused.
+        using (var wait = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            wait.CancelAfter(TimeSpan.FromSeconds(5));
+            try { await CloseAsync(storageId, wait.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            { throw new InvalidOperationException("The workspace still has work in flight. Stop its runs before switching its model source."); }
+        }
+        await SetFollowFlagAsync(storageId, followUser, ct).ConfigureAwait(false);
+        try { await using var _ = await AcquireAsync(storageId, ct).ConfigureAwait(false); }
+        catch
+        {
+            // The chosen source does not project into this workspace: keep the one that worked.
+            await SetFollowFlagAsync(storageId, !followUser, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task SetFollowFlagAsync(string storageId, bool followUser, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            _registrations[storageId] = GetRegistration(storageId) with { FollowUserModels = followUser };
+            await SaveRegistrationsAsync(ct).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task SetWritePolicyAsync(string storageId, bool allowStorageWrite, CancellationToken ct = default)
@@ -404,6 +442,7 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
             services.Replace(ServiceDescriptor.Singleton<ISessionStorageAdmissionGuard>(transferGuard));
         if (_host.GetService<ISessionScopeTransferService>() is { } transfers)
             services.AddSingleton<ISessionScopeTransferService>(transfers);
+        if (registration.FollowUserModels) services.AddSingleton<IConfigurationDocumentRedirects>(new FollowUserModelsRedirect(User));
         services.AddTinadecConfigurationFiles();
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         var runtime = new Runtime(scope, provider, policy);
@@ -486,7 +525,8 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
                 Convert.ToBoolean(StorageScopeInitializer.Value(item, "allow_storage_write") ?? false), item["name"].ToString()!,
                 roots, StorageScopeInitializer.Value(item, "primary_root_id")?.ToString(),
                 StorageScopeInitializer.Value(item, "historical_roots") is TomlTableArray historical
-                    ? historical.Select(row => new WorkspaceSourceRoot(row["id"].ToString()!, Path.GetFullPath(row["path"].ToString()!))).ToArray() : null);
+                    ? historical.Select(row => new WorkspaceSourceRoot(row["id"].ToString()!, Path.GetFullPath(row["path"].ToString()!))).ToArray() : null,
+                Convert.ToBoolean(StorageScopeInitializer.Value(item, "follow_user_models") ?? false));
         }
     }
 
@@ -504,6 +544,7 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
                 ["name"] = registration.Name
             };
             if (scope.PostgresConnectionReference is { } reference) entry["postgres_connection_reference"] = reference;
+            if (registration.FollowUserModels) entry["follow_user_models"] = true;
             if (registration.Roots is { } roots)
             {
                 entry["primary_root_id"] = registration.PrimaryRootId!;
@@ -591,7 +632,14 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
     }
 
     private sealed record Registration(StorageScopeDescriptor Scope, Guid OwnerPrincipalId, bool AllowStorageWrite, string Name,
-        IReadOnlyList<WorkspaceSourceRoot>? Roots = null, string? PrimaryRootId = null, IReadOnlyList<WorkspaceSourceRoot>? HistoricalRoots = null);
+        IReadOnlyList<WorkspaceSourceRoot>? Roots = null, string? PrimaryRootId = null, IReadOnlyList<WorkspaceSourceRoot>? HistoricalRoots = null,
+        bool FollowUserModels = false);
+
+    /// <summary>The workspace's models.toml is the user scope's file (see <see cref="IConfigurationDocumentRedirects"/>).</summary>
+    private sealed class FollowUserModelsRedirect(StorageScopeDescriptor user) : IConfigurationDocumentRedirects
+    {
+        public IScopeStorageLocations? For(string documentId) => documentId == "models" ? user : null;
+    }
     private sealed class HostTenantContext(TenantContext identity) : ITenantContextAccessor { public TenantContext Current => identity; }
     private sealed class HostProjectWritePolicy(bool allow) : IProjectStorageWritePolicy
     {

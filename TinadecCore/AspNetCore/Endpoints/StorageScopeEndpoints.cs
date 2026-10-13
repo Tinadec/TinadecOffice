@@ -72,6 +72,15 @@ public static class StorageScopeEndpoints
                 if (storageId == "user") { dto["restart_required"] = true; dto["requested_storage_root"] = request.StorageRoot ?? scope.Root; }
                 return Results.Ok(dto);
             }));
+        // Where a workspace's models come from: the user's models.toml (one file, shared with the
+        // model center) or its own copy. A preference of this machine's user, not a host privilege.
+        app.MapPost("/api/v1/storage/scopes/{storageId}/model-source", async (string storageId, WorkspaceModelSourceRequest request,
+            IStorageScopeRegistry registry, CancellationToken ct) =>
+            await HandleAsync(async () => {
+                if (registry is not IWorkspaceModelSourceRegistry sources)
+                    return Problem(409, "capability_unavailable", "This host keeps a single storage scope.");
+                await sources.SetFollowsUserModelsAsync(storageId, request.FollowUser, ct).ConfigureAwait(false);
+                return Results.Ok(new { storage_id = storageId, follow_user_models = request.FollowUser }); }));
         app.MapPost("/api/v1/storage/scopes/{storageId}/write-policy", async (string storageId, StorageWritePolicyRequest request, HttpContext http, IStorageScopeRegistry registry, CancellationToken ct) =>
             await HandleAsync(async () => {
                 var expected = Environment.GetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN");
@@ -124,7 +133,8 @@ public static class StorageScopeEndpoints
         new { config = scope.Config, skills = scope.Skills, packages = scope.Packages, data = scope.Data, state = scope.State,
             logs = scope.Logs, cache = scope.Cache, temp = scope.Temp, worktrees = scope.Worktrees },
         error is null ? "ready" : "error", error?.Message, error?.Code, error?.Classification.Category,
-        error?.Classification.Retryable, error?.Classification.Actions, error?.TraceId, error?.Diagnostics);
+        error?.Classification.Retryable, error?.Classification.Actions, error?.TraceId, error?.Diagnostics,
+        scope.ScopeKind != "project" || error is null && registry is IWorkspaceModelSourceRegistry sources && sources.FollowsUserModels(scope.StorageId));
 
     private sealed record ScopeDto(
         string StorageId, string ScopeKind, Guid? ProjectId, string? ProjectRoot,
@@ -132,7 +142,8 @@ public static class StorageScopeEndpoints
         string StorageRoot, string Backend, bool External, string? PostgresConnectionReference,
         bool AllowStorageWrite, object Paths, string Availability,
         string? AvailabilityError, string? AvailabilityCode, string? Category, bool? Retryable,
-        IReadOnlyList<string>? Actions, string? TraceId, IReadOnlyList<ConfigurationDiagnostic>? Diagnostics);
+        IReadOnlyList<string>? Actions, string? TraceId, IReadOnlyList<ConfigurationDiagnostic>? Diagnostics,
+        bool FollowUserModels);
 
     private static object DocumentDto(ScopeConfigurationDocument d) => new { document_id = d.Id, path = d.Path, text = d.Text,
         content_hash = d.ContentHash, diagnostics = d.Diagnostics, version = d.Version };
@@ -163,5 +174,6 @@ public static class StorageScopeEndpoints
     public sealed record CleanupRequest(string Category);
     public sealed record CleanupApplyRequest(string PreviewId);
     public sealed record StorageWritePolicyRequest(bool AllowStorageWrite);
+    public sealed record WorkspaceModelSourceRequest(bool FollowUser);
     public sealed record ConfigurationTextRequest(string Text);
 }

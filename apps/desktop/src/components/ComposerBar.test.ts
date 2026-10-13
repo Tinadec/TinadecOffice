@@ -46,6 +46,8 @@ const apiMock = vi.hoisted(() => ({
   api: {
     listAgentModeTopologies: vi.fn(async () => [] as import('@/api').AgentModeTopologyDto[]),
     listModelProviders: vi.fn(async () => [] as import('@/api').ModelProviderInstanceDto[]),
+    listModelRoutes: vi.fn(async () => [] as import('@/api').ModelRouteDto[]),
+    saveModelRoute: vi.fn(async () => ({})),
     listDirectory: vi.fn(async (_cwd: string, _dir: string) => ({ data: { entries: [] as unknown[] } })),
   },
 }))
@@ -521,9 +523,9 @@ describe('ComposerBar unified command panel', () => {
   })
 
   it('searches Chinese and English metadata on either surface and never invents presets', async () => {
-    const wrapper = mountComposer({ modelValue: '/模型' })
+    const wrapper = mountComposer({ modelValue: '/权限' })
     await flushPromises()
-    expect(document.querySelector('[data-testid="command-panel-model"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="command-panel-permission"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="command-panel-mode"]')).toBeNull()
     await wrapper.find('textarea').trigger('keydown', { key: 'Escape' })
     await wrapper.find('.welcome-dialog-plus').trigger('click')
@@ -535,27 +537,61 @@ describe('ComposerBar unified command panel', () => {
     wrapper.unmount()
   })
 
-  it('selects only configured enabled provider models and explicitly resets the override', async () => {
-    apiMock.api.listModelProviders.mockResolvedValue([provider, { ...provider, id: 'disabled', enabled: false, models: ['hidden-model'] }, { ...provider, id: 'empty', model: null, models: [] }] as never)
-    const wrapper = mountComposer({ modelValue: '/model', meetingModelOverride: { provider_instance_id: 'provider-1', model: 'model-a' } })
+  /**
+   * The default model lives in the command panel, like mode and permission. Its list is the model
+   * center's projection, so a model named only on the chat route (missing before) is offered, and
+   * choosing one rewrites the chat route: the model center's default, not a per-conversation pin.
+   */
+  it('switches the default model from the panel, listing models named only on the chat route', async () => {
+    apiMock.api.listModelProviders.mockResolvedValue([{ ...provider, driver: 'openai', capabilities: ['chat'], status: 'ready', updated_at: '' }] as never)
+    apiMock.api.listModelRoutes.mockResolvedValue([{ purpose: 'chat', revision: 3, updated_at: '', candidates: [{ provider_instance_id: 'provider-1', model: 'route-only', position: 0 }] }] as never)
+    const wrapper = mountComposer({ modelValue: 'draft' })
     await flushPromises()
-    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.get('[data-testid="composer-model-trigger"]').text()).toContain('route-only')
+    await wrapper.get('[data-testid="composer-model-trigger"]').trigger('click')
     await flushPromises()
-    const labels = [...document.querySelectorAll('.command-panel-row strong')].map(row => row.textContent)
-    expect(labels).toEqual(['chat.followDefault', 'model-a', 'model-b'])
+    expect(document.querySelector('[data-testid="command-panel-provider-1:route-only"]')?.getAttribute('aria-pressed')).toBe('true')
     click('[data-testid="command-panel-provider-1:model-b"]')
     await flushPromises()
-    expect(wrapper.emitted('update:meetingModelOverride')?.[0]?.[0]).toEqual({ provider_instance_id: 'provider-1', model: 'model-b' })
-    expect(document.querySelector('.composer-command-panel')).toBeNull()
-    await wrapper.find('.welcome-dialog-plus').trigger('click')
-    await flushPromises()
-    click('[data-testid="command-panel-model"]')
-    await flushPromises()
-    click('[data-testid="command-panel-default"]')
-    await flushPromises()
-    expect(wrapper.emitted('update:meetingModelOverride')?.[1]?.[0]).toBeNull()
-    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(apiMock.api.saveModelRoute).toHaveBeenCalledWith('chat', { candidates: [{ provider_instance_id: 'provider-1', model: 'model-b' }] }, undefined, { expected_revision: 3 })
+    expect(wrapper.emitted('update:meetingModelOverride')).toBeUndefined()
     wrapper.unmount()
+  })
+
+  describe('a conversation pinned to a model', () => {
+
+    it('shows the pinned model and returns it to the model center default in one click', async () => {
+      apiMock.api.listModelProviders.mockResolvedValue([provider] as never)
+      const wrapper = mountComposer({ meetingModelOverride: { provider_instance_id: 'provider-1', model: 'model-b' } })
+      await flushPromises()
+      const chip = wrapper.get('[data-testid="composer-pinned-model"]')
+      expect(chip.text()).toBe('composer.pinnedModel {"model":"model-b"}')
+      expect(chip.classes()).not.toContain('is-unavailable')
+      await wrapper.get('[data-testid="composer-pinned-model"]').trigger('click')
+      expect(wrapper.emitted('update:meetingModelOverride')?.[0]?.[0]).toBeNull()
+      expect(wrapper.emitted('submit')).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it.each([
+      ['deleted', [] as unknown[]],
+      ['disabled', [{ ...provider, enabled: false }]],
+    ])('names a %s provider unavailable instead of showing it as in use', async (_case, rows) => {
+      apiMock.api.listModelProviders.mockResolvedValue(rows as never)
+      const wrapper = mountComposer({ meetingModelOverride: { provider_instance_id: 'provider-1', model: 'gone-model' } })
+      await flushPromises()
+      const chip = wrapper.get('[data-testid="composer-pinned-model"]')
+      expect(chip.text()).toBe('composer.pinnedModelUnavailable {"model":"gone-model"}')
+      expect(chip.classes()).toContain('is-unavailable')
+      wrapper.unmount()
+    })
+
+    it('shows nothing for a conversation that follows the model center', async () => {
+      const wrapper = mountComposer({ meetingModelOverride: null })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="composer-pinned-model"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
   })
 
   it('ranks an exact /mode command above the /model prefix', async () => {
@@ -665,7 +701,7 @@ describe('ComposerBar unified command panel', () => {
     const wrapper = mount(ComposerBar, { attachTo: document.body, props: { busy: false, permission: 'default', modelValue: 'draft remains' } })
     await wrapper.find('.welcome-dialog-plus').trigger('click')
     await flushPromises()
-    click('[data-testid="command-panel-model"]')
+    click('[data-testid="command-panel-permission"]')
     await flushPromises()
     const input = document.querySelector('.command-panel-search input') as HTMLInputElement
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -786,7 +822,7 @@ describe('ComposerBar unified command panel', () => {
   })
 
   it('returns from a slash subpage to the editable composer and blocks held deletion until key release', async () => {
-    const wrapper = mount(ComposerBar, { attachTo: document.body, props: { busy: false, permission: 'default', modelValue: '/model Keep the draft' } })
+    const wrapper = mount(ComposerBar, { attachTo: document.body, props: { busy: false, permission: 'default', modelValue: '/permission Keep the draft' } })
     await flushPromises()
     await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
@@ -804,7 +840,7 @@ describe('ComposerBar unified command panel', () => {
     textarea.dispatchEvent(editing)
     expect(editing.defaultPrevented).toBe(false)
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
-    expect(wrapper.find('textarea').element.value).toBe('/model Keep the draft')
+    expect(wrapper.find('textarea').element.value).toBe('/permission Keep the draft')
     wrapper.unmount()
   })
 
@@ -904,7 +940,7 @@ describe('ComposerBar unified command panel', () => {
       await wrapper.find('.welcome-dialog-plus').trigger('click')
       await flushPromises()
       animate.mockClear()
-      click('[data-testid="command-panel-model"]')
+      click('[data-testid="command-panel-permission"]')
       await flushPromises()
       if (reduced) expect(animate).not.toHaveBeenCalled()
       else {
@@ -929,15 +965,15 @@ describe('ComposerBar unified command panel', () => {
     expect(document.querySelector('.command-panel-header strong')?.textContent).toBe('commandPanel.mode')
     click('.command-panel-close')
     await flushPromises()
-    await wrapper.setProps({ modelValue: '/model' })
-    await flushPromises()
-    expect(document.querySelector('[data-testid="command-panel-model"]')).not.toBeNull()
-    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-    expect(document.querySelector('.command-panel-header strong')?.textContent).toBe('commandPanel.model')
     await wrapper.setProps({ modelValue: '/permission' })
     await flushPromises()
     expect(document.querySelector('[data-testid="command-panel-permission"]')).not.toBeNull()
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(document.querySelector('.command-panel-header strong')?.textContent).toBe('commandPanel.permission')
+    await wrapper.setProps({ modelValue: '/mode' })
+    await flushPromises()
+    expect(document.querySelector('[data-testid="command-panel-mode"]')).not.toBeNull()
     wrapper.unmount()
   })
 
@@ -972,14 +1008,16 @@ describe('ComposerBar unified command panel', () => {
     wrapper.unmount()
   })
 
-  it('shows catalog errors without clearing the current model override', async () => {
+  it('shows catalog errors without clearing the pinned model, and an unreadable roster never marks it unavailable', async () => {
     apiMock.api.listModelProviders.mockRejectedValue(new Error('offline'))
+    apiMock.api.listAgentModeTopologies.mockRejectedValue(new Error('offline'))
     const model = { provider_instance_id: 'preserved', model: 'existing-model' }
-    const wrapper = mountComposer({ modelValue: '/model', meetingModelOverride: model })
+    const wrapper = mountComposer({ modelValue: '/mode', meetingModelOverride: model })
     await flushPromises()
     await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     expect(document.querySelector('.command-panel-feedback')?.textContent).toContain('commandPanel.catalogError')
+    expect(wrapper.get('[data-testid="composer-pinned-model"]').classes()).not.toContain('is-unavailable')
     expect(wrapper.emitted('update:meetingModelOverride')).toBeUndefined()
     expect(wrapper.props('meetingModelOverride')).toEqual(model)
     wrapper.unmount()

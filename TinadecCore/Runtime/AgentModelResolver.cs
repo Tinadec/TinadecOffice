@@ -221,16 +221,25 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         var source = request.StrategySource;
         if (request.IsConversationRoot)
         {
+            // A conversation's chosen model outlives the provider it names: the provider can be
+            // deleted or disabled in the model center later, or the session can run in a storage
+            // scope that never had it (each workspace scope keeps its own models.toml). Such an
+            // override cannot be honoured, so the run uses the default strategy instead of failing
+            // with "provider not found". An explicit choice on the request is checked at admission.
             var meetingOverride = request.MeetingModelOverride;
             if (meetingOverride is not null)
             {
-                strategy = new ModelStrategyDto { Kind = ModelStrategyKinds.Fixed, ProviderInstanceId = meetingOverride.ProviderInstanceId, Model = meetingOverride.Model };
-                source = "turn_override";
+                if (await ProviderUsableAsync(meetingOverride.ProviderInstanceId, cancellationToken).ConfigureAwait(false))
+                {
+                    strategy = new ModelStrategyDto { Kind = ModelStrategyKinds.Fixed, ProviderInstanceId = meetingOverride.ProviderInstanceId, Model = meetingOverride.Model };
+                    source = "turn_override";
+                }
             }
             else if (request.UseSessionModelOverride)
             {
                 var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
-                if (session?.MeetingModelOverride is { } sessionOverride)
+                if (session?.MeetingModelOverride is { } sessionOverride
+                    && await ProviderUsableAsync(sessionOverride.ProviderInstanceId, cancellationToken).ConfigureAwait(false))
                 {
                     strategy = new ModelStrategyDto { Kind = ModelStrategyKinds.Fixed, ProviderInstanceId = sessionOverride.ProviderInstanceId, Model = sessionOverride.Model };
                     source = "session_override";
@@ -238,6 +247,15 @@ internal sealed class AgentModelResolver : IAgentModelResolver
             }
         }
         return await FreezeStrategyAsync(strategy, source, !request.IsConversationRoot && strategy.Kind == ModelStrategyKinds.Inherit, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>The provider exists in the current scope, is not deleted and is enabled.</summary>
+    private async Task<bool> ProviderUsableAsync(Guid providerId, CancellationToken ct)
+    {
+        var scope = _tenant.Current;
+        await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+        return await db.Providers.AsNoTracking().AnyAsync(x => x.Id == providerId && x.TenantId == scope.TenantId
+            && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId) && x.DeletedAt == null && x.Enabled, ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<ChatResolution>> ResolveInvocationCandidatesAsync(FrozenModelPlan plan, Guid? parentInstanceId, CancellationToken cancellationToken = default)

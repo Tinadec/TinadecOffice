@@ -9,8 +9,12 @@ namespace TinadecCore.Persistence;
 
 public sealed class ScopeConfigurationDocuments(
     IScopeStorageLocations locations,
-    IEnumerable<IConfigurationDocumentValidator> validators) : IScopeConfigurationDocuments
+    IEnumerable<IConfigurationDocumentValidator> validators,
+    IConfigurationDocumentRedirects? redirects = null) : IScopeConfigurationDocuments
 {
+    /// <summary>Where a document lives: this scope, or the scope it is redirected to.</summary>
+    private IScopeStorageLocations LocationsFor(string id) => redirects?.For(id) ?? locations;
+
     private static readonly string[] Ids = ["runtime", "agents", "models", "tools", "mcp", "prompts", "skills", "storage", "logging"];
     private readonly SemaphoreSlim _writer = new(1, 1);
     public IReadOnlyList<string> DocumentIds => Ids;
@@ -35,7 +39,7 @@ public sealed class ScopeConfigurationDocuments(
         if (exists && applied is not null && applied.Id == id && applied.Path == path && applied.ContentHash == hash)
             return applied;
         var diagnostics = exists ? await ValidateAsync(id, text, cancellationToken).ConfigureAwait(false)
-            : File.Exists(EstablishedPath(id)) || ScopeConfigurationInitialization.IsPublishedProject(locations)
+            : File.Exists(EstablishedPath(id)) || ScopeConfigurationInitialization.IsPublishedProject(LocationsFor(id))
                 ? new ConfigurationDiagnostic[] { new("configuration_missing", "An established configuration file is missing. Restore it or save a valid replacement.") } : [];
         return new(id, path, text, hash, diagnostics, DocumentVersion(text));
     }
@@ -64,13 +68,15 @@ public sealed class ScopeConfigurationDocuments(
         var diagnostics = await ValidateAsync(id, text, cancellationToken).ConfigureAwait(false);
         if (diagnostics.Any(d => d.Severity == "error"))
             throw new ConfigurationDocumentException("configuration_invalid", "Configuration validation failed.", diagnostics);
+        var target = LocationsFor(id);
         await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            Directory.CreateDirectory(locations.Config);
-            AssertNoLinks(path);
-            // Exclusive OS lock also serializes separate Core processes using the same scope.
-            await using var lease = await AcquireLeaseAsync(cancellationToken).ConfigureAwait(false);
+            Directory.CreateDirectory(target.Config);
+            AssertNoLinks(target, path);
+            // Exclusive OS lock also serializes separate Core processes using the same scope —
+            // and, for a redirected document, every scope that shares it.
+            await using var lease = await AcquireLeaseAsync(target, cancellationToken).ConfigureAwait(false);
             var actual = File.Exists(path) ? Hash(await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false)) : "";
             if (!string.Equals(actual, expectedContentHash.Trim('"'), StringComparison.OrdinalIgnoreCase))
                 throw new ConfigurationDocumentException("configuration_conflict", "Configuration changed since it was read. Reload before saving.");
@@ -85,7 +91,7 @@ public sealed class ScopeConfigurationDocuments(
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     output.Flush(flushToDisk: true);
                 }
-                AssertNoLinks(path);
+                AssertNoLinks(target, path);
                 File.Move(temporary, path, overwrite: true);
                 await MarkEstablishedAsync(id, CancellationToken.None).ConfigureAwait(false);
             }
@@ -102,8 +108,9 @@ public sealed class ScopeConfigurationDocuments(
     {
         if (!Ids.Contains(id, StringComparer.Ordinal))
             throw new ConfigurationDocumentException("configuration_not_found", "Unknown configuration document.");
-        var path = Path.GetFullPath(Path.Combine(locations.Config, id + ".toml"));
-        AssertNoLinks(path);
+        var target = LocationsFor(id);
+        var path = Path.GetFullPath(Path.Combine(target.Config, id + ".toml"));
+        AssertNoLinks(target, path);
         return path;
     }
 
@@ -112,7 +119,7 @@ public sealed class ScopeConfigurationDocuments(
         var path = EstablishedPath(id);
         if (File.Exists(path)) return;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        AssertNoLinks(path);
+        AssertNoLinks(LocationsFor(id), path);
         try
         {
             await using var marker = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None,
@@ -126,15 +133,16 @@ public sealed class ScopeConfigurationDocuments(
 
     private string EstablishedPath(string id)
     {
-        var path = Path.GetFullPath(Path.Combine(locations.State, ".configuration-documents", id + ".initialized"));
-        AssertNoLinks(path);
+        var target = LocationsFor(id);
+        var path = Path.GetFullPath(Path.Combine(target.State, ".configuration-documents", id + ".initialized"));
+        AssertNoLinks(target, path);
         return path;
     }
 
-    private void AssertNoLinks(string path)
+    private static void AssertNoLinks(IScopeStorageLocations owner, string path)
     {
         var current = new FileInfo(path) as FileSystemInfo;
-        var boundary = Path.GetFullPath(locations.Root).TrimEnd(Path.DirectorySeparatorChar);
+        var boundary = Path.GetFullPath(owner.Root).TrimEnd(Path.DirectorySeparatorChar);
         while (current is not null)
         {
             if (current.Exists && (current.Attributes & FileAttributes.ReparsePoint) != 0)
@@ -145,11 +153,11 @@ public sealed class ScopeConfigurationDocuments(
         }
     }
 
-    private async Task<FileStream> AcquireLeaseAsync(CancellationToken cancellationToken)
+    private static async Task<FileStream> AcquireLeaseAsync(IScopeStorageLocations owner, CancellationToken cancellationToken)
     {
-        var lockPath = Path.Combine(locations.State, ".configuration-write.lock");
-        AssertNoLinks(lockPath);
-        Directory.CreateDirectory(locations.State);
+        var lockPath = Path.Combine(owner.State, ".configuration-write.lock");
+        AssertNoLinks(owner, lockPath);
+        Directory.CreateDirectory(owner.State);
         for (var attempt = 0; ; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
