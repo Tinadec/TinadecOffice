@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('@/lib/scopedEventSource', () => ({ ScopedEventSource: class { constructor(url: string) { return new EventSource(url) } } }))
 import { effectScope, ref, nextTick, type EffectScope } from 'vue'
 import { api } from '@/api'
-import { useAgentActivity } from './useAgentActivity'
+import { REPLAY_FALLBACK_MS, TOOL_REFRESH_DELAY_MS, useAgentActivity } from './useAgentActivity'
 
 /**
  * Core writes NAMED SSE frames, and the browser only dispatches a named frame to a
@@ -98,10 +98,13 @@ describe('useAgentActivity event wiring', () => {
   })
 
   it('scopes tool reads by run and cannot apply a read after switching session', async () => {
+    vi.useFakeTimers()
     const { harness, source, sessionId } = await mount()
+    source.emit('heartbeat', {})
     let resolve!: (items: never[]) => void
     vi.mocked(api.listToolExecutions).mockImplementation(() => new Promise((done) => { resolve = done }))
     source.emit('task.accepted', {}, 1)
+    vi.advanceTimersByTime(TOOL_REFRESH_DELAY_MS)
     expect(api.listToolExecutions).toHaveBeenLastCalledWith('s-1', { run_id: 'r-1', limit: 200 })
     sessionId.value = 's-2'
     await nextTick()
@@ -109,6 +112,54 @@ describe('useAgentActivity event wiring', () => {
     await Promise.resolve()
     expect(harness.toolCalls.value).toEqual([])
     expect(harness.turnActivities.value).toEqual({})
+    vi.useRealTimers()
+  })
+
+  describe('tool timeline reads', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('reads nothing during the replay, then each replayed run once on the heartbeat', async () => {
+      const { source } = await mount()
+      for (let seq = 1; seq <= 40; seq += 1) source.emit('tool.execution.requested', { execution_id: `e${seq}`, tool_id: 'read_file' }, seq, undefined, seq <= 20 ? 'r-1' : 'r-2')
+      vi.advanceTimersByTime(TOOL_REFRESH_DELAY_MS * 3)
+      expect(api.listToolExecutions).not.toHaveBeenCalled()
+      source.emit('heartbeat', {})
+      vi.advanceTimersByTime(TOOL_REFRESH_DELAY_MS)
+      expect(vi.mocked(api.listToolExecutions).mock.calls.map(([, params]) => params?.run_id).sort()).toEqual(['r-1', 'r-2'])
+    })
+
+    it('coalesces a live burst into one read per run', async () => {
+      const { source } = await mount()
+      source.emit('heartbeat', {})
+      for (let seq = 1; seq <= 5; seq += 1) source.emit('tool.execution.completed', { execution_id: `e${seq}` }, seq)
+      source.emit('approval.requested', { execution_id: 'e9' }, 1, undefined, 'r-2')
+      expect(api.listToolExecutions).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(TOOL_REFRESH_DELAY_MS)
+      expect(api.listToolExecutions).toHaveBeenCalledTimes(2)
+      source.emit('tool.execution.completed', { execution_id: 'e6' }, 6)
+      vi.advanceTimersByTime(TOOL_REFRESH_DELAY_MS)
+      expect(api.listToolExecutions).toHaveBeenCalledTimes(3)
+    })
+
+    it('treats the replay as over when no heartbeat arrives', async () => {
+      const { source } = await mount()
+      source.emit('tool.execution.requested', { execution_id: 'e1' }, 1)
+      vi.advanceTimersByTime(REPLAY_FALLBACK_MS - 1)
+      expect(api.listToolExecutions).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1 + TOOL_REFRESH_DELAY_MS)
+      expect(api.listToolExecutions).toHaveBeenCalledTimes(1)
+    })
+
+    it('drops pending reads when the session changes', async () => {
+      const { source, sessionId } = await mount()
+      source.emit('heartbeat', {})
+      source.emit('tool.execution.requested', { execution_id: 'e1' }, 1)
+      sessionId.value = 's-2'
+      await nextTick()
+      vi.advanceTimersByTime(TOOL_REFRESH_DELAY_MS * 2)
+      expect(api.listToolExecutions).not.toHaveBeenCalled()
+    })
   })
 
   /**

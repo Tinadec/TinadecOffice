@@ -183,6 +183,11 @@ function agentRoleLabel(agentType: string): string {
   return labels[agentType] ?? agentType
 }
 
+/** How long tool events of one run are gathered into a single timeline read. */
+export const TOOL_REFRESH_DELAY_MS = 300
+/** A stream that never sends the post-replay heartbeat is treated as replayed after this. */
+export const REPLAY_FALLBACK_MS = 2000
+
 export function useAgentActivity(
   sessionId: Ref<string | null>,
   orchestration?: Ref<OrchestrationSnapshotDto | null>,
@@ -210,6 +215,18 @@ export function useAgentActivity(
   }>>({})
   let generation = 0
   const toolReads = new Map<string, number>()
+  /**
+   * Tool timeline reads are coalesced per run: the first tool/approval/task event schedules
+   * one read TOOL_REFRESH_DELAY_MS later, and the events that follow in that window ride on
+   * it. During the initial durable replay nothing is read at all - the runs that saw such
+   * events are only marked, and each is read once when Core's post-replay heartbeat arrives
+   * (or after REPLAY_FALLBACK_MS for a stream that never sends one). Opening a long session
+   * used to issue one full-session read per historical event.
+   */
+  const toolRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const replayDirtyRuns = new Set<string>()
+  let replaying = false
+  let replayFallback: ReturnType<typeof setTimeout> | null = null
   const supervisionReviews = ref(new Map<string, SupervisionReview>())
   const seenEvents = new Set<string>()
   let latestSelectedSequence = 0
@@ -250,6 +267,7 @@ export function useAgentActivity(
     // resurrect a stale decision gate if the same run id ever reappeared here.
     supervisionReviews.value.clear()
     toolReads.clear()
+    clearToolRefreshes()
     seenEvents.clear()
     latestSelectedSequence = 0
     activity.value = { ...DEFAULT_ACTIVITY }
@@ -1015,9 +1033,42 @@ export function useAgentActivity(
     }, 30000)
   }
 
-  async function refreshToolExecutions() {
+  function clearToolRefreshes() {
+    for (const timer of toolRefreshTimers.values()) clearTimeout(timer)
+    toolRefreshTimers.clear()
+    replayDirtyRuns.clear()
+  }
+
+  function requestToolRefresh(runId: string | null) {
+    if (!runId) return
+    if (replaying) {
+      replayDirtyRuns.add(runId)
+      return
+    }
+    if (toolRefreshTimers.has(runId)) return
+    toolRefreshTimers.set(runId, setTimeout(() => {
+      toolRefreshTimers.delete(runId)
+      void fetchToolExecutions(runId)
+    }, TOOL_REFRESH_DELAY_MS))
+  }
+
+  function endReplay() {
+    if (replayFallback) clearTimeout(replayFallback)
+    replayFallback = null
+    if (!replaying) return
+    replaying = false
+    const dirty = [...replayDirtyRuns]
+    replayDirtyRuns.clear()
+    dirty.forEach(requestToolRefresh)
+  }
+
+  /** Read the current run's tool timeline now (an explicit refresh, not an event). */
+  function refreshToolExecutions() {
+    return fetchToolExecutions(activity.value.runId)
+  }
+
+  async function fetchToolExecutions(runId: string | null) {
     const session = sessionId.value
-    const runId = activity.value.runId
     if (!session || !runId) return
     const epoch = generation
     const read = (toolReads.get(runId) ?? 0) + 1
@@ -1161,7 +1212,7 @@ export function useAgentActivity(
       event.type.startsWith('step.') ||
       event.type.startsWith('task')
     ) {
-      void refreshToolExecutions()
+      requestToolRefresh(runId ?? activity.value.runId)
     }
     if ((known || historical) && previous && previous !== runId) selectTurn(previous)
     else latestSelectedSequence = Math.max(latestSelectedSequence, event.seq)
@@ -1172,12 +1223,19 @@ export function useAgentActivity(
     if (!sessionId.value) return
     // The window's one session stream is owned by sessionEventBus; scoping the
     // subscription is what keeps this view on the session it was built for.
-    unsubscribe = subscribeToSessionEvents(handleSessionEvent, { scope: sessionId })
+    replaying = true
+    if (replayFallback) clearTimeout(replayFallback)
+    replayFallback = setTimeout(endReplay, REPLAY_FALLBACK_MS)
+    unsubscribe = subscribeToSessionEvents(handleSessionEvent, { scope: sessionId, onHeartbeat: endReplay })
   }
 
   function disconnect() {
     unsubscribe?.()
     unsubscribe = null
+    replaying = false
+    if (replayFallback) clearTimeout(replayFallback)
+    replayFallback = null
+    clearToolRefreshes()
   }
 
   watch(
