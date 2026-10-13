@@ -3,6 +3,7 @@ import { computed, ref, nextTick, watch } from 'vue'
 import ChatHeader from './ChatHeader.vue'
 import MessageList from './MessageList.vue'
 import ConversationView from './conversation/ConversationView.vue'
+import AgentTodosStatus from './conversation/AgentTodosStatus.vue'
 import ComposerBar from './ComposerBar.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
@@ -201,6 +202,7 @@ function handleReject(approvalId: string) {
           :workspace-root="conversation.workspaceRoot"
           @edit="emit('edit-message', $event)"
         />
+        <AgentTodosStatus v-if="conversation" :feed="conversation.feed" :runs="conversation.runs" />
         <MessageList
           v-else
           :messages="messages"

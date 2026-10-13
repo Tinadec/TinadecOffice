@@ -2156,7 +2156,7 @@ retry: 'Retry',
       status: { waiting: 'Waiting', running: 'Working', awaiting_approval: 'Needs approval', completed: 'Done', failed: 'Failed', blocked: 'Blocked', cancelled: 'Cancelled' },
     },
     wait: { waiting: 'Waiting for {names}', resolved: 'Got results from {names}' },
-    plan: { updated: 'Updated plan · {done}/{total}', more: '{count} more', status: { pending: 'pending', in_progress: 'in progress', completed: 'done' } },
+    plan: { capsule: 'Plan {done}/{total}', updated: 'Updated plan · {done}/{total}', more: '{count} more', status: { pending: 'pending', in_progress: 'in progress', completed: 'done' } },
     supervision: { revise: 'Supervision asked for changes', escalate: 'Supervision needs your decision' },
     marker: {
       compacted: 'Context compacted', interrupted: 'Interrupted by a new message', model_retry: 'Model busy, retrying ({retry}/{limit})',

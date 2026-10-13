@@ -2153,7 +2153,7 @@ retry: '重试',
       status: { waiting: '等待', running: '进行中', awaiting_approval: '待审批', completed: '完成', failed: '失败', blocked: '受阻', cancelled: '已取消' },
     },
     wait: { waiting: '等待 {names}', resolved: '已收到 {names} 的结果' },
-    plan: { updated: '更新了计划 · {done}/{total}', more: '还有 {count} 项', status: { pending: '待办', in_progress: '进行中', completed: '已完成' } },
+    plan: { capsule: '计划 {done}/{total}', updated: '更新了计划 · {done}/{total}', more: '还有 {count} 项', status: { pending: '待办', in_progress: '进行中', completed: '已完成' } },
     supervision: { revise: '监督要求修改', escalate: '监督需要你决定' },
     marker: {
       compacted: '上下文已压缩', interrupted: '已被新消息打断', model_retry: '模型繁忙，正在重试（{retry}/{limit}）',
