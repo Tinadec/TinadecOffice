@@ -42,6 +42,32 @@ describe('MarkdownDiagram', () => {
     wrapper.unmount()
   })
 
+  it('gives every diagram on the page its own id and renders them one at a time', async () => {
+    // Mermaid scopes styles and its scratch node by id; a shared id drew diagrams into each other.
+    let active = 0
+    let overlapped = false
+    diagram.render.mockImplementation(async () => {
+      active += 1
+      if (active > 1) overlapped = true
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      active -= 1
+      return { svg: '<svg data-testid="diagram"></svg>' } as never
+    })
+    const first = render(SOURCE)
+    const second = render('graph LR\n  C --> D')
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await flushPromises()
+    const ids = diagram.render.mock.calls.map((call) => call[0])
+    expect(ids).toHaveLength(2)
+    expect(new Set(ids).size).toBe(2)
+    expect(overlapped).toBe(false)
+    expect(first.find('.markdown-diagram-svg svg').exists()).toBe(true)
+    expect(second.find('.markdown-diagram-svg svg').exists()).toBe(true)
+    first.unmount()
+    second.unmount()
+    diagram.render.mockImplementation(async () => ({ svg: '<svg data-testid="diagram"></svg>' }) as never)
+  })
+
   it('keeps the source visible when the diagram cannot be parsed', async () => {
     // mermaid resolves `false` for an invalid diagram when errors are suppressed.
     diagram.parse.mockResolvedValueOnce(false as unknown as ParseResult)
