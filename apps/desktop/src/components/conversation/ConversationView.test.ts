@@ -280,6 +280,26 @@ describe('ConversationView turn states (APP-HOME-108 follow-up)', () => {
     settled.unmount()
   })
 
+  it('draws a date line where the conversation crosses a day, not above the first turn', () => {
+    const fixture: FeedFixture = {
+      name: 'days',
+      messages: [
+        user('u1', 'yesterday', { created_at: new Date(2026, 9, 12, 21).toISOString() }),
+        user('u2', 'later that night', { created_at: new Date(2026, 9, 12, 23).toISOString() }),
+        user('u3', 'next morning', { created_at: new Date(2026, 9, 13, 9).toISOString() }),
+      ],
+      runs: [],
+      events: [],
+    }
+    const wrapper = mountView(fixture)
+    const lines = wrapper.findAll('[data-testid="day-separator"]')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.attributes('role')).toBe('separator')
+    const turns = wrapper.findAll('[data-testid="conversation-turn"]')
+    expect(turns[2]!.element.previousElementSibling).toBe(lines[0]!.element)
+    wrapper.unmount()
+  })
+
   it('shows a skeleton only when loading outlasts 200ms, and no "ready" placeholder meanwhile', async () => {
     vi.useFakeTimers()
     try {

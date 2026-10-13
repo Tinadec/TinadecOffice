@@ -8,6 +8,8 @@ import type { ApprovalDto, MessageDto } from '@/api'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
 import { buildTurns, type TurnRunInput } from '@/lib/conversation/turns'
+import { crossesDay, dayLabel, feedLocale } from '@/lib/conversation/format'
+import { Marker, MarkerContent } from '@/components/ui/marker'
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller'
 import ConversationTurn from './ConversationTurn.vue'
 
@@ -29,7 +31,7 @@ const props = defineProps<{
   loading?: boolean
 }>()
 const emit = defineEmits<{ edit: [payload: { id: string; content: string }] }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 // Reduced motion is a second design, not a slower one: jumps are instant.
 const motion = usePreferredReducedMotion()
 const showSkeleton = useDelayedLoading(toRef(() => Boolean(props.loading)), { delayMs: 200, minimumMs: 500 })
@@ -48,6 +50,18 @@ const turns = computed(() => {
     streaming: new Map(Object.entries(props.streamingReplies ?? {}).filter(([, text]) => text)),
   })
 })
+
+/** A date line above each turn that starts on a later day than the one before it. */
+const dayBreaks = computed(() => {
+  const now = new Date()
+  const lang = feedLocale(locale.value)
+  const breaks = new Map<string, string>()
+  turns.value.forEach((turn, index) => {
+    const previous = turns.value[index - 1]?.startedAt
+    if (turn.startedAt && crossesDay(previous, turn.startedAt)) breaks.set(turn.id, dayLabel(turn.startedAt, now, lang))
+  })
+  return breaks
+})
 </script>
 
 <template>
@@ -61,6 +75,9 @@ const turns = computed(() => {
             :message-id="turn.id"
             :scroll-anchor="Boolean(turn.user)"
           >
+            <Marker v-if="dayBreaks.has(turn.id)" variant="separator" class="conversation-day" role="separator" data-testid="day-separator">
+              <MarkerContent><time :datetime="turn.startedAt ?? undefined">{{ dayBreaks.get(turn.id) }}</time></MarkerContent>
+            </Marker>
             <ConversationTurn
               :turn="turn"
               :revision="feed.revision.value"
@@ -105,5 +122,6 @@ const turns = computed(() => {
 .conversation-skeleton-bar.is-short { width: 55%; }
 @keyframes conversation-skeleton-pulse { 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) { .conversation-skeleton-bar { animation: none; } }
+.conversation-day { margin-bottom: 16px; font-size: 11px; color: var(--text-muted); }
 .conversation-empty { position: absolute; inset: 0; pointer-events: none; display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; color: var(--text-muted); font-size: 13px; }
 </style>
