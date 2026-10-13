@@ -13,6 +13,7 @@ import DoctorCard from './home/DoctorCard.vue'
 import BrowserCard from './home/BrowserCard.vue'
 import AgentCard from './home/AgentCard.vue'
 import TerminalCard from './home/TerminalCard.vue'
+import SubAgentsCard from './home/SubAgentsCard.vue'
 import MarketFilterCard from './market/MarketFilterCard.vue'
 import MarketCatalogCard from './market/MarketCatalogCard.vue'
 import MarketDetailCard from './market/MarketDetailCard.vue'
@@ -42,6 +43,9 @@ export function buildUieRegistry(): CardRegistry {
     // mounting two TerminalCards would attach two xterm views to the same terminal IDs and
     // let one view dispose the other's renderer.
     { type: 'terminal', component: TerminalCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '终端' },
+    // The session's sub-agents (APP-HOME-108 P5). One roster per session, so singleton; it
+    // reads the window's conversation feed and is not detachable this round.
+    { type: 'subAgents', component: SubAgentsCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '子智能体' },
     { type: 'marketFilter', component: MarketFilterCard, minWidth: 240, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '筛选' },
     { type: 'marketCatalog', component: MarketCatalogCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '目录' },
     { type: 'marketDetail', component: MarketDetailCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '详情' },

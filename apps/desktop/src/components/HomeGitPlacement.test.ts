@@ -32,9 +32,9 @@ describe('Home feature panel Git widget placement', () => {
     const wrapper = mount(HomePickerCard, { global: { stubs: {
       GitStatusWidget: { template: '<button class="git-status-widget" @click="$emit(\'open\')" />', emits: ['open'] },
     } } })
-    expect(FEATURE_CATALOG).toHaveLength(9)
     expect(FEATURE_CATALOG.find(entry => entry.descriptorId === 'git')).toBeTruthy()
-    expect(wrapper.findAll('.panel-home-card')).toHaveLength(8)
+    // Every catalog page except Git, which the status widget replaces on the grid.
+    expect(wrapper.findAll('.panel-home-card')).toHaveLength(FEATURE_CATALOG.length - 1)
     expect(wrapper.find('.git-status-widget').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('context.homeGit')
     await wrapper.find('.git-status-widget').trigger('click')

@@ -1,6 +1,7 @@
 import {
   Activity,
   Bot,
+  BotMessageSquare,
   GitBranch,
   Globe,
   Layers3,
@@ -14,7 +15,7 @@ import {
 // ---------------------------------------------------------------------------
 // featureCatalog — the shared catalog of feature-panel pages.
 //
-// Single source of truth for the nine openable feature pages of the feature
+// Single source of truth for the ten openable feature pages of the feature
 // panel (right column). Consumed by:
 //   - HomePickerCard.vue — the Home grid of feature cards,
 //   - BrowserTabBar.vue — the "+" tab dropdown menu that lists every page,
@@ -45,6 +46,7 @@ export const FEATURE_CATALOG: FeatureCatalogEntry[] = [
   { descriptorId: 'orchestration', titleKey: 'context.homeOrchestration', descKey: 'context.homeOrchestrationDesc', icon: Layers3, color: '#a371f7' },
   { descriptorId: 'organization', titleKey: 'context.homeOrganization', descKey: 'context.homeOrganizationDesc', icon: Users, color: '#db61a2' },
   { descriptorId: 'browser', titleKey: 'context.homePreview', descKey: 'context.homePreviewDesc', icon: Globe, color: '#58a6ff' },
+  { descriptorId: 'subAgents', titleKey: 'context.homeSubAgents', descKey: 'context.homeSubAgentsDesc', icon: BotMessageSquare, color: '#39c5cf' },
   { descriptorId: 'events', titleKey: 'context.homeEvents', descKey: 'context.homeEventsDesc', icon: Activity, color: '#7d8590' },
   { descriptorId: 'doctor', titleKey: 'context.homeDoctor', descKey: 'context.homeDoctorDesc', icon: Stethoscope, color: '#3fb950' },
 ]
