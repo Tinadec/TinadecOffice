@@ -102,7 +102,7 @@
 - **会话切换骨架**：`HomeController.transcriptLoading`——选中会话且本地无消息时置真，只由最新一次读取结束时清除（旧读取晚到不清）。`ChatPanel` 加载期间不回欢迎页；`ConversationView` 用 `useDelayedLoading(200/500)` 显示回合形状的骨架（右侧气泡 + 两行），覆盖在视口上（scroller 内容区占满视口高度，放在其后会被挤出可见区）。已知取舍：一个确实为空的既有会话，加载期间先停在对话布局，加载完再升回欢迎页。
 - **groupText**：同一回合有多条回答时，非最后一条且 ≤150 字（按字符、去首尾空白）的回答显示为两行截断的弱化小字，悬停 `title` 看全文，不带脚注；最后一条永不压缩（`isCompactAnswer`）。
 - **shimmer-once**：`useJustSettled` 只在 live → 完成的那一刻为真；推理块的「思考了 N 秒」与工作区摘要在本页看着完成时扫一次，挂载时已完成的历史不扫，减弱动效下不动。
-- **图片与流程图**（计划未列，回答沿用既有 `MarkdownRender`/`MarkdownDiagram`）：新增场景 `rich-answer` 实拍后发现两处问题并修复——① `MarkdownDiagram` 的 `diagramCounter` 声明在每个实例的 setup 里，页面上每张图都以 `md-diagram-1` 渲染，mermaid 按 id 限定样式与临时节点，同一回答里两张图会画到一起（PR #42 起即存在，平面流里一条回答带两张图就会触发）；改为模块级计数，mermaid 的加载、全局配置与 render 串行共享。② groupText 会把只有一张短流程图的中间回答压成两行小字；现在只压纯文字，代码块、图片、表格、公式不压。边标签底色改用卡片表面色（base 主题原为饱和色块）。Markdown 图片按列宽缩放、无溢出。
+- **图片与流程图**（计划未列，回答沿用既有 `MarkdownRender`/`MarkdownDiagram`）：新增场景 `rich-answer` 实拍后发现两处问题并修复——① `MarkdownDiagram` 的 `diagramCounter` 声明在每个实例的 setup 里，页面上每张图都以 `md-diagram-1` 渲染，mermaid 按 id 限定样式与临时节点，同一回答里两张图会画到一起（PR #42 起即存在，平面流里一条回答带两张图就会触发）；改为模块级计数，mermaid 的加载、全局配置与 render 串行共享。② groupText 会把只有一张短流程图的中间回答压成两行小字；现在只压纯文字，代码块、图片、表格、公式不压。边标签底色改用卡片表面色（base 主题原为饱和色块）。Markdown 图片按列宽缩放、无溢出。窄列下流程图只缩到原始宽度的 80%（标签约 9.6px），再窄就横向滚动并从左边缘开始，不再缩成看不清的小字（`harness/narrow.mjs`：1169 不滚动，520/380 滚动）。
 - Debug Studio「对话消息流」新增场景 `next-day-stopped`（昨天的回合两次作答、今天的回合被停止）与「加载中」开关。
 
 ## 视觉验收（无头 Chromium）

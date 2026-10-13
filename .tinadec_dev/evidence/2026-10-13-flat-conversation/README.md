@@ -28,6 +28,8 @@ Debug Studio's own tab bar hides its Preview tab below ~800px.
 - `screenshots/followup-rich-*.png` — the `rich-answer` scenario: a diagram-only interim answer,
   then a Markdown image, a mermaid flowchart and a table (`harness/rich.mjs`). Before the fix the
   two diagrams drew into each other (every diagram was rendered as `md-diagram-1`).
+- `screenshots/followup-narrow-diagram-w380.png` — at 380px the flowchart stops shrinking at 80% and
+  scrolls sideways from its left edge (`harness/narrow.mjs` prints scale and label size per width).
 - `computed-styles.txt` — computed `animation-name` with and without `prefers-reduced-motion`.
 - `harness/*.mjs` — the scripts (they import `playwright` from a tools directory outside the repo).
 
