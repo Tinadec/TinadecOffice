@@ -171,9 +171,9 @@ onBeforeUnmount(() => {
       <section class="about-hero-card about-hero-card--tasks">
         <header><ListChecks :size="13" />{{ t('aboutPage.hero.tasks') }}</header>
         <ul>
-          <li><Check :size="12" class="is-done" /><span>{{ t('aboutPage.hero.taskSetup') }}<small>5 files <b class="add">+1,127</b> <b class="del">-8</b></small></span></li>
-          <li><LoaderCircle :size="12" class="is-running" /><span>{{ t('aboutPage.hero.taskDesign') }}<small>14 files <b class="add">+12,327</b> <b class="del">-52</b></small></span></li>
-          <li><LoaderCircle :size="12" class="is-running" /><span>{{ t('aboutPage.hero.taskFrontend') }}<small>22 files <b class="add">+39,233</b> <b class="del">-13</b></small></span></li>
+          <li><Check :size="12" class="is-done" /><span>{{ t('aboutPage.hero.taskSetup') }}<small>{{ t('aboutPage.hero.files', { n: 5 }) }} <b class="add">+1,127</b> <b class="del">-8</b></small></span></li>
+          <li><LoaderCircle :size="12" class="is-running" /><span>{{ t('aboutPage.hero.taskDesign') }}<small>{{ t('aboutPage.hero.files', { n: 14 }) }} <b class="add">+12,327</b> <b class="del">-52</b></small></span></li>
+          <li><LoaderCircle :size="12" class="is-running" /><span>{{ t('aboutPage.hero.taskFrontend') }}<small>{{ t('aboutPage.hero.files', { n: 22 }) }} <b class="add">+39,233</b> <b class="del">-13</b></small></span></li>
           <li><CircleDashed :size="12" /><span>{{ t('aboutPage.hero.taskBackend') }}<small>{{ t('aboutPage.hero.notStarted') }}</small></span></li>
         </ul>
         <footer>{{ t('aboutPage.hero.taskSummary') }}</footer>

@@ -254,7 +254,7 @@ function addModeNode() {
   const firstAgent = agents.value[0]?.id ?? 'meeting'
   modeNodes.value = [
     ...modeNodes.value,
-    { id, agent_id: firstAgent, lane: 'operation', position: { x: 80 + modeNodes.value.length * 40, y: 80 }, label: `node ${modeNodes.value.length + 1}` }
+    { id, agent_id: firstAgent, lane: 'operation', position: { x: 80 + modeNodes.value.length * 40, y: 80 }, label: t('agentCenter.newNodeLabel', { n: modeNodes.value.length + 1 }) }
   ]
 }
 
@@ -418,9 +418,9 @@ defineExpose({ loadModes })
             <component :is="modeIcon(m.slug)" :size="14" class="ac-mode-icon" />
             <span class="ac-mode-meta" :title="m.description ?? undefined">
               <strong>{{ m.display_name }}</strong>
-              <small>{{ m.description || `rev ${m.revision ?? '—'}` }}</small>
+              <small>{{ m.description || t('agentCenter.revisionShort', { revision: m.revision ?? '—' }) }}</small>
             </span>
-            <UiBadge :variant="readinessVariant(m.status)">{{ m.status ?? 'draft' }}</UiBadge>
+            <UiBadge :variant="readinessVariant(m.status)">{{ m.status ?? t('common.draft') }}</UiBadge>
           </button>
           <div v-if="filteredModes.length === 0" class="quiet ac-mode-empty">{{ t('agentCenter.empty.noModes') }}</div>
         </div>

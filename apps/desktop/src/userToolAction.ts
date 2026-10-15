@@ -1,4 +1,5 @@
 import type { ApprovalDto, UserToolActionDto } from './api'
+import type { Translate } from './i18n'
 
 const TERMINAL_STATUSES = new Set(['completed', 'blocked', 'failed', 'outcome_unknown'])
 const DECISION_STATUSES = new Set(['awaiting_delegate', 'awaiting_user', 'awaiting_approval'])
@@ -37,13 +38,6 @@ export function isUserToolActionTerminal(status: string): boolean {
 
 export function userToolActionNeedsDecision(status: string): boolean {
   return DECISION_STATUSES.has(status)
-}
-
-/** The forms of useI18n()'s `t` that helpers outside a component call. */
-export interface Translate {
-  (key: string): string
-  (key: string, named: Record<string, unknown>): string
-  (key: string, named: Record<string, unknown>, plural: number): string
 }
 
 /** One line on where `operation` stands, in the caller's language. */

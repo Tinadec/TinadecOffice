@@ -214,7 +214,7 @@ defineExpose({ refreshAll })
     </div>
 
     <div class="ac-prompt-toolbar">
-      <div class="model-provider-filters" role="group" aria-label="prompt-view">
+      <div class="model-provider-filters" role="group" :aria-label="t('settings.promptViewLabel')">
         <button :class="{ active: promptCanvasMode === 'fragments' }" :aria-pressed="promptCanvasMode === 'fragments'" @click="promptCanvasMode = 'fragments'">
           <FileText :size="12" />
           <span>{{ t('settings.fragmentsView') }}</span>
@@ -233,7 +233,7 @@ defineExpose({ refreshAll })
         <UiSelectField
           v-model="pipelineCanvasSelectedId"
           class="ac-pipeline-select"
-          :options="pipelines.map((p) => ({ value: p.id, label: `${p.name ?? p.title ?? p.id.slice(0, 8)} · ${p.status ?? 'draft'}` }))"
+          :options="pipelines.map((p) => ({ value: p.id, label: `${p.name ?? p.title ?? p.id.slice(0, 8)} · ${p.status ?? t('common.draft')}` }))"
         />
       </div>
       <PromptPipelineCanvas
@@ -247,7 +247,7 @@ defineExpose({ refreshAll })
           <template #content>
             <div class="ac-pipeline-card-head">
               {{ p.name ?? p.title ?? p.id.slice(0, 8) }}
-              <UiBadge variant="outline">{{ p.status ?? 'draft' }}</UiBadge>
+              <UiBadge variant="outline">{{ p.status ?? t('common.draft') }}</UiBadge>
             </div>
             <div class="quiet ac-pipeline-card-desc">{{ p.description ?? '—' }}</div>
             <div class="ac-pipeline-card-actions">
@@ -266,7 +266,7 @@ defineExpose({ refreshAll })
           <Search :size="15" />
           <UiInput v-model="fragQuery" :placeholder="t('settings.fragmentSearchPlaceholder')" />
         </div>
-        <div class="model-provider-filters" role="group" aria-label="enabled">
+        <div class="model-provider-filters" role="group" :aria-label="t('settings.fragmentEnabledFilter')">
           <button :class="{ active: fragEnabledFilter === 'all' }" :aria-pressed="fragEnabledFilter === 'all'" @click="fragEnabledFilter = 'all'">{{ t('settings.allStatuses') }}</button>
           <button :class="{ active: fragEnabledFilter === 'enabled' }" :aria-pressed="fragEnabledFilter === 'enabled'" @click="fragEnabledFilter = 'enabled'">{{ t('settings.enabledStatus') }}</button>
           <button :class="{ active: fragEnabledFilter === 'disabled' }" :aria-pressed="fragEnabledFilter === 'disabled'" @click="fragEnabledFilter = 'disabled'">{{ t('settings.disabledStatus') }}</button>
@@ -277,7 +277,7 @@ defineExpose({ refreshAll })
       <div class="center-workbench workbench-duo">
         <aside class="center-resource-rail pe-fragment-list">
           <div class="pe-list-header">
-            <h3>Fragments</h3>
+            <h3>{{ t('settings.fragmentsView') }}</h3>
             <UiBadge variant="outline">{{ filteredFragments.length }}</UiBadge>
           </div>
           <div v-if="filteredFragments.length === 0" class="quiet pe-empty">{{ t('agentCenter.empty.noPrompts') }}</div>
@@ -290,9 +290,9 @@ defineExpose({ refreshAll })
           >
             <div class="pe-fragment-head">
               <strong :title="fragment.title">{{ fragment.title }}</strong>
-              <UiBadge v-if="fragment.is_builtin" variant="secondary">builtin</UiBadge>
+              <UiBadge v-if="fragment.is_builtin" variant="secondary">{{ t('settings.builtinBadge') }}</UiBadge>
             </div>
-            <span class="pe-fragment-meta">{{ fragment.scope }} / {{ fragment.category }} · prio {{ fragment.priority }}</span>
+            <span class="pe-fragment-meta">{{ fragment.scope }} / {{ fragment.category }} · {{ t('settings.fragmentPriority', { priority: fragment.priority }) }}</span>
           </button>
         </aside>
 
@@ -305,11 +305,11 @@ defineExpose({ refreshAll })
                     <h3>{{ selectedFragment.title }}</h3>
                     <p>{{ selectedFragment.key }} · {{ selectedFragment.scope }} / {{ selectedFragment.category }}</p>
                   </div>
-                  <UiBadge :variant="selectedFragment.enabled ? 'default' : 'secondary'">{{ selectedFragment.enabled ? 'enabled' : 'disabled' }}</UiBadge>
+                  <UiBadge :variant="selectedFragment.enabled ? 'default' : 'secondary'">{{ selectedFragment.enabled ? t('settings.enabledStatus') : t('settings.disabledStatus') }}</UiBadge>
                 </div>
 
                 <div v-if="fragmentEffectiveness" class="pe-metrics">
-                  <div class="pe-metric"><Activity :size="14" /><div><span>Score</span><strong>{{ (fragmentEffectiveness.effectiveness_score * 100).toFixed(0) }}%</strong></div></div>
+                  <div class="pe-metric"><Activity :size="14" /><div><span>{{ t('settings.fragmentScore') }}</span><strong>{{ (fragmentEffectiveness.effectiveness_score * 100).toFixed(0) }}%</strong></div></div>
                   <div class="pe-metric"><History :size="14" /><div><span>v</span><strong>{{ fragmentEffectiveness.active_version }}</strong></div></div>
                   <div class="pe-metric"><ThumbsUp :size="14" /><div><span>+</span><strong>{{ fragmentEffectiveness.positive_signals }}</strong></div></div>
                   <div class="pe-metric"><ThumbsDown :size="14" /><div><span>-</span><strong>{{ fragmentEffectiveness.negative_signals }}</strong></div></div>
@@ -336,7 +336,7 @@ defineExpose({ refreshAll })
                     <div class="pe-version-main">
                       <div class="pe-version-head-row">
                         <strong>v{{ version.version }}</strong>
-                        <UiBadge v-if="version.is_active" variant="default">active</UiBadge>
+                        <UiBadge v-if="version.is_active" variant="default">{{ t('settings.activeVersion') }}</UiBadge>
                         <span class="pe-version-date">{{ new Date(version.created_at).toLocaleString() }}</span>
                       </div>
                       <p class="pe-version-summary">{{ version.change_summary }}</p>
@@ -357,7 +357,7 @@ defineExpose({ refreshAll })
         <template #content>
           <div class="pe-section-head">
             <div class="pe-section-title"><Eye :size="14" /><span>{{ t('settings.contextPreviewTitle') }}</span></div>
-            <UiBadge v-if="promptPreview" variant="outline">{{ promptPreview.estimated_tokens }} tokens</UiBadge>
+            <UiBadge v-if="promptPreview" variant="outline">{{ t('settings.estimatedTokens', { n: promptPreview.estimated_tokens }) }}</UiBadge>
           </div>
           <div class="ac-preview-fields">
             <div><UiLabel>{{ t('settings.agentIdField') }}</UiLabel><UiInput v-model="promptPreviewAgentId" placeholder="meeting" /></div>

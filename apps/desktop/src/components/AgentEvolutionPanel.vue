@@ -350,7 +350,7 @@ defineExpose({ loadProposals })
             </span>
           </div>
           <div class="evolution-add-row">
-            <UiInput v-model="promoteToolInput" placeholder="tool id" size="sm" @keydown.enter="addPromoteTool" />
+            <UiInput v-model="promoteToolInput" :placeholder="t('agentCenter.evolution.toolIdPlaceholder')" size="sm" @keydown.enter="addPromoteTool" />
             <UiButton variant="outline" size="sm" :disabled="!promoteToolInput.trim()" @click="addPromoteTool">{{ t('agentCenter.evolution.add') }}</UiButton>
           </div>
         </div>

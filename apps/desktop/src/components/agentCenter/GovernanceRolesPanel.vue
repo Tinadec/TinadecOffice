@@ -96,7 +96,7 @@ onMounted(load)
       <h2><ShieldCheck class="size-4" /> {{ t('agentCenter.governanceRoles') }}</h2>
       <span v-if="defaults?.status" class="gov-roles__defaults" data-testid="workspace-defaults-status">
         {{ t('agentCenter.defaultsActive') }}: {{ defaults.status }}
-        <span v-if="defaults.revision != null">· rev {{ defaults.revision }}</span>
+        <span v-if="defaults.revision != null">· {{ t('agentCenter.revisionShort', { revision: defaults.revision }) }}</span>
       </span>
     </header>
 
@@ -120,8 +120,8 @@ onMounted(load)
         </p>
 
         <dl class="gov-role-card__facts">
-          <div><dt>model_strategy</dt><dd data-testid="model-strategy">{{ modelStrategyLabel(agent) }}</dd></div>
-          <div v-if="agent.model_route_purpose"><dt>route</dt><dd>{{ agent.model_route_purpose }}</dd></div>
+          <div><dt>{{ t('agentCenter.facts.modelStrategy') }}</dt><dd data-testid="model-strategy">{{ modelStrategyLabel(agent) }}</dd></div>
+          <div v-if="agent.model_route_purpose"><dt>{{ t('agentCenter.facts.route') }}</dt><dd>{{ agent.model_route_purpose }}</dd></div>
         </dl>
 
         <div class="gov-role-card__tools">

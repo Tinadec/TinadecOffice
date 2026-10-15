@@ -90,6 +90,11 @@ const panelSources = import.meta.glob(
     './../composables/useGitOperation.ts',
     './../composables/useAiChangeAnalysis.ts',
     './../userToolAction.ts',
+    // Settings sections that used to carry their own wording: storage spoke through an inline
+    // label(zh, en) pair, and tool settings built its validation sentences in script.
+    './../settings/sections/StorageSection.vue',
+    './../settings/sections/AboutHero.vue',
+    './../settings/toolSettings.ts',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>

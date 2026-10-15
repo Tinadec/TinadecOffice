@@ -20,4 +20,14 @@ const i18n = createI18n({
   },
 })
 
+/**
+ * The forms of useI18n()'s `t` that plain helpers take from their caller, so their wording
+ * follows the component's language without the helper importing this instance.
+ */
+export interface Translate {
+  (key: string): string
+  (key: string, named: Record<string, unknown>): string
+  (key: string, named: Record<string, unknown>, plural: number): string
+}
+
 export default i18n

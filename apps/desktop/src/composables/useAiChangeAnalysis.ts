@@ -1,7 +1,7 @@
 import { ref, computed, type ComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type ModelStreamChunkDto } from '../api'
-import type { Translate } from '../userToolAction'
+import type { Translate } from '../i18n'
 import type { GitStatusFile, GitDiffSection } from './useGitOperation'
 import { statusToLabel } from './useGitOperation'
 

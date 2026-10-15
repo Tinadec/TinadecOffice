@@ -116,7 +116,7 @@ defineExpose({ loadRuntimeInstances })
         <Search :size="15" />
         <UiInput v-model="runtimeSessionFilter" :placeholder="t('agentCenter.filter.searchInstances')" />
       </div>
-      <div class="model-provider-filters" role="group" aria-label="runtime-status">
+      <div class="model-provider-filters" role="group" :aria-label="t('settings.runtimeStatusFilter')">
         <button v-for="opt in runtimeStatusOptions" :key="opt" :class="{ active: runtimeStatusFilter === opt }" :aria-pressed="runtimeStatusFilter === opt" @click="runtimeStatusFilter = opt">
           {{ opt === 'all' ? t('settings.allStatuses') : opt }}
         </button>
@@ -133,7 +133,7 @@ defineExpose({ loadRuntimeInstances })
         <div class="ac-instance-head">
           <strong>{{ inst.agent_name ?? inst.agent_id ?? inst.id.slice(0, 8) }}</strong>
           <UiBadge :variant="readinessVariant(inst.status)">{{ inst.status }}</UiBadge>
-          <span class="ac-instance-ids">run {{ inst.run_id.slice(0, 8) }} · session {{ String(inst.session_id ?? '—').slice(0, 8) }}</span>
+          <span class="ac-instance-ids">{{ t('settings.instanceIds', { run: inst.run_id.slice(0, 8), session: String(inst.session_id ?? '—').slice(0, 8) }) }}</span>
         </div>
         <div v-if="inst.source_definition || inst.frozen_version || inst.recent_actual_model" class="ac-instance-evidence">
           <span v-if="inst.source_definition">
@@ -143,7 +143,7 @@ defineExpose({ loadRuntimeInstances })
             {{ t('agentCenter.runtimeInfo.frozenVersion') }}: {{ inst.frozen_version.agent_version_id.slice(0, 8) }} · {{ inst.frozen_version.content_hash.slice(0, 8) }}
           </span>
           <span v-if="inst.recent_actual_model">
-            {{ t('agentCenter.runtimeInfo.recentModel') }}: {{ inst.recent_actual_model.provider_instance_id }}{{ inst.recent_actual_model.model ? ` · ${inst.recent_actual_model.model}` : '' }} · {{ inst.recent_actual_model.strategy_source }}<template v-if="inst.recent_actual_model.fallback_position > 0"> · fallback #{{ inst.recent_actual_model.fallback_position }}</template>
+            {{ t('agentCenter.runtimeInfo.recentModel') }}: {{ inst.recent_actual_model.provider_instance_id }}{{ inst.recent_actual_model.model ? ` · ${inst.recent_actual_model.model}` : '' }} · {{ inst.recent_actual_model.strategy_source }}<template v-if="inst.recent_actual_model.fallback_position > 0"> · {{ t('settings.fallbackPosition', { n: inst.recent_actual_model.fallback_position }) }}</template>
           </span>
           <span v-if="inst.fallback_summary">
             {{ t('agentCenter.runtimeInfo.fallbackSummary') }}: {{ inst.fallback_summary.attempts - inst.fallback_summary.failed_attempts }}/{{ inst.fallback_summary.attempts }}<template v-if="inst.fallback_summary.used_fallback"> · {{ t('agentCenter.runtimeInfo.usedFallback') }}</template>
@@ -168,9 +168,9 @@ defineExpose({ loadRuntimeInstances })
       <div class="ac-sheet-body">
         <h3>{{ t('settings.reassignTitle') }}</h3>
         <p class="quiet">{{ t('settings.reassignHint') }}</p>
-        <div><UiLabel>Session ID</UiLabel><UiInput v-model="reassignForm.session_id" placeholder="session_id" /></div>
-        <div><UiLabel>Interaction ID</UiLabel><UiInput v-model="reassignForm.interaction_id" placeholder="interaction_id" /></div>
-        <div><UiLabel>Target Run ID</UiLabel><UiInput v-model="reassignForm.target_run_id" placeholder="target_run_id" /></div>
+        <div><UiLabel>{{ t('settings.sessionIdLabel') }}</UiLabel><UiInput v-model="reassignForm.session_id" placeholder="session_id" /></div>
+        <div><UiLabel>{{ t('settings.interactionIdLabel') }}</UiLabel><UiInput v-model="reassignForm.interaction_id" placeholder="interaction_id" /></div>
+        <div><UiLabel>{{ t('settings.targetRunIdLabel') }}</UiLabel><UiInput v-model="reassignForm.target_run_id" placeholder="target_run_id" /></div>
         <div class="ac-sheet-actions">
           <UiButton size="sm" variant="outline" @click="showReassignSheet = false">{{ t('settings.cancel') }}</UiButton>
           <UiButton size="sm" @click="submitReassign">{{ t('settings.reassignConfirm') }}</UiButton>

@@ -47,7 +47,7 @@ watch(dirty, value => emit('dirty', value), { immediate: true })
 const mcpSchema: ToolJsonSchema = { type: 'object', additionalProperties: false, required: ['id', 'name', 'enabled', 'command', 'args', 'env'], properties: {
   id: { type: 'string', minLength: 1 }, name: { type: 'string' }, enabled: { type: 'boolean' }, command: { type: 'string', minLength: 1 }, args: { type: 'array', items: { type: 'string' } }, env: { type: 'object', additionalProperties: { type: ['string', 'null'] } }, cwd: { type: ['string', 'null'] }, project_id: { type: ['string', 'null'] },
 } }
-const validation = computed(() => validateSettings(content.value, mcpSchema))
+const validation = computed(() => validateSettings(content.value, mcpSchema, t))
 function discard() { ++epoch; editing.value = false; selected.value = null; content.value = baseline.value = ''; name.value = ''; enabled.value = true; files.value = {}; packageLoaded.value = false; baselineFiles.value = JSON.stringify({}); previewPath.value = previewContent.value = ''; emit('dirty', false) }
 function stopActionPoll() { if (actionTimer !== null) clearTimeout(actionTimer); actionTimer = null }
 function followAction(actionId: string, status: string) {

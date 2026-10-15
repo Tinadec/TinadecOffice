@@ -1,3 +1,4 @@
+import type { Translate } from '@/i18n'
 /** The editor consumes the schema published by Core; it does not own tool defaults. */
 export interface ToolJsonSchema {
   type?: string | string[]
@@ -98,12 +99,12 @@ export function effectiveSettings(document: ToolSettingsDocument | ToolSettingsE
 }
 
 /** Strict JSON syntax plus the same object/type/range constraints returned by Core. */
-export function validateSettings(text: string, schema: ToolJsonSchema | null, sparse = false): { value?: Record<string, unknown>; issues: SettingsIssue[] } {
+export function validateSettings(text: string, schema: ToolJsonSchema | null, t: Translate, sparse = false): { value?: Record<string, unknown>; issues: SettingsIssue[] } {
   let value: unknown
   try { value = JSON.parse(text) }
   catch (error) { return { issues: [{ path: '$', message: error instanceof Error ? error.message : String(error) }] } }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return { issues: [{ path: '$', message: 'Expected a JSON object.' }] }
-  if (!schema) return { issues: [{ path: '$', message: 'The configuration schema has not loaded.' }] }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { issues: [{ path: '$', message: t('toolsSettings.validation.expectedObject') }] }
+  if (!schema) return { issues: [{ path: '$', message: t('toolsSettings.validation.schemaNotLoaded') }] }
   const issues: SettingsIssue[] = []
   // JSON.parse accepts duplicate keys. Configuration documents must reject them before save.
   const tokens = text.match(/"(?:\\.|[^"\\])*"|[{}\[\],:]/g) ?? []
@@ -115,7 +116,7 @@ export function validateSettings(text: string, schema: ToolJsonSchema | null, sp
     else if (token === ',' && parent?.object) parent.expectingKey = true
     else if (token.startsWith('"') && parent?.object && parent.expectingKey) {
       const key = JSON.parse(token) as string
-      if (parent.keys.has(key)) issues.push({ path: `${parent.path}.${key}`, message: 'Duplicate property.' })
+      if (parent.keys.has(key)) issues.push({ path: `${parent.path}.${key}`, message: t('toolsSettings.validation.duplicateProperty') })
       parent.keys.add(key); parent.key = key; parent.expectingKey = false
     }
   }
@@ -123,30 +124,30 @@ export function validateSettings(text: string, schema: ToolJsonSchema | null, sp
     const types = typeof rule.type === 'string' ? [rule.type] : rule.type ?? []
     const actual = item === null ? 'null' : Array.isArray(item) ? 'array' : typeof item
     if (types.length && !types.some(type => type === actual || (type === 'integer' && typeof item === 'number' && Number.isSafeInteger(item)))) {
-      issues.push({ path, message: `Expected ${types.join(' / ')}.` }); return
+      issues.push({ path, message: t('toolsSettings.validation.expectedType', { types: types.join(' / ') }) }); return
     }
-    if (rule.enum && !rule.enum.some(candidate => JSON.stringify(candidate) === JSON.stringify(item))) issues.push({ path, message: `Expected one of ${rule.enum.map(value => JSON.stringify(value)).join(', ')}.` })
+    if (rule.enum && !rule.enum.some(candidate => JSON.stringify(candidate) === JSON.stringify(item))) issues.push({ path, message: t('toolsSettings.validation.expectedOneOf', { values: rule.enum.map(value => JSON.stringify(value)).join(', ') }) })
     if (typeof item === 'number') {
-      if (rule.minimum !== undefined && item < rule.minimum) issues.push({ path, message: `Minimum: ${rule.minimum}.` })
-      if (rule.maximum !== undefined && item > rule.maximum) issues.push({ path, message: `Maximum: ${rule.maximum}.` })
+      if (rule.minimum !== undefined && item < rule.minimum) issues.push({ path, message: t('toolsSettings.validation.minimum', { value: rule.minimum }) })
+      if (rule.maximum !== undefined && item > rule.maximum) issues.push({ path, message: t('toolsSettings.validation.maximum', { value: rule.maximum }) })
     }
     if (typeof item === 'string') {
-      if (rule.format === 'uuid' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item)) issues.push({ path, message: 'Expected a resource UUID.' })
-      if (rule.minLength !== undefined && item.length < rule.minLength) issues.push({ path, message: `Minimum length: ${rule.minLength}.` })
-      if (rule.maxLength !== undefined && item.length > rule.maxLength) issues.push({ path, message: `Maximum length: ${rule.maxLength}.` })
+      if (rule.format === 'uuid' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item)) issues.push({ path, message: t('toolsSettings.validation.expectedUuid') })
+      if (rule.minLength !== undefined && item.length < rule.minLength) issues.push({ path, message: t('toolsSettings.validation.minLength', { value: rule.minLength }) })
+      if (rule.maxLength !== undefined && item.length > rule.maxLength) issues.push({ path, message: t('toolsSettings.validation.maxLength', { value: rule.maxLength }) })
     }
     if (Array.isArray(item)) {
-      if (rule.uniqueItems && new Set(item.map(value => JSON.stringify(value))).size !== item.length) issues.push({ path, message: 'Duplicate items.' })
-      if (rule.minItems !== undefined && item.length < rule.minItems) issues.push({ path, message: `Minimum items: ${rule.minItems}.` })
-      if (rule.maxItems !== undefined && item.length > rule.maxItems) issues.push({ path, message: `Maximum items: ${rule.maxItems}.` })
+      if (rule.uniqueItems && new Set(item.map(value => JSON.stringify(value))).size !== item.length) issues.push({ path, message: t('toolsSettings.validation.duplicateItems') })
+      if (rule.minItems !== undefined && item.length < rule.minItems) issues.push({ path, message: t('toolsSettings.validation.minItems', { value: rule.minItems }) })
+      if (rule.maxItems !== undefined && item.length > rule.maxItems) issues.push({ path, message: t('toolsSettings.validation.maxItems', { value: rule.maxItems }) })
       if (rule.items) item.forEach((child, index) => walk(child, rule.items!, `${path}[${index}]`))
     } else if (item && typeof item === 'object') {
       const record = item as Record<string, unknown>
-      if (!sparse) for (const key of rule.required ?? []) if (!(key in record)) issues.push({ path: `${path}.${key}`, message: 'Required property.' })
+      if (!sparse) for (const key of rule.required ?? []) if (!(key in record)) issues.push({ path: `${path}.${key}`, message: t('toolsSettings.validation.required') })
       for (const [key, child] of Object.entries(record)) {
         const property = rule.properties?.[key]
         if (property) walk(child, property, `${path}.${key}`)
-        else if (rule.additionalProperties === false) issues.push({ path: `${path}.${key}`, message: 'Unknown property.' })
+        else if (rule.additionalProperties === false) issues.push({ path: `${path}.${key}`, message: t('toolsSettings.validation.unknownProperty') })
         else if (typeof rule.additionalProperties === 'object') walk(child, rule.additionalProperties, `${path}.${key}`)
       }
     }
