@@ -22,7 +22,7 @@ import { projectStorageId, scopedApi, selectionKey } from '@/lib/storageScope'
  * never reads content references directly. Restore is an explicit user
  * command (not yet inside the UserToolAction loop) and is labelled as such.
  */
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const snapshots = ref<SnapshotDto[]>([])
 const selectedProjectId = ref<string>('')
@@ -218,7 +218,7 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
 
     <div v-if="lastRestore" class="snapshot-page__restore-result" data-testid="snapshot-restore-result">
       <strong>{{ t('governance.lastRestore') }}:</strong>
-      {{ lastRestore.result.status ?? '?' }} ·
+      {{ lastRestore.result.status ? t(`governance.snapshotStatus.${lastRestore.result.status}`, lastRestore.result.status) : '?' }} ·
       {{ lastRestore.result.applied_file_count ?? 0 }}
       {{ t('governance.filesApplied') }}
       <span v-if="lastRestore.result.workspace_hash" class="font-mono text-xs"> · {{ lastRestore.result.workspace_hash.slice(0, 12) }}</span>
@@ -235,15 +235,15 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
       <li v-for="s in sorted" :key="s.id" class="snapshot-card" data-testid="snapshot-card">
         <div class="snapshot-card__head">
           <span class="font-mono text-xs">{{ s.id.slice(0, 8) }}</span>
-          <span class="snapshot-card__badge">{{ s.kind }}</span>
+          <span class="snapshot-card__badge">{{ t(`governance.snapshotKind.${s.kind}`, s.kind) }}</span>
           <span v-if="s.is_git" class="snapshot-card__badge">git</span>
-          <span class="snapshot-card__status">{{ s.status }}</span>
+          <span class="snapshot-card__status">{{ t(`governance.snapshotStatus.${s.status}`, s.status) }}</span>
         </div>
         <dl class="snapshot-card__meta">
           <div><dt>{{ t('governance.snapshotFacts.files') }}</dt><dd>{{ s.file_count }}</dd></div>
           <div><dt>{{ t('governance.snapshotFacts.workspaceHash') }}</dt><dd class="font-mono">{{ s.workspace_hash.slice(0, 12) }}</dd></div>
           <div><dt>{{ t('governance.snapshotFacts.contentHash') }}</dt><dd class="font-mono">{{ s.content_hash.slice(0, 12) }}</dd></div>
-          <div><dt>{{ t('governance.snapshotFacts.createdAt') }}</dt><dd>{{ s.created_at }}</dd></div>
+          <div><dt>{{ t('governance.snapshotFacts.createdAt') }}</dt><dd>{{ new Date(s.created_at).toLocaleString(locale) }}</dd></div>
         </dl>
         <button
           type="button"
@@ -271,7 +271,7 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
           </p>
           <ul v-else class="snapshot-review__list">
             <li v-for="change in reviewedChanges" :key="change.path" class="snapshot-review__row" data-testid="snapshot-review-row">
-              <span class="snapshot-card__badge" :data-status="change.status">{{ change.status }}</span>
+              <span class="snapshot-card__badge" :data-status="change.status">{{ t(`governance.fileChange.${change.status}`, change.status) }}</span>
               <code class="font-mono text-xs">{{ change.path }}</code>
               <button type="button" class="detail-dialog__btn" data-testid="snapshot-diff-btn" @click="toggleDiff(change)">
                 {{ t('governance.compare') }}

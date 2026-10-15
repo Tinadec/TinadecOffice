@@ -17,8 +17,9 @@ import { useStatusLabels } from '@/lib/statusLabels'
  *
  * Desktop never merges these facts; the board only renders Core projections.
  */
-const { t } = useI18n()
-const { riskLabel } = useStatusLabels()
+const { t, te } = useI18n()
+const { riskLabel, severityLabel } = useStatusLabels()
+const kindLabel = (kind: string) => (te(`approval.kind.${kind}`) ? t(`approval.kind.${kind}`) : kind)
 const userActionStore = useUserActionStore()
 
 const approvals = ref<ApprovalDto[]>([])
@@ -167,7 +168,7 @@ onUnmounted(() => {
         <p v-if="!openApprovals.length" class="approval-board__empty">{{ t('common.empty') }}</p>
         <article v-for="a in openApprovals" :key="a.id" class="approval-card">
           <div class="approval-card__title">{{ a.summary }}</div>
-          <div class="approval-card__meta font-mono text-xs">{{ a.command ?? a.kind }}</div>
+          <div class="approval-card__meta font-mono text-xs">{{ a.command ?? kindLabel(a.kind) }}</div>
           <UserActionStatusBadge v-if="a.governance_status" :status="a.governance_status" />
           <div class="approval-card__actions">
             <button type="button" class="detail-dialog__btn" :disabled="deciding === a.id" @click="decideApproval(a.id, 'approved')">
@@ -188,7 +189,7 @@ onUnmounted(() => {
         </p>
         <article v-for="f in findings" :key="f.id" class="approval-card">
           <div class="approval-card__title">{{ f.summary }}</div>
-          <div class="approval-card__meta">{{ f.severity }} · {{ f.category }}</div>
+          <div class="approval-card__meta">{{ severityLabel(f.severity) }} · {{ f.category }}</div>
           <div class="approval-card__meta">{{ f.recommendation }}</div>
         </article>
       </section>

@@ -22,6 +22,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof
       const named = arg as Record<string, unknown> | undefined
       return named && Object.keys(named).length ? `${key} ${JSON.stringify(named)}` : key
     },
+    te: () => false,
   }),
 }))
 

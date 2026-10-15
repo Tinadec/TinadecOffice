@@ -9,8 +9,10 @@ const api = scopedApi(baseApi, () => 'user')
 import { generatedApi as baseGeneratedApi } from '@/generated/client'
 const generatedApi = scopedApi(baseGeneratedApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const { t } = useI18n()
+const { instanceStatusLabel } = useStatusLabels()
 const { notify } = useNotifications()
 
 const runtimeInstances = ref<AgentRuntimeInstanceDto[]>([])
@@ -118,7 +120,7 @@ defineExpose({ loadRuntimeInstances })
       </div>
       <div class="model-provider-filters" role="group" :aria-label="t('settings.runtimeStatusFilter')">
         <button v-for="opt in runtimeStatusOptions" :key="opt" :class="{ active: runtimeStatusFilter === opt }" :aria-pressed="runtimeStatusFilter === opt" @click="runtimeStatusFilter = opt">
-          {{ opt === 'all' ? t('settings.allStatuses') : opt }}
+          {{ opt === 'all' ? t('settings.allStatuses') : instanceStatusLabel(opt) }}
         </button>
       </div>
     </div>
@@ -132,7 +134,7 @@ defineExpose({ loadRuntimeInstances })
       <div v-for="inst in pagedRuntimeInstances" :key="inst.id" class="ac-instance-row">
         <div class="ac-instance-head">
           <strong>{{ inst.agent_name ?? inst.agent_id ?? inst.id.slice(0, 8) }}</strong>
-          <UiBadge :variant="readinessVariant(inst.status)">{{ inst.status }}</UiBadge>
+          <UiBadge :variant="readinessVariant(inst.status)">{{ instanceStatusLabel(inst.status) }}</UiBadge>
           <span class="ac-instance-ids">{{ t('settings.instanceIds', { run: inst.run_id.slice(0, 8), session: String(inst.session_id ?? '—').slice(0, 8) }) }}</span>
         </div>
         <div v-if="inst.source_definition || inst.frozen_version || inst.recent_actual_model" class="ac-instance-evidence">

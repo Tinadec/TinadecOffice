@@ -14,6 +14,7 @@ import { useNotifications } from '@/composables/useNotifications'
  * settings sections.
  */
 const { t } = useI18n()
+const petKindLabel = (kind: string) => t(`settings.petKind.${kind}`, kind)
 const { items: notificationItems, notify, confirm, dismiss: dismissNotification, status, dismissByKey } =
   useNotifications()
 
@@ -184,7 +185,7 @@ onBeforeUnmount(() => {
                     <span class="pet-item-name" :title="pet.displayName">{{ pet.displayName }}</span>
                     <UiBadge v-if="pet.enabled" variant="secondary" class="pet-card-badge">{{ t('settings.petEnabled') }}</UiBadge>
                   </div>
-                  <span class="pet-item-meta" :title="[pet.kind, pet.submittedBy].filter(Boolean).join(' · ')">{{ pet.kind }}<template v-if="pet.submittedBy"> · {{ pet.submittedBy }}</template></span>
+                  <span class="pet-item-meta" :title="[petKindLabel(pet.kind), pet.submittedBy].filter(Boolean).join(' · ')">{{ petKindLabel(pet.kind) }}<template v-if="pet.submittedBy"> · {{ pet.submittedBy }}</template></span>
                   <div class="pet-gallery-actions">
                     <UiButton
                       class="pet-action-button"
@@ -246,7 +247,7 @@ onBeforeUnmount(() => {
                   <div class="pet-gallery-body">
                     <div class="pet-gallery-title-row">
                       <span class="pet-item-name" :title="pet.displayName">{{ pet.displayName }}</span>
-                      <UiBadge variant="outline" class="pet-card-badge" :title="pet.kind">{{ pet.kind }}</UiBadge>
+                      <UiBadge variant="outline" class="pet-card-badge" :title="petKindLabel(pet.kind)">{{ petKindLabel(pet.kind) }}</UiBadge>
                     </div>
                     <span class="pet-item-meta" :title="[pet.slug, pet.submittedBy].filter(Boolean).join(' · ')">{{ pet.slug }}<template v-if="pet.submittedBy"> · {{ pet.submittedBy }}</template></span>
                     <div class="pet-gallery-actions">

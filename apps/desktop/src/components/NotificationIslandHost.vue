@@ -14,7 +14,8 @@ import {
 } from '@/composables/useNotifications'
 
 const route = useRoute()
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+const sourceLabel = (source: string) => (te(`app.notificationSource.${source}`) ? t(`app.notificationSource.${source}`) : source)
 const {
   items, history, orderedItems,
   statusHero, transientHero, statusFoldedCount, transientFoldedCount,
@@ -267,7 +268,7 @@ function taskLabel(item: NotificationItem) {
                 <span class="island-stack__title">
                   {{ item.title || item.message }}
                 </span>
-                <span v-if="item.source" class="island-stack__source">{{ item.source }}</span>
+                <span v-if="item.source" class="island-stack__source">{{ sourceLabel(item.source) }}</span>
               </div>
               <span v-if="item.count > 1" class="island-stack__count-badge" :aria-label="t('app.repeatedCount', { count: item.count })">×{{ item.count }}</span>
               <span v-if="item.remote" class="island-stack__remote">↗</span>
@@ -313,7 +314,7 @@ function taskLabel(item: NotificationItem) {
           </div>
           <!-- meta row: source, residency, age — the expanded presentation's leading context -->
           <div class="island-card__meta-row">
-            <span v-if="openItem.source" class="island-card__chip">{{ openItem.source }}</span>
+            <span v-if="openItem.source" class="island-card__chip">{{ sourceLabel(openItem.source) }}</span>
             <span v-if="openItem.persistence !== 'auto'" class="island-card__chip island-card__chip--persistent">
               <Pin :size="9" aria-hidden="true" />{{ t('app.persistent') }}
             </span>
@@ -359,7 +360,7 @@ function taskLabel(item: NotificationItem) {
                     <span class="island-overflow__title">
                       {{ item.title || item.message }}
                     </span>
-                    <span v-if="item.source" class="island-overflow__source">{{ item.source }}</span>
+                    <span v-if="item.source" class="island-overflow__source">{{ sourceLabel(item.source) }}</span>
                   </div>
                   <time class="island-overflow__time" :datetime="new Date(item.createdAt).toISOString()">{{ relativeTime(item.createdAt) }}</time>
                   <button type="button" class="island-overflow__action" :aria-label="t('app.viewDetails')" @click.stop="openDetail(item.id)"><FileText :size="12" aria-hidden="true" /></button>
@@ -380,7 +381,7 @@ function taskLabel(item: NotificationItem) {
                   </span>
                   <div class="island-overflow__content">
                     <span class="island-overflow__title">{{ entry.title || entry.message }}</span>
-                    <span v-if="entry.source" class="island-overflow__source">{{ entry.source }}</span>
+                    <span v-if="entry.source" class="island-overflow__source">{{ sourceLabel(entry.source) }}</span>
                   </div>
                   <time class="island-overflow__time" :datetime="new Date(entry.dismissedAt).toISOString()">{{ relativeTime(entry.dismissedAt) }}</time>
                 </li>

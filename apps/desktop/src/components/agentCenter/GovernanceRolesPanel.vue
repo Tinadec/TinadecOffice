@@ -15,7 +15,9 @@ const api = scopedApi(baseApi, () => 'user')
  * manifest-provided catalog; tools missing from the live provider render as
  * "provider unavailable" instead of being silently dropped.
  */
-const { t } = useI18n()
+const { t, te } = useI18n()
+const layerLabel = (layer: string) => (te(`orchestrationPanel.layer.${layer}`) ? t(`orchestrationPanel.layer.${layer}`) : layer)
+const statusLabel = (status: string) => (te(`agentCenter.filter.${status}`) ? t(`agentCenter.filter.${status}`) : status)
 
 const props = defineProps<{
   /** Live tool ids from Core/Tool Provider manifest. */
@@ -95,7 +97,7 @@ onMounted(load)
     <header class="gov-roles__head">
       <h2><ShieldCheck class="size-4" /> {{ t('agentCenter.governanceRoles') }}</h2>
       <span v-if="defaults?.status" class="gov-roles__defaults" data-testid="workspace-defaults-status">
-        {{ t('agentCenter.defaultsActive') }}: {{ defaults.status }}
+        {{ t('agentCenter.defaultsActive') }}: {{ statusLabel(defaults.status) }}
         <span v-if="defaults.revision != null">· {{ t('agentCenter.revisionShort', { revision: defaults.revision }) }}</span>
       </span>
     </header>
@@ -111,8 +113,8 @@ onMounted(load)
         <div class="gov-role-card__head">
           <component :is="agent.layer === 'operation' ? ShieldCheck : GitBranch" class="size-4" />
           <strong>{{ displayName(agent) }}</strong>
-          <span class="gov-role-card__layer">{{ agent.layer }}</span>
-          <span v-if="agent.status" class="gov-role-card__status">{{ agent.status }}</span>
+          <span class="gov-role-card__layer">{{ layerLabel(agent.layer) }}</span>
+          <span v-if="agent.status" class="gov-role-card__status">{{ statusLabel(agent.status) }}</span>
         </div>
 
         <p v-if="agent.layer === 'operation' && !(agent.allowed_tools ?? []).length" class="gov-role-card__note" data-testid="steward-no-tools">

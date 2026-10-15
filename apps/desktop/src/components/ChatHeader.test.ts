@@ -2,11 +2,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { createI18n } from 'vue-i18n'
+import en from '@/locales/en'
 import ChatHeader from './ChatHeader.vue'
-
-vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
-  useI18n: () => ({ t: (_key: string, fallback?: string) => fallback ?? _key }),
-}))
 
 const runMock = vi.hoisted(() => ({
   runs: [
@@ -25,6 +23,7 @@ vi.mock('@/stores/run', () => ({
 
 function mountHeader() {
   return mount(ChatHeader, {
+    global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
     props: { currentSession: { id: 's1', title: 'Test session', project_id: 'p1', status: 'active', created_at: '', updated_at: '', permission_mode: 'default', space_options: null, settings_revision: 0 } },
   })
 }

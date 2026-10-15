@@ -20,7 +20,8 @@ import {
   type NotificationLevel,
 } from '@/composables/useNotifications'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+const sourceLabel = (source: string) => (te(`app.notificationSource.${source}`) ? t(`app.notificationSource.${source}`) : source)
 const {
   currentConfirmation,
   detailItem,
@@ -290,7 +291,7 @@ onBeforeUnmount(() => {
           v-if="detailItem.source || (detailItem.count > 1) || detailItem.remote"
           class="detail-dialog__meta"
         >
-          <span v-if="detailItem.source" class="detail-dialog__chip">{{ detailItem.source }}</span>
+          <span v-if="detailItem.source" class="detail-dialog__chip">{{ sourceLabel(detailItem.source) }}</span>
           <span v-if="detailItem.count > 1" class="detail-dialog__chip">{{ t('app.repeatedCount', { count: detailItem.count }) }}</span>
           <span v-if="detailItem.remote" class="detail-dialog__chip detail-dialog__chip--remote">{{ t('app.fromOtherWindow') }}</span>
           <span class="detail-dialog__time">{{ formatRelativeTime(detailItem.createdAt) }}</span>

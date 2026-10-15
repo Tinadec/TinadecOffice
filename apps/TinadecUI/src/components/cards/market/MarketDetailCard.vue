@@ -229,7 +229,7 @@ function statusLine() {
             data-testid="market-mcp-server"
           >
             <Globe2 :size="14" />
-            <span>{{ server.name }} · {{ server.status }}</span>
+            <span>{{ server.name }} · {{ t(`toolsSettings.connectionStatus.${server.status}`, server.status) }}</span>
           </div>
           <p v-if="mcpConfigPath" class="quiet">{{ t('market.mcpConfigFile') }}: {{ mcpConfigPath }}</p>
         </template>

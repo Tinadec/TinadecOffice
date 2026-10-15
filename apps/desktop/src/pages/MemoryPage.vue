@@ -161,7 +161,7 @@ onMounted(() => {
       <article v-for="candidate in candidates" :key="candidate.id" class="memory-card" data-testid="memory-candidate">
         <p class="memory-card__content">{{ candidate.content }}</p>
         <p class="memory-card__meta">
-          <span class="memory-card__chip">{{ candidate.kind }}</span>
+          <span class="memory-card__chip">{{ t(`memory.kind.${candidate.kind}`, candidate.kind) }}</span>
           <span class="memory-card__chip">{{ t(`memory.scope.${candidate.scope}`, candidate.scope) }}</span>
           <span class="memory-card__chip">{{ t('memory.confidence') }} {{ confidencePercent(candidate.confidence) }}</span>
         </p>
@@ -222,7 +222,7 @@ onMounted(() => {
       <article v-for="item in activeItems" :key="item.id" class="memory-card" data-testid="memory-item">
         <p class="memory-card__content">{{ item.content }}</p>
         <p class="memory-card__meta">
-          <span class="memory-card__chip">{{ item.kind }}</span>
+          <span class="memory-card__chip">{{ t(`memory.kind.${item.kind}`, item.kind) }}</span>
           <span class="memory-card__chip">{{ t(`memory.scope.${item.scope}`, item.scope) }}</span>
           <span class="memory-card__chip">v{{ item.version }}</span>
         </p>

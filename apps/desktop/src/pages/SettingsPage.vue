@@ -46,6 +46,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 import { useRouter } from 'vue-router'
 import AboutSection from '@/settings/sections/AboutSection.vue'
 import ArchiveTrashSection from '@/settings/sections/ArchiveTrashSection.vue'
@@ -193,7 +194,9 @@ interface ProviderForm {
   enabled: boolean
 }
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+const { riskLabel } = useStatusLabels()
+const definitionStatusLabel = (status: string) => (te(`agentCenter.filter.${status}`) ? t(`agentCenter.filter.${status}`) : status)
 const { canAccessBackend, reason: hostReason } = useHostAccess()
 const router = useRouter()
 const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
@@ -1129,7 +1132,7 @@ async function connectDiscoveredCli(candidate: CliDiscoveryCandidateDto, channel
     await loadModelCenter()
     notify.success(created.display_name)
   } catch (error) {
-    notify.error(error, { title: `${candidate.display_name} · ${channel.channel}` })
+    notify.error(error, { title: `${candidate.display_name} · ${channelLabel(channel)}` })
   } finally {
     cliDiscoveryLoading.value = false
   }
@@ -1897,6 +1900,11 @@ function statusLabel(status: string) {
   if (status === 'disabled') return t('settings.statusDisabled')
   if (status === 'cooldown') return t('settings.statusCooldown')
   if (status === 'not_configured' || !status) return t('settings.statusNotConfigured')
+  if (status === 'configured') return t('settings.statusConfigured')
+  if (status === 'found') return t('settings.statusFound')
+  if (status === 'missing') return t('settings.statusMissing')
+  if (status === 'missing_provider') return t('settings.statusMissingProvider')
+  if (status === 'unknown') return t('settings.statusUnknown')
   return status
 }
 
@@ -3195,7 +3203,7 @@ import '../settings/settings.css'
                   </div>
                   <div>
                     <span>{{ t('settings.agentStatus') }}</span>
-                    <strong>{{ configuringDirectoryItem.status }}</strong>
+                    <strong>{{ definitionStatusLabel(configuringDirectoryItem.status) }}</strong>
                   </div>
                 </div>
                 <div v-if="(configuringDirectoryItem.mode_usages ?? []).length > 0" class="agent-mode-usage-list">
@@ -3375,12 +3383,12 @@ import '../settings/settings.css'
                         risky: tool.requires_approval
                       }"
                       :disabled="configuringAgent.is_built_in"
-                      :title="tool.display_name + ' · ' + tool.risk + (tool.requires_approval ? ' · ' + t('settings.approvalRequired') : '')"
+                      :title="tool.display_name + ' · ' + riskLabel(tool.risk) + (tool.requires_approval ? ' · ' + t('settings.approvalRequired') : '')"
                       @click="toggleAgentTool(tool.id)"
                     >
                       <span class="agent-tool-name">{{ tool.display_name }}</span>
                       <span class="agent-tool-meta">
-                        <span class="agent-tool-risk" :class="tool.risk">{{ tool.risk }}</span>
+                        <span class="agent-tool-risk" :class="tool.risk">{{ riskLabel(tool.risk) }}</span>
                         <span v-if="tool.requires_approval" class="agent-tool-approval">⚑ {{ t('settings.approvalRequired') }}</span>
                       </span>
                       <span class="agent-tool-id">{{ tool.id }}</span>

@@ -87,6 +87,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof
   useI18n: () => ({
     // A named value is appended so a test can see it reached the text (common.copyName(…)).
     t: (key: string, named?: Record<string, unknown>) => named?.name !== undefined ? `${key}(${String(named.name)})` : key,
+    te: () => false,
     locale: { value: 'en' },
   }),
 }))

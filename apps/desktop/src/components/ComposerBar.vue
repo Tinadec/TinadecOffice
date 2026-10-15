@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Plus, Settings, Sparkles, Square, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, useId, type Component, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { UiButton, UiSelectField } from '@/components/ui'
@@ -38,6 +39,7 @@ import { toDirEntryView, type DirEntryDto, type DirEntryView } from '@/lib/works
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 
 const { t } = useI18n()
+const { runStatusLabel } = useStatusLabels()
 const router = useRouter()
 
 const props = defineProps<{
@@ -710,7 +712,7 @@ function confirmSteer(id: string, interrupt = false) {
                 :aria-label="t('composer.selectTargetRun')"
                 :options="[
                   { value: '', label: t('composer.selectTargetRun'), disabled: true },
-                  ...activeRuns.map((r) => ({ value: r.id, label: `${r.id.slice(0,8)} · ${r.status}` })),
+                  ...activeRuns.map((r) => ({ value: r.id, label: `${r.id.slice(0,8)} · ${runStatusLabel(r.status)}` })),
                 ]"
               />
               <button class="queued-action" :disabled="!steerTarget" @click="confirmSteer(item.id)">{{ t('composer.confirmSteer') }}</button>

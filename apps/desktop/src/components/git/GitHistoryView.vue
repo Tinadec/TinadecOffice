@@ -72,7 +72,7 @@ const groupedCommits = computed(() => {
   for (const commit of props.commits ?? []) {
     if (!commit || typeof commit.hash !== 'string' || !commit.hash) continue
     const rawDate = typeof commit.date === 'string' ? commit.date : ''
-    const dateKey = rawDate.split(' ')[0] || 'unknown'
+    const dateKey = rawDate.split(' ')[0] ?? ''
     if (!groups[dateKey]) groups[dateKey] = []
     groups[dateKey].push(commit)
   }
@@ -88,7 +88,7 @@ watch(() => props.commits, () => {
 })
 
 function formatDate(dateStr: string): string {
-  if (!dateStr) return ''
+  if (!dateStr) return t('context.gitHistoryNoDate')
   try {
     const d = new Date(dateStr)
     if (Number.isNaN(d.getTime())) return dateStr.split(' ')[0] ?? dateStr

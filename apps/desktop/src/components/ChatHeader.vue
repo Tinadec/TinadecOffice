@@ -3,8 +3,10 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SessionDto } from '../api'
 import { useRunStore } from '@/stores/run'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const { t } = useI18n()
+const { runStatusLabel } = useStatusLabels()
 
 defineProps<{
   currentSession: SessionDto | null
@@ -43,11 +45,11 @@ function selectRun(runId: string): void {
           'run-pill--running': ['planning', 'understanding', 'executing', 'replanning', 'reviewing'].includes(run.status),
           'run-pill--waiting': String(run.status).startsWith('awaiting') || run.status === 'paused',
         }"
-        :title="`${run.id} · ${run.status}`"
+        :title="`${run.id} · ${runStatusLabel(run.status)}`"
         @click="selectRun(run.id)"
       >
         <span class="run-pill__dot" />
-        {{ String(run.status).replace('_', ' ') }}
+        {{ runStatusLabel(run.status) }}
       </button>
       <span v-if="!selectedRunId" class="run-pills__hint">{{ t('chat.latestRun') }}</span>
     </div>

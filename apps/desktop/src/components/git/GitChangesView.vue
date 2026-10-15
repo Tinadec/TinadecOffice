@@ -29,6 +29,7 @@ import {
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 import { UiSelectField } from '@/components/ui'
 import type { ApprovalDto } from '../../api'
 import {
@@ -144,6 +145,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, te } = useI18n()
+const { approvalStatusLabel } = useStatusLabels()
 
 // ---- Diff preview ----
 const showDiffPreview = ref(false)
@@ -829,7 +831,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
           <div class="git-conflict-approval-info">
             <ShieldCheck :size="13" />
             <span>{{ resolveConflictApproval.summary }}</span>
-            <span class="git-conflict-approval-status">{{ resolveConflictApproval.status }}</span>
+            <span class="git-conflict-approval-status">{{ approvalStatusLabel(resolveConflictApproval.status) }}</span>
           </div>
           <div class="git-conflict-approval-actions">
             <div v-if="canDecideResolveConflictApproval" class="git-approval-decide">
@@ -1013,7 +1015,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
           <div class="git-discard-approval-info">
             <ShieldCheck :size="13" />
             <span>{{ discardApproval.summary }}</span>
-            <span class="git-discard-approval-status">{{ discardApproval.status }}</span>
+            <span class="git-discard-approval-status">{{ approvalStatusLabel(discardApproval.status) }}</span>
           </div>
           <div class="git-discard-approval-actions">
             <div v-if="canDecideDiscardApproval" class="git-approval-decide">

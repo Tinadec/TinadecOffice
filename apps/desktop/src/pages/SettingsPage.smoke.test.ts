@@ -41,6 +41,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof
   useI18n: () => ({
     t: (key: string, fallback?: string) =>
       typeof fallback === 'string' ? fallback : key,
+    te: () => false,
     locale: { value: 'en' },
   }),
 }))

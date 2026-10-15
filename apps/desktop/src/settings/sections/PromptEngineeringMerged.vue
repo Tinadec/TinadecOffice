@@ -28,7 +28,8 @@ const api = scopedApi(baseApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
 import { consumeRequest, pendingPromptId } from '@/lib/pageRequests'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+const definitionStatusLabel = (status: string) => (te(`agentCenter.filter.${status}`) ? t(`agentCenter.filter.${status}`) : status)
 const { notify } = useNotifications()
 
 // ── shared view state ──
@@ -247,7 +248,7 @@ defineExpose({ refreshAll })
           <template #content>
             <div class="ac-pipeline-card-head">
               {{ p.name ?? p.title ?? p.id.slice(0, 8) }}
-              <UiBadge variant="outline">{{ p.status ?? t('common.draft') }}</UiBadge>
+              <UiBadge variant="outline">{{ p.status ? definitionStatusLabel(p.status) : t('common.draft') }}</UiBadge>
             </div>
             <div class="quiet ac-pipeline-card-desc">{{ p.description ?? '—' }}</div>
             <div class="ac-pipeline-card-actions">

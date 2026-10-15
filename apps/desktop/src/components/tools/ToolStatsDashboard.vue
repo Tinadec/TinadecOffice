@@ -83,7 +83,7 @@ const stats = computed(() => {
       })
     }
 
-    const sourceKey = exec.source || 'unknown'
+    const sourceKey = exec.source || ''
     bySource.set(sourceKey, (bySource.get(sourceKey) ?? 0) + 1)
   }
 
@@ -305,7 +305,7 @@ function sourceBarWidth(count: number, total: number): string {
       <div class="tool-stats-sources">
         <div v-for="source in stats.sourceStats" :key="source.source" class="tool-stats-source-row">
           <span class="tool-stats-source-tag" :class="sourceClass(source.source)">
-            {{ source.source }}
+            {{ source.source || t('toolsSettings.sourceUndeclared') }}
           </span>
           <div class="tool-stats-source-bar-track">
             <div

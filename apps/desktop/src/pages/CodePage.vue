@@ -164,7 +164,7 @@ onMounted(() => {
               @click="c.handleSwitchTab(tab.path)"
             >
               <span class="code-tab-name">{{ tab.path.split(/[\\/]/).pop() }}</span>
-              <span class="code-tab-mode">{{ tab.mode }}</span>
+              <span class="code-tab-mode">{{ t(`code.tabMode.${tab.mode}`) }}</span>
               <span class="code-tab-close" @click.stop="c.handleCloseTab(tab.path)">
                 <X :size="11" />
               </span>

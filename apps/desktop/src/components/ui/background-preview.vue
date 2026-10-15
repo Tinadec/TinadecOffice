@@ -15,6 +15,9 @@ const props = defineProps<{
   height?: number
 }>()
 
+const typeLabels = { none: 'settings.bgNone', image: 'settings.bgImage', video: 'settings.bgVideo', html: 'settings.bgHtml' } as const
+const typeLabel = computed(() => t(typeLabels[props.settings.type]))
+
 // Compute preview container style
 const containerStyle = computed(() => ({
   height: `${props.height || 200}px`,
@@ -138,7 +141,7 @@ const placeholderText = computed(() => {
     
     <!-- Overlay info -->
     <div class="preview-overlay">
-      <span class="preview-type">{{ settings.type }}</span>
+      <span class="preview-type">{{ typeLabel }}</span>
       <span v-if="settings.opacity < 100" class="preview-opacity">
         {{ settings.opacity }}%
       </span>

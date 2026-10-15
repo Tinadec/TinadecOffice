@@ -240,7 +240,7 @@ onBeforeUnmount(() => { ++epoch; ++contextEpoch; stopActionPoll(); chooseDraft?.
             <small v-if="kind === 'skills' && skillMeta(row, 'package_hash')">{{ t('toolsSettings.packageHash') }}: {{ skillMeta(row, 'package_hash') }}</small>
             <small v-if="kind === 'skills' && skillMeta(row, 'source')">{{ t('toolsSettings.packageSource') }}: {{ skillMeta(row, 'source') }}<template v-if="skillMeta(row, 'version')"> @ {{ skillMeta(row, 'version') }}</template></small>
             <small v-if="kind === 'skills' && skillMeta(row, 'commit')">{{ t('toolsSettings.packageCommit') }}: {{ skillMeta(row, 'commit') }}</small>
-            <small v-if="kind === 'mcp' && connectionResults[row.resource_id]">{{ t('toolsSettings.connectionTest') }}: {{ connectionResults[row.resource_id]?.status }} {{ connectionResults[row.resource_id]?.reason }}</small>
+            <small v-if="kind === 'mcp' && connectionResults[row.resource_id]">{{ t('toolsSettings.connectionTest') }}: {{ t(`toolsSettings.connectionStatus.${connectionResults[row.resource_id]?.status}`, connectionResults[row.resource_id]?.status ?? '') }} {{ connectionResults[row.resource_id]?.reason }}</small>
           </span>
         </label>
         <UiBadge :variant="skillStatus(row) === 'invalid' || skillStatus(row) === 'pending' ? 'secondary' : row.enabled ? 'outline' : 'secondary'">{{ t(skillStatus(row) === 'invalid' ? 'toolsSettings.invalid' : skillStatus(row) === 'pending' ? 'toolsSettings.pendingApproval' : row.enabled ? 'toolsSettings.enabled' : 'toolsSettings.disabled') }}</UiBadge>

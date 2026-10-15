@@ -12,7 +12,8 @@ import { useNotifications } from '@/composables/useNotifications'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 import { consumeRequest, pendingModeId } from '@/lib/pageRequests'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+const definitionStatusLabel = (status: string) => (te(`agentCenter.filter.${status}`) ? t(`agentCenter.filter.${status}`) : status)
 const { notify } = useNotifications()
 
 const modes = ref<AgentModeTopologyDto[]>([])
@@ -420,7 +421,7 @@ defineExpose({ loadModes })
               <strong>{{ m.display_name }}</strong>
               <small>{{ m.description || t('agentCenter.revisionShort', { revision: m.revision ?? '—' }) }}</small>
             </span>
-            <UiBadge :variant="readinessVariant(m.status)">{{ m.status ?? t('common.draft') }}</UiBadge>
+            <UiBadge :variant="readinessVariant(m.status)">{{ m.status ? definitionStatusLabel(m.status) : t('common.draft') }}</UiBadge>
           </button>
           <div v-if="filteredModes.length === 0" class="quiet ac-mode-empty">{{ t('agentCenter.empty.noModes') }}</div>
         </div>

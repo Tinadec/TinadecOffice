@@ -5,7 +5,7 @@ import { useStatusLabels } from '@/lib/statusLabels'
 import type { ApprovalDto, ApprovalRuleDto, CreateApprovalRuleInput } from '../api'
 import ApprovalGateStatus from './approval/ApprovalGateStatus.vue'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { riskLabel, approvalStatusLabel } = useStatusLabels()
 
 const props = withDefaults(defineProps<{
@@ -34,6 +34,7 @@ const ruleLabel = (rule: ApprovalRuleDto) => rule.kind === 'command_prefix'
   : rule.tool_id
 
 const isSpecProposal = (approval: ApprovalDto) => approval.tool_id === 'spec_propose'
+const kindLabel = (kind: string) => (te(`approval.kind.${kind}`) ? t(`approval.kind.${kind}`) : kind)
 type SpecStage = 'requirements' | 'design' | 'tasks'
 function specProposal(approval: ApprovalDto): { stage: SpecStage; document: string } | null {
   if (!isSpecProposal(approval) || !approval.arguments) return null
@@ -107,7 +108,7 @@ function decideCurrent(approval: ApprovalDto, decision: 'approved' | 'rejected')
       <article v-for="approval in pendingApprovals(approvals)" :key="approval.id" class="approval-row approval-row-pending" :class="{ 'approval-row--spec': isSpecProposal(approval) }">
       <div class="approval-facts">
         <div class="approval-head">
-          <strong>{{ isSpecProposal(approval) ? t('approval.specConfirmation') : approval.kind }}</strong>
+          <strong>{{ isSpecProposal(approval) ? t('approval.specConfirmation') : kindLabel(approval.kind) }}</strong>
           <code v-if="approval.tool_id && !isSpecProposal(approval)" class="approval-tool">{{ approval.tool_id }}</code>
           <span v-if="approval.risk" class="approval-risk" :data-risk="approval.risk">{{ riskLabel(approval.risk) }}</span>
         </div>

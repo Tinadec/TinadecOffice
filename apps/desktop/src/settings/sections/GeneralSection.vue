@@ -235,7 +235,7 @@ void dismissConfirm
                 {{ service.core_status === 'ready' ? t('settings.serviceCoreReady') : t('settings.serviceCoreUnreachable') }}
               </UiBadge>
               <UiBadge v-if="service.current" variant="outline">{{ t('settings.serviceCurrent') }}</UiBadge>
-              <span v-if="service.mode" class="service-discovery-meta">{{ service.mode }}</span>
+              <span v-if="service.mode" class="service-discovery-meta">{{ t(`settings.serviceMode.${service.mode}`, service.mode) }}</span>
             </button>
             <div v-else class="service-discovery-row service-discovery-row-core">
               <UiBadge variant="outline">{{ t('settings.serviceBadgeCore') }}</UiBadge>
