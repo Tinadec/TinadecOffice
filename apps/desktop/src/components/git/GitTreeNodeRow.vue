@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
   ChevronRight,
@@ -26,6 +27,8 @@ export interface GitTreeFileItem {
   additions?: number
   deletions?: number
 }
+
+const { t } = useI18n()
 
 const props = defineProps<{
   node: GitTreeNode<GitTreeFileItem>
@@ -135,7 +138,7 @@ function handleUnstageFolder() {
       :style="{ paddingLeft: `${(depth ?? 0) * 14 + 6}px` }"
       @click="toggleFolder"
     >
-      <button type="button" class="git-tree-expand-btn" :aria-label="isExpanded ? 'Collapse' : 'Expand'">
+      <button type="button" class="git-tree-expand-btn" :aria-label="isExpanded ? t('app.collapse') : t('app.expand')">
         <component :is="isExpanded ? ChevronDown : ChevronRight" :size="13" />
       </button>
       <component :is="isExpanded ? FolderOpen : Folder" :size="14" class="git-folder-icon" />
@@ -147,7 +150,7 @@ function handleUnstageFolder() {
           v-if="node.isStaged"
           type="button"
           class="git-hover-btn"
-          title="Unstage folder"
+          :title="t('context.gitUnstageFolder')"
           :disabled="operationLoading"
           @click.stop="handleUnstageFolder"
         >
@@ -157,7 +160,7 @@ function handleUnstageFolder() {
           v-else
           type="button"
           class="git-hover-btn"
-          title="Stage folder"
+          :title="t('context.gitStageFolder')"
           :disabled="operationLoading"
           @click.stop="handleStageFolder"
         >
@@ -211,7 +214,7 @@ function handleUnstageFolder() {
           v-if="node.fileData.is_staged"
           type="button"
           class="git-hover-btn"
-          title="Unstage file"
+          :title="t('context.gitUnstageFile')"
           :disabled="operationLoading"
           @click.stop="emit('unstage-file', node.fileData.path)"
         >
@@ -221,7 +224,7 @@ function handleUnstageFolder() {
           v-else
           type="button"
           class="git-hover-btn"
-          title="Stage file"
+          :title="t('context.gitStageFile')"
           :disabled="operationLoading"
           @click.stop="emit('stage-file', node.fileData.path)"
         >
@@ -232,7 +235,7 @@ function handleUnstageFolder() {
           v-if="!node.fileData.is_conflicted"
           type="button"
           class="git-hover-btn is-discard"
-          title="Discard changes"
+          :title="t('context.gitDiscardChanges')"
           :disabled="operationLoading"
           @click.stop="emit('discard-file', node.fileData.path)"
         >
@@ -242,7 +245,7 @@ function handleUnstageFolder() {
         <button
           type="button"
           class="git-hover-btn"
-          title="View diff"
+          :title="t('context.gitViewDiff')"
           @click.stop="emit('select-diff', node.fileData.path)"
         >
           <ExternalLink :size="12" />

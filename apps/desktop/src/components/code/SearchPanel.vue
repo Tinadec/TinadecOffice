@@ -7,6 +7,7 @@ import {
   SearchCode,
 } from '@lucide/vue'
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
@@ -22,6 +23,7 @@ const emit = defineEmits<{
   select: [path: string]
 }>()
 
+const { t } = useI18n()
 const { notify } = useNotifications()
 
 const mode = ref<SearchMode>('files')
@@ -60,7 +62,7 @@ async function runSearch(): Promise<void> {
       grepResults.value = groupSearchLines(data, props.cwd)
     }
   } catch (err) {
-    notify.error(err, { title: 'Search failed', source: 'code', key: 'code-search' })
+    notify.error(err, { title: t('code.searchFailed'), source: 'code', key: 'code-search' })
   } finally {
     searching.value = false
   }
@@ -114,7 +116,7 @@ function escapeRegex(s: string): string {
         @click="switchMode('files')"
       >
         <FileCode :size="12" />
-        <span>Files</span>
+        <span>{{ t('code.search.files') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
@@ -123,7 +125,7 @@ function escapeRegex(s: string): string {
         @click="switchMode('content')"
       >
         <SearchCode :size="12" />
-        <span>Content</span>
+        <span>{{ t('code.search.content') }}</span>
       </UiButton>
     </div>
 
@@ -131,7 +133,7 @@ function escapeRegex(s: string): string {
       <Search :size="14" class="text-muted-foreground" />
       <UiInput
         v-model="query"
-        :placeholder="mode === 'files' ? 'files containing…' : 'search content...'"
+        :placeholder="mode === 'files' ? t('code.search.filesPlaceholder') : t('code.search.contentPlaceholder')"
         class="h-7 text-xs"
         @keydown.enter="runSearch"
       />
@@ -140,7 +142,7 @@ function escapeRegex(s: string): string {
         size="icon"
         class="h-7 w-7 shrink-0"
         :class="{ 'bg-accent': caseSensitive }"
-        :title="'Case sensitive'"
+        :title="t('code.search.caseSensitive')"
         @click="caseSensitive = !caseSensitive"
       >
         <CaseSensitive :size="13" />
@@ -150,7 +152,7 @@ function escapeRegex(s: string): string {
         size="icon"
         class="h-7 w-7 shrink-0"
         :class="{ 'bg-accent': useRegex }"
-        :title="'Regex'"
+        :title="t('code.search.regex')"
         @click="useRegex = !useRegex"
       >
         <Regex :size="13" />
@@ -160,18 +162,18 @@ function escapeRegex(s: string): string {
     <UiScrollArea class="flex-1">
       <div class="search-results">
         <div v-if="searching" class="px-3 py-4 text-center text-xs text-muted-foreground">
-          Searching...
+          {{ t('code.search.searching') }}
         </div>
 
         <template v-else-if="!hasResults && query">
           <div class="px-3 py-4 text-center text-xs text-muted-foreground">
-            No results found.
+            {{ t('code.search.noResults') }}
           </div>
         </template>
 
         <template v-else-if="!query">
           <div class="px-3 py-4 text-center text-xs text-muted-foreground">
-            Enter a search query and press Enter.
+            {{ t('code.search.hint') }}
           </div>
         </template>
 
@@ -223,7 +225,7 @@ function escapeRegex(s: string): string {
         </template>
 
         <div v-if="truncated" class="search-truncated">
-          Showing the first matches — refine the query to narrow them down.
+          {{ t('code.search.truncated') }}
         </div>
       </div>
     </UiScrollArea>

@@ -102,11 +102,11 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
     const result = await createTerminal({
       shellId: shellId || (availableShells.value[0]?.id ?? 'default'),
       cwd: props.cwd,
-      title: availableShells.value.find((s) => s.id === shellId)?.label ?? 'Terminal',
+      title: availableShells.value.find((s) => s.id === shellId)?.label ?? t('terminal.defaultTitle'),
     })
     
     if (!result) {
-      notify.error(t('terminal.createFailed', 'Failed to create terminal'))
+      notify.error(t('terminal.createFailed'))
       return
     }
     
@@ -117,7 +117,7 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
       setTimeout(() => focusTerminal(activeTerminalId.value!), 100)
     }
   } catch (err) {
-    notify.error(err, { title: t('terminal.createFailed', 'Failed to create terminal') })
+    notify.error(err, { title: t('terminal.createFailed') })
   }
 }
 
@@ -139,10 +139,10 @@ async function handleRestart(id: string): Promise<void> {
     const result = await createTerminal({
       shellId: shellId || 'default',
       cwd,
-      title: oldInstance?.title ?? 'Terminal',
+      title: oldInstance?.title ?? t('terminal.defaultTitle'),
     })
     if (!result) {
-      notify.error(t('terminal.createFailed', 'Failed to create terminal'))
+      notify.error(t('terminal.createFailed'))
       return
     }
     await nextTick()
@@ -150,7 +150,7 @@ async function handleRestart(id: string): Promise<void> {
       fitTerminal(activeTerminalId.value)
     }
   } catch (err) {
-    notify.error(err, { title: t('terminal.createFailed', 'Failed to create terminal') })
+    notify.error(err, { title: t('terminal.createFailed') })
   }
 }
 

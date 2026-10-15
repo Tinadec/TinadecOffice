@@ -76,14 +76,14 @@ onMounted(() => {
     <section class="code-workspace">
       <!-- Top toolbar -->
       <div class="code-toolbar">
-        <UiButton variant="ghost" size="icon" class="h-8 w-8" title="Back" @click="router.push('/')">
+        <UiButton variant="ghost" size="icon" class="h-8 w-8" :title="t('common.back')" @click="router.push('/')">
           <ArrowLeft :size="16" />
         </UiButton>
 
         <div class="code-toolbar-project">
           <UiSelect
             :model-value="c.selectedProjectId.value ?? ''"
-            placeholder="Select project..."
+            :placeholder="t('code.selectProject')"
             class="h-8 w-64"
             @update:model-value="c.setProject($event as string)"
           >
@@ -103,18 +103,18 @@ onMounted(() => {
         </div>
 
         <div class="code-toolbar-actions">
-          <UiButton variant="ghost" size="sm" class="h-8" title="New file" @click="c.handleNewFile()">
+          <UiButton variant="ghost" size="sm" class="h-8" :title="t('code.newFile')" @click="c.handleNewFile()">
             <FilePlus :size="14" />
-            <span>New</span>
+            <span>{{ t('code.new') }}</span>
           </UiButton>
-          <UiButton variant="ghost" size="sm" class="h-8" title="Refresh" @click="c.handleRefresh()">
+          <UiButton variant="ghost" size="sm" class="h-8" :title="t('common.refresh')" @click="c.handleRefresh()">
             <RefreshCw :size="14" />
           </UiButton>
           <UiButton
             variant="ghost"
             size="icon"
             class="h-8 w-8"
-            :title="c.showSearchPanel.value ? 'Hide search' : 'Show search'"
+            :title="c.showSearchPanel.value ? t('code.hideSearch') : t('code.showSearch')"
             @click="c.showSearchPanel.value = !c.showSearchPanel.value"
           >
             <Search :size="15" />
@@ -123,7 +123,7 @@ onMounted(() => {
             variant="ghost"
             size="icon"
             class="h-8 w-8"
-            :title="c.showPatchPanel.value ? 'Hide patch' : 'Show patch'"
+            :title="c.showPatchPanel.value ? t('code.hidePatch') : t('code.showPatch')"
             @click="c.showPatchPanel.value = !c.showPatchPanel.value"
           >
             <GitCompare :size="15" />
@@ -174,7 +174,7 @@ onMounted(() => {
           <!-- Editor content -->
           <div class="code-editor-area">
             <div v-if="!activeTab" class="code-empty">
-              <p>Select a file from the file tree to start editing.</p>
+              <p>{{ t('code.emptyEditor') }}</p>
             </div>
             <template v-else>
               <CodeViewer
@@ -215,7 +215,7 @@ onMounted(() => {
           />
           <div v-else class="code-right-empty">
             <GitCompare :size="24" class="text-muted-foreground" />
-            <p>No patch to preview.</p>
+            <p>{{ t('code.noPatch') }}</p>
           </div>
         </aside>
       </div>

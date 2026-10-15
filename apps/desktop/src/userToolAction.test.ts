@@ -10,6 +10,8 @@ import {
   withGitToolConfirmation,
 } from './userToolAction'
 import type { UserToolActionDto } from './api'
+import { createI18n } from 'vue-i18n'
+import en from './locales/en'
 
 const action = (overrides: Partial<Omit<UserToolActionDto, 'audit_reference'>> = {}): UserToolActionDto => ({
   id: 'action-1',
@@ -126,6 +128,7 @@ describe('user tool action projection', () => {
     expect(userToolActionNeedsDecision('awaiting_user')).toBe(true)
     expect(userToolActionNeedsDecision('awaiting_approval')).toBe(true)
     expect(userToolActionNeedsDecision('snapshot_required')).toBe(false)
-    expect(userToolActionStatusMessage(action({ status: 'outcome_unknown' }), 'Save file')).toContain('unknown')
+    const { t } = createI18n({ legacy: false, locale: 'en', messages: { en } }).global
+    expect(userToolActionStatusMessage(action({ status: 'outcome_unknown' }), 'Save file', t)).toContain('unknown')
   })
 })

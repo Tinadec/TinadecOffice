@@ -495,7 +495,7 @@ export function useGitOperation(
 
   function actionCompleted(action: UserToolActionDto | null): boolean {
     if (!action) return false
-    const message = userToolActionStatusMessage(action, action.tool_id)
+    const message = userToolActionStatusMessage(action, action.tool_id, t)
     if (action.status === 'blocked' && action.error_category === 'snapshot_failed') {
       // Surface the one-time override instead of a generic warning.
       snapshotOverrideCandidate.value = action
@@ -631,8 +631,8 @@ export function useGitOperation(
         isStage ? 'git_stage' : 'git_unstage',
         selected.patch ? { patch: selected.patch } : { paths },
         selected.patch
-          ? `${isStage ? 'Stage' : 'Unstage'} selected text hunks on ${previewData.value.branch ?? 'HEAD'}`
-          : `${isStage ? 'Stage' : 'Unstage'} ${paths.length} file${paths.length === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`,
+          ? t(isStage ? 'context.gitSummary.stageHunks' : 'context.gitSummary.unstageHunks', { branch: previewData.value.branch ?? 'HEAD' })
+          : t(isStage ? 'context.gitSummary.stageFiles' : 'context.gitSummary.unstageFiles', { n: paths.length, branch: previewData.value.branch ?? 'HEAD' }, paths.length),
       )
       indexApprovalId.value = approval.id
       indexAction.value = action
@@ -673,10 +673,10 @@ export function useGitOperation(
       const approval = usePaths
         ? await createGitAction('git_commit', {
             message: commitMessage.value.trim(), paths,
-          }, `Commit ${paths.length} selected file${paths.length === 1 ? '' : 's'} on ${branch} (auto-stage)`)
+          }, t('context.gitSummary.commitSelected', { n: paths.length, branch }, paths.length))
         : await createGitAction('git_commit', {
             commit_staged_only: true, message: commitMessage.value.trim(),
-          }, `Commit ${repoSummary.value.stagedCount} staged file${repoSummary.value.stagedCount === 1 ? '' : 's'} on ${branch}`)
+          }, t('context.gitSummary.commitStaged', { n: repoSummary.value.stagedCount, branch }, repoSummary.value.stagedCount))
       commitApprovalId.value = approval.id
       notify.info({ message: t('context.gitCommitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -713,7 +713,7 @@ export function useGitOperation(
       const ahead = typeof pushData.value.ahead === 'number' ? pushData.value.ahead : 0
       const approval = await createGitAction('git_push', {
         set_upstream: noUpstreamOnly.value, remote: 'origin',
-      }, `Push ${branch} to ${upstream} (${ahead} ahead)`)
+      }, t('context.gitSummary.push', { branch, upstream, ahead }))
       pushApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -749,7 +749,7 @@ export function useGitOperation(
       // 只拉不推：git_pull 仅更新本地，不会把本地提交推到远端。
       const approval = await createGitAction('git_pull', {
         branch, remote: upstream.split('/')[0] ?? 'origin',
-      }, `Pull ${branch} from ${upstream} (${behind} behind, ${pullStrategy.value}, no push)`)
+      }, t('context.gitSummary.pull', { branch, upstream, behind, strategy: pullStrategy.value }))
       pullApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -779,7 +779,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_checkout', { branch }, `Checkout branch ${branch}`)
+      const approval = await createGitAction('git_checkout', { branch }, t('context.gitSummary.checkout', { branch }))
       checkoutApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -809,7 +809,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branchName.trim()) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_branch_create', { branch: branchName }, `Create and checkout branch ${branchName}`)
+      const approval = await createGitAction('git_branch_create', { branch: branchName }, t('context.gitSummary.createBranch', { branch: branchName }))
       branchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -839,7 +839,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !canRequestFetchApproval.value) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_fetch', {}, `Fetch remote updates for ${previewData.value.branch ?? 'HEAD'}`)
+      const approval = await createGitAction('git_fetch', {}, t('context.gitSummary.fetch', { branch: previewData.value.branch ?? 'HEAD' }))
       fetchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -870,7 +870,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_merge', { branch }, `Merge branch ${branch} into ${previewData.value.branch ?? 'HEAD'}`)
+      const approval = await createGitAction('git_merge', { branch }, t('context.gitSummary.merge', { branch, target: previewData.value.branch ?? 'HEAD' }))
       mergeApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -900,7 +900,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
     try {
-      const approval = await createRebaseAction('start', { branch }, `Rebase ${previewData.value.branch ?? 'HEAD'} onto ${branch}`)
+      const approval = await createRebaseAction('start', { branch }, t('context.gitSummary.rebase', { branch, target: previewData.value.branch ?? 'HEAD' }))
       rebaseApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -945,7 +945,7 @@ export function useGitOperation(
         const result = await resumeGitAction(rebaseApproval.value)
         if (!actionCompleted(result)) return
       } else {
-        const approval = await createRebaseAction(operation, {}, `Rebase ${operation} on ${previewData.value.branch ?? 'HEAD'}`)
+        const approval = await createRebaseAction(operation, {}, t('context.gitSummary.rebaseStep', { operation, target: previewData.value.branch ?? 'HEAD' }))
         rebaseApprovalId.value = approval.id
       }
       await refreshAll()
@@ -964,7 +964,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !filePath.trim()) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_conflict_resolve', { path: filePath, strategy }, `Resolve conflict in ${filePath} using ${strategy}`)
+      const approval = await createGitAction('git_conflict_resolve', { path: filePath, strategy }, t('context.gitSummary.resolve', { path: filePath, strategy }))
       resolveConflictApprovalId.value = approval.id
       resolveConflictPath.value = filePath
       resolveConflictStrategy.value = strategy
@@ -1007,7 +1007,7 @@ export function useGitOperation(
     try {
       const approval = await createGitAction('git_discard', {
         paths: targets, include_untracked: includeUntracked,
-      }, `Discard ${targets.length} file${targets.length === 1 ? '' : 's'}${includeUntracked ? ' (incl. untracked)' : ''} on ${previewData.value.branch ?? 'HEAD'}`)
+      }, t(includeUntracked ? 'context.gitSummary.discardWithUntracked' : 'context.gitSummary.discard', { n: targets.length, branch: previewData.value.branch ?? 'HEAD' }, targets.length))
       discardApprovalId.value = approval.id
       discardPaths.value = targets
       discardIncludeUntracked.value = includeUntracked
@@ -1041,7 +1041,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_branch_delete', { branch, force }, `Delete branch ${branch}${force ? ' (force)' : ''}`)
+      const approval = await createGitAction('git_branch_delete', { branch, force }, t(force ? 'context.gitSummary.forceDeleteBranch' : 'context.gitSummary.deleteBranch', { branch }))
       deleteBranchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -1072,7 +1072,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !newName.trim()) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_branch_rename', { new_name: newName }, `Rename current branch to ${newName}`)
+      const approval = await createGitAction('git_branch_rename', { new_name: newName }, t('context.gitSummary.renameBranch', { name: newName }))
       renameBranchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -1103,7 +1103,7 @@ export function useGitOperation(
     operationLoading.value = true
     try {
       const operation = { action: 'create' as const, branch: payload.branch.trim(), path: payload.path.trim() }
-      const approval = await createGitAction('git_worktree_create', { branch: operation.branch, path: operation.path }, `Create worktree ${operation.path} for ${operation.branch}`)
+      const approval = await createGitAction('git_worktree_create', { branch: operation.branch, path: operation.path }, t('context.gitSummary.createWorktree', { path: operation.path, branch: operation.branch }))
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
@@ -1117,7 +1117,7 @@ export function useGitOperation(
     operationLoading.value = true
     try {
       const operation = { action: 'remove' as const, path: path.trim() }
-      const approval = await createGitAction('git_worktree_remove', { path: operation.path }, `Remove worktree ${operation.path}`)
+      const approval = await createGitAction('git_worktree_remove', { path: operation.path }, t('context.gitSummary.removeWorktree', { path: operation.path }))
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })

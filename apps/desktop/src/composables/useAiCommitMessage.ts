@@ -1,4 +1,5 @@
 import { ref, computed, type ComputedRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, type ModelStreamChunkDto } from '../api'
 import type { GitStatusFile, GitDiffSection } from './useGitOperation'
 import { statusToLabel } from './useGitOperation'
@@ -226,6 +227,7 @@ export function generateLocalSuggestion(
 export function useAiCommitMessage(
   selectedSessionId: ComputedRef<string | null>,
 ) {
+  const { t } = useI18n()
   const generating = ref(false)
   const aiError = ref<string | null>(null)
   const aiSuggestion = ref<AiCommitSuggestion | null>(null)
@@ -244,7 +246,7 @@ export function useAiCommitMessage(
     branch?: string,
   ): Promise<void> {
     if (files.length === 0) {
-      aiError.value = 'No changes to analyze'
+      aiError.value = t('context.gitAiNoChanges')
       return
     }
 
@@ -329,7 +331,7 @@ export function useAiCommitMessage(
             }
             generating.value = false
           } else if (chunk.kind === 'error') {
-            aiError.value = chunk.delta ?? 'AI generation failed'
+            aiError.value = chunk.delta ?? t('context.gitAiGenerateFailed')
             generating.value = false
           }
         },
@@ -339,7 +341,7 @@ export function useAiCommitMessage(
         },
       )
     } catch (err) {
-      aiError.value = err instanceof Error ? err.message : 'AI generation failed'
+      aiError.value = err instanceof Error ? err.message : t('context.gitAiGenerateFailed')
       generating.value = false
     }
   }

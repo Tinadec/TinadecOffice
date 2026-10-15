@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, GitCompare, ShieldCheck, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, createUserToolActionForPath, type ApprovalDto, type UserToolActionDto } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton } from '@/components/ui'
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
+const { t } = useI18n()
 const { getMonaco, isDark } = useMonaco()
 const { notify } = useNotifications()
 
@@ -50,7 +52,7 @@ const pendingApproval = computed(() =>
     ? props.approvals?.find((a) => a.id === pendingApprovalId.value)
     : null)
     ?? (pendingAction.value && userToolActionNeedsDecision(pendingAction.value.status)
-      ? userToolActionToApproval(pendingAction.value, `Apply patch to: ${props.filePath}`, {
+      ? userToolActionToApproval(pendingAction.value, t('code.patch.approval', { path: props.filePath }), {
           sessionId: props.selectedSessionId,
           cwd: props.cwd,
         })
@@ -180,7 +182,7 @@ async function handleApplyPatch(): Promise<void> {
     publishAction(action)
     await handleActionStatus(action)
   } catch (err) {
-    notify.error(err, { title: 'Failed to request patch', source: 'code', key: 'code-patch-action' })
+    notify.error(err, { title: t('code.patch.requestFailed'), source: 'code', key: 'code-patch-action' })
   } finally {
     applying.value = false
   }
@@ -201,7 +203,7 @@ async function resolveFileHash(): Promise<string | null> {
 function publishAction(action: UserToolActionDto): void {
   pendingAction.value = action
   pendingApprovalId.value = userToolApprovalId(action)
-  const approval = userToolActionToApproval(action, `Apply patch to: ${props.filePath}`, {
+  const approval = userToolActionToApproval(action, t('code.patch.approval', { path: props.filePath }), {
     sessionId: props.selectedSessionId,
     cwd: props.cwd,
   })
@@ -213,13 +215,13 @@ function publishAction(action: UserToolActionDto): void {
 }
 
 async function handleActionStatus(action: UserToolActionDto): Promise<void> {
-  feedback.value = userToolActionStatusMessage(action, `Apply patch to ${props.filePath}`)
+  feedback.value = userToolActionStatusMessage(action, t('code.patch.operation', { path: props.filePath }), t)
   if (action.status === 'completed') {
     await finishPatch(action)
     return
   }
   if (action.status === 'blocked' || action.status === 'failed') {
-    notify.error(action.message ?? action.status, { title: 'Patch blocked', source: 'code', key: 'code-patch-action' })
+    notify.error(action.message ?? action.status, { title: t('code.patch.blocked'), source: 'code', key: 'code-patch-action' })
     return
   }
   if (action.status === 'outcome_unknown') {
@@ -229,7 +231,7 @@ async function handleActionStatus(action: UserToolActionDto): Promise<void> {
 
 async function finishPatch(action: UserToolActionDto): Promise<void> {
   if (action.status !== 'completed') return
-  notify.success(`Patch applied to ${props.filePath}.`)
+  notify.success(t('code.patch.applied', { path: props.filePath }))
   pendingAction.value = null
   pendingApprovalId.value = null
   pendingPatch.value = null
@@ -250,7 +252,7 @@ async function executePatch(): Promise<void> {
     publishAction(action)
     await handleActionStatus(action)
   } catch (err) {
-    notify.error(err, { title: 'Failed to apply patch', source: 'code', key: 'code-patch-apply' })
+    notify.error(err, { title: t('code.patch.applyFailed'), source: 'code', key: 'code-patch-apply' })
   } finally {
     applying.value = false
   }
@@ -260,7 +262,7 @@ watch(pendingApproval, (approval) => {
   if (approval && approval.status === 'approved') {
     void executePatch()
   } else if (approval && approval.status === 'rejected') {
-    feedback.value = 'Patch approval was rejected.'
+    feedback.value = t('code.patch.rejected')
     if (pendingAction.value) void refreshPendingAction()
   }
 })
@@ -318,7 +320,7 @@ watch(
   <div class="flex h-full flex-col">
     <div class="flex items-center gap-2 border-b border-border px-3 py-2">
       <GitCompare :size="14" class="text-muted-foreground" />
-      <span class="truncate text-sm font-medium">Diff: {{ filePath }}</span>
+      <span class="truncate text-sm font-medium">{{ t('code.patch.title', { path: filePath }) }}</span>
       <div class="ml-auto flex items-center gap-1">
         <UiButton
           variant="default"
@@ -328,9 +330,9 @@ watch(
           @click="handleApplyPatch"
         >
           <ShieldCheck :size="13" />
-          <span>Apply Patch</span>
+          <span>{{ t('code.patch.apply') }}</span>
         </UiButton>
-        <UiButton variant="ghost" size="icon" class="h-7 w-7" title="Close" @click="emit('cancel')">
+        <UiButton variant="ghost" size="icon" class="h-7 w-7" :title="t('common.close')" @click="emit('cancel')">
           <X :size="13" />
         </UiButton>
       </div>
@@ -341,12 +343,12 @@ watch(
       <span>{{ feedback }}</span>
     </div>
     <div v-if="!hasChanges" class="px-3 py-2 text-xs text-muted-foreground">
-      No changes to preview.
+      {{ t('code.patch.noChanges') }}
     </div>
 
     <div class="relative flex-1">
       <div v-if="loading" class="absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
-        Loading diff...
+        {{ t('code.patch.loading') }}
       </div>
       <div ref="containerRef" class="h-full w-full" />
     </div>

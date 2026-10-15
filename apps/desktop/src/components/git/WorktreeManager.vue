@@ -203,7 +203,7 @@ watch(newBranch, (value) => {
           <GitBranch :size="13" />
           <strong>{{ worktree.branch ?? worktree.detached ?? t('context.gitWorktreeDetached') }}</strong>
           <UiBadge v-if="worktree.is_current" variant="secondary">{{ t('context.gitWorktreeCurrent') }}</UiBadge>
-          <UiBadge v-else-if="worktree.is_main" variant="outline">main</UiBadge>
+          <UiBadge v-else-if="worktree.is_main" variant="outline">{{ t('context.gitWorktreeMain') }}</UiBadge>
         </div>
         <div class="worktree-row-path">{{ worktree.path }}</div>
         <div v-if="worktree.head" class="worktree-row-head-commit">

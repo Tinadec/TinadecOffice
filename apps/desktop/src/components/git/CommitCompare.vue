@@ -162,7 +162,7 @@ watch(
           <input
             v-model="baseRef"
             type="text"
-            :placeholder="'HEAD~1 / branch / hash'"
+            :placeholder="t('context.gitCompareBasePlaceholder')"
           />
           <button
             type="button"
@@ -193,7 +193,7 @@ watch(
           <input
             v-model="headRef"
             type="text"
-            :placeholder="'HEAD / branch / hash'"
+            :placeholder="t('context.gitCompareHeadPlaceholder')"
           />
           <button
             type="button"

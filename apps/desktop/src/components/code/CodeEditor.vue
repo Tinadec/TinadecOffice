@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, Edit, Redo, Save, Undo, Wand2, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, createUserToolActionForPath, type ApprovalDto, type UserToolActionDto } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton } from '@/components/ui'
@@ -31,6 +32,7 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
+const { t } = useI18n()
 const { getMonaco, isDark } = useMonaco()
 const { notify } = useNotifications()
 
@@ -63,7 +65,7 @@ const pendingApproval = computed(() =>
     ? props.approvals?.find((a) => a.id === pendingApprovalId.value)
     : null)
     ?? (pendingAction.value && userToolActionNeedsDecision(pendingAction.value.status)
-      ? userToolActionToApproval(pendingAction.value, `Save file: ${props.filePath}`, {
+      ? userToolActionToApproval(pendingAction.value, t('code.editor.saveApproval', { path: props.filePath }), {
           sessionId: props.selectedSessionId,
           cwd: props.cwd,
         })
@@ -99,7 +101,7 @@ async function loadFile(): Promise<void> {
     modifiedAt.value = typeof entry?.modified_at === 'string' ? entry.modified_at : null
     await renderEditor()
   } catch (err) {
-    notify.error(err, { title: 'Failed to load file', source: 'code', key: 'code-editor-load' })
+    notify.error(err, { title: t('code.loadFileFailed'), source: 'code', key: 'code-editor-load' })
   } finally {
     loading.value = false
   }
@@ -176,7 +178,7 @@ async function handleSave(): Promise<void> {
     publishAction(action)
     await handleActionStatus(action)
   } catch (err) {
-    notify.error(err, { title: 'Failed to request file save', source: 'code', key: 'code-editor-action' })
+    notify.error(err, { title: t('code.editor.saveRequestFailed'), source: 'code', key: 'code-editor-action' })
   } finally {
     saving.value = false
   }
@@ -185,7 +187,7 @@ async function handleSave(): Promise<void> {
 function publishAction(action: UserToolActionDto): void {
   pendingAction.value = action
   pendingApprovalId.value = userToolApprovalId(action)
-  const approval = userToolActionToApproval(action, `Save file: ${props.filePath}`, {
+  const approval = userToolActionToApproval(action, t('code.editor.saveApproval', { path: props.filePath }), {
     sessionId: props.selectedSessionId,
     cwd: props.cwd,
   })
@@ -197,13 +199,13 @@ function publishAction(action: UserToolActionDto): void {
 }
 
 async function handleActionStatus(action: UserToolActionDto): Promise<void> {
-  feedback.value = userToolActionStatusMessage(action, `Save ${props.filePath}`)
+  feedback.value = userToolActionStatusMessage(action, t('code.editor.saveOperation', { path: props.filePath }), t)
   if (action.status === 'completed') {
     await finishSave(action)
     return
   }
   if (action.status === 'blocked' || action.status === 'failed') {
-    notify.error(action.message ?? action.status, { title: 'Save blocked', source: 'code', key: 'code-editor-action' })
+    notify.error(action.message ?? action.status, { title: t('code.editor.saveBlocked'), source: 'code', key: 'code-editor-action' })
     return
   }
   if (action.status === 'outcome_unknown') {
@@ -216,7 +218,7 @@ async function finishSave(action: UserToolActionDto): Promise<void> {
   // Re-read instead of guessing: the next save must carry the hash the file has now,
   // and size/mtime come from stat rather than from "what we meant to write".
   await loadFile()
-  notify.success(`Saved ${props.filePath}.`)
+  notify.success(t('code.editor.saved', { path: props.filePath }))
   pendingAction.value = null
   pendingApprovalId.value = null
   lastPublishedAction.value = null
@@ -236,7 +238,7 @@ async function executeSave(): Promise<void> {
     publishAction(action)
     await handleActionStatus(action)
   } catch (err) {
-    notify.error(err, { title: 'Failed to save file', source: 'code', key: 'code-editor-save' })
+    notify.error(err, { title: t('code.editor.saveFailed'), source: 'code', key: 'code-editor-save' })
   } finally {
     saving.value = false
   }
@@ -265,7 +267,7 @@ watch(pendingApproval, (approval) => {
   if (approval && approval.status === 'approved') {
     void executeSave()
   } else if (approval && approval.status === 'rejected') {
-    feedback.value = 'Save approval was rejected.'
+    feedback.value = t('code.editor.saveRejected')
     if (pendingAction.value) void refreshPendingAction()
   }
 })
@@ -339,13 +341,13 @@ defineExpose({
       <span class="truncate text-sm font-medium">{{ filePath }}</span>
       <span v-if="isDirty" class="text-xs text-amber-500">●</span>
       <div class="ml-auto flex items-center gap-1">
-        <UiButton variant="ghost" size="icon" class="h-7 w-7" title="Undo" @click="handleUndo">
+        <UiButton variant="ghost" size="icon" class="h-7 w-7" :title="t('code.editor.undo')" @click="handleUndo">
           <Undo :size="13" />
         </UiButton>
-        <UiButton variant="ghost" size="icon" class="h-7 w-7" title="Redo" @click="handleRedo">
+        <UiButton variant="ghost" size="icon" class="h-7 w-7" :title="t('code.editor.redo')" @click="handleRedo">
           <Redo :size="13" />
         </UiButton>
-        <UiButton variant="ghost" size="icon" class="h-7 w-7" title="Format document" @click="handleFormat">
+        <UiButton variant="ghost" size="icon" class="h-7 w-7" :title="t('code.editor.format')" @click="handleFormat">
           <Wand2 :size="13" />
         </UiButton>
         <UiButton
@@ -353,13 +355,13 @@ defineExpose({
           size="sm"
           class="h-7"
           :disabled="!canSave"
-          :title="isDirty ? 'Save (Ctrl+S)' : 'No changes'"
+          :title="isDirty ? t('code.editor.saveShortcut') : t('code.editor.noChanges')"
           @click="handleSave"
         >
           <Save :size="13" />
-          <span>Save</span>
+          <span>{{ t('code.editor.save') }}</span>
         </UiButton>
-        <UiButton variant="ghost" size="icon" class="h-7 w-7" title="Close editor" @click="handleCancel">
+        <UiButton variant="ghost" size="icon" class="h-7 w-7" :title="t('code.editor.close')" @click="handleCancel">
           <X :size="13" />
         </UiButton>
       </div>
@@ -372,7 +374,7 @@ defineExpose({
 
     <div class="relative flex-1">
       <div v-if="loading" class="absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
-        Loading...
+        {{ t('common.loading') }}
       </div>
       <div ref="containerRef" class="h-full w-full" />
     </div>

@@ -251,10 +251,12 @@ async function createTerminalInstance(
       throw new Error(result?.error || 'The main process started no terminal')
     }
 
+    // Callers name the tab in the user's language; without a name it shows the shell, like any terminal.
+    const shellName = result.shell || shell || 'shell'
     const instance: TerminalInstance = {
       id: result.id,
-      shell: result.shell || shell || 'shell',
-      title: result.title || options.title || 'Terminal',
+      shell: shellName,
+      title: result.title || options.title || shellName,
       term: null,
       fitAddon: null,
       exited: false,
@@ -492,10 +494,11 @@ function openAgentTerminal(options: {
     return existing.id
   }
 
+  const shell = 'agent'
   const instance: TerminalInstance = {
     id,
-    shell: 'agent',
-    title: options.title || options.command?.slice(0, 40) || 'Agent terminal',
+    shell,
+    title: options.title || options.command?.slice(0, 40) || shell,
     term: null,
     fitAddon: null,
     exited: false,

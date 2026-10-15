@@ -39,32 +39,41 @@ export function userToolActionNeedsDecision(status: string): boolean {
   return DECISION_STATUSES.has(status)
 }
 
+/** The forms of useI18n()'s `t` that helpers outside a component call. */
+export interface Translate {
+  (key: string): string
+  (key: string, named: Record<string, unknown>): string
+  (key: string, named: Record<string, unknown>, plural: number): string
+}
+
+/** One line on where `operation` stands, in the caller's language. */
 export function userToolActionStatusMessage(
   action: UserToolActionDto,
   operation: string,
+  t: Translate,
 ): string {
   const detail = action.message?.trim()
   switch (action.status) {
     case 'snapshot_required':
-      return `${operation} is waiting for a workspace snapshot.`
+      return t('userAction.status.snapshotRequired', { operation })
     case 'awaiting_delegate':
-      return `${operation} is waiting for delegated approval.`
+      return t('userAction.status.awaitingDelegate', { operation })
     case 'awaiting_user':
-      return `${operation} is waiting for your permission.`
+      return t('userAction.status.awaitingUser', { operation })
     case 'awaiting_approval':
-      return `${operation} is waiting for action approval.`
+      return t('userAction.status.awaitingApproval', { operation })
     case 'running':
-      return `${operation} is running.`
+      return t('userAction.status.running', { operation })
     case 'completed':
-      return `${operation} completed.`
+      return t('userAction.status.completed', { operation })
     case 'outcome_unknown':
-      return `${operation} outcome is unknown; inspect the workspace before retrying.`
+      return t('userAction.status.outcomeUnknown', { operation })
     case 'blocked':
-      return detail ? `${operation} blocked: ${detail}` : `${operation} was blocked.`
+      return detail ? t('userAction.status.blockedDetail', { operation, detail }) : t('userAction.status.blocked', { operation })
     case 'failed':
-      return detail ? `${operation} failed: ${detail}` : `${operation} failed.`
+      return detail ? t('userAction.status.failedDetail', { operation, detail }) : t('userAction.status.failed', { operation })
     default:
-      return detail ? `${operation}: ${detail}` : `${operation}: ${action.status}.`
+      return detail ? t('userAction.status.otherDetail', { operation, detail }) : t('userAction.status.other', { operation, status: action.status })
   }
 }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Edit, FileCode, RefreshCw } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton, UiSkeleton } from '@/components/ui'
@@ -16,6 +17,7 @@ const emit = defineEmits<{
   edit: [filePath: string, content: string]
 }>()
 
+const { t } = useI18n()
 const { getMonaco, isDark } = useMonaco()
 const { notify } = useNotifications()
 
@@ -62,7 +64,7 @@ async function loadFile(): Promise<void> {
     modifiedAt.value = typeof entry?.modified_at === 'string' ? entry.modified_at : null
     await renderEditor()
   } catch (err) {
-    notify.error(err, { title: 'Failed to load file', source: 'code', key: 'code-file-load' })
+    notify.error(err, { title: t('code.loadFileFailed'), source: 'code', key: 'code-file-load' })
   } finally {
     loading.value = false
   }
@@ -138,12 +140,12 @@ watch(language, (lang) => {
       <div class="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
         <span v-if="fileSize !== null">{{ formatSize(fileSize) }}</span>
         <span v-if="modifiedAt">{{ formatDate(modifiedAt) }}</span>
-        <UiButton variant="ghost" size="icon" class="h-7 w-7" title="Reload" :disabled="loading" @click="loadFile">
+        <UiButton variant="ghost" size="icon" class="h-7 w-7" :title="t('code.viewer.reload')" :disabled="loading" @click="loadFile">
           <RefreshCw :size="13" :class="{ 'animate-spin': loading }" />
         </UiButton>
-        <UiButton variant="outline" size="sm" class="h-7" title="Edit file" @click="handleEdit">
+        <UiButton variant="outline" size="sm" class="h-7" :title="t('code.viewer.editFile')" @click="handleEdit">
           <Edit :size="13" />
-          <span>Edit</span>
+          <span>{{ t('code.viewer.edit') }}</span>
         </UiButton>
       </div>
     </div>

@@ -14,6 +14,7 @@ import {
   Trash2,
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, createUserToolActionForPath, type ApprovalDto, type UserToolActionDto } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
@@ -47,6 +48,7 @@ const props = defineProps<{
   approvals?: ApprovalDto[]
   selectedSessionId?: string | null
 }>()
+const { t } = useI18n()
 const { notify, status, dismissByKey } = useNotifications()
 
 const emit = defineEmits<{
@@ -99,7 +101,7 @@ async function expandNode(node: TreeNode): Promise<void> {
     node.children = entries.map((e) => entryToNode(e, node.path))
     node.loaded = true
   } catch (err) {
-    notify.error(err, { title: 'Failed to load directory', source: 'code', key: 'code-tree-expand' })
+    notify.error(err, { title: t('code.tree.loadFailed'), source: 'code', key: 'code-tree-expand' })
   } finally {
     node.loading = false
   }
@@ -137,10 +139,10 @@ async function refresh(): Promise<void> {
     dismissByKey('code-tree-load')
   } catch (err) {
     status.error(err, {
-      title: 'Failed to load directory',
+      title: t('code.tree.loadFailed'),
       source: 'code',
       key: 'code-tree-load',
-      action: { label: 'Retry', run: () => refresh() },
+      action: { label: t('common.retry'), run: () => refresh() },
     })
   } finally {
     loading.value = false
@@ -170,7 +172,7 @@ async function runSearch(): Promise<void> {
       loading: false,
     }))
   } catch (err) {
-    notify.error(err, { title: 'Search failed', source: 'code', key: 'code-tree-search' })
+    notify.error(err, { title: t('code.searchFailed'), source: 'code', key: 'code-tree-search' })
   } finally {
     searching.value = false
   }
@@ -218,9 +220,9 @@ async function requestDeleteApproval(node: TreeNode): Promise<void> {
       commandParams('delete', node.path),
       idempotencyKey,
     )
-    publishAction(action, `Delete file: ${node.path}`)
+    publishAction(action, t('code.tree.deleteSummary', { path: node.path }))
   } catch (err) {
-    notify.error(err, { title: 'Failed to request file deletion', source: 'code', key: 'code-tree-delete-action' })
+    notify.error(err, { title: t('code.tree.deleteRequestFailed'), source: 'code', key: 'code-tree-delete-action' })
   } finally {
     inFlightIdempotencyKeys.delete(idempotencyKey)
   }
@@ -230,10 +232,10 @@ async function requestRenameApproval(node: TreeNode): Promise<void> {
   closeContextMenu()
   const prompt = globalThis.prompt
   if (typeof prompt !== 'function') {
-    notify.error('This environment cannot open a rename prompt.', { title: 'Rename unavailable', source: 'code', key: 'code-tree-rename-prompt' })
+    notify.error(t('code.tree.renamePromptUnavailable'), { title: t('code.tree.renameUnavailable'), source: 'code', key: 'code-tree-rename-prompt' })
     return
   }
-  const newName = prompt('New file name', node.name)?.trim()
+  const newName = prompt(t('code.tree.renamePrompt'), node.name)?.trim()
   if (!newName || newName === node.name || newName.includes('/') || newName.includes('\\')) return
   const targetPath = node.path.includes('/')
     ? `${node.path.slice(0, node.path.lastIndexOf('/') + 1)}${newName}`
@@ -248,9 +250,9 @@ async function requestRenameApproval(node: TreeNode): Promise<void> {
       commandParams('rename', node.path, targetPath),
       idempotencyKey,
     )
-    publishAction(action, `Rename file: ${node.path} -> ${targetPath}`)
+    publishAction(action, t('code.tree.renameSummary', { from: node.path, to: targetPath }))
   } catch (err) {
-    notify.error(err, { title: 'Failed to request file rename', source: 'code', key: 'code-tree-rename-action' })
+    notify.error(err, { title: t('code.tree.renameRequestFailed'), source: 'code', key: 'code-tree-rename-action' })
   } finally {
     inFlightIdempotencyKeys.delete(idempotencyKey)
   }
@@ -299,18 +301,18 @@ function publishAction(action: UserToolActionDto, summary: string): void {
   summaries.set(action.id, summary)
   pendingActionSummaries.value = summaries
   if (action.status === 'completed') {
-    notify.success({ message: `${summary} completed.`, source: 'code' })
+    notify.success({ message: t('userAction.status.completed', { operation: summary }), source: 'code' })
     summaries.delete(action.id)
     pendingActionSummaries.value = summaries
     void refresh()
     return
   }
   if (action.status === 'blocked' || action.status === 'failed') {
-    notify.error(action.message ?? action.status, { title: 'File operation blocked', source: 'code', key: `code-tree-action-${action.id}` })
+    notify.error(action.message ?? action.status, { title: t('code.tree.operationBlocked'), source: 'code', key: `code-tree-action-${action.id}` })
     return
   }
   if (action.status === 'outcome_unknown') {
-    notify.warning({ message: userToolActionStatusMessage(action, summary), source: 'code', key: `code-tree-action-${action.id}` })
+    notify.warning({ message: userToolActionStatusMessage(action, summary, t), source: 'code', key: `code-tree-action-${action.id}` })
     return
   }
   if (userToolActionNeedsDecision(action.status)) {
@@ -330,7 +332,7 @@ async function resumeAction(action: UserToolActionDto, summary: string): Promise
     next.set(latest.id, latest)
     pendingActions.value = next
     if (latest.status === 'completed') {
-      notify.success({ message: `${summary} completed.`, source: 'code' })
+      notify.success({ message: t('userAction.status.completed', { operation: summary }), source: 'code' })
       const summaries = new Map(pendingActionSummaries.value)
       summaries.delete(latest.id)
       pendingActionSummaries.value = summaries
@@ -338,12 +340,12 @@ async function resumeAction(action: UserToolActionDto, summary: string): Promise
     } else if (userToolActionNeedsDecision(latest.status)) {
       publishAction(latest, summary)
     } else if (latest.status === 'blocked' || latest.status === 'failed') {
-      notify.error(latest.message ?? latest.status, { title: 'File operation failed', source: 'code', key: `code-tree-action-${latest.id}` })
+      notify.error(latest.message ?? latest.status, { title: t('code.tree.operationFailed'), source: 'code', key: `code-tree-action-${latest.id}` })
     } else if (latest.status === 'outcome_unknown') {
-      notify.warning({ message: userToolActionStatusMessage(latest, summary), source: 'code', key: `code-tree-action-${latest.id}` })
+      notify.warning({ message: userToolActionStatusMessage(latest, summary, t), source: 'code', key: `code-tree-action-${latest.id}` })
     }
   } catch (err) {
-    notify.error(err, { title: 'Failed to resume file operation', source: 'code', key: 'code-tree-action-resume' })
+    notify.error(err, { title: t('code.tree.resumeFailed'), source: 'code', key: 'code-tree-action-resume' })
   } finally {
     resumingActions.delete(action.id)
   }
@@ -352,7 +354,7 @@ async function resumeAction(action: UserToolActionDto, summary: string): Promise
 watch(() => props.approvals, () => {
   for (const action of pendingActions.value.values()) {
     const approval = props.approvals?.find((item) => item.id === userToolApprovalId(action))
-    const summary = pendingActionSummaries.value.get(action.id) ?? (action.tool_id === 'command_run' ? `File operation: ${action.id}` : action.tool_id)
+    const summary = pendingActionSummaries.value.get(action.id) ?? (action.tool_id === 'command_run' ? t('code.tree.operationWithId', { id: action.id }) : action.tool_id)
     if (approval?.status === 'approved' && action.action_approval_id) {
       void resumeAction(action, summary)
       continue
@@ -370,8 +372,8 @@ watch(() => props.approvals, () => {
 const pendingActionList = computed(() => Array.from(pendingActions.value.values())
   .filter((action) => action.status !== 'completed')
   .map((action) => {
-    const summary = pendingActionSummaries.value.get(action.id) ?? 'File operation'
-    return { action, summary, message: userToolActionStatusMessage(action, summary) }
+    const summary = pendingActionSummaries.value.get(action.id) ?? t('code.tree.operation')
+    return { action, summary, message: userToolActionStatusMessage(action, summary, t) }
   }))
 
 function flattenTree(nodes: TreeNode[], depth: number, acc: FlatNode[]): FlatNode[] {
@@ -407,14 +409,14 @@ watch(() => props.cwd, () => {
         class="h-7 text-xs"
         @keydown.enter="runSearch"
       />
-      <UiButton variant="ghost" size="icon" class="h-7 w-7 shrink-0" title="Search" :disabled="searching" @click="runSearch">
+      <UiButton variant="ghost" size="icon" class="h-7 w-7 shrink-0" :title="t('code.tree.search')" :disabled="searching" @click="runSearch">
         <RefreshCw :size="13" :class="{ 'animate-spin': searching }" />
       </UiButton>
     </div>
 
     <div class="flex items-center justify-between border-b border-border px-2 py-1">
       <span class="truncate text-xs font-medium text-muted-foreground">{{ rootPath }}</span>
-      <UiButton variant="ghost" size="icon" class="h-6 w-6 shrink-0" title="Refresh" :disabled="loading" @click="refresh">
+      <UiButton variant="ghost" size="icon" class="h-6 w-6 shrink-0" :title="t('common.refresh')" :disabled="loading" @click="refresh">
         <RefreshCw :size="12" :class="{ 'animate-spin': loading }" />
       </UiButton>
     </div>
@@ -429,12 +431,12 @@ watch(() => props.cwd, () => {
     <UiScrollArea class="flex-1">
       <div class="code-tree py-1">
         <div v-if="loading && tree.length === 0" class="px-3 py-4 text-center text-xs text-muted-foreground">
-          Loading...
+          {{ t('common.loading') }}
         </div>
 
         <template v-else-if="flatList.length === 0">
           <div class="px-3 py-4 text-center text-xs text-muted-foreground">
-            {{ searchResults ? 'No matches found.' : 'Directory is empty.' }}
+            {{ searchResults ? t('code.tree.noMatches') : t('code.tree.empty') }}
           </div>
         </template>
 
@@ -477,13 +479,13 @@ watch(() => props.cwd, () => {
 
             <div v-if="contextMenuPath === item.node.path" class="code-tree-context-menu">
               <button class="code-tree-context-item" @click="handleNodeClick(item.node); closeContextMenu()">
-                <File :size="12" /> Open
+                <File :size="12" /> {{ t('code.tree.open') }}
               </button>
               <button class="code-tree-context-item" @click="requestRenameApproval(item.node)">
-                <Pencil :size="12" /> Rename (approval)
+                <Pencil :size="12" /> {{ t('code.tree.rename') }}
               </button>
               <button class="code-tree-context-item danger" @click="requestDeleteApproval(item.node)">
-                <Trash2 :size="12" /> Delete (approval)
+                <Trash2 :size="12" /> {{ t('code.tree.delete') }}
               </button>
             </div>
           </div>

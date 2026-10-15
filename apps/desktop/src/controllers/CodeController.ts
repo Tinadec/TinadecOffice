@@ -1,4 +1,5 @@
 import { computed, ref, type Ref } from 'vue'
+import i18n from '@/i18n'
 import { api as baseApi, type ApprovalDto, type ProjectDto } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
 import { projectStorageId, scopedApi, selectionKey } from '@/lib/storageScope'
@@ -15,6 +16,7 @@ export interface OpenTab {
   content?: string
 }
 
+const t = i18n.global.t
 const projects = ref<ProjectDto[]>([])
 const selectedProjectId = ref<string | null>(null)
 const api = scopedApi(baseApi, () => projectStorageId(selectedProjectId.value))
@@ -51,10 +53,10 @@ async function loadProjects(): Promise<void> {
   } catch (err) {
     banner.error({
       key: 'code-load',
-      title: 'Failed to load projects',
-      message: 'The project list is currently unavailable.',
-      details: err instanceof Error ? err.message : 'Failed to load projects',
-      action: { label: 'Retry', run: () => loadProjects() },
+      title: t('code.loadProjectsFailed'),
+      message: t('code.projectsUnavailable'),
+      details: err instanceof Error ? err.message : t('code.loadProjectsFailed'),
+      action: { label: t('common.retry'), run: () => loadProjects() },
     })
   } finally {
     busy.value = false
@@ -136,7 +138,7 @@ async function decideApproval(approval: ApprovalDto, decision: 'approved' | 'rej
     await api.decideApproval(approval.id, decision)
     await loadApprovals()
   } catch (err) {
-    notify.error(err, { title: 'Failed to decide approval' })
+    notify.error(err, { title: t('approval.decideFailed') })
   }
 }
 
@@ -149,8 +151,8 @@ function handleShowPatch(filePath: string, original: string, modified: string): 
 
 function handleNewFile(): void {
   notify.info({
-    title: 'New file',
-    message: 'New file creation requires an approval flow. Use the chat panel to request file creation.',
+    title: t('code.newFile'),
+    message: t('code.newFileHint'),
   })
 }
 

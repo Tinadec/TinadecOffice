@@ -1,5 +1,7 @@
 import { ref, computed, type ComputedRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, type ModelStreamChunkDto } from '../api'
+import type { Translate } from '../userToolAction'
 import type { GitStatusFile, GitDiffSection } from './useGitOperation'
 import { statusToLabel } from './useGitOperation'
 
@@ -93,6 +95,7 @@ function isConfigFile(path: string): boolean {
 export function generateLocalChangeAnalysis(
   files: GitStatusFile[],
   sections: GitDiffSection[],
+  t: Translate,
 ): AiChangeAnalysis {
   let score = 0
   const concerns: AiChangeConcern[] = []
@@ -114,7 +117,7 @@ export function generateLocalChangeAnalysis(
       concerns.push({
         severity: 'high',
         category: 'Conflict',
-        description: `${file.path} has unresolved merge conflicts`,
+        description: t('context.gitRisk.conflict', { path: file.path }),
       })
     }
 
@@ -123,7 +126,7 @@ export function generateLocalChangeAnalysis(
       concerns.push({
         severity: 'medium',
         category: 'Deletion',
-        description: `${file.path} is being deleted`,
+        description: t('context.gitRisk.deletion', { path: file.path }),
       })
     }
 
@@ -132,9 +135,9 @@ export function generateLocalChangeAnalysis(
       concerns.push({
         severity: 'medium',
         category: 'Dependencies',
-        description: `Lockfile ${file.path} changed — verify dependency updates`,
+        description: t('context.gitRisk.lockfile', { path: file.path }),
       })
-      testSuggestions.push(`Run install and smoke tests after ${file.path} changes`)
+      testSuggestions.push(t('context.gitRisk.lockfileTest', { path: file.path }))
     }
 
     if (isConfigFile(file.path)) {
@@ -142,7 +145,7 @@ export function generateLocalChangeAnalysis(
       concerns.push({
         severity: 'low',
         category: 'Configuration',
-        description: `${file.path} configuration changed`,
+        description: t('context.gitRisk.config', { path: file.path }),
       })
     }
 
@@ -151,9 +154,9 @@ export function generateLocalChangeAnalysis(
       concerns.push({
         severity: 'high',
         category: 'Security',
-        description: `${file.path} may affect authentication or authorization`,
+        description: t('context.gitRisk.security', { path: file.path }),
       })
-      testSuggestions.push(`Review security-related tests for ${file.path}`)
+      testSuggestions.push(t('context.gitRisk.securityTest', { path: file.path }))
     }
 
     if (isApiSurface(file.path)) {
@@ -161,13 +164,13 @@ export function generateLocalChangeAnalysis(
       concerns.push({
         severity: 'medium',
         category: 'API',
-        description: `${file.path} touches API surface`,
+        description: t('context.gitRisk.api', { path: file.path }),
       })
-      testSuggestions.push(`Run API contract and integration tests`)
+      testSuggestions.push(t('context.gitRisk.apiTest'))
     }
 
     if (status === 'A' && file.path.toLowerCase().includes('test')) {
-      testSuggestions.push(`New test file ${file.path} — ensure it runs in CI`)
+      testSuggestions.push(t('context.gitRisk.newTest', { path: file.path }))
     }
   }
 
@@ -176,7 +179,7 @@ export function generateLocalChangeAnalysis(
     concerns.push({
       severity: totalLines > 1500 ? 'high' : 'medium',
       category: 'Size',
-      description: `Large diff: +${additions} -${deletions} lines across ${files.length} files`,
+      description: t('context.gitRisk.size', { additions, deletions, files: files.length }),
     })
   }
 
@@ -194,13 +197,13 @@ export function generateLocalChangeAnalysis(
   const riskScore = Math.min(100, Math.max(0, score * 7))
 
   if (files.length > 0 && testSuggestions.length === 0) {
-    testSuggestions.push('Run the affected unit/integration tests')
+    testSuggestions.push(t('context.gitRisk.defaultTest'))
   }
 
   const summary =
     uniqueConcerns.length === 0
-      ? `Low-risk change: ${files.length} file${files.length === 1 ? '' : 's'} updated.`
-      : `${files.length} file${files.length === 1 ? '' : 's'} updated with ${uniqueConcerns.length} potential concern${uniqueConcerns.length === 1 ? '' : 's'}.`
+      ? t('context.gitRisk.summaryLow', { n: files.length }, files.length)
+      : t('context.gitRisk.summary', { n: files.length, concerns: t('context.gitRisk.concernCount', { n: uniqueConcerns.length }, uniqueConcerns.length) }, files.length)
 
   return {
     summary,
@@ -209,7 +212,7 @@ export function generateLocalChangeAnalysis(
     concerns: uniqueConcerns,
     affectedAreas: [...affectedAreas],
     testSuggestions: [...new Set(testSuggestions)],
-    explanation: 'Generated from local heuristics; AI analysis not available.',
+    explanation: t('context.gitRisk.localExplanation'),
   }
 }
 
@@ -221,6 +224,7 @@ export function generateLocalChangeAnalysis(
  * heuristics when no session is available.
  */
 export function useAiChangeAnalysis(selectedSessionId: ComputedRef<string | null>) {
+  const { t } = useI18n()
   const analyzing = ref(false)
   const aiError = ref<string | null>(null)
   const analysis = ref<AiChangeAnalysis | null>(null)
@@ -235,12 +239,12 @@ export function useAiChangeAnalysis(selectedSessionId: ComputedRef<string | null
     branch?: string,
   ): Promise<void> {
     if (files.length === 0) {
-      aiError.value = 'No changes to analyze'
+      aiError.value = t('context.gitAiNoChanges')
       return
     }
 
     const sessionId = selectedSessionId.value
-    const localAnalysis = generateLocalChangeAnalysis(files, sections)
+    const localAnalysis = generateLocalChangeAnalysis(files, sections, t)
     analysis.value = localAnalysis
 
     if (!sessionId) {
@@ -316,14 +320,14 @@ export function useAiChangeAnalysis(selectedSessionId: ComputedRef<string | null
           } else if (chunk.kind === 'done') {
             const text = streamingText.value.trim()
             if (text) {
-              const parsed = parseAiAnalysisResponse(text)
+              const parsed = parseAiAnalysisResponse(text, t)
               if (parsed) {
                 analysis.value = parsed
               }
             }
             analyzing.value = false
           } else if (chunk.kind === 'error') {
-            aiError.value = chunk.delta ?? 'AI analysis failed'
+            aiError.value = chunk.delta ?? t('context.gitAiAnalysisFailed')
             analyzing.value = false
           }
         },
@@ -333,7 +337,7 @@ export function useAiChangeAnalysis(selectedSessionId: ComputedRef<string | null
         },
       )
     } catch (err) {
-      aiError.value = err instanceof Error ? err.message : 'AI analysis failed'
+      aiError.value = err instanceof Error ? err.message : t('context.gitAiAnalysisFailed')
       analyzing.value = false
     }
   }
@@ -366,7 +370,7 @@ export function useAiChangeAnalysis(selectedSessionId: ComputedRef<string | null
   }
 }
 
-function parseAiAnalysisResponse(text: string): AiChangeAnalysis | null {
+function parseAiAnalysisResponse(text: string, t: Translate): AiChangeAnalysis | null {
   // Try to extract JSON from a markdown code block if the model wrapped it
   const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(text)
   const jsonText = codeBlockMatch ? codeBlockMatch[1] : text
@@ -395,7 +399,7 @@ function parseAiAnalysisResponse(text: string): AiChangeAnalysis | null {
       concerns,
       affectedAreas: Array.isArray(parsed.affectedAreas) ? parsed.affectedAreas.map(String) : [],
       testSuggestions: Array.isArray(parsed.testSuggestions) ? parsed.testSuggestions.map(String) : [],
-      explanation: String(parsed.explanation ?? 'AI-generated risk assessment.'),
+      explanation: String(parsed.explanation ?? t('context.gitRisk.aiExplanation')),
     }
   } catch {
     return null

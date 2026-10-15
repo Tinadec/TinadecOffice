@@ -26,7 +26,7 @@ const action = computed(() => store.get(actionId.value))
 const isUnknown = computed(() => action.value?.status === 'outcome_unknown')
 
 const statusText = computed(() =>
-  action.value ? userToolActionStatusMessage(action.value, action.value.tool_id) : '',
+  action.value ? userToolActionStatusMessage(action.value, action.value.tool_id, t) : '',
 )
 
 async function load(): Promise<void> {
