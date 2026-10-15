@@ -7,7 +7,7 @@
     "apps/*"
   ],
   "scripts": {
-    "predev": "node scripts/dev-port-guard.mjs && node scripts/setup-shadcn-ai.mjs && node scripts/setup-ripgrep.mjs && npm run dev:tools",
+    "predev": "node scripts/check-dependencies.mjs && node scripts/dev-port-guard.mjs && node scripts/setup-shadcn-ai.mjs && node scripts/setup-ripgrep.mjs && npm run dev:tools",
     "dev": "node scripts/dev.mjs",
     "dev:tools": "node scripts/dotnet.mjs build TinadecTools/TinadecTools.csproj",
     "dev:core": "node scripts/dotnet.mjs run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731",
