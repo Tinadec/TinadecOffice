@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import { describe, expect, it } from 'vitest'
 import { PET_STATES, parsePetSprite, petFrameAt, petSourceRect } from './petRuntime'
 
@@ -5,7 +6,7 @@ describe('Petdex pet runtime', () => {
   it('parses classic and extended Petdex grids', () => {
     expect(parsePetSprite(1536, 1872)).toEqual({ columns: 8, rows: 9, frameWidth: 192, frameHeight: 208 })
     expect(parsePetSprite(1536, 2288).rows).toBe(11)
-    expect(() => parsePetSprite(1500, 1872)).toThrow('Petdex 8-column')
+    expect(() => parsePetSprite(1500, 1872)).toThrow(i18n.global.t('settings.petSpriteGrid'))
   })
 
   it('loops only through each state active cells', () => {

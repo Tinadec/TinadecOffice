@@ -16,6 +16,7 @@
  */
 
 import type { EventEnvelope } from '@/api'
+import i18n from '@/i18n'
 
 export type TerminalSourceKind = 'local' | 'agent'
 
@@ -187,7 +188,7 @@ export function createAgentTerminalSource(options: AgentTerminalOptions): Termin
     switch (event.type) {
       case 'terminal.command': {
         const command = String(payload.command ?? '')
-        const cwd = payload.cwd ? ` ${dim(`(cwd: ${payload.cwd})`)}` : ''
+        const cwd = payload.cwd ? ` ${dim(i18n.global.t('terminal.output.cwd', { cwd: payload.cwd }))}` : ''
         handlers.onData(`${dim('$ ')}${command}${cwd}\r\n`)
         handlers.onStatus?.('running')
         break
@@ -204,13 +205,13 @@ export function createAgentTerminalSource(options: AgentTerminalOptions): Termin
       case 'terminal.exit': {
         const code = payload.exit_code
         status = 'exited'
-        handlers.onData(`\r\n${dim(`[Process exited with code ${code ?? 'unknown'}]`)}\r\n`)
+        handlers.onData(`\r\n${dim(i18n.global.t('terminal.output.exited', { code: code ?? '?' }))}\r\n`)
         handlers.onStatus?.('exited', code == null ? undefined : String(code))
         break
       }
       case 'terminal.session.killed': {
         status = 'killed'
-        handlers.onData(`\r\n${dim('[Session terminated]')}\r\n`)
+        handlers.onData(`\r\n${dim(i18n.global.t('terminal.output.terminated'))}\r\n`)
         handlers.onStatus?.('killed')
         break
       }
@@ -235,7 +236,7 @@ export function createAgentTerminalSource(options: AgentTerminalOptions): Termin
     attach,
     write(data) {
       void sendStdin(terminalSessionId, data).catch(() => {
-        handlers?.onData(`\r\n${dim('[Input was not delivered]')}\r\n`)
+        handlers?.onData(`\r\n${dim(i18n.global.t('terminal.output.inputLost'))}\r\n`)
       })
     },
     resize() {
@@ -253,7 +254,7 @@ export function createAgentTerminalSource(options: AgentTerminalOptions): Termin
     kill() {
       void kill?.(terminalSessionId).catch(() => undefined)
       status = 'killed'
-      handlers?.onData(`\r\n${dim('[Session terminated]')}\r\n`)
+      handlers?.onData(`\r\n${dim(i18n.global.t('terminal.output.terminated'))}\r\n`)
       handlers?.onStatus?.('killed')
       this.detach()
     },

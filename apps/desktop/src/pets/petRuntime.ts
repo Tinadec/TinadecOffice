@@ -1,3 +1,5 @@
+import i18n from '@/i18n'
+
 export const PETDEX_COLUMNS = 8
 export const PETDEX_MIN_ROWS = 9
 export const PETDEX_BASE_FRAME_WIDTH = 192
@@ -33,13 +35,13 @@ export interface PetFrame {
 
 export function parsePetSprite(width: number, height: number): PetSpriteLayout {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
-    throw new Error('Pet spritesheet dimensions are invalid')
+    throw new Error(i18n.global.t('settings.petSpriteInvalid'))
   }
   const frameWidth = width / PETDEX_COLUMNS
   const frameHeight = frameWidth / PETDEX_FRAME_ASPECT
   const rows = height / frameHeight
   if (!Number.isInteger(frameWidth) || !Number.isInteger(frameHeight) || !Number.isInteger(rows) || rows < PETDEX_MIN_ROWS) {
-    throw new Error('Pet spritesheet must use the Petdex 8-column frame grid')
+    throw new Error(i18n.global.t('settings.petSpriteGrid'))
   }
   return { columns: PETDEX_COLUMNS, rows, frameWidth, frameHeight }
 }

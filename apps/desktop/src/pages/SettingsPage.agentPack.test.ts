@@ -85,7 +85,8 @@ vi.mock('vue-router', () => ({
 
 vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({
-    t: (key: string) => key,
+    // A named value is appended so a test can see it reached the text (common.copyName(…)).
+    t: (key: string, named?: Record<string, unknown>) => named?.name !== undefined ? `${key}(${String(named.name)})` : key,
     locale: { value: 'en' },
   }),
 }))
@@ -275,7 +276,7 @@ describe('SettingsPage GraphSeedPack clone flow', () => {
     await flushPromises()
 
     expect(mocks.createAgentDraft).toHaveBeenCalledWith(expect.objectContaining({
-      display_name: 'Managed Meeting (copy)',
+      display_name: 'common.copyName(Managed Meeting)',
       layer: 'operation',
       role: 'session_coordinator',
       tool_scope: ['*'],

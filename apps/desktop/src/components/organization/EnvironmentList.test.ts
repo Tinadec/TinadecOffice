@@ -31,7 +31,7 @@ describe('EnvironmentList', () => {
     const [staging, gpu] = wrapper.findAll('.environment-item')
     expect(staging!.text()).toContain('测试')
     expect(staging!.text()).toContain('1/2 空闲')
-    expect(staging!.text()).toContain('本会话 · #1 run run-aaaa')
+    expect(staging!.text()).toContain('本会话 · #1 运行 run-aaaa')
     expect(gpu!.text()).toContain('已停用')
     expect(gpu!.text()).toContain('启用')
   })

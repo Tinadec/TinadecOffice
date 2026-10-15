@@ -233,7 +233,7 @@ async function cloneSelectedMode() {
   modeBusy.value = true
   try {
     const m = await api.createAgentModeDraft({
-      display_name: `${source.display_name} (copy)`,
+      display_name: t('common.copyName', { name: source.display_name }),
       description: source.description ?? null,
       ...toCoreTopology(modeNodes.value, modeEdges.value),
       canvas_layout: {}

@@ -1,3 +1,5 @@
+import i18n from '@/i18n'
+
 export type GitDiffLineChange = 'context' | 'add' | 'delete';
 
 export interface GitDiffLine {
@@ -151,7 +153,7 @@ export function parseUnifiedDiff(diff: string): GitParsedDiff {
 
   return {
     files,
-    notice: diff.trim().length === 0 ? 'No diff text available.' : null
+    notice: diff.trim().length === 0 ? i18n.global.t('context.gitNoDiffText') : null
   };
 }
 

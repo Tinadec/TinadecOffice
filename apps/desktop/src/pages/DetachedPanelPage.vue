@@ -165,7 +165,7 @@ async function requestShellApproval() {
   busy.value = true
   try {
     const command = shellCommand.value.trim()
-    if (!command) throw new Error('Enter a command before requesting a shell action.')
+    if (!command) throw new Error(t('home.shellNeedsCommand'))
     const windows = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
     const params = {
       executable: windows ? 'cmd.exe' : '/bin/sh',

@@ -2635,7 +2635,7 @@ async function requestResult<T>(path: string, init?: StorageRequestOptions): Pro
       data = JSON.parse(text);
     } catch {
       // Response body is not valid JSON – surface the raw text for debugging
-      throw new Error(`Invalid response from server: ${text.substring(0, 200)}`);
+      throw new Error(i18n.global.t('errors.invalidServerResponse', { text: text.substring(0, 200) }));
     }
   }
 
@@ -2701,7 +2701,7 @@ export async function createUserToolActionForPath(
   const projects = await request<ProjectDto[]>('/api/v1/projects');
   const normalized = path.replace(/[\\/]+$/, '').toLowerCase();
   const project = projects.find((item) => item.path.replace(/[\\/]+$/, '').toLowerCase() === normalized);
-  if (!project) throw new Error('The selected workspace is not registered in TinadecCore.');
+  if (!project) throw new Error(i18n.global.t('errors.workspaceNotRegistered'));
   return request<UserToolActionDto>('/api/v1/user/tool-actions', {
     method: 'POST',
     storageId: project.storage_id ?? capturedStorage,

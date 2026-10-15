@@ -7,13 +7,17 @@ import type { ProjectDto } from '@/api'
 import type { PermissionLevel } from '@/types/mode'
 import type { AttachableFile, PendingAttachment } from '@/lib/pendingAttachments'
 
+const { default: zhBundle } = await vi.hoisted(() => import('@/locales/zh-CN'))
+
 vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   // Returns the key so tests can assert which entry rendered. A named-parameter call
   // (t('x', { name })) gets the interpolation appended instead of the bare key, which is
   // what lets a test check the value actually reached the label rather than only that a
-  // label exists.
+  // label exists. Search keywords are the one exception: they are the bilingual words a
+  // search matches, so they come from the real zh-CN bundle.
   useI18n: () => ({
     t: (key: string, arg?: unknown) => {
+      if (key.startsWith('commandPanel.kw.')) return key.split('.').reduce<unknown>((node, part) => (node as Record<string, unknown>)?.[part], zhBundle) as string
       if (typeof arg === 'string' || typeof arg === 'number') return String(arg)
       const named = arg as Record<string, unknown> | undefined
       return named && Object.keys(named).length ? `${key} ${JSON.stringify(named)}` : key

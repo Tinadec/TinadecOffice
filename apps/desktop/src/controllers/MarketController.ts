@@ -55,7 +55,7 @@ let catalogEpoch = 0
 let ledgerEpoch = 0
 
 const sourceForm = reactive({
-  name: 'MCP Registry',
+  name: t('market.defaultSourceName'),
   kind: '',
   location: '',
 })

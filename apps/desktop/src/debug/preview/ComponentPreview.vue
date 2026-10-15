@@ -53,7 +53,7 @@ const mockActivity = computed<AgentActivity>(() => {
     runId: orch.run.id,
     runStartedAt: orch.run.created_at,
     runSummary: orch.run.summary,
-    activeAgentName: activeAssignment?.agent_name ?? 'Meeting Agent',
+    activeAgentName: activeAssignment?.agent_name ?? t('activity.meetingAgentName'),
     activeAgentRole: activeAssignment?.agent_type ?? t('activity.roles.meeting'),
     completedNodes: completed,
     totalNodes: orch.nodes.length,

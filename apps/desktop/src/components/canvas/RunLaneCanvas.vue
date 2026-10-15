@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { VueFlow, Panel, type Node, type Edge } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { layoutLanes, toFlowNodes, makeEdge } from './flowShared'
@@ -15,6 +16,7 @@ import type { AgentLineageEntryDto } from '@/api'
  * when both are empty the canvas degrades to a labeled empty state rather
  * than inventing nodes. Frozen runs are never draggable or connectable.
  */
+const { t } = useI18n()
 const props = defineProps<{
   lineage: Array<AgentLineageEntryDto & { display_name?: string }>
   hasOrchestrationData: boolean
@@ -68,7 +70,7 @@ const edges = computed<Edge[]>(() => {
         parent.id,
         entry.id,
         'lineage',
-        `depth ${entry.generation_depth}`,
+        t('workbench.lineageDepth', { depth: entry.generation_depth }),
       ),
     )
   }

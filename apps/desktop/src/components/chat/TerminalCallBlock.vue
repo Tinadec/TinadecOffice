@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="terminal-call-block">
     <header class="terminal-call-head">
-      <span class="terminal-call-badge">AGENT</span>
+      <span class="terminal-call-badge">{{ t('terminal.agentBadge') }}</span>
       <code class="terminal-call-command">{{ command }}</code>
       <span v-if="isRunning" class="terminal-call-live">
         <Loader2 :size="11" class="terminal-call-spin" />

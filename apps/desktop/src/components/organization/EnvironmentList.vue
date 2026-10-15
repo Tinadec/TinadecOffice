@@ -72,7 +72,7 @@ async function register() {
 
 const holderLabel = (holder: EnvironmentDto['holders'][number]) =>
   (holder.session_id && holder.session_id === props.sessionId ? `${t('organization.environments.thisSession')} · ` : '')
-  + `#${holder.slot} run ${holder.run_id?.slice(0, 8) ?? '?'}`
+  + t('organization.environments.holder', { slot: holder.slot, run: holder.run_id?.slice(0, 8) ?? '?' })
 
 onMounted(load)
 // Occupancy is live state; re-read when the user switches sessions to see what this one holds.

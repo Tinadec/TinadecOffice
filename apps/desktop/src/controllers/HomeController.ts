@@ -1100,9 +1100,9 @@ async function promoteQueued(id: string) {
 async function requestShellApproval() {
   await run(t('home.action.requestApproval'), async () => {
     const projectPath = currentProject.value?.path
-    if (!projectPath) throw new Error('Select a registered project before requesting a shell action.')
+    if (!projectPath) throw new Error(t('home.shellNeedsProject'))
     const command = shellCommand.value.trim()
-    if (!command) throw new Error('Enter a command before requesting a shell action.')
+    if (!command) throw new Error(t('home.shellNeedsCommand'))
     // 'shell' is the governed command tool id (same one agent workers use);
     // Core resolves it from the live provider manifest and its frozen schema
     // takes { command, cwd }, not the legacy command_run executable shape.
@@ -1184,7 +1184,7 @@ async function executeCatalogTool(tool: ToolDescriptorDto) {
     })
     return
   }
-  await run(`run ${tool.display_name}`, async () => {
+  await run(t('home.action.runTool', { name: tool.display_name }), async () => {
     const response = tool.execute_endpoint.includes('/tool-runtime/')
       ? await api.executeToolRuntime(tool.id, { session_id: sessionId, cwd, arguments: {} })
       : await api.executeCodeTool(tool.id, { session_id: sessionId, cwd, arguments: {} })

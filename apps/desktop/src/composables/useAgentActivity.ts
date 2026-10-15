@@ -319,7 +319,7 @@ export function useAgentActivity(
       runId,
       runStartedAt: event.ts,
       runSummary: summary,
-      activeAgentName: 'Meeting Agent',
+      activeAgentName: t('activity.meetingAgentName'),
       activeAgentRole: agentRoleLabel('meeting'),
       lastUpdated: event.ts,
     }

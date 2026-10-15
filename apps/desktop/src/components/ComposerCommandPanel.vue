@@ -246,7 +246,7 @@ function modelChoiceRows(agent: AgentDirectoryItemDto, conversation: boolean, ch
   const rows: Row[] = []
   if (own?.kind === 'route') rows.push({ id: 'own-route', label: strategyName(own), hint: t('composer.agentModels.routeHint'), icon: Network, checked: true, disabled: true, run: () => {} })
   rows.push({ id: 'follow-default', label: t('composer.agentModels.followDefault'), hint: followHint(agent, conversation), icon: Sparkles,
-    keywords: 'default inherit 默认 跟随', checked: !own, disabled: busy, run: () => choose(null) })
+    keywords: t('commandPanel.kw.followDefault'), checked: !own, disabled: busy, run: () => choose(null) })
   for (const row of model?.models.value ?? []) rows.push({
     id: `${row.provider_instance_id}:${row.model_id}`, label: row.display_name || row.model_id,
     hint: row.provider_display_name ?? undefined, keywords: `${row.model_id} ${row.provider_display_name ?? ''}`, icon: Sparkles,
@@ -255,7 +255,7 @@ function modelChoiceRows(agent: AgentDirectoryItemDto, conversation: boolean, ch
   })
   for (const runtime of model?.runtimes.value ?? []) rows.push({
     id: `runtime:${runtime.provider_instance_id}`, label: runtime.display_name, hint: t('composer.agentModels.runtime'),
-    keywords: `${runtime.display_name} cli acp`, icon: Bot,
+    keywords: `${runtime.display_name} ${t('commandPanel.kw.runtime')}`, icon: Bot,
     checked: selected?.provider_instance_id === runtime.provider_instance_id && !selected.model, disabled: busy,
     run: () => choose({ provider_instance_id: runtime.provider_instance_id, model: null }),
   })
@@ -289,7 +289,7 @@ function modelPageRows(): Row[] {
   })
   const ownModels = agents.otherAgents.value.filter(agent => agents.ownStrategy(agent)).length
   rows.push({ id: 'model-agents', label: t('commandPanel.modelAgents'), hint: t('commandPanel.modelAgentsHint'), icon: Users,
-    keywords: 'agents executor 智能体 执行', value: ownModels ? t('composer.agentModels.ownCount', { count: ownModels }) : undefined,
+    keywords: t('commandPanel.kw.agentModels'), value: ownModels ? t('composer.agentModels.ownCount', { count: ownModels }) : undefined,
     submenu: true, testId: 'command-panel-model-agents', run: () => selectPage('model-agents') })
   rows.push(manageModelsRow())
   return rows
@@ -319,8 +319,8 @@ const allRows = computed<Row[]>(() => {
     return modelChoiceRows(agent, false, choice => { void agents.setModel(agent, choice) })
   }
   const rows: Row[] = [
-    { id: 'image', label: t('chat.addImage'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: 'image picture 图片', icon: Image, disabled: !props.canAttach, testId: 'composer-attach-image', run: () => emit('attach', 'image/*') },
-    { id: 'file', label: t('chat.addFile'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: 'file attachment 文件 附件', icon: FileText, disabled: !props.canAttach, testId: 'composer-attach-file', run: () => emit('attach', '') },
+    { id: 'image', label: t('chat.addImage'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: t('commandPanel.kw.image'), icon: Image, disabled: !props.canAttach, testId: 'composer-attach-image', run: () => emit('attach', 'image/*') },
+    { id: 'file', label: t('chat.addFile'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: t('commandPanel.kw.file'), icon: FileText, disabled: !props.canAttach, testId: 'composer-attach-file', run: () => emit('attach', '') },
   ]
   for (const setting of composerSettings) {
     if ('surface' in setting && (setting.surface === 'space') !== Boolean(props.spatial)) continue
@@ -329,7 +329,7 @@ const allRows = computed<Row[]>(() => {
     const currentValue = setting.id === 'model' ? props.defaultModelLabel : setting.id === 'mode' ? selectedMode.value?.display_name ?? t('commandPanel.mode') : setting.id === 'permission' ? permissionName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
     rows.push({
       id: setting.id, label: t(setting.label), hint: t(setting.hint),
-      keywords: setting.keywords,
+      keywords: t(setting.keywords),
       icon: setting.id === 'permission' ? currentPermission.value.icon : setting.id === 'mode' && selectedMode.value ? modeIcon(selectedMode.value.slug) : icons[setting.id],
       risk: setting.id === 'permission' ? currentPermission.value.risk : undefined, value: currentValue,
       switch: !!toggle, checked: toggle ? Boolean(space.value[toggle]) : undefined, submenu: !!submenu,

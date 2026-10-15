@@ -13,16 +13,17 @@ export type SpaceToggle = Exclude<keyof SpaceOptionsDto, 'workflow_mode_version_
 // The model row is the model of the agent that answers the user, the same per-agent setting as
 // the agent center; the other agents' models sit one page further down.
 // Existing run/session commands still come from appCommands and their shared handlers.
+// label, hint and keywords are translation keys.
 export const composerSettings = [
-  { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'model agent default 模型 智能体 默认模型', page: 'model' },
-  { id: 'mode', label: 'commandPanel.mode', hint: 'commandPanel.modeHint', keywords: 'mode preset plan solo 模式 预设 计划', page: 'mode', surface: 'flat' },
-  { id: 'permission', label: 'commandPanel.permission', hint: 'permission.nextRunHint', keywords: 'permission approval 权限 审批', page: 'permission' },
-  { id: 'plan', label: 'commandPanel.plan', hint: 'commandPanel.planHint', keywords: 'plan planning 计划 规划', toggle: 'plan_first', surface: 'space' },
-  { id: 'spec', label: 'commandPanel.spec', hint: 'commandPanel.specHint', keywords: 'spec specification 规范 需求 设计', toggle: 'spec_enabled', surface: 'space' },
-  { id: 'agents', label: 'commandPanel.agents', hint: 'commandPanel.agentsHint', keywords: 'agents team collaboration 多智能体 协作 编排', toggle: 'multi_agent', surface: 'space' },
-  { id: 'workflow', label: 'commandPanel.workflow', hint: 'commandPanel.workflowHint', keywords: 'workflow 工作流 流程', page: 'workflow', surface: 'space' },
-  { id: 'bulletin', label: 'commandPanel.bulletin', hint: 'commandPanel.bulletinHint', keywords: 'bulletin board 公告板 协作信息', toggle: 'bulletin_board', surface: 'space' },
-  { id: 'worktree', label: 'commandPanel.worktree', hint: 'commandPanel.worktreeHint', keywords: 'worktree git isolation 隔离 工作树', toggle: 'worktree', surface: 'space' },
+  { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'commandPanel.kw.model', page: 'model' },
+  { id: 'mode', label: 'commandPanel.mode', hint: 'commandPanel.modeHint', keywords: 'commandPanel.kw.mode', page: 'mode', surface: 'flat' },
+  { id: 'permission', label: 'commandPanel.permission', hint: 'permission.nextRunHint', keywords: 'commandPanel.kw.permission', page: 'permission' },
+  { id: 'plan', label: 'commandPanel.plan', hint: 'commandPanel.planHint', keywords: 'commandPanel.kw.plan', toggle: 'plan_first', surface: 'space' },
+  { id: 'spec', label: 'commandPanel.spec', hint: 'commandPanel.specHint', keywords: 'commandPanel.kw.spec', toggle: 'spec_enabled', surface: 'space' },
+  { id: 'agents', label: 'commandPanel.agents', hint: 'commandPanel.agentsHint', keywords: 'commandPanel.kw.agents', toggle: 'multi_agent', surface: 'space' },
+  { id: 'workflow', label: 'commandPanel.workflow', hint: 'commandPanel.workflowHint', keywords: 'commandPanel.kw.workflow', page: 'workflow', surface: 'space' },
+  { id: 'bulletin', label: 'commandPanel.bulletin', hint: 'commandPanel.bulletinHint', keywords: 'commandPanel.kw.bulletin', toggle: 'bulletin_board', surface: 'space' },
+  { id: 'worktree', label: 'commandPanel.worktree', hint: 'commandPanel.worktreeHint', keywords: 'commandPanel.kw.worktree', toggle: 'worktree', surface: 'space' },
 ] as const
 
 export type PermissionRisk = 'neutral' | 'low' | 'medium' | 'high'

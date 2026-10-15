@@ -354,7 +354,7 @@ const forceProviderWrite = ref(false)
 
 const providerForm = reactive<ProviderForm>({  id: '',
   driver: 'openai-compatible',
-  display_name: 'OpenAI Compatible',
+  display_name: t('settings.providerDefaultName'),
   connection_kind: 'api-key',
   protocol: 'openai-chat',
   base_url: 'https://api.openai.com/v1',
@@ -1371,7 +1371,7 @@ async function cloneAgent() {
   if (!agent) return
   agentCloneBusy.value = true
   try {
-    const newName = `${agent.name} (copy)`
+    const newName = t('common.copyName', { name: agent.name })
     await api.createAgentDraft({
       slug: `${agent.id}-copy-${Date.now()}`,
       display_name: newName,

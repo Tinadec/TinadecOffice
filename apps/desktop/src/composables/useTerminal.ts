@@ -21,6 +21,7 @@
  */
 
 import { computed, getCurrentInstance, markRaw, onUnmounted, ref, shallowRef } from 'vue'
+import i18n from '@/i18n'
 import type { Terminal } from '@xterm/xterm'
 import type { ITheme as XtermTheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -248,7 +249,7 @@ async function createTerminalInstance(
       : null
 
     if (!result?.id) {
-      throw new Error(result?.error || 'The main process started no terminal')
+      throw new Error(result?.error || i18n.global.t('terminal.noProcess'))
     }
 
     // Callers name the tab in the user's language; without a name it shows the shell, like any terminal.
@@ -376,7 +377,7 @@ function attachTerminal(
   const removeExitListener = window.tinadec.terminal.onExit(id, (exitCode) => {
     instance.exited = true
     if (instance.term) {
-      instance.term.write(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`)
+      instance.term.write(`\r\n\x1b[90m${i18n.global.t('terminal.output.exited', { code: exitCode })}\x1b[0m\r\n`)
     }
   })
 

@@ -1,3 +1,5 @@
+import i18n from '@/i18n'
+
 /** Local import validation mirrors the package boundary enforced again by Core. */
 export const SKILL_PACKAGE_MAX_BYTES = 16 * 1024 * 1024
 export const SKILL_PACKAGE_MAX_FILES = 256
@@ -11,12 +13,12 @@ export function skillNameFromDocument(content: string): string {
 }
 
 export function validateSkillPackagePaths(paths: string[]): void {
-  if (paths.length > SKILL_PACKAGE_MAX_FILES) throw new Error(`Skill package exceeds ${SKILL_PACKAGE_MAX_FILES} files.`)
+  if (paths.length > SKILL_PACKAGE_MAX_FILES) throw new Error(i18n.global.t('toolsSettings.skillPackageTooMany', { max: SKILL_PACKAGE_MAX_FILES }))
   const seen = new Set<string>()
   for (const path of paths) {
-    if (!path || path.startsWith('/') || path.includes('\\') || path.includes(':') || path.split('/').some(segment => !segment || segment === '.' || segment === '..')) throw new Error(`Invalid skill package path: ${path}`)
+    if (!path || path.startsWith('/') || path.includes('\\') || path.includes(':') || path.split('/').some(segment => !segment || segment === '.' || segment === '..')) throw new Error(i18n.global.t('toolsSettings.skillPackagePathInvalid', { path: path }))
     const canonical = path.toLowerCase()
-    if (seen.has(canonical)) throw new Error(`Duplicate skill package path: ${path}`)
+    if (seen.has(canonical)) throw new Error(i18n.global.t('toolsSettings.skillPackagePathDuplicate', { path }))
     seen.add(canonical)
   }
 }

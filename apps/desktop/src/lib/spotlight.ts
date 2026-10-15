@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import { loadSessionCatalog } from '@/lib/sessionRoster'
 import { useHostAccess } from '@/lib/hostAccess'
 /**
@@ -150,7 +151,7 @@ async function loadCatalog<T>(key: keyof Catalogs, load: (signal: AbortSignal) =
     try {
       const loaded = await boundedSource(load, signal)
       result = Array.isArray(loaded) ? { rows: loaded } : loaded
-      if (!result || !Array.isArray(result.rows)) throw new Error('Invalid search source response.')
+      if (!result || !Array.isArray(result.rows)) throw new Error(i18n.global.t('palette.searchSourceInvalid'))
     } catch (error) {
       if (signal?.aborted) throw error
       result = { rows: [], error: errorMessage(error) }
@@ -208,7 +209,7 @@ function projectItems(projects: ProjectDto[], host: SpotlightHost): SpotlightIte
       kind: 'project' as const,
       label: project.name || project.path,
       detail: project.path,
-      keywords: '项目 工作区 project workspace folder',
+      keywords: i18n.global.t('palette.kwProjectRow'),
       action: () => host.openProject(selectionKey(project)),
     }))
 }
@@ -222,7 +223,7 @@ function conversationItems(sessions: SessionDto[], projects: ProjectDto[], host:
       kind: 'conversation' as const,
       label: session.title || t('palette.untitledSession'),
       detail: [projectNames.get(selectionKey({ id: session.project_id ?? '', storage_id: session.storage_id })), new Date(session.updated_at).toLocaleDateString()].filter(Boolean).join(' · '),
-      keywords: '会话 对话 session conversation thread',
+      keywords: i18n.global.t('palette.kwSessionRow'),
       action: () => host.openSession(selectionKey(session)),
     }))
 }
@@ -244,7 +245,7 @@ function agentItems(agents: AgentDirectoryItemDto[], host: SpotlightHost): Spotl
     kind: 'agent' as const,
     label: agent.display_name || agent.slug,
     detail: [agent.slug, agent.role, agent.layer].filter(Boolean).join(' · '),
-    keywords: ['智能体 agent', agent.source_kind, ...(agent.mode_usages ?? []).map((usage) => usage.mode_slug)].join(' '),
+    keywords: [i18n.global.t('palette.kwAgentRow'), agent.source_kind, ...(agent.mode_usages ?? []).map((usage) => usage.mode_slug)].join(' '),
     action: () => host.openAgent(agent.id),
   }))
 }
@@ -255,7 +256,7 @@ function modeItems(modes: AgentModeDto[], host: SpotlightHost): SpotlightItem[] 
     kind: 'mode' as const,
     label: mode.display_name || mode.slug || mode.id,
     detail: mode.summary || mode.description || mode.slug,
-    keywords: ['模式 mode workflow', mode.slug, mode.description, mode.status].filter(Boolean).join(' '),
+    keywords: [i18n.global.t('palette.kwModeRow'), mode.slug, mode.description, mode.status].filter(Boolean).join(' '),
     action: () => host.openMode(mode.id),
   }))
 }
@@ -266,7 +267,7 @@ function promptItems(prompts: PromptFragmentDto[], host: SpotlightHost): Spotlig
     kind: 'prompt' as const,
     label: prompt.title || prompt.key || prompt.id,
     detail: [prompt.key, prompt.scope, prompt.category].filter(Boolean).join(' · '),
-    keywords: ['提示词 片段 prompt fragment', prompt.content, prompt.target_agent_id].filter(Boolean).join(' '),
+    keywords: [i18n.global.t('palette.kwPromptRow'), prompt.content, prompt.target_agent_id].filter(Boolean).join(' '),
     action: () => host.openPrompt(prompt.id),
   }))
 }
@@ -279,10 +280,10 @@ async function toolGroup(query: string, host: SpotlightHost, signal?: AbortSigna
     // desktop DTO describes nested discovery rows; read both without inventing
     // missing score, domain or provider-layer facts.
     const items = (results as unknown[]).map((result): SpotlightItem => {
-      if (!result || typeof result !== 'object') throw new Error('Invalid tool search response.')
+      if (!result || typeof result !== 'object') throw new Error(i18n.global.t('palette.toolSearchInvalid'))
       const row = result as Record<string, unknown>
       const tool = row.tool && typeof row.tool === 'object' ? row.tool as Record<string, unknown> : row
-      if (typeof tool.id !== 'string' || !tool.id) throw new Error('Invalid tool search response.')
+      if (typeof tool.id !== 'string' || !tool.id) throw new Error(i18n.global.t('palette.toolSearchInvalid'))
       const id = tool.id
       return {
         id: `tool.${id}`,
@@ -324,7 +325,7 @@ async function workspaceGroup(query: string, host: SpotlightHost, signal?: Abort
     const result = await boundedSource((sourceSignal) => api.grepContent(root, query.trim(), { case_sensitive: false, fixed_strings: true, max_results: 100 }, { signal: sourceSignal }), signal)
     const data = result.data as FileSearchDataDto & { success?: boolean; error?: string }
     if (result.status === 'failed' || result.status === 'blocked' || data?.success === false) {
-      return { kind: 'resource', items: [], error: data?.error || result.summary || 'File content search failed.' }
+      return { kind: 'resource', items: [], error: data?.error || result.summary || i18n.global.t('palette.fileSearchFailed') }
     }
     const paths = searchedFilePaths(data, root)
     return {
@@ -335,7 +336,7 @@ async function workspaceGroup(query: string, host: SpotlightHost, signal?: Abort
         kind: 'resource' as const,
         label: path.split('/').pop() ?? path,
         detail: toWorkspaceRelative(path, root),
-        keywords: '文件 file 资源 resource',
+        keywords: i18n.global.t('palette.kwFileRow'),
         action: () => projectId ? host.openWorkspacePath(path, projectId) : host.openWorkspacePath(path),
       })),
     }

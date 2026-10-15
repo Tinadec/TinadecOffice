@@ -447,7 +447,7 @@ export function useGitOperation(
   }
 
   async function createGitAction(toolId: string, args: Record<string, unknown>, summary: string): Promise<ApprovalDto> {
-    if (!cwd.value) throw new Error('A project workspace is required.')
+    if (!cwd.value) throw new Error(t('context.gitWorkspaceRequired'))
     const parameters = withGitToolConfirmation(toolId, {
       repository_path: cwd.value,
       ...args,
@@ -921,7 +921,7 @@ export function useGitOperation(
     args: Record<string, unknown>,
     summary: string,
   ): Promise<ApprovalDto> {
-    if (!cwd.value) throw new Error('A project workspace is required.')
+    if (!cwd.value) throw new Error(t('context.gitWorkspaceRequired'))
     const parameters = withGitToolConfirmation('git_rebase', {
       repository_path: cwd.value,
       operation,
