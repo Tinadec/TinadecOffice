@@ -3,14 +3,14 @@ import { useI18n } from 'vue-i18n'
 import { ClipboardList, CheckCircle2 } from '@lucide/vue'
 import type { DiagnosticsReport, FailureCluster, RecentFailure } from '../types/metrics'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{
   report: DiagnosticsReport | null
 }>()
 
 function formatTime(iso: string): string {
-  try { return new Date(iso).toLocaleTimeString() } catch { return iso }
+  try { return new Date(iso).toLocaleTimeString(locale.value) } catch { return iso }
 }
 </script>
 

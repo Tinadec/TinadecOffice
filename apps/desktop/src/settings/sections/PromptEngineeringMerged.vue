@@ -28,7 +28,7 @@ const api = scopedApi(baseApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
 import { consumeRequest, pendingPromptId } from '@/lib/pageRequests'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { notify } = useNotifications()
 
 // ── shared view state ──
@@ -337,7 +337,7 @@ defineExpose({ refreshAll })
                       <div class="pe-version-head-row">
                         <strong>v{{ version.version }}</strong>
                         <UiBadge v-if="version.is_active" variant="default">{{ t('settings.activeVersion') }}</UiBadge>
-                        <span class="pe-version-date">{{ new Date(version.created_at).toLocaleString() }}</span>
+                        <span class="pe-version-date">{{ new Date(version.created_at).toLocaleString(locale) }}</span>
                       </div>
                       <p class="pe-version-summary">{{ version.change_summary }}</p>
                     </div>

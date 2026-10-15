@@ -40,7 +40,7 @@ import PersonalShareCard from './PersonalShareCard.vue'
  * component under these classic `<Transition>`s is the interop path this Vue RC
  * is known to break on, and it cannot be mounted in tests at all.
  */
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { notify, status, dismissByKey } = useNotifications()
 
 const BIO_MAX_LENGTH = 80
@@ -173,7 +173,7 @@ const usage = ref<ShareUsage | null>(null)
 const usageLoading = ref(false)
 
 function formatTokenCount(value: number | null): string {
-  return value === null ? '—' : value.toLocaleString()
+  return value === null ? '—' : value.toLocaleString(locale.value)
 }
 
 async function loadTokenUsage(): Promise<void> {

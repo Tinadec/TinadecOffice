@@ -7,7 +7,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useAutoDisclosure } from '@/composables/useAutoDisclosure'
 import { useJustSettled } from '@/composables/useJustSettled'
 import { useElapsed } from '@/composables/useElapsed'
-import { feedLocale, formatDuration } from '@/lib/conversation/format'
+import { formatDuration } from '@/lib/conversation/format'
 import type { FeedNode } from '@/lib/conversation/grouping'
 import { latestReasoningTitle } from '@/lib/conversation/reasoning'
 import type { FeedEntry, RunActivity, ToolEntry } from '@/lib/conversation/reducer'
@@ -30,8 +30,7 @@ const props = defineProps<{
   revision: number
   workspaceRoot?: string | null
 }>()
-const { t, locale } = useI18n()
-const lang = computed(() => feedLocale(locale.value))
+const { t } = useI18n()
 
 const { open } = useAutoDisclosure(toRef(() => props.live))
 // The summary that replaces the status line sweeps once, only when this run finished in view.
@@ -63,7 +62,7 @@ const summary = computed(() => {
   const commands = tools.filter((entry) => entrySentence(entry).verb === 'run').length
   const edits = tools.filter((entry) => entrySentence(entry).verb === 'edit').length
   return [
-    t('conversation.turn.workedFor', { duration: formatDuration(elapsed.value ?? 0, lang.value) }),
+    t('conversation.turn.workedFor', { duration: formatDuration(elapsed.value ?? 0, t) }),
     files && t('conversation.group.files', { count: files }, files),
     edits && t('conversation.turn.edits', { count: edits }, edits),
     commands && t('conversation.turn.commands', { count: commands }, commands),
@@ -77,7 +76,7 @@ const summary = computed(() => {
       <template v-if="live">
         <Spinner decorative class="conversation-glyph" />
         <span class="shimmer" role="status" data-testid="turn-status">{{ status }}</span>
-        <span v-if="elapsed !== null" class="conversation-fold-meta">{{ formatDuration(elapsed, lang) }}</span>
+        <span v-if="elapsed !== null" class="conversation-fold-meta">{{ formatDuration(elapsed, t) }}</span>
       </template>
       <span v-else :class="{ 'shimmer-once': justSettled }" data-testid="turn-summary">{{ summary }}</span>
       <ChevronRight class="conversation-fold-chevron" aria-hidden="true" />

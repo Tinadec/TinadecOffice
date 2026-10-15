@@ -3173,6 +3173,8 @@ retry: 'Retry',
       files: '{count} file | {count} files', searches: '{count} search | {count} searches',
       lists: '{count} folder | {count} folders', thoughts: '{count} thought | {count} thoughts',
     },
+    duration: { underSecond: '<1s', seconds: '{s}s', minutes: '{m}m', minutesSeconds: '{m}m {s}s', hours: '{h}h', hoursMinutes: '{h}h {m}m' },
+    day: { today: 'Today', yesterday: 'Yesterday' },
     reasoning: { drafting: 'Drafting…', thinking: 'Thinking', thoughtFor: 'Thought for {duration}', showAll: 'Show all' },
     agents: {
       openInPanel: 'Open in panel', openedInPanel: 'Selected in the Sub-agents panel', panelTitle: 'Sub-agents', none: 'No sub-agents in this conversation yet',

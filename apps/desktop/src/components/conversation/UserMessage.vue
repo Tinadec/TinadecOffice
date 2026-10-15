@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { api, type MessageDto } from '@/api'
 import type { MessageAttachmentSummaryDto } from '@/generated/client'
 import { fileNameParts, formatAttachmentBytes } from '@/lib/pendingAttachments'
-import { feedLocale, formatClock } from '@/lib/conversation/format'
+import { formatClock } from '@/lib/conversation/format'
 import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle, AttachmentTrigger } from '@/components/ui/attachment'
@@ -24,7 +24,7 @@ const draft = ref('')
 
 // An optimistic row has a local `pending-…` id Core never saw, so it cannot anchor a revert.
 const canEdit = computed(() => !props.message.id.startsWith('pending-'))
-const clock = computed(() => (props.message.created_at ? formatClock(props.message.created_at, feedLocale(locale.value)) : ''))
+const clock = computed(() => (props.message.created_at ? formatClock(props.message.created_at, locale.value) : ''))
 // `?? []` covers locally built rows (optimistic bubbles, fixtures); the wire always sends an array.
 const attachments = computed(() => props.message.attachments ?? [])
 

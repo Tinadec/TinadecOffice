@@ -17,7 +17,7 @@ const props = defineProps<{
   sessionId?: string | null
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { runStatusLabel: statusWords, severityLabel } = useStatusLabels()
 
 const emit = defineEmits<{
@@ -111,7 +111,7 @@ function usageGroupLabel(group: ModelUsageGroup): string {
   const calls = t('orchestrationPanel.calls', group.calls)
   if (group.totalTokens === null) return t('orchestrationPanel.groupNoUsage', { name, via, calls })
   const partial = group.unpricedCalls > 0 ? t('orchestrationPanel.unreported', { count: group.unpricedCalls }) : ''
-  return t('orchestrationPanel.groupTokens', { name, via, tokens: group.totalTokens.toLocaleString('en-US'), partial, calls })
+  return t('orchestrationPanel.groupTokens', { name, via, tokens: group.totalTokens.toLocaleString(locale.value), partial, calls })
 }
 
 function runStatusLabel(status?: string | null): string {

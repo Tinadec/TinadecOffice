@@ -21,7 +21,7 @@ const props = defineProps<{
   toolExecution: ToolExecutionTimelineItemDto
   defaultExpanded?: boolean
 }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { statusLabel, riskLabel } = useStatusLabels()
 
 const emit = defineEmits<{
@@ -68,7 +68,7 @@ const formattedTime = computed(() => {
   if (!ts) return ''
   try {
     const date = new Date(ts)
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    return date.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   } catch {
     return ts
   }

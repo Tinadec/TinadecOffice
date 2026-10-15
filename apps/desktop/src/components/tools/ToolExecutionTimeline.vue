@@ -32,7 +32,7 @@ const statusFilter = ref<StatusFilter>('all')
 const sortOrder = ref<SortOrder>('desc')
 const expandedIds = ref<Set<string>>(new Set())
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { statusLabel, riskLabel } = useStatusLabels()
 
 const filterOptions: Array<{ key: StatusFilter; icon: typeof ListFilter }> = [
@@ -114,7 +114,7 @@ function formatDuration(ms: number): string {
 function formatTime(ts: string): string {
   if (!ts) return ''
   try {
-    return new Date(ts).toLocaleTimeString([], {
+    return new Date(ts).toLocaleTimeString(locale.value, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit'

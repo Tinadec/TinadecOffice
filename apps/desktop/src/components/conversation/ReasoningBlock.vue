@@ -8,7 +8,7 @@ import { useAutoDisclosure } from '@/composables/useAutoDisclosure'
 import { useDelayedLoading } from '@/composables/useDelayedLoading'
 import { useElapsed } from '@/composables/useElapsed'
 import { useJustSettled } from '@/composables/useJustSettled'
-import { feedLocale, formatDuration } from '@/lib/conversation/format'
+import { formatDuration } from '@/lib/conversation/format'
 import { latestReasoningTitle, reasoningSections } from '@/lib/conversation/reasoning'
 import type { ReasoningEntry } from '@/lib/conversation/reducer'
 
@@ -19,7 +19,7 @@ import type { ReasoningEntry } from '@/lib/conversation/reducer'
  * it stays that way. Very long reasoning is height-limited with a fade and "Show all".
  */
 const props = defineProps<{ entry: ReasoningEntry }>()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const thinking = computed(() => props.entry.status === 'running')
 const { open } = useAutoDisclosure(thinking)
@@ -27,7 +27,6 @@ const showSpinner = useDelayedLoading(thinking)
 // "Thought for 12s" sweeps once when the thought ends here; history arrives already still.
 const justSettled = useJustSettled(thinking)
 const elapsed = useElapsed(toRef(() => props.entry.startedAt), toRef(() => props.entry.endedAt))
-const lang = computed(() => feedLocale(locale.value))
 const sections = computed(() => reasoningSections(props.entry.text))
 const title = computed(() => latestReasoningTitle(props.entry.text))
 const showAll = ref(false)
@@ -36,7 +35,7 @@ const long = computed(() => props.entry.text.length + props.entry.output.length 
 const label = computed(() => {
   // A worker that writes without thinking aloud is drafting, not "thinking".
   if (thinking.value) return title.value ?? t(props.entry.output && !props.entry.text ? 'conversation.reasoning.drafting' : 'conversation.reasoning.thinking')
-  return t('conversation.reasoning.thoughtFor', { duration: formatDuration(elapsed.value ?? 0, lang.value) })
+  return t('conversation.reasoning.thoughtFor', { duration: formatDuration(elapsed.value ?? 0, t) })
 })
 </script>
 
@@ -46,7 +45,7 @@ const label = computed(() => {
       <Spinner decorative v-if="showSpinner" class="conversation-glyph" />
       <Brain v-else class="conversation-glyph" aria-hidden="true" />
       <span :class="{ shimmer: thinking, 'shimmer-once': justSettled }" data-testid="reasoning-label" :role="thinking ? 'status' : undefined">{{ label }}</span>
-      <span v-if="thinking && elapsed !== null" class="conversation-fold-meta">{{ formatDuration(elapsed, lang) }}</span>
+      <span v-if="thinking && elapsed !== null" class="conversation-fold-meta">{{ formatDuration(elapsed, t) }}</span>
       <ChevronRight class="conversation-fold-chevron" aria-hidden="true" />
     </CollapsibleTrigger>
     <CollapsibleContent class="conversation-fold-content">

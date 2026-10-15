@@ -17,7 +17,7 @@ import { useI18n } from 'vue-i18n'
 import { UiButton, UiSelectField } from '@/components/ui'
 import { marketController } from '@/controllers/MarketController'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const {
   busy, activeProposal: proposal, proposalBusy, targetProject,
@@ -48,7 +48,7 @@ const expiresAtLabel = computed(() => {
   const raw = proposal.value?.expires_at
   if (!raw) return ''
   const moment = new Date(raw)
-  return Number.isNaN(moment.getTime()) ? raw : moment.toLocaleTimeString()
+  return Number.isNaN(moment.getTime()) ? raw : moment.toLocaleTimeString(locale.value)
 })
 
 function statusLine() {

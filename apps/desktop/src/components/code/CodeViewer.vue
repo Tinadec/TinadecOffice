@@ -17,7 +17,7 @@ const emit = defineEmits<{
   edit: [filePath: string, content: string]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { getMonaco, isDark } = useMonaco()
 const { notify } = useNotifications()
 
@@ -42,7 +42,7 @@ function formatSize(bytes: number | null): string {
 function formatDate(iso: string | null): string {
   if (!iso) return '-'
   try {
-    return new Date(iso).toLocaleString()
+    return new Date(iso).toLocaleString(locale.value)
   } catch {
     return iso
   }

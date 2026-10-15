@@ -14,13 +14,14 @@ import {
 } from '@lucide/vue'
 import type { AgentActivity, AgentState } from '@/composables/useAgentActivity'
 import AgentStatusIndicator from './AgentStatusIndicator.vue'
+import { formatDuration as formatElapsed } from '@/lib/conversation/format'
 
 const props = defineProps<{
   activity: AgentActivity
   agentStates: Record<string, AgentState>
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const expanded = ref(false)
 
 const statusConfig = computed(() => {
@@ -85,19 +86,12 @@ const elapsedMs = computed(() => {
   return Math.max(0, end - start)
 })
 
-const elapsedLabel = computed(() => {
-  if (elapsedMs.value == null) return null
-  const seconds = Math.floor(elapsedMs.value / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return `${minutes}m ${remainingSeconds}s`
-})
+const elapsedLabel = computed(() => (elapsedMs.value == null ? null : formatElapsed(elapsedMs.value, t)))
 
 const startedTimeLabel = computed(() => {
   if (!props.activity.runStartedAt) return null
   try {
-    return new Date(props.activity.runStartedAt).toLocaleTimeString('zh-CN', {
+    return new Date(props.activity.runStartedAt).toLocaleTimeString(locale.value, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',

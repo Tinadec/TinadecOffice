@@ -16,8 +16,9 @@ import {
 } from '@lucide/vue'
 import type { ThinkingStep } from '@/composables/useAgentActivity'
 import { useI18n } from 'vue-i18n'
+import { formatDuration as formatElapsed } from '@/lib/conversation/format'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{
   steps: ThinkingStep[]
@@ -59,9 +60,8 @@ const stepConfig = computed(() => {
 
 function formatTime(ts: string): string {
   try {
-    // No locale argument: the label above is translated, and a timestamp pinned to `zh-CN`
-    // rendered Chinese AM/PM conventions for every other locale too.
-    return new Date(ts).toLocaleTimeString(undefined, {
+    // The UI language, not the OS locale and never a pinned `zh-CN`: the label above is translated.
+    return new Date(ts).toLocaleTimeString(locale.value, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -76,9 +76,7 @@ function formatDuration(ms: number | null): string | null {
   if (ms < 1000) return `${ms}ms`
   const seconds = ms / 1000
   if (seconds < 60) return `${seconds.toFixed(1)}s`
-  const minutes = Math.floor(seconds / 60)
-  const remaining = Math.floor(seconds % 60)
-  return `${minutes}m${remaining}s`
+  return formatElapsed(ms, t)
 }
 
 const hasSteps = computed(() => props.steps.length > 0)

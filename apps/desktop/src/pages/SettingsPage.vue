@@ -193,7 +193,7 @@ interface ProviderForm {
   enabled: boolean
 }
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { canAccessBackend, reason: hostReason } = useHostAccess()
 const router = useRouter()
 const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
@@ -3455,7 +3455,7 @@ import '../settings/settings.css'
                   <div v-for="version in [...agentVersionHistory].reverse()" :key="version.id" class="center-list-row agent-version-row" :class="{ latest: version.version === configuringAgent.version }">
                     <strong>v{{ version.version }}</strong>
                     <span class="agent-version-hash">{{ (version as AgentVersionDto & { content_hash?: string }).content_hash?.slice(0, 8) ?? '—' }}</span>
-                    <time>{{ new Date(version.created_at).toLocaleString() }}</time>
+                    <time>{{ new Date(version.created_at).toLocaleString(locale) }}</time>
                     <UiBadge v-if="version.version === configuringAgent.version" variant="default">{{ t('settings.agentVersionCurrent') }}</UiBadge>
                   </div>
                 </div>

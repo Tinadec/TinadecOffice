@@ -222,7 +222,7 @@ function conversationItems(sessions: SessionDto[], projects: ProjectDto[], host:
       id: `conversation.${selectionKey(session)}`,
       kind: 'conversation' as const,
       label: session.title || t('palette.untitledSession'),
-      detail: [projectNames.get(selectionKey({ id: session.project_id ?? '', storage_id: session.storage_id })), new Date(session.updated_at).toLocaleDateString()].filter(Boolean).join(' · '),
+      detail: [projectNames.get(selectionKey({ id: session.project_id ?? '', storage_id: session.storage_id })), new Date(session.updated_at).toLocaleDateString(i18n.global.locale.value)].filter(Boolean).join(' · '),
       keywords: i18n.global.t('palette.kwSessionRow'),
       action: () => host.openSession(selectionKey(session)),
     }))

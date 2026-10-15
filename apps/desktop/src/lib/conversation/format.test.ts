@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { crossesDay, dayLabel, elapsedMs, feedLocale, formatClock, formatDuration } from './format'
+import { createI18n } from 'vue-i18n'
+import en from '@/locales/en'
+import zhCN from '@/locales/zh-CN'
+import { crossesDay, dayLabel, elapsedMs, formatClock, formatDuration } from './format'
+
+const enT = createI18n({ legacy: false, locale: 'en', messages: { en } }).global.t
+const zhT = createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': zhCN } }).global.t
 
 describe('formatDuration', () => {
   it.each([
@@ -11,13 +17,13 @@ describe('formatDuration', () => {
     [120_000, '2 分', '2m'],
     [3_600_000, '1 小时', '1h'],
     [3_900_000, '1 小时 5 分', '1h 5m'],
-  ])('%i ms', (ms, zh, en) => {
-    expect(formatDuration(ms, 'zh-CN')).toBe(zh)
-    expect(formatDuration(ms, 'en')).toBe(en)
+  ])('%i ms', (ms, zh, english) => {
+    expect(formatDuration(ms, zhT)).toBe(zh)
+    expect(formatDuration(ms, enT)).toBe(english)
   })
 
   it('treats an unreadable value as under a second', () => {
-    expect(formatDuration(Number.NaN, 'en')).toBe('<1s')
+    expect(formatDuration(Number.NaN, enT)).toBe('<1s')
   })
 })
 
@@ -35,12 +41,12 @@ describe('day labels', () => {
   const at = (month: number, day: number, year = 2026) => new Date(year, month, day, 9, 30).toISOString()
 
   it('says today, yesterday, a weekday within the week, then a date', () => {
-    expect(dayLabel(at(9, 13), now, 'zh-CN')).toBe('今天')
-    expect(dayLabel(at(9, 12), now, 'en')).toBe('Yesterday')
-    expect(dayLabel(at(9, 10), now, 'en')).toBe('Saturday')
-    expect(dayLabel(at(9, 10), now, 'zh-CN')).toBe('星期六')
-    expect(dayLabel(at(8, 1), now, 'en')).toBe('September 1')
-    expect(dayLabel(at(11, 31, 2025), now, 'en')).toBe('December 31, 2025')
+    expect(dayLabel(at(9, 13), now, 'zh-CN', zhT)).toBe('今天')
+    expect(dayLabel(at(9, 12), now, 'en', enT)).toBe('Yesterday')
+    expect(dayLabel(at(9, 10), now, 'en', enT)).toBe('Saturday')
+    expect(dayLabel(at(9, 10), now, 'zh-CN', zhT)).toBe('星期六')
+    expect(dayLabel(at(8, 1), now, 'en', enT)).toBe('September 1')
+    expect(dayLabel(at(11, 31, 2025), now, 'en', enT)).toBe('December 31, 2025')
   })
 
   it('detects a local calendar-day boundary between neighbours', () => {
@@ -50,12 +56,9 @@ describe('day labels', () => {
   })
 })
 
-describe('clock and locale', () => {
-  it('formats a 24-hour clock and maps locales', () => {
+describe('clock', () => {
+  it('formats a 24-hour clock', () => {
     expect(formatClock(new Date(2026, 9, 13, 14, 32).toISOString(), 'en')).toBe('14:32')
     expect(formatClock('bad', 'en')).toBe('')
-    expect(feedLocale('zh-CN')).toBe('zh-CN')
-    expect(feedLocale('en-US')).toBe('en')
-    expect(feedLocale(undefined)).toBe('en')
   })
 })

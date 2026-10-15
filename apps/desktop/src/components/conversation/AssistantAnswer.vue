@@ -4,7 +4,7 @@ import { computed, ref, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MarkdownRender from '@/components/MarkdownRender.vue'
 import { useSmoothText } from '@/composables/useSmoothText'
-import { feedLocale, formatClock, formatDuration } from '@/lib/conversation/format'
+import { formatClock, formatDuration } from '@/lib/conversation/format'
 
 /**
  * The answer body. It is never folded: activity collapses around it, the answer stays.
@@ -27,8 +27,7 @@ const { t, locale } = useI18n()
 
 const shown = useSmoothText(toRef(props, 'content'), computed(() => Boolean(props.streaming)))
 const copied = ref(false)
-const lang = computed(() => feedLocale(locale.value))
-const clock = computed(() => (props.createdAt ? formatClock(props.createdAt, lang.value) : ''))
+const clock = computed(() => (props.createdAt ? formatClock(props.createdAt, locale.value) : ''))
 
 function copy() {
   void navigator.clipboard?.writeText(props.content)
@@ -49,7 +48,7 @@ function copy() {
         <Copy v-else :size="12" aria-hidden="true" />
       </button>
       <time v-if="clock" :datetime="createdAt ?? undefined">{{ clock }}</time>
-      <span v-if="workedMs">{{ t('conversation.turn.workedFor', { duration: formatDuration(workedMs, lang) }) }}</span>
+      <span v-if="workedMs">{{ t('conversation.turn.workedFor', { duration: formatDuration(workedMs, t) }) }}</span>
       <span v-if="toolCount">{{ t('conversation.turn.toolCount', { count: toolCount }, toolCount) }}</span>
     </div>
   </div>

@@ -12,7 +12,7 @@ import { useNotifications } from '@/composables/useNotifications'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 import { consumeRequest, pendingModeId } from '@/lib/pageRequests'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { notify } = useNotifications()
 
 const modes = ref<AgentModeTopologyDto[]>([])
@@ -519,7 +519,7 @@ defineExpose({ loadModes })
         <div v-else class="ac-version-list">
           <div v-for="v in modeVersions" :key="v.id" class="center-list-row ac-version-row">
             <strong>v{{ v.version }}</strong>
-            <small>{{ v.created_at ? new Date(v.created_at).toLocaleString() : '—' }}</small>
+            <small>{{ v.created_at ? new Date(v.created_at).toLocaleString(locale) : '—' }}</small>
             <UiBadge :variant="v.is_active ? 'default' : 'secondary'">{{ v.is_active ? t('settings.agentVersionCurrent') : t('settings.agentVersionArchived') }}</UiBadge>
           </div>
           <div v-if="modeVersions.length === 0" class="quiet">{{ t('settings.noModeVersions') }}</div>

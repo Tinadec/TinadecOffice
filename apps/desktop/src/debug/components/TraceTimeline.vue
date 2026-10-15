@@ -5,6 +5,7 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Search, ArrowLeft } from '@lucide/vue'
 import { UiSelectField } from '@/components/ui'
+import { formatDuration as formatElapsed } from '@/lib/conversation/format'
 
 const { t } = useI18n()
 
@@ -38,7 +39,7 @@ const filteredTraces = computed(() => {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms.toFixed(0)}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  return `${(ms / 60000).toFixed(1)}m`
+  return formatElapsed(ms, t)
 }
 
 function flattenSpans(nodes: SpanNode[], depth = 0): Array<SpanNode & { depth: number }> {

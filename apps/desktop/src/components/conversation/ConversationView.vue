@@ -8,7 +8,7 @@ import type { ApprovalDto, MessageDto } from '@/api'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
 import { buildTurns, type TurnRunInput } from '@/lib/conversation/turns'
-import { crossesDay, dayLabel, feedLocale } from '@/lib/conversation/format'
+import { crossesDay, dayLabel } from '@/lib/conversation/format'
 import { Marker, MarkerContent } from '@/components/ui/marker'
 import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller'
 import ConversationTurn from './ConversationTurn.vue'
@@ -55,11 +55,10 @@ const turns = computed(() => {
 /** A date line above each turn that starts on a later day than the one before it. */
 const dayBreaks = computed(() => {
   const now = new Date()
-  const lang = feedLocale(locale.value)
   const breaks = new Map<string, string>()
   turns.value.forEach((turn, index) => {
     const previous = turns.value[index - 1]?.startedAt
-    if (turn.startedAt && crossesDay(previous, turn.startedAt)) breaks.set(turn.id, dayLabel(turn.startedAt, now, lang))
+    if (turn.startedAt && crossesDay(previous, turn.startedAt)) breaks.set(turn.id, dayLabel(turn.startedAt, now, locale.value, t))
   })
   return breaks
 })

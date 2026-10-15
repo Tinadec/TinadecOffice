@@ -14,7 +14,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { notify } = useNotifications()
 
 const selectedHash = ref<string | null>(null)
@@ -92,7 +92,7 @@ function formatDate(dateStr: string): string {
   try {
     const d = new Date(dateStr)
     if (Number.isNaN(d.getTime())) return dateStr.split(' ')[0] ?? dateStr
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    return d.toLocaleDateString(locale.value, { month: 'short', day: 'numeric' })
   } catch {
     return dateStr.split(' ')[0] ?? dateStr
   }
@@ -103,7 +103,7 @@ function formatTime(dateStr: string): string {
   try {
     const d = new Date(dateStr)
     if (Number.isNaN(d.getTime())) return ''
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
   }

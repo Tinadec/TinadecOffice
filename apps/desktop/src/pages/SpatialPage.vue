@@ -17,7 +17,7 @@ import { subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useSpatialGit } from '@/composables/useSpatialGit'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 
-const { t, te } = useI18n()
+const { t, te, locale } = useI18n()
 const emit = defineEmits<{ ready: [] }>()
 const uie = ensureProductionUie()
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
@@ -371,7 +371,7 @@ function leavePreview(event: FocusEvent) { if (!(event.currentTarget as HTMLElem
               <UiButton variant="ghost" size="icon" :aria-label="t('space.overview')" @click="overview"><Maximize /></UiButton>
             </div>
           <div v-if="topology || loadError || loading" class="space-data-status" role="status">
-            <span v-if="topology">{{ t('space.cluster.loaded', { runs: topology.runs.length, tasks: topology.runs.reduce((n, r) => n + r.tasks.length, 0) }) }} · {{ t('space.cluster.fetchedAt') }} {{ new Date(topology.generated_at).toLocaleTimeString() }}</span>
+            <span v-if="topology">{{ t('space.cluster.loaded', { runs: topology.runs.length, tasks: topology.runs.reduce((n, r) => n + r.tasks.length, 0) }) }} · {{ t('space.cluster.fetchedAt') }} {{ new Date(topology.generated_at).toLocaleTimeString(locale) }}</span>
             <span v-if="incomplete">{{ t('space.cluster.truncated') }}</span>
             <span v-if="loadError">{{ t(topology ? 'space.cluster.stale' : 'space.cluster.loadFailed') }}: {{ loadError }}</span>
             <button v-if="loadError" type="button" @click="loadTopology">{{ t('space.retry') }}</button>

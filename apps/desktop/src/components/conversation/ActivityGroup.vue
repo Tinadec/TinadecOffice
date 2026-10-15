@@ -7,7 +7,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useAgentDirectory } from '@/composables/useAgentDirectory'
 import { useAutoDisclosure } from '@/composables/useAutoDisclosure'
 import { useDelayedLoading } from '@/composables/useDelayedLoading'
-import { feedLocale, formatDuration } from '@/lib/conversation/format'
+import { formatDuration } from '@/lib/conversation/format'
 import type { ActivityGroupNode } from '@/lib/conversation/grouping'
 import type { ReasoningEntry, ToolEntry, WaitEntry } from '@/lib/conversation/reducer'
 import { entrySentence, verbKey } from '@/lib/conversation/toolSentence'
@@ -20,17 +20,16 @@ import ReasoningBlock from './ReasoningBlock.vue'
  * consecutive reads share one "Read a.ts, b.ts" line, each search and listing is one line.
  */
 const props = defineProps<{ node: ActivityGroupNode; workspaceRoot?: string | null }>()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { displayName } = useAgentDirectory()
 
 const { open } = useAutoDisclosure(toRef(() => props.node.exploring))
 const showSpinner = useDelayedLoading(toRef(() => props.node.exploring))
-const lang = computed(() => feedLocale(locale.value))
 
 const label = computed(() => {
   const { node } = props
   if (node.thinkingOnly) {
-    return node.exploring ? t('conversation.reasoning.thinking') : t('conversation.reasoning.thoughtFor', { duration: formatDuration(node.thinkingMs, lang.value) })
+    return node.exploring ? t('conversation.reasoning.thinking') : t('conversation.reasoning.thoughtFor', { duration: formatDuration(node.thinkingMs, t) })
   }
   const parts = [
     node.counts.files && t('conversation.group.files', { count: node.counts.files }, node.counts.files),
