@@ -70,7 +70,7 @@ async function loadContext() {
   try {
     if (scope.value?.availability === 'error') {
       const item = scope.value
-      throw new ApiError(item.availability_error ?? '工作区不可用', 409, { ...item, code: item.availability_code })
+      throw new ApiError(item.availability_error ?? t('storage.workspaceUnavailable'), 409, { ...item, code: item.availability_code })
     }
     const [result, diagnosis] = await Promise.all([api.getStorageStats(captured), api.getStorageDiagnostics(captured)])
     if (current !== generation) return

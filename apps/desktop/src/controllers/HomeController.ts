@@ -52,6 +52,7 @@ import type { WorkspaceInput, WorkspaceDefinition, WorkspaceLoadState } from '@/
 // connection. This is the direct migration of HomePage.vue's script logic.
 // ---------------------------------------------------------------------------
 
+const t = i18n.global.t
 const projects = ref<ProjectDto[]>([])
 const workspaceEditor = ref<{ open: boolean; projectKey: string | null }>({ open: false, projectKey: null })
 const workspaceLoadStates = ref<Record<string, WorkspaceLoadState>>({})
@@ -223,7 +224,7 @@ async function ensureComposerSession(): Promise<string> {
   const promise = (async () => {
     sessionListRead++
     sessionListAbort?.abort()
-    const session = await boundApi.createSession(projectId, 'Tinadec session', settings.mode_version_id, view, settings)
+    const session = await boundApi.createSession(projectId, t('chat.title'), settings.mode_version_id, view, settings)
     sessions.value = [session, ...sessions.value.filter(s => !sessionInScope(s, session.id, storageId))]
     if (viewMode.value === view && selectedProjectId.value === projectId && selectedStorageId() === storageId && !selectedSessionId.value) {
       selectedSessionId.value = session.id
@@ -257,7 +258,7 @@ const { notify, banner, dismissByKey } = useNotifications()
 
 function generateTitle(content: string, attachmentNames: readonly string[] = []): string {
   const trimmed = content.trim()
-  if (!trimmed) return attachmentNames[0] ?? 'New chat'
+  if (!trimmed) return attachmentNames[0] ?? t('home.newChat')
   const firstLine = trimmed.split('\n')[0]
   if (firstLine.length <= 50) return firstLine
   return firstLine.substring(0, 47) + '...'
@@ -272,7 +273,7 @@ async function run(label: string, action: () => Promise<void>) {
   try {
     await action()
   } catch (err) {
-    notify.error(err, { title: `${label} failed` })
+    notify.error(err, { title: t('home.actionFailed', { action: label }) })
   } finally {
     busy.value = false
   }
@@ -289,8 +290,8 @@ async function loadInitial() {
       dismissByKey(key)
       return // The shared host banner owns recovery; these reads never reached the backend.
     }
-    const error = toErrorState(reason, '加载失败')
-    banner.error({ key, title, message: error.message, details: [error.details, error.traceId ? 'trace_id: ' + error.traceId : ''].filter(Boolean).join('\n'), action: { label: '重试', run: () => loadInitial() } })
+    const error = toErrorState(reason, t('home.loadFailed'))
+    banner.error({ key, title, message: error.message, details: [error.details, error.traceId ? 'trace_id: ' + error.traceId : ''].filter(Boolean).join('\n'), action: { label: t('common.retry'), run: () => loadInitial() } })
   }
   try {
     await Promise.allSettled([
@@ -310,8 +311,8 @@ async function loadInitial() {
           await loadSessions()
         } finally { if (restoring) suppressProjectSessionsReload = false }
         if (read === initialRead) dismissByKey('home-load')
-      }).catch(reason => failure(reason, 'home-load', '工作区加载失败')),
-      api.doctor().then(report => { if (read === initialRead) { doctor.value = report; dismissByKey('home-doctor') } }).catch(reason => failure(reason, 'home-doctor', '诊断信息加载失败')),
+      }).catch(reason => failure(reason, 'home-load', t('home.workspacesLoadFailed'))),
+      api.doctor().then(report => { if (read === initialRead) { doctor.value = report; dismissByKey('home-doctor') } }).catch(reason => failure(reason, 'home-doctor', t('home.doctorLoadFailed'))),
       api.readiness().then(receipt => {
         if (read !== initialRead) return
         readiness.value = receipt
@@ -320,7 +321,7 @@ async function loadInitial() {
         if (route?.model) modelName.value = route.model
         if (route?.base_url) modelBaseUrl.value = route.base_url
         dismissByKey('home-readiness')
-      }).catch(reason => failure(reason, 'home-readiness', '运行就绪信息加载失败')),
+      }).catch(reason => failure(reason, 'home-readiness', t('home.readinessLoadFailed'))),
     ])
   } finally { if (read === initialRead) busy.value = false }
 }
@@ -378,8 +379,8 @@ async function unregisterWorkspace(projectKey: string) {
   if (!project) return
   const storageId = project.storage_id ?? projectStorageId(project.id)
   if (!storageId || storageId === 'user') return
-  await run('unregister workspace', async () => {
-    if (!window.tinadec?.storageAction) throw new Error('取消登记需要可信主窗口宿主。')
+  await run(t('home.action.unregisterWorkspace'), async () => {
+    if (!window.tinadec?.storageAction) throw new Error(t('home.unregisterNeedsHost'))
     await window.tinadec.storageAction(storageId, 'unregister')
     if (selectedStorageId() === storageId) setSelectedStorage('user')
     revealWorkspace('user::free')
@@ -406,7 +407,7 @@ function installErrorRecovery(): void {
     unregister_workspace: async (storageId?: string) => {
       const project = projects.value.find(row => (row.storage_id ?? projectStorageId(row.id)) === storageId)
       if (!project) return
-      const approved = await useNotifications().confirm({ title: '取消工作区登记', message: '取消登记会保留配置、数据和源文件夹。', confirmLabel: '取消登记', destructive: true })
+      const approved = await useNotifications().confirm({ title: t('home.unregisterTitle'), message: t('home.unregisterMessage'), confirmLabel: t('home.unregisterConfirm'), destructive: true })
       if (approved) await unregisterWorkspace(selectionKey(project))
     },
   })
@@ -429,7 +430,7 @@ async function retryWorkspace(key: string) {
       recovered = lists.flat().find(row => selectionKey(row) === key && row.availability !== 'error' && row.lifecycle_status != null) ?? null
       if (!recovered) {
         const unavailable = lists.flat().find(row => selectionKey(row) === key && row.availability === 'error') ?? project
-        throw new ApiError(unavailable.availability_error ?? '工作区状态仍无法读取。', 409, { ...unavailable, code: unavailable.availability_code ?? 'storage_scope_unavailable' }, { storageId: storage })
+        throw new ApiError(unavailable.availability_error ?? t('home.workspaceStillUnreadable'), 409, { ...unavailable, code: unavailable.availability_code ?? 'storage_scope_unavailable' }, { storageId: storage })
       }
     }
     if (read !== sessionListRead || retry.signal.aborted) return
@@ -445,7 +446,7 @@ async function retryWorkspace(key: string) {
     workspaceLoadStates.value = { ...workspaceLoadStates.value, [key]: { status: 'ready' } }
   } catch (reason) {
     if (!retry.signal.aborted && read === sessionListRead && !isAbortError(reason)) {
-      const error = toErrorState(reason, '工作区读取失败')
+      const error = toErrorState(reason, t('home.workspaceReadFailed'))
       workspaceLoadStates.value = { ...workspaceLoadStates.value, [key]: { status: 'error', message: error.message, error } }
     }
   } finally { if (workspaceRetryAborts.get(key) === retry) workspaceRetryAborts.delete(key) }
@@ -578,16 +579,16 @@ function attachRun(runId: string) {
         if (chunk.kind === 'error') {
           const payload = chunk.payload as Record<string, unknown>
           const message = payload.safe_error_message ?? payload.message ?? payload.error_category
-          invokeError.value = typeof message === 'string' ? message : '运行失败'
+          invokeError.value = typeof message === 'string' ? message : t('activity.runFailed')
         }
-        void loadMessagesAndApprovals().catch(error => { if (!isAbortError(error)) notify.error(error, { title: '会话加载失败' }) })
+        void loadMessagesAndApprovals().catch(error => { if (!isAbortError(error)) notify.error(error, { title: t('home.sessionLoadFailed') }) })
         runStreams.get(runId)?.disconnect()
         runStreams.delete(runId)
         syncWorking()
       }
     },
     onError: (error) => {
-      if (!navigator.onLine) invokeError.value = '网络已断开'
+      if (!navigator.onLine) invokeError.value = t('home.sendError.offline')
       else if (error.message) invokeError.value = error.message
     },
   })
@@ -632,7 +633,7 @@ async function completeWorkspace(input: WorkspaceInput, projectKey: string | nul
   } else {
     const path = anchor ?? input.roots.find(root => root.id === input.primary_root_id)!.path
     const scope = await api.openStorageScope({ project_path: path, ...input })
-    if (!scope.project_id || !scope.workspace) throw new Error('工作区身份或配置未返回。')
+    if (!scope.project_id || !scope.workspace) throw new Error(t('home.workspaceIdentityMissing'))
     definition = scope.workspace
     registerProjectStorage(scope.project_id, scope.storage_id)
     const project: ProjectDto = { id: scope.project_id, storage_id: scope.storage_id, ...definition, path: definition.roots.find(root => root.id === definition.primary_root_id)!.path,
@@ -667,12 +668,12 @@ async function createSession(projectId: string | null) {
       return
     }
   }
-  await run('create session', async () => {
+  await run(t('home.action.createSession'), async () => {
     // A session roster read that started before this explicit create must not be
     // allowed to arrive after the create and restore the old selected session.
     sessionListRead++
     sessionListAbort?.abort()
-    const session = await boundApi.createSession(projectId, 'Tinadec session', null, requestedView)
+    const session = await boundApi.createSession(projectId, t('chat.title'), null, requestedView)
     sessions.value = [session, ...sessions.value]
     if (viewMode.value !== requestedView || selectedStorageId() !== requestedStorage) return
     selectedSessionId.value = session.id
@@ -705,7 +706,7 @@ async function renameProject(projectId: string, name: string) {
   const identity = selectionIdentity(projectId)
   const trimmed = name.trim()
   if (!trimmed) return
-  await run('rename project', async () => {
+  await run(t('home.action.renameProject'), async () => {
     const updated = await generatedApi.renameProject(projectId, trimmed)
     projects.value = projects.value.map((p) => (p.id === identity.id && (!identity.storageId || p.storage_id === identity.storageId) ? { ...p, name: updated.name } : p))
   })
@@ -714,34 +715,34 @@ async function renameProject(projectId: string, name: string) {
 async function renameSession(sessionId: string, title: string) {
   const trimmed = title.trim()
   if (!trimmed) return
-  await run('rename session', async () => {
+  await run(t('home.action.renameSession'), async () => {
     await saveSessionTitle(sessionId, trimmed)
   })
 }
 
 async function archiveProject(projectId: string) {
-  await run('archive project', async () => {
+  await run(t('home.action.archiveProject'), async () => {
     await generatedApi.archiveProject(projectId)
     await refreshProjectsAndSessions()
   })
 }
 
 async function trashProject(projectId: string) {
-  await run('move project to trash', async () => {
+  await run(t('home.action.trashProject'), async () => {
     await generatedApi.trashProject(projectId)
     await refreshProjectsAndSessions()
   })
 }
 
 async function archiveSession(sessionId: string) {
-  await run('archive session', async () => {
+  await run(t('home.action.archiveSession'), async () => {
     await generatedApi.archiveSession(sessionId)
     await refreshProjectsAndSessions()
   })
 }
 
 async function trashSession(sessionId: string) {
-  await run('move session to trash', async () => {
+  await run(t('home.action.trashSession'), async () => {
     await generatedApi.trashSession(sessionId)
     await refreshProjectsAndSessions()
   })
@@ -751,7 +752,7 @@ async function monitorSessionTransfer(receipt: SessionTransferDto, task: TaskHan
   const key = `${receipt.source_storage_id}::${receipt.session_id}`
   try {
     sessionTransfers.value = { ...sessionTransfers.value, [key]: receipt }
-    if (receipt.status === 'failed' || receipt.status === 'cancelled') throw new Error(receipt.error ?? receipt.error_code ?? '会话迁移未完成')
+    if (receipt.status === 'failed' || receipt.status === 'cancelled') throw new Error(receipt.error ?? receipt.error_code ?? t('home.transfer.unfinished'))
     if (receipt.status === 'completed') {
       const followTarget = selectedStorageId() === receipt.source_storage_id && selectedSessionId.value === receipt.session_id
       const selectionVersion = explicitSelectionVersion
@@ -765,12 +766,12 @@ async function monitorSessionTransfer(receipt: SessionTransferDto, task: TaskHan
         followSession(`${receipt.storage_id}::${receipt.session_id}`)
         await loadMessagesAndApprovals()
       }
-      task.succeed('会话已迁移到目标项目。后续运行使用目标项目的已发布默认模式。')
+      task.succeed(t('home.transfer.done'))
       return
     }
-    task.update({ message: receipt.status === 'pending' ? '等待来源与目标存储空闲。当前运行须结束，可关闭关联会话浮窗以释放事件流。' : '正在迁移会话和引用内容。' })
+    task.update({ message: receipt.status === 'pending' ? t('home.transfer.waiting') : t('home.transfer.moving') })
     setTimeout(() => { void api.getSessionTransfer(receipt.transfer_id).then(next => monitorSessionTransfer(next, task)).catch(error => {
-      task.fail(error, { action: { label: '继续检查迁移', run: () => api.getSessionTransfer(receipt.transfer_id).then(next => monitorSessionTransfer(next, task)) } })
+      task.fail(error, { action: { label: t('home.transfer.recheck'), run: () => api.getSessionTransfer(receipt.transfer_id).then(next => monitorSessionTransfer(next, task)) } })
     }) }, 1000)
   } catch (error) {
     delete sessionTransfers.value[key]
@@ -794,11 +795,11 @@ async function migrateSession(sessionKey: string, targetProjectKey: string) {
       for (const stream of runStreams.values()) stream.disconnect()
       runStreams.clear(); syncWorking()
     }
-    const task = notify.task({ key: `session-transfer:${receipt.transfer_id}`, message: '会话迁移已受理。', source: 'storage' })
+    const task = notify.task({ key: `session-transfer:${receipt.transfer_id}`, message: t('home.transfer.accepted'), source: 'storage' })
     void monitorSessionTransfer(receipt, task)
   } catch (error) {
     const queued = (error as { code?: string }).code === 'queued_interactions_pending'
-    notify.error(queued ? '此会话仍有已受理的排队消息。请先执行或取消队列，再申请迁移。' : error, { title: '会话迁移失败' })
+    notify.error(queued ? t('home.transfer.queued') : error, { title: t('home.transfer.failed') })
   } finally { busy.value = false }
 }
 
@@ -843,11 +844,11 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
   const preparingSession = !requestedSession && composerSessionCreation?.view === requestedView && composerSessionCreation.projectId === requestedProject && composerSessionCreation.storageId === requestedStorage
     ? composerSessionCreation.promise : null
   if (preparingSession) {
-    invokeError.value = '附件会话正在准备，请稍候再发送。'
+    invokeError.value = t('home.attachmentSessionPreparing')
     return
   }
   if (pendingAttachments.value.some(attachment => attachment.status === 'uploading')) {
-    invokeError.value = '附件正在上传，请稍候再发送。'
+    invokeError.value = t('home.attachmentUploading')
     return
   }
   const pendingSettings = requestedSession ? settingsWrites.get(sessionWriteKey(requestedSession, requestedStorage)) : null
@@ -862,14 +863,14 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
   const requestedModel = selected.meeting_model_override
   const requestedSpace = requestedView === 'space' ? selected.space_options : null
   let requestedSettingsRevision = requestedRecord?.settings_revision
-  await run('send message', async () => {
+  await run(t('home.action.sendMessage'), async () => {
     let sessionId = requestedSession
     if (!sessionId) {
       // Created in the mode being sent: ChatPanel resets the picker to the new session's own
       // mode, so a session created on the default would flip the picker back after this send.
       sessionListRead++
       sessionListAbort?.abort()
-      const session = await boundApi.createSession(requestedProject ?? null, 'Tinadec session', requestedMode, requestedView, {
+      const session = await boundApi.createSession(requestedProject ?? null, t('chat.title'), requestedMode, requestedView, {
         permission_mode: requestedPermission, meeting_model_override: requestedModel,
         ...(requestedSpace ? { space_options: requestedSpace } : {}),
       })
@@ -890,12 +891,12 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
     const modeVersionId = requestedMode
     const targetRunId = opts?.target_run_id ?? null
     const meetingModelOverride = requestedModel
-    if (dispatchMode === 'insert' && !targetRunId) throw new Error('插入模式需选择目标 run')
+    if (dispatchMode === 'insert' && !targetRunId) throw new Error(t('home.insertNeedsRun'))
     // Taken before the request, not after it: a send that fails must leave the chips
     // alone so the same selection can be retried. Core binds these rows to the message
     // it appends, so the optimistic bubble carries the same projection a reload shows.
     if (dispatchMode === 'insert' && outgoing.attachmentIds.length > 0) {
-      throw new Error('转向消息不追加新消息，因此不能携带附件；请把文件作为单独一条消息发送')
+      throw new Error(t('home.steerNoAttachments'))
     }
     try {
       if (isCurrent()) messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString(), attachments: outgoing.summaries } as MessageDto]
@@ -946,14 +947,14 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
       // (docs/app-core-ui.md §4.1). The legacy invoke-stream / POST messages
       // fallbacks were removed so failures surface visibly instead of
       // silently degrading to a non-durable path.
-      if (msg.includes('mode_unavailable') || msg.includes('模式不可用')) invokeError.value = '当前对话模式不可用，请在输入框左下角重新选择模式'
+      if (msg.includes('mode_unavailable') || msg.includes('模式不可用')) invokeError.value = t('home.sendError.modeUnavailable')
       else if (code === 'context_conflict') {
         // §4.1-4: show revision conflict guidance; user must re-read before resending.
-        invokeError.value = '上下文已更新（检测到新的目标修订）。请重新读取当前状态后再发送。'
-      } else if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置，请在设置中选择模型后重试'
-      else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = '权限不足'
-      else if (msg.includes('recovering')) invokeError.value = '恢复中，请稍候再试'
-      else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = '网络已断开'
+        invokeError.value = t('home.sendError.contextChanged')
+      } else if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = t('home.sendError.modelNotConfigured')
+      else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = t('home.sendError.forbidden')
+      else if (msg.includes('recovering')) invokeError.value = t('home.sendError.recovering')
+      else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = t('home.sendError.offline')
       else invokeError.value = msg
       throw err
     }
@@ -983,7 +984,7 @@ async function editAndResend(payload: { id: string; content: string }) {
   const sessionId = selectedSessionId.value
   if (!sessionId) return
   if (draft.value.trim()) {
-    invokeError.value = '输入框里还有未发送的内容，先发送或清空它，再编辑历史消息。'
+    invokeError.value = t('home.editBlockedByDraft')
     return
   }
   invokeError.value = null
@@ -993,7 +994,7 @@ async function editAndResend(payload: { id: string; content: string }) {
     const code = (err as { code?: unknown }).code
     const msg = err instanceof Error ? err.message : String(err)
     invokeError.value = code === 'active_run_conflict' || msg.includes('active_run_conflict')
-      ? '这条消息正被一个 run 使用，先停止它才能改写它的历史。'
+      ? t('home.editBlockedByRun')
       : msg
     draft.value = payload.content
     return
@@ -1053,7 +1054,7 @@ async function steerQueued(id: string, targetRunId: string, interrupt = false) {
   if (!item) return
   if (!(await dequeue(item, sessionId, capturedApi))) return
   let sent = false
-  await run('steer message', async () => {
+  await run(t('home.action.steerMessage'), async () => {
     await capturedApi.createInteraction(sessionId, {
       content: item.content,
       client_message_id: newId(),
@@ -1076,7 +1077,7 @@ async function promoteQueued(id: string) {
   if (!item) return
   if (!(await dequeue(item, sessionId, capturedApi))) return
   let sent = false
-  await run('promote message', async () => {
+  await run(t('home.action.promoteMessage'), async () => {
     await capturedApi.createInteraction(sessionId, {
       content: item.content,
       // A message Core already holds keeps its id, so running it now reuses the words the user
@@ -1097,7 +1098,7 @@ async function promoteQueued(id: string) {
 }
 
 async function requestShellApproval() {
-  await run('request approval', async () => {
+  await run(t('home.action.requestApproval'), async () => {
     const projectPath = currentProject.value?.path
     if (!projectPath) throw new Error('Select a registered project before requesting a shell action.')
     const command = shellCommand.value.trim()
@@ -1127,7 +1128,7 @@ async function decideApproval(
   decision: 'approved' | 'rejected',
   scope?: 'once' | 'run',
 ) {
-  await run('decide approval', async () => {
+  await run(t('home.action.decideApproval'), async () => {
     await api.decideApproval(approval.id, decision, null, scope)
     await loadMessagesAndApprovals()
   })
@@ -1139,21 +1140,21 @@ async function decideApproval(
  * chat had no handler at all before — the button existed and clicked into nothing.
  */
 async function decideApprovalById(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'run') {
-  await run('decide approval', async () => {
+  await run(t('home.action.decideApproval'), async () => {
     await api.decideApproval(approvalId, decision, null, scope)
     await loadMessagesAndApprovals()
   })
 }
 
 async function revokeApprovalRule(rule: ApprovalRuleDto) {
-  await run('revoke approval rule', async () => {
+  await run(t('home.action.revokeApprovalRule'), async () => {
     await api.revokeApprovalRule(rule.id)
     approvalRules.value = approvalRules.value.filter((item) => item.id !== rule.id)
   })
 }
 
 async function createApprovalRule(input: CreateApprovalRuleInput) {
-  await run('create approval rule', async () => {
+  await run(t('home.action.createApprovalRule'), async () => {
     const created = await api.createApprovalRule(input)
     approvalRules.value = [created, ...approvalRules.value.filter((item) => item.id !== created.id)]
   })
@@ -1163,7 +1164,7 @@ async function createApprovalRule(input: CreateApprovalRuleInput) {
 async function stopRun() {
   const runId = stoppableRunId.value
   if (!runId) return
-  await run('stop run', async () => {
+  await run(t('home.action.stopRun'), async () => {
     await api.controlRun(runId, 'cancel')
     await loadMessagesAndApprovals()
   })
@@ -1177,8 +1178,8 @@ async function executeCatalogTool(tool: ToolDescriptorDto) {
   if (!sessionId || !cwd) {
     notify.warning({
       key: 'tool-catalog-context',
-      title: '需要工作区',
-      message: '请选择一个项目和会话后再运行工具。',
+      title: t('home.toolNeedsWorkspace'),
+      message: t('home.toolNeedsWorkspaceHint'),
       source: 'tools',
     })
     return
@@ -1188,9 +1189,9 @@ async function executeCatalogTool(tool: ToolDescriptorDto) {
       ? await api.executeToolRuntime(tool.id, { session_id: sessionId, cwd, arguments: {} })
       : await api.executeCodeTool(tool.id, { session_id: sessionId, cwd, arguments: {} })
     if (response.approval_summary) {
-      notify.info({ key: `tool-approval-${tool.id}`, title: '工具需要审批', message: response.approval_summary, source: 'tools' })
+      notify.info({ key: `tool-approval-${tool.id}`, title: t('home.toolNeedsApproval'), message: response.approval_summary, source: 'tools' })
     } else {
-      notify.success({ key: `tool-complete-${tool.id}`, title: '工具已完成', message: response.summary, source: 'tools' })
+      notify.success({ key: `tool-complete-${tool.id}`, title: t('home.toolCompleted'), message: response.summary, source: 'tools' })
     }
     await loadMessagesAndApprovals()
   })
@@ -1299,7 +1300,7 @@ watch([selectedSessionId, selectedStorage], ([, storageId], [, previousStorage])
   runText.clear()
   provisionalReplies.clear()
   streamingText.value = new Map()
-  void loadMessagesAndApprovals().catch(error => { if (!isAbortError(error)) notify.error(error, { title: '会话加载失败' }) })
+  void loadMessagesAndApprovals().catch(error => { if (!isAbortError(error)) notify.error(error, { title: t('home.sessionLoadFailed') }) })
   followSession(currentSession.value ? selectionKey(currentSession.value) : selectedSessionId.value)
   queuedMessages.value = []
 })
@@ -1317,7 +1318,7 @@ watch(canAccessBackend, ready => {
       const key = selectionKey(currentSession.value)
       await loadMessagesAndApprovals()
       if (recovery === recoveryRead && canAccessBackend.value && currentSession.value && selectionKey(currentSession.value) === key) followSession(key)
-    }).catch(error => { if (recovery === recoveryRead && !isAbortError(error)) notify.error(error, { title: '会话恢复失败' }) })
+    }).catch(error => { if (recovery === recoveryRead && !isAbortError(error)) notify.error(error, { title: t('home.sessionRecoverFailed') }) })
     return
   }
   if (hostAccessStatus.value?.error?.code === 'desktop_restart_required' || hostAccessStatus.value?.error?.code === 'host_bridge_unavailable') {

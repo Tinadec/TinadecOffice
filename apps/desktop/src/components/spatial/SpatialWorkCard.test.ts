@@ -22,7 +22,7 @@ vi.mock('@/controllers/HomeController', async () => {
 })
 vi.mock('@/api', () => ({ api: { readFile: h.readFile, controlRun: h.controlRun, createInteraction: h.createInteraction } }))
 vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => ({ notify: { error: vi.fn() } }) }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({
   t: (key: string, params?: Record<string, unknown>) => [key, ...Object.values(params ?? {})].join(' '), te: () => true,
 }) }))
 vi.mock('@/components/chat/ToolCallCard.vue', () => ({ default: {

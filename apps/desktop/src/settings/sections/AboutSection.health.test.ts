@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({ healthProbe: vi.fn(), gatewayUrl: 'http://127.0.0.1:48730' }))
 vi.mock('@/api', () => ({ api }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
 
 afterEach(() => { vi.clearAllMocks(); Reflect.deleteProperty(window, 'tinadec') })
 

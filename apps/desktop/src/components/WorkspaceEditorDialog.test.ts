@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createI18n } from 'vue-i18n'
+import zh from '@/locales/zh-CN'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import WorkspaceEditorDialog from './WorkspaceEditorDialog.vue'
@@ -19,7 +21,7 @@ beforeEach(() => {
 })
 afterEach(() => Object.defineProperty(window, 'tinadec', { configurable: true, value: previousHost }))
 function buttons(text: string) { return Array.from(document.body.querySelectorAll<HTMLButtonElement>('.workspace-dialog button')).filter(button => button.textContent?.trim() === text) }
-async function open() { const wrapper = mount(WorkspaceEditorDialog, { attachTo: document.body }); editor.value = { open: true, projectKey: null }; await flushPromises(); return wrapper }
+async function open() { const wrapper = mount(WorkspaceEditorDialog, { attachTo: document.body, global: { plugins: [createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': zh } })] } }); editor.value = { open: true, projectKey: null }; await flushPromises(); return wrapper }
 async function add(paths: string[]) { h.pick.mockResolvedValueOnce(paths); buttons('添加源文件夹')[0]!.click(); await flushPromises() }
 describe('workspace editor', () => {
   it('selects multiple folders without initializing, retains a custom name, and cancels without creating', async () => {
@@ -50,7 +52,7 @@ describe('workspace editor', () => {
     const { ApiError } = await import('@/lib/apiError')
     const saved = { name: 'Saved', roots: [{ id: 'main', path: 'C:/saved' }], primary_root_id: 'main', icon: 'code', color: 'blue', content_hash: 'hash' }
     h.read.mockResolvedValue(saved)
-    const wrapper = mount(WorkspaceEditorDialog, { attachTo: document.body })
+    const wrapper = mount(WorkspaceEditorDialog, { attachTo: document.body, global: { plugins: [createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': zh } })] } })
     editor.value = { open: true, projectKey: 'scope::project' }; await flushPromises()
     const input = document.querySelector<HTMLInputElement>('.workspace-dialog input')!
     input.value = 'My draft'; input.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()

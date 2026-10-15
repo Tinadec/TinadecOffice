@@ -858,7 +858,7 @@ function confirmSteer(id: string, interrupt = false) {
             :aria-label="canSend ? t('chat.send') : t('chat.nothingToSend')"
             @click="submit()"
           >
-            <span v-if="busy" class="composer-send-spinner" role="status" aria-label="sending" />
+            <span v-if="busy" class="composer-send-spinner" role="status" :aria-label="t('chat.sending')" />
             <ArrowUp v-else :size="15" />
           </UiButton>
         </div>

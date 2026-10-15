@@ -6,6 +6,7 @@ import {
   type ToolExecutionTimelineItemDto,
 } from '@/api'
 import { subscribeToSessionEvents } from '@/lib/sessionEventBus'
+import i18n from '@/i18n'
 
 export type AgentRunStatus =
   | 'idle'
@@ -162,25 +163,11 @@ function extractStringArray(value: unknown, key: string): string[] {
   return extractArray(value, key).filter((item): item is string => typeof item === 'string')
 }
 
+// Activity lines are written once per event, in the language the app has at that moment.
+const { t, te } = i18n.global
+
 function agentRoleLabel(agentType: string): string {
-  const labels: Record<string, string> = {
-    meeting: '会议智能体',
-    context_compressor: '上下文压缩',
-    prompt_context_engineer: '提示词工程师',
-    evolver: '进化智能体',
-    tool_assistant: '工具助理',
-    supervisor: '监督智能体',
-    skill_learner: '技能学习',
-    task_planner: '任务规划',
-    test_multimodal: '测试多模态',
-    code_explorer: '代码探查',
-    search_specialist: '搜索专家',
-    file_finder: '文件查找',
-    git_manager: 'Git 管理',
-    code_writer: '代码编写',
-    designer: '设计智能体',
-  }
-  return labels[agentType] ?? agentType
+  return agentType && te(`activity.roles.${agentType}`) ? t(`activity.roles.${agentType}`) : agentType
 }
 
 /** How long tool events of one run are gathered into a single timeline read. */
@@ -333,7 +320,7 @@ export function useAgentActivity(
       runStartedAt: event.ts,
       runSummary: summary,
       activeAgentName: 'Meeting Agent',
-      activeAgentRole: '会议智能体',
+      activeAgentRole: agentRoleLabel('meeting'),
       lastUpdated: event.ts,
     }
     thinkingSteps.value = [
@@ -341,13 +328,13 @@ export function useAgentActivity(
       {
         id: `${event.seq}-run`,
         type: 'run_started',
-        title: '编排运行已启动',
-        description: summary ?? '智能体开始分析用户意图',
+        title: t('activity.runStarted'),
+        description: summary ?? t('activity.runStartedHint'),
         timestamp: event.ts,
         durationMs: null,
       },
     ]
-    addProgressEvent(event.seq, event.type, 'play', '编排运行已启动')
+    addProgressEvent(event.seq, event.type, 'play', t('activity.runStarted'))
   }
 
   function processTaskGraphCreated(event: EventEnvelope) {
@@ -369,10 +356,10 @@ export function useAgentActivity(
       {
         id: `${event.seq}-graph`,
         type: 'task_graph',
-        title: '任务图已创建',
+        title: t('activity.taskGraphCreated'),
         description: title
-          ? `${title}（${nodeCount} 个任务节点）`
-          : `创建了 ${nodeCount} 个任务节点`,
+          ? t('activity.taskGraphTitled', { title, count: nodeCount }, nodeCount)
+          : t('activity.taskGraphNodes', { count: nodeCount }, nodeCount),
         timestamp: event.ts,
         durationMs: lastRunStartedAt
           ? new Date(event.ts).getTime() - new Date(lastRunStartedAt).getTime()
@@ -380,12 +367,12 @@ export function useAgentActivity(
         details: { nodeCount, title },
       },
     ]
-    addProgressEvent(event.seq, event.type, 'network', `创建了 ${nodeCount} 个任务节点`)
+    addProgressEvent(event.seq, event.type, 'network', t('activity.taskGraphNodes', { count: nodeCount }, nodeCount))
   }
 
   function processTaskAssigned(event: EventEnvelope) {
     const agentId = extractString(event.payload, 'agent_id') ?? 'unknown'
-    const agentName = extractString(event.payload, 'agent_name') ?? 'Agent'
+    const agentName = extractString(event.payload, 'agent_name') ?? t('activity.agentFallback')
     const agentLayer = extractString(event.payload, 'agent_layer') ?? 'execution'
     const agentType = extractString(event.payload, 'agent_type') ?? ''
     const taskTitle = extractString(event.payload, 'task_title') ?? extractString(event.payload, 'title')
@@ -406,19 +393,19 @@ export function useAgentActivity(
       {
         id: `${event.seq}-assign`,
         type: 'agent_assignment',
-        title: `${agentName} 已分配任务`,
-        description: taskTitle ?? `${role} 开始执行任务`,
+        title: t('activity.assigned', { name: agentName }),
+        description: taskTitle ?? t('activity.assignedHint', { role }),
         timestamp: event.ts,
         durationMs: null,
         details: { agentId, agentLayer, agentType },
       },
     ]
-    addProgressEvent(event.seq, event.type, 'user-check', `${agentName} 接受了任务分配`)
+    addProgressEvent(event.seq, event.type, 'user-check', t('activity.accepted', { name: agentName }))
   }
 
   function processStepResult(event: EventEnvelope) {
     const agentId = extractString(event.payload, 'agent_id') ?? 'unknown'
-    const agentName = extractString(event.payload, 'agent_name') ?? 'Agent'
+    const agentName = extractString(event.payload, 'agent_name') ?? t('activity.agentFallback')
     const summary = extractString(event.payload, 'summary') ?? ''
     const status = extractString(event.payload, 'status') ?? 'completed'
     const agentLayer = extractString(event.payload, 'agent_layer') ?? 'execution'
@@ -440,14 +427,14 @@ export function useAgentActivity(
       {
         id: `${event.seq}-step`,
         type: 'step_result',
-        title: `${agentName} 完成步骤`,
+        title: t('activity.stepDone', { name: agentName }),
         description: summary,
         timestamp: event.ts,
         durationMs: null,
         details: { status },
       },
     ]
-    addProgressEvent(event.seq, event.type, 'check-circle', `${agentName} 完成了一个步骤`)
+    addProgressEvent(event.seq, event.type, 'check-circle', t('activity.stepCompleted', { name: agentName }))
   }
 
   function processSupervision(event: EventEnvelope) {
@@ -461,7 +448,7 @@ export function useAgentActivity(
     const severity = extractString(event.payload, 'severity')
       ?? (decision === 'escalate' || decision === 'revise' ? 'warning' : 'info')
     const category = extractString(event.payload, 'category') ?? decision
-    const summary = extractString(event.payload, 'summary') ?? reasons.join('；')
+    const summary = extractString(event.payload, 'summary') ?? reasons.join(t('activity.reasonSeparator'))
     const recommendation = extractString(event.payload, 'recommendation') ?? ''
 
     thinkingSteps.value = [
@@ -469,7 +456,7 @@ export function useAgentActivity(
       {
         id: `${event.seq}-supervision`,
         type: 'supervision',
-        title: decision ? `监督发现 · ${decision}` : `监督发现 · ${severity}`,
+        title: t('activity.supervisionFinding', { label: decision || severity }),
         description: summary || recommendation || category,
         timestamp: event.ts,
         durationMs: null,
@@ -478,7 +465,7 @@ export function useAgentActivity(
         details: { recommendation, decision, reasons },
       },
     ]
-    addProgressEvent(event.seq, event.type, 'shield', `监督检查：${category || severity}`)
+    addProgressEvent(event.seq, event.type, 'shield', t('activity.supervisionCheck', { label: category || severity }))
   }
 
   function processSupervisionUserReview(event: EventEnvelope) {
@@ -517,17 +504,17 @@ export function useAgentActivity(
       {
         id: `${event.seq}-context`,
         type: 'context_pack',
-        title: '上下文包已创建',
+        title: t('activity.contextPackCreated'),
         description:
           compressionRatio != null
-            ? `${summary}（压缩比 ${compressionRatio.toFixed(2)}x）`
+            ? t('activity.contextPackRatio', { summary, ratio: compressionRatio.toFixed(2) })
             : summary,
         timestamp: event.ts,
         durationMs: null,
         details: { tokenBudget, compressionRatio },
       },
     ]
-    addProgressEvent(event.seq, event.type, 'package', '上下文包已压缩')
+    addProgressEvent(event.seq, event.type, 'package', t('activity.contextPackCompressed'))
   }
 
   function processApprovalRequested(event: EventEnvelope) {
@@ -536,7 +523,7 @@ export function useAgentActivity(
     // approve/reject buttons it already had markup for.
     const approvalId = extractString(event.payload, 'approval_id') ?? extractString(event.payload, 'id')
     const toolId = extractString(event.payload, 'tool_id')
-    const summary = extractString(event.payload, 'summary') ?? (toolId ? `工具 ${toolId} 需要审批` : '需要审批')
+    const summary = extractString(event.payload, 'summary') ?? (toolId ? t('activity.toolNeedsApproval', { tool: toolId }) : t('activity.needsApproval'))
 
     activity.value = {
       ...activity.value,
@@ -554,7 +541,7 @@ export function useAgentActivity(
 
     // handleSessionEvent refreshes the authoritative timeline once after projection.
 
-    addProgressEvent(event.seq, event.type, 'alert-circle', `等待审批：${summary}`)
+    addProgressEvent(event.seq, event.type, 'alert-circle', t('activity.waitingApproval', { summary }))
   }
 
   function processApprovalDecided(event: EventEnvelope, decision: 'approved' | 'rejected') {
@@ -581,7 +568,7 @@ export function useAgentActivity(
       event.seq,
       event.type,
       decision === 'approved' ? 'check' : 'x',
-      decision === 'approved' ? '审批已通过' : '审批已拒绝',
+      decision === 'approved' ? t('activity.approvalGranted') : t('activity.approvalRejected'),
     )
   }
 
@@ -593,13 +580,13 @@ export function useAgentActivity(
   function processGateDecided(event: EventEnvelope) {
     const decision = extractString(event.payload, 'decision')
     const rationale = extractString(event.payload, 'rationale')
-    const who = extractString(event.payload, 'gate_kind') === 'conversation_identity' ? '对话身份' : '审查员'
-    const text = decision === 'approved' ? `${who}已批准` : decision === 'rejected' ? `${who}已驳回` : `${who}交还给你决定`
+    const who = extractString(event.payload, 'gate_kind') === 'conversation_identity' ? t('activity.gateConversation') : t('activity.gateReviewer')
+    const text = decision === 'approved' ? t('activity.gateApproved', { who }) : decision === 'rejected' ? t('activity.gateRejected', { who }) : t('activity.gateEscalated', { who })
     addProgressEvent(
       event.seq,
       event.type,
       decision === 'approved' ? 'check' : decision === 'rejected' ? 'x' : 'alert-circle',
-      rationale ? `${text}：${rationale}` : text,
+      rationale ? t('activity.withDetail', { title: text, detail: rationale }) : text,
     )
   }
 
@@ -614,24 +601,24 @@ export function useAgentActivity(
     const embeddedFailure = event.payload?.['tool_success'] === false
 
     if (event.type === 'tool.execution.requested') {
-      addProgressEvent(event.seq, event.type, 'wrench', `调用工具 ${toolId}`)
+      addProgressEvent(event.seq, event.type, 'wrench', t('activity.toolCalling', { tool: toolId }))
     } else if (event.type === 'tool.execution.completed') {
       addProgressEvent(
         event.seq,
         event.type,
         embeddedFailure ? 'alert-triangle' : 'check',
-        embeddedFailure ? `工具 ${toolId} 返回失败结果` : `工具 ${toolId} 完成`,
+        embeddedFailure ? t('activity.toolReturnedFailure', { tool: toolId }) : t('activity.toolCompleted', { tool: toolId }),
       )
     } else {
       // failed / outcome_unknown: name the category, because "the tool failed" gives
       // a reader nothing to act on and the category is what the model acted on.
-      const label = category ? `${toolId} 失败（${category}）` : `${toolId} 失败`
+      const label = category ? t('activity.toolFailedWith', { tool: toolId, category }) : t('activity.toolFailed', { tool: toolId })
       thinkingSteps.value = [
         ...thinkingSteps.value,
         {
           id: `${event.seq}-tool-${event.type}`,
           type: 'tool',
-          title: event.type === 'tool.execution.outcome_unknown' ? '工具结果未知' : '工具执行失败',
+          title: event.type === 'tool.execution.outcome_unknown' ? t('activity.toolOutcomeUnknown') : t('activity.toolExecutionFailed'),
           description: label,
           timestamp: event.ts,
           durationMs: null,
@@ -659,15 +646,15 @@ export function useAgentActivity(
       {
         id: `${event.seq}-run-failed`,
         type: 'run',
-        title: '运行失败',
-        description: [category, message].filter(Boolean).join(' · ') || '运行失败',
+        title: t('activity.runFailed'),
+        description: [category, message].filter(Boolean).join(' · ') || t('activity.runFailed'),
         timestamp: event.ts,
         durationMs: null,
         severity: 'error',
         details: { category },
       },
     ]
-    addProgressEvent(event.seq, event.type, 'x', `运行失败${category ? `：${category}` : ''}`)
+    addProgressEvent(event.seq, event.type, 'x', category ? t('activity.runFailedWith', { category }) : t('activity.runFailed'))
   }
 
   function processMeetingFallback(event: EventEnvelope) {
@@ -677,17 +664,17 @@ export function useAgentActivity(
       {
         id: `${event.seq}-meeting-fallback`,
         type: 'run',
-        title: '最终汇总已降级',
+        title: t('activity.summaryDegraded'),
         description: category
-          ? `汇总模型不可用（${category}），已直接返回持久化的执行证据。`
-          : '汇总模型不可用，已直接返回持久化的执行证据。',
+          ? t('activity.summaryDegradedWith', { category })
+          : t('activity.summaryDegradedHint'),
         timestamp: event.ts,
         durationMs: null,
         severity: 'warning',
         category,
       },
     ]
-    addProgressEvent(event.seq, event.type, 'alert-triangle', '最终汇总模型不可用，已返回执行证据')
+    addProgressEvent(event.seq, event.type, 'alert-triangle', t('activity.summaryModelUnavailable'))
   }
 
   /**
@@ -713,18 +700,18 @@ export function useAgentActivity(
       // Core names each assignment with a run-scoped handle (search#2): the only way to tell
       // two instances of one role apart in the list.
       const who = extractString(event.payload, 'handle') ?? slug
-      const why = reason === 'coordinator_assigned' ? '协调者点名' : reason
-      addProgressEvent(event.seq, event.type, 'user-check', `${who} 接单${why ? `（${why}）` : ''}`)
+      const why = reason === 'coordinator_assigned' ? t('activity.namedByCoordinator') : reason
+      addProgressEvent(event.seq, event.type, 'user-check', why ? t('activity.workerTookWith', { who, why }) : t('activity.workerTook', { who }))
       return
     }
     if (event.type === 'worker.tool_failed') {
       // A fed-back tool failure is not a dead end any more: it is an iteration.
-      const label = category ? `${slug} 的调用失败（${category}），已交回模型` : `${slug} 的调用失败，已交回模型`
+      const label = category ? t('activity.workerToolFailedWith', { slug, category }) : t('activity.workerToolFailed', { slug })
       addProgressEvent(event.seq, event.type, 'alert-triangle', label)
       return
     }
     if (event.type === 'worker.budget_exhausted') {
-      addProgressEvent(event.seq, event.type, 'hourglass', `${slug} 收敛收尾：${message || category || '预算耗尽'}`)
+      addProgressEvent(event.seq, event.type, 'hourglass', t('activity.workerWrappingUp', { slug, reason: message || category || t('activity.budgetExhausted') }))
       return
     }
     if (event.type === 'worker.blocked') {
@@ -734,8 +721,8 @@ export function useAgentActivity(
         {
           id: `${event.seq}-worker-blocked`,
           type: 'step_result',
-          title: `${slug} 未完成任务`,
-          description: message || '执行者报告任务受阻，系统将重新规划或请求用户处理。',
+          title: t('activity.workerUnfinished', { slug }),
+          description: message || t('activity.workerBlockedHint'),
           timestamp: event.ts,
           durationMs: null,
           severity: 'warning',
@@ -743,14 +730,14 @@ export function useAgentActivity(
           details: { slug },
         },
       ]
-      addProgressEvent(event.seq, event.type, 'alert-triangle', message || `${slug} 的任务受阻`)
+      addProgressEvent(event.seq, event.type, 'alert-triangle', message || t('activity.workerBlocked', { slug }))
       return
     }
     addProgressEvent(
       event.seq,
       event.type,
       event.type === 'worker.failed' ? 'x' : 'check-circle',
-      message || (event.type === 'worker.failed' ? `${slug} 失败` : `${slug} 完成`),
+      message || (event.type === 'worker.failed' ? t('activity.workerFailed', { slug }) : t('activity.workerFinished', { slug })),
     )
   }
 
@@ -764,18 +751,18 @@ export function useAgentActivity(
     const awaited = extractArray(payload, 'awaited')
       .map((item) => extractString(item, 'handle') ?? extractString(item, 'title') ?? extractString(item, 'task_key'))
       .filter((item): item is string => Boolean(item))
-    const waiter = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? '协调者'
+    const waiter = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? t('activity.coordinator')
     let step: Pick<ThinkingStep, 'type' | 'title' | 'description'> & { severity?: string }
     let icon: string
     switch (event.type) {
       case 'task.dispatched': {
-        const agent = extractString(payload, 'agent') ?? '执行者'
+        const agent = extractString(payload, 'agent') ?? t('activity.executor')
         const followUp = extractString(payload, 'follow_up_of')
-        const by = extractString(payload, 'dispatched_by') ?? '协调者'
+        const by = extractString(payload, 'dispatched_by') ?? t('activity.coordinator')
         step = {
           type: 'dispatch',
-          title: `${by} 派发给 ${agent}`,
-          description: (extractString(payload, 'title') ?? '') + (followUp ? `（接续 ${followUp}）` : ''),
+          title: t('activity.dispatched', { by, agent }),
+          description: (extractString(payload, 'title') ?? '') + (followUp ? t('activity.followUpOf', { task: followUp }) : ''),
         }
         icon = 'send'
         break
@@ -783,18 +770,18 @@ export function useAgentActivity(
       case 'task.dispatch_rejected':
         step = {
           type: 'dispatch',
-          title: '子任务派发被拒绝',
+          title: t('activity.dispatchRejected'),
           description: extractString(payload, 'code') ?? '',
           severity: 'warning',
         }
         icon = 'alert-triangle'
         break
       case 'task.wait_started':
-        step = { type: 'wait', title: `${waiter} 等待子任务结果`, description: awaited.join('、') }
+        step = { type: 'wait', title: t('activity.waitStarted', { waiter }), description: awaited.join(t('activity.listSeparator')) }
         icon = 'hourglass'
         break
       default:
-        step = { type: 'wait', title: `${waiter} 收到子任务结果`, description: awaited.join('、') }
+        step = { type: 'wait', title: t('activity.waitResolved', { waiter }), description: awaited.join(t('activity.listSeparator')) }
         icon = 'check-circle'
     }
     activity.value = { ...activity.value, lastUpdated: event.ts }
@@ -802,7 +789,7 @@ export function useAgentActivity(
       ...thinkingSteps.value,
       { id: `${event.seq}-${event.type}`, timestamp: event.ts, durationMs: null, ...step },
     ]
-    addProgressEvent(event.seq, event.type, icon, step.description ? `${step.title}：${step.description}` : step.title)
+    addProgressEvent(event.seq, event.type, icon, step.description ? t('activity.withDetail', { title: step.title, detail: step.description }) : step.title)
   }
 
   /**
@@ -813,7 +800,7 @@ export function useAgentActivity(
   function processPlanUpdated(event: EventEnvelope) {
     const payload = event.payload
     const taskId = extractString(payload, 'task_id') ?? extractString(payload, 'task_key') ?? String(event.seq)
-    const who = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? '智能体'
+    const who = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? t('activity.agentFallback')
     const steps = extractArray(payload, 'steps')
       .map((item) => ({ step: extractString(item, 'step') ?? '', status: extractString(item, 'status') ?? 'pending' }))
       .filter((item) => item.step)
@@ -823,7 +810,7 @@ export function useAgentActivity(
     const step: ThinkingStep = {
       id,
       type: 'plan',
-      title: `${who} 的计划（${done}/${steps.length}）`,
+      title: t('activity.planTitle', { who, done, total: steps.length }),
       description: steps.map((item) => `${marker[item.status] ?? '○'} ${item.step}`).join('\n'),
       timestamp: event.ts,
       durationMs: null,
@@ -834,7 +821,7 @@ export function useAgentActivity(
       : [...thinkingSteps.value, step]
     activity.value = { ...activity.value, lastUpdated: event.ts }
     const current = steps.find((item) => item.status === 'in_progress')
-    addProgressEvent(event.seq, event.type, 'list-checks', current ? `${who}：${current.step}` : `${who} 更新了计划`)
+    addProgressEvent(event.seq, event.type, 'list-checks', current ? t('activity.withDetail', { title: who, detail: current.step }) : t('activity.planUpdated', { who }))
   }
 
   function processShellApprovalRequired(event: EventEnvelope) {
@@ -855,7 +842,7 @@ export function useAgentActivity(
           {
             id: `shell-${event.seq}`,
             toolId: 'shell',
-            toolName: 'Shell 执行',
+            toolName: t('activity.shellExecution'),
             status: 'waiting_approval',
             startedAt: event.ts,
             completedAt: null,
@@ -872,7 +859,7 @@ export function useAgentActivity(
       }
     }
 
-    addProgressEvent(event.seq, event.type, 'terminal', `Shell 命令等待审批：${command}`)
+    addProgressEvent(event.seq, event.type, 'terminal', t('activity.shellAwaitingApproval', { command }))
   }
 
   function processMessageCreated(event: EventEnvelope) {
@@ -890,7 +877,7 @@ export function useAgentActivity(
         scheduleCleanup()
       }
     }
-    addProgressEvent(event.seq, event.type, 'message-square', '新消息已生成')
+    addProgressEvent(event.seq, event.type, 'message-square', t('activity.messageCreated'))
   }
 
   function processEvent(event: EventEnvelope) {
@@ -910,7 +897,7 @@ export function useAgentActivity(
         const step: ThinkingStep = existing ? { ...existing, status } : {
           // The run handle (search#2) names the instance; parallel workers of one role
           // share agent_name and would otherwise render as identical "search" thoughts.
-          id, type: 'reasoning', title: extractString(event.payload, 'handle') ?? extractString(event.payload, 'agent_name') ?? 'Model',
+          id, type: 'reasoning', title: extractString(event.payload, 'handle') ?? extractString(event.payload, 'agent_name') ?? t('activity.modelFallback'),
           description: '', timestamp: event.ts, seq: event.seq, durationMs: null, status,
         }
         // Only the provider's explicit reasoning channel is a reasoning text. Internal
@@ -949,8 +936,8 @@ export function useAgentActivity(
       case 'worker.interrupted':
       case 'run.interrupted':
         addProgressEvent(event.seq, event.type, 'hand', event.type === 'worker.interrupted'
-          ? `${extractString(event.payload, 'handle') ?? '执行者'} 被打断，按新的指示继续`
-          : '运行被打断，正在按新的指示重做当前一步')
+          ? t('activity.workerInterrupted', { who: extractString(event.payload, 'handle') ?? t('activity.executor') })
+          : t('activity.runInterrupted'))
         break
       case 'task.dispatched':
       case 'task.dispatch_rejected':

@@ -5,7 +5,7 @@ import CommandPaletteButton from './CommandPaletteButton.vue'
 import { closePalette, paletteIsOpen } from '@/composables/useCommandPalette'
 import { PALETTE_COMBO, formatCombo } from '@/lib/keybindings'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({
     t: (key: string, named?: unknown) =>
       named && typeof named === 'object' && 'combo' in named

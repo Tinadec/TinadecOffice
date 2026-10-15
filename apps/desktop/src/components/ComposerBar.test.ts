@@ -7,7 +7,7 @@ import type { ProjectDto } from '@/api'
 import type { PermissionLevel } from '@/types/mode'
 import type { AttachableFile, PendingAttachment } from '@/lib/pendingAttachments'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   // Returns the key so tests can assert which entry rendered. A named-parameter call
   // (t('x', { name })) gets the interpolation appended instead of the bare key, which is
   // what lets a test check the value actually reached the label rather than only that a

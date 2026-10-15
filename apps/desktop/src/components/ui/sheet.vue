@@ -2,6 +2,7 @@
 import { cn } from '@/lib/utils'
 import { X } from '@lucide/vue'
 import { ref, watch } from 'vue'
+import i18n from '@/i18n'
 
 interface Props {
   open?: boolean
@@ -53,7 +54,7 @@ const sideClasses = {
           @click="close"
         >
           <X class="h-4 w-4" />
-          <span class="sr-only">Close</span>
+          <span class="sr-only">{{ i18n.global.t('common.close') }}</span>
         </button>
       </div>
     </div>

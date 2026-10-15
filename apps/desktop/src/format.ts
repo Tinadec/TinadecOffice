@@ -1,7 +1,9 @@
+import i18n from './i18n'
+
 export function basenameFromPath(path: string): string {
   const trimmed = path.trim().replace(/[\\/]+$/, '');
   const parts = trimmed.split(/[\\/]/);
-  return parts.at(-1) || trimmed || 'Project';
+  return parts.at(-1) || trimmed || i18n.global.t('home.untitledProject');
 }
 
 export function toneForStatus(status: string): 'ok' | 'warn' | 'danger' | 'neutral' {

@@ -2,6 +2,7 @@
 import type { HTMLAttributes } from "vue"
 import { onBeforeUnmount, onMounted, useTemplateRef, watch } from "vue"
 import { cn } from "@/lib/utils"
+import i18n from '@/i18n'
 import { SCROLL_KEYS, useMessageScrollerContext } from "./useMessageScroller"
 
 const props = withDefaults(defineProps<{
@@ -60,7 +61,7 @@ onBeforeUnmount(() => {
     ref="viewport"
     data-slot="message-scroller-viewport"
     role="region"
-    :aria-label="label ?? 'Messages'"
+    :aria-label="label ?? i18n.global.t('common.messages')"
     :tabindex="0"
     :data-scrollable="scrollableAttr"
     :data-autoscrolling="autoscrolling ? '' : undefined"

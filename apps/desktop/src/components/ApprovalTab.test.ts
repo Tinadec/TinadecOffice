@@ -4,7 +4,7 @@ import { mount } from '@vue/test-utils'
 import ApprovalTab from './ApprovalTab.vue'
 import type { ApprovalDto, ApprovalRuleDto } from '../api'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key, te: () => false }),
 }))
 

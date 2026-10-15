@@ -47,7 +47,7 @@ vi.mock('@/composables/useSpatialGit', async () => {
 vi.mock('@/composables/usePanelStyles', () => ({ usePanelStyles: () => ({
   getPanelStyle: () => ({}), getPanelDataAttributes: () => ({}),
 }) }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({
   t: (key: string, params?: Record<string, unknown>) => [key, ...Object.values(params ?? {})].join(' '), te: () => true,
 }) }))
 vi.mock('@/components/ui', async () => ({

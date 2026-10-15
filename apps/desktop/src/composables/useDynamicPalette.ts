@@ -17,6 +17,7 @@
 
 import { StorageSerializers, useStorage } from '@vueuse/core'
 import { ref, watch, type Ref } from 'vue'
+import i18n from '@/i18n'
 import type { DynamicPalette } from '@/lib/monetExtract'
 import { buildDynamicVars, extractSourceColor } from '@/lib/monetExtract'
 import { useBackground } from './useBackground'
@@ -120,7 +121,7 @@ async function extract(source: string): Promise<void> {
       lastNotifiedFor = source
       console.warn('[dynamicPalette] extraction failed:', error)
       useNotifications().notify.error(error, {
-        title: 'Background color extraction failed',
+        title: i18n.global.t('settings.paletteExtractionFailed'),
         source: 'settings',
       })
     }

@@ -2,6 +2,7 @@
 import { useHostAccess } from '@/lib/hostAccess'
 import { recoveryActions, useErrorState } from '@/composables/useErrorState'
 import { computed, nextTick, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose } from 'reka-ui'
 import { FolderPlus, FolderOpen, Star, Trash2, X, LoaderCircle } from '@lucide/vue'
 import { UiButton, UiInput } from '@/components/ui'
@@ -12,6 +13,7 @@ import { selectionIdentity, projectStorageId } from '@/lib/storageScope'
 import { folderIdentity, workspaceIcons, workspaceColors, type WorkspaceRoot, type WorkspaceDefinition, type WorkspacePreview, type WorkspaceInput } from '@/lib/workspaces'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 
+const { t } = useI18n()
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 const { canAccessBackend, reason: hostReason } = useHostAccess()
 const failureOperation = ref<'read' | 'preview' | 'submit'>('read')
@@ -77,14 +79,14 @@ async function addFolders() {
     if (!paths.length) return
     const seen = new Set(form.value.roots.map(root => folderIdentity(root.path)))
     const duplicate = paths.find(path => { const id = folderIdentity(path); if (seen.has(id)) return true; seen.add(id); return false })
-    if (duplicate) throw new Error('文件夹已添加：' + duplicate)
+    if (duplicate) throw new Error(t('workspaceEditor.duplicateFolder', { path: duplicate }))
     if (!editor.value.projectKey) {
       const previews = await Promise.all(paths.map(path => api.previewWorkspace(path)))
       if (version !== read) return
       const saved = previews.find(preview => preview.exists)
       if (saved) { existing.value = saved; return }
     }
-    if (form.value.roots.length + paths.length > 32) throw new Error('最多添加 32 个源文件夹。')
+    if (form.value.roots.length + paths.length > 32) throw new Error(t('workspaceEditor.tooManyFolders', { max: 32 }))
     const roots = paths.map(path => ({ id: crypto.randomUUID(), path }))
     form.value.roots.push(...roots)
     if (!form.value.primary_root_id) setPrimary(roots[0]!)
@@ -122,34 +124,34 @@ const failureRecovery = computed(() => recoveryActions(failure.error.value, {
       <DialogOverlay class="workspace-dialog-overlay" />
       <DialogContent class="workspace-dialog" :style="getPanelStyle()" v-bind="getPanelDataAttributes()" @escape-key-down="saving && $event.preventDefault()" @interact-outside="$event.preventDefault()">
         <form @submit.prevent="submit">
-          <header><DialogTitle>{{ editor.projectKey ? '编辑工作区' : '新建工作区' }}</DialogTitle><DialogClose as-child><UiButton type="button" variant="ghost" size="icon" aria-label="关闭" :disabled="saving"><X :size="16" /></UiButton></DialogClose></header>
-          <DialogDescription>添加已有源文件夹，在同一个工作区中管理对话与配置。</DialogDescription>
+          <header><DialogTitle>{{ editor.projectKey ? t('workspaceEditor.editTitle') : t('workspaceEditor.newTitle') }}</DialogTitle><DialogClose as-child><UiButton type="button" variant="ghost" size="icon" :aria-label="t('common.close')" :disabled="saving"><X :size="16" /></UiButton></DialogClose></header>
+          <DialogDescription>{{ t('workspaceEditor.description') }}</DialogDescription>
           <p v-if="!canAccessBackend" role="status">{{ hostReason }}</p>
-          <p v-if="loading" role="status"><LoaderCircle class="animate-spin" :size="16" />正在读取工作区…</p>
+          <p v-if="loading" role="status"><LoaderCircle class="animate-spin" :size="16" />{{ t('workspaceEditor.loading') }}</p>
           <section v-else-if="existing?.workspace" class="workspace-existing">
-            <h3>找到已有工作区</h3><strong>{{ existing.workspace.name }}</strong>
-            <ul><li v-for="root in existing.workspace.roots" :key="root.id">{{ root.path }}<span v-if="root.id === existing.workspace.primary_root_id"> · 主文件夹</span></li></ul>
-            <p>保存位置：{{ existing.storage_root }}</p><p>打开后保留原有配置与对话。</p>
-            <UiButton type="button" variant="ghost" :disabled="saving" @click="existing = null">重新选择文件夹</UiButton>
+            <h3>{{ t('workspaceEditor.existingTitle') }}</h3><strong>{{ existing.workspace.name }}</strong>
+            <ul><li v-for="root in existing.workspace.roots" :key="root.id">{{ root.path }}<span v-if="root.id === existing.workspace.primary_root_id"> · {{ t('workspaceEditor.primary') }}</span></li></ul>
+            <p>{{ t('workspaceEditor.storageRoot', { path: existing.storage_root }) }}</p><p>{{ t('workspaceEditor.existingHint') }}</p>
+            <UiButton type="button" variant="ghost" :disabled="saving" @click="existing = null">{{ t('workspaceEditor.reselect') }}</UiButton>
           </section>
           <template v-else>
-            <section v-if="latestWorkspace" class="workspace-existing" role="status"><h3>配置已更新，当前草稿已保留</h3><strong>{{ latestWorkspace.name }}</strong><p v-for="root in latestWorkspace.roots" :key="root.id">{{ root.path }}</p><UiButton type="button" variant="outline" @click="applyWorkspace(latestWorkspace)">载入最新配置并替换草稿</UiButton></section>
+            <section v-if="latestWorkspace" class="workspace-existing" role="status"><h3>{{ t('workspaceEditor.updatedTitle') }}</h3><strong>{{ latestWorkspace.name }}</strong><p v-for="root in latestWorkspace.roots" :key="root.id">{{ root.path }}</p><UiButton type="button" variant="outline" @click="applyWorkspace(latestWorkspace)">{{ t('workspaceEditor.loadLatest') }}</UiButton></section>
             <section class="workspace-source-section">
-              <h3>源文件夹</h3>
+              <h3>{{ t('workspaceEditor.sources') }}</h3>
               <ul v-if="form.roots.length" class="workspace-source-list">
                 <li v-for="root in form.roots" :key="root.id">
                   <FolderOpen :size="16" /><div class="workspace-source-path"><strong>{{ basenameFromPath(root.path) }}</strong><span :title="root.path">{{ root.path }}</span></div>
-                  <span v-if="root.id === form.primary_root_id" class="workspace-primary"><Star :size="12" />主文件夹</span>
-                  <UiButton v-else type="button" size="sm" variant="ghost" :disabled="saving" @click="setPrimary(root)">设为主要</UiButton>
-                  <UiButton type="button" variant="ghost" size="icon" :aria-label="`移除 ${basenameFromPath(root.path)}`" :disabled="saving || root.id === form.primary_root_id || form.roots.length === 1" :title="root.id === form.primary_root_id ? '移除前请将另一个文件夹设为主要' : '移除引用，保留文件夹'" @click="removeRoot(root)"><Trash2 :size="14" /></UiButton>
+                  <span v-if="root.id === form.primary_root_id" class="workspace-primary"><Star :size="12" />{{ t('workspaceEditor.primary') }}</span>
+                  <UiButton v-else type="button" size="sm" variant="ghost" :disabled="saving" @click="setPrimary(root)">{{ t('workspaceEditor.setPrimary') }}</UiButton>
+                  <UiButton type="button" variant="ghost" size="icon" :aria-label="t('workspaceEditor.remove', { name: basenameFromPath(root.path) })" :disabled="saving || root.id === form.primary_root_id || form.roots.length === 1" :title="root.id === form.primary_root_id ? t('workspaceEditor.removeBlocked') : t('workspaceEditor.removeHint')" @click="removeRoot(root)"><Trash2 :size="14" /></UiButton>
                 </li>
               </ul>
-              <UiButton type="button" variant="outline" class="workspace-add-folders" :disabled="saving || picking || !canAccessBackend" @click="addFolders"><FolderPlus :size="18" />{{ picking ? '正在选择…' : '添加源文件夹' }}</UiButton>
+              <UiButton type="button" variant="outline" class="workspace-add-folders" :disabled="saving || picking || !canAccessBackend" @click="addFolders"><FolderPlus :size="18" />{{ picking ? t('workspaceEditor.picking') : t('workspaceEditor.addSources') }}</UiButton>
             </section>
-            <label class="workspace-field">工作区名称<UiInput v-model="form.name" maxlength="128" placeholder="默认使用主文件夹名称" :disabled="saving" @update:model-value="nameEdited = true" /></label>
-            <fieldset class="workspace-appearance" :disabled="saving"><legend>图标</legend><button v-for="(icon, key) in workspaceIcons" :key="key" type="button" :aria-label="`图标 ${key}`" :aria-pressed="form.icon === key" @click="form.icon = key"><component :is="icon" :size="18" /></button></fieldset>
-            <fieldset class="workspace-appearance" :disabled="saving"><legend>颜色</legend><button v-for="color in workspaceColors" :key="color" type="button" :aria-label="`颜色 ${color}`" :aria-pressed="form.color === color" @click="form.color = color"><span class="workspace-color-swatch" :class="`workspace-color-${color}`" /></button></fieldset>
-            <p class="workspace-storage-note">{{ editor.projectKey ? '更换主文件夹保留当前数据保存位置；已有运行与终端保持原绑定。' : `确认创建后，在${primary ? ' ' + primary.path + '/.tinadec' : '主文件夹的 .tinadec'} 保存工作区数据。` }}</p>
+            <label class="workspace-field">{{ t('workspaceEditor.name') }}<UiInput v-model="form.name" maxlength="128" :placeholder="t('workspaceEditor.namePlaceholder')" :disabled="saving" @update:model-value="nameEdited = true" /></label>
+            <fieldset class="workspace-appearance" :disabled="saving"><legend>{{ t('workspaceEditor.icon') }}</legend><button v-for="(icon, key) in workspaceIcons" :key="key" type="button" :aria-label="t('workspaceEditor.iconLabel', { key })" :aria-pressed="form.icon === key" @click="form.icon = key"><component :is="icon" :size="18" /></button></fieldset>
+            <fieldset class="workspace-appearance" :disabled="saving"><legend>{{ t('workspaceEditor.color') }}</legend><button v-for="color in workspaceColors" :key="color" type="button" :aria-label="t('workspaceEditor.colorLabel', { color })" :aria-pressed="form.color === color" @click="form.color = color"><span class="workspace-color-swatch" :class="`workspace-color-${color}`" /></button></fieldset>
+            <p class="workspace-storage-note">{{ editor.projectKey ? t('workspaceEditor.storageNoteEdit') : primary ? t('workspaceEditor.storageNoteAt', { path: primary.path + '/.tinadec' }) : t('workspaceEditor.storageNoteDefault') }}</p>
           </template>
           <div v-if="failureState" role="alert" class="workspace-error">
             <p>{{ failureState.message }}</p>
@@ -159,7 +161,7 @@ const failureRecovery = computed(() => recoveryActions(failure.error.value, {
               <UiButton v-for="action in failureRecovery" :key="action.kind" variant="outline" size="sm" @click="action.run()">{{ action.label }}</UiButton>
             </div>
           </div>
-          <footer><UiButton type="button" variant="ghost" :disabled="saving" @click="close(false)">取消</UiButton><UiButton type="submit" :disabled="!canAccessBackend || saving || loading || picking || (!existing?.workspace && (!form.name.trim() || !form.roots.length || (!!editor.projectKey && !hash)))"><LoaderCircle v-if="saving" :size="16" class="animate-spin" />{{ existing ? '打开已有工作区' : editor.projectKey ? '保存' : '创建工作区' }}</UiButton></footer>
+          <footer><UiButton type="button" variant="ghost" :disabled="saving" @click="close(false)">{{ t('common.cancel') }}</UiButton><UiButton type="submit" :disabled="!canAccessBackend || saving || loading || picking || (!existing?.workspace && (!form.name.trim() || !form.roots.length || (!!editor.projectKey && !hash)))"><LoaderCircle v-if="saving" :size="16" class="animate-spin" />{{ existing ? t('workspaceEditor.openExisting') : editor.projectKey ? t('workspaceEditor.save') : t('workspaceEditor.create') }}</UiButton></footer>
         </form>
       </DialogContent>
     </DialogPortal>

@@ -18,6 +18,7 @@ import type {
   ModelRouteDto
 } from './api'
 import { findTemplate, type ProviderCategory, type ProviderTemplate } from './providerTemplates'
+import i18n from './i18n'
 
 export type ModelCenterSection = 'suppliers' | 'api' | 'models' | 'routes' | 'cli' | 'tui' | 'acp'
 
@@ -715,7 +716,7 @@ export function aggregateModelCenterOverview(input: ModelCenterAggregateInput): 
 
   const diagnostics: CenterDiagnosticDto[] = [];
   if (!input.model_readiness) {
-    diagnostics.push({ code: 'MODEL_READINESS_UNAVAILABLE', severity: 'warning', message: 'Model readiness receipt is unavailable; showing configuration only.', source: 'model-readiness', status: null, route_purpose: null, agent_ids: null });
+    diagnostics.push({ code: 'MODEL_READINESS_UNAVAILABLE', severity: 'warning', message: i18n.global.t('settings.modelReadinessUnavailable'), source: 'model-readiness', status: null, route_purpose: null, agent_ids: null });
   }
 
   return {

@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ArchiveTrashSection from './ArchiveTrashSection.vue'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string, params?: Record<string, string>) => (params ? `${key}:${params.name}` : key) }),
 }))
 

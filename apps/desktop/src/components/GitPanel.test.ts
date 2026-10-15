@@ -6,7 +6,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import GitPanel from './GitPanel.vue';
 import { api, type ApprovalDto, type CodeToolExecuteResultDto } from '../api';
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({
     t: (key: string) => key
   })

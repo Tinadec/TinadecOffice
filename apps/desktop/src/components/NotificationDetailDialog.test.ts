@@ -6,7 +6,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import NotificationDetailDialog from './NotificationDetailDialog.vue'
 import { resolveConfirmation, useNotifications } from '@/composables/useNotifications'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
 }))
 

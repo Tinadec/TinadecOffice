@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref, type Ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import en from '@/locales/en'
+import zh from '@/locales/zh-CN'
 import type { HostConnectionStatus } from '@/lib/hostConnection'
 import HostAvailabilityBanner from './HostAvailabilityBanner.vue'
 import { retryConnection } from '@/composables/useConnection'
@@ -19,7 +21,7 @@ describe('HostAvailabilityBanner', () => {
   beforeEach(() => { shared.status = ref({ state: 'ready', managed: true }); vi.clearAllMocks(); vi.stubEnv('DEV', false) })
   afterEach(() => { wrapper?.unmount(); Object.defineProperty(window, 'tinadec', { configurable: true, value: originalHost }); vi.unstubAllEnvs() })
   function render(locale = 'zh-CN') {
-    wrapper = mount(HostAvailabilityBanner, { global: { plugins: [createI18n({ legacy: false, locale, fallbackLocale: 'en', messages: {} })] } })
+    wrapper = mount(HostAvailabilityBanner, { global: { plugins: [createI18n({ legacy: false, locale, fallbackLocale: 'en', messages: { en, 'zh-CN': zh } })] } })
     return wrapper
   }
   it('keeps healthy host clear and explains preview without a fake retry action', async () => {

@@ -95,6 +95,18 @@ const panelSources = import.meta.glob(
     './../settings/sections/StorageSection.vue',
     './../settings/sections/AboutHero.vue',
     './../settings/toolSettings.ts',
+    // Home and chat: the controller's notices and send errors, the activity timeline, the host
+    // banner (its words used to live in a component-local message table) and the workspace dialog.
+    './../controllers/HomeController.ts',
+    './../composables/useAgentActivity.ts',
+    './../components/HostAvailabilityBanner.vue',
+    './../components/WorkspaceEditorDialog.vue',
+    './../components/AppSidebar.vue',
+    './../components/chat/TerminalCallBlock.vue',
+    './../components/chat/AgentActivityBanner.vue',
+    './../components/chat/AgentStatusIndicator.vue',
+    './../lib/hostAccess.ts',
+    './../lib/hostConnection.ts',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>

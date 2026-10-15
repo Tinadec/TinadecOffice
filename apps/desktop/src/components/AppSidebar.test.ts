@@ -7,7 +7,7 @@ import type { ProjectDto, SessionDto } from '../api'
 import { useDebugStudio } from '@/composables/useDebugStudio'
 import { freeWorkspaceKey, workspaceListStorageKey } from '@/composables/useWorkspaceList'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
@@ -62,14 +62,14 @@ describe('Debug Studio opt-in navigation', () => {
     const wrapper = factory()
     try {
       await flushPromises()
-      expect(wrapper.find('[title="Debug Studio"]').exists()).toBe(false)
+      expect(wrapper.find('[title="sidebar.debugStudio"]').exists()).toBe(false)
       await useDebugStudio().saveEnabled(true)
       await flushPromises()
-      await wrapper.get('[title="Debug Studio"]').trigger('click')
+      await wrapper.get('[title="sidebar.debugStudio"]').trigger('click')
       expect(openDebugStudio).toHaveBeenCalledOnce()
       await useDebugStudio().saveEnabled(false)
       await flushPromises()
-      expect(wrapper.find('[title="Debug Studio"]').exists()).toBe(false)
+      expect(wrapper.find('[title="sidebar.debugStudio"]').exists()).toBe(false)
     } finally {
       wrapper.unmount()
       Object.defineProperty(window, 'tinadec', { configurable: true, value: previousHost })
@@ -152,7 +152,7 @@ describe('AppSidebar lifecycle management', () => {
     expect(wrapper.findAll('.session-row')).toHaveLength(6)
     await wrapper.get('.workspace-show-more').trigger('click')
     expect(wrapper.findAll('.session-row')).toHaveLength(9)
-    expect(wrapper.get('.workspace-show-more').text()).toBe('收起显示')
+    expect(wrapper.get('.workspace-show-more').text()).toBe('sidebar.showFewer')
     await wrapper.get('.workspace-show-more').trigger('click')
     expect(wrapper.findAll('.session-row')).toHaveLength(6)
     wrapper.unmount()

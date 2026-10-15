@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({ healthProbe: vi.fn().mockResolvedValue({ gateway: true, core: true, core_version: '0.1.0' }), gatewayUrl: 'http://127.0.0.1:48700' }))
 vi.mock('@/api', () => ({ api }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
 
 function deferred<T>() {
   let resolve!: (value: T) => void

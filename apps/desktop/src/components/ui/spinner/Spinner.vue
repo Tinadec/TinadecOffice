@@ -2,6 +2,9 @@
 import type { HTMLAttributes } from "vue"
 import { Loader2Icon } from "@lucide/vue"
 import { cn } from "@/lib/utils"
+import i18n from '@/i18n'
+// Global translator: a primitive must render without the app's i18n plugin installed.
+const t = i18n.global.t
 
 const props = defineProps<{
   class?: HTMLAttributes["class"]
@@ -20,7 +23,7 @@ const props = defineProps<{
   <Loader2Icon
     data-slot="spinner"
     :role="decorative ? undefined : 'status'"
-    :aria-label="decorative ? undefined : (label ?? 'Loading')"
+    :aria-label="decorative ? undefined : (label ?? t('common.loading'))"
     :aria-hidden="decorative ? 'true' : undefined"
     :class="cn('size-3.5 animate-spin motion-reduce:animate-pulse', props.class)"
   />

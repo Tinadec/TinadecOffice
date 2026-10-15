@@ -10,6 +10,7 @@
  * help the agent finish.
  */
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -33,6 +34,7 @@ const props = defineProps<{
   status?: 'running' | 'completed' | 'failed' | 'waiting_approval' | string
 }>()
 
+const { t } = useI18n()
 const { notify } = useNotifications()
 const { openAgentTerminal } = useTerminal()
 const openSpaceTerminal = inject<() => void>('space:open-terminal')
@@ -161,7 +163,7 @@ function attachSession(sessionId: string) {
 function openInPanel() {
   const sessionId = terminalSessionId.value
   if (!sessionId) {
-    notify.info('终端会话尚未建立，稍候再试')
+    notify.info(t('terminal.call.notReady'))
     return
   }
   const panelSource = createAgentTerminalSource({
@@ -182,7 +184,7 @@ function openInPanel() {
     terminalSessionId: sessionId,
     runId: resolvedRunId.value,
     command: props.command,
-    title: props.command?.slice(0, 40) || 'Agent terminal',
+    title: props.command?.slice(0, 40) || t('conversation.tool.terminalTitle'),
     source: panelSource,
   })
   if (openSpaceTerminal) {
@@ -197,14 +199,14 @@ function openInPanel() {
         scope: uie.scope.value,
         descriptorId: 'terminal',
         slotId: 'right',
-        title: props.command?.slice(0, 24) || 'Agent terminal',
+        title: props.command?.slice(0, 24) || t('conversation.tool.terminalTitle'),
       },
       source: 'user',
       expectedRevision: uie.snapshot.value.revision,
     })
   } catch {
     // No layout engine on this host: the session is registered, just not visible.
-    notify.info('已加入终端面板，请在右侧功能面板打开「终端」标签查看')
+    notify.info(t('terminal.call.addedToPanel'))
   }
 }
 
@@ -215,7 +217,7 @@ async function togglePause() {
     await api.controlRun(resolvedRunId.value, paused.value ? 'resume' : 'pause')
     paused.value = !paused.value
   } catch (err) {
-    notify.error(err, { title: '暂停失败' })
+    notify.error(err, { title: t('terminal.call.pauseFailed') })
   } finally {
     busy.value = false
   }
@@ -235,7 +237,7 @@ async function stop() {
       await api.controlRun(resolvedRunId.value, 'cancel')
     }
   } catch (err) {
-    notify.error(err, { title: '终止失败' })
+    notify.error(err, { title: t('terminal.call.stopFailed') })
   } finally {
     busy.value = false
   }
@@ -295,22 +297,22 @@ onBeforeUnmount(() => {
       <code class="terminal-call-command">{{ command }}</code>
       <span v-if="isRunning" class="terminal-call-live">
         <Loader2 :size="11" class="terminal-call-spin" />
-        运行中
+        {{ t('terminal.call.running') }}
       </span>
-      <span v-else-if="exited" class="terminal-call-done">已结束</span>
+      <span v-else-if="exited" class="terminal-call-done">{{ t('terminal.call.ended') }}</span>
       <span class="terminal-call-spacer" />
       <button v-if="resolvedRunId && isRunning" class="terminal-call-btn" type="button" @click="togglePause">
         <Pause v-if="!paused" :size="11" />
         <Play v-else :size="11" />
-        {{ paused ? '继续' : '暂停' }}
+        {{ paused ? t('terminal.call.resume') : t('terminal.call.pause') }}
       </button>
       <button v-if="isRunning" class="terminal-call-btn danger" type="button" @click="stop">
         <Square :size="11" />
-        终止
+        {{ t('terminal.call.stop') }}
       </button>
       <button class="terminal-call-btn" type="button" @click="openInPanel">
         <ExternalLink :size="11" />
-        在功能面板打开
+        {{ t('terminal.call.openInPanel') }}
       </button>
     </header>
     <div ref="containerRef" class="terminal-call-body" />

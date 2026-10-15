@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { AgentState } from '@/composables/useAgentActivity'
 
+const { t } = useI18n()
 const props = defineProps<{
   agent: AgentState
 }>()
@@ -27,15 +29,15 @@ const statusClass = computed(() => {
 const statusLabel = computed(() => {
   switch (props.agent.status) {
     case 'active':
-      return '执行中'
+      return t('activity.agent.active')
     case 'waiting':
-      return '等待中'
+      return t('activity.agent.waiting')
     case 'completed':
-      return '已完成'
+      return t('activity.agent.completed')
     case 'error':
-      return '出错'
+      return t('activity.agent.error')
     default:
-      return '空闲'
+      return t('activity.agent.idle')
   }
 })
 
@@ -46,8 +48,8 @@ const layerClass = computed(() => {
 })
 
 const layerLabel = computed(() => {
-  if (isPlanning.value) return '规划层'
-  if (isExecution.value) return '执行层'
+  if (isPlanning.value) return t('activity.agent.planningLayer')
+  if (isExecution.value) return t('activity.agent.executionLayer')
   return props.agent.agentLayer
 })
 </script>

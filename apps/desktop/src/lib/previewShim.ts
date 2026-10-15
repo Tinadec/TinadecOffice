@@ -9,6 +9,7 @@
 // real Electron app the preload owns `window.tinadec` and this shim is skipped.
 
 import { setHostAccessStatus } from './hostAccess'
+import i18n from '@/i18n'
 const noop = () => {}
 
 function rejectNotAvailable(reason: string): Promise<never> {
@@ -24,7 +25,7 @@ export function installPreviewShimIfNeeded(): void {
   const previewDebugKey = 'tinadec.preview.debug-studio-enabled'
   function previewDebugEnabled(): boolean { return localStorage.getItem(previewDebugKey) === 'true' }
 
-  const hostStatus = { state: 'preview' as const, managed: false, error: { code: 'desktop_host_required', message: '界面预览：工作区、存储和安装操作请在桌面应用中进行。' } }
+  const hostStatus = { state: 'preview' as const, managed: false, error: { code: 'desktop_host_required', message: i18n.global.t('host.previewShim') } }
   setHostAccessStatus(hostStatus)
   w.tinadec = {
     getHostStatus: () => Promise.resolve(hostStatus),

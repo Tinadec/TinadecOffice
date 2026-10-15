@@ -1,3 +1,5 @@
+import i18n from '@/i18n'
+
 /** Public host readiness snapshot. Credentials never cross this boundary. */
 export interface HostConnectionStatus {
   state: 'checking' | 'ready' | 'unavailable' | 'rejected' | 'preview' | 'restart_required'
@@ -14,7 +16,7 @@ export interface HostStatusBridge {
 function restartRequired(): HostConnectionStatus {
   return { state: 'restart_required', managed: true, error: {
     code: 'desktop_restart_required',
-    message: '桌面主进程与界面版本不一致，请重新启动桌面应用。',
+    message: i18n.global.t('host.restartRequired'),
   } }
 }
 
@@ -23,7 +25,7 @@ export function hostBridgeFailure(error: unknown): HostConnectionStatus {
   const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
   if (/No handler registered for ['"]tinadec:host-(?:status|retry)['"](?:\s|$)/.test(message)) return restartRequired()
   return { state: 'unavailable', managed: true, error: {
-    code: 'host_bridge_unavailable', message: '桌面宿主状态接口暂不可用，请重试连接。',
+    code: 'host_bridge_unavailable', message: i18n.global.t('host.bridgeUnavailable'),
   } }
 }
 

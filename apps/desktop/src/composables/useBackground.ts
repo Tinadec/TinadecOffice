@@ -5,6 +5,7 @@
 
 import { useStorage } from '@vueuse/core'
 import { ref, type Ref } from 'vue'
+import i18n from '@/i18n'
 import {
   type BackgroundSettings,
   type BackgroundType,
@@ -171,7 +172,7 @@ async function selectBackgroundFile(type: BackgroundType): Promise<string | null
   const tinadec = (window as any).tinadec
   if (!tinadec?.selectBackgroundFile) {
     console.warn('Electron file dialog API not available')
-    useNotifications().notify.error('Electron file dialog API not available', { title: 'Background file selection unavailable', source: 'settings' })
+    useNotifications().notify.error(i18n.global.t('settings.backgroundPickerMissing'), { title: i18n.global.t('settings.backgroundPickerUnavailable'), source: 'settings' })
     return null
   }
 
@@ -180,7 +181,7 @@ async function selectBackgroundFile(type: BackgroundType): Promise<string | null
     return result || null
   } catch (error) {
     console.error('Failed to select background file:', error)
-    useNotifications().notify.error(error, { title: 'Failed to select background file', source: 'settings' })
+    useNotifications().notify.error(error, { title: i18n.global.t('settings.backgroundPickFailed'), source: 'settings' })
     return null
   }
 }

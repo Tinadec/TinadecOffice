@@ -2,6 +2,7 @@
 import { cn } from '@/lib/utils'
 import { ChevronDown } from '@lucide/vue'
 import { ref, watch } from 'vue'
+import i18n from '@/i18n'
 
 interface Props {
   modelValue?: string
@@ -43,7 +44,7 @@ function select(value: string) {
       @click="isOpen = !isOpen"
     >
       <span v-if="selectedValue" class="truncate">{{ displayValue || selectedValue }}</span>
-      <span v-else class="text-muted-foreground">{{ placeholder || 'Select...' }}</span>
+      <span v-else class="text-muted-foreground">{{ placeholder || i18n.global.t('common.selectPlaceholder') }}</span>
       <ChevronDown class="h-4 w-4 opacity-50" />
     </button>
     <div

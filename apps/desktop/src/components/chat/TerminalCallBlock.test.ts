@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createI18n } from 'vue-i18n'
+import zh from '@/locales/zh-CN'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
@@ -17,6 +19,8 @@ const h = vi.hoisted(() => {
     dispatch: vi.fn(),
   }
 })
+
+const chinese = () => createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': zh } })
 
 vi.mock('@xterm/xterm', () => {
   class FakeTerminal {
@@ -115,6 +119,7 @@ describe('TerminalCallBlock', () => {
 
     const wrapper = mount(TerminalCallBlock, {
       props: { executionId: 'exec-1', command: 'npm test', runId: 'run-1', status: 'running' },
+      global: { plugins: [chinese()] },
     })
     await flushPromises()
 
@@ -139,7 +144,7 @@ describe('TerminalCallBlock', () => {
     })
     const wrapper = mount(TerminalCallBlock, {
       props: { executionId: 'exec-1', command: 'npm test', status: 'running' },
-      global: { provide: { 'space:open-terminal': openSpaceTerminal } },
+      global: { plugins: [chinese()], provide: { 'space:open-terminal': openSpaceTerminal } },
     })
     await flushPromises()
     await wrapper.findAll('button').find((b) => b.text().includes('在功能面板打开'))!.trigger('click')
@@ -158,6 +163,7 @@ describe('TerminalCallBlock', () => {
 
     const wrapper = mount(TerminalCallBlock, {
       props: { executionId: 'exec-1', command: 'npm test', status: 'running' },
+      global: { plugins: [chinese()] },
     })
     await flushPromises()
 
@@ -174,6 +180,7 @@ describe('TerminalCallBlock', () => {
     h.listTerminalSessions.mockResolvedValue([])
     const wrapper = mount(TerminalCallBlock, {
       props: { executionId: 'exec-1', command: 'npm test', status: 'running' },
+      global: { plugins: [chinese()] },
     })
     await flushPromises()
 

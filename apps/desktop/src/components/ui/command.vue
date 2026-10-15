@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { cn } from '@/lib/utils'
 import { Search } from '@lucide/vue'
+import i18n from '@/i18n'
 
 interface Props {
   class?: string
@@ -20,7 +21,7 @@ const props = defineProps<Props>()
       <Search class="mr-2 h-4 w-4 shrink-0 opacity-50" />
       <input
         class="flex h-10 w-full rounded-md bg-[var(--surface-input)] py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        placeholder="Type a command or search..."
+        :placeholder="i18n.global.t('common.commandPlaceholder')"
       />
     </div>
     <div class="max-h-[300px] overflow-y-auto overflow-x-hidden">

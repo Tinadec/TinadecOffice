@@ -2,6 +2,7 @@
 import type { HTMLAttributes } from "vue"
 import type { MessageScrollerButtonDirection } from "./useMessageScroller"
 import { ArrowDownIcon } from "@lucide/vue"
+import i18n from '@/i18n'
 import { computed } from "vue"
 import { cn } from "@/lib/utils"
 import { useMessageScroller, useMessageScrollerScrollable } from "./useMessageScroller"
@@ -54,7 +55,7 @@ function onClick(event: MouseEvent) {
   >
     <slot>
       <ArrowDownIcon />
-      <span class="sr-only">{{ label ?? (direction === "end" ? "Scroll to end" : "Scroll to start") }}</span>
+      <span class="sr-only">{{ label ?? (direction === "end" ? i18n.global.t('common.scrollToEnd') : i18n.global.t('common.scrollToStart')) }}</span>
     </slot>
   </button>
 </template>

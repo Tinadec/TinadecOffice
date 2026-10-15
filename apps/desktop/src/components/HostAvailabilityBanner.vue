@@ -9,28 +9,7 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 
 const { status } = useHostAccess()
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
-const { t } = useI18n({ useScope: 'local', messages: {
-  'zh-CN': {
-    previewTitle: '界面预览', previewText: '此页面不连接用户数据。工作区、目录选择和资源安装请在桌面应用中操作。',
-    unavailableTitle: '桌面宿主连接中断', unavailableText: '工作区及资源操作暂不可用。连接验证成功后自动恢复，也可以手动重试。',
-    rejectedTitle: '本地服务身份验证失败', rejectedText: '请使用同一次启动的 Core、Gateway 和 Desktop，再重试连接。',
-    restartTitle: '桌面与界面版本不一致', restartText: '当前桌面主进程尚未载入界面所需的接口。请重启桌面应用后继续使用工作区及资源功能。',
-    manualRestartText: '当前桌面宿主不支持自动重启。请关闭桌面应用，再重新打开。', restartFailedText: '自动重启未完成。请关闭桌面应用，再重新打开。',
-    developerRestartText: '请关闭当前开发进程，然后从仓库根目录重新运行 npm run dev，以重新启动桌面及本地服务。',
-    restart: '重启桌面应用', restarting: '正在重启…',
-    checking: '正在重新验证桌面宿主…', retry: '重试宿主连接', retrying: '正在重试…',
-  },
-  en: {
-    previewTitle: 'UI preview', previewText: 'This page does not connect to user data. Use the desktop app for workspaces, folder selection and resource installation.',
-    unavailableTitle: 'Desktop host disconnected', unavailableText: 'Workspace and resource operations are unavailable. They resume after host verification succeeds; you can also retry now.',
-    rejectedTitle: 'Local service identity rejected', rejectedText: 'Start Core, Gateway and Desktop together, then retry the connection.',
-    restartTitle: 'Desktop and UI versions do not match', restartText: 'The desktop main process has not loaded the interfaces required by this UI. Restart the desktop app to use workspaces and resources.',
-    manualRestartText: 'This desktop host cannot restart automatically. Close the desktop app and open it again.', restartFailedText: 'Automatic restart did not complete. Close the desktop app and open it again.',
-    developerRestartText: 'Close the current development processes, then run npm run dev again from the repository root to restart the desktop and local services.',
-    restart: 'Restart desktop app', restarting: 'Restarting…',
-    checking: 'Verifying the desktop host again…', retry: 'Retry host connection', retrying: 'Retrying…',
-  },
-} })
+const { t } = useI18n()
 const pending = ref(false)
 const restartFailed = ref(false)
 const visible = computed(() => Boolean(status.value && status.value.state !== 'ready') || pending.value)
@@ -39,11 +18,11 @@ const rejected = computed(() => status.value?.state === 'rejected')
 const restartRequired = computed(() => status.value?.state === 'restart_required')
 const development = import.meta.env.DEV
 const restartAvailable = computed(() => !development && typeof window.tinadec?.restartApp === 'function')
-const title = computed(() => t(restartRequired.value ? 'restartTitle' : preview.value ? 'previewTitle' : rejected.value ? 'rejectedTitle' : 'unavailableTitle'))
-const description = computed(() => t(status.value?.state === 'checking' ? 'checking' : restartRequired.value ? 'restartText' : preview.value ? 'previewText' : rejected.value ? 'rejectedText' : 'unavailableText'))
+const title = computed(() => t(restartRequired.value ? 'hostBanner.restartTitle' : preview.value ? 'hostBanner.previewTitle' : rejected.value ? 'hostBanner.rejectedTitle' : 'hostBanner.unavailableTitle'))
+const description = computed(() => t(status.value?.state === 'checking' ? 'hostBanner.checking' : restartRequired.value ? 'hostBanner.restartText' : preview.value ? 'hostBanner.previewText' : rejected.value ? 'hostBanner.rejectedText' : 'hostBanner.unavailableText'))
 const restartGuidance = computed(() => restartRequired.value
-  ? development ? t('developerRestartText') : !restartAvailable.value ? t('manualRestartText') : restartFailed.value ? t('restartFailedText') : '' : '')
-const actionLabel = computed(() => t(restartRequired.value ? pending.value ? 'restarting' : 'restart' : pending.value ? 'retrying' : 'retry'))
+  ? development ? t('hostBanner.developerRestartText') : !restartAvailable.value ? t('hostBanner.manualRestartText') : restartFailed.value ? t('hostBanner.restartFailedText') : '' : '')
+const actionLabel = computed(() => t(restartRequired.value ? pending.value ? 'hostBanner.restarting' : 'hostBanner.restart' : pending.value ? 'hostBanner.retrying' : 'hostBanner.retry'))
 async function recover() {
   if (pending.value) return
   pending.value = true

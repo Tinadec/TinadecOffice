@@ -14,7 +14,7 @@ const t = (key: string) => key
 const writeText = vi.fn().mockResolvedValue(undefined)
 const readText = vi.fn().mockResolvedValue('pasted text')
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t }),
 }))
 vi.mock('@/composables/usePanelStyles', () => ({

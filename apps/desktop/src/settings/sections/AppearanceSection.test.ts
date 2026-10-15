@@ -17,7 +17,7 @@ import { __resetPanelStylesForTests } from '@/composables/usePanelStyles'
 import { __resetThemeForTests } from '@/composables/useTheme'
 import { __resetDynamicPaletteForTests } from '@/composables/useDynamicPalette'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh-CN' } }),
 }))
 

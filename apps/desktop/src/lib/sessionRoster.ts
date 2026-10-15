@@ -1,4 +1,5 @@
 import { api, type SessionDto } from '@/api'
+import i18n from '@/i18n'
 import { selectionKey } from './storageScope'
 import { isAbortError } from './isAbortError'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
@@ -24,7 +25,7 @@ export async function readSessionRoster<T extends { id: string; storage_id?: str
     if (result.status === 'fulfilled') rows.push(...result.value.map(row => ({ ...row, storage_id: row.storage_id ?? source.storageId })))
     else {
       if (isAbortError(result.reason)) throw result.reason
-      failures.push({ source, error: toErrorState(result.reason, '会话读取失败') })
+      failures.push({ source, error: toErrorState(result.reason, i18n.global.t('home.sessionReadFailed')) })
       rows.push(...(options.previous ?? []).filter(row => (row.storage_id ?? 'user') === source.storageId && (source.projectId === undefined || row.project_id === source.projectId)))
     }
   })

@@ -1,4 +1,5 @@
 import { readBackendResponse } from '@/lib/backendRequest'
+import i18n from '@/i18n'
 import type { AgentPackEnvelope } from '@/agentPacks/GraphSeedPack'
 import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
 import type { components } from '@/generated/schema'
@@ -3007,7 +3008,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ project_id: projectId ?? undefined, title, mode_version_id: modeVersionId ?? undefined, ...(viewMode === 'space' ? { view_mode: viewMode } : {}), ...settings })
   }).then(session => {
-    if (viewMode === 'space' && session.view_mode !== 'space') throw new Error('无法创建空间会话：服务尚未支持独立会话类型，请更新服务后重试。')
+    if (viewMode === 'space' && session.view_mode !== 'space') throw new Error(i18n.global.t('space.sessionUnsupported'))
     return session
   }),
   migrateSession: (sessionId: string, payload: { target_storage_id: string; target_project_id?: string }) => request<SessionTransferDto>(`/api/v1/sessions/${sessionId}/migrate`, {

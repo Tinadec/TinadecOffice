@@ -100,6 +100,7 @@ vi.mock('@/composables/useAgentActivity', () => ({
 }))
 
 import { homeController } from './HomeController'
+import i18n from '@/i18n'
 import { setHostAccessStatus } from '@/lib/hostAccess'
 import { ApiError } from '@/lib/apiError'
 import * as durableStream from '@/lib/runStream'
@@ -172,7 +173,8 @@ describe('HomeController session families', () => {
     const selected = homeController.selectedSessionId.value
     finish({ id: 'new-space-family', project_id: null, title: 'Space', view_mode: 'space' } as never)
     await creating
-    expect(h.createSession).toHaveBeenLastCalledWith(null, 'Tinadec session', null, 'space')
+    // A new session is titled in the app's language until its first message names it.
+    expect(h.createSession).toHaveBeenLastCalledWith(null, i18n.global.t('chat.title'), null, 'space')
     expect(homeController.selectedSessionId.value).toBe(selected)
     expect(homeController.visibleSessions.value.some(s => s.id === 'new-space-family')).toBe(false)
   })

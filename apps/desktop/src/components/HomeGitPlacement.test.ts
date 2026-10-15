@@ -15,7 +15,7 @@ vi.mock('@/composables/useHomeGitStatus', () => ({ useHomeGitStatus: () => ({
   recentCommit: ref(null), historyLoaded: ref(false), historyError: ref(false),
   businessReady: ref(false), refresh: vi.fn(),
 }) }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
 import HomePickerCard from '../../../TinadecUI/src/components/cards/home/HomePickerCard.vue'
 
 describe('Home feature panel Git widget placement', () => {

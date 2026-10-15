@@ -359,11 +359,11 @@ function openDebugStudio() {
         size="sm"
         class="sidebar-nav-item w-full justify-start"
         v-if="debugStudioEnabled"
-        title="Debug Studio"
+        :title="t('sidebar.debugStudio')"
         @click="openDebugStudio()"
       >
         <Bug :size="16" class="sidebar-icon" />
-        <span class="sidebar-label">Debug Studio</span>
+        <span class="sidebar-label">{{ t('sidebar.debugStudio') }}</span>
       </UiButton>
     </nav>
 
@@ -393,9 +393,9 @@ function openDebugStudio() {
           <button class="project-row-action sidebar-extra" :disabled="busy || workspace.project?.availability === 'error'" :aria-label="`${workspace.name} · ${t('sidebar.newChat')}`" :title="t('sidebar.newChat')" @mousedown.stop @click.stop="emit('create-session', workspace.project ? workspace.key : null)"><Plus :size="14" /></button>
         </div>
         <div v-if="isExpanded(workspace.key)" :id="`workspace-sessions-${workspace.key}`" class="project-sessions sidebar-extra">
-          <div v-if="workspaceLoadStates?.[workspace.key]?.status === 'loading'" class="session-empty" role="status">加载中…</div>
+          <div v-if="workspaceLoadStates?.[workspace.key]?.status === 'loading'" class="session-empty" role="status">{{ t('common.loading') }}</div>
           <div v-else-if="workspaceLoadStates?.[workspace.key]?.status === 'error' || workspace.project?.availability === 'error'" class="workspace-load-error" role="status">
-            <span :title="workspaceLoadStates?.[workspace.key]?.message ?? workspace.project?.availability_error">加载失败</span><button @click="emit('retry-workspaces', workspace.key)">重试</button>
+            <span :title="workspaceLoadStates?.[workspace.key]?.message ?? workspace.project?.availability_error">{{ t('home.loadFailed') }}</span><button @click="emit('retry-workspaces', workspace.key)">{{ t('common.retry') }}</button>
           </div>
           <div v-for="session in shownSessions(workspace.key)" :key="selectionKey(session)" class="session-row" :class="{ active: isActiveSession(session) }" @contextmenu.prevent="openMenuAtCursor($event, 'session', selectionKey(session), session.title)">
             <button class="session-item" :aria-current="isActiveSession(session) ? 'page' : undefined" :title="session.title" @click="handleSessionClick(selectionKey(session))" @dblclick.stop="renaming = { kind: 'session', id: selectionKey(session) }">
@@ -404,7 +404,7 @@ function openDebugStudio() {
             <button class="session-more" :title="t('sidebar.moreActions')" @click.stop="openMenuAtButton($event, 'session', selectionKey(session), session.title)"><MoreHorizontal :size="13" /></button>
           </div>
           <div v-if="!allSessions(workspace.key).length && (!workspaceLoadStates?.[workspace.key] || workspaceLoadStates[workspace.key]?.status === 'ready') && workspace.project?.availability !== 'error'" class="session-empty">{{ t('sidebar.noSessions') }}</div>
-          <button v-if="allSessions(workspace.key).length > shownSessions(workspace.key).length || list.state.value.allKeys.includes(workspace.key)" class="workspace-show-more" @click="list.toggle(workspace.key, 'allKeys')">{{ list.state.value.allKeys.includes(workspace.key) ? '收起显示' : '展开显示' }}</button>
+          <button v-if="allSessions(workspace.key).length > shownSessions(workspace.key).length || list.state.value.allKeys.includes(workspace.key)" class="workspace-show-more" @click="list.toggle(workspace.key, 'allKeys')">{{ list.state.value.allKeys.includes(workspace.key) ? t('sidebar.showFewer') : t('sidebar.showAll') }}</button>
         </div>
       </div></template>
     </div>
@@ -455,7 +455,7 @@ function openDebugStudio() {
           variant="ghost"
           size="icon"
           class="sidebar-footer-action"
-          :title="collapsed ? '展开侧边栏' : '折叠侧边栏'"
+          :title="collapsed ? t('sidebar.expand') : t('sidebar.collapse')"
           @click="emit('toggle-collapse')"
         >
           <component :is="collapsed ? PanelLeftOpen : PanelLeftClose" :size="16" />

@@ -1,5 +1,6 @@
 import { computed, shallowRef } from 'vue'
 import { ApiError } from './apiError'
+import i18n from '@/i18n'
 import { readHostStatus, type HostConnectionStatus } from './hostConnection'
 
 const status = shallowRef<HostConnectionStatus | null>(null)
@@ -11,8 +12,8 @@ export function useHostAccess() {
     isPreview: computed(() => status.value?.state === 'preview'),
     canAccessBackend: computed(() => !status.value || status.value.state === 'ready'),
     reason: computed(() => status.value?.state === 'preview'
-      ? '界面预览不连接用户数据。工作区、存储和资源安装请在桌面应用中操作。'
-      : status.value?.error?.message ?? '正在验证桌面宿主，业务操作暂不可用。'),
+      ? i18n.global.t('host.previewReason')
+      : status.value?.error?.message ?? i18n.global.t('host.verifyingReason')),
   }
 }
 
@@ -36,7 +37,7 @@ export async function assertHostAccess(path: string, signal?: AbortSignal): Prom
 function throwHostUnavailable(current: HostConnectionStatus): never {
   const preview = current.state === 'preview'
   const code = preview ? 'desktop_host_required' : current.error?.code ?? 'host_unavailable'
-  const message = preview ? '此页面是界面预览。请在桌面应用中执行此操作。' : current.error?.message ?? '桌面宿主尚未就绪，请重试连接。'
+  const message = preview ? i18n.global.t('host.previewAction') : current.error?.message ?? i18n.global.t('host.notReady')
   throw new ApiError(message, preview ? 403 : 503, {
     code, detail: message, category: 'environment_unavailable', retryable: false,
     actions: preview || current.state === 'restart_required' ? [] : ['retry'],

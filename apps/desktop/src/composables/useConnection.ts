@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { api } from '@/api'
+import i18n from '@/i18n'
 import { setHostAccessStatus } from '@/lib/hostAccess'
 import { readHostStatus, retryHostStatus, type HostConnectionStatus } from '@/lib/hostConnection'
 
@@ -96,7 +97,7 @@ export function retryConnection(): Promise<boolean> {
       return await probe(false)
     } catch {
       if (epoch === generation && revision === hostRevision) applyHostStatus({ state: 'unavailable', managed: true,
-        error: { code: 'host_connection_unavailable', message: 'The host connection could not be checked. Retry the desktop host.' } })
+        error: { code: 'host_connection_unavailable', message: i18n.global.t('host.connectionCheckFailed') } })
       return false
     }
   })().finally(() => { if (epoch === generation) pendingRetry = undefined })

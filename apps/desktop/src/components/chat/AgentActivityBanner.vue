@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   Loader2,
   Brain,
@@ -19,6 +20,7 @@ const props = defineProps<{
   agentStates: Record<string, AgentState>
 }>()
 
+const { t } = useI18n()
 const expanded = ref(false)
 
 const statusConfig = computed(() => {
@@ -26,7 +28,7 @@ const statusConfig = computed(() => {
     case 'thinking':
       return {
         icon: Brain,
-        label: '思考中',
+        label: t('activity.banner.thinking'),
         color: 'banner-thinking',
         spin: true,
         pulse: false,
@@ -34,7 +36,7 @@ const statusConfig = computed(() => {
     case 'working':
       return {
         icon: Activity,
-        label: '工作中',
+        label: t('activity.banner.working'),
         color: 'banner-working',
         spin: false,
         pulse: true,
@@ -42,7 +44,7 @@ const statusConfig = computed(() => {
     case 'waiting_approval':
       return {
         icon: ShieldAlert,
-        label: '等待审批',
+        label: t('activity.banner.waitingApproval'),
         color: 'banner-waiting',
         spin: false,
         pulse: false,
@@ -50,7 +52,7 @@ const statusConfig = computed(() => {
     case 'completed':
       return {
         icon: CheckCircle2,
-        label: '已完成',
+        label: t('activity.banner.completed'),
         color: 'banner-completed',
         spin: false,
         pulse: false,
@@ -58,7 +60,7 @@ const statusConfig = computed(() => {
     case 'error':
       return {
         icon: AlertCircle,
-        label: '出错',
+        label: t('activity.banner.error'),
         color: 'banner-error',
         spin: false,
         pulse: false,
@@ -66,7 +68,7 @@ const statusConfig = computed(() => {
     default:
       return {
         icon: Activity,
-        label: '空闲',
+        label: t('activity.banner.idle'),
         color: 'banner-idle',
         spin: false,
         pulse: false,
@@ -144,7 +146,7 @@ const hasActivity = computed(
         </div>
         <div class="agent-banner-info">
           <div class="agent-banner-title-row">
-            <strong>{{ activity.activeAgentName ?? '智能体' }}</strong>
+            <strong>{{ activity.activeAgentName ?? t('activity.agentFallback') }}</strong>
             <span v-if="activity.activeAgentRole" class="agent-banner-role">{{ activity.activeAgentRole }}</span>
             <span class="agent-banner-status-tag">{{ statusConfig.label }}</span>
           </div>
@@ -154,7 +156,7 @@ const hasActivity = computed(
               <Clock :size="11" />
               {{ startedTimeLabel }}
             </span>
-            <span v-if="elapsedLabel" class="agent-banner-elapsed">已耗时 {{ elapsedLabel }}</span>
+            <span v-if="elapsedLabel" class="agent-banner-elapsed">{{ t('activity.banner.elapsed', { time: elapsedLabel }) }}</span>
           </div>
         </div>
       </div>
@@ -176,7 +178,7 @@ const hasActivity = computed(
     <Transition name="banner-expand">
       <div v-if="expanded" class="agent-banner-details">
         <div v-if="planningAgents.length > 0" class="agent-banner-section">
-          <span class="agent-banner-section-title">规划层智能体</span>
+          <span class="agent-banner-section-title">{{ t('activity.banner.planningAgents') }}</span>
           <div class="agent-banner-agent-grid">
             <AgentStatusIndicator
               v-for="agent in planningAgents"
@@ -186,7 +188,7 @@ const hasActivity = computed(
           </div>
         </div>
         <div v-if="executionAgents.length > 0" class="agent-banner-section">
-          <span class="agent-banner-section-title">执行层智能体</span>
+          <span class="agent-banner-section-title">{{ t('activity.banner.executionAgents') }}</span>
           <div class="agent-banner-agent-grid">
             <AgentStatusIndicator
               v-for="agent in executionAgents"
@@ -197,7 +199,7 @@ const hasActivity = computed(
         </div>
         <div v-if="planningAgents.length === 0 && executionAgents.length === 0" class="agent-banner-empty">
           <Loader2 :size="14" class="agent-icon-spin" />
-          <span>正在等待智能体分配...</span>
+          <span>{{ t('activity.banner.waitingAssignment') }}</span>
         </div>
       </div>
     </Transition>

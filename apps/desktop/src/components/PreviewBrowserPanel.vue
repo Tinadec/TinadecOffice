@@ -29,9 +29,9 @@ const canGoBack = computed(() => historyIndex.value > 0)
 const canGoForward = computed(() => historyIndex.value < history.value.length - 1)
 
 const quickLinks = computed(() => [
-  { label: 'Gateway API', url: gatewayDocsUrl },
-  { label: 'Gateway Health', url: (window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730') + '/api/v1/health' },
-  { label: 'Dev Server', url: VITE_DEV_URL },
+  { label: t('context.previewGatewayApi'), url: gatewayDocsUrl },
+  { label: t('context.previewGatewayHealth'), url: (window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730') + '/api/v1/health' },
+  { label: t('context.previewDevServer'), url: VITE_DEV_URL },
 ])
 
 function normalizeUrl(input: string): string {

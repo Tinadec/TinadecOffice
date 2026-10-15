@@ -19,7 +19,7 @@ const state = {
 const hostStatus = ref({ state: 'ready' })
 vi.mock('@/composables/useHomeGitStatus', () => ({ useHomeGitStatus: () => state }))
 vi.mock('@/composables/useConnection', () => ({ useConnection: () => ({ hostStatus }) }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: ref('zh-CN') }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key, locale: ref('zh-CN') }) }))
 import GitStatusWidget from '../../../TinadecUI/src/components/cards/home/GitStatusWidget.vue'
 
 const project = { id: 'a', path: 'C:/repo', name: 'Workspace', created_at: '' }

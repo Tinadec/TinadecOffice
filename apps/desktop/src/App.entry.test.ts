@@ -16,7 +16,7 @@ vi.mock('vue-router', () => ({
   useRoute: () => route,
   RouterView: defineComponent({ name: 'RouterView', render: () => null }),
 }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/composables/useBackground', () => ({
   useBackground: () => ({ settings: ref({ type: 'none' }), applyBackground: vi.fn() }),
 }))
