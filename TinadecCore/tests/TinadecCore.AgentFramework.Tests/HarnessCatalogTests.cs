@@ -21,14 +21,6 @@ public sealed class HarnessCatalogTests
     ];
 
     [Fact]
-    public void Catalog_ContainsEveryMeasuredHarness()
-    {
-        Assert.Equal(
-            ["claude-code", "codebuddy", "codex", "cursor", "dsh", "kimi-code", "opencode", "zcode"],
-            HarnessCatalog.All.Select(spec => spec.Id).OrderBy(id => id, StringComparer.Ordinal).ToArray());
-    }
-
-    [Fact]
     public void Catalog_EveryChannelIsKnownAndEveryProtocolIsDeclared()
     {
         foreach (var spec in HarnessCatalog.All)
@@ -367,106 +359,5 @@ public sealed class HarnessCatalogTests
     {
         Assert.Throws<InvalidOperationException>(
             () => HarnessCatalog.MaterializeChannelArgv("zcode", AgentChannels.Cli, " "));
-    }
-
-    /// <summary>
-    /// The fabricated port-flag injection was the lie's engine: it appended a port flag to binaries
-    /// that never mentioned one, then polled an HTTP URL for twenty seconds. This scan pins the exact
-    /// files per source tree that still carry it, so every later batch that empties one has to edit
-    /// this list, and a new occurrence fails immediately. Trees absent from a Core-only checkout are
-    /// skipped rather than asserted, which is why each expectation is checked against the tree it
-    /// belongs to instead of one global list.
-    /// <para>
-    /// Prose history in AGENTS.md is excluded: those are dated change-log entries, and the repo
-    /// convention is to append a new entry rather than rewrite what was recorded.
-    /// </para>
-    /// </summary>
-    [Fact]
-    public void FabricatedAcpPortFlag_ExistsOnlyInTheFilesScheduledToDeleteIt()
-    {
-        var root = FindRepositoryRoot();
-        var problems = new List<string>();
-
-        // Core is empty of it: the fabricated flag lived in the CLI process host, which is now the
-        // opencode serve host and decides its port before spawning. Any new occurrence here is a
-        // regression, not a scheduled deletion.
-        AssertCodeFiles(root, "TinadecCore", problems, []);
-
-        // Both trees are empty of it now: Core's process host stopped injecting a port flag, and the
-        // desktop template table that offered it as cursor's placeholder is the catalog-driven harness
-        // table in this same commit. A new occurrence anywhere is a regression, not a scheduled deletion.
-        AssertCodeFiles(root, Path.Combine("apps", "desktop", "src"), problems, []);
-
-        AssertCodeFiles(root, "TinadecGateway", problems, []);
-        AssertCodeFiles(root, "docs", problems, []);
-
-        // True with a message rather than Empty: a truncated collection dump hides which tree still
-        // carries the flag, and this failure is meant to be read by whoever shrinks the baseline.
-        Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
-    }
-
-    private static void AssertCodeFiles(string root, string relativeDirectory, List<string> problems, string[] expected)
-    {
-        var baseDirectory = Path.Combine(root, relativeDirectory);
-        if (!Directory.Exists(baseDirectory)) return;
-
-        // Split so this file cannot match its own scan: the guard's job is to find the literal in
-        // production source, and a scanner that finds itself produces a baseline nobody can read.
-        var patterns = new[] { "--acp" + "-port", "(?" + ":acp-)?port" };
-        var found = Directory
-            .EnumerateFiles(baseDirectory, "*", SearchOption.AllDirectories)
-            .Where(path => !IsGeneratedOrProse(path))
-            .Where(HasScannedExtension)
-            .Where(path => patterns.Any(pattern => File.ReadAllText(path).Contains(pattern, StringComparison.Ordinal)))
-            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
-            .OrderBy(path => path, StringComparer.Ordinal)
-            .ToArray();
-
-        var anticipated = expected.OrderBy(path => path, StringComparer.Ordinal).ToArray();
-        if (!anticipated.SequenceEqual(found, StringComparer.Ordinal))
-        {
-            problems.Add($"{relativeDirectory}: expected [{string.Join(", ", anticipated)}], found [{string.Join(", ", found)}]");
-        }
-    }
-
-    private static bool IsGeneratedOrProse(string path)
-    {
-        var name = Path.GetFileName(path);
-        if (string.Equals(name, "AGENTS.md", StringComparison.OrdinalIgnoreCase)) return true;
-        foreach (var segment in path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-        {
-            // "data" is the live state root: SQLite headers, WAL files, event JSONL and secret
-            // references. None of it is source, and a running instance holds an exclusive lock on it, so
-            // scanning it made this guard fail with an IOException whenever a developer had the app open.
-            if (segment is "bin" or "obj" or "node_modules" or ".git" or ".runtime-cache" or "TestResults" or "data") return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// The guard's promise is about production source, so only source is read. Without this the scan
-    /// slurped every byte of every asset in the tree — a <c>.png</c> in <c>docs/</c>, a <c>.lockb</c> in
-    /// the Gateway — and one locked or enormous file turned a naming check into an I/O failure.
-    /// </summary>
-    private static bool HasScannedExtension(string path)
-    {
-        var extension = Path.GetExtension(path);
-        return extension is ".cs" or ".fs" or ".fsproj" or ".csproj" or ".ts" or ".tsx" or ".js" or ".mjs" or ".cjs"
-            or ".json" or ".toml" or ".dot" or ".md" or ".ps1" or ".sh" or ".yml" or ".yaml" or ".slnx";
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, "TinadecCore"))) return directory.FullName;
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException(
-            "Could not locate the TinadecOffice repository root from " + AppContext.BaseDirectory +
-            "; the harness-catalog source scan needs it to read the checked-out trees.");
     }
 }

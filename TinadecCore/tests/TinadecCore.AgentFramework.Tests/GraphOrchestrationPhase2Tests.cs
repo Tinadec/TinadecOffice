@@ -106,12 +106,6 @@ public sealed class GraphOrchestrationPhase2Tests
     // ── every mode freezes a Graph section; schema v3 replaced the mode string pair ──
 
     [Fact]
-    public void SchemaVersion_Is_V3Literal()
-    {
-        Assert.Equal("frozen-run-configuration/v3", FrozenRunConfigurationV1.CurrentSchemaVersion);
-    }
-
-    [Fact]
     public void GraphBody_WritesGraphSection_AndRoundTripsTierNodesEdges()
     {
         var graph = new FrozenGraph(

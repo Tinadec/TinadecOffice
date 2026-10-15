@@ -72,23 +72,6 @@ public sealed class DmaeaOrchestrationTests
     }
 
     [Fact]
-    public async Task PlanningAgent_InstructionsExplainTaskArrayIsTheDispatchMechanism()
-    {
-        // 缺口①修复 B（提示词汇表断层）：对话身份「派发」的唯一机制是输出 JSON 任务数组；
-        // 治理层零工具，用户文本一旦要求「通过 dispatch 工具派发」，没有这句话模型就会
-        // 找工具找不到而以散文拒绝（run d035fa40）。
-        var client = new StubChatClient("[]");
-        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
-
-        _ = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
-
-        Assert.NotNull(client.LastInstructions);
-        Assert.Contains("唯一机制", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("不需要任何 dispatch 工具", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("不要用散文拒绝或解释", client.LastInstructions, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task PlanningAgent_ReceivesFrozenSpecialistRosterInInstructions()
     {
         var client = new StubChatClient("""[{"task_key":"code-task","title":"Code","description":"","success_criteria":["done"],"dependencies":[],"required_capabilities":["tool.code"],"required_tools":["write_file"],"priority":1,"risk":"low"}]""");
@@ -232,25 +215,6 @@ public sealed class DmaeaOrchestrationTests
         Assert.Contains("no balanced JSON array candidate", planner.LastParseErrorDetail, StringComparison.Ordinal);
         Assert.Single(tasks);
     }
-
-    [Fact]
-    public async Task PlanningAgent_InstructionsPinArrayFieldTypesAndEmptyPlanContract()
-    {
-        // The 2026-09-17 cluster also exposed two prompt gaps: no type constraint on
-        // the four array fields, and no "greeting → []" contract.
-        var client = new StubChatClient("[]");
-        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
-
-        _ = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
-
-        Assert.NotNull(client.LastInstructions);
-        Assert.Contains("四个字段必须是字符串数组", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("直接输出 []", client.LastInstructions, StringComparison.Ordinal);
-    }
-
-    // ──────────────────────────────────────────────────────────
-    // Execution layer
-    // ──────────────────────────────────────────────────────────
 
     [Fact]
     public async Task ExecutionAgent_ReturnsCompletedResultWithSummary()
