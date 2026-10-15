@@ -82,6 +82,14 @@ const panelSources = import.meta.glob(
     './../pages/DesktopPetPage.vue',
     './../components/governance/PreAuthorizationDialog.vue',
     './../components/governance/SnapshotOverrideDialog.vue',
+    // The code page and its Git panels, including the approval and status lines built in script.
+    './../pages/CodePage.vue',
+    './../components/code/*.vue',
+    './../components/git/*.vue',
+    './../controllers/CodeController.ts',
+    './../composables/useGitOperation.ts',
+    './../composables/useAiChangeAnalysis.ts',
+    './../userToolAction.ts',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>
