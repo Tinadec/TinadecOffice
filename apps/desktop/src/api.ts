@@ -53,6 +53,13 @@ export interface ProjectDto {
   trashed_at?: string | null;
 }
 
+/** What Gateway's health answer says about each service; see `api.healthProbe`. */
+export interface HealthProbeDto {
+  gateway: boolean
+  core: boolean
+  core_version: string | null
+}
+
 export interface SessionDto {
   storage_id?: string;
   /** Slug of the agent that answers the user in this session, frozen when the session was created. */
@@ -2959,6 +2966,28 @@ export const api = {
   tinaChatExecuteIntent: (id: string, intentId: string, body: components['schemas']['TinaChatExecuteIntentRequest']) =>
     request<TinaChatExecution>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents/${encodeURIComponent(intentId)}/execute`, { method: 'POST', body: JSON.stringify(body) }),
   health: () => request<Record<string, unknown>>('/api/v1/health'),
+  /**
+   * Health as the About page reads it. When only Core is unreachable Gateway answers 503 with its
+   * own fingerprint, which `health()` turns into an error that keeps no body; this reads the
+   * fingerprint and returns only what it says. A network failure still throws.
+   */
+  healthProbe: async (): Promise<HealthProbeDto> => {
+    const path = '/api/v1/health'
+    const storageId = captureStorageId(path)
+    const headers = storageHeaders(path, { storageId })
+    headers.set('accept', 'application/json')
+    const { response, text } = await readBackendResponse(`${gatewayUrl}${normalizeStorageRequest(path).path}`, path, { headers }, { storageId })
+    let data: Record<string, unknown> = {}
+    try {
+      const parsed: unknown = text ? JSON.parse(text) : null
+      if (parsed && typeof parsed === 'object') data = parsed as Record<string, unknown>
+    } catch { /* not JSON: it says nothing about either service */ }
+    return {
+      gateway: data.gateway === 'ok',
+      core: response.ok && data.status === 'ok',
+      core_version: response.ok && typeof data.version === 'string' ? data.version : null,
+    }
+  },
   doctor: () => request<DoctorReportDto>('/api/v1/doctor'),
   readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),
   getToolLayerReadiness: (options?: { signal?: AbortSignal }) => request<ToolLayerReadinessReceiptDto>('/api/v1/tool-layer-readiness', options),

@@ -517,3 +517,19 @@ describe('request cancellation semantics', () => {
     await expect(api.listSessions()).rejects.toThrow('Cannot connect to backend')
   })
 })
+
+describe('health probe', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it("reads Gateway's own fingerprint from the 503 it answers when only Core is unreachable", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ gateway: 'ok', core_status: 'unreachable', mode: 'local' }), { status: 503, headers: { 'content-type': 'application/json' } })))
+    // The plain health call loses the body to ApiError, which is why the probe exists.
+    await expect(api.health()).rejects.toBeInstanceOf(ApiError)
+    await expect(api.healthProbe()).resolves.toEqual({ gateway: true, core: false, core_version: null })
+  })
+
+  it('reports both up, with the version Core gave, on a healthy answer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status: 'ok', gateway: 'ok', version: '0.1.0' }), { status: 200, headers: { 'content-type': 'application/json' } })))
+    await expect(api.healthProbe()).resolves.toEqual({ gateway: true, core: true, core_version: '0.1.0' })
+  })
+})

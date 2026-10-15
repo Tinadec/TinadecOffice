@@ -35,22 +35,17 @@ const gatewayState = ref<ServiceState>('checking')
 const coreState = ref<ServiceState>('checking')
 const coreVersion = ref('')
 
-/**
- * Gateway answers health for both. A 503 that still carries Gateway's fingerprint means Gateway
- * is up and only Core is unreachable, which the page says instead of calling both down.
- */
+/** Gateway answers for both; when only Core is down it still says that it is up itself. */
 async function checkHealth(): Promise<void> {
   gatewayState.value = 'checking'
   coreState.value = 'checking'
   try {
-    const data = await api.health()
-    gatewayState.value = data.gateway === 'ok' ? 'running' : 'unreachable'
-    coreState.value = data.status === 'ok' ? 'running' : 'unreachable'
-    coreVersion.value = typeof data.version === 'string' ? data.version : ''
-  } catch (error) {
-    const failure = error as { status?: number; body?: unknown }
-    const body = failure.body && typeof failure.body === 'object' ? failure.body as Record<string, unknown> : {}
-    gatewayState.value = failure.status === 503 && body.gateway === 'ok' ? 'running' : 'unreachable'
+    const probe = await api.healthProbe()
+    gatewayState.value = probe.gateway ? 'running' : 'unreachable'
+    coreState.value = probe.core ? 'running' : 'unreachable'
+    coreVersion.value = probe.core_version ?? ''
+  } catch {
+    gatewayState.value = 'unreachable'
     coreState.value = 'unreachable'
   }
 }

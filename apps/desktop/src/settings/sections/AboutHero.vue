@@ -278,9 +278,9 @@ onBeforeUnmount(() => {
 .about-hero-card .is-running { color: var(--accent-primary); }
 /* Tasks take the left column, the other two stack on the right: edges may meet as on the poster,
    text never sits under another card. */
-.about-hero-card--tasks { top: 26px; left: 0; width: 172px; animation-delay: -2s; }
-.about-hero-card--vcs { top: 22px; right: 14px; width: 178px; animation-delay: -4s; }
-.about-hero-card--review { bottom: 18px; right: 14px; width: 178px; }
+.about-hero-card--tasks { top: 26px; left: 0; width: min(45%, 176px); animation-delay: -2s; }
+.about-hero-card--vcs { top: 22px; right: 14px; width: min(46%, 182px); animation-delay: -4s; }
+.about-hero-card--review { bottom: 18px; right: 14px; width: min(46%, 182px); }
 .about-hero-review { display: flex; align-items: center; gap: 6px; }
 .about-hero-review + .about-hero-review { margin-top: 7px; }
 .about-hero-review span { flex: 1; }

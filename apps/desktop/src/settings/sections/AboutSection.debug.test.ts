@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const api = vi.hoisted(() => ({ health: vi.fn().mockResolvedValue({ status: 'ok', gateway: 'ok' }), gatewayUrl: 'http://127.0.0.1:48700' }))
+const api = vi.hoisted(() => ({ healthProbe: vi.fn().mockResolvedValue({ gateway: true, core: true, core_version: '0.1.0' }), gatewayUrl: 'http://127.0.0.1:48700' }))
 vi.mock('@/api', () => ({ api }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
