@@ -7,11 +7,14 @@ import {
   Clock,
   ListFilter,
   Shield,
+  Wrench,
   XCircle
 } from '@lucide/vue'
 import type { ToolExecutionTimelineItemDto } from '@/api'
 import { toolIconOf } from '@/lib/toolPresentation'
 import ToolInvocationCard from './ToolInvocationCard.vue'
+import { useI18n } from 'vue-i18n'
+import { useToolLabels } from '@/lib/toolLabels'
 
 const props = defineProps<{
   toolExecutions: ToolExecutionTimelineItemDto[]
@@ -29,12 +32,15 @@ const statusFilter = ref<StatusFilter>('all')
 const sortOrder = ref<SortOrder>('desc')
 const expandedIds = ref<Set<string>>(new Set())
 
-const filterOptions: Array<{ key: StatusFilter; label: string; icon: typeof ListFilter }> = [
-  { key: 'all', label: 'All', icon: ListFilter },
-  { key: 'success', label: 'Success', icon: CheckCircle2 },
-  { key: 'failed', label: 'Failed', icon: XCircle },
-  { key: 'approval', label: 'Approval', icon: Shield },
-  { key: 'running', label: 'Running', icon: Clock }
+const { t } = useI18n()
+const { statusLabel, riskLabel } = useToolLabels()
+
+const filterOptions: Array<{ key: StatusFilter; icon: typeof ListFilter }> = [
+  { key: 'all', icon: ListFilter },
+  { key: 'success', icon: CheckCircle2 },
+  { key: 'failed', icon: XCircle },
+  { key: 'approval', icon: Shield },
+  { key: 'running', icon: Clock }
 ]
 
 function sourceClass(source: string) {
@@ -159,23 +165,23 @@ function onViewDetails(exec: ToolExecutionTimelineItemDto) {
           @click="setFilter(opt.key)"
         >
           <component :is="opt.icon" :size="12" />
-          <span>{{ opt.label }}</span>
+          <span>{{ t(`toolPanel.filters.${opt.key}`) }}</span>
           <span class="tool-timeline-filter-count">{{ filterCounts[opt.key] }}</span>
         </button>
       </div>
       <button
         class="tool-timeline-sort"
-        :title="sortOrder === 'desc' ? 'Newest first' : 'Oldest first'"
+        :title="sortOrder === 'desc' ? t('toolPanel.newestFirst') : t('toolPanel.oldestFirst')"
         @click="toggleSort"
       >
         <component :is="sortOrder === 'desc' ? ArrowDownWideNarrow : ArrowUpWideNarrow" :size="14" />
-        <span>{{ sortOrder === 'desc' ? 'Newest' : 'Oldest' }}</span>
+        <span>{{ sortOrder === 'desc' ? t('toolPanel.newest') : t('toolPanel.oldest') }}</span>
       </button>
     </div>
 
     <div v-if="filteredExecutions.length === 0" class="tool-timeline-empty">
       <Wrench :size="20" />
-      <span>No tool executions match the current filter.</span>
+      <span>{{ t('toolPanel.noMatches') }}</span>
     </div>
 
     <div v-else class="tool-timeline-list">
@@ -202,9 +208,9 @@ function onViewDetails(exec: ToolExecutionTimelineItemDto) {
                   {{ execution.source }}
                 </span>
                 <span class="tool-timeline-status" :class="statusClass(execution.status)">
-                  {{ execution.status }}
+                  {{ statusLabel(execution.status) }}
                 </span>
-                <span v-if="execution.requires_approval" class="tool-timeline-approval-flag" title="Approval required">
+                <span v-if="execution.requires_approval" class="tool-timeline-approval-flag" :title="t('toolPanel.approvalRequired')">
                   <Shield :size="11" />
                 </span>
               </div>
@@ -214,10 +220,10 @@ function onViewDetails(exec: ToolExecutionTimelineItemDto) {
                   {{ formatTime(execution.requested_at) }}
                 </span>
                 <span class="tool-timeline-duration">{{ formatDuration(execution.duration_ms) }}</span>
-                <span class="tool-timeline-risk">{{ execution.risk }}</span>
+                <span class="tool-timeline-risk">{{ riskLabel(execution.risk) }}</span>
                 <span class="tool-timeline-layer">{{ execution.provider_layer }}</span>
                 <span v-if="execution.approval_id" class="tool-timeline-approval-id">
-                  approval {{ execution.approval_id }}
+                  {{ t('toolPanel.approvalId', { id: execution.approval_id }) }}
                 </span>
               </div>
               <p v-if="execution.summary" class="tool-timeline-summary-text">{{ execution.summary }}</p>

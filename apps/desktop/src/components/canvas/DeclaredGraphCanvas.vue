@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { computed } from 'vue'
 import { VueFlow, Panel, type Node, type Edge } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -54,15 +55,18 @@ const edges = computed<Edge[]>(() =>
 
 const flowSummary = computed(() => (props.flows ?? []).slice(0, 6))
 
+const { t, te } = useI18n()
+
 const tierLabel = computed(() => {
-  if (!props.graph.tier) return null
-  const names: Record<string, string> = {
-    deterministic: 'deterministic · 焊死拓扑',
-    self_dispatch: 'self_dispatch · 边内自派发',
-    free_form: 'free_form · 自由搭建',
-  }
-  return names[props.graph.tier] ?? props.graph.tier
+  const tier = props.graph.tier
+  if (!tier) return null
+  return te(`orchestrationPanel.tier.${tier}`) ? t(`orchestrationPanel.tier.${tier}`) : tier
 })
+
+/** A node's layer in words; one this build does not know is shown as it came. */
+function layerLabel(layer: string): string {
+  return te(`orchestrationPanel.layer.${layer}`) ? t(`orchestrationPanel.layer.${layer}`) : layer
+}
 </script>
 
 <template>
@@ -79,9 +83,9 @@ const tierLabel = computed(() => {
       <Background />
       <Panel position="top-left" class="declared-graph-legend">
         <span class="legend-dot legend-dot--conversation"></span>
-        {{ $t('workbench.conversationNode', 'conversation identity') }}
+        {{ t('orchestrationPanel.conversationNode') }}
         <span v-if="tierLabel" class="legend-tier" data-testid="declared-graph-tier">{{ tierLabel }}</span>
-        <span class="legend-count">{{ flows?.length ?? 0 }} flows</span>
+        <span class="legend-count">{{ t('orchestrationPanel.flows', flows?.length ?? 0) }}</span>
       </Panel>
       <template #node-default="nodeProps">
         <div
@@ -90,8 +94,8 @@ const tierLabel = computed(() => {
         >
           <div class="graph-node__label">{{ nodeProps.data.node.label ?? nodeProps.data.node.node_key }}</div>
           <div class="graph-node__meta">
-            <span>{{ nodeProps.data.node.layer }}</span>
-            <span v-if="nodeProps.data.node.is_conversation">· identity</span>
+            <span>{{ layerLabel(nodeProps.data.node.layer) }}</span>
+            <span v-if="nodeProps.data.node.is_conversation">{{ t('orchestrationPanel.identity') }}</span>
           </div>
         </div>
       </template>

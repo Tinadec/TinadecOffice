@@ -130,7 +130,7 @@ function toggleCollapse() {
 
     <div v-if="!collapsed" class="task-graph-body">
       <p v-if="!snapshot?.graph" class="task-graph-empty">
-        Send a task to create the orchestration plan.
+        {{ t('taskGraph.empty') }}
       </p>
       <div v-else class="task-lanes">
         <div v-for="group in laneGroups" :key="group.lane_key" class="task-lane">
@@ -139,7 +139,7 @@ function toggleCollapse() {
             <span v-if="laneOf(group.lane_key)" class="task-lane-state" :class="laneOf(group.lane_key)!.status">
               {{ laneOf(group.lane_key)!.status }}
             </span>
-            <span v-if="laneOf(group.lane_key)?.escalated" class="task-lane-escalated">escalated</span>
+            <span v-if="laneOf(group.lane_key)?.escalated" class="task-lane-escalated">{{ t('taskGraph.escalated') }}</span>
           </div>
           <ol class="task-step-list">
             <li

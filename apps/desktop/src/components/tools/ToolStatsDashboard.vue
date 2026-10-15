@@ -11,10 +11,12 @@ import {
   XCircle
 } from '@lucide/vue'
 import type { ToolExecutionTimelineItemDto } from '@/api'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   toolExecutions: ToolExecutionTimelineItemDto[]
 }>()
+const { t } = useI18n()
 
 interface ToolStat {
   toolId: string
@@ -146,7 +148,7 @@ function sourceBarWidth(count: number, total: number): string {
     <section class="tool-stats-section">
       <header class="tool-stats-section-head">
         <Activity :size="14" />
-        <strong>Overview</strong>
+        <strong>{{ t('toolPanel.stats.overview') }}</strong>
       </header>
       <div class="tool-stats-grid">
         <div class="tool-stat-card">
@@ -155,7 +157,7 @@ function sourceBarWidth(count: number, total: number): string {
           </div>
           <div class="tool-stat-body">
             <strong>{{ stats.total }}</strong>
-            <span>Total calls</span>
+            <span>{{ t('toolPanel.stats.total') }}</span>
           </div>
         </div>
         <div class="tool-stat-card">
@@ -164,7 +166,7 @@ function sourceBarWidth(count: number, total: number): string {
           </div>
           <div class="tool-stat-body">
             <strong>{{ stats.success }}</strong>
-            <span>Completed</span>
+            <span>{{ t('toolPanel.stats.completed') }}</span>
           </div>
         </div>
         <div class="tool-stat-card">
@@ -173,7 +175,7 @@ function sourceBarWidth(count: number, total: number): string {
           </div>
           <div class="tool-stat-body">
             <strong>{{ stats.failed }}</strong>
-            <span>Failed</span>
+            <span>{{ t('toolPanel.stats.failed') }}</span>
           </div>
         </div>
         <div class="tool-stat-card">
@@ -182,7 +184,7 @@ function sourceBarWidth(count: number, total: number): string {
           </div>
           <div class="tool-stat-body">
             <strong>{{ stats.approval }}</strong>
-            <span>Awaiting approval</span>
+            <span>{{ t('toolPanel.stats.awaitingApproval') }}</span>
           </div>
         </div>
         <div class="tool-stat-card">
@@ -191,7 +193,7 @@ function sourceBarWidth(count: number, total: number): string {
           </div>
           <div class="tool-stat-body">
             <strong>{{ formatDuration(stats.averageDuration) }}</strong>
-            <span>Avg duration</span>
+            <span>{{ t('toolPanel.stats.avgDuration') }}</span>
           </div>
         </div>
         <div class="tool-stat-card">
@@ -200,7 +202,7 @@ function sourceBarWidth(count: number, total: number): string {
           </div>
           <div class="tool-stat-body">
             <strong>{{ stats.approvalRate.toFixed(0) }}%</strong>
-            <span>Approval pass rate</span>
+            <span>{{ t('toolPanel.stats.approvalRate') }}</span>
           </div>
         </div>
       </div>
@@ -209,11 +211,11 @@ function sourceBarWidth(count: number, total: number): string {
     <section v-if="stats.total > 0" class="tool-stats-section">
       <header class="tool-stats-section-head">
         <AlertOctagon :size="14" />
-        <strong>Status breakdown</strong>
+        <strong>{{ t('toolPanel.stats.breakdown') }}</strong>
       </header>
       <div class="tool-stats-bars">
         <div class="tool-stats-bar-row">
-          <span class="tool-stats-bar-label">Completed</span>
+          <span class="tool-stats-bar-label">{{ t('toolPanel.stats.completed') }}</span>
           <div class="tool-stats-bar-track">
             <div
               class="tool-stats-bar-fill fill-success"
@@ -223,7 +225,7 @@ function sourceBarWidth(count: number, total: number): string {
           <span class="tool-stats-bar-value">{{ stats.success }}</span>
         </div>
         <div class="tool-stats-bar-row">
-          <span class="tool-stats-bar-label">Failed</span>
+          <span class="tool-stats-bar-label">{{ t('toolPanel.stats.failed') }}</span>
           <div class="tool-stats-bar-track">
             <div
               class="tool-stats-bar-fill fill-failed"
@@ -233,7 +235,7 @@ function sourceBarWidth(count: number, total: number): string {
           <span class="tool-stats-bar-value">{{ stats.failed }}</span>
         </div>
         <div class="tool-stats-bar-row">
-          <span class="tool-stats-bar-label">Running</span>
+          <span class="tool-stats-bar-label">{{ t('toolPanel.stats.running') }}</span>
           <div class="tool-stats-bar-track">
             <div
               class="tool-stats-bar-fill fill-running"
@@ -243,7 +245,7 @@ function sourceBarWidth(count: number, total: number): string {
           <span class="tool-stats-bar-value">{{ stats.running }}</span>
         </div>
         <div class="tool-stats-bar-row">
-          <span class="tool-stats-bar-label">Pending</span>
+          <span class="tool-stats-bar-label">{{ t('toolPanel.stats.pending') }}</span>
           <div class="tool-stats-bar-track">
             <div
               class="tool-stats-bar-fill fill-pending"
@@ -253,7 +255,7 @@ function sourceBarWidth(count: number, total: number): string {
           <span class="tool-stats-bar-value">{{ stats.pending }}</span>
         </div>
         <div class="tool-stats-bar-row">
-          <span class="tool-stats-bar-label">Approval</span>
+          <span class="tool-stats-bar-label">{{ t('toolPanel.stats.approval') }}</span>
           <div class="tool-stats-bar-track">
             <div
               class="tool-stats-bar-fill fill-approval"
@@ -263,7 +265,7 @@ function sourceBarWidth(count: number, total: number): string {
           <span class="tool-stats-bar-value">{{ stats.approval }}</span>
         </div>
         <div class="tool-stats-bar-row">
-          <span class="tool-stats-bar-label">Blocked</span>
+          <span class="tool-stats-bar-label">{{ t('toolPanel.stats.blocked') }}</span>
           <div class="tool-stats-bar-track">
             <div
               class="tool-stats-bar-fill fill-blocked"
@@ -278,7 +280,7 @@ function sourceBarWidth(count: number, total: number): string {
     <section v-if="stats.topTools.length > 0" class="tool-stats-section">
       <header class="tool-stats-section-head">
         <BarChart3 :size="14" />
-        <strong>Top tools</strong>
+        <strong>{{ t('toolPanel.stats.topTools') }}</strong>
       </header>
       <div class="tool-stats-top">
         <div v-for="tool in stats.topTools" :key="tool.toolId" class="tool-stats-top-row">
@@ -298,7 +300,7 @@ function sourceBarWidth(count: number, total: number): string {
     <section v-if="stats.sourceStats.length > 0" class="tool-stats-section">
       <header class="tool-stats-section-head">
         <Wrench :size="14" />
-        <strong>By source</strong>
+        <strong>{{ t('toolPanel.stats.bySource') }}</strong>
       </header>
       <div class="tool-stats-sources">
         <div v-for="source in stats.sourceStats" :key="source.source" class="tool-stats-source-row">
@@ -322,7 +324,7 @@ function sourceBarWidth(count: number, total: number): string {
 
     <div v-if="stats.total === 0" class="tool-stats-empty">
       <Activity :size="20" />
-      <span>No tool execution data available for this session.</span>
+      <span>{{ t('toolPanel.stats.empty') }}</span>
     </div>
   </div>
 </template>

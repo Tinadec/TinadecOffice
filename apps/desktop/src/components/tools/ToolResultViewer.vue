@@ -2,11 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import { Check, ChevronDown, ChevronRight, Copy, Folder } from '@lucide/vue'
 import type { ToolExecutionTimelineItemDto } from '@/api'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   toolExecution: ToolExecutionTimelineItemDto
   defaultExpanded?: boolean
 }>()
+const { t } = useI18n()
 
 const expanded = ref(props.defaultExpanded ?? false)
 const copied = ref(false)
@@ -64,11 +66,11 @@ function toggle() {
         :size="14"
         class="tool-result-chevron"
       />
-      <span class="tool-result-title">Result</span>
+      <span class="tool-result-title">{{ t('toolPanel.result') }}</span>
       <span class="tool-result-meta">{{ toolExecution.status }}</span>
       <button
         class="tool-result-copy"
-        title="Copy result"
+        :title="t('toolPanel.copyResult')"
         @click.stop="copyResult"
       >
         <Check v-if="copied" :size="12" />
@@ -88,7 +90,7 @@ function toggle() {
           </div>
         </div>
         <p v-if="!toolExecution.summary && evidenceLines.length === 0" class="tool-result-empty">
-          No result was recorded for this call.
+          {{ t('toolPanel.noResult') }}
         </p>
       </div>
     </div>

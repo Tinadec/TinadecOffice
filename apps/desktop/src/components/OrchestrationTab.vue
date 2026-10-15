@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, RefreshCw, Wrench } from '@lucide/vue'
 import { api, type ContextBudgetShareDto, type ContextPackDto, type ModelInvocationDto, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto, type ToolDescriptorDto } from '../api'
 import { summarizeModelInvocations, type ModelUsageGroup, type ModelUsageSummary } from '../lib/modelUsage'
@@ -14,6 +15,8 @@ const props = defineProps<{
   tools?: ToolDescriptorDto[]
   sessionId?: string | null
 }>()
+
+const { t, te } = useI18n()
 
 const emit = defineEmits<{
   'rerun-tool': [toolExecution: ToolExecutionTimelineItemDto]
@@ -101,12 +104,18 @@ const ambiguousModels = computed(() => {
 })
 
 function usageGroupLabel(group: ModelUsageGroup): string {
-  const name = group.model ?? 'unnamed model'
-  const via = ambiguousModels.value.has(group.model ?? '') ? ` via ${group.providerId.slice(0, 8)}` : ''
-  const calls = `${group.calls} ${group.calls === 1 ? 'call' : 'calls'}`
-  if (group.totalTokens === null) return `${name}${via} · no token usage reported · ${calls}`
-  const partial = group.unpricedCalls > 0 ? ` (${group.unpricedCalls} unreported)` : ''
-  return `${name}${via} · ${group.totalTokens.toLocaleString('en-US')} tokens${partial} · ${calls}`
+  const name = group.model ?? t('orchestrationPanel.unnamedModel')
+  const via = ambiguousModels.value.has(group.model ?? '') ? t('orchestrationPanel.via', { provider: group.providerId.slice(0, 8) }) : ''
+  const calls = t('orchestrationPanel.calls', group.calls)
+  if (group.totalTokens === null) return t('orchestrationPanel.groupNoUsage', { name, via, calls })
+  const partial = group.unpricedCalls > 0 ? t('orchestrationPanel.unreported', { count: group.unpricedCalls }) : ''
+  return t('orchestrationPanel.groupTokens', { name, via, tokens: group.totalTokens.toLocaleString('en-US'), partial, calls })
+}
+
+/** The run's status in words where the conversation already names it; an unknown one as it came. */
+function runStatusLabel(status?: string | null): string {
+  if (!status) return ''
+  return te(`space.status.${status}`) ? t(`space.status.${status}`) : status
 }
 
 /**
@@ -115,7 +124,7 @@ function usageGroupLabel(group: ModelUsageGroup): string {
  * which lane it was assembled for, or none for the main planner.
  */
 function packLabel(pack: ContextPackDto): string {
-  return pack.lane_key ? `Lane '${pack.lane_key}' pack` : 'Planner pack'
+  return pack.lane_key ? t('orchestrationPanel.packLane', { lane: pack.lane_key }) : t('orchestrationPanel.packPlanner')
 }
 
 /**
@@ -156,10 +165,10 @@ function droppedShares(pack: ContextPackDto): Array<{ source: string; tokens: nu
   return [...sumBySource(pack.dropped_sources)].map(([source, tokens]) => ({ source, tokens }))
 }
 
-const tabs: Array<{ key: TabKey; label: string; icon: typeof ListTree }> = [
-  { key: 'timeline', label: 'Timeline', icon: ListTree },
-  { key: 'catalog', label: 'Catalog', icon: Package },
-  { key: 'stats', label: 'Stats', icon: BarChart3 }
+const tabs: Array<{ key: TabKey; icon: typeof ListTree }> = [
+  { key: 'timeline', icon: ListTree },
+  { key: 'catalog', icon: Package },
+  { key: 'stats', icon: BarChart3 }
 ]
 
 function onRerun(exec: ToolExecutionTimelineItemDto) {
@@ -178,14 +187,14 @@ function onExecuteTool(tool: ToolDescriptorDto) {
 <template>
   <section class="orchestration-tab">
     <div v-if="!hasSnapshot" class="orchestration-empty">
-      No orchestration run yet.
+      {{ t('orchestrationPanel.empty') }}
     </div>
 
     <template v-else-if="snapshot">
       <article v-if="snapshot.graph" class="orchestration-block">
         <div class="orchestration-block-head">
           <GitBranch :size="15" />
-          <strong>Mode Graph</strong>
+          <strong>{{ t('orchestrationPanel.modeGraph') }}</strong>
         </div>
         <DeclaredGraphCanvas :graph="snapshot.graph" :flows="snapshot.flows" />
       </article>
@@ -193,23 +202,23 @@ function onExecuteTool(tool: ToolDescriptorDto) {
       <article class="orchestration-block">
         <div class="orchestration-block-head">
           <Layers3 :size="15" />
-          <strong>Run</strong>
+          <strong>{{ t('orchestrationPanel.run') }}</strong>
         </div>
         <p>{{ snapshot.run?.summary }}</p>
         <div class="orchestration-tags">
-          <span>{{ snapshot.run?.status }}</span>
-          <span>{{ snapshot.nodes.length }} nodes</span>
-          <span>{{ snapshot.assignments.length }} assignments</span>
+          <span>{{ runStatusLabel(snapshot.run?.status) }}</span>
+          <span>{{ t('orchestrationPanel.nodes', snapshot.nodes.length) }}</span>
+          <span>{{ t('orchestrationPanel.assignments', snapshot.assignments.length) }}</span>
         </div>
       </article>
 
       <article class="orchestration-block">
         <div class="orchestration-block-head">
           <AlertTriangle :size="15" />
-          <strong>Supervision</strong>
+          <strong>{{ t('orchestrationPanel.supervision') }}</strong>
         </div>
         <div v-if="snapshot.supervision_findings.length === 0" class="quiet">
-          No findings.
+          {{ t('orchestrationPanel.noFindings') }}
         </div>
         <div v-for="finding in snapshot.supervision_findings" :key="finding.id" class="orchestration-finding">
           <span>{{ finding.severity }} · {{ finding.category }}</span>
@@ -221,7 +230,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
       <article class="orchestration-block">
         <div class="orchestration-block-head">
           <Wrench :size="15" />
-          <strong>Tool Executions</strong>
+          <strong>{{ t('orchestrationPanel.toolExecutions') }}</strong>
         </div>
 
         <div class="orchestration-tabs">
@@ -233,7 +242,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
             @click="activeTab = tab.key"
           >
             <component :is="tab.icon" :size="13" />
-            <span>{{ tab.label }}</span>
+            <span>{{ t(`orchestrationPanel.tabs.${tab.key}`) }}</span>
           </button>
         </div>
 
@@ -258,33 +267,33 @@ function onExecuteTool(tool: ToolDescriptorDto) {
           v-if="activeTab === 'catalog'"
           class="orchestration-refresh"
           :disabled="toolCatalogLoading"
-          title="Refresh tool catalog"
+          :title="t('orchestrationPanel.refreshToolsHint')"
           @click="refreshToolCatalog"
         >
           <RefreshCw :size="12" :class="{ spinning: toolCatalogLoading }" />
-          <span>Refresh tools</span>
+          <span>{{ t('orchestrationPanel.refreshTools') }}</span>
         </button>
       </article>
 
       <article class="orchestration-block">
         <div class="orchestration-block-head">
           <Archive :size="15" />
-          <strong>Context Packs</strong>
+          <strong>{{ t('orchestrationPanel.contextPacks') }}</strong>
         </div>
         <div v-if="snapshot.context_packs.length === 0" class="quiet">
-          No context packs.
+          {{ t('orchestrationPanel.noContextPacks') }}
         </div>
         <div v-for="pack in snapshot.context_packs" :key="pack.id" class="context-pack-row" data-testid="context-pack-row">
           <p>{{ packLabel(pack) }}</p>
           <div class="orchestration-tags">
-            <span>{{ pack.evidence_count }} evidence</span>
-            <span>{{ pack.estimated_tokens }} / {{ pack.token_budget }} tokens</span>
+            <span>{{ t('orchestrationPanel.evidence', { count: pack.evidence_count }) }}</span>
+            <span>{{ t('orchestrationPanel.tokens', { used: pack.estimated_tokens, budget: pack.token_budget }) }}</span>
           </div>
           <div
             v-if="pack.sources.length"
             class="orchestration-tags"
             role="list"
-            aria-label="Evidence sources this pack carried, with the tokens each cost"
+            :aria-label="t('orchestrationPanel.sourcesLabel')"
             data-testid="context-pack-sources"
           >
             <span
@@ -295,16 +304,15 @@ function onExecuteTool(tool: ToolDescriptorDto) {
             >{{ sourceLabel(pack, source) }}</span>
           </div>
           <p v-else class="quiet">
-            No evidence list was recorded for this pack — it was written before the pack started
-            naming its sources, so its contents are unknown here rather than empty.
+            {{ t('orchestrationPanel.noSourceList') }}
           </p>
           <!-- Available but cut: the pack answered "which sources" without saying which
                ones the budget removed, and those are two different answers to "why did the
                agent ignore the project rules". -->
           <p v-if="droppedShares(pack).length" class="quiet" data-testid="context-pack-dropped">
-            Cut by the token budget:
-            <span v-for="share in droppedShares(pack)" :key="share.source" data-testid="context-pack-dropped-source">{{ share.source }} ({{ share.tokens }} tokens)</span>
-            — available when this pack was built, but they did not fit, so the model was not told them.
+            {{ t('orchestrationPanel.droppedLead') }}
+            <span v-for="share in droppedShares(pack)" :key="share.source" data-testid="context-pack-dropped-source">{{ t('orchestrationPanel.droppedSource', { source: share.source, tokens: share.tokens }) }}</span>
+            {{ t('orchestrationPanel.droppedTail') }}
           </p>
         </div>
       </article>
@@ -312,27 +320,25 @@ function onExecuteTool(tool: ToolDescriptorDto) {
       <article class="orchestration-block" data-testid="model-usage">
         <div class="orchestration-block-head">
           <BarChart3 :size="15" />
-          <strong>Model Usage</strong>
+          <strong>{{ t('orchestrationPanel.modelUsage') }}</strong>
         </div>
         <div v-if="usageState === 'loading'" class="quiet">
-          Reading this run's model invocation audit…
+          {{ t('orchestrationPanel.usageLoading') }}
         </div>
         <div v-else-if="usageState === 'unavailable'" class="quiet" data-testid="model-usage-unavailable">
-          The invocation audit could not be read, so no token figures are shown. An unread audit is
-          not a zero-cost run.
+          {{ t('orchestrationPanel.usageUnavailable') }}
         </div>
         <div v-else-if="!usage || usage.calls === 0" class="quiet" data-testid="model-usage-empty">
-          No model calls recorded for this run yet.
+          {{ t('orchestrationPanel.usageEmpty') }}
         </div>
         <template v-else>
           <p v-if="usage.truncated" class="quiet" data-testid="model-usage-truncated">
-            Partial: this run has more than {{ USAGE_PAGE_LIMIT * USAGE_PAGE_SIZE }} recorded calls
-            and the walk stopped there, so the figures below are a floor rather than a total.
+            {{ t('orchestrationPanel.usageTruncated', { limit: USAGE_PAGE_LIMIT * USAGE_PAGE_SIZE }) }}
           </p>
           <div
             class="orchestration-tags"
             role="list"
-            aria-label="Tokens and calls per model in this run"
+            :aria-label="t('orchestrationPanel.usageGroupsLabel')"
           >
             <span
               v-for="group in usage.groups"
@@ -342,11 +348,10 @@ function onExecuteTool(tool: ToolDescriptorDto) {
             >{{ usageGroupLabel(group) }}</span>
           </div>
           <p v-if="usage.unpricedCalls" class="quiet" data-testid="model-usage-unpriced">
-            {{ usage.unpricedCalls }} of {{ usage.calls }} calls reported no token usage at all —
-            a failed or unreported call, not a free one.
+            {{ t('orchestrationPanel.usageUnpriced', { unpriced: usage.unpricedCalls, calls: usage.calls }) }}
           </p>
           <p class="quiet">
-            Tokens only: this build has no per-model price table, so no amount is shown.
+            {{ t('orchestrationPanel.tokensOnly') }}
           </p>
         </template>
       </article>
@@ -354,13 +359,13 @@ function onExecuteTool(tool: ToolDescriptorDto) {
       <article class="orchestration-block">
         <div class="orchestration-block-head">
           <CheckCircle2 :size="15" />
-          <strong>Step Results</strong>
+          <strong>{{ t('orchestrationPanel.stepResults') }}</strong>
         </div>
         <div v-if="snapshot.step_results.length === 0" class="quiet">
-          No step results.
+          {{ t('orchestrationPanel.noStepResults') }}
         </div>
         <div v-for="result in snapshot.step_results" :key="result.id" class="step-result-row">
-          <span>{{ result.status }}</span>
+          <span>{{ runStatusLabel(result.status) }}</span>
           <p>{{ result.summary }}</p>
         </div>
       </article>

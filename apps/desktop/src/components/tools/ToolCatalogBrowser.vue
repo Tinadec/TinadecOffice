@@ -14,8 +14,10 @@ import { api, type ToolDescriptorDto, type ToolSearchResultDto } from '@/api'
 import { riskLevelsPresent, riskToneClass, toolIconOf } from '@/lib/toolPresentation'
 import { useNotifications } from '@/composables/useNotifications'
 import { UiSelectField } from '@/components/ui'
+import { useToolLabels } from '@/lib/toolLabels'
 
 const { t } = useI18n()
+const { riskLabel } = useToolLabels()
 const { status, dismissByKey } = useNotifications()
 
 const props = defineProps<{
@@ -46,7 +48,7 @@ const sourceOptions = computed(() => {
     sources.add(tool.source)
   }
   return [
-    { key: 'all', label: 'All sources' },
+    { key: 'all', label: t('toolPanel.catalog.allSources') },
     ...[...sources].sort().map((source) => ({ key: source, label: source }))
   ]
 })
@@ -58,8 +60,8 @@ const sourceOptions = computed(() => {
  * one of those five choices filtered the catalog to an empty list.
  */
 const riskOptions = computed(() => [
-  { key: 'all', label: 'All risk levels' },
-  ...riskLevelsPresent(tools.value.map((tool) => tool.risk)).map((risk) => ({ key: risk, label: risk }))
+  { key: 'all', label: t('toolPanel.catalog.allRisks') },
+  ...riskLevelsPresent(tools.value.map((tool) => tool.risk)).map((risk) => ({ key: risk, label: riskLabel(risk) }))
 ])
 
 function sourceClass(source: string) {
@@ -192,42 +194,42 @@ function onExecute(tool: ToolDescriptorDto) {
         <input
           v-model="searchQuery"
           type="text"
-          placeholder="Search tools by name, capability, or domain..."
+          :placeholder="t('toolPanel.catalog.search')"
           class="tool-catalog-search-input"
         />
-        <span v-if="searchLoading" class="tool-catalog-search-loading">Searching…</span>
+        <span v-if="searchLoading" class="tool-catalog-search-loading">{{ t('toolPanel.catalog.searching') }}</span>
       </div>
       <UiSelectField
         v-model="sourceFilter"
         class="tool-catalog-select"
-        aria-label="Source"
+        :aria-label="t('toolPanel.catalog.source')"
         :options="sourceOptions.map((opt) => ({ value: opt.key, label: opt.label }))"
       />
       <UiSelectField
         v-model="riskFilter"
         class="tool-catalog-select"
-        aria-label="Risk"
+        :aria-label="t('toolPanel.catalog.risk')"
         :options="riskOptions.map((opt) => ({ value: opt.key, label: opt.label }))"
       />
       <UiSelectField
         v-model="approvalFilter"
         class="tool-catalog-select"
-        aria-label="Approval"
+        :aria-label="t('toolPanel.catalog.approval')"
         :options="[
-          { value: 'all', label: 'All approval' },
-          { value: 'required', label: 'Approval required' },
-          { value: 'optional', label: 'No approval' },
+          { value: 'all', label: t('toolPanel.catalog.allApproval') },
+          { value: 'required', label: t('toolPanel.catalog.approvalRequired') },
+          { value: 'optional', label: t('toolPanel.catalog.noApproval') },
         ]"
       />
     </div>
 
     <div v-if="loading" class="tool-catalog-loading">
-      <span>Loading tools…</span>
+      <span>{{ t('toolPanel.catalog.loading') }}</span>
     </div>
 
     <div v-else-if="totalCount === 0" class="tool-catalog-empty">
       <Package :size="20" />
-      <span>No tools match the current filters.</span>
+      <span>{{ t('toolPanel.catalog.empty') }}</span>
     </div>
 
     <div v-else class="tool-catalog-groups">
@@ -240,7 +242,7 @@ function onExecute(tool: ToolDescriptorDto) {
           <span class="tool-catalog-group-source" :class="sourceClass(sourceKey)">
             {{ sourceKey }}
           </span>
-          <span class="tool-catalog-group-count">{{ groupedTools[sourceKey].length }} tools</span>
+          <span class="tool-catalog-group-count">{{ t('toolPanel.catalog.count', groupedTools[sourceKey].length) }}</span>
         </header>
 
         <div class="tool-catalog-grid">
@@ -268,49 +270,49 @@ function onExecute(tool: ToolDescriptorDto) {
             <div class="tool-catalog-card-tags">
               <span class="tool-catalog-tag" :class="sourceClass(tool.source)">{{ tool.source }}</span>
               <span class="tool-catalog-tag" :class="riskToneClass(tool.risk)" :style="{ '--risk-color': riskColor(tool.risk) }">
-                {{ tool.risk }}
+                {{ riskLabel(tool.risk) }}
               </span>
               <span v-if="tool.requires_approval" class="tool-catalog-tag tag-approval">
                 <Shield :size="10" />
-                approval
+                {{ t('toolPanel.catalog.approvalTag') }}
               </span>
               <span v-if="tool.domain" class="tool-catalog-tag tag-domain">{{ tool.domain }}</span>
             </div>
 
             <div v-if="isExpanded(tool.id)" class="tool-catalog-card-detail">
               <div class="tool-catalog-detail-row">
-                <span class="tool-catalog-detail-label">Domain</span>
+                <span class="tool-catalog-detail-label">{{ t('toolPanel.catalog.domain') }}</span>
                 <span class="tool-catalog-detail-value">{{ tool.domain || '—' }}</span>
               </div>
               <div class="tool-catalog-detail-row">
-                <span class="tool-catalog-detail-label">Source</span>
+                <span class="tool-catalog-detail-label">{{ t('toolPanel.catalog.source') }}</span>
                 <span class="tool-catalog-detail-value">{{ tool.source }}</span>
               </div>
               <div class="tool-catalog-detail-row">
-                <span class="tool-catalog-detail-label">Risk</span>
-                <span class="tool-catalog-detail-value" :style="{ color: riskColor(tool.risk) }">{{ tool.risk }}</span>
+                <span class="tool-catalog-detail-label">{{ t('toolPanel.catalog.risk') }}</span>
+                <span class="tool-catalog-detail-value" :style="{ color: riskColor(tool.risk) }">{{ riskLabel(tool.risk) }}</span>
               </div>
               <div class="tool-catalog-detail-row">
-                <span class="tool-catalog-detail-label">Approval</span>
+                <span class="tool-catalog-detail-label">{{ t('toolPanel.catalog.approval') }}</span>
                 <span class="tool-catalog-detail-value">
                   <Shield v-if="tool.requires_approval" :size="11" />
                   <ShieldAlert v-else :size="11" />
-                  {{ tool.requires_approval ? 'Required' : 'Not required' }}
+                  {{ tool.requires_approval ? t('toolPanel.catalog.required') : t('toolPanel.catalog.notRequired') }}
                 </span>
               </div>
               <div class="tool-catalog-detail-row">
-                <span class="tool-catalog-detail-label">Endpoint</span>
+                <span class="tool-catalog-detail-label">{{ t('toolPanel.catalog.endpoint') }}</span>
                 <code class="tool-catalog-detail-mono">{{ tool.execute_endpoint }}</code>
               </div>
               <div v-if="tool.capabilities.length > 0" class="tool-catalog-detail-capabilities">
-                <span class="tool-catalog-detail-label">Capabilities</span>
+                <span class="tool-catalog-detail-label">{{ t('toolPanel.catalog.capabilities') }}</span>
                 <div class="tool-catalog-cap-list">
                   <span v-for="cap in tool.capabilities" :key="cap" class="tool-catalog-cap">{{ cap }}</span>
                 </div>
               </div>
               <button class="tool-catalog-execute" @click="onExecute(tool)">
                 <Wrench :size="12" />
-                <span>Execute</span>
+                <span>{{ t('toolPanel.catalog.execute') }}</span>
               </button>
             </div>
           </article>
@@ -326,12 +328,15 @@ function onExecute(tool: ToolDescriptorDto) {
   gap: 10px;
 }
 
+/* One row when the card is wide; in a narrow card the search keeps its own row and the three
+   filters share the next instead of being squeezed to a single character each. */
 .tool-catalog-controls {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
+.tool-catalog-search { flex: 1 1 220px; }
 
 .tool-catalog-search {
   position: relative;
@@ -376,7 +381,7 @@ function onExecute(tool: ToolDescriptorDto) {
   flex-shrink: 0;
 }
 
-.tool-catalog-select { min-width: 0; }
+.tool-catalog-select { flex: 1 1 110px; min-width: 0; }
 .tool-catalog-select :deep(.ui-select-trigger) {
   height: 30px;
   padding: 0 8px;

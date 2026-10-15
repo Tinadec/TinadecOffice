@@ -14,11 +14,15 @@ import {
 import type { ToolExecutionTimelineItemDto } from '@/api'
 import { riskToneClass, toolIconOf } from '@/lib/toolPresentation'
 import ToolResultViewer from './ToolResultViewer.vue'
+import { useI18n } from 'vue-i18n'
+import { useToolLabels } from '@/lib/toolLabels'
 
 const props = defineProps<{
   toolExecution: ToolExecutionTimelineItemDto
   defaultExpanded?: boolean
 }>()
+const { t } = useI18n()
+const { statusLabel, riskLabel } = useToolLabels()
 
 const emit = defineEmits<{
   'rerun': [toolExecution: ToolExecutionTimelineItemDto]
@@ -129,28 +133,28 @@ function viewDetails() {
         <span class="tool-invocation-id">{{ toolExecution.tool_id }}</span>
       </div>
       <span class="tool-invocation-source" :class="sourceClass">{{ toolExecution.source }}</span>
-      <span class="tool-invocation-status" :class="statusClass">{{ toolExecution.status }}</span>
+      <span class="tool-invocation-status" :class="statusClass">{{ statusLabel(toolExecution.status) }}</span>
       <span class="tool-invocation-duration">
         <Clock :size="11" />
         {{ formattedDuration }}
       </span>
       <div class="tool-invocation-menu-wrapper">
-        <button class="tool-invocation-menu-btn" title="Actions" @click="toggleMenu">
+        <button class="tool-invocation-menu-btn" :title="t('toolPanel.actions')" :aria-label="t('toolPanel.actions')" @click="toggleMenu">
           <MoreHorizontal :size="14" />
         </button>
         <div v-if="menuOpen" class="tool-invocation-menu" @click.stop>
           <button class="tool-invocation-menu-item" @click="rerun">
             <RotateCw :size="12" />
-            <span>Re-run</span>
+            <span>{{ t('toolPanel.rerun') }}</span>
           </button>
           <button class="tool-invocation-menu-item" @click="viewDetails">
             <Search :size="12" />
-            <span>View details</span>
+            <span>{{ t('toolPanel.viewDetails') }}</span>
           </button>
           <button class="tool-invocation-menu-item" @click="copyResult">
             <Check v-if="copied" :size="12" />
             <Copy v-else :size="12" />
-            <span>{{ copied ? 'Copied' : 'Copy result' }}</span>
+            <span>{{ copied ? t('toolPanel.copied') : t('toolPanel.copyResult') }}</span>
           </button>
         </div>
         <div v-if="menuOpen" class="tool-invocation-menu-overlay" @click="closeMenu" />
@@ -163,7 +167,7 @@ function viewDetails() {
 
     <div v-if="toolExecution.requires_approval" class="tool-invocation-approval">
       <Shield :size="11" />
-      <span>Approval required</span>
+      <span>{{ t('toolPanel.approvalRequired') }}</span>
       <small v-if="toolExecution.approval_id">{{ toolExecution.approval_id }}</small>
     </div>
 
@@ -172,20 +176,20 @@ function viewDetails() {
         {{ item.length > 60 ? item.slice(0, 60) + '…' : item }}
       </span>
       <span v-if="toolExecution.evidence.length > 3" class="tool-invocation-evidence-more">
-        +{{ toolExecution.evidence.length - 3 }} more
+        {{ t('toolPanel.more', { count: toolExecution.evidence.length - 3 }) }}
       </span>
     </div>
 
     <div class="tool-invocation-meta">
-      <span class="tool-invocation-risk" :class="riskClass">{{ toolExecution.risk }}</span>
+      <span class="tool-invocation-risk" :class="riskClass">{{ riskLabel(toolExecution.risk) }}</span>
       <span class="tool-invocation-layer">{{ toolExecution.provider_layer }}</span>
       <span class="tool-invocation-time">{{ formattedTime }}</span>
-      <span class="tool-invocation-seq">seq {{ toolExecution.requested_seq }}-{{ toolExecution.updated_seq }}</span>
+      <span class="tool-invocation-seq">{{ t('toolPanel.seq', { from: toolExecution.requested_seq, to: toolExecution.updated_seq }) }}</span>
     </div>
 
     <button class="tool-invocation-expand" @click="toggle">
       <component :is="expanded ? ChevronDown : ChevronRight" :size="12" />
-      <span>{{ expanded ? 'Hide result' : 'Show result' }}</span>
+      <span>{{ expanded ? t('toolPanel.hideResult') : t('toolPanel.showResult') }}</span>
     </button>
 
     <div v-if="expanded" class="tool-invocation-result">

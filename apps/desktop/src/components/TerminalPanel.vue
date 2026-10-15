@@ -325,14 +325,14 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
               <span
                 v-if="instance.sourceKind === 'agent'"
                 class="terminal-tab-source"
-                title="Agent session (tool-core-gateway)"
-              >AGENT</span>
+                :title="t('terminal.agentSessionHint')"
+              >{{ t('terminal.agentBadge') }}</span>
               <span class="terminal-tab-label">{{ instance.title }}</span>
             </button>
             <button
               v-if="instance.sourceKind === 'agent'"
               class="terminal-tab-kill"
-              :title="'Terminate agent session'"
+              :title="t('terminal.killAgentSession')"
               @click.stop="handleKill(instance.id)"
             >
               <PowerOff :size="11" />
@@ -401,7 +401,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
         >
           {{ t('terminal.retry') }}
         </button>
-        <button class="terminal-error-close" aria-label="dismiss" @click="clearCreationError()">
+        <button class="terminal-error-close" :aria-label="t('terminal.dismiss')" @click="clearCreationError()">
           <X :size="12" />
         </button>
       </div>
@@ -438,14 +438,14 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
         <span class="terminal-status-info">
           {{ activeTerminal.title }}
           <span v-if="activeTerminal.sourceKind === 'agent'" class="terminal-status-source">
-            · agent session
+            {{ t('terminal.agentSession') }}
           </span>
           <span v-if="activeTerminal.exited" class="terminal-status-exited">
             ({{ t('terminal.exited') }})
           </span>
         </span>
         <span class="terminal-status-hint">
-          {{ activeTerminal.sourceKind === 'agent' ? 'input is forwarded to the agent session' : t('terminal.shortcutHint') }}
+          {{ activeTerminal.sourceKind === 'agent' ? t('terminal.agentInputHint') : t('terminal.shortcutHint') }}
         </span>
       </div>
     </template>

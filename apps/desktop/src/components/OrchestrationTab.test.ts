@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import en from '../locales/en'
 import OrchestrationTab from './OrchestrationTab.vue'
 import type { ContextPackDto, ModelInvocationDto, OrchestrationSnapshotDto } from '../api'
 
@@ -95,7 +97,7 @@ function snapshot(contextPacks: ContextPackDto[]): OrchestrationSnapshotDto {
 function mountTab(contextPacks: ContextPackDto[]) {
   return mount(OrchestrationTab, {
     props: { snapshot: snapshot(contextPacks), toolExecutions: [], tools: [] },
-    global: { stubs },
+    global: { stubs, plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
   })
 }
 
