@@ -10,7 +10,8 @@ import { composerSettings, pageDepth, parentPage, permissionChoices, type Compos
 import { defaultSpaceOptions } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 import type { DefaultModel } from '@/composables/useDefaultModel'
-import type { AgentModels, ModelChoice } from '@/composables/useAgentModels'
+import type { AgentModels, ModelChoice, NamedStrategy } from '@/composables/useAgentModels'
+import type { AgentDirectoryItemDto } from '@/api'
 import type { ReasoningEffortChoice } from '@/lib/reasoningEffort'
 import ReasoningEffortSlider from './ReasoningEffortSlider.vue'
 
@@ -73,7 +74,11 @@ const modelAgent = computed(() => props.agentModels?.agents.value.find(agent => 
 /** "Back to the command list" only where back leads there; deeper pages go up one level. */
 const backLabel = computed(() => t(pageDepth(page.value) > 1 ? 'common.back' : 'commandPanel.back'))
 /** The agent pages wait for the list instead of reading as empty. */
-const agentListPending = computed(() => (page.value === 'model-agents' || page.value === 'model-agent') && props.agentModels?.loaded.value === false)
+const onModelPage = computed(() => page.value === 'model' || page.value === 'model-agents' || page.value === 'model-agent')
+const agentListPending = computed(() => (page.value === 'model-agents' || page.value === 'model-agent')
+  && props.agentModels?.loaded.value === false && !props.agentModels.error.value)
+/** The agent list could not be read: said on the model pages, with a retry, instead of a silent fallback. */
+const agentListFailed = computed(() => onModelPage.value && props.agentModels?.loaded.value === false && props.agentModels.error.value)
 let loadSequence = 0
 /**
  * The slider moves at once; whenever no write is running it shows the saved value again, so a
@@ -82,7 +87,11 @@ let loadSequence = 0
 const reasoningDraft = ref<ReasoningEffortChoice>('')
 watch(() => [props.defaultModel?.reasoningEffort.value ?? '', props.defaultModel?.busy.value ?? false] as const,
   ([value, busy]) => { if (!busy) reasoningDraft.value = value }, { immediate: true })
-const showReasoning = computed(() => page.value === 'model' && Boolean(props.defaultModel?.reasoningSupported.value))
+// Until the agent list is read the slider would point at the default model rather than the one the
+// conversation agent runs on; after a failed read it does point there, as the fallback page does.
+const showReasoning = computed(() => page.value === 'model'
+  && (!props.agentModels || props.agentModels.loaded.value || props.agentModels.error.value)
+  && Boolean(props.defaultModel?.reasoningSupported.value))
 function stopSliderKeys(event: KeyboardEvent) { if (event.key !== 'Escape') event.stopPropagation() }
 let anchorObserver: ResizeObserver | null = null
 let navigationDeleteKey: string | null = null
@@ -205,30 +214,59 @@ function modeRows(workflow: boolean): Row[] {
   }))]
 }
 const manageModelsRow = (): Row => ({ id: 'manage-models', label: t('composer.modelSwitch.manage'), icon: Settings, run: () => emit('manage-models') })
-/** "Follow the default" and every configured model, for one agent. */
-function modelChoiceRows(selected: ModelChoice | null, followHint: string, choose: (choice: ModelChoice | null) => void): Row[] {
+function choiceName(choice: ModelChoice): string {
+  return choice.model || props.defaultModel?.providerName(choice.provider_instance_id) || t('composer.pinnedModelUnknown')
+}
+function strategyName(strategy: NamedStrategy): string {
+  return strategy.kind === 'fixed' ? choiceName(strategy.choice) : t('composer.agentModels.route', { purpose: strategy.purpose })
+}
+/** The agent's model in a word: its own, else the configured one, else "follow the default". */
+function agentModelName(agent: AgentDirectoryItemDto): string {
+  const agents = props.agentModels!
+  const strategy = agents.ownStrategy(agent) ?? agents.configuredStrategy(agent)
+  return strategy ? strategyName(strategy) : t('composer.agentModels.followDefault')
+}
+/** What "follow the default" leads to for this agent, so the row says it rather than implying the default model. */
+function followHint(agent: AgentDirectoryItemDto, conversation: boolean): string {
+  const configured = props.agentModels!.configuredStrategy(agent)
+  if (configured) return t('composer.agentModels.followConfigured', { model: strategyName(configured) })
+  if (conversation) return t('composer.agentModels.followDefaultHint', { model: props.defaultModel?.name.value || t('composer.modelSwitch.none') })
+  return t('composer.agentModels.followDefaultOtherHint')
+}
+/**
+ * One agent's choices: follow the default, every configured model and every CLI/ACP runtime. A
+ * route given in the agent center shows as the current choice; nothing here replaces it unasked.
+ */
+function modelChoiceRows(agent: AgentDirectoryItemDto, conversation: boolean, choose: (choice: ModelChoice | null) => void): Row[] {
   const model = props.defaultModel
-  const busy = (props.agentModels?.busy.value ?? false) || (model?.busy.value ?? false)
-  const rows: Row[] = [{ id: 'follow-default', label: t('composer.agentModels.followDefault'), hint: followHint, icon: Sparkles,
-    keywords: 'default inherit 默认 跟随', checked: !selected, disabled: busy, run: () => choose(null) }]
+  const agents = props.agentModels!
+  const busy = agents.busy.value || (model?.busy.value ?? false)
+  const own = agents.ownStrategy(agent)
+  const selected = own?.kind === 'fixed' ? own.choice : null
+  const rows: Row[] = []
+  if (own?.kind === 'route') rows.push({ id: 'own-route', label: strategyName(own), hint: t('composer.agentModels.routeHint'), icon: Network, checked: true, disabled: true, run: () => {} })
+  rows.push({ id: 'follow-default', label: t('composer.agentModels.followDefault'), hint: followHint(agent, conversation), icon: Sparkles,
+    keywords: 'default inherit 默认 跟随', checked: !own, disabled: busy, run: () => choose(null) })
   for (const row of model?.models.value ?? []) rows.push({
     id: `${row.provider_instance_id}:${row.model_id}`, label: row.display_name || row.model_id,
     hint: row.provider_display_name ?? undefined, keywords: `${row.model_id} ${row.provider_display_name ?? ''}`, icon: Sparkles,
     checked: selected?.provider_instance_id === row.provider_instance_id && selected.model === row.model_id, disabled: busy,
     run: () => choose({ provider_instance_id: row.provider_instance_id, model: row.model_id }),
   })
-  if (model?.loaded.value && !model.models.value.length)
+  for (const runtime of model?.runtimes.value ?? []) rows.push({
+    id: `runtime:${runtime.provider_instance_id}`, label: runtime.display_name, hint: t('composer.agentModels.runtime'),
+    keywords: `${runtime.display_name} cli acp`, icon: Bot,
+    checked: selected?.provider_instance_id === runtime.provider_instance_id && !selected.model, disabled: busy,
+    run: () => choose({ provider_instance_id: runtime.provider_instance_id, model: null }),
+  })
+  if (model?.loaded.value && !model.models.value.length && !model.runtimes.value.length)
     rows.push({ id: 'no-models', label: t('composer.modelSwitch.empty'), icon: Sparkles, disabled: true, run: () => {} })
   return rows
-}
-function choiceName(choice: ModelChoice | null): string {
-  if (!choice) return t('composer.agentModels.followDefault')
-  return choice.model || props.defaultModel?.providerName(choice.provider_instance_id) || t('composer.pinnedModelUnknown')
 }
 /**
  * The conversation agent's model, then the way to the other agents. Until the agent list is read
  * (or when the session's conversation agent is not in it) this page sets the default model, as it
- * always did, rather than offering nothing.
+ * always did, rather than offering nothing; a failed read says so above the rows.
  */
 function modelPageRows(): Row[] {
   const agents = props.agentModels
@@ -245,12 +283,11 @@ function modelPageRows(): Row[] {
       choices.push({ id: 'no-models', label: t('composer.modelSwitch.empty'), icon: Sparkles, disabled: true, run: () => {} })
     return [...choices, manageModelsRow()]
   }
-  const defaultName = props.defaultModel?.name.value || t('composer.modelSwitch.none')
-  const rows = modelChoiceRows(agents.fixedChoice(conversation), t('composer.agentModels.followDefaultHint', { model: defaultName }), choice => {
-    void agents.setModel(conversation, choice)
-    if (props.modelPinned) emit('clear-model-pin')
+  const rows = modelChoiceRows(conversation, true, choice => {
+    // The session pin wins over the agent's own model, so it goes — but only once the choice is saved.
+    void agents.setModel(conversation, choice).then(saved => { if (saved && props.modelPinned) emit('clear-model-pin') })
   })
-  const ownModels = agents.otherAgents.value.filter(agent => agents.fixedChoice(agent)).length
+  const ownModels = agents.otherAgents.value.filter(agent => agents.ownStrategy(agent)).length
   rows.push({ id: 'model-agents', label: t('commandPanel.modelAgents'), hint: t('commandPanel.modelAgentsHint'), icon: Users,
     keywords: 'agents executor 智能体 执行', value: ownModels ? t('composer.agentModels.ownCount', { count: ownModels }) : undefined,
     submenu: true, testId: 'command-panel-model-agents', run: () => selectPage('model-agents') })
@@ -259,11 +296,11 @@ function modelPageRows(): Row[] {
 }
 function otherAgentRows(): Row[] {
   const agents = props.agentModels
-  if (!agents) return []
+  if (!agents?.loaded.value) return []
   return agents.otherAgents.value.map(agent => ({
     id: `agent:${agent.id}`, label: agent.display_name || agent.slug,
     hint: agents.usageInMode(agent) ? t('composer.agentModels.inMode') : undefined, keywords: agent.slug, icon: Bot,
-    value: choiceName(agents.effectiveChoice(agent)), submenu: true, testId: `command-panel-agent-${agent.slug}`,
+    value: agentModelName(agent), submenu: true, testId: `command-panel-agent-${agent.slug}`,
     run: () => { modelAgentId.value = agent.id; selectPage('model-agent') },
   }))
 }
@@ -278,8 +315,8 @@ const allRows = computed<Row[]>(() => {
   if (page.value === 'model-agent') {
     const agents = props.agentModels
     const agent = modelAgent.value
-    if (!agents || !agent) return []
-    return modelChoiceRows(agents.fixedChoice(agent), t('composer.agentModels.followDefaultOtherHint'), choice => { void agents.setModel(agent, choice) })
+    if (!agents?.loaded.value || !agent) return []
+    return modelChoiceRows(agent, false, choice => { void agents.setModel(agent, choice) })
   }
   const rows: Row[] = [
     { id: 'image', label: t('chat.addImage'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: 'image picture 图片', icon: Image, disabled: !props.canAttach, testId: 'composer-attach-image', run: () => emit('attach', 'image/*') },
@@ -488,6 +525,7 @@ defineExpose({ keydown, activate, page, selectPage })
       </label>
       <div class="command-panel-list">
         <p v-if="catalogError" class="command-panel-feedback" role="alert">{{ t('commandPanel.catalogError') }} <button @click="loadCatalogs">{{ t('commandPanel.retry') }}</button></p>
+        <p v-if="agentListFailed" class="command-panel-feedback" role="alert" data-testid="command-panel-agents-failed">{{ t(page === 'model' ? 'composer.agentModels.loadFailedFallback' : 'composer.agentModels.loadFailed') }} <button @click="agentModels?.load()">{{ t('commandPanel.retry') }}</button></p>
         <p v-if="(loading || agentListPending) && page !== 'root'" class="command-panel-note" role="status">{{ t('commandPanel.loading') }}</p>
         <button v-for="(row, rowIndex) in rows" :key="row.id" class="command-panel-row" :class="{ 'is-highlighted': rowIndex === index, 'is-selected': row.checked, 'mode-selector-item': page === 'mode', active: page === 'mode' && row.checked }" :role="row.switch ? 'switch' : undefined" :aria-checked="row.switch ? row.checked : undefined" :aria-pressed="!row.switch && row.checked !== undefined ? row.checked : undefined" :aria-label="row.risk && row.risk !== 'neutral' ? `${row.label} · ${t(`commandPanel.risk.${row.risk}`)}` : undefined" :disabled="row.disabled" :data-testid="row.testId ?? `command-panel-${row.id}`" :data-row-index="rowIndex" :title="row.hint" @mouseenter="index = rowIndex" @focus="index = rowIndex" @click="activate(row)">
           <component :is="row.icon" v-if="row.icon" :size="16" class="command-panel-row-icon" :data-risk="row.risk" aria-hidden="true" />
@@ -495,7 +533,7 @@ defineExpose({ keydown, activate, page, selectPage })
           <span v-if="row.switch" class="command-panel-switch" :class="{ 'is-on': row.checked }" aria-hidden="true"><span /></span>
           <template v-else><span v-if="row.value" class="command-panel-value">{{ row.value }}</span><ChevronRight v-if="row.submenu" :size="14" aria-hidden="true" /><Check v-else-if="row.checked" :size="16" aria-hidden="true" /></template>
         </button>
-        <p v-if="!rows.length && !agentListPending" class="command-panel-note">{{ t(page === 'model-agents' && !activeQuery ? 'composer.agentModels.none' : 'commandPanel.empty') }}</p>
+        <p v-if="!rows.length && !agentListPending && !agentListFailed" class="command-panel-note">{{ t(page === 'model-agents' && !activeQuery ? 'composer.agentModels.none' : 'commandPanel.empty') }}</p>
         <button v-if="page === 'root' && slashQuery && !rows.length" class="command-panel-row" data-testid="command-panel-send-as-text" @click="emit('send-as-text')"><FileText :size="16" class="command-panel-row-icon" aria-hidden="true" />{{ t('commandPanel.sendAsText') }}</button>
         <p v-if="page === 'workflow'" class="command-panel-note">{{ t('commandPanel.workflowRequirement') }}</p>
       </div>

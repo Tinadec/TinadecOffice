@@ -2179,6 +2179,12 @@ retry: 'Retry',
   },
   composer: {
     agentModels: {
+      followConfigured: 'Runs on what it is configured with: {model}',
+      route: 'Route · {purpose}',
+      routeHint: 'Set in the agent center; choose a model or follow the default to replace it',
+      runtime: 'CLI/ACP runtime, picks its own model',
+      loadFailed: 'Could not read the agents.',
+      loadFailedFallback: 'Could not read the agents, so this sets the default model.',
       followDefault: 'Follow the default',
       followDefaultHint: 'Uses the default model, {model}',
       followDefaultOtherHint: 'Nothing set: when spawned it follows the agent that spawned it, otherwise the default model',

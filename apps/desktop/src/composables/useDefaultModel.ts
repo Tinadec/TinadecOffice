@@ -31,8 +31,12 @@ export function useDefaultModel() {
 
   const chatRoute = computed(() => routes.value.find(route => route.purpose === 'chat') ?? null)
   const current = computed(() => chatRoute.value?.candidates[0] ?? null)
-  const models = computed(() => aggregateModelCenterOverview({ providers: providers.value, routes: routes.value, templates: [] }).models
-    .filter(model => model.enabled))
+  const overview = computed(() => aggregateModelCenterOverview({ providers: providers.value, routes: routes.value, templates: [] }))
+  const models = computed(() => overview.value.models.filter(model => model.enabled))
+  /** Enabled CLI/ACP runtimes an agent can be given; they pick their own model. */
+  const runtimes = computed(() => [...overview.value.cli_runtimes, ...overview.value.acp_runtimes]
+    .filter(runtime => runtime.enabled && runtime.provider_instance_id)
+    .map(runtime => ({ provider_instance_id: runtime.provider_instance_id!, display_name: runtime.display_name })))
   /**
    * The model the reasoning effort is read from and written to: the default model unless the
    * composer names another (the model its conversation agent actually runs on). Effort is that
@@ -111,7 +115,7 @@ export function useDefaultModel() {
   }
 
   watch(selectedStorage, () => { loaded.value = false; void load() })
-  return { models, current, name, loaded, busy, load, choose, isCurrent, providerName, reasoningTarget, reasoningSupported, reasoningEffort, setReasoningEffort }
+  return { models, runtimes, current, name, loaded, busy, load, choose, isCurrent, providerName, reasoningTarget, reasoningSupported, reasoningEffort, setReasoningEffort }
 }
 
 export type DefaultModel = ReturnType<typeof useDefaultModel>

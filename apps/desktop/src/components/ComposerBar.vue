@@ -189,6 +189,8 @@ const conversationChoice = computed<ModelChoice | null>(() => {
   return current ? { provider_instance_id: current.provider_instance_id, model: current.model ?? null } : null
 })
 watch(conversationChoice, (choice) => { defaultModel.reasoningTarget.value = choice }, { immediate: true })
+/** A model being saved holds the next send, so the task does not resolve the model it replaced. */
+const modelSaving = computed(() => agentModels.busy.value || defaultModel.busy.value)
 // Unknown reads as the neutral row name, never as "no default model".
 // A chosen reasoning effort rides along ("gpt-5 · High"); the model default adds nothing.
 const defaultModelLabel = computed(() => {
@@ -588,7 +590,7 @@ onMounted(() => {
 onUnmounted(() => { disposed = true; document.removeEventListener('click', handleClickOutside) })
 
 function submit(pref?: DispatchPref, asText = false) {
-  if (props.settingsSaving || attachmentPreparing.value) return
+  if (props.settingsSaving || modelSaving.value || attachmentPreparing.value) return
   if (!asText && handleCommandEnter()) return
   const content = props.modelValue.trim()
   if (!content && !canSend.value) return
@@ -852,7 +854,7 @@ function confirmSteer(id: string, interrupt = false) {
             size="icon"
             class="welcome-dialog-send"
             data-testid="composer-send"
-            :disabled="!canSend || settingsSaving || attachmentPreparing"
+            :disabled="!canSend || settingsSaving || modelSaving || attachmentPreparing"
             :aria-label="canSend ? t('chat.send') : t('chat.nothingToSend')"
             @click="submit()"
           >

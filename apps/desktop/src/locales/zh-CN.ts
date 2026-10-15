@@ -2177,6 +2177,12 @@ retry: '重试',
   },
   composer: {
     agentModels: {
+      followConfigured: '按它自身的配置：{model}',
+      route: '路由 · {purpose}',
+      routeHint: '在智能体中心设置；选一个模型或跟随默认即可替换',
+      runtime: 'CLI/ACP 运行时，由它自己选择模型',
+      loadFailed: '没能读取智能体列表。',
+      loadFailedFallback: '没能读取智能体列表，这里改的是默认模型。',
       followDefault: '跟随默认',
       followDefaultHint: '使用默认模型 {model}',
       followDefaultOtherHint: '没有单独指定：被派生时跟随派生它的智能体，否则使用默认模型',

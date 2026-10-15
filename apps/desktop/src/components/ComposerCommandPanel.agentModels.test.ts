@@ -28,6 +28,7 @@ const defaultModel = {
     { provider_instance_id: 'p1', model_id: 'gpt-5', display_name: 'gpt-5', provider_display_name: 'OpenAI', enabled: true },
     { provider_instance_id: 'p2', model_id: 'deepseek-v4', display_name: 'deepseek-v4', provider_display_name: 'DeepSeek', enabled: true },
   ]),
+  runtimes: ref([]),
   current: ref({ provider_instance_id: 'p1', model: 'gpt-5' }), name: ref('gpt-5'), loaded: ref(true), busy: ref(false),
   load: async () => {}, choose: vi.fn(), isCurrent: () => false, providerName: () => null,
   reasoningTarget: ref(null), reasoningSupported: ref(false), reasoningEffort: ref(''), setReasoningEffort: async () => {},
@@ -66,6 +67,17 @@ describe('composer model pages', () => {
     await click('command-panel-p2:deepseek-v4')
     expect(h0.put).toHaveBeenCalledWith('a-meeting', { mode: 'fixed', provider_instance_id: 'p2', model: 'deepseek-v4' })
     expect(wrapper.emitted('clear-model-pin')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the session pin when the choice could not be saved', async () => {
+    h0.agents = [agent('a-meeting', 'meeting', null)]
+    h0.put.mockRejectedValue(new Error('offline'))
+    const wrapper = mountPanel()
+    await flushPromises()
+    await click('command-panel-p2:deepseek-v4')
+    expect(h0.put).toHaveBeenCalledOnce()
+    expect(wrapper.emitted('clear-model-pin')).toBeUndefined()
     wrapper.unmount()
   })
 
