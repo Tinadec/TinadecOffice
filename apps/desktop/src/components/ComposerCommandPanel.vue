@@ -430,7 +430,7 @@ defineExpose({ keydown, activate, page, selectPage })
 </template>
 
 <style scoped>
-.composer-command-panel { --command-panel-transition-duration: var(--durationFast, 150ms); --command-panel-transition-easing: var(--curveDecelerateMid, cubic-bezier(0.2, 0, 0, 1)); z-index: 9999; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border-muted); border-radius: 16px; background: var(--surface-section); box-shadow: var(--shadow-panel); color: var(--text-primary); font-size: 12px; }
+.composer-command-panel { --command-panel-transition-duration: var(--durationFast, 150ms); --command-panel-transition-easing: var(--curveDecelerateMid, cubic-bezier(0.2, 0, 0, 1)); z-index: 9999; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; background: var(--surface-section); box-shadow: var(--shadow-panel); color: var(--text-primary); font-size: 12px; }
 .command-panel-content { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .command-panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 2px; flex-shrink: 0; }
 .command-panel-header strong { font-weight: 600; }
@@ -440,7 +440,6 @@ defineExpose({ keydown, activate, page, selectPage })
 .command-panel-close { margin-left: auto; }
 .command-panel-search { display: flex; gap: 8px; align-items: center; color: var(--text-muted); margin: 4px 12px 8px; padding: 8px; border-radius: 8px; background: var(--surface-input); flex-shrink: 0; font-weight: 400; }
 .command-panel-search input { min-width: 0; width: 100%; height: auto; min-height: 0; padding: 0; border-radius: 0; line-height: 1.5; color: var(--text-primary); background: transparent; border: 0; box-shadow: none; outline: none; font: inherit; }
-.command-panel-search:focus-within { outline: 1px solid var(--border-strong, var(--text-muted)); }
 .command-panel-reasoning { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; margin: 0 12px 8px; padding: 10px 10px 4px; border-radius: 9px; background: var(--surface-input); }
 .command-panel-reasoning label { color: var(--text-secondary); font-weight: 500; }
 .command-panel-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 0 6px 6px; }
