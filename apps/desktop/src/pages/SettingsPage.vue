@@ -3472,7 +3472,7 @@ import '../settings/settings.css'
                   <Save :size="14" />
                   <span>{{ t('settings.saveAgent') }}</span>
                 </UiButton>
-                <span v-if="!configuringAgent.is_built_in && agentEditRevision !== null" class="agent-revision-hint">rev {{ agentEditRevision }}</span>
+                <span v-if="!configuringAgent.is_built_in && agentEditRevision !== null" class="agent-revision-hint">{{ t('settings.agentRevision', { revision: agentEditRevision }) }}</span>
                 <span v-if="configuringAgent.is_built_in" class="agent-builtin-save-hint">{{ t('settings.builtInCloneHint') }}</span>
               </div>
             </div>

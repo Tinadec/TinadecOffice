@@ -13,14 +13,14 @@ const { t } = useI18n()
 type DemoSection = 'buttons' | 'inputs' | 'cards' | 'feedback' | 'data' | 'layout'
 const active = ref<DemoSection>('buttons')
 
-const sections: { id: DemoSection; label: string; icon: any }[] = [
-  { id: 'buttons', label: 'Buttons', icon: MousePointer2 },
-  { id: 'inputs', label: 'Inputs', icon: Type },
-  { id: 'cards', label: 'Cards', icon: CreditCard },
-  { id: 'feedback', label: 'Feedback', icon: Bell },
-  { id: 'data', label: 'Data display', icon: Table2 },
-  { id: 'layout', label: 'Layout', icon: LayoutGrid },
-]
+const sections = computed<{ id: DemoSection; label: string; icon: any }[]>(() => [
+  { id: 'buttons', label: t('library.sections.buttons'), icon: MousePointer2 },
+  { id: 'inputs', label: t('library.sections.inputs'), icon: Type },
+  { id: 'cards', label: t('library.sections.cards'), icon: CreditCard },
+  { id: 'feedback', label: t('library.sections.feedback'), icon: Bell },
+  { id: 'data', label: t('library.sections.data'), icon: Table2 },
+  { id: 'layout', label: t('library.sections.layout'), icon: LayoutGrid },
+])
 
 const demoInput = ref('')
 const demoSwitch = ref(true)
@@ -39,9 +39,9 @@ const demoRows = computed(() => [
       <aside class="library-nav">
         <div class="library-nav-head">
           <Component :size="16" />
-          <h1>Library</h1>
+          <h1>{{ t('library.title') }}</h1>
         </div>
-        <p class="library-nav-hint">TinadecUI component gallery</p>
+        <p class="library-nav-hint">{{ t('library.hint') }}</p>
         <nav class="library-nav-list">
           <button
             v-for="s in sections"
@@ -59,32 +59,32 @@ const demoRows = computed(() => [
       <section class="library-content">
         <!-- Buttons -->
         <div v-if="active === 'buttons'" class="library-section">
-          <h2>Buttons</h2>
+          <h2>{{ t('library.sections.buttons') }}</h2>
           <div class="library-grid">
             <UiCard class="library-demo-card">
-              <template #header>Variants</template>
+              <template #header>{{ t('library.buttons.variants') }}</template>
               <div class="library-row">
-                <UiButton>Default</UiButton>
-                <UiButton variant="secondary">Secondary</UiButton>
-                <UiButton variant="ghost">Ghost</UiButton>
-                <UiButton variant="outline">Outline</UiButton>
-                <UiButton variant="destructive">Destructive</UiButton>
+                <UiButton>{{ t('library.variants.default') }}</UiButton>
+                <UiButton variant="secondary">{{ t('library.variants.secondary') }}</UiButton>
+                <UiButton variant="ghost">{{ t('library.variants.ghost') }}</UiButton>
+                <UiButton variant="outline">{{ t('library.variants.outline') }}</UiButton>
+                <UiButton variant="destructive">{{ t('library.variants.destructive') }}</UiButton>
               </div>
             </UiCard>
             <UiCard class="library-demo-card">
-              <template #header>Sizes</template>
+              <template #header>{{ t('library.buttons.sizes') }}</template>
               <div class="library-row">
-                <UiButton size="sm">Small</UiButton>
-                <UiButton>Default</UiButton>
-                <UiButton size="lg">Large</UiButton>
+                <UiButton size="sm">{{ t('library.buttons.small') }}</UiButton>
+                <UiButton>{{ t('library.variants.default') }}</UiButton>
+                <UiButton size="lg">{{ t('library.buttons.large') }}</UiButton>
                 <UiButton size="icon"><Search :size="14" /></UiButton>
               </div>
             </UiCard>
             <UiCard class="library-demo-card">
-              <template #header>States</template>
+              <template #header>{{ t('library.buttons.states') }}</template>
               <div class="library-row">
-                <UiButton disabled>Disabled</UiButton>
-                <UiButton :loading="true">Loading</UiButton>
+                <UiButton disabled>{{ t('library.buttons.disabled') }}</UiButton>
+                <UiButton :loading="true">{{ t('library.buttons.loading') }}</UiButton>
               </div>
             </UiCard>
           </div>
@@ -92,20 +92,20 @@ const demoRows = computed(() => [
 
         <!-- Inputs -->
         <div v-else-if="active === 'inputs'" class="library-section">
-          <h2>Inputs</h2>
+          <h2>{{ t('library.sections.inputs') }}</h2>
           <div class="library-grid">
             <UiCard class="library-demo-card">
-              <template #header>Text input</template>
+              <template #header>{{ t('library.inputs.text') }}</template>
               <div class="library-stack">
-                <UiInput v-model="demoInput" placeholder="Type something…" />
-                <p class="library-meta">value: {{ demoInput || '—' }}</p>
+                <UiInput v-model="demoInput" :placeholder="t('library.inputs.placeholder')" />
+                <p class="library-meta">{{ t('library.inputs.value', { value: demoInput || '—' }) }}</p>
               </div>
             </UiCard>
             <UiCard class="library-demo-card">
-              <template #header>Switch</template>
+              <template #header>{{ t('library.inputs.switch') }}</template>
               <div class="library-row">
                 <UiSwitch v-model="demoSwitch" />
-                <span class="library-meta">{{ demoSwitch ? 'on' : 'off' }}</span>
+                <span class="library-meta">{{ demoSwitch ? t('library.inputs.on') : t('library.inputs.off') }}</span>
               </div>
             </UiCard>
           </div>
@@ -113,19 +113,22 @@ const demoRows = computed(() => [
 
         <!-- Cards -->
         <div v-else-if="active === 'cards'" class="library-section">
-          <h2>Cards</h2>
+          <h2>{{ t('library.sections.cards') }}</h2>
           <div class="library-grid">
-            <UiCard title="Default card" description="Card with title and description">
-              <p class="library-meta">Body slot content. Use <code>header</code>/<code>footer</code> slots for chrome.</p>
-              <template #footer><UiButton size="sm">Action</UiButton></template>
+            <UiCard :title="t('library.cards.title')" :description="t('library.cards.description')">
+              <i18n-t keypath="library.cards.body" tag="p" scope="global" class="library-meta">
+                <template #header><code>header</code></template>
+                <template #footer><code>footer</code></template>
+              </i18n-t>
+              <template #footer><UiButton size="sm">{{ t('library.cards.action') }}</UiButton></template>
             </UiCard>
             <UiCard class="library-demo-card">
-              <template #header>Badges</template>
+              <template #header>{{ t('library.cards.badges') }}</template>
               <div class="library-row">
-                <UiBadge>Default</UiBadge>
-                <UiBadge variant="secondary">Secondary</UiBadge>
-                <UiBadge variant="outline">Outline</UiBadge>
-                <UiBadge variant="destructive">Destructive</UiBadge>
+                <UiBadge>{{ t('library.variants.default') }}</UiBadge>
+                <UiBadge variant="secondary">{{ t('library.variants.secondary') }}</UiBadge>
+                <UiBadge variant="outline">{{ t('library.variants.outline') }}</UiBadge>
+                <UiBadge variant="destructive">{{ t('library.variants.destructive') }}</UiBadge>
               </div>
             </UiCard>
           </div>
@@ -133,14 +136,16 @@ const demoRows = computed(() => [
 
         <!-- Feedback -->
         <div v-else-if="active === 'feedback'" class="library-section">
-          <h2>Feedback</h2>
+          <h2>{{ t('library.sections.feedback') }}</h2>
           <div class="library-grid">
             <UiCard class="library-demo-card">
-              <template #header>Notes</template>
-              <p class="library-meta">Notifications use the island host (App.vue). Trigger via <code>useNotifications()</code> — not rendered here to avoid spill.</p>
+              <template #header>{{ t('library.feedback.notes') }}</template>
+              <i18n-t keypath="library.feedback.notesBody" tag="p" scope="global" class="library-meta">
+                <template #call><code>useNotifications()</code></template>
+              </i18n-t>
             </UiCard>
             <UiCard class="library-demo-card">
-              <template #header>Icons</template>
+              <template #header>{{ t('library.feedback.icons') }}</template>
               <div class="library-row">
                 <Sparkles :size="18" /> <SlidersHorizontal :size="18" /> <ToggleLeft :size="18" /> <Square :size="18" />
               </div>
@@ -150,18 +155,18 @@ const demoRows = computed(() => [
 
         <!-- Data display -->
         <div v-else-if="active === 'data'" class="library-section">
-          <h2>Data display</h2>
+          <h2>{{ t('library.sections.data') }}</h2>
           <UiCard>
-            <template #header>Table</template>
+            <template #header>{{ t('library.data.table') }}</template>
             <div class="library-table">
-              <div class="library-table-head"><span>#</span><span>Name</span><span>Status</span><span>Owner</span></div>
+              <div class="library-table-head"><span>#</span><span>{{ t('library.data.name') }}</span><span>{{ t('library.data.status') }}</span><span>{{ t('library.data.owner') }}</span></div>
               <div v-for="r in demoRows" :key="r.id" class="library-table-row">
-                <span>{{ r.id }}</span><span>{{ r.name }}</span><span><UiBadge :variant="r.status === 'active' ? 'default' : 'secondary'">{{ r.status }}</UiBadge></span><span class="library-meta">{{ r.owner }}</span>
+                <span>{{ r.id }}</span><span>{{ r.name }}</span><span><UiBadge :variant="r.status === 'active' ? 'default' : 'secondary'">{{ r.status === 'active' ? t('library.data.active') : t('library.data.draft') }}</UiBadge></span><span class="library-meta">{{ r.owner }}</span>
               </div>
             </div>
           </UiCard>
           <UiCard class="library-demo-card" style="margin-top:12px">
-            <template #header>List</template>
+            <template #header>{{ t('library.data.list') }}</template>
             <ul class="library-list">
               <li v-for="r in demoRows" :key="r.id" class="library-list-item"><ListTodo :size="14" /> {{ r.name }}</li>
             </ul>
@@ -170,15 +175,21 @@ const demoRows = computed(() => [
 
         <!-- Layout -->
         <div v-else-if="active === 'layout'" class="library-section">
-          <h2>Layout</h2>
+          <h2>{{ t('library.sections.layout') }}</h2>
           <div class="library-grid">
             <UiCard class="library-demo-card">
               <template #header>TinadecUI</template>
-              <p class="library-meta">Home/Market use <code>UieCanvas</code> + <code>UieColumn</code>. Library uses a standalone scroll layout.</p>
+              <i18n-t keypath="library.layout.uie" tag="p" scope="global" class="library-meta">
+                <template #canvas><code>UieCanvas</code></template>
+                <template #column><code>UieColumn</code></template>
+              </i18n-t>
             </UiCard>
             <UiCard class="library-demo-card">
-              <template #header>Shell</template>
-              <p class="library-meta">Shell: <code>.shell</code> flex column with <code>AppHeader</code> + scroll content. Panels: TinadecUI three-column engine.</p>
+              <template #header>{{ t('library.layout.shell') }}</template>
+              <i18n-t keypath="library.layout.shellBody" tag="p" scope="global" class="library-meta">
+                <template #shell><code>.shell</code></template>
+                <template #header><code>AppHeader</code></template>
+              </i18n-t>
             </UiCard>
           </div>
         </div>

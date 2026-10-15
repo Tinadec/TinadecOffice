@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import { ApiError } from '@/lib/apiError'
 import { useHostAccess } from '@/lib/hostAccess'
 import { readSessionRoster } from '@/lib/sessionRoster'
@@ -1113,7 +1114,7 @@ async function requestShellApproval() {
       command,
     })
     const action = await createUserToolActionForPath(projectPath, 'shell', params, idempotencyKey)
-    const approval = userToolActionToApproval(action, `Run command: ${command}`, {
+    const approval = userToolActionToApproval(action, i18n.global.t('approval.runCommandSummary', { command }), {
       sessionId: selectedSessionId.value,
       cwd: projectPath,
     })

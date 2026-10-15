@@ -177,13 +177,13 @@ async function requestShellApproval() {
       command,
     })
     const action = await createUserToolActionForPath(projectPath.value, 'command_run', params, idempotencyKey)
-    const approval = userToolActionToApproval(action, `Run command: ${command}`, {
+    const approval = userToolActionToApproval(action, t('approval.runCommandSummary', { command }), {
       sessionId: sessionId.value,
       cwd: projectPath.value,
     })
     approvals.value = [approval, ...approvals.value]
   } catch (err) {
-    notify.error(err, { title: 'Failed to request shell approval' })
+    notify.error(err, { title: t('approval.requestFailed') })
   } finally {
     busy.value = false
   }
@@ -198,7 +198,7 @@ async function decideApproval(
     await api.decideApproval(approval.id, decision, null, scope)
     await loadData()
   } catch (err) {
-    notify.error(err, { title: 'Failed to decide approval' })
+    notify.error(err, { title: t('approval.decideFailed') })
   }
 }
 

@@ -2,11 +2,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MemoryPage from './MemoryPage.vue'
+import { createI18n } from 'vue-i18n'
+import en from '@/locales/en'
 import type { MemoryCandidateDto, MemoryItemDto } from '@/api'
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (_key: string, fallback?: string) => fallback ?? _key }),
-}))
 
 vi.mock('@/api', () => ({
   api: {
@@ -20,6 +19,7 @@ vi.mock('@/api', () => ({
 
 import { api } from '@/api'
 const apiMock = vi.mocked(api, true)
+const english = () => ({ global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] } })
 
 function candidate(overrides: Partial<MemoryCandidateDto> = {}): MemoryCandidateDto {
   return {
@@ -72,7 +72,7 @@ afterEach(() => {
 })
 
 async function mounted() {
-  const wrapper = mount(MemoryPage)
+  const wrapper = mount(MemoryPage, english())
   await flushPromises()
   return wrapper
 }

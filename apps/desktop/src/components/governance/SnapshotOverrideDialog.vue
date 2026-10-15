@@ -63,12 +63,7 @@ function confirm(): void {
         <h2 data-testid="override-title">{{ t('governance.snapshotOverrideTitle') }}</h2>
       </div>
       <p class="detail-dialog__summary" data-testid="override-body">
-        {{
-          t(
-            'governance.snapshotOverrideBody',
-            'The snapshot could not be captured for this action. Proceeding without one means this change may be impossible to roll back.',
-          )
-        }}
+        {{ t('governance.snapshotOverrideBody') }}
       </p>
 
       <div class="snapshot-override__meta" data-testid="override-action-ref">{{ toolId }} · {{ actionId.slice(0, 8) }}</div>
@@ -76,12 +71,7 @@ function confirm(): void {
       <label class="snapshot-override__ack">
         <input v-model="acknowledged" type="checkbox" data-testid="override-acknowledge" />
         <span>
-          {{
-            t(
-              'governance.snapshotOverrideAck',
-              'I understand this change is recorded as non-reversible and cannot be undone by TinadecOffice.',
-            )
-          }}
+          {{ t('governance.snapshotOverrideAck') }}
         </span>
       </label>
 
@@ -95,7 +85,7 @@ function confirm(): void {
 
       <div class="detail-dialog__actions">
         <button type="button" class="detail-dialog__btn" data-testid="override-cancel" @click="cancel">
-          {{ t('common.cancel', 'Cancel') }}
+          {{ t('common.cancel') }}
         </button>
         <button
           type="button"

@@ -81,7 +81,7 @@ onBeforeUnmount(() => {
 
     <div v-if="!action && !loadError" class="recovery-page__state">
       <RefreshCw class="size-4 animate-spin" />
-      {{ t('common.loading', 'Loading…') }}
+      {{ t('common.loading') }}
     </div>
 
     <div v-else-if="loadError" class="recovery-page__state recovery-page__state--error" data-testid="recovery-error">
@@ -91,21 +91,16 @@ onBeforeUnmount(() => {
 
     <template v-else-if="action">
       <section v-if="!isUnknown" class="recovery-page__notice" data-testid="recovery-not-unknown">
-        {{
-          t(
-            'governance.recoveryNotNeeded',
-            'This action is no longer awaiting a recovery decision. Current status is shown below.',
-          )
-        }}
+        {{ t('governance.recoveryNotNeeded') }}
       </section>
 
       <dl class="recovery-page__grid">
-        <div><dt>tool</dt><dd>{{ action.tool_id }}</dd></div>
-        <div><dt>status</dt><dd data-testid="recovery-status">{{ statusText }}</dd></div>
-        <div><dt>audit_reference</dt><dd class="font-mono text-xs">{{ action.audit_reference }}</dd></div>
-        <div v-if="action.snapshot_id"><dt>snapshot_id</dt><dd class="font-mono text-xs">{{ action.snapshot_id }}</dd></div>
-        <div v-if="action.recovery_reason"><dt>last_recovery_reason</dt><dd>{{ action.recovery_reason }}</dd></div>
-        <div v-if="action.message"><dt>message</dt><dd>{{ action.message }}</dd></div>
+        <div><dt>{{ t('governance.recoveryFacts.tool') }}</dt><dd>{{ action.tool_id }}</dd></div>
+        <div><dt>{{ t('governance.recoveryFacts.status') }}</dt><dd data-testid="recovery-status">{{ statusText }}</dd></div>
+        <div><dt>{{ t('governance.recoveryFacts.auditReference') }}</dt><dd class="font-mono text-xs">{{ action.audit_reference }}</dd></div>
+        <div v-if="action.snapshot_id"><dt>{{ t('governance.recoveryFacts.snapshot') }}</dt><dd class="font-mono text-xs">{{ action.snapshot_id }}</dd></div>
+        <div v-if="action.recovery_reason"><dt>{{ t('governance.recoveryFacts.lastReason') }}</dt><dd>{{ action.recovery_reason }}</dd></div>
+        <div v-if="action.message"><dt>{{ t('governance.recoveryFacts.message') }}</dt><dd>{{ action.message }}</dd></div>
       </dl>
 
       <footer v-if="isUnknown" class="recovery-page__actions">

@@ -3,10 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import GovernanceBoardPage from './GovernanceBoardPage.vue'
+import { createI18n } from 'vue-i18n'
+import en from '@/locales/en'
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (_key: string, fallback?: string) => fallback ?? _key }),
-}))
 
 vi.mock('@/api', () => ({
   api: {
@@ -21,6 +20,7 @@ vi.mock('@/api', () => ({
 
 import { api, type ApprovalDto } from '@/api'
 const apiMock = vi.mocked(api, true)
+const english = () => ({ global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] } })
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -51,7 +51,7 @@ describe('GovernanceBoardPage', () => {
     apiMock.listPermissionRequests.mockResolvedValue([])
     apiMock.listUserToolActions.mockResolvedValue([])
 
-    const wrapper = mount(GovernanceBoardPage)
+    const wrapper = mount(GovernanceBoardPage, english())
     await flushPromises()
 
     const approvalsCol = wrapper.find('[data-testid="column-approvals"]')
@@ -88,7 +88,7 @@ describe('GovernanceBoardPage', () => {
       created_at: '2026-08-23T00:00:00Z',
     } as ApprovalDto)
 
-    const wrapper = mount(GovernanceBoardPage)
+    const wrapper = mount(GovernanceBoardPage, english())
     await flushPromises()
 
     const approveBtn = wrapper.find('[data-testid="column-approvals"] button')
@@ -110,7 +110,7 @@ describe('GovernanceBoardPage', () => {
       apiMock.listPermissionRequests.mockResolvedValue([])
       apiMock.listUserToolActions.mockResolvedValue([])
 
-      const wrapper = mount(GovernanceBoardPage)
+      const wrapper = mount(GovernanceBoardPage, english())
       await vi.advanceTimersByTimeAsync(0)
       expect(apiMock.listApprovals).toHaveBeenCalledTimes(1)
 
@@ -136,7 +136,7 @@ describe('GovernanceBoardPage', () => {
       apiMock.listUserToolActions.mockResolvedValue([])
       const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
 
-      const wrapper = mount(GovernanceBoardPage)
+      const wrapper = mount(GovernanceBoardPage, english())
       await vi.advanceTimersByTimeAsync(0)
       expect(apiMock.listApprovals).toHaveBeenCalledTimes(1)
 

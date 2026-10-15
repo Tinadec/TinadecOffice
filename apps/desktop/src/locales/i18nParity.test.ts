@@ -71,6 +71,17 @@ const panelSources = import.meta.glob(
     // Market labels are resolved by the controller (one owner for both the filter rail and the
     // row badges), so a dead key there would render in two cards at once.
     './../controllers/MarketController.ts',
+    // Pages whose wording moved out of the template into the locales; a dead key would show its
+    // dotted path where the heading or button was.
+    './../pages/LibraryPage.vue',
+    './../pages/WorkbenchPage.vue',
+    './../pages/MemoryPage.vue',
+    './../pages/GovernanceBoardPage.vue',
+    './../pages/RecoveryCheckPage.vue',
+    './../pages/SnapshotsPage.vue',
+    './../pages/DesktopPetPage.vue',
+    './../components/governance/PreAuthorizationDialog.vue',
+    './../components/governance/SnapshotOverrideDialog.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>
@@ -100,6 +111,10 @@ function cardSources(): Record<string, string> {
 function referencedKeys(source: string): Set<string> {
   const keys = new Set<string>()
   for (const match of source.matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'/g)) {
+    keys.add(match[1])
+  }
+  // <i18n-t keypath="…"> renders a sentence with markup inside it; its key is just as dead if missing.
+  for (const match of source.matchAll(/\bkeypath="([a-zA-Z0-9_.]+)"/g)) {
     keys.add(match[1])
   }
   return keys

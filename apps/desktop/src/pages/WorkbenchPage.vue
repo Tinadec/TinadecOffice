@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useRunStore } from '@/stores/run'
 import { homeController } from '@/controllers/HomeController'
@@ -9,7 +10,10 @@ import TaskGraphPanel from '@/components/TaskGraphPanel.vue'
 import RunLaneCanvas from '@/components/canvas/RunLaneCanvas.vue'
 import RunStatusBadge from '@/components/governance/RunStatusBadge.vue'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
+import { useStatusLabels } from '@/lib/statusLabels'
 
+const { t } = useI18n()
+const { runStatusLabel, severityLabel } = useStatusLabels()
 const wb = useWorkbenchStore()
 const runStore = useRunStore()
 
@@ -81,29 +85,29 @@ async function control(action: 'cancel'|'pause'|'resume') {
 <template>
   <div class="workbench-page">
     <div class="workbench-head">
-      <h2 class="workbench-title">Workbench</h2>
+      <h2 class="workbench-title">{{ t('workbench.title') }}</h2>
       <div class="workbench-status">
         <RunStatusBadge :status="status" />
-        <span v-if="wb.cursor != null" class="workbench-cursor">cursor {{ wb.cursor }}</span>
-        <span v-if="runId" class="workbench-run">run {{ runId.slice(0, 8) }}</span>
+        <span v-if="wb.cursor != null" class="workbench-cursor">{{ t('workbench.cursor', { cursor: wb.cursor }) }}</span>
+        <span v-if="runId" class="workbench-run">{{ t('workbench.run', { id: runId.slice(0, 8) }) }}</span>
       </div>
       <div class="workbench-controls">
         <CommandPaletteButton />
-        <UiButton size="sm" variant="outline" :disabled="!runId || isTerminal" @click="control('pause')">Pause</UiButton>
-        <UiButton size="sm" variant="outline" :disabled="!runId || status !== 'paused'" @click="control('resume')">Resume</UiButton>
-        <UiButton size="sm" variant="destructive" :disabled="!runId || isTerminal" @click="control('cancel')">Cancel</UiButton>
+        <UiButton size="sm" variant="outline" :disabled="!runId || isTerminal" @click="control('pause')">{{ t('workbench.pause') }}</UiButton>
+        <UiButton size="sm" variant="outline" :disabled="!runId || status !== 'paused'" @click="control('resume')">{{ t('workbench.resume') }}</UiButton>
+        <UiButton size="sm" variant="destructive" :disabled="!runId || isTerminal" @click="control('cancel')">{{ t('common.cancel') }}</UiButton>
       </div>
     </div>
 
-    <div v-if="!sessionId" class="workbench-empty">Select a session to view workbench.</div>
+    <div v-if="!sessionId" class="workbench-empty">{{ t('workbench.noSession') }}</div>
     <template v-else>
       <!-- Frozen run configuration: display-only projection (§4.2) -->
       <div class="workbench-frozen" data-testid="frozen-config">
-        <span>mode {{ frozenConfig.mode_id }}</span>
+        <span>{{ t('workbench.frozen.mode', { value: frozenConfig.mode_id }) }}</span>
         <span>v{{ frozenConfig.config_version }}</span>
-        <span class="mono">cfg {{ frozenConfig.config_hash || '—' }}</span>
-        <span>rev {{ frozenConfig.context_revision }}</span>
-        <span class="mono">manifest {{ frozenConfig.tool_manifest_hash || '—' }}</span>
+        <span class="mono">{{ t('workbench.frozen.config', { value: frozenConfig.config_hash || '—' }) }}</span>
+        <span>{{ t('workbench.frozen.revision', { value: frozenConfig.context_revision }) }}</span>
+        <span class="mono">{{ t('workbench.frozen.manifest', { value: frozenConfig.tool_manifest_hash || '—' }) }}</span>
       </div>
 
       <!-- Dual-lane canvas: operation / execution with spawn lineage -->
@@ -117,16 +121,16 @@ async function control(action: 'cancel'|'pause'|'resume') {
       <UiCard v-if="selectedInstance" class="workbench-section" data-testid="instance-drawer">
         <div class="drawer-head">
           <h3>{{ selectedInstance.display_name }} <span class="mono">{{ selectedInstance.id.slice(0, 8) }}</span></h3>
-          <UiButton size="sm" variant="outline" @click="selectedInstanceId = null">Close</UiButton>
+          <UiButton size="sm" variant="outline" @click="selectedInstanceId = null">{{ t('common.close') }}</UiButton>
         </div>
         <dl class="instance-facts">
-          <div><dt>layer</dt><dd>{{ selectedInstance.layer }}</dd></div>
-          <div><dt>role</dt><dd>{{ selectedInstance.role }}</dd></div>
-          <div><dt>status</dt><dd>{{ selectedInstance.status }}</dd></div>
-          <div><dt>generation_depth</dt><dd>{{ selectedInstance.generation_depth }}</dd></div>
-          <div v-if="selectedInstance.parent_instance_id"><dt>parent</dt><dd class="mono">{{ selectedInstance.parent_instance_id.slice(0, 8) }}</dd></div>
-          <div v-if="selectedInstance.task_id"><dt>task</dt><dd class="mono">{{ selectedInstance.task_id.slice(0, 8) }}</dd></div>
-          <div v-if="selectedInstance.capabilities?.length"><dt>capabilities</dt><dd>{{ selectedInstance.capabilities.join(', ') }}</dd></div>
+          <div><dt>{{ t('workbench.facts.layer') }}</dt><dd>{{ selectedInstance.layer }}</dd></div>
+          <div><dt>{{ t('workbench.facts.role') }}</dt><dd>{{ selectedInstance.role }}</dd></div>
+          <div><dt>{{ t('workbench.facts.status') }}</dt><dd>{{ runStatusLabel(selectedInstance.status) }}</dd></div>
+          <div><dt>{{ t('workbench.facts.depth') }}</dt><dd>{{ selectedInstance.generation_depth }}</dd></div>
+          <div v-if="selectedInstance.parent_instance_id"><dt>{{ t('workbench.facts.parent') }}</dt><dd class="mono">{{ selectedInstance.parent_instance_id.slice(0, 8) }}</dd></div>
+          <div v-if="selectedInstance.task_id"><dt>{{ t('workbench.facts.task') }}</dt><dd class="mono">{{ selectedInstance.task_id.slice(0, 8) }}</dd></div>
+          <div v-if="selectedInstance.capabilities?.length"><dt>{{ t('workbench.facts.capabilities') }}</dt><dd>{{ selectedInstance.capabilities.join(', ') }}</dd></div>
         </dl>
       </UiCard>
 
@@ -134,28 +138,28 @@ async function control(action: 'cancel'|'pause'|'resume') {
         <!-- ponytail: bridge generated snapshot to legacy panel type via unknown cast; single canonical DTO is generated/client.ts -->
         <TaskGraphPanel :snapshot="(wb.snapshot as unknown as never)" />
         <div v-if="wb.nodes.length" class="workbench-nodes-note">
-          {{ wb.nodes.length }} nodes · {{ wb.findings.length }} findings · {{ wb.contextVersions.length }} context versions
+          {{ t('workbench.counts', { nodes: wb.nodes.length, findings: wb.findings.length, versions: wb.contextVersions.length }) }}
         </div>
       </UiCard>
 
       <div class="workbench-sections">
         <UiCard class="workbench-section">
-          <h3>Supervision findings</h3>
-          <div v-if="wb.findings.length === 0" class="quiet">No findings.</div>
+          <h3>{{ t('workbench.findings') }}</h3>
+          <div v-if="wb.findings.length === 0" class="quiet">{{ t('workbench.noFindings') }}</div>
           <div v-for="f in wb.findings" :key="f.id" class="finding-row">
-            <UiBadge variant="outline">{{ f.severity }} · {{ f.category }}</UiBadge>
+            <UiBadge variant="outline">{{ severityLabel(f.severity) }} · {{ f.category }}</UiBadge>
             <p>{{ f.summary }}</p>
             <small>{{ f.recommendation }}</small>
           </div>
         </UiCard>
 
         <UiCard class="workbench-section">
-          <h3>Context versions</h3>
-          <div v-if="wb.contextVersions.length === 0" class="quiet">No versions.</div>
+          <h3>{{ t('workbench.contextVersions') }}</h3>
+          <div v-if="wb.contextVersions.length === 0" class="quiet">{{ t('workbench.noVersions') }}</div>
           <div v-for="v in wb.contextVersions" :key="v.id" class="version-row">
             <span class="mono">r{{ v.revision }}</span>
             <span>{{ v.kind }} · {{ v.status }}</span>
-            <span v-if="v.base_revision != null" class="mono">base {{ v.base_revision }}</span>
+            <span v-if="v.base_revision != null" class="mono">{{ t('workbench.base', { revision: v.base_revision }) }}</span>
           </div>
         </UiCard>
       </div>

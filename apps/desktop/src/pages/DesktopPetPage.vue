@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Grip, X } from '@lucide/vue'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   PETDEX_BASE_FRAME_HEIGHT,
   PETDEX_BASE_FRAME_WIDTH,
@@ -11,6 +12,7 @@ import {
   type PetState,
 } from '@/pets/petRuntime'
 
+const { t } = useI18n()
 const canvas = ref<HTMLCanvasElement | null>(null)
 const pet = ref<DownloadedPet | null>(null)
 const loaded = ref(false)
@@ -184,7 +186,7 @@ onBeforeUnmount(() => {
   <main
     class="desktop-pet-window"
     :class="{ dragging }"
-    aria-label="Pet window"
+    :aria-label="t('desktopPet.window')"
     @mousemove="updateHitTest"
     @wheel="zoom"
   >
@@ -192,7 +194,7 @@ onBeforeUnmount(() => {
       v-show="loaded"
       ref="canvas"
       class="pet-canvas"
-      :aria-label="pet?.displayName ?? 'Desktop pet'"
+      :aria-label="pet?.displayName ?? t('desktopPet.fallbackName')"
       role="img"
       @dblclick="jump"
       @pointerdown="startDrag"
@@ -200,15 +202,15 @@ onBeforeUnmount(() => {
       @pointerup="stopDrag"
       @pointercancel="stopDrag"
     />
-    <div v-if="!loaded" class="pet-placeholder">Pet</div>
-    <button class="pet-control pet-close" type="button" title="Close pet" aria-label="Close pet" @click="closePet">
+    <div v-if="!loaded" class="pet-placeholder">{{ t('desktopPet.placeholder') }}</div>
+    <button class="pet-control pet-close" type="button" :title="t('desktopPet.close')" :aria-label="t('desktopPet.close')" @click="closePet">
       <X :size="14" />
     </button>
     <button
       class="pet-control pet-resize"
       type="button"
-      title="Resize pet"
-      aria-label="Resize pet"
+      :title="t('desktopPet.resize')"
+      :aria-label="t('desktopPet.resize')"
       @pointerdown="startResize"
       @pointermove="moveResize"
       @pointerup="stopResize"

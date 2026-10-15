@@ -205,7 +205,7 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
           @change="selectProject"
         />
         <button type="button" class="detail-dialog__btn" :disabled="loading || !selectedProjectId" @click="load">
-          {{ loading ? t('common.loading', 'Loading…') : t('common.refresh', 'Refresh') }}
+          {{ loading ? t('common.loading') : t('common.refresh') }}
         </button>
       </div>
     </header>
@@ -240,10 +240,10 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
           <span class="snapshot-card__status">{{ s.status }}</span>
         </div>
         <dl class="snapshot-card__meta">
-          <div><dt>files</dt><dd>{{ s.file_count }}</dd></div>
-          <div><dt>workspace_hash</dt><dd class="font-mono">{{ s.workspace_hash.slice(0, 12) }}</dd></div>
-          <div><dt>content_hash</dt><dd class="font-mono">{{ s.content_hash.slice(0, 12) }}</dd></div>
-          <div><dt>created_at</dt><dd>{{ s.created_at }}</dd></div>
+          <div><dt>{{ t('governance.snapshotFacts.files') }}</dt><dd>{{ s.file_count }}</dd></div>
+          <div><dt>{{ t('governance.snapshotFacts.workspaceHash') }}</dt><dd class="font-mono">{{ s.workspace_hash.slice(0, 12) }}</dd></div>
+          <div><dt>{{ t('governance.snapshotFacts.contentHash') }}</dt><dd class="font-mono">{{ s.content_hash.slice(0, 12) }}</dd></div>
+          <div><dt>{{ t('governance.snapshotFacts.createdAt') }}</dt><dd>{{ s.created_at }}</dd></div>
         </dl>
         <button
           type="button"
@@ -265,7 +265,7 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
         </button>
 
         <section v-if="reviewSnapshotId === s.id" class="snapshot-review" data-testid="snapshot-review">
-          <p v-if="changesLoading" class="snapshot-page__empty">{{ t('common.loading', 'Loading…') }}</p>
+          <p v-if="changesLoading" class="snapshot-page__empty">{{ t('common.loading') }}</p>
           <p v-else-if="!reviewedChanges.length" class="snapshot-page__empty" data-testid="snapshot-review-clean">
             {{ t('governance.noFileChanges') }}
           </p>

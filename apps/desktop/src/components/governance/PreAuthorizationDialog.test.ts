@@ -7,7 +7,7 @@ import PreAuthorizationDialog from './PreAuthorizationDialog.vue'
 import { api, type PreAuthorizationDto } from '@/api'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
+  useI18n: () => ({ t: (key: string) => key, te: () => false, locale: { value: 'en' } }),
 }))
 
 vi.mock('@/api', () => ({

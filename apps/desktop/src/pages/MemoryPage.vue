@@ -82,7 +82,7 @@ async function decide(candidate: MemoryCandidateDto, promote: boolean): Promise<
     if (promote) await load()
   } catch (e) {
     const code = (e as { code?: string | null }).code
-    decisionError.value = code === 'conflict' ? t('memory.alreadyDecided', 'Someone already answered this one.') : errorMessage(e)
+    decisionError.value = code === 'conflict' ? t('memory.alreadyDecided') : errorMessage(e)
   } finally {
     deciding.value = null
   }
@@ -104,7 +104,7 @@ async function revoke(item: MemoryItemDto): Promise<void> {
 function confidencePercent(value: unknown): string {
   // A confidence that is not a number renders as unknown, never as "NaN%".
   const numeric = Number(value)
-  if (!Number.isFinite(numeric)) return t('memory.confidenceUnknown', 'no score')
+  if (!Number.isFinite(numeric)) return t('memory.confidenceUnknown')
   return `${Math.round(Math.max(0, Math.min(1, numeric)) * 100)}%`
 }
 
@@ -116,31 +116,31 @@ onMounted(() => {
 <template>
   <div class="memory-page" data-testid="memory-page">
     <header class="memory-page__header">
-      <h1><BookMarked class="size-4" /> {{ t('memory.title', 'Memory review') }}</h1>
-      <div class="memory-page__filters" role="group" :aria-label="t('memory.filters', 'Filters')">
+      <h1><BookMarked class="size-4" /> {{ t('memory.title') }}</h1>
+      <div class="memory-page__filters" role="group" :aria-label="t('memory.filters')">
         <label class="memory-page__filter">
-          <span>{{ t('memory.queueStatus', 'Queue') }}</span>
+          <span>{{ t('memory.queueStatus') }}</span>
           <UiSelectField
             v-model="status"
             data-testid="memory-status"
-            :aria-label="t('memory.queueStatus', 'Queue')"
+            :aria-label="t('memory.queueStatus')"
             :options="CANDIDATE_STATUSES.map((value) => ({ value, label: t(`memory.status.${value}`, value) }))"
             @change="void load()"
           />
         </label>
         <label class="memory-page__filter">
-          <span>{{ t('memory.scope', 'Scope') }}</span>
+          <span>{{ t('memory.scopeLabel') }}</span>
           <UiSelectField
             v-model="scope"
             data-testid="memory-scope"
-            :aria-label="t('memory.scope', 'Scope')"
-            :options="[{ value: '', label: t('memory.scope.all', 'Every scope') }, ...SCOPES.map((value) => ({ value, label: t(`memory.scope.${value}`, value) }))]"
+            :aria-label="t('memory.scopeLabel')"
+            :options="[{ value: '', label: t('memory.scope.all') }, ...SCOPES.map((value) => ({ value, label: t(`memory.scope.${value}`, value) }))]"
             @change="void load()"
           />
         </label>
         <CommandPaletteButton />
         <button type="button" class="memory-page__button" :disabled="loading" data-testid="memory-refresh" @click="void load()">
-          {{ loading ? t('common.loading', 'Loading…') : t('common.refresh', 'Refresh') }}
+          {{ loading ? t('common.loading') : t('common.refresh') }}
         </button>
       </div>
     </header>
@@ -150,32 +150,32 @@ onMounted(() => {
 
     <section class="memory-page__section" aria-labelledby="memory-queue-heading">
       <h2 id="memory-queue-heading">
-        <Inbox class="size-4" /> {{ t('memory.queueTitle', 'Awaiting review') }}
+        <Inbox class="size-4" /> {{ t('memory.queueTitle') }}
         <span class="memory-page__count">{{ candidates.length }}</span>
       </h2>
       <!-- A shelf that failed to answer is not a shelf that answered "nothing", so the
            empty line waits until the request actually came back. -->
       <p v-if="!candidates.length && !loading && !loadError" class="memory-page__empty" data-testid="memory-queue-empty">
-        {{ t('memory.queueEmpty', 'Nothing is waiting for you in this scope.') }}
+        {{ t('memory.queueEmpty') }}
       </p>
       <article v-for="candidate in candidates" :key="candidate.id" class="memory-card" data-testid="memory-candidate">
         <p class="memory-card__content">{{ candidate.content }}</p>
         <p class="memory-card__meta">
           <span class="memory-card__chip">{{ candidate.kind }}</span>
           <span class="memory-card__chip">{{ t(`memory.scope.${candidate.scope}`, candidate.scope) }}</span>
-          <span class="memory-card__chip">{{ t('memory.confidence', 'confidence') }} {{ confidencePercent(candidate.confidence) }}</span>
+          <span class="memory-card__chip">{{ t('memory.confidence') }} {{ confidencePercent(candidate.confidence) }}</span>
         </p>
         <dl v-if="candidate.applicability || candidate.expiry_condition || candidate.evidence" class="memory-card__grounds">
           <template v-if="candidate.evidence">
-            <dt><Lightbulb class="size-3" /> {{ t('memory.evidence', 'Grounded in') }}</dt>
+            <dt><Lightbulb class="size-3" /> {{ t('memory.evidence') }}</dt>
             <dd>{{ candidate.evidence }}</dd>
           </template>
           <template v-if="candidate.applicability">
-            <dt>{{ t('memory.applicability', 'Applies while') }}</dt>
+            <dt>{{ t('memory.applicability') }}</dt>
             <dd>{{ candidate.applicability }}</dd>
           </template>
           <template v-if="candidate.expiry_condition">
-            <dt>{{ t('memory.expiry', 'Stops being true when') }}</dt>
+            <dt>{{ t('memory.expiry') }}</dt>
             <dd>{{ candidate.expiry_condition }}</dd>
           </template>
         </dl>
@@ -187,7 +187,7 @@ onMounted(() => {
             :data-testid="`memory-promote-${candidate.id}`"
             @click="decide(candidate, true)"
           >
-            {{ t('memory.promote', 'Remember this') }}
+            {{ t('memory.promote') }}
           </button>
           <button
             type="button"
@@ -196,7 +196,7 @@ onMounted(() => {
             :data-testid="`memory-reject-${candidate.id}`"
             @click="decide(candidate, false)"
           >
-            {{ t('memory.reject', 'Discard') }}
+            {{ t('memory.reject') }}
           </button>
         </div>
         <p v-else class="memory-card__decided">
@@ -204,20 +204,20 @@ onMounted(() => {
           <span v-if="candidate.decision_reason"> · {{ candidate.decision_reason }}</span>
         </p>
       </article>
-      <p v-if="candidatesTruncated" class="memory-page__paged">{{ t('memory.queueTruncated', 'Showing the first 100 — there may be more.') }}</p>
+      <p v-if="candidatesTruncated" class="memory-page__paged">{{ t('memory.queueTruncated') }}</p>
     </section>
 
     <section class="memory-page__section" aria-labelledby="memory-shelf-heading">
       <h2 id="memory-shelf-heading">
         <BookMarked class="size-4" />
-        {{ showHistory ? t('memory.historyTitle', 'Forgotten') : t('memory.shelfTitle', 'What the agents remember') }}
+        {{ showHistory ? t('memory.historyTitle') : t('memory.shelfTitle') }}
         <span class="memory-page__count">{{ activeItems.length }}</span>
       </h2>
       <button type="button" class="memory-page__link" data-testid="memory-toggle-history" @click="showHistory = !showHistory; void load()">
-        {{ showHistory ? t('memory.showActive', 'Show active memory') : t('memory.showHistory', 'Show what was forgotten') }}
+        {{ showHistory ? t('memory.showActive') : t('memory.showHistory') }}
       </button>
       <p v-if="!activeItems.length && !loading && !loadError" class="memory-page__empty" data-testid="memory-shelf-empty">
-        {{ showHistory ? t('memory.historyEmpty', 'Nothing has been revoked.') : t('memory.shelfEmpty', 'No promoted memory in this scope.') }}
+        {{ showHistory ? t('memory.historyEmpty') : t('memory.shelfEmpty') }}
       </p>
       <article v-for="item in activeItems" :key="item.id" class="memory-card" data-testid="memory-item">
         <p class="memory-card__content">{{ item.content }}</p>
@@ -227,8 +227,8 @@ onMounted(() => {
           <span class="memory-card__chip">v{{ item.version }}</span>
         </p>
         <p v-if="item.applicability || item.expiry_condition" class="memory-card__meta">
-          <span v-if="item.applicability">{{ t('memory.applicability', 'Applies while') }} {{ item.applicability }}</span>
-          <span v-if="item.expiry_condition"> · {{ t('memory.expiry', 'Stops being true when') }} {{ item.expiry_condition }}</span>
+          <span v-if="item.applicability">{{ t('memory.applicability') }} {{ item.applicability }}</span>
+          <span v-if="item.expiry_condition"> · {{ t('memory.expiry') }} {{ item.expiry_condition }}</span>
         </p>
         <div class="memory-card__actions">
           <button
@@ -238,11 +238,11 @@ onMounted(() => {
             :data-testid="`memory-revoke-${item.id}`"
             @click="revoke(item)"
           >
-            {{ t('memory.revoke', 'Forget this') }}
+            {{ t('memory.revoke') }}
           </button>
         </div>
       </article>
-      <p v-if="itemsTruncated" class="memory-page__paged">{{ t('memory.shelfTruncated', 'Showing the first 100 — there may be more.') }}</p>
+      <p v-if="itemsTruncated" class="memory-page__paged">{{ t('memory.shelfTruncated') }}</p>
     </section>
   </div>
 </template>
