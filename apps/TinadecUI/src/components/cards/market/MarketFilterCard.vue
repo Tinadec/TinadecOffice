@@ -16,7 +16,7 @@ import {
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { UiBadge, UiButton, UiInput, UiLabel } from '@/components/ui'
+import { UiBadge, UiButton, UiInput, UiLabel, UiSelectField } from '@/components/ui'
 import {
   catalogKindLabel, kindOptions as _kindOptions, marketController, sourceKindLabel,
 } from '@/controllers/MarketController'
@@ -32,7 +32,7 @@ const {
 const kindOptions = _kindOptions.map((o) => ({ ...o, icon: o.key === 'skill' ? Bot : o.key === 'mcp-server' ? PlugZap : o.key === 'acp-adapter' ? Terminal : Boxes }))
 // Core answers the kinds it has an adapter for; the picker used to list eight it could never read,
 // so every add either created a row that could not refresh or failed outright.
-const sourceKindOptions = computed(() => supportedKinds.value)
+const sourceKindOptions = computed(() => supportedKinds.value.map(kind => ({ value: kind, label: sourceKindLabel(kind) })))
 
 function filterLabel(key: string) {
   return key === 'all' ? t('market.filterAll') : catalogKindLabel(key)
@@ -112,9 +112,7 @@ function filterLabel(key: string) {
 
     <div class="market-source-form">
       <UiLabel>{{ t('market.addSource') }}</UiLabel>
-      <select v-model="sourceForm.kind" class="market-select">
-        <option v-for="kind in sourceKindOptions" :key="kind" :value="kind">{{ sourceKindLabel(kind) }}</option>
-      </select>
+      <UiSelectField v-model="sourceForm.kind" :options="sourceKindOptions" :aria-label="t('market.sourceKind')" />
       <UiInput v-model="sourceForm.name" :placeholder="t('market.sourceName')" />
       <UiInput v-model="sourceForm.location" :placeholder="t(sourceForm.kind === 'skill_git' ? 'market.skillGitLocation' : 'market.sourceLocation')" />
       <p v-if="sourceForm.kind === 'skill_git'" class="quiet">{{ t('market.skillGitHint') }}</p>
@@ -214,13 +212,4 @@ function filterLabel(key: string) {
   border-top: 1px solid var(--border-muted);
 }
 
-.market-select {
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-input);
-  color: var(--text-primary);
-  font-size: 13px;
-}
 </style>

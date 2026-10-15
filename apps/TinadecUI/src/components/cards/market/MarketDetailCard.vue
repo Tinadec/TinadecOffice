@@ -14,7 +14,7 @@ import {
 } from '@lucide/vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { UiButton } from '@/components/ui'
+import { UiButton, UiSelectField } from '@/components/ui'
 import { marketController } from '@/controllers/MarketController'
 
 const { t } = useI18n()
@@ -130,10 +130,12 @@ function statusLine() {
 
       <label v-if="selectedItem.kind === 'skill' && !selectedInstallation" class="market-scope-picker">
         <span>{{ t('market.installScope') }}</span>
-        <select v-model="skillScope">
-          <option value="shared">{{ t('toolsSettings.shared') }}</option>
-          <option value="project">{{ t('toolsSettings.projectResources') }}</option>
-        </select>
+        <UiSelectField
+          :model-value="skillScope"
+          :options="[{ value: 'shared', label: t('toolsSettings.shared') }, { value: 'project', label: t('toolsSettings.projectResources') }]"
+          :aria-label="t('market.installScope')"
+          @update:model-value="skillScope = $event === 'project' ? 'project' : 'shared'"
+        />
       </label>
 
       <div v-if="proposal" class="market-proposal" data-testid="market-proposal">
