@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { Check, ChevronDown, FileText, Infinity as InfinityIcon, ShieldAlert, ShieldX, Terminal } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 import type { ApprovalDto, ApprovalRuleDto, CreateApprovalRuleInput } from '../api'
 import ApprovalGateStatus from './approval/ApprovalGateStatus.vue'
 
 const { t } = useI18n()
+const { riskLabel, approvalStatusLabel } = useStatusLabels()
 
 const props = withDefaults(defineProps<{
   approvals: ApprovalDto[]
@@ -107,7 +109,7 @@ function decideCurrent(approval: ApprovalDto, decision: 'approved' | 'rejected')
         <div class="approval-head">
           <strong>{{ isSpecProposal(approval) ? t('approval.specConfirmation') : approval.kind }}</strong>
           <code v-if="approval.tool_id && !isSpecProposal(approval)" class="approval-tool">{{ approval.tool_id }}</code>
-          <span v-if="approval.risk" class="approval-risk" :data-risk="approval.risk">{{ approval.risk }}</span>
+          <span v-if="approval.risk" class="approval-risk" :data-risk="approval.risk">{{ riskLabel(approval.risk) }}</span>
         </div>
         <p class="approval-summary">{{ isSpecProposal(approval) ? t('approval.specConfirmationHint') : approval.summary }}</p>
         <section v-if="isSpecProposal(approval)" class="approval-spec" :aria-labelledby="`spec-document-${approval.id}`">
@@ -182,7 +184,7 @@ function decideCurrent(approval: ApprovalDto, decision: 'approved' | 'rejected')
           <ShieldX v-if="approval.status === 'rejected'" :size="14" class="approval-history-icon rejected" />
           <Check v-else :size="14" class="approval-history-icon" />
           <div class="approval-history-copy"><strong>{{ approval.command ?? approval.tool_id ?? approval.summary }}</strong><span>{{ approval.summary }}</span></div>
-          <span class="approval-history-status" :data-status="approval.status">{{ approval.status }}</span>
+          <span class="approval-history-status" :data-status="approval.status">{{ approvalStatusLabel(approval.status) }}</span>
         </article>
       </div>
       <span v-else class="quiet approval-empty">{{ t('approval.noHistory') }}</span>

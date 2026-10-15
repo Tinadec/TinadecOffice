@@ -30,6 +30,7 @@ import {
   Users,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 import type { AgentActivity, AgentState, ThinkingStep, ProgressEvent } from '@/composables/useAgentActivity'
 import type { AgentAssignmentDto, OrchestrationSnapshotDto, TaskNodeDto } from '../api'
 import AgentStatusIndicator from './chat/AgentStatusIndicator.vue'
@@ -38,6 +39,7 @@ import type { ConversationFeed } from '@/composables/useConversationFeed'
 import type { TurnRunInput } from '@/lib/conversation/turns'
 
 const { t } = useI18n()
+const { severityLabel } = useStatusLabels()
 
 const props = defineProps<{
   activity: AgentActivity
@@ -408,7 +410,7 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
                       class="agent-panel-thinking-severity"
                       :class="`severity-${step.severity}`"
                     >
-                      {{ step.severity }}
+                      {{ severityLabel(step.severity) }}
                     </span>
                   </div>
                 </div>

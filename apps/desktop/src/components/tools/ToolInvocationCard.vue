@@ -15,14 +15,14 @@ import type { ToolExecutionTimelineItemDto } from '@/api'
 import { riskToneClass, toolIconOf } from '@/lib/toolPresentation'
 import ToolResultViewer from './ToolResultViewer.vue'
 import { useI18n } from 'vue-i18n'
-import { useToolLabels } from '@/lib/toolLabels'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const props = defineProps<{
   toolExecution: ToolExecutionTimelineItemDto
   defaultExpanded?: boolean
 }>()
 const { t } = useI18n()
-const { statusLabel, riskLabel } = useToolLabels()
+const { statusLabel, riskLabel } = useStatusLabels()
 
 const emit = defineEmits<{
   'rerun': [toolExecution: ToolExecutionTimelineItemDto]

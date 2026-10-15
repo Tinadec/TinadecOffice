@@ -3,12 +3,14 @@ import { computed, ref, watch } from 'vue'
 import { Check, ChevronDown, ChevronRight, Copy, Folder } from '@lucide/vue'
 import type { ToolExecutionTimelineItemDto } from '@/api'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const props = defineProps<{
   toolExecution: ToolExecutionTimelineItemDto
   defaultExpanded?: boolean
 }>()
 const { t } = useI18n()
+const { statusLabel } = useStatusLabels()
 
 const expanded = ref(props.defaultExpanded ?? false)
 const copied = ref(false)
@@ -67,7 +69,7 @@ function toggle() {
         class="tool-result-chevron"
       />
       <span class="tool-result-title">{{ t('toolPanel.result') }}</span>
-      <span class="tool-result-meta">{{ toolExecution.status }}</span>
+      <span class="tool-result-meta">{{ statusLabel(toolExecution.status) }}</span>
       <button
         class="tool-result-copy"
         :title="t('toolPanel.copyResult')"

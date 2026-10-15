@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '../lib/statusLabels'
 import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, RefreshCw, Wrench } from '@lucide/vue'
 import { api, type ContextBudgetShareDto, type ContextPackDto, type ModelInvocationDto, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto, type ToolDescriptorDto } from '../api'
 import { summarizeModelInvocations, type ModelUsageGroup, type ModelUsageSummary } from '../lib/modelUsage'
@@ -16,7 +17,8 @@ const props = defineProps<{
   sessionId?: string | null
 }>()
 
-const { t, te } = useI18n()
+const { t } = useI18n()
+const { runStatusLabel: statusWords, severityLabel } = useStatusLabels()
 
 const emit = defineEmits<{
   'rerun-tool': [toolExecution: ToolExecutionTimelineItemDto]
@@ -112,10 +114,8 @@ function usageGroupLabel(group: ModelUsageGroup): string {
   return t('orchestrationPanel.groupTokens', { name, via, tokens: group.totalTokens.toLocaleString('en-US'), partial, calls })
 }
 
-/** The run's status in words where the conversation already names it; an unknown one as it came. */
 function runStatusLabel(status?: string | null): string {
-  if (!status) return ''
-  return te(`space.status.${status}`) ? t(`space.status.${status}`) : status
+  return status ? statusWords(status) : ''
 }
 
 /**
@@ -221,7 +221,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
           {{ t('orchestrationPanel.noFindings') }}
         </div>
         <div v-for="finding in snapshot.supervision_findings" :key="finding.id" class="orchestration-finding">
-          <span>{{ finding.severity }} · {{ finding.category }}</span>
+          <span>{{ severityLabel(finding.severity) }} · {{ finding.category }}</span>
           <p>{{ finding.summary }}</p>
           <small>{{ finding.recommendation }}</small>
         </div>

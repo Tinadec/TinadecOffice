@@ -14,7 +14,7 @@ import type { ToolExecutionTimelineItemDto } from '@/api'
 import { toolIconOf } from '@/lib/toolPresentation'
 import ToolInvocationCard from './ToolInvocationCard.vue'
 import { useI18n } from 'vue-i18n'
-import { useToolLabels } from '@/lib/toolLabels'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const props = defineProps<{
   toolExecutions: ToolExecutionTimelineItemDto[]
@@ -33,7 +33,7 @@ const sortOrder = ref<SortOrder>('desc')
 const expandedIds = ref<Set<string>>(new Set())
 
 const { t } = useI18n()
-const { statusLabel, riskLabel } = useToolLabels()
+const { statusLabel, riskLabel } = useStatusLabels()
 
 const filterOptions: Array<{ key: StatusFilter; icon: typeof ListFilter }> = [
   { key: 'all', icon: ListFilter },

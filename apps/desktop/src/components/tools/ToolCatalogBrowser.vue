@@ -14,10 +14,10 @@ import { api, type ToolDescriptorDto, type ToolSearchResultDto } from '@/api'
 import { riskLevelsPresent, riskToneClass, toolIconOf } from '@/lib/toolPresentation'
 import { useNotifications } from '@/composables/useNotifications'
 import { UiSelectField } from '@/components/ui'
-import { useToolLabels } from '@/lib/toolLabels'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const { t } = useI18n()
-const { riskLabel } = useToolLabels()
+const { riskLabel } = useStatusLabels()
 const { status, dismissByKey } = useNotifications()
 
 const props = defineProps<{

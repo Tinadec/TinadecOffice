@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 import { computed } from 'vue'
 import { VueFlow, Panel, type Node, type Edge } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -56,6 +57,7 @@ const edges = computed<Edge[]>(() =>
 const flowSummary = computed(() => (props.flows ?? []).slice(0, 6))
 
 const { t, te } = useI18n()
+const { runStatusLabel } = useStatusLabels()
 
 const tierLabel = computed(() => {
   const tier = props.graph.tier
@@ -102,7 +104,7 @@ function layerLabel(layer: string): string {
     </VueFlow>
     <ul v-if="flowSummary.length" class="declared-graph-flows">
       <li v-for="flow in flowSummary" :key="flow.task_key">
-        {{ flow.from }} → {{ flow.handle ?? flow.to }} · {{ flow.task_key }} · {{ flow.status }}
+        {{ flow.from }} → {{ flow.handle ?? flow.to }} · {{ flow.task_key }} · {{ runStatusLabel(flow.status) }}
       </li>
     </ul>
   </div>

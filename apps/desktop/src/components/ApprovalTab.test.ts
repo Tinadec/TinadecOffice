@@ -5,7 +5,7 @@ import ApprovalTab from './ApprovalTab.vue'
 import type { ApprovalDto, ApprovalRuleDto } from '../api'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
+  useI18n: () => ({ t: (key: string) => key, te: () => false }),
 }))
 
 function mountRows(approvals: ApprovalDto[], approvalRules: ApprovalRuleDto[] = []) {
