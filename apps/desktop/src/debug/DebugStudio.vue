@@ -49,22 +49,22 @@ function closeWindow() {
 
 async function injectMessage(request: SimulateMessageRequest) {
   const response = await simulation.injectMessage(request)
-  if (response?.simulated) notify.success({ message: 'Simulation message injected', source: 'debug' })
-  else notify.error(response ? 'Simulation message was rejected' : simulation.error.value ?? 'Simulation message failed', { source: 'debug' })
+  if (response?.simulated) notify.success({ message: t('debugStudio.simulation.injected'), source: 'debug' })
+  else notify.error(response ? t('debugStudio.simulation.rejected') : simulation.error.value ?? t('debugStudio.simulation.failed'), { source: 'debug' })
 }
 
 async function forceApproval(request: ForceApprovalDecisionRequest) {
   const confirmed = await confirm({
-    title: 'Force simulated approval decision',
-    message: `Force this approval to be ${request.decision}?`,
-    confirmLabel: request.decision === 'approved' ? 'Approve' : 'Reject',
+    title: t('debugStudio.simulation.forceTitle'),
+    message: t(request.decision === 'approved' ? 'debugStudio.simulation.forceApprove' : 'debugStudio.simulation.forceReject'),
+    confirmLabel: request.decision === 'approved' ? t('common.approve') : t('common.reject'),
     destructive: true,
   })
   if (!confirmed) return
 
   const response = await simulation.forceApprovalDecision(request)
-  if (response?.simulated) notify.success({ message: `Simulated approval ${request.decision}`, source: 'debug' })
-  else notify.error(response ? 'Approval decision was rejected' : simulation.error.value ?? 'Approval decision failed', { source: 'debug' })
+  if (response?.simulated) notify.success({ message: t(request.decision === 'approved' ? 'debugStudio.simulation.approved' : 'debugStudio.simulation.rejectedApproval'), source: 'debug' })
+  else notify.error(response ? t('debugStudio.simulation.decisionRejected') : simulation.error.value ?? t('debugStudio.simulation.decisionFailed'), { source: 'debug' })
 }
 
 onMounted(() => {
@@ -109,7 +109,7 @@ onMounted(() => {
         </button>
         <button class="debug-tab" :class="{ active: activeTab === 'preview' }" @click="activeTab = 'preview'">
           <LayoutDashboard :size="12" style="margin-right: 4px; vertical-align: middle;" />
-          预览
+          {{ t('debugStudio.tabPreview') }}
         </button>
       </nav>
     </PreviewIslandCard>

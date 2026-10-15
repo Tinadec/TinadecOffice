@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, provide, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useUie } from './useUie'
 import type { PersistedCardInstance } from '../engine/types'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   instance: PersistedCardInstance
@@ -44,7 +47,7 @@ provide('uie:active', computed(() => props.active))
       :key="instance.id"
     />
     <div v-else-if="activated" class="uie-card-unknown">
-      Unknown card: {{ instance.descriptorId }}
+      {{ t('uie.unknownCard', { id: instance.descriptorId }) }}
     </div>
   </div>
 </template>

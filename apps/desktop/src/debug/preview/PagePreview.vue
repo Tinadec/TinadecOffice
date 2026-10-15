@@ -5,6 +5,7 @@
  * 数据来自 apiBridge 注入的 mock api（按场景响应式切换）。
  */
 import { computed, defineAsyncComponent, ref, shallowRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import ChatPanel from '@/components/ChatPanel.vue'
 import ConversationPreview from './ConversationPreview.vue'
 import PreviewIslandCard from './PreviewIslandCard.vue'
@@ -24,6 +25,8 @@ import type { PermissionLevel } from '@/types/mode'
 import type { MockDataBundle } from './mockData'
 import { exploreEditShell } from '@/lib/conversation/fixtures'
 import { applyEvents, createFeedState } from '@/lib/conversation/reducer'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   pageName: string
@@ -83,7 +86,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
         <template #header>
           <div class="preview-island-header">
             <MessageSquare :size="14" />
-            <span>聊天面板（真实组件）</span>
+            <span>{{ t('debugStudio.preview.frame.chatPanel') }}</span>
           </div>
         </template>
         <ChatPanel
@@ -113,7 +116,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
         <template #header>
           <div class="preview-island-header">
             <MessagesSquare :size="14" />
-            <span>对话消息流（真实 ConversationView）</span>
+            <span>{{ t('debugStudio.preview.frame.conversation') }}</span>
           </div>
         </template>
         <ConversationPreview />
@@ -126,7 +129,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
         <template #header>
           <div class="preview-island-header">
             <GitBranch :size="14" />
-            <span>Git 管理（真实 GitPanel 组件）</span>
+            <span>{{ t('debugStudio.preview.frame.git') }}</span>
             <UiBadge variant="outline">{{ currentProject?.name ?? 'tinadec' }}</UiBadge>
           </div>
         </template>
@@ -149,7 +152,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
         <template #header>
           <div class="preview-island-header">
             <FileCode2 :size="14" />
-            <span>代码编辑器（真实 CodePage）</span>
+            <span>{{ t('debugStudio.preview.frame.code') }}</span>
             <UiBadge variant="outline">Monaco · FileTree · Patch</UiBadge>
           </div>
         </template>
@@ -167,8 +170,8 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
         <template #header>
           <div class="preview-island-header">
             <SettingsIcon :size="14" />
-            <span>设置（真实 SettingsPage）</span>
-            <UiBadge variant="outline">全部子页签可用</UiBadge>
+            <span>{{ t('debugStudio.preview.frame.settings') }}</span>
+            <UiBadge variant="outline">{{ t('debugStudio.preview.frame.allTabs') }}</UiBadge>
           </div>
         </template>
         <PreviewNavScope>
@@ -185,7 +188,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
         <template #header>
           <div class="preview-island-header">
             <Store :size="14" />
-            <span>扩展市场（真实 MarketPage · UIE 引擎隔离）</span>
+            <span>{{ t('debugStudio.preview.frame.market') }}</span>
           </div>
         </template>
         <RealMarketPage />
@@ -193,7 +196,7 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
     </div>
 
     <div v-else class="preview-empty-hint">
-      未找到页面：{{ pageName }}
+      {{ t('debugStudio.preview.pageNotFound', { name: pageName }) }}
     </div>
   </div>
 </template>

@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, inject, ref, toValue, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import en from '@/locales/en'
 import UieCardHost from '../../../TinadecUI/src/components/UieCardHost.vue'
 
 const componentFor = vi.hoisted(() => vi.fn())
@@ -30,6 +32,7 @@ describe('UIE card activation', () => {
     componentFor.mockReturnValue(card)
     wrapper = mount(UieCardHost, {
       props: { instance: { id: 'terminal-1', descriptorId: 'terminal', title: 'Terminal', state: {} }, active: false },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
     })
     expect(setup).not.toHaveBeenCalled()
     expect(wrapper.find('button').exists()).toBe(false)
@@ -52,6 +55,7 @@ describe('UIE card activation', () => {
     componentFor.mockReturnValue(undefined)
     wrapper = mount(UieCardHost, {
       props: { instance: { id: 'missing-1', descriptorId: 'missing', title: 'Missing', state: {} }, active: false },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
     })
     expect(wrapper.find('.uie-card-unknown').exists()).toBe(false)
     await wrapper.setProps({ active: true })

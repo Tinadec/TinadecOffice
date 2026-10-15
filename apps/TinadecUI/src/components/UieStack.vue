@@ -4,6 +4,7 @@ import { Combine, Globe, type LucideIcon } from '@lucide/vue'
 import UieCardHost from './UieCardHost.vue'
 import BrowserTabBar from './BrowserTabBar.vue'
 import { useI18n } from 'vue-i18n'
+import { useCardTitle } from './cardTitle'
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui'
 import { useUie } from './useUie'
 import { usePanelStyles } from '@/composables/usePanelStyles'
@@ -43,6 +44,7 @@ const props = defineProps<{
 
 const uie = useUie()
 const { t } = useI18n()
+const cardTitle = useCardTitle()
 
 // The stack is a single material root. Tab bar and content share one continuous
 // surface owned by the UIE stack.
@@ -268,7 +270,8 @@ function restoreDock() {
 async function detachTab(instanceId: string) {
   const inst = props.instances.find((i) => i.id === instanceId)
   if (!inst) return
-  const ok = await detached.detach(inst, inst.state)
+  // The floating window is named in the app's language, like the tab it came from.
+  const ok = await detached.detach({ ...inst, title: cardTitle(inst) }, inst.state)
   if (ok) close(instanceId)
 }
 
@@ -342,12 +345,12 @@ onUnmounted(() => {
         :key="inst.id"
         class="browser-tab"
         :class="{ active: stack.activeTabId === inst.id, 'tab-dragging': dockDrag.isDraggingTab(inst.id) }"
-        :title="inst.title"
+        :title="cardTitle(inst)"
         @click="activate(inst.id)"
         @mousedown="startDockDrag($event, inst)"
         @auxclick="closeOnAuxClick($event, inst)"
       >
-        <span class="browser-tab-label">{{ inst.title }}</span>
+        <span class="browser-tab-label">{{ cardTitle(inst) }}</span>
         <span
           v-if="inst.id !== stack.activeTabId"
           class="browser-tab-close"
@@ -384,11 +387,11 @@ onUnmounted(() => {
         :key="inst.id"
         class="browser-tab"
         :class="{ active: stack.activeTabId === inst.id }"
-        :title="inst.title"
+        :title="cardTitle(inst)"
         @click="activate(inst.id)"
         @auxclick="closeOnAuxClick($event, inst)"
       >
-        <span class="browser-tab-label">{{ inst.title }}</span>
+        <span class="browser-tab-label">{{ cardTitle(inst) }}</span>
         <span
           v-if="inst.id !== stack.activeTabId"
           class="browser-tab-close"

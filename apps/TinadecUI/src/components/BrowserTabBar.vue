@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { useCardTitle } from './cardTitle'
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui'
 import { useDetachedTabs } from '@/composables/useDetachedTabs'
 import { useDockDrag, type DockDropTarget } from '@/composables/useDockDrag'
@@ -28,6 +29,7 @@ import { FEATURE_CATALOG } from './cards/home/featureCatalog'
 import type { PersistedCardInstance, UieSlotId } from '../engine/types'
 
 const { t } = useI18n()
+const cardTitle = useCardTitle()
 const collapseLabel = computed(() => t('context.collapsePanel', t('app.collapse')))
 
 const props = defineProps<{
@@ -220,14 +222,14 @@ onUnmounted(() => {
       :key="inst.id"
       class="browser-tab"
       :class="{ active: activeTabId === inst.id, 'tab-dragging': dockDrag.isDraggingTab(inst.id) }"
-      :title="inst.title"
+      :title="cardTitle(inst)"
       @click="onTabClick($event, inst.id)"
       @mousedown="onTabMouseDown($event, inst)"
       @auxclick="onTabAuxClick($event, inst)"
       @contextmenu="onTabContextMenu($event, inst)"
     >
       <component :is="iconFor(inst.descriptorId)" :size="14" class="browser-tab-icon" />
-      <span class="browser-tab-label">{{ inst.title }}</span>
+      <span class="browser-tab-label">{{ cardTitle(inst) }}</span>
       <span
         class="browser-tab-detach"
         :title="t('context.detachTab')"
@@ -249,11 +251,11 @@ onUnmounted(() => {
       v-for="dt in detachedTabs"
       :key="dt.tabId"
       class="browser-tab browser-tab-detached"
-      :title="t('context.detachedTabHint', { title: dt.title })"
+      :title="t('context.detachedTabHint', { title: cardTitle({ descriptorId: dt.type, title: dt.title }) })"
       @click="emit('focus-detached', dt.windowId)"
     >
       <component :is="iconFor(dt.type)" :size="14" class="browser-tab-icon" />
-      <span class="browser-tab-label">{{ dt.title }}</span>
+      <span class="browser-tab-label">{{ cardTitle({ descriptorId: dt.type, title: dt.title }) }}</span>
       <ExternalLink :size="10" class="browser-tab-detached-icon" />
     </button>
 

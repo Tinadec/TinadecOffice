@@ -12,12 +12,13 @@
 import { provide } from 'vue'
 import { useRouter, routerKey, type Router } from 'vue-router'
 import { useNotifications } from '@/composables/useNotifications'
+import i18n from '@/i18n'
 
 const real = useRouter()
 const { notify } = useNotifications()
 
 function blocked(): Promise<void> {
-  notify.info({ message: '预览模式：页面导航已隔离', source: 'debug-preview' })
+  notify.info({ message: i18n.global.t('debugStudio.preview.navigationIsolated'), source: 'debug-preview' })
   return Promise.resolve()
 }
 

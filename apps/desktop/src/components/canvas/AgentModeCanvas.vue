@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { VueFlow, Panel, useVueFlow, type Node, type Edge, type Connection } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Workflow, Cpu } from '@lucide/vue'
 import type { AgentModeNodeDto, AgentModeEdgeDto, AgentDefinitionDto } from '@/api'
 
+const { t } = useI18n()
 const props = defineProps<{
   nodes: AgentModeNodeDto[]
   edges: AgentModeEdgeDto[]
@@ -50,7 +52,7 @@ const vfNodes = computed<Node[]>(() =>
         label: n.label ?? ag?.name ?? n.agent_id ?? '',
         agent_id: n.agent_id,
         lane: normalizeLane(n.lane),
-        agentName: ag?.name ?? n.agent_id?.slice(0, 8) ?? '未绑定',
+        agentName: ag?.name ?? n.agent_id?.slice(0, 8) ?? t('canvas.unbound'),
         role: ag?.agent_type ?? '—',
         cap: cap || '—',
         toolCount: tools,
@@ -122,7 +124,7 @@ function hasCycle(nextEdges: AgentModeEdgeDto[]): boolean {
 onConnect((conn: Connection) => {
   if (props.readonly) return
   if (!conn.source || !conn.target) return
-  if (conn.source === conn.target) { laneWarning.value = '不允许自连'; setTimeout(() => laneWarning.value = '', 1800); return }
+  if (conn.source === conn.target) { laneWarning.value = t('canvas.noSelfLink'); setTimeout(() => laneWarning.value = '', 1800); return }
   if (props.edges.some((e) => e.source === conn.source && e.target === conn.target)) return
   const src = props.nodes.find((n) => n.id === conn.source)
   const tgt = props.nodes.find((n) => n.id === conn.target)
@@ -130,14 +132,14 @@ onConnect((conn: Connection) => {
     const sl = normalizeLane(src.lane); const tl = normalizeLane(tgt.lane)
     // lane 约束：禁止 execution → operation 回流，同层连线仅警告
     if (sl === 'execution' && tl === 'operation') {
-      laneWarning.value = 'lane 约束：execution 不能连回 operation'
+      laneWarning.value = t('canvas.laneBackflow')
       setTimeout(() => laneWarning.value = '', 2200)
       return
     }
   }
   const next: AgentModeEdgeDto = { id: `e-${conn.source}-${conn.target}`, source: conn.source, target: conn.target }
   const check = [...props.edges, next]
-  if (hasCycle(check)) { laneWarning.value = '连线将形成环，已拦截'; setTimeout(() => laneWarning.value = '', 2200); return }
+  if (hasCycle(check)) { laneWarning.value = t('canvas.cycleBlocked'); setTimeout(() => laneWarning.value = '', 2200); return }
   emit('update:edges', check)
 })
 
@@ -170,8 +172,8 @@ defineExpose({ deleteSelectedEdge, updateEdgeLabel, selectedEdgeId, laneWarning 
 <template>
   <div class="agent-mode-canvas">
     <div class="lane-headers">
-      <div class="lane-head op"><Workflow :size="13" />operation<em>{{ opCount }}</em></div>
-      <div class="lane-head ex"><Cpu :size="13" />execution<em>{{ exCount }}</em></div>
+      <div class="lane-head op"><Workflow :size="13" />{{ t('workbench.operationLane') }}<em>{{ opCount }}</em></div>
+      <div class="lane-head ex"><Cpu :size="13" />{{ t('workbench.executionLane') }}<em>{{ exCount }}</em></div>
     </div>
     <div v-if="laneWarning" class="lane-warning">{{ laneWarning }}</div>
     <div class="canvas-wrap">
@@ -191,13 +193,13 @@ defineExpose({ deleteSelectedEdge, updateEdgeLabel, selectedEdgeId, laneWarning 
         @nodes-change="handleNodesChange"
       >
         <Background />
-        <Panel position="top-right" class="vf-panel">{{ readonly ? '只读 · 克隆后可编辑' : '双泳道 · 拖拽节点 / 连线 · 选中边可删/改标签' }}</Panel>
+        <Panel position="top-right" class="vf-panel">{{ readonly ? t('canvas.readonlyHint') : t('canvas.modeHint') }}</Panel>
         <template #node-custom="{ data }">
           <div class="am-node" :class="{ sel: data.selected, op: data.lane === 'operation', ex: data.lane === 'execution' }">
             <div class="am-node-head">
               <span class="am-node-icon"><Workflow v-if="data.lane === 'operation'" :size="12" /><Cpu v-else :size="12" /></span>
               <strong :title="data.agentName">{{ data.agentName }}</strong>
-              <span class="am-node-tool">{{ data.toolCount }} tools</span>
+              <span class="am-node-tool">{{ t('canvas.toolCount', { n: data.toolCount }) }}</span>
             </div>
             <div class="am-node-label" :title="data.label">{{ data.label }}</div>
             <div class="am-node-meta"><span>{{ data.role }}</span><span class="dot">·</span><span :title="data.cap">{{ data.cap }}</span></div>

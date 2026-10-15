@@ -221,7 +221,8 @@ export function repairLayout(
     cards[id] = {
       id,
       descriptorId: i.descriptorId,
-      title: typeof i.title === 'string' && i.title ? i.title : descriptor?.defaultTitle ?? i.descriptorId,
+      // An empty title is kept: it means "no name of its own", and the tab shows the card type's name.
+      title: typeof i.title === 'string' ? i.title : descriptor?.defaultTitle ?? '',
       ...(typeof i.x === 'number' && Number.isFinite(i.x) ? { x: Math.max(0, Math.round(i.x)) } : {}),
       ...(typeof i.y === 'number' && Number.isFinite(i.y) ? { y: Math.max(0, Math.round(i.y)) } : {}),
       ...(typeof i.w === 'number' && Number.isFinite(i.w) ? { w: Math.max(1, Math.round(i.w)) } : {}),

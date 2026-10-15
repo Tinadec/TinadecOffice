@@ -6,10 +6,13 @@
  * 并行子智能体、失败、打断、上下文压缩。
  */
 import { computed, ref, shallowRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import ConversationView from '@/components/conversation/ConversationView.vue'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
 import { FEED_FIXTURES } from '@/lib/conversation/fixtures'
 import { applyEvents, createFeedState } from '@/lib/conversation/reducer'
+
+const { t } = useI18n()
 
 const scenarios = FEED_FIXTURES.map((make) => make())
 const selected = ref(scenarios[0]!.name)
@@ -26,7 +29,7 @@ const feed = computed<ConversationFeed>(() => {
 
 <template>
   <div class="conversation-preview">
-    <div class="conversation-preview-scenarios" role="radiogroup" aria-label="场景">
+    <div class="conversation-preview-scenarios" role="radiogroup" :aria-label="t('debugStudio.preview.scenarioLabel')">
       <button
         v-for="item in scenarios"
         :key="item.name"
@@ -38,7 +41,7 @@ const feed = computed<ConversationFeed>(() => {
       >
         {{ item.name }}
       </button>
-      <button type="button" class="conversation-preview-scenario" role="switch" :aria-checked="loading" @click="loading = !loading">加载中</button>
+      <button type="button" class="conversation-preview-scenario" role="switch" :aria-checked="loading" @click="loading = !loading">{{ t('common.loading') }}</button>
     </div>
     <div class="conversation-preview-inner">
       <ConversationView
@@ -50,7 +53,7 @@ const feed = computed<ConversationFeed>(() => {
         workspace-root="/w"
       />
     </div>
-    <div class="conversation-preview-hint">fixtures 与 src/lib/conversation 测试共用 · 运行中场景的工作区展开，已完成场景收成摘要，点击可展开</div>
+    <div class="conversation-preview-hint">{{ t('debugStudio.preview.conversationHint') }}</div>
   </div>
 </template>
 

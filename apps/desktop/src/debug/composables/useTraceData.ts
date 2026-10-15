@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import i18n from '@/i18n'
 import { storageFetch as fetch } from '@/lib/storageScope'
 import type { TraceSummary, TraceDetail, SpanNode } from '../types/trace'
 import type { GetTracesRequest } from '../types/debug-api'
@@ -38,8 +39,8 @@ export function useTraceData() {
       traces.value = data.traces ?? []
       dismissByKey('debug-trace')
     } catch (e) {
-      error.value = `Failed to fetch traces: ${e}`
-      status.error({ key: 'debug-trace', message: `Failed to fetch traces: ${e}`, source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.fetchTraces', { error: String(e) })
+      status.error({ key: 'debug-trace', message: i18n.global.t('debugStudio.requestFailed.fetchTraces', { error: String(e) }), source: 'debug' })
     } finally {
       loading.value = false
     }
@@ -57,8 +58,8 @@ export function useTraceData() {
       currentTrace.value = data
       dismissByKey('debug-trace')
     } catch (e) {
-      error.value = `Failed to fetch trace detail: ${e}`
-      status.error({ key: 'debug-trace', message: `Failed to fetch trace detail: ${e}`, source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.fetchTraceDetail', { error: String(e) })
+      status.error({ key: 'debug-trace', message: i18n.global.t('debugStudio.requestFailed.fetchTraceDetail', { error: String(e) }), source: 'debug' })
     } finally {
       loading.value = false
     }

@@ -107,6 +107,14 @@ const panelSources = import.meta.glob(
     './../components/chat/AgentStatusIndicator.vue',
     './../lib/hostAccess.ts',
     './../lib/hostConnection.ts',
+    // The mode / pipeline canvases and Debug Studio, whose chrome was hardcoded Chinese.
+    './../components/canvas/AgentModeCanvas.vue',
+    './../components/canvas/PromptPipelineCanvas.vue',
+    './../debug/DebugStudio.vue',
+    './../debug/preview/PreviewGallery.vue',
+    './../debug/preview/ComponentPreview.vue',
+    './../debug/preview/PagePreview.vue',
+    './../debug/preview/ConversationPreview.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>
@@ -129,6 +137,12 @@ function cardSources(): Record<string, string> {
       const rel = `TinadecUI/cards/${group.name}/${file}`
       out[rel] = readFileSync(path.join(root, group.name, file), 'utf8')
     }
+  }
+  // The engine's own chrome (tab bars, card host, title bar) sits beside the cards; its keys were
+  // missing from both bundles once, which showed `uie.move` as a tooltip.
+  const components = path.resolve(root, '..')
+  for (const file of readdirSync(components)) {
+    if (file.endsWith('.vue')) out[`TinadecUI/components/${file}`] = readFileSync(path.join(components, file), 'utf8')
   }
   return out
 }

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { VueFlow, Panel, useVueFlow, type Node, type Edge, type Connection } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import type { PromptPipelineDto } from '@/api'
 
+const { t } = useI18n()
 const props = defineProps<{ pipeline: PromptPipelineDto | null }>()
 const emit = defineEmits<{
   'update:nodes': [nodes: unknown[]]
@@ -56,10 +58,10 @@ function hasCycle(next: RawEdge[]): boolean {
 
 onConnect((c: Connection) => {
   if (!c.source || !c.target) return
-  if (c.source === c.target) { warn.value = '不允许自连'; setTimeout(() => warn.value = '', 1800); return }
+  if (c.source === c.target) { warn.value = t('canvas.noSelfLink'); setTimeout(() => warn.value = '', 1800); return }
   if (rawEdges.value.some((e) => e.source === c.source && e.target === c.target)) return
   const next: RawEdge = { id: `e-${c.source}-${c.target}`, source: c.source, target: c.target }
-  if (hasCycle([...rawEdges.value, next])) { warn.value = '连线将形成环，已拦截'; setTimeout(() => warn.value = '', 2200); return }
+  if (hasCycle([...rawEdges.value, next])) { warn.value = t('canvas.cycleBlocked'); setTimeout(() => warn.value = '', 2200); return }
   emit('update:edges', [...rawEdges.value, next])
 })
 function onNodeClick(e: { node: Node }) { selectedId.value = e.node.id; selectedEdgeId.value = null; const n = rawNodes.value.find((x) => x.id === e.node.id) ?? null; emit('select-node', n); emit('select-edge', null) }
@@ -76,11 +78,11 @@ function handleNodesChange(changes: unknown) {
 <template>
   <div class="prompt-pipeline-canvas">
     <div v-if="warn" class="pp-warn">{{ warn }}</div>
-    <div v-if="!pipeline" class="center-empty-state"><span>请选择一条管线以预览画布</span></div>
+    <div v-if="!pipeline" class="center-empty-state"><span>{{ t('canvas.choosePipeline') }}</span></div>
     <div v-else class="pp-wrap">
       <VueFlow :nodes="vfNodes" :edges="vfEdges" fit-view-on-init class="vf" @node-click="onNodeClick" @edge-click="onEdgeClick" @pane-click="onPaneClick" @nodes-change="handleNodesChange">
         <Background />
-        <Panel position="top-right" class="vf-panel">拖拽节点 · 连线 · 选中查看详情</Panel>
+        <Panel position="top-right" class="vf-panel">{{ t('canvas.pipelineHint') }}</Panel>
         <template #node-custom="{ data }">
           <div class="pp-node" :class="{ sel: data.selected }">
             <div class="pp-node-head"><span class="pp-node-type">{{ data.nodeType }}</span><strong :title="data.label">{{ data.label }}</strong></div>

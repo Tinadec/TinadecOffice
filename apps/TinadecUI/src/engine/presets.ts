@@ -24,11 +24,12 @@ export interface PresetContext {
   nextInstanceId: () => string
 }
 
-function card(id: string, descriptorId: string, title: string, state?: Record<string, unknown>): PersistedCardInstance {
+/** A preset card carries no title of its own: the tab shows its type's name in the app language. */
+function card(id: string, descriptorId: string, state?: Record<string, unknown>): PersistedCardInstance {
   return {
     id,
     descriptorId,
-    title,
+    title: '',
     ...(state ? { state } : {}),
   }
 }
@@ -74,17 +75,17 @@ function buildHomePreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.gap = HOME_GEOMETRY.gap
   snapshot.edgeInset = HOME_GEOMETRY.edgeInset
 
-  const nav = card(n(), 'nav', '项目')
-  const chat = card(n(), 'chat', '聊天')
-  const picker = card(n(), 'homePicker', 'Home')
-  const git = card(n(), 'git', 'Git')
-  const approval = card(n(), 'approval', '审批')
-  const orchestration = card(n(), 'orchestration', '编排')
-  const events = card(n(), 'events', '事件')
-  const doctor = card(n(), 'doctor', 'Doctor')
-  const browser = card(n(), 'browser', '浏览器')
-  const agent = card(n(), 'agent', 'Agent')
-  const terminal = card(n(), 'terminal', '终端')
+  const nav = card(n(), 'nav')
+  const chat = card(n(), 'chat')
+  const picker = card(n(), 'homePicker')
+  const git = card(n(), 'git')
+  const approval = card(n(), 'approval')
+  const orchestration = card(n(), 'orchestration')
+  const events = card(n(), 'events')
+  const doctor = card(n(), 'doctor')
+  const browser = card(n(), 'browser')
+  const agent = card(n(), 'agent')
+  const terminal = card(n(), 'terminal')
 
   snapshot.cards = {
     [nav.id]: nav,
@@ -122,8 +123,8 @@ function buildSettingsPreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.gap = 8
   snapshot.edgeInset = 8
 
-  const nav = card(n(), 'settingsNav', '设置')
-  const content = card(n(), 'settingsContent', '内容')
+  const nav = card(n(), 'settingsNav')
+  const content = card(n(), 'settingsContent')
 
   snapshot.cards = { [nav.id]: nav, [content.id]: content }
   snapshot.columns = {
@@ -142,9 +143,9 @@ function buildMarketPreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.gap = 8
   snapshot.edgeInset = 8
 
-  const filter = card(n(), 'marketFilter', '筛选')
-  const catalog = card(n(), 'marketCatalog', '目录')
-  const detail = card(n(), 'marketDetail', '详情')
+  const filter = card(n(), 'marketFilter')
+  const catalog = card(n(), 'marketCatalog')
+  const detail = card(n(), 'marketDetail')
 
   snapshot.cards = { [filter.id]: filter, [catalog.id]: catalog, [detail.id]: detail }
   snapshot.columns = {
@@ -162,11 +163,11 @@ function buildCodePreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.gap = 1
   snapshot.edgeInset = 0
 
-  const toolbar = card(n(), 'codeToolbar', '代码')
-  const fileTree = card(n(), 'fileTree', '文件')
-  const search = card(n(), 'search', '搜索')
-  const editor = card(n(), 'editor', '编辑器')
-  const patch = card(n(), 'patchDiff', '补丁')
+  const toolbar = card(n(), 'codeToolbar')
+  const fileTree = card(n(), 'fileTree')
+  const search = card(n(), 'search')
+  const editor = card(n(), 'editor')
+  const patch = card(n(), 'patchDiff')
 
   snapshot.cards = {
     [toolbar.id]: toolbar,
@@ -191,13 +192,13 @@ function buildDebugPreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.gap = 1
   snapshot.edgeInset = 0
 
-  const timeline = card(n(), 'debugTimeline', '时间线')
-  const inspector = card(n(), 'debugInspector', 'Inspector')
-  const graph = card(n(), 'debugGraph', 'Agent 图')
-  const metrics = card(n(), 'debugMetrics', '指标')
-  const diagnostics = card(n(), 'debugDiagnostics', '诊断')
-  const preview = card(n(), 'debugPreview', '预览')
-  const simulator = card(n(), 'debugSimulator', '模拟器')
+  const timeline = card(n(), 'debugTimeline')
+  const inspector = card(n(), 'debugInspector')
+  const graph = card(n(), 'debugGraph')
+  const metrics = card(n(), 'debugMetrics')
+  const diagnostics = card(n(), 'debugDiagnostics')
+  const preview = card(n(), 'debugPreview')
+  const simulator = card(n(), 'debugSimulator')
 
   snapshot.cards = {
     [timeline.id]: timeline,

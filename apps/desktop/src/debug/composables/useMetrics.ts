@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import i18n from '@/i18n'
 import { storageFetch as fetch } from '@/lib/storageScope'
 import type { MetricsResponse, DiagnosticsReport } from '../types/metrics'
 import { useNotifications } from '@/composables/useNotifications'
@@ -30,8 +31,8 @@ export function useMetrics() {
       error.value = null
       dismissByKey('debug-metrics')
     } catch (e) {
-      error.value = `Failed to fetch metrics: ${e}`
-      status.error({ key: 'debug-metrics', message: `Failed to fetch metrics: ${e}`, source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.fetchMetrics', { error: String(e) })
+      status.error({ key: 'debug-metrics', message: i18n.global.t('debugStudio.requestFailed.fetchMetrics', { error: String(e) }), source: 'debug' })
     } finally {
       loading.value = false
     }
@@ -47,8 +48,8 @@ export function useMetrics() {
       error.value = null
       dismissByKey('debug-metrics')
     } catch (e) {
-      error.value = `Failed to fetch diagnostics: ${e}`
-      status.error({ key: 'debug-metrics', message: `Failed to fetch diagnostics: ${e}`, source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.fetchDiagnostics', { error: String(e) })
+      status.error({ key: 'debug-metrics', message: i18n.global.t('debugStudio.requestFailed.fetchDiagnostics', { error: String(e) }), source: 'debug' })
     } finally {
       loading.value = false
     }
@@ -63,8 +64,8 @@ export function useMetrics() {
       error.value = null
       return result
     } catch (e) {
-      error.value = `Failed to fetch process info: ${e}`
-      notify.error(`Failed to fetch process info: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.fetchProcessInfo', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.fetchProcessInfo', { error: String(e) }), { source: 'debug' })
       return null
     }
   }

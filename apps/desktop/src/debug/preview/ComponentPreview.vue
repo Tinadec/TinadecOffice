@@ -4,6 +4,7 @@
  * 根据选中的组件名称，用 mock 数据渲染对应的独立组件。
  */
 import { computed, defineAsyncComponent, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AgentActivityBanner from '@/components/chat/AgentActivityBanner.vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import ThinkingProcess from '@/components/chat/ThinkingProcess.vue'
@@ -17,6 +18,8 @@ import type { ToolExecutionTimelineItemDto, ToolDescriptorDto } from '@/api'
 import type { MockDataBundle } from './mockData'
 import { mockThinkingSteps, mockToolCalls } from './mockData'
 import PreviewIslandCard from './PreviewIslandCard.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   componentName: string
@@ -51,7 +54,7 @@ const mockActivity = computed<AgentActivity>(() => {
     runStartedAt: orch.run.created_at,
     runSummary: orch.run.summary,
     activeAgentName: activeAssignment?.agent_name ?? 'Meeting Agent',
-    activeAgentRole: activeAssignment?.agent_type ?? '会议智能体',
+    activeAgentRole: activeAssignment?.agent_type ?? t('activity.roles.meeting'),
     completedNodes: completed,
     totalNodes: orch.nodes.length,
     lastUpdated: orch.run.updated_at,
@@ -120,13 +123,13 @@ const mockTools = computed<ToolDescriptorDto[]>(() => props.data.tools)
     <PreviewIslandCard v-if="componentName === 'AgentActivityBanner'" variant="raised" padding="sm" class="preview-frame">
       <AgentActivityBanner :activity="mockActivity" :agent-states="mockAgentStates" />
       <PreviewIslandCard v-if="!data.orchestration?.run" variant="section" padding="sm" class="preview-empty-hint" :hoverable="false">
-        当前场景无编排运行数据，切换到「正常填充」或「智能体工作中」场景查看效果。
+        {{ t('debugStudio.preview.noOrchestration') }}
       </PreviewIslandCard>
     </PreviewIslandCard>
 
     <!-- ToolCallCard：共享 mock 全量展示五种状态（orca 悬浮卡片风格） -->
     <PreviewIslandCard v-else-if="componentName === 'ToolCallCard'" variant="section" padding="sm" class="preview-frame">
-      <template #header><span class="preview-frame-title">工具调用卡片 — 5 种状态（hover 抬升 / 拖拽）</span></template>
+      <template #header><span class="preview-frame-title">{{ t('debugStudio.preview.frame.toolCallCard') }}</span></template>
       <div class="preview-card-list">
         <PreviewIslandCard
           v-for="call in mockToolCalls()"
@@ -143,31 +146,31 @@ const mockTools = computed<ToolDescriptorDto[]>(() => props.data.tools)
 
     <!-- ThinkingProcess：共享 mock，不依赖编排场景 -->
     <PreviewIslandCard v-else-if="componentName === 'ThinkingProcess'" variant="raised" padding="sm" class="preview-frame">
-      <template #header><span class="preview-frame-title">思考过程</span></template>
+      <template #header><span class="preview-frame-title">{{ t('debugStudio.preview.items.ThinkingProcess') }}</span></template>
       <ThinkingProcess :steps="mockThinkingSteps()" />
     </PreviewIslandCard>
 
     <!-- ToolExecutionTimeline -->
     <PreviewIslandCard v-else-if="componentName === 'ToolExecutionTimeline'" variant="raised" padding="sm" class="preview-frame">
-      <template #header><span class="preview-frame-title">工具执行时间线</span></template>
+      <template #header><span class="preview-frame-title">{{ t('debugStudio.preview.items.ToolExecutionTimeline') }}</span></template>
       <ToolExecutionTimeline :tool-executions="data.toolExecutions" />
     </PreviewIslandCard>
 
     <!-- ToolCatalogBrowser -->
     <PreviewIslandCard v-else-if="componentName === 'ToolCatalogBrowser'" variant="raised" padding="sm" class="preview-frame">
-      <template #header><span class="preview-frame-title">工具目录</span></template>
+      <template #header><span class="preview-frame-title">{{ t('debugStudio.preview.frame.toolCatalog') }}</span></template>
       <ToolCatalogBrowser :tools="mockTools" />
     </PreviewIslandCard>
 
     <!-- ToolStatsDashboard -->
     <PreviewIslandCard v-else-if="componentName === 'ToolStatsDashboard'" variant="raised" padding="sm" class="preview-frame">
-      <template #header><span class="preview-frame-title">工具统计</span></template>
+      <template #header><span class="preview-frame-title">{{ t('debugStudio.preview.frame.toolStats') }}</span></template>
       <ToolStatsDashboard :tool-executions="data.toolExecutions" />
     </PreviewIslandCard>
 
     <!-- DiffViewer -->
     <PreviewIslandCard v-else-if="componentName === 'DiffViewer'" variant="raised" padding="sm" class="preview-frame">
-      <template #header><span class="preview-frame-title">Diff 查看器</span></template>
+      <template #header><span class="preview-frame-title">{{ t('debugStudio.preview.items.DiffViewer') }}</span></template>
       <DiffViewer
         v-if="mockDiffFiles"
         :files="mockDiffFiles.files.map((f) => ({
@@ -184,13 +187,13 @@ const mockTools = computed<ToolDescriptorDto[]>(() => props.data.tools)
         :enable-hunk-actions="false"
       />
       <PreviewIslandCard v-else variant="section" padding="sm" class="preview-empty-hint" :hoverable="false">
-        当前场景无 Git diff 数据，切换到「Git 变更」场景查看效果。
+        {{ t('debugStudio.preview.noGitDiff') }}
       </PreviewIslandCard>
     </PreviewIslandCard>
 
     <!-- CommitMessageEditor -->
     <PreviewIslandCard v-else-if="componentName === 'CommitMessageEditor'" variant="raised" padding="sm" class="preview-frame">
-      <template #header><span class="preview-frame-title">Commit 消息编辑器</span></template>
+      <template #header><span class="preview-frame-title">{{ t('debugStudio.preview.items.CommitMessageEditor') }}</span></template>
       <CommitMessageEditor
         v-model="commitMessage"
         :recent-commits="[
@@ -205,7 +208,7 @@ const mockTools = computed<ToolDescriptorDto[]>(() => props.data.tools)
     <PreviewIslandCard v-else-if="componentName === 'FileTreePanel'" variant="raised" padding="none" class="preview-frame file-tree-frame">
       <template #header>
         <div class="file-tree-head">
-          <span>文件树（真实 FileTreePanel）</span>
+          <span>{{ t('debugStudio.preview.frame.fileTree') }}</span>
           <span class="file-tree-cwd">D:/workspace/tinadec</span>
         </div>
       </template>
@@ -213,7 +216,7 @@ const mockTools = computed<ToolDescriptorDto[]>(() => props.data.tools)
     </PreviewIslandCard>
 
     <PreviewIslandCard v-else variant="section" padding="sm" class="preview-empty-hint" :hoverable="false">
-      未找到组件：{{ componentName }}
+      {{ t('debugStudio.preview.componentNotFound', { name: componentName }) }}
     </PreviewIslandCard>
   </div>
 </template>

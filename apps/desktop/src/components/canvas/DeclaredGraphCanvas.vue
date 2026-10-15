@@ -48,7 +48,7 @@ const edges = computed<Edge[]>(() =>
     id: edge.edge_key,
     source: edge.source_node_key ?? '',
     target: edge.target_node_key ?? '',
-    label: edge.data_contract ? 'contract' : '',
+    label: edge.data_contract ? t('canvas.contractEdge') : '',
     style: { stroke: 'var(--accent-info, #4a9eff)' },
     labelStyle: { fontSize: '10px' },
   })),

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Home as HomeIcon, PanelRightOpen, type LucideIcon } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { useCardTitle } from './cardTitle'
 import UieStack from './UieStack.vue'
 import UieDock from './UieDock.vue'
 import { useUie } from './useUie'
@@ -27,6 +28,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const cardTitle = useCardTitle()
 const uie = useUie()
 
 /** All tab instanceIds in this column — dock panes first, else the primary stack. */
@@ -301,7 +303,7 @@ function onDividerUp() {
         :key="inst.id"
         class="uie-column-collapsed-icon"
         :class="{ active: isFeatureActive(inst.id) }"
-        :title="inst.title"
+        :title="cardTitle(inst)"
         @click="expand(inst.id)"
       >
         <component :is="railIconFor(inst.descriptorId)" :size="16" />

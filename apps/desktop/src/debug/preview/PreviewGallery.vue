@@ -5,6 +5,7 @@
  * 跟随全局 usePanelStyles 材质（opaque/translucent/blur），不再自管主题
  */
 import { computed, onBeforeUnmount, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   LayoutDashboard,
   MessageSquare,
@@ -37,32 +38,35 @@ type ItemType = 'page' | 'component'
 interface TreeItem {
   id: string
   name: string
-  label: string
   type: ItemType
   icon: typeof LayoutDashboard
 }
 
 const PAGES: TreeItem[] = [
-  { id: 'ChatPanel', name: 'ChatPanel', label: '聊天面板', type: 'page', icon: MessageSquare },
-  { id: 'ConversationFlow', name: 'ConversationFlow', label: '对话消息流', type: 'page', icon: MessagesSquare },
-  { id: 'GitPanel', name: 'GitPanel', label: 'Git 管理', type: 'page', icon: GitBranch },
-  { id: 'CodePage', name: 'CodePage', label: '代码编辑器', type: 'page', icon: Code2 },
-  { id: 'SettingsPage', name: 'SettingsPage', label: '设置页', type: 'page', icon: Settings },
-  { id: 'MarketPage', name: 'MarketPage', label: '扩展市场', type: 'page', icon: Store },
+  { id: 'ChatPanel', name: 'ChatPanel', type: 'page', icon: MessageSquare },
+  { id: 'ConversationFlow', name: 'ConversationFlow', type: 'page', icon: MessagesSquare },
+  { id: 'GitPanel', name: 'GitPanel', type: 'page', icon: GitBranch },
+  { id: 'CodePage', name: 'CodePage', type: 'page', icon: Code2 },
+  { id: 'SettingsPage', name: 'SettingsPage', type: 'page', icon: Settings },
+  { id: 'MarketPage', name: 'MarketPage', type: 'page', icon: Store },
 ]
 
 const COMPONENTS: TreeItem[] = [
-  { id: 'AgentActivityBanner', name: 'AgentActivityBanner', label: 'Agent 活动横幅', type: 'component', icon: Activity },
-  { id: 'ToolCallCard', name: 'ToolCallCard', label: '工具调用卡片', type: 'component', icon: Wrench },
-  { id: 'ThinkingProcess', name: 'ThinkingProcess', label: '思考过程', type: 'component', icon: Brain },
-  { id: 'ToolExecutionTimeline', name: 'ToolExecutionTimeline', label: '工具执行时间线', type: 'component', icon: ListTree },
-  { id: 'ToolCatalogBrowser', name: 'ToolCatalogBrowser', label: '工具目录浏览器', type: 'component', icon: Wrench },
-  { id: 'ToolStatsDashboard', name: 'ToolStatsDashboard', label: '工具统计仪表板', type: 'component', icon: BarChart3 },
-  { id: 'DiffViewer', name: 'DiffViewer', label: 'Diff 查看器', type: 'component', icon: GitCompare },
-  { id: 'CommitMessageEditor', name: 'CommitMessageEditor', label: 'Commit 消息编辑器', type: 'component', icon: Edit3 },
-  { id: 'FileTreePanel', name: 'FileTreePanel', label: '文件树面板', type: 'component', icon: Folder },
+  { id: 'AgentActivityBanner', name: 'AgentActivityBanner', type: 'component', icon: Activity },
+  { id: 'ToolCallCard', name: 'ToolCallCard', type: 'component', icon: Wrench },
+  { id: 'ThinkingProcess', name: 'ThinkingProcess', type: 'component', icon: Brain },
+  { id: 'ToolExecutionTimeline', name: 'ToolExecutionTimeline', type: 'component', icon: ListTree },
+  { id: 'ToolCatalogBrowser', name: 'ToolCatalogBrowser', type: 'component', icon: Wrench },
+  { id: 'ToolStatsDashboard', name: 'ToolStatsDashboard', type: 'component', icon: BarChart3 },
+  { id: 'DiffViewer', name: 'DiffViewer', type: 'component', icon: GitCompare },
+  { id: 'CommitMessageEditor', name: 'CommitMessageEditor', type: 'component', icon: Edit3 },
+  { id: 'FileTreePanel', name: 'FileTreePanel', type: 'component', icon: Folder },
 ]
 
+const { t } = useI18n()
+const itemLabel = (item: TreeItem) => t(`debugStudio.preview.items.${item.id}`)
+const scenarioText = (id: ScenarioId, field: 'label' | 'description') =>
+  t(`debugStudio.preview.scenario.${id.replace(/-(\w)/g, (_, c: string) => c.toUpperCase())}.${field}`)
 const selectedItem = ref<TreeItem>(PAGES[0])
 const scenarioId = ref<ScenarioId>('populated')
 
@@ -84,14 +88,14 @@ const currentScenario = computed(() => SCENARIOS.find((s) => s.id === scenarioId
 const stats = computed(() => {
   const d = mockData.value
   return [
-    { label: '项目', value: d.projects.length },
-    { label: '会话', value: d.sessions.length },
-    { label: '消息', value: d.messages.length },
-    { label: '审批', value: d.approvals.length },
-    { label: '工具调用', value: d.toolExecutions.length },
-    { label: '事件', value: d.events.length },
-    { label: '智能体', value: d.agents.length },
-    { label: '工具', value: d.tools.length },
+    { label: t('debugStudio.preview.stats.projects'), value: d.projects.length },
+    { label: t('debugStudio.preview.stats.sessions'), value: d.sessions.length },
+    { label: t('debugStudio.preview.stats.messages'), value: d.messages.length },
+    { label: t('debugStudio.preview.stats.approvals'), value: d.approvals.length },
+    { label: t('debugStudio.preview.stats.toolCalls'), value: d.toolExecutions.length },
+    { label: t('debugStudio.preview.stats.events'), value: d.events.length },
+    { label: t('debugStudio.preview.stats.agents'), value: d.agents.length },
+    { label: t('debugStudio.preview.stats.tools'), value: d.tools.length },
   ]
 })
 
@@ -112,14 +116,14 @@ function refresh() { refreshKey.value++ }
       <template #header>
         <div class="sidebar-head">
           <LayoutDashboard :size="14" />
-          <span>预览画廊</span>
+          <span>{{ t('debugStudio.preview.title') }}</span>
         </div>
       </template>
       <div class="sidebar-tree">
         <div class="tree-group">
           <button class="tree-group-head" @click="toggleGroup('pages')">
             <component :is="expandedGroups.has('pages') ? ChevronDown : ChevronRight" :size="12" />
-            <span>页面</span>
+            <span>{{ t('debugStudio.preview.pages') }}</span>
             <small>{{ PAGES.length }}</small>
           </button>
           <template v-if="expandedGroups.has('pages')">
@@ -131,14 +135,14 @@ function refresh() { refreshKey.value++ }
               @click="selectItem(item)"
             >
               <component :is="item.icon" :size="13" />
-              <span>{{ item.label }}</span>
+              <span>{{ itemLabel(item) }}</span>
             </button>
           </template>
         </div>
         <div class="tree-group">
           <button class="tree-group-head" @click="toggleGroup('components')">
             <component :is="expandedGroups.has('components') ? ChevronDown : ChevronRight" :size="12" />
-            <span>组件</span>
+            <span>{{ t('debugStudio.preview.components') }}</span>
             <small>{{ COMPONENTS.length }}</small>
           </button>
           <template v-if="expandedGroups.has('components')">
@@ -150,7 +154,7 @@ function refresh() { refreshKey.value++ }
               @click="selectItem(item)"
             >
               <component :is="item.icon" :size="13" />
-              <span>{{ item.label }}</span>
+              <span>{{ itemLabel(item) }}</span>
             </button>
           </template>
         </div>
@@ -164,12 +168,12 @@ function refresh() { refreshKey.value++ }
           <div class="gallery-toolbar">
             <div class="toolbar-left">
               <component :is="selectedItem.icon" :size="14" />
-              <span class="toolbar-name">{{ selectedItem.label }}</span>
-              <span class="toolbar-type" :class="selectedItem.type">{{ selectedItem.type === 'page' ? '页面' : '组件' }}</span>
-              <UiBadge variant="outline" class="toolbar-scenario">{{ currentScenario.label }}</UiBadge>
+              <span class="toolbar-name">{{ itemLabel(selectedItem) }}</span>
+              <span class="toolbar-type" :class="selectedItem.type">{{ selectedItem.type === 'page' ? t('debugStudio.preview.pages') : t('debugStudio.preview.components') }}</span>
+              <UiBadge variant="outline" class="toolbar-scenario">{{ scenarioText(currentScenario.id, 'label') }}</UiBadge>
             </div>
             <div class="toolbar-right">
-              <button class="toolbar-btn" title="刷新预览" @click="refresh">
+              <button class="toolbar-btn" :title="t('debugStudio.preview.refresh')" @click="refresh">
                 <RefreshCw :size="13" />
               </button>
             </div>
@@ -200,8 +204,8 @@ function refresh() { refreshKey.value++ }
               </span>
             </div>
             <div class="status-scenario">
-              <span class="status-scenario-label">当前场景：</span>
-              <strong>{{ currentScenario.label }}</strong>
+              <span class="status-scenario-label">{{ t('debugStudio.preview.currentScenario') }}</span>
+              <strong>{{ scenarioText(currentScenario.id, 'label') }}</strong>
             </div>
           </div>
         </template>
@@ -212,12 +216,12 @@ function refresh() { refreshKey.value++ }
     <PreviewIslandCard variant="section" padding="none" class="gallery-controls">
       <template #header>
         <div class="controls-head">
-          <span>场景控制</span>
+          <span>{{ t('debugStudio.preview.controls') }}</span>
         </div>
       </template>
       <div class="controls-body">
         <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
-          <label class="controls-label">场景预设</label>
+          <label class="controls-label">{{ t('debugStudio.preview.presets') }}</label>
           <div class="scenario-list">
             <PreviewIslandCard
               v-for="s in SCENARIOS"
@@ -229,33 +233,33 @@ function refresh() { refreshKey.value++ }
               class="scenario-card"
               @click="scenarioId = s.id"
             >
-              <span class="scenario-label">{{ s.label }}</span>
-              <small class="scenario-desc">{{ s.description }}</small>
+              <span class="scenario-label">{{ scenarioText(s.id, 'label') }}</span>
+              <small class="scenario-desc">{{ scenarioText(s.id, 'description') }}</small>
             </PreviewIslandCard>
           </div>
         </PreviewIslandCard>
 
         <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
-          <label class="controls-label">场景描述</label>
-          <p class="scenario-detail">{{ currentScenario.description }}</p>
+          <label class="controls-label">{{ t('debugStudio.preview.description') }}</label>
+          <p class="scenario-detail">{{ scenarioText(currentScenario.id, 'description') }}</p>
         </PreviewIslandCard>
 
         <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
-          <label class="controls-label">数据选项</label>
+          <label class="controls-label">{{ t('debugStudio.preview.dataOptions') }}</label>
           <div class="toggle-row">
-            <span>显示审批</span>
+            <span>{{ t('debugStudio.preview.showApprovals') }}</span>
             <button class="toggle-switch" :class="{ on: showApprovals }" @click="showApprovals = !showApprovals">
               <span class="toggle-knob" />
             </button>
           </div>
           <div class="toggle-row">
-            <span>显示工具调用</span>
+            <span>{{ t('debugStudio.preview.showToolCalls') }}</span>
             <button class="toggle-switch" :class="{ on: showToolCalls }" @click="showToolCalls = !showToolCalls">
               <span class="toggle-knob" />
             </button>
           </div>
           <div class="toggle-row">
-            <span>显示错误</span>
+            <span>{{ t('debugStudio.preview.showErrors') }}</span>
             <button class="toggle-switch" :class="{ on: showErrors }" @click="showErrors = !showErrors">
               <span class="toggle-knob" />
             </button>
@@ -263,12 +267,12 @@ function refresh() { refreshKey.value++ }
         </PreviewIslandCard>
 
         <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
-          <label class="controls-label">预览宽度 ({{ previewWidth }}%)</label>
+          <label class="controls-label">{{ t('debugStudio.preview.width', { width: previewWidth }) }}</label>
           <input type="range" min="40" max="100" v-model.number="previewWidth" class="width-slider" />
         </PreviewIslandCard>
 
         <PreviewIslandCard v-if="unmockedMethods.size > 0" variant="raised" padding="sm" class="controls-section">
-          <label class="controls-label">未模拟 API（走空实现）</label>
+          <label class="controls-label">{{ t('debugStudio.preview.unmocked') }}</label>
           <div class="unmocked-list">
             <UiBadge v-for="m in unmockedMethods" :key="m" variant="outline">{{ m }}</UiBadge>
           </div>

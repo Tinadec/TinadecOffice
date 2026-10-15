@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import i18n from '@/i18n'
 import { storageFetch as fetch } from '@/lib/storageScope'
 import type {
   SimulateMessageRequest,
@@ -34,8 +35,8 @@ export function useSimulation() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return await response.json()
     } catch (e) {
-      error.value = `Failed to inject message: ${e}`
-      notify.error(`Failed to inject message: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.injectMessage', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.injectMessage', { error: String(e) }), { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -53,8 +54,8 @@ export function useSimulation() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return await response.json()
     } catch (e) {
-      error.value = `Failed to inject model response: ${e}`
-      notify.error(`Failed to inject model response: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.injectModelResponse', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.injectModelResponse', { error: String(e) }), { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -72,8 +73,8 @@ export function useSimulation() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return await response.json()
     } catch (e) {
-      error.value = `Failed to inject tool result: ${e}`
-      notify.error(`Failed to inject tool result: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.injectToolResult', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.injectToolResult', { error: String(e) }), { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -91,8 +92,8 @@ export function useSimulation() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return await response.json()
     } catch (e) {
-      error.value = `Failed to force approval: ${e}`
-      notify.error(`Failed to force approval: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.forceApproval', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.forceApproval', { error: String(e) }), { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -110,8 +111,8 @@ export function useSimulation() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return await response.json()
     } catch (e) {
-      error.value = `Failed to patch agent state: ${e}`
-      notify.error(`Failed to patch agent state: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.patchAgentState', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.patchAgentState', { error: String(e) }), { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -125,8 +126,8 @@ export function useSimulation() {
       breakpoints.value = await response.json()
       dismissByKey('debug-sim-breakpoints')
     } catch (e) {
-      error.value = `Failed to fetch breakpoints: ${e}`
-      status.error({ key: 'debug-sim-breakpoints', message: `Failed to fetch breakpoints: ${e}`, source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.fetchBreakpoints', { error: String(e) })
+      status.error({ key: 'debug-sim-breakpoints', message: i18n.global.t('debugStudio.requestFailed.fetchBreakpoints', { error: String(e) }), source: 'debug' })
     }
   }
 
@@ -142,8 +143,8 @@ export function useSimulation() {
       breakpoints.value.push(bp)
       return bp
     } catch (e) {
-      error.value = `Failed to create breakpoint: ${e}`
-      notify.error(`Failed to create breakpoint: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.createBreakpoint', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.createBreakpoint', { error: String(e) }), { source: 'debug' })
       return null
     }
   }
@@ -155,8 +156,8 @@ export function useSimulation() {
       breakpoints.value = breakpoints.value.filter(bp => bp.id !== id)
       return true
     } catch (e) {
-      error.value = `Failed to delete breakpoint: ${e}`
-      notify.error(`Failed to delete breakpoint: ${e}`, { source: 'debug' })
+      error.value = i18n.global.t('debugStudio.requestFailed.deleteBreakpoint', { error: String(e) })
+      notify.error(i18n.global.t('debugStudio.requestFailed.deleteBreakpoint', { error: String(e) }), { source: 'debug' })
       return false
     }
   }

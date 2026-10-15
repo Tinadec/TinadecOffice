@@ -24,7 +24,8 @@ vi.mock('@/composables/useDockDrag', () => ({
 }))
 
 vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
-  useI18n: () => ({ t: (key: string) => key }),
+  // No message table: tab titles fall back to the stored ones these cases look for.
+  useI18n: () => ({ t: (key: string) => key, te: () => false, availableLocales: [] }),
 }))
 
 const home: PersistedCardInstance = {
