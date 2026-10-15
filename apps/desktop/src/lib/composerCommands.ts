@@ -3,15 +3,18 @@ import type { SpaceOptionsDto } from '@/api'
 import type { Component } from 'vue'
 import { Eye, Shield, ShieldAlert, ShieldCheck, UserCheck, Users } from '@lucide/vue'
 
-export type ComposerPage = 'root' | 'model' | 'mode' | 'permission' | 'workflow'
+export type ComposerPage = 'root' | 'model' | 'model-agents' | 'model-agent' | 'mode' | 'permission' | 'workflow'
+/** Pages one level below another; every other page sits right under the command list. */
+export const parentPage: Partial<Record<ComposerPage, ComposerPage>> = { 'model-agents': 'model', 'model-agent': 'model-agents' }
+export const pageDepth = (page: ComposerPage): number => page === 'root' ? 0 : 1 + (parentPage[page] ? pageDepth(parentPage[page]!) : 0)
 export type SpaceToggle = Exclude<keyof SpaceOptionsDto, 'workflow_mode_version_id'>
 
 // Metadata only: session ownership and all mutations remain in HomeController.
-// The model row is the default model (the model center's chat route), one value for every
-// conversation — not a per-conversation choice.
+// The model row is the model of the agent that answers the user, the same per-agent setting as
+// the agent center; the other agents' models sit one page further down.
 // Existing run/session commands still come from appCommands and their shared handlers.
 export const composerSettings = [
-  { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'model default 模型 默认模型', page: 'model' },
+  { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'model agent default 模型 智能体 默认模型', page: 'model' },
   { id: 'mode', label: 'commandPanel.mode', hint: 'commandPanel.modeHint', keywords: 'mode preset plan solo 模式 预设 计划', page: 'mode', surface: 'flat' },
   { id: 'permission', label: 'commandPanel.permission', hint: 'permission.nextRunHint', keywords: 'permission approval 权限 审批', page: 'permission' },
   { id: 'plan', label: 'commandPanel.plan', hint: 'commandPanel.planHint', keywords: 'plan planning 计划 规划', toggle: 'plan_first', surface: 'space' },

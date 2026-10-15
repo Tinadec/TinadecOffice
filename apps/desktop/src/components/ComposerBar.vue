@@ -8,6 +8,7 @@ import ComposerCommandPanel from './ComposerCommandPanel.vue'
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from '@/components/ui/attachment'
 import { Spinner } from '@/components/ui/spinner'
 import { useDefaultModel } from '@/composables/useDefaultModel'
+import { useAgentModels, type ModelChoice } from '@/composables/useAgentModels'
 import { requestSettingsSection } from '@/lib/pageRequests'
 import type { PermissionLevel } from '@/types/mode'
 import type { MeetingModelOverrideDto, ModelProviderInstanceDto, ProjectDto, SpaceOptionsDto } from '@/api'
@@ -167,14 +168,34 @@ const slashQuery = computed(() => commandsDismissed.value ? null : composerSlash
 const commandPanelOpen = computed(() => showPlusMenu.value || slashQuery.value !== null)
 const modePanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'mode')
 const permissionPanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'permission')
-const modelPanelExpanded = computed(() => commandPanelOpen.value && commandPanelRef.value?.page === 'model')
+const modelPanelExpanded = computed(() => commandPanelOpen.value && ['model', 'model-agents', 'model-agent'].includes(commandPanelRef.value?.page ?? ''))
 const defaultModel = useDefaultModel()
+const agentModels = useAgentModels({
+  // Older sessions carry no frozen identity; every shipped mode answers through `meeting`.
+  conversationSlug: computed(() => homeController.currentSession.value?.conversation_template_slug || 'meeting'),
+  modeVersionId: computed(() => props.modeVersionId ?? null),
+})
+/**
+ * The model the agent that answers the user runs on: the session's pin, else the agent's own
+ * model, else the default model. The toolbar names it and the reasoning effort applies to it.
+ */
+const conversationChoice = computed<ModelChoice | null>(() => {
+  const pin = props.meetingModelOverride
+  if (pin) return { provider_instance_id: pin.provider_instance_id, model: pin.model ?? null }
+  const agent = agentModels.conversationAgent.value
+  const own = agent ? agentModels.effectiveChoice(agent) : null
+  if (own) return own
+  const current = defaultModel.current.value
+  return current ? { provider_instance_id: current.provider_instance_id, model: current.model ?? null } : null
+})
+watch(conversationChoice, (choice) => { defaultModel.reasoningTarget.value = choice }, { immediate: true })
 // Unknown reads as the neutral row name, never as "no default model".
 // A chosen reasoning effort rides along ("gpt-5 · High"); the model default adds nothing.
 const defaultModelLabel = computed(() => {
-  const name = defaultModel.name.value
-  if (name === undefined) return t('commandPanel.model')
-  if (name === null) return t('composer.modelSwitch.none')
+  if (defaultModel.name.value === undefined) return t('commandPanel.model')
+  const choice = conversationChoice.value
+  const name = choice ? choice.model || defaultModel.providerName(choice.provider_instance_id) || t('composer.pinnedModelUnknown') : null
+  if (!name) return t('composer.modelSwitch.none')
   const effort = defaultModel.reasoningSupported.value ? defaultModel.reasoningEffort.value : ''
   return effort ? `${name} · ${t(`settings.reasoningTick.${effort}`)}` : name
 })
@@ -557,6 +578,7 @@ function handleClickOutside(event: MouseEvent) {
 
 onMounted(() => {
   void defaultModel.load()
+  void agentModels.load()
   document.addEventListener('click', handleClickOutside)
   // A draft can arrive pre-filled (edit-and-resend, a restored session), and the
   // modelValue watcher does not fire for a value that was never changed.
@@ -895,6 +917,8 @@ function confirmSteer(id: string, interrupt = false) {
       :space-options="spaceOptions"
       :default-model="defaultModel"
       :default-model-label="defaultModelLabel"
+      :agent-models="agentModels"
+      :model-pinned="Boolean(meetingModelOverride)"
       :settings-saving="settingsSaving"
       :settings-error="settingsError"
       :command-host="commandHost"
@@ -906,6 +930,7 @@ function confirmSteer(id: string, interrupt = false) {
       @update:mode-version-id="changeMode"
       @update:permission="changePermission"
       @update:space-options="changeSpaceOptions"
+      @clear-model-pin="changeModel(null)"
       @manage-models="manageModels"
       @mode-label="(label, unavailable, icon) => { modeLabel = label; modeUnavailable = unavailable; modeGlyph = icon }"
     />

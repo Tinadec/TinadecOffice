@@ -55,6 +55,8 @@ export interface ProjectDto {
 
 export interface SessionDto {
   storage_id?: string;
+  /** Slug of the agent that answers the user in this session, frozen when the session was created. */
+  conversation_template_slug?: string | null;
   /** Creation-time conversation family. Older servers/rows default to flat. */
   view_mode?: 'flat' | 'space';
   id: string;

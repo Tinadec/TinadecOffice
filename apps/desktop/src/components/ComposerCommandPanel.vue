@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { ArrowLeft, Check, ChevronRight, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, Sparkles, Users, Workflow, X } from '@lucide/vue'
+import { ArrowLeft, Bot, Check, ChevronRight, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, Sparkles, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { api, type AgentModeTopologyDto, type SpaceOptionsDto } from '@/api'
 import type { PermissionLevel } from '@/types/mode'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } from '@/lib/appCommands'
-import { composerSettings, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
+import { composerSettings, pageDepth, parentPage, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
 import { defaultSpaceOptions } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 import type { DefaultModel } from '@/composables/useDefaultModel'
+import type { AgentModels, ModelChoice } from '@/composables/useAgentModels'
 import type { ReasoningEffortChoice } from '@/lib/reasoningEffort'
 import ReasoningEffortSlider from './ReasoningEffortSlider.vue'
 
@@ -23,9 +24,14 @@ const props = defineProps<{
   permission: PermissionLevel
   modeVersionId?: string | null
   spaceOptions?: SpaceOptionsDto | null
-  /** The default model (chat route); its page switches it for every conversation. */
+  /** The default model (chat route), offered as what an agent without its own model follows. */
   defaultModel?: DefaultModel
+  /** The conversation agent's model, shown on the command list. */
   defaultModelLabel?: string
+  /** Each agent's own model; the model page sets the conversation agent's, a page below the others'. */
+  agentModels?: AgentModels
+  /** The session pins the conversation agent to a model, which wins over the agent's own. */
+  modelPinned?: boolean
   settingsSaving?: boolean
   settingsError?: string | null
   commandHost: CommandHost
@@ -40,6 +46,8 @@ const emit = defineEmits<{
   'update:permission': [value: PermissionLevel]
   'update:spaceOptions': [value: SpaceOptionsDto]
   'manage-models': []
+  /** A model chosen for the conversation agent should take effect, so the session pin goes. */
+  'clear-model-pin': []
   'mode-label': [value: string, unavailable: boolean, icon: Component]
 }>()
 
@@ -59,6 +67,13 @@ const modes = ref<AgentModeTopologyDto[]>([])
 const loading = ref(false)
 const modeError = ref(false)
 const space = computed(() => props.spaceOptions ?? defaultSpaceOptions())
+/** The agent whose model the agent-model page sets. */
+const modelAgentId = ref<string | null>(null)
+const modelAgent = computed(() => props.agentModels?.agents.value.find(agent => agent.id === modelAgentId.value) ?? null)
+/** "Back to the command list" only where back leads there; deeper pages go up one level. */
+const backLabel = computed(() => t(pageDepth(page.value) > 1 ? 'common.back' : 'commandPanel.back'))
+/** The agent pages wait for the list instead of reading as empty. */
+const agentListPending = computed(() => (page.value === 'model-agents' || page.value === 'model-agent') && props.agentModels?.loaded.value === false)
 let loadSequence = 0
 /**
  * The slider moves at once; whenever no write is running it shows the saved value again, so a
@@ -101,7 +116,7 @@ watch(page, async (next, previous) => {
   const previousHeight = panelRef.value?.getBoundingClientRect().height
   cancelPageAnimations()
   await nextTick()
-  if (props.open && page.value === next && next !== previous) animateContent(next === 'root' ? -8 : 8, previousHeight)
+  if (props.open && page.value === next && next !== previous) animateContent(pageDepth(next) < pageDepth(previous) ? -8 : 8, previousHeight)
 })
 
 const availableModes = computed(() => {
@@ -127,7 +142,12 @@ watch([availableModes, () => props.modeVersionId, loading], ([modes, current, bu
 const workflowName = computed(() => availableModes.value.find(mode => mode.latest_published_mode_version_id === space.value.workflow_mode_version_id)?.display_name)
 const currentPermission = computed(() => permissionChoices.find(choice => choice.value === props.permission)!)
 const permissionName = computed(() => t(currentPermission.value.label))
-const title = computed(() => page.value === 'root' ? t('composer.commands') : t(`commandPanel.${page.value}`))
+const title = computed(() => {
+  if (page.value === 'root') return t('composer.commands')
+  if (page.value === 'model-agents') return t('commandPanel.modelAgents')
+  if (page.value === 'model-agent') return modelAgent.value?.display_name || modelAgent.value?.slug || t('commandPanel.modelAgents')
+  return t(`commandPanel.${page.value}`)
+})
 const activeQuery = computed(() => page.value === 'root' && props.slashQuery != null ? props.slashQuery : query.value)
 const catalogError = computed(() => ['mode', 'workflow'].includes(page.value) ? modeError.value : false)
 
@@ -156,8 +176,9 @@ function selectPage(next: ComposerPage) {
   void nextTick(() => searchRef.value?.focus())
 }
 function back() {
-  page.value = 'root'
-  query.value = rootQuery.value
+  const parent = parentPage[page.value] ?? 'root'
+  page.value = parent
+  query.value = parent === 'root' ? rootQuery.value : ''
   index.value = 0
   void nextTick(() => {
     if (props.slashQuery != null) emit('focus-composer')
@@ -183,13 +204,36 @@ function modeRows(workflow: boolean): Row[] {
     },
   }))]
 }
-const allRows = computed<Row[]>(() => {
-  if (page.value === 'permission') return permissionChoices.map(choice => ({
-    id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon, risk: choice.risk, checked: props.permission === choice.value,
-    disabled: props.settingsSaving, run: () => emit('update:permission', choice.value),
-  }))
-  if (page.value === 'mode' || page.value === 'workflow') return modeRows(page.value === 'workflow')
-  if (page.value === 'model') {
+const manageModelsRow = (): Row => ({ id: 'manage-models', label: t('composer.modelSwitch.manage'), icon: Settings, run: () => emit('manage-models') })
+/** "Follow the default" and every configured model, for one agent. */
+function modelChoiceRows(selected: ModelChoice | null, followHint: string, choose: (choice: ModelChoice | null) => void): Row[] {
+  const model = props.defaultModel
+  const busy = (props.agentModels?.busy.value ?? false) || (model?.busy.value ?? false)
+  const rows: Row[] = [{ id: 'follow-default', label: t('composer.agentModels.followDefault'), hint: followHint, icon: Sparkles,
+    keywords: 'default inherit 默认 跟随', checked: !selected, disabled: busy, run: () => choose(null) }]
+  for (const row of model?.models.value ?? []) rows.push({
+    id: `${row.provider_instance_id}:${row.model_id}`, label: row.display_name || row.model_id,
+    hint: row.provider_display_name ?? undefined, keywords: `${row.model_id} ${row.provider_display_name ?? ''}`, icon: Sparkles,
+    checked: selected?.provider_instance_id === row.provider_instance_id && selected.model === row.model_id, disabled: busy,
+    run: () => choose({ provider_instance_id: row.provider_instance_id, model: row.model_id }),
+  })
+  if (model?.loaded.value && !model.models.value.length)
+    rows.push({ id: 'no-models', label: t('composer.modelSwitch.empty'), icon: Sparkles, disabled: true, run: () => {} })
+  return rows
+}
+function choiceName(choice: ModelChoice | null): string {
+  if (!choice) return t('composer.agentModels.followDefault')
+  return choice.model || props.defaultModel?.providerName(choice.provider_instance_id) || t('composer.pinnedModelUnknown')
+}
+/**
+ * The conversation agent's model, then the way to the other agents. Until the agent list is read
+ * (or when the session's conversation agent is not in it) this page sets the default model, as it
+ * always did, rather than offering nothing.
+ */
+function modelPageRows(): Row[] {
+  const agents = props.agentModels
+  const conversation = agents?.loaded.value ? agents.conversationAgent.value : null
+  if (!agents || !conversation) {
     const model = props.defaultModel
     const choices: Row[] = (model?.models.value ?? []).map(row => ({
       id: `${row.provider_instance_id}:${row.model_id}`, label: row.display_name || row.model_id,
@@ -199,7 +243,43 @@ const allRows = computed<Row[]>(() => {
     }))
     if (model?.loaded.value && !choices.length)
       choices.push({ id: 'no-models', label: t('composer.modelSwitch.empty'), icon: Sparkles, disabled: true, run: () => {} })
-    return [...choices, { id: 'manage-models', label: t('composer.modelSwitch.manage'), icon: Settings, run: () => emit('manage-models') }]
+    return [...choices, manageModelsRow()]
+  }
+  const defaultName = props.defaultModel?.name.value || t('composer.modelSwitch.none')
+  const rows = modelChoiceRows(agents.fixedChoice(conversation), t('composer.agentModels.followDefaultHint', { model: defaultName }), choice => {
+    void agents.setModel(conversation, choice)
+    if (props.modelPinned) emit('clear-model-pin')
+  })
+  const ownModels = agents.otherAgents.value.filter(agent => agents.fixedChoice(agent)).length
+  rows.push({ id: 'model-agents', label: t('commandPanel.modelAgents'), hint: t('commandPanel.modelAgentsHint'), icon: Users,
+    keywords: 'agents executor 智能体 执行', value: ownModels ? t('composer.agentModels.ownCount', { count: ownModels }) : undefined,
+    submenu: true, testId: 'command-panel-model-agents', run: () => selectPage('model-agents') })
+  rows.push(manageModelsRow())
+  return rows
+}
+function otherAgentRows(): Row[] {
+  const agents = props.agentModels
+  if (!agents) return []
+  return agents.otherAgents.value.map(agent => ({
+    id: `agent:${agent.id}`, label: agent.display_name || agent.slug,
+    hint: agents.usageInMode(agent) ? t('composer.agentModels.inMode') : undefined, keywords: agent.slug, icon: Bot,
+    value: choiceName(agents.effectiveChoice(agent)), submenu: true, testId: `command-panel-agent-${agent.slug}`,
+    run: () => { modelAgentId.value = agent.id; selectPage('model-agent') },
+  }))
+}
+const allRows = computed<Row[]>(() => {
+  if (page.value === 'permission') return permissionChoices.map(choice => ({
+    id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon, risk: choice.risk, checked: props.permission === choice.value,
+    disabled: props.settingsSaving, run: () => emit('update:permission', choice.value),
+  }))
+  if (page.value === 'mode' || page.value === 'workflow') return modeRows(page.value === 'workflow')
+  if (page.value === 'model') return modelPageRows()
+  if (page.value === 'model-agents') return otherAgentRows()
+  if (page.value === 'model-agent') {
+    const agents = props.agentModels
+    const agent = modelAgent.value
+    if (!agents || !agent) return []
+    return modelChoiceRows(agents.fixedChoice(agent), t('composer.agentModels.followDefaultOtherHint'), choice => { void agents.setModel(agent, choice) })
   }
   const rows: Row[] = [
     { id: 'image', label: t('chat.addImage'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: 'image picture 图片', icon: Image, disabled: !props.canAttach, testId: 'composer-attach-image', run: () => emit('attach', 'image/*') },
@@ -320,6 +400,7 @@ async function loadCatalogs() {
   const sequence = ++loadSequence
   loading.value = true
   void props.defaultModel?.load()
+  void props.agentModels?.load()
   const results = await Promise.allSettled([api.listAgentModeTopologies()])
   if (sequence !== loadSequence) return
   const [modeResult] = results
@@ -397,7 +478,7 @@ defineExpose({ keydown, activate, page, selectPage })
     <section v-if="open" ref="panelRef" class="composer-command-panel" data-testid="composer-commands" role="dialog" :aria-label="title" :aria-busy="settingsSaving || loading" :style="[position, panelStyle]" v-bind="panelDataAttrs" @keydown="keydown">
       <div ref="contentRef" class="command-panel-content" :data-page="page">
       <header class="command-panel-header">
-        <button v-if="page !== 'root'" class="command-panel-icon command-panel-back" :aria-label="t('commandPanel.back')" :title="t('commandPanel.backHint')" @click="back"><ArrowLeft :size="16" /><span>{{ t('commandPanel.back') }}</span></button>
+        <button v-if="page !== 'root'" class="command-panel-icon command-panel-back" :aria-label="backLabel" :title="t('commandPanel.backHint')" @click="back"><ArrowLeft :size="16" /><span>{{ backLabel }}</span></button>
         <strong>{{ title }}</strong>
         <button class="command-panel-icon command-panel-close" :aria-label="t('commandPanel.close')" @click="emit('close')"><X :size="15" /></button>
       </header>
@@ -407,24 +488,24 @@ defineExpose({ keydown, activate, page, selectPage })
       </label>
       <div class="command-panel-list">
         <p v-if="catalogError" class="command-panel-feedback" role="alert">{{ t('commandPanel.catalogError') }} <button @click="loadCatalogs">{{ t('commandPanel.retry') }}</button></p>
-        <p v-if="loading && page !== 'root'" class="command-panel-note" role="status">{{ t('commandPanel.loading') }}</p>
+        <p v-if="(loading || agentListPending) && page !== 'root'" class="command-panel-note" role="status">{{ t('commandPanel.loading') }}</p>
         <button v-for="(row, rowIndex) in rows" :key="row.id" class="command-panel-row" :class="{ 'is-highlighted': rowIndex === index, 'is-selected': row.checked, 'mode-selector-item': page === 'mode', active: page === 'mode' && row.checked }" :role="row.switch ? 'switch' : undefined" :aria-checked="row.switch ? row.checked : undefined" :aria-pressed="!row.switch && row.checked !== undefined ? row.checked : undefined" :aria-label="row.risk && row.risk !== 'neutral' ? `${row.label} · ${t(`commandPanel.risk.${row.risk}`)}` : undefined" :disabled="row.disabled" :data-testid="row.testId ?? `command-panel-${row.id}`" :data-row-index="rowIndex" :title="row.hint" @mouseenter="index = rowIndex" @focus="index = rowIndex" @click="activate(row)">
           <component :is="row.icon" v-if="row.icon" :size="16" class="command-panel-row-icon" :data-risk="row.risk" aria-hidden="true" />
           <span class="command-panel-copy"><strong>{{ row.label }}</strong><small v-if="row.hint">{{ row.hint }}</small></span>
           <span v-if="row.switch" class="command-panel-switch" :class="{ 'is-on': row.checked }" aria-hidden="true"><span /></span>
           <template v-else><span v-if="row.value" class="command-panel-value">{{ row.value }}</span><ChevronRight v-if="row.submenu" :size="14" aria-hidden="true" /><Check v-else-if="row.checked" :size="16" aria-hidden="true" /></template>
         </button>
-        <p v-if="!rows.length" class="command-panel-note">{{ t('commandPanel.empty') }}</p>
+        <p v-if="!rows.length && !agentListPending" class="command-panel-note">{{ t(page === 'model-agents' && !activeQuery ? 'composer.agentModels.none' : 'commandPanel.empty') }}</p>
         <button v-if="page === 'root' && slashQuery && !rows.length" class="command-panel-row" data-testid="command-panel-send-as-text" @click="emit('send-as-text')"><FileText :size="16" class="command-panel-row-icon" aria-hidden="true" />{{ t('commandPanel.sendAsText') }}</button>
         <p v-if="page === 'workflow'" class="command-panel-note">{{ t('commandPanel.workflowRequirement') }}</p>
       </div>
       <!-- The slider's own keys (arrows, Home/End) stay with it instead of moving the row highlight. -->
       <div v-if="showReasoning" class="command-panel-reasoning" data-testid="command-panel-reasoning" @keydown="stopSliderKeys">
-        <label for="command-panel-reasoning-slider" :title="t('composer.reasoning.hint', { model: defaultModel?.current.value?.model ?? '' })">{{ t('composer.reasoning.label') }}</label>
+        <label for="command-panel-reasoning-slider" :title="t('composer.reasoning.hint', { model: defaultModel?.reasoningTarget.value?.model ?? defaultModel?.current.value?.model ?? '' })">{{ t('composer.reasoning.label') }}</label>
         <ReasoningEffortSlider id="command-panel-reasoning-slider" v-model="reasoningDraft" @commit="defaultModel?.setReasoningEffort($event)" />
       </div>
       </div>
-      <footer class="command-panel-footer" :class="{ 'has-error': settingsError }" :role="settingsError ? 'alert' : 'status'">{{ settingsError || (settingsSaving ? t('commandPanel.saving') : t(page === 'model' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask')) }}</footer>
+      <footer class="command-panel-footer" :class="{ 'has-error': settingsError }" :role="settingsError ? 'alert' : 'status'">{{ settingsError || (settingsSaving ? t('commandPanel.saving') : t(page === 'model' || page === 'model-agents' || page === 'model-agent' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask')) }}</footer>
     </section>
   </Teleport>
 </template>

@@ -1581,11 +1581,15 @@ async function saveAgentModelStrategy(agent: AgentViewDto) {
     // 不再走 draft/publish，也就没有 412/409 managed_resource_read_only。
     // 三档原样透传。此前 route 被静默降级成 inherit，用户选「按用途路由」保存后
     // 会变成「跟随默认」——Core 现已支持 mode='route' + route_purpose。
+    // The endpoint replaces the whole binding: the tool-scope override goes back as it was, or
+    // saving a model would clear it.
+    const toolScope = agent.model_binding?.tool_scope_override
     const saved = await api.putAgentRuntimeBinding(agent.id, {
       mode: strategy.kind as 'inherit' | 'route' | 'fixed',
       provider_instance_id: (strategy as { provider_instance_id?: string }).provider_instance_id ?? null,
       model: (strategy as { model?: string | null }).model ?? null,
       route_purpose: (strategy as { route_purpose?: string }).route_purpose ?? null,
+      ...(Array.isArray(toolScope) ? { tool_scope: toolScope } : {}),
     })
     // 定向 patch（问题 1 修复）：PUT 响应体已是权威的最新绑定（含 revision/updated_at），
     // 直接写回 agents 那一行并据其重新 seed 选择，不再 loadAgentCenter() 全量重载——
