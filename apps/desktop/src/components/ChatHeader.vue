@@ -49,7 +49,7 @@ function selectRun(runId: string): void {
         <span class="run-pill__dot" />
         {{ String(run.status).replace('_', ' ') }}
       </button>
-      <span v-if="!selectedRunId" class="run-pills__hint">{{ t('chat.latestRun', 'latest') }}</span>
+      <span v-if="!selectedRunId" class="run-pills__hint">{{ t('chat.latestRun') }}</span>
     </div>
   </div>
 </template>

@@ -193,14 +193,14 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
 <template>
   <div class="snapshot-page" data-testid="snapshot-page">
     <header class="snapshot-page__header">
-      <h1><Camera class="size-4" /> {{ t('governance.snapshotsTitle', 'Workspace snapshots') }}</h1>
+      <h1><Camera class="size-4" /> {{ t('governance.snapshotsTitle') }}</h1>
       <div class="flex items-center gap-2">
         <CommandPaletteButton />
         <UiSelectField
           class="snapshot-page__select"
           data-testid="snapshot-project-select"
           :value="selectedProjectId"
-          :aria-label="t('governance.snapshotsTitle', 'Workspace snapshots')"
+          :aria-label="t('governance.snapshotsTitle')"
           :options="projects.map((p) => ({ value: selectionKey(p), label: p.name }))"
           @change="selectProject"
         />
@@ -211,24 +211,24 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
     </header>
 
     <p class="snapshot-page__hint">
-      {{ t('governance.snapshotsHint', 'Restore is an explicit user command; it is not yet part of the UserToolAction approval loop.') }}
+      {{ t('governance.snapshotsHint') }}
     </p>
 
     <div v-if="loadError" class="snapshot-page__error" data-testid="snapshot-error">{{ loadError }}</div>
 
     <div v-if="lastRestore" class="snapshot-page__restore-result" data-testid="snapshot-restore-result">
-      <strong>{{ t('governance.lastRestore', 'Last restore') }}:</strong>
+      <strong>{{ t('governance.lastRestore') }}:</strong>
       {{ lastRestore.result.status ?? '?' }} ·
       {{ lastRestore.result.applied_file_count ?? 0 }}
-      {{ t('governance.filesApplied', 'files applied') }}
+      {{ t('governance.filesApplied') }}
       <span v-if="lastRestore.result.workspace_hash" class="font-mono text-xs"> · {{ lastRestore.result.workspace_hash.slice(0, 12) }}</span>
       <span v-if="(lastRestore.result.conflicts?.length ?? 0) > 0" class="text-warning">
-        {{ t('governance.conflictsPresent', 'conflicts reported') }}
+        {{ t('governance.conflictsPresent') }}
       </span>
     </div>
 
     <p v-if="!loading && !sorted.length" class="snapshot-page__empty" data-testid="snapshot-empty">
-      {{ t('governance.noSnapshots', 'No snapshots captured for this project yet.') }}
+      {{ t('governance.noSnapshots') }}
     </p>
 
     <ul class="snapshot-list">
@@ -253,7 +253,7 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
           @click="restore(s)"
         >
           <RotateCcw class="size-3.5" />
-          {{ restoring === s.id ? t('common.working', 'Working…') : t('governance.restore', 'Restore') }}
+          {{ restoring === s.id ? t('common.working') : t('governance.restore') }}
         </button>
         <button
           type="button"
@@ -261,20 +261,20 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
           data-testid="snapshot-review-btn"
           @click="toggleReview(s)"
         >
-          {{ reviewSnapshotId === s.id ? t('governance.hideFiles', 'Hide files') : t('governance.reviewFiles', 'Review files') }}
+          {{ reviewSnapshotId === s.id ? t('governance.hideFiles') : t('governance.reviewFiles') }}
         </button>
 
         <section v-if="reviewSnapshotId === s.id" class="snapshot-review" data-testid="snapshot-review">
           <p v-if="changesLoading" class="snapshot-page__empty">{{ t('common.loading', 'Loading…') }}</p>
           <p v-else-if="!reviewedChanges.length" class="snapshot-page__empty" data-testid="snapshot-review-clean">
-            {{ t('governance.noFileChanges', 'No file differs from this snapshot.') }}
+            {{ t('governance.noFileChanges') }}
           </p>
           <ul v-else class="snapshot-review__list">
             <li v-for="change in reviewedChanges" :key="change.path" class="snapshot-review__row" data-testid="snapshot-review-row">
               <span class="snapshot-card__badge" :data-status="change.status">{{ change.status }}</span>
               <code class="font-mono text-xs">{{ change.path }}</code>
               <button type="button" class="detail-dialog__btn" data-testid="snapshot-diff-btn" @click="toggleDiff(change)">
-                {{ t('governance.compare', 'Compare') }}
+                {{ t('governance.compare') }}
               </button>
               <button
                 v-if="change.restorable"
@@ -285,10 +285,10 @@ async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
                 @click="undoFile(change)"
               >
                 <RotateCcw class="size-3.5" />
-                {{ undoingPath === change.path ? t('common.working', 'Working…') : t('governance.undoFile', 'Undo this file') }}
+                {{ undoingPath === change.path ? t('common.working') : t('governance.undoFile') }}
               </button>
               <span v-else class="snapshot-review__irreversible" data-testid="snapshot-not-restorable">
-                {{ t('governance.fileNotCaptured', 'Its content was not captured, so this file cannot be undone from this snapshot.') }}
+                {{ t('governance.fileNotCaptured') }}
               </span>
               <DiffViewer
                 v-if="diffs[change.path]"

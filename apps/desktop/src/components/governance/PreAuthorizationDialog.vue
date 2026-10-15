@@ -109,7 +109,7 @@ async function submit(): Promise<void> {
       <div class="detail-dialog__heading">
         <span class="detail-dialog__icon" aria-hidden="true"><ShieldCheck :size="20" /></span>
         <h2 data-testid="pre-auth-title">
-          {{ t('governance.preAuthorizeTitle', 'Pre-authorize tools') }}
+          {{ t('governance.preAuthorizeTitle') }}
         </h2>
       </div>
 
@@ -125,24 +125,24 @@ async function submit(): Promise<void> {
 
         <section class="panel pre-auth-form">
           <label>
-            {{ t('governance.preAuthRunId', 'Run ID') }}
+            {{ t('governance.preAuthRunId') }}
             <input v-model="runId" data-testid="pre-auth-run-id" placeholder="00000000-0000-0000-0000-000000000000" />
           </label>
           <label>
-            {{ t('governance.preAuthLane', 'Lane (optional)') }}
+            {{ t('governance.preAuthLane') }}
             <input v-model="laneKey" data-testid="pre-auth-lane" placeholder="main" />
           </label>
           <label>
-            {{ t('governance.preAuthTools', 'Tool IDs (comma-separated)') }}
+            {{ t('governance.preAuthTools') }}
             <input v-model="toolScope" data-testid="pre-auth-tools" placeholder="git_commit, shell" />
           </label>
           <div class="pre-auth-grid">
             <label>
-              {{ t('governance.preAuthRiskMax', 'Risk max') }}
+              {{ t('governance.preAuthRiskMax') }}
               <UiSelectField
                 v-model="riskMax"
                 data-testid="pre-auth-risk"
-                :aria-label="t('governance.preAuthRiskMax', 'Risk max')"
+                :aria-label="t('governance.preAuthRiskMax')"
                 :options="[
                   { value: 'low', label: 'low' },
                   { value: 'medium', label: 'medium' },
@@ -153,20 +153,20 @@ async function submit(): Promise<void> {
               />
             </label>
             <label>
-              {{ t('governance.preAuthMaxUses', 'Max uses') }}
+              {{ t('governance.preAuthMaxUses') }}
               <input v-model.number="maxUses" type="number" min="1" data-testid="pre-auth-max-uses" />
             </label>
             <label>
-              {{ t('governance.preAuthExpires', 'Expires at (optional)') }}
+              {{ t('governance.preAuthExpires') }}
               <input v-model="expiresAt" type="datetime-local" data-testid="pre-auth-expires" />
             </label>
           </div>
           <label>
-            {{ t('governance.preAuthHash', 'Parameter constraint hash (optional)') }}
+            {{ t('governance.preAuthHash') }}
             <input v-model="parameterHash" data-testid="pre-auth-hash" />
           </label>
           <label>
-            {{ t('governance.preAuthSummary', 'Summary (optional)') }}
+            {{ t('governance.preAuthSummary') }}
             <input v-model="summary" data-testid="pre-auth-summary" />
           </label>
 
@@ -184,14 +184,14 @@ async function submit(): Promise<void> {
             data-testid="pre-auth-submit"
             @click="submit"
           >
-            {{ submitting ? t('common.loading', 'Submitting…') : t('governance.preAuthorizeConfirm', 'Grant pre-authorization') }}
+            {{ submitting ? t('common.loading', 'Submitting…') : t('governance.preAuthorizeConfirm') }}
           </button>
         </div>
       </template>
 
       <template v-else>
         <p class="detail-dialog__summary" data-testid="pre-auth-success">
-          {{ t('governance.preAuthorizeGranted', 'Pre-authorization granted.') }}
+          {{ t('governance.preAuthorizeGranted') }}
         </p>
         <div class="approval-row" data-testid="pre-auth-record">
           <div>
@@ -205,7 +205,7 @@ async function submit(): Promise<void> {
         </div>
         <div class="detail-dialog__actions">
           <button type="button" class="detail-dialog__btn" data-testid="pre-auth-done" @click="cancel">
-            {{ t('common.close', 'Close') }}
+            {{ t('common.close') }}
           </button>
         </div>
       </template>

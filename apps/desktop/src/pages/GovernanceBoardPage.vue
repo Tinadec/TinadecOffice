@@ -126,11 +126,11 @@ onUnmounted(() => {
 <template>
   <div class="approval-board" data-testid="approval-board">
     <header class="approval-board__header">
-      <h1>{{ t('governance.boardTitle', 'Governance decisions') }}</h1>
+      <h1>{{ t('governance.boardTitle') }}</h1>
       <div class="approval-board__header-actions">
         <CommandPaletteButton />
         <button type="button" class="detail-dialog__btn" data-testid="open-pre-auth" @click="preAuthOpen = true">
-          {{ t('governance.preAuthorize', 'Pre-authorize') }}
+          {{ t('governance.preAuthorize') }}
         </button>
         <button type="button" class="detail-dialog__btn" :disabled="loading" @click="void loadAll()">
           {{ loading ? t('common.loading', 'Loading…') : t('common.refresh', 'Refresh') }}
@@ -143,17 +143,17 @@ onUnmounted(() => {
     <div class="approval-board__columns">
       <!-- Column 1: PermissionRequest -->
       <section class="approval-board__column" data-testid="column-permissions">
-        <h2><ShieldCheck class="size-4" /> {{ t('governance.permissions', 'Capability requests') }} ({{ openPermissions.length }})</h2>
-        <p v-if="!openPermissions.length" class="approval-board__empty">{{ t('common.empty', 'Nothing waiting.') }}</p>
+        <h2><ShieldCheck class="size-4" /> {{ t('governance.permissions') }} ({{ openPermissions.length }})</h2>
+        <p v-if="!openPermissions.length" class="approval-board__empty">{{ t('common.empty') }}</p>
         <article v-for="p in openPermissions" :key="p.id" class="approval-card">
           <div class="approval-card__title">{{ p.capability }} / {{ p.action }}</div>
           <div class="approval-card__meta">risk: {{ p.risk }} · {{ p.resource }}</div>
           <div class="approval-card__actions">
             <button type="button" class="detail-dialog__btn" :disabled="deciding === p.id" @click="decidePermission(p.id, true)">
-              {{ t('common.approve', 'Approve') }}
+              {{ t('common.approve') }}
             </button>
             <button type="button" class="detail-dialog__btn detail-dialog__btn--danger" :disabled="deciding === p.id" @click="decidePermission(p.id, false)">
-              {{ t('common.reject', 'Reject') }}
+              {{ t('common.reject') }}
             </button>
           </div>
         </article>
@@ -161,18 +161,18 @@ onUnmounted(() => {
 
       <!-- Column 2: ActionApproval + user actions -->
       <section class="approval-board__column" data-testid="column-approvals">
-        <h2><Gavel class="size-4" /> {{ t('governance.actionApprovals', 'Action approvals') }} ({{ openApprovals.length }})</h2>
-        <p v-if="!openApprovals.length" class="approval-board__empty">{{ t('common.empty', 'Nothing waiting.') }}</p>
+        <h2><Gavel class="size-4" /> {{ t('governance.actionApprovals') }} ({{ openApprovals.length }})</h2>
+        <p v-if="!openApprovals.length" class="approval-board__empty">{{ t('common.empty') }}</p>
         <article v-for="a in openApprovals" :key="a.id" class="approval-card">
           <div class="approval-card__title">{{ a.summary }}</div>
           <div class="approval-card__meta font-mono text-xs">{{ a.command ?? a.kind }}</div>
           <UserActionStatusBadge v-if="a.governance_status" :status="a.governance_status" />
           <div class="approval-card__actions">
             <button type="button" class="detail-dialog__btn" :disabled="deciding === a.id" @click="decideApproval(a.id, 'approved')">
-              {{ t('common.approve', 'Approve') }}
+              {{ t('common.approve') }}
             </button>
             <button type="button" class="detail-dialog__btn detail-dialog__btn--danger" :disabled="deciding === a.id" @click="decideApproval(a.id, 'rejected')">
-              {{ t('common.reject', 'Reject') }}
+              {{ t('common.reject') }}
             </button>
           </div>
         </article>
@@ -180,9 +180,9 @@ onUnmounted(() => {
 
       <!-- Column 3: Supervision (read-only) -->
       <section class="approval-board__column" data-testid="column-supervision">
-        <h2><Eye class="size-4" /> {{ t('governance.supervision', 'Supervision review') }}</h2>
+        <h2><Eye class="size-4" /> {{ t('governance.supervision') }}</h2>
         <p v-if="!findings.length" class="approval-board__empty">
-          {{ t('governance.supervisionEmpty', 'No supervision findings projected yet.') }}
+          {{ t('governance.supervisionEmpty') }}
         </p>
         <article v-for="f in findings" :key="f.id" class="approval-card">
           <div class="approval-card__title">{{ f.summary }}</div>

@@ -45,8 +45,8 @@ async function decide(decision: 'mark_completed' | 'mark_failed'): Promise<void>
     await store.decideRecovery(actionId.value, {
       decision,
       reason: decision === 'mark_completed'
-        ? t('governance.recoveryCompletedReason', 'User verified the workspace after an unknown outcome.')
-        : t('governance.recoveryFailedReason', 'User judged the workspace incorrect after an unknown outcome.'),
+        ? t('governance.recoveryCompletedReason')
+        : t('governance.recoveryFailedReason'),
     })
     void router.back()
   } catch (e) {
@@ -73,9 +73,9 @@ onBeforeUnmount(() => {
 <template>
   <div class="recovery-page" data-testid="recovery-page">
     <header class="recovery-page__header">
-      <h1>{{ t('governance.recoveryTitle', 'Outcome recovery check') }}</h1>
+      <h1>{{ t('governance.recoveryTitle') }}</h1>
       <p class="recovery-page__subtitle">
-        {{ t('governance.recoverySubtitle', 'This action finished in an unknown state. Inspect your workspace before deciding.') }}
+        {{ t('governance.recoverySubtitle') }}
       </p>
     </header>
 
@@ -86,7 +86,7 @@ onBeforeUnmount(() => {
 
     <div v-else-if="loadError" class="recovery-page__state recovery-page__state--error" data-testid="recovery-error">
       {{ loadError }}
-      <button type="button" class="detail-dialog__btn" @click="load">{{ t('common.retry', 'Retry') }}</button>
+      <button type="button" class="detail-dialog__btn" @click="load">{{ t('common.retry') }}</button>
     </div>
 
     <template v-else-if="action">
@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
           @click="decide('mark_completed')"
         >
           <CheckCircle2 class="size-4" />
-          {{ t('governance.markCompleted', 'Workspace looks right — mark completed') }}
+          {{ t('governance.markCompleted') }}
         </button>
         <button
           type="button"
@@ -127,12 +127,12 @@ onBeforeUnmount(() => {
           @click="decide('mark_failed')"
         >
           <FileWarning class="size-4" />
-          {{ t('governance.markFailed', 'Mark failed') }}
+          {{ t('governance.markFailed') }}
         </button>
       </footer>
 
       <button type="button" class="detail-dialog__btn recovery-page__back" @click="back">
-        {{ t('common.back', 'Back') }}
+        {{ t('common.back') }}
       </button>
     </template>
   </div>

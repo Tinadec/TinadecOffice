@@ -89,7 +89,7 @@ function nodeStyleClass(layer: string, status: string): string {
 <template>
   <div class="run-lane-canvas" data-testid="run-lane-canvas">
     <div v-if="isEmpty && !hasOrchestrationData" class="run-lane-canvas__empty" data-testid="lane-empty">
-      {{ $t('workbench.laneEmpty', 'No agent instances projected for this run yet.') }}
+      {{ $t('workbench.laneEmpty') }}
     </div>
     <VueFlow
       v-else
@@ -104,9 +104,9 @@ function nodeStyleClass(layer: string, status: string): string {
     >
       <Background />
       <Panel position="top-left" class="run-lane-legend">
-        <span class="legend-dot legend-dot--operation"></span> {{ $t('workbench.operationLane', 'operation') }}
-        <span class="legend-dot legend-dot--execution"></span> {{ $t('workbench.executionLane', 'execution') }}
-        <span class="legend-line"></span> {{ $t('workbench.lineageEdge', 'spawn lineage') }}
+        <span class="legend-dot legend-dot--operation"></span> {{ $t('workbench.operationLane') }}
+        <span class="legend-dot legend-dot--execution"></span> {{ $t('workbench.executionLane') }}
+        <span class="legend-line"></span> {{ $t('workbench.lineageEdge') }}
       </Panel>
       <template #node-default="nodeProps">
         <div

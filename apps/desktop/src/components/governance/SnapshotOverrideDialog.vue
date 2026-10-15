@@ -60,7 +60,7 @@ function confirm(): void {
     >
       <div class="detail-dialog__heading">
         <span class="detail-dialog__icon" aria-hidden="true"><AlertTriangle :size="20" /></span>
-        <h2 data-testid="override-title">{{ t('governance.snapshotOverrideTitle', 'Skip workspace snapshot?') }}</h2>
+        <h2 data-testid="override-title">{{ t('governance.snapshotOverrideTitle') }}</h2>
       </div>
       <p class="detail-dialog__summary" data-testid="override-body">
         {{
@@ -89,7 +89,7 @@ function confirm(): void {
         v-model="reason"
         class="snapshot-override__reason"
         rows="2"
-        :placeholder="t('governance.snapshotOverrideReasonPlaceholder', 'Optional reason (recorded in the audit trail)')"
+        :placeholder="t('governance.snapshotOverrideReasonPlaceholder')"
         data-testid="override-reason"
       />
 
@@ -104,7 +104,7 @@ function confirm(): void {
           data-testid="override-confirm"
           @click="confirm"
         >
-          {{ t('governance.snapshotOverrideConfirm', 'Proceed without snapshot') }}
+          {{ t('governance.snapshotOverrideConfirm') }}
         </button>
       </div>
     </dialog>
