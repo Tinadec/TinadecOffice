@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { RuntimeReadinessReceiptDto } from '../api'
+import type { ReadinessItemDto, RuntimeReadinessReceiptDto } from '../api'
+import { readinessAction, readinessReason } from '../lib/readinessText'
 import StatusPill from './StatusPill.vue'
 
 /** Core's unified readiness receipt (GET /api/v1/readiness): the overall status and its fixed checks. */
@@ -13,6 +14,9 @@ const { t, te, locale } = useI18n()
 /** A status or check name in words; one this build does not know is shown as it came. */
 const statusLabel = (status: string) => te(`doctor.status.${status}`) ? t(`doctor.status.${status}`) : status
 const itemName = (id: string) => te(`doctor.item.${id}`) ? t(`doctor.item.${id}`) : id
+
+const reasonText = (item: ReadinessItemDto) => readinessReason(item, { t, te })
+const actionText = (item: ReadinessItemDto) => readinessAction(item, { t, te })
 
 const counts = computed(() => {
   const items = props.readiness?.items ?? []
@@ -50,8 +54,8 @@ const checkedAt = computed(() => {
           <StatusPill :status="item.status" :label="statusLabel(item.status)" />
           <strong>{{ itemName(item.id) }}</strong>
         </div>
-        <p v-if="item.reason">{{ item.reason }}</p>
-        <p v-if="item.action" class="readiness-action">{{ item.action }}</p>
+        <p v-if="reasonText(item)" :title="reasonText(item) === item.reason ? undefined : item.reason ?? undefined">{{ reasonText(item) }}</p>
+        <p v-if="actionText(item)" class="readiness-action" :title="actionText(item) === item.action ? undefined : item.action ?? undefined">{{ actionText(item) }}</p>
       </div>
     </div>
   </section>

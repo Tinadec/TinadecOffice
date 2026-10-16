@@ -77,10 +77,11 @@ public sealed class ModelProbeService
             {
                 Id = Id,
                 Status = "blocked",
-                Reason = $"模型探针无法执行：{resolution.Error ?? "chat 路由不可用"}",
-                Action = "在模型中心完成 chat 路由与 provider 配置（录入 API key、启用 provider）后重试",
+                ReasonCode = "probe_route_unavailable",
+                Reason = $"The model probe cannot run: {resolution.Error ?? "the chat route is unavailable"}",
+                Action = "Finish the chat route and provider setup in the model center (enter the API key, enable the provider), then retry.",
                 CheckedAt = now,
-                Data = new { base_url_override = GetOverrideBaseUrl() }
+                Data = new { base_url_override = GetOverrideBaseUrl(), error = resolution.Error }
             });
         }
 
@@ -91,8 +92,9 @@ public sealed class ModelProbeService
             {
                 Id = Id,
                 Status = "unavailable",
-                Reason = $"本地 agent 协议 {protocol} 由 harness 自己选模型，服务端 HTTP 探针不适用。",
-                Action = "使用对应 CLI runtime 的会话验证连通性（发起一次真实会话）。",
+                ReasonCode = "probe_not_applicable",
+                Reason = $"Local agent protocol {protocol} lets the harness choose the model; the server-side HTTP probe does not apply.",
+                Action = "Verify connectivity with a real conversation through that CLI runtime.",
                 CheckedAt = now,
                 Data = new { model_id = resolution.ModelId, protocol }
             });
@@ -134,7 +136,8 @@ public sealed class ModelProbeService
             {
                 Id = Id,
                 Status = "ready",
-                Reason = $"模型端点可用（{stopwatch.ElapsedMilliseconds}ms）。",
+                ReasonCode = "probe_ready",
+                Reason = $"The model endpoint answered ({stopwatch.ElapsedMilliseconds} ms).",
                 CheckedAt = now,
                 Data = new
                 {
@@ -157,24 +160,27 @@ public sealed class ModelProbeService
             {
                 Id = Id,
                 Status = "degraded",
-                Reason = $"模型端点在 {ProbeTimeout.TotalSeconds:0}s 内未响应（TimeoutException/超时取消）。端点 {effectiveBaseUrl}。",
-                Action = $"检查网络连通性与 base_url（当前 {effectiveBaseUrl}）；fixture 模式确认 scripts/model-fixture.mjs 已启动。",
+                ReasonCode = "probe_timeout",
+                Reason = $"The model endpoint did not answer within {ProbeTimeout.TotalSeconds:0} s (timeout). Endpoint {effectiveBaseUrl}.",
+                Action = $"Check network connectivity and base_url (currently {effectiveBaseUrl}); in fixture mode make sure scripts/model-fixture.mjs is running.",
                 CheckedAt = now,
-                Data = new { model_id = resolution.ModelId, base_url = effectiveBaseUrl, duration_ms = stopwatch.ElapsedMilliseconds }
+                Data = new { model_id = resolution.ModelId, base_url = effectiveBaseUrl, duration_ms = stopwatch.ElapsedMilliseconds, timeout_seconds = (int)ProbeTimeout.TotalSeconds }
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             stopwatch.Stop();
             var summary = DescribeException(ex);
+            var (code, action) = SuggestAction(ex, effectiveBaseUrl);
             item = new ReadinessItem
             {
                 Id = Id,
                 Status = "degraded",
-                Reason = $"模型探针调用失败：{summary}",
-                Action = SuggestAction(ex, effectiveBaseUrl),
+                ReasonCode = code,
+                Reason = $"The model probe call failed: {summary}",
+                Action = action,
                 CheckedAt = now,
-                Data = new { model_id = resolution.ModelId, base_url = effectiveBaseUrl, exception_type = ex.GetType().Name }
+                Data = new { model_id = resolution.ModelId, base_url = effectiveBaseUrl, exception_type = ex.GetType().Name, error = summary }
             };
             _logger.LogWarning(ex, "Model probe failed for {ModelId} via {BaseUrl}.", resolution.ModelId, effectiveBaseUrl);
         }
@@ -239,20 +245,21 @@ public sealed class ModelProbeService
         return $"{ex.GetType().Name}: {Truncate(message, 240)}";
     }
 
-    private static string SuggestAction(Exception ex, string baseUrl)
+    /// <summary>The failure's reason code (clients word it) and an English diagnostic action.</summary>
+    private static (string Code, string Action) SuggestAction(Exception ex, string baseUrl)
     {
         var message = ex.Message ?? string.Empty;
         if (message.Contains("401") || message.Contains("Unauthorized") || message.Contains("invalid_api_key"))
-            return "API key 被拒绝（HTTP 401）：在模型中心为 provider 重新录入有效 API key 后重试。";
+            return ("probe_unauthorized", "The API key was rejected (HTTP 401): enter a valid API key for the provider in the model center and retry.");
         if (message.Contains("403") || message.Contains("Forbidden"))
-            return "端点拒绝访问（HTTP 403）：确认账号权限与 key 所属项目。";
+            return ("probe_forbidden", "The endpoint refused access (HTTP 403): check the account permissions and the project the key belongs to.");
         if (message.Contains("404") || message.Contains("Not Found"))
-            return $"端点返回 404：检查 base_url 是否正确（当前 {baseUrl}），OpenAI 兼容端点通常以 /v1 结尾。";
+            return ("probe_not_found", $"The endpoint returned 404: check that base_url is right (currently {baseUrl}); OpenAI-compatible endpoints usually end with /v1.");
         if (message.Contains("429") || message.Contains("rate limit", StringComparison.OrdinalIgnoreCase))
-            return "端点限流（HTTP 429）：稍后重试或更换额度可用的 key。";
+            return ("probe_rate_limited", "The endpoint is rate limited (HTTP 429): retry later or use a key with quota left.");
         if (message.Contains("refused") || message.Contains("connect failed", StringComparison.OrdinalIgnoreCase))
-            return $"无法连接 {baseUrl}：确认端点进程已启动（fixture 模式先启动 scripts/model-fixture.mjs）。";
-        return $"排查端点 {baseUrl} 的可用性后重试；也可查看 Core 日志获取完整异常。";
+            return ("probe_connection_refused", $"Cannot connect to {baseUrl}: make sure the endpoint process is running (in fixture mode start scripts/model-fixture.mjs first).");
+        return ("probe_failed", $"Check that endpoint {baseUrl} is available and retry; the Core log has the full exception.");
     }
 
     private static string? Truncate(string? value, int maxLength) =>

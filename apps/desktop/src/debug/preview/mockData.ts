@@ -1165,18 +1165,18 @@ export function mockEvents(sessionId: string): EventEnvelope[] {
 // Doctor / Readiness
 // ============================================================
 
-// Core's unified readiness receipt (GET /api/v1/readiness), worded as the server words it today.
+// Core's unified readiness receipt (GET /api/v1/readiness): a reason_code the UI words, plus Core's English diagnostics.
 const readyItems = () => [
-  { id: 'database', status: 'ready', reason: '数据库可达（sqlite）', checked_at: iso(0) },
-  { id: 'core_storage', status: 'ready', reason: 'Content store 写/读/删 round trip 成功。', checked_at: iso(0) },
-  { id: 'agent_pack', status: 'ready', reason: '已激活 Agent Pack：tinadec.graph-seed@3.0.1', checked_at: iso(0) },
-  { id: 'default_mode', status: 'ready', reason: '工作区默认模式已配置。', checked_at: iso(0) },
-  { id: 'model_route', status: 'ready', reason: 'chat 路由解析到 gpt-5.4-mini。', checked_at: iso(0), data: { model: 'gpt-5.4-mini', base_url: 'https://api.openai.com/v1' } },
-  { id: 'model_provider', status: 'ready', reason: "chat provider 'OpenAI' 已启用（driver openai，model gpt-5.4-mini）。", checked_at: iso(0) },
-  { id: 'model_secret', status: 'ready', reason: 'provider 已录入 API key。', checked_at: iso(0) },
-  { id: 'model_probe', status: 'unavailable', reason: '模型探针尚未执行（结果缓存 60s，过期或路由变更后需重新探测）。', action: 'POST /api/v1/model-probe?force=true 触发一次真实 1-token 请求。', checked_at: iso(0) },
-  { id: 'tool_provider', status: 'ready', reason: 'TinadecTools 进程可用，manifest 声明 49 个工具。', checked_at: iso(0) },
-  { id: 'manifest_hash', status: 'ready', reason: 'manifest hash 已就绪。', checked_at: iso(0) },
+  { id: 'database', status: 'ready', reason_code: 'database_ready', reason: 'Database reachable (sqlite).', checked_at: iso(0), data: { provider: 'sqlite', state: 'ready' } },
+  { id: 'core_storage', status: 'ready', reason_code: 'storage_ready', reason: 'Content store write/read/delete round trip succeeded.', checked_at: iso(0) },
+  { id: 'agent_pack', status: 'ready', reason_code: 'packs_active', reason: '1 agent pack(s) installed, 1 active.', checked_at: iso(0), data: { source: 'agent-pack', count: 1, active: 1 } },
+  { id: 'default_mode', status: 'ready', reason_code: 'default_mode_ready', reason: 'The workspace has a default agent mode.', checked_at: iso(0) },
+  { id: 'model_route', status: 'ready', reason_code: 'route_ready', reason: 'Chat route resolved to gpt-5.4-mini.', checked_at: iso(0) },
+  { id: 'model_provider', status: 'ready', reason_code: 'provider_ready', reason: "Chat provider 'OpenAI' is enabled (driver openai, model gpt-5.4-mini).", checked_at: iso(0), data: { provider_display_name: 'OpenAI', driver: 'openai', model: 'gpt-5.4-mini', base_url: 'https://api.openai.com/v1' } },
+  { id: 'model_secret', status: 'ready', reason_code: 'secret_ready', reason: 'The provider API key is stored in SecretStore.', checked_at: iso(0), data: { provider_display_name: 'OpenAI' } },
+  { id: 'model_probe', status: 'unavailable', reason_code: 'probe_not_run', reason: 'The model probe has not run yet (results are cached for 60 s and need a new probe after they expire or the route changes).', action: 'POST /api/v1/model-probe?force=true sends one real 1-token request.', checked_at: iso(0) },
+  { id: 'tool_provider', status: 'ready', reason_code: 'tools_ready', reason: 'The TinadecTools process is available; its manifest declares 49 tools.', checked_at: iso(0), data: { tool_count: 49 } },
+  { id: 'manifest_hash', status: 'ready', reason_code: 'manifest_ready', reason: 'The tool manifest hash was obtained.', checked_at: iso(0) },
 ]
 
 export function mockReadiness(): RuntimeReadinessReceiptDto {
@@ -1188,7 +1188,7 @@ export function mockReadinessBlocked(): RuntimeReadinessReceiptDto {
     status: 'blocked',
     checked_at: iso(0),
     items: readyItems().map((item) => item.id === 'model_secret'
-      ? { ...item, status: 'blocked', reason: 'provider 尚未录入 API key。', action: '在模型中心为 provider OpenAI 录入 API key（模型中心 → provider → 编辑 → 保存 API key）。' }
+      ? { ...item, status: 'blocked', reason_code: 'secret_missing', reason: 'The provider has no API key yet.', action: 'Enter an API key for provider OpenAI in the model center (provider, Edit, save the API key).' }
       : item),
   }
 }

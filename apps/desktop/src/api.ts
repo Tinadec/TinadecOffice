@@ -633,6 +633,8 @@ export interface ReadinessItemDto {
   id: string;
   /** ready | degraded | blocked | unavailable */
   status: string;
+  /** What `reason` is about; the UI words it from `doctor.reason.*` / `doctor.action.*` and `data`. */
+  reason_code?: string | null;
   reason?: string | null;
   action?: string | null;
   checked_at?: string;
@@ -2987,7 +2989,7 @@ export const api = {
       core_version: response.ok && typeof data.version === 'string' ? data.version : null,
     }
   },
-  readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),
+  readiness: (options?: { signal?: AbortSignal }) => request<RuntimeReadinessReceiptDto>('/api/v1/readiness', options),
   getToolLayerReadiness: (options?: { signal?: AbortSignal }) => request<ToolLayerReadinessReceiptDto>('/api/v1/tool-layer-readiness', options),
   listProjects: (options?: { signal?: AbortSignal; storageId?: string; lifecycleStatus?: 'active' | 'archived' | 'trashed' }) => request<ProjectDto[]>(`/api/v1/projects${options?.lifecycleStatus ? '?lifecycle_status=' + encodeURIComponent(options.lifecycleStatus) : ''}`, options),
   createProject: (name: string, path: string) => request<ProjectDto>('/api/v1/projects', {

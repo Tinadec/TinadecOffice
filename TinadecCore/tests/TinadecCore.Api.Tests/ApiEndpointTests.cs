@@ -149,12 +149,14 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
             Assert.True(ids.Contains(expectedId), $"readiness receipt is missing item '{expectedId}'");
         }
 
-        // Every item carries status and a timestamp; reason/action are omitted
-        // when null (ready items carry no remediation hint).
+        // Every item carries status, a timestamp and the reason code clients word it from;
+        // reason/action are omitted when null (ready items carry no remediation hint).
         foreach (var item in itemList)
         {
             Assert.True(item.TryGetProperty("status", out _));
             Assert.True(item.TryGetProperty("checked_at", out _));
+            Assert.True(item.TryGetProperty("reason_code", out var code) && code.ValueKind == JsonValueKind.String,
+                $"readiness item '{item.GetProperty("id").GetString()}' has no reason_code");
         }
 
         var database = itemList.Single(item => item.GetProperty("id").GetString() == "database");

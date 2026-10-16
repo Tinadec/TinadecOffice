@@ -87,6 +87,7 @@ public sealed class ModelProbeServiceTests
         var item = await service.ProbeAsync(force: true);
 
         Assert.Equal("unavailable", item.Status);
+        Assert.Equal("probe_not_applicable", item.ReasonCode);
         Assert.Contains(protocol, item.Reason);
         Assert.Equal(0, factory.Calls);
     }
@@ -131,6 +132,7 @@ public sealed class ModelProbeServiceTests
         var item = await service.ProbeAsync(force: true);
 
         Assert.Equal("blocked", item.Status);
+        Assert.Equal("probe_route_unavailable", item.ReasonCode);
         Assert.Contains("chat 路由未配置", item.Reason);
         Assert.Equal(0, factory.Calls);
     }

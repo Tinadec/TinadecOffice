@@ -81,6 +81,7 @@ import {
   type ModelProviderInstanceDto,
   type ModelProviderTemplateDto,
   type ModelReadinessReceiptDto,
+  type RuntimeReadinessReceiptDto,
   type ModelReferenceDto,
   type ModelRouteDto,
   type ModelCenterApiConnectionDto,
@@ -142,6 +143,7 @@ import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'
 import ModelParametersEditor from '@/settings/sections/ModelParametersEditor.vue'
 import { consumeRequest, pendingAgentId, pendingModeId, pendingPromptId, pendingToolId, pendingToolAgentId, requestToolAgent, pendingModelProviderId, pendingSettingsSection } from '@/lib/pageRequests'
 import { routesAfterModelRemoval } from '@/lib/modelRouteEdits'
+import { readinessReason } from '@/lib/readinessText'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { createSettingsLeaveGuard } from './settingsNavigation'
@@ -291,6 +293,7 @@ const agentCenterOverview = ref<AgentCenterOverviewDto | null>(null)
 const providers = ref<ModelProviderInstanceDto[]>([])
 const modelReadiness = ref<ModelReadinessReceiptDto | null>(null)
 const modelCatalogReadiness = ref<ModelCatalogReadinessReceiptDto | null>(null)
+const readinessReceipt = ref<RuntimeReadinessReceiptDto | null>(null)
 const routes = ref<ModelRouteDto[]>([])
 const agentModes = ref<AgentModeDto[]>([])
 const agentDirectory = ref<AgentDirectoryItemDto[]>([])
@@ -433,6 +436,13 @@ const blockedModelRoutes = computed(() =>
 const warningCatalogTemplates = computed(() =>
   (modelCatalogReadiness.value?.templates ?? []).filter((template) => template.status !== 'ready')
 )
+/** Why the model layer is not ready, worded from the unified receipt's reason codes. The deprecated
+ *  receipt's notes are Core's English diagnostics, shown only when the unified receipt could not be read. */
+const modelReadinessNotes = computed(() => readinessReceipt.value
+  ? [...new Set((readinessReceipt.value.items ?? [])
+      .filter((item) => item.id.startsWith('model_') && item.status !== 'ready')
+      .flatMap((item) => readinessReason(item, { t, te }) ?? []))]
+  : modelReadiness.value?.design_notes ?? [])
 
 const formFields = computed(() => {
   const fields = currentTemplate.value?.fields ?? {
@@ -874,13 +884,14 @@ function loadModelCenter(): Promise<void> {
 }
 async function loadModelCenterData({ signal, isCurrent }: ReadContext) {
     // model-center/overview BFF was deleted; derive the same projection from versioned APIs.
-    const [providerRows, providerTemplates, routeRows, acpAdapters, modelReadinessReceipt, catalogReadinessReceipt] = await Promise.all([
+    const [providerRows, providerTemplates, routeRows, acpAdapters, modelReadinessReceipt, catalogReadinessReceipt, unifiedReceipt] = await Promise.all([
       api.listModelProviders({ signal }),
       api.listModelProviderTemplates({ signal }).catch(() => [] as ModelProviderTemplateDto[]),
       api.listModelRoutes({ signal }),
       api.listAcpAdapters({ signal }).catch(() => [] as AcpAdapterDto[]),
       api.getModelReadiness({ signal }).catch(() => modelReadiness.value),
-      api.getModelCatalogReadiness({ signal }).catch(() => modelCatalogReadiness.value)
+      api.getModelCatalogReadiness({ signal }).catch(() => modelCatalogReadiness.value),
+      api.readiness({ signal }).catch(() => readinessReceipt.value)
     ])
     if (!isCurrent()) return
     const overview = aggregateModelCenterOverview({
@@ -900,6 +911,7 @@ async function loadModelCenterData({ signal, isCurrent }: ReadContext) {
     providers.value = instances
     modelReadiness.value = overview.readiness.model ?? null
     modelCatalogReadiness.value = overview.readiness.catalog ?? null
+    readinessReceipt.value = unifiedReceipt
 
     const selected = instances.find((provider) => provider.id === selectedProviderId.value) ?? instances[0]
     if (selected) {
@@ -2235,8 +2247,8 @@ import '../settings/settings.css'
                   </div>
                   <span v-else class="quiet">{{ t('settings.noBlockedRoutes') }}</span>
                 </div>
-                <ul v-if="modelReadiness.design_notes.length > 0" class="model-diagnostic-notes">
-                  <li v-for="note in modelReadiness.design_notes" :key="note">{{ note }}</li>
+                <ul v-if="modelReadinessNotes.length > 0" class="model-diagnostic-notes">
+                  <li v-for="note in modelReadinessNotes" :key="note">{{ note }}</li>
                 </ul>
               </section>
               <section v-if="modelCatalogReadiness" class="model-diagnostic-section">

@@ -22,6 +22,13 @@ public sealed record ReadinessItem
 {
     public string Id { get; init; } = string.Empty;
     public string Status { get; init; } = "unavailable";
+    /// <summary>
+    /// Stable identifier of the reason (for example <c>secret_missing</c>). Clients word the reason and
+    /// its action from this code and the facts in <see cref="Data"/>, so a localized UI never depends on
+    /// server text; <see cref="Reason"/> and <see cref="Action"/> stay English diagnostics for logs and
+    /// API callers.
+    /// </summary>
+    public string? ReasonCode { get; init; }
     public string? Reason { get; init; }
     public string? Action { get; init; }
     public DateTimeOffset CheckedAt { get; init; } = DateTimeOffset.UtcNow;
@@ -109,8 +116,9 @@ public sealed class ReadinessService
         {
             Id = ModelProbeItemId,
             Status = "unavailable",
-            Reason = "模型探针尚未执行（结果缓存 60s，过期或路由变更后需重新探测）。",
-            Action = "POST /api/v1/model-probe?force=true 触发一次真实 1-token 请求。",
+            ReasonCode = "probe_not_run",
+            Reason = "The model probe has not run yet (results are cached for 60 s and need a new probe after they expire or the route changes).",
+            Action = "POST /api/v1/model-probe?force=true sends one real 1-token request.",
             CheckedAt = checkedAt
         });
         items.AddRange(await CheckToolProviderAsync(checkedAt, cancellationToken).ConfigureAwait(false));
@@ -133,8 +141,9 @@ public sealed class ReadinessService
         {
             Id = "database",
             Status = ready ? "ready" : "blocked",
-            Reason = ready ? $"数据库可达（{probe.Detail}）" : (probe.Detail ?? $"数据库状态 {probe.StateName}。"),
-            Action = ready ? null : "检查 TinadecPersistence 连接配置（data/tinadec.db 或 PostgreSQL 连接串）并重启 Core。",
+            ReasonCode = ready ? "database_ready" : "database_unavailable",
+            Reason = ready ? $"Database reachable ({probe.Detail})." : (probe.Detail ?? $"Database state {probe.StateName}."),
+            Action = ready ? null : "Check the TinadecPersistence connection settings (data/tinadec.db or the PostgreSQL connection string) and restart Core.",
             Data = new { provider = probe.Provider, state = probe.StateName, detail = probe.Detail }
         };
     }
@@ -172,7 +181,8 @@ public sealed class ReadinessService
             {
                 Id = "core_storage",
                 Status = "ready",
-                Reason = "Content store 写/读/删 round trip 成功。",
+                ReasonCode = "storage_ready",
+                Reason = "Content store write/read/delete round trip succeeded.",
                 CheckedAt = checkedAt
             };
         }
@@ -182,9 +192,11 @@ public sealed class ReadinessService
             {
                 Id = "core_storage",
                 Status = "blocked",
-                Reason = $"Core 存储 round trip 失败：{ex.GetType().Name}: {ex.Message}",
-                Action = "检查存储目录/数据库 schema（迁移未跑或磁盘不可写时会出现该错误），必要时删除 data/ 重新初始化。",
-                CheckedAt = checkedAt
+                ReasonCode = "storage_failed",
+                Reason = $"Core storage round trip failed: {ex.GetType().Name}: {ex.Message}",
+                Action = "Check the storage directory and database schema (missing migrations or an unwritable disk cause this); reinitialize data/ if needed.",
+                CheckedAt = checkedAt,
+                Data = new { error = $"{ex.GetType().Name}: {ex.Message}" }
             };
         }
     }
@@ -211,11 +223,13 @@ public sealed class ReadinessService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            var reason = $"Agent 目录查询失败：{ex.GetType().Name}: {ex.Message}";
+            var error = $"{ex.GetType().Name}: {ex.Message}";
+            var reason = $"Agent directory query failed: {error}";
+            const string action = "Check that database migrations completed; restarting Core reruns migrations and bootstrap.";
             return
             [
-                new ReadinessItem { Id = "agent_pack", Status = "blocked", Reason = reason, Action = "检查数据库迁移是否完成；重启 Core 会重跑迁移与 bootstrap。", CheckedAt = checkedAt },
-                new ReadinessItem { Id = "default_mode", Status = "blocked", Reason = reason, Action = "检查数据库迁移是否完成；重启 Core 会重跑迁移与 bootstrap。", CheckedAt = checkedAt }
+                new ReadinessItem { Id = "agent_pack", Status = "blocked", ReasonCode = "catalog_unreadable", Reason = reason, Action = action, CheckedAt = checkedAt, Data = new { error } },
+                new ReadinessItem { Id = "default_mode", Status = "blocked", ReasonCode = "catalog_unreadable", Reason = reason, Action = action, CheckedAt = checkedAt, Data = new { error } }
             ];
         }
 
@@ -227,14 +241,17 @@ public sealed class ReadinessService
             {
                 Id = "agent_pack",
                 Status = activePacks.Length > 0 ? "ready" : "degraded",
+                ReasonCode = activePacks.Length > 0 ? "packs_active" : "packs_inactive",
                 Reason = activePacks.Length > 0
-                    ? $"已安装 {packs.Count} 个 Agent Pack（{activePacks.Length} 个 active）。"
-                    : "存在 Agent Pack 安装记录但没有 active 版本。",
-                Action = activePacks.Length > 0 ? null : "在 Agent Pack 页面重新安装/激活对应的 pack。",
+                    ? $"{packs.Count} agent pack(s) installed, {activePacks.Length} active."
+                    : "Agent pack installations exist, but none is active.",
+                Action = activePacks.Length > 0 ? null : "Reinstall or activate the pack on the agent pack page.",
                 CheckedAt = checkedAt,
                 Data = new
                 {
                     source = "agent-pack",
+                    count = packs.Count,
+                    active = activePacks.Length,
                     packs = packs.Select(item => new { pack_id = item.PackId, status = item.Status, active_version = item.ActiveVersion })
                 }
             };
@@ -245,7 +262,8 @@ public sealed class ReadinessService
             {
                 Id = "agent_pack",
                 Status = "ready",
-                Reason = "未安装外部 Agent Pack；内置 Agent 目录已由 bootstrap seed。",
+                ReasonCode = "builtin_directory",
+                Reason = "No external agent pack is installed; bootstrap seeded the built-in agent directory.",
                 CheckedAt = checkedAt,
                 Data = new { source = "bootstrap", bootstrap_directory = _configuration["TinadecAgent:BootstrapDirectoryPath"] ?? "builtin" }
             };
@@ -256,8 +274,9 @@ public sealed class ReadinessService
             {
                 Id = "agent_pack",
                 Status = "blocked",
-                Reason = "工作区没有任何 Agent Pack，且内置 Agent 目录尚未 bootstrap。",
-                Action = "重启 Core 触发 DevSeed/BootstrapAgentDirectory，或在 Agent Pack 页面安装 pack（POST /api/v1/agent-packs/install-preview → install）。",
+                ReasonCode = "no_agents",
+                Reason = "The workspace has no agent pack, and the built-in agent directory was not bootstrapped.",
+                Action = "Restart Core to run DevSeed/BootstrapAgentDirectory, or install a pack on the agent pack page (POST /api/v1/agent-packs/install-preview, then install).",
                 CheckedAt = checkedAt
             };
         }
@@ -267,10 +286,11 @@ public sealed class ReadinessService
         {
             Id = "default_mode",
             Status = hasDefaultMode ? "ready" : "blocked",
+            ReasonCode = hasDefaultMode ? "default_mode_ready" : "default_mode_missing",
             Reason = hasDefaultMode
-                ? "工作区已设置默认 Agent Mode。"
-                : "工作区没有 active 的默认 Agent Mode；会话创建与交互提交会被拒绝。",
-            Action = hasDefaultMode ? null : "在 Agent Center 发布一个模式并设为默认（workspace-defaults），或安装包含 mode 的 Agent Pack。",
+                ? "The workspace has a default agent mode."
+                : "The workspace has no active default agent mode; creating conversations and submitting interactions will be refused.",
+            Action = hasDefaultMode ? null : "Publish a mode in Agent Center and make it the workspace default, or install an agent pack that contains a mode.",
             CheckedAt = checkedAt,
             Data = hasDefaultMode ? new { mode_version_id = defaults!.DefaultModeVersionId } : null
         };
@@ -289,10 +309,11 @@ public sealed class ReadinessService
         {
             Id = "model_route",
             Status = modelReadiness.IsReady ? "ready" : "blocked",
+            ReasonCode = modelReadiness.IsReady ? "route_ready" : "route_unavailable",
             Reason = modelReadiness.IsReady
                 ? modelReadiness.StatusMessage
-                : string.Join("；", modelReadiness.Warnings.Count > 0 ? modelReadiness.Warnings : ["chat 路由不可用。"]),
-            Action = modelReadiness.IsReady ? null : "在模型中心检查 chat 路由（GET /api/v1/model-routes）与 provider 绑定；干净环境重启 Core 会自动 seed 一条 chat 路由。",
+                : string.Join("; ", modelReadiness.Warnings.Count > 0 ? modelReadiness.Warnings : ["The chat route is unavailable."]),
+            Action = modelReadiness.IsReady ? null : "Check the chat route (GET /api/v1/model-routes) and its provider binding in the model center; restarting Core in a clean environment seeds a chat route.",
             CheckedAt = checkedAt
         };
 
@@ -353,58 +374,62 @@ public sealed class ReadinessService
         var secretItem = new ReadinessItem { Id = "model_secret", CheckedAt = checkedAt };
         if (configError is not null)
         {
-            providerItem = providerItem with { Status = "unavailable", Reason = $"provider 配置读取失败：{configError}", Action = "查看 Core 日志；必要时在模型中心重建 provider。" };
-            secretItem = secretItem with { Status = "unavailable", Reason = "provider 配置不可读，无法检查密钥。", Action = "修复 provider 配置后再检查密钥。" };
+            providerItem = providerItem with { Status = "unavailable", ReasonCode = "provider_config_unreadable", Reason = $"Reading the provider configuration failed: {configError}", Action = "Check the Core log; recreate the provider in the model center if needed.", Data = new { error = configError } };
+            secretItem = secretItem with { Status = "unavailable", ReasonCode = "secret_unchecked_config", Reason = "The provider configuration is unreadable, so the key was not checked.", Action = "Fix the provider configuration, then check the key again." };
         }
         else if (!routeFound)
         {
-            providerItem = providerItem with { Status = "unavailable", Reason = "chat 路由不存在，无法归属 provider。", Action = "重启 Core 让 DevSeed 自动创建 chat 路由，或在模型中心绑定一条 chat 路由。" };
-            secretItem = secretItem with { Status = "unavailable", Reason = "chat 路由不存在，无法检查 provider 密钥。", Action = providerItem.Action };
+            providerItem = providerItem with { Status = "unavailable", ReasonCode = "provider_no_route", Reason = "No chat route exists, so no provider is assigned.", Action = "Restart Core so DevSeed creates a chat route, or bind a chat route in the model center." };
+            secretItem = secretItem with { Status = "unavailable", ReasonCode = "secret_unchecked_no_route", Reason = "No chat route exists, so the provider key was not checked.", Action = providerItem.Action };
         }
         else if (provider is null)
         {
-            providerItem = providerItem with { Status = "blocked", Reason = "chat 路由引用的 provider 实例缺失或已删除。", Action = "在模型中心重新绑定 chat 路由到一个存在的 provider。" };
-            secretItem = secretItem with { Status = "unavailable", Reason = "provider 缺失，无法检查密钥。", Action = providerItem.Action };
+            providerItem = providerItem with { Status = "blocked", ReasonCode = "provider_missing", Reason = "The provider referenced by the chat route is missing or deleted.", Action = "Rebind the chat route to an existing provider in the model center." };
+            secretItem = secretItem with { Status = "unavailable", ReasonCode = "secret_unchecked_provider_missing", Reason = "The provider is missing, so the key was not checked.", Action = providerItem.Action };
         }
         else if (!provider.Enabled)
         {
             providerItem = providerItem with
             {
                 Status = "blocked",
-                Reason = $"chat provider '{provider.DisplayName}' 已停用。",
-                Action = "在模型中心启用该 provider（模型中心 → provider 列表 → 启用）。",
+                ReasonCode = "provider_disabled",
+                Reason = $"Chat provider '{provider.DisplayName}' is disabled.",
+                Action = "Enable the provider in the model center (provider list, then Enable).",
                 Data = ProviderData()
             };
-            secretItem = secretItem with { Status = "unavailable", Reason = "provider 已停用，密钥状态未检查。", Action = providerItem.Action };
+            secretItem = secretItem with { Status = "unavailable", ReasonCode = "secret_unchecked_provider_disabled", Reason = "The provider is disabled, so the key was not checked.", Action = providerItem.Action, Data = ProviderData() };
         }
         else if (providerVersion is null)
         {
             providerItem = providerItem with
             {
                 Status = "blocked",
-                Reason = "provider 当前版本缺失（配置内容不可用）。",
-                Action = "在模型中心重新保存 provider 配置（base_url/model），生成新的版本。",
+                ReasonCode = "provider_version_missing",
+                Reason = "The current provider version is missing (its configuration content is unavailable).",
+                Action = "Save the provider configuration (base_url/model) again in the model center to create a new version.",
                 Data = ProviderData()
             };
-            secretItem = secretItem with { Status = "unavailable", Reason = "provider 版本缺失，密钥状态未检查。", Action = providerItem.Action };
+            secretItem = secretItem with { Status = "unavailable", ReasonCode = "secret_unchecked_provider_version", Reason = "The provider version is missing, so the key was not checked.", Action = providerItem.Action, Data = ProviderData() };
         }
         else if (string.IsNullOrWhiteSpace(baseUrl))
         {
             providerItem = providerItem with
             {
                 Status = "blocked",
-                Reason = "provider 配置缺少 base_url。",
-                Action = "在模型中心为 provider 补充 base_url（OpenAI 兼容端点通常以 /v1 结尾）。",
+                ReasonCode = "provider_base_url_missing",
+                Reason = "The provider configuration has no base_url.",
+                Action = "Add a base_url for the provider in the model center (OpenAI-compatible endpoints usually end with /v1).",
                 Data = ProviderData()
             };
-            secretItem = secretItem with { Status = "unavailable", Reason = "base_url 缺失，密钥状态未检查。", Action = providerItem.Action };
+            secretItem = secretItem with { Status = "unavailable", ReasonCode = "secret_unchecked_base_url", Reason = "base_url is missing, so the key was not checked.", Action = providerItem.Action, Data = ProviderData() };
         }
         else
         {
             providerItem = providerItem with
             {
                 Status = "ready",
-                Reason = $"chat provider '{provider.DisplayName}' 已启用（driver {provider.Driver}，model {model ?? provider.Driver}）。",
+                ReasonCode = "provider_ready",
+                Reason = $"Chat provider '{provider.DisplayName}' is enabled (driver {provider.Driver}, model {model ?? provider.Driver}).",
                 Data = ProviderData()
             };
 
@@ -413,9 +438,10 @@ public sealed class ReadinessService
                 secretItem = secretItem with
                 {
                     Status = "blocked",
-                    Reason = "provider 尚未录入 API key。",
-                    Action = $"在模型中心为 provider {provider.DisplayName} 录入 API key（模型中心 → provider → 编辑 → 保存 API key），或运行 e2e 脚本自动录入。",
-                    Data = new { provider_instance_id = provider.Id, has_key = false }
+                    ReasonCode = "secret_missing",
+                    Reason = "The provider has no API key yet.",
+                    Action = $"Enter an API key for provider {provider.DisplayName} in the model center (provider, Edit, save the API key), or let the e2e script enter it.",
+                    Data = new { provider_instance_id = provider.Id, provider_display_name = provider.DisplayName, has_key = false }
                 };
             }
             else
@@ -424,13 +450,14 @@ public sealed class ReadinessService
                 secretItem = secretItem with
                 {
                     Status = string.IsNullOrWhiteSpace(key) ? "blocked" : "ready",
+                    ReasonCode = string.IsNullOrWhiteSpace(key) ? "secret_unreadable" : "secret_ready",
                     Reason = string.IsNullOrWhiteSpace(key)
-                        ? "provider 已配置密钥引用，但 SecretStore 中读不到有效 key。"
-                        : "provider API key 已存入 SecretStore。",
+                        ? "The provider has a key reference, but SecretStore holds no valid key."
+                        : "The provider API key is stored in SecretStore.",
                     Action = string.IsNullOrWhiteSpace(key)
-                        ? $"在模型中心为 provider {provider.DisplayName} 重新录入 API key。"
+                        ? $"Enter the API key for provider {provider.DisplayName} again in the model center."
                         : null,
-                    Data = new { provider_instance_id = provider.Id, has_key = !string.IsNullOrWhiteSpace(key) }
+                    Data = new { provider_instance_id = provider.Id, provider_display_name = provider.DisplayName, has_key = !string.IsNullOrWhiteSpace(key) }
                 };
             }
         }
@@ -472,12 +499,13 @@ public sealed class ReadinessService
             // runs it — a bare "build the tools project" left a developer guessing
             // which of the three symptoms (zero tools / TOOL_MANIFEST_UNAVAILABLE /
             // process_exit) they were looking at.
-            const string action = "运行 npm run dev:tools（或 dotnet build TinadecTools/TinadecTools）；npm run dev 已自动先构建工具子进程。也可在 TinadecTools:ExecutablePath 指定已构建的可执行文件。";
+            const string action = "Run npm run dev:tools (or dotnet build TinadecTools/TinadecTools); npm run dev builds the tool process first. TinadecTools:ExecutablePath can also name a built executable.";
             toolProvider = new ReadinessItem
             {
                 Id = "tool_provider",
                 Status = "unavailable",
-                Reason = "未找到 TinadecTools 可执行文件（TinadecTools/bin/{Debug|Release}/net10.0/ 下不存在）。",
+                ReasonCode = "tools_not_built",
+                Reason = "The TinadecTools executable was not found (nothing under TinadecTools/bin/{Debug|Release}/net10.0/).",
                 Action = action,
                 CheckedAt = checkedAt
             };
@@ -485,7 +513,8 @@ public sealed class ReadinessService
             {
                 Id = "manifest_hash",
                 Status = "unavailable",
-                Reason = "TinadecTools 不可用，无法获取工具 manifest hash。",
+                ReasonCode = "manifest_unavailable",
+                Reason = "TinadecTools is unavailable, so the tool manifest hash is unknown.",
                 Action = action,
                 CheckedAt = checkedAt
             };
@@ -503,7 +532,8 @@ public sealed class ReadinessService
                 {
                     Id = "tool_provider",
                     Status = "ready",
-                    Reason = $"TinadecTools 进程可用，manifest 声明 {manifest.Tools.Count} 个工具。",
+                    ReasonCode = "tools_ready",
+                    Reason = $"The TinadecTools process is available; its manifest declares {manifest.Tools.Count} tools.",
                     CheckedAt = checkedAt,
                     Data = new { workspace_root = workspaceRoot, tool_count = manifest.Tools.Count, protocol_version = manifest.ProtocolVersion }
                 };
@@ -511,29 +541,33 @@ public sealed class ReadinessService
                 {
                     Id = "manifest_hash",
                     Status = string.IsNullOrWhiteSpace(manifest.ManifestHash) ? "degraded" : "ready",
+                    ReasonCode = string.IsNullOrWhiteSpace(manifest.ManifestHash) ? "manifest_hash_missing" : "manifest_ready",
                     Reason = string.IsNullOrWhiteSpace(manifest.ManifestHash)
-                        ? "TinadecTools manifest 未携带 manifest_hash；冻结与失配检测将退化。"
-                        : "工具 manifest hash 已取得。",
+                        ? "The TinadecTools manifest carries no manifest_hash; freezing and mismatch detection degrade."
+                        : "The tool manifest hash was obtained.",
                     CheckedAt = checkedAt,
                     Data = string.IsNullOrWhiteSpace(manifest.ManifestHash) ? null : new { manifest_hash = manifest.ManifestHash }
                 };
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                var reason = $"TinadecTools manifest 握手失败：{ex.GetType().Name}: {ex.Message}";
+                var error = $"{ex.GetType().Name}: {ex.Message}";
                 toolProvider = new ReadinessItem
                 {
                     Id = "tool_provider",
                     Status = "unavailable",
-                    Reason = reason,
-                    Action = "dotnet build TinadecTools/TinadecTools 后重启 Core；若反复失败检查 TinadecTools:DefaultWorkspaceRoot。",
-                    CheckedAt = checkedAt
+                    ReasonCode = "tools_handshake_failed",
+                    Reason = $"TinadecTools manifest handshake failed: {error}",
+                    Action = "Build TinadecTools/TinadecTools and restart Core; if it keeps failing, check TinadecTools:DefaultWorkspaceRoot.",
+                    CheckedAt = checkedAt,
+                    Data = new { error }
                 };
                 manifestHash = new ReadinessItem
                 {
                     Id = "manifest_hash",
                     Status = "unavailable",
-                    Reason = "工具进程不可用，manifest hash 未知。",
+                    ReasonCode = "manifest_unavailable",
+                    Reason = "The tool process is unavailable, so the manifest hash is unknown.",
                     Action = toolProvider.Action,
                     CheckedAt = checkedAt
                 };
