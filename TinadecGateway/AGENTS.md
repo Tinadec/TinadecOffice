@@ -146,6 +146,7 @@ Gateway 是北向无状态门面。用户 Code 工具执行入口代理 Core `/a
 - Gateway 不存储任何业务状态
 - Gateway 不执行文件、Git、Shell、PTY 或 MCP 操作
 - Gateway 只代理请求，不实现业务逻辑
+- Gateway 不产出界面文案：自己的报错只给 `code`（措辞在 `apps/desktop/src/locales` 的 `errors.code.*`）；转发时不改写 Core 的 code、原因码和事实字段（`reason_code`、`*_data` 等）
 - 当前 v1 工具执行请求代理到 Core，由 Core 调用 Tool Provider（本机为 TinadecTools 子进程）
 - MCP 连接管理由 Tool Provider 负责
 

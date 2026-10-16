@@ -1,9 +1,9 @@
 # WEB APP KNOWLEDGE
 
-**Last Updated:** 2026-08-25
-**Last Updated By:** openai/gpt-5.6
-**Last Verified Commit:** daf2648
-**Branch:** main
+**Last Updated:** 2026-10-16
+**Last Updated By:** webShim 的界面文字只走 desktop 翻译键（`web.*`）。
+**Last Verified Commit:** f5a45a5
+**Branch:** fix/i18n-remaining-server-text
 
 ## OVERVIEW
 Browser client that reuses the Electron desktop renderer verbatim. This package contains
@@ -36,6 +36,7 @@ apps/web/
   `@/main`, because desktop modules read `window.tinadec.gatewayUrl()` at module top level
   (`apps/desktop/src/api.ts:943`).
 - Do not copy or move desktop source files into this package. Alias only.
+- Text a person can see in `webShim.ts` (refusal reasons and the like) comes from the desktop locale keys (`web.*`), read at call time so it follows the interface language; never literal Chinese or English.
 
 ## WHERE TO LOOK
 | Task | Location | Notes |

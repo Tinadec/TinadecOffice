@@ -39,7 +39,7 @@
 
 `retry`、`reload`、`open_settings`、`open_storage_settings`、`open_tool_settings`、`unregister_workspace`、`choose_folder`。
 
-客户端只认识上表；未知动作被忽略，不能注入未预期的行为。服务端不下发面向用户的文案。
+客户端只认识上表；未知动作被忽略，不能注入未预期的行为。服务端不下发面向用户的文案。错误以外给人看的说明（就绪原因、安装阻断、审批摘要等）同样带稳定码和事实字段，英文句子只作诊断，字段清单见 `TinadecCore/AGENTS.md` 的 ERROR ENVELOPE。
 
 ## 响应形状
 
