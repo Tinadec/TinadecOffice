@@ -204,9 +204,9 @@ function onExecuteTool(tool: ToolDescriptorDto) {
           <Layers3 :size="15" />
           <strong>{{ t('orchestrationPanel.run') }}</strong>
         </div>
-        <p>{{ snapshot.run?.summary }}</p>
         <div class="orchestration-tags">
-          <span>{{ runStatusLabel(snapshot.run?.status) }}</span>
+          <!-- Core's run summary is its English narration of the last transition: diagnostic, so a tooltip. -->
+          <span :title="snapshot.run?.summary || undefined">{{ runStatusLabel(snapshot.run?.status) }}</span>
           <span>{{ t('orchestrationPanel.nodes', snapshot.nodes.length) }}</span>
           <span>{{ t('orchestrationPanel.assignments', snapshot.assignments.length) }}</span>
         </div>

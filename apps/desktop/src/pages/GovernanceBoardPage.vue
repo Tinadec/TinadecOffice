@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { approvalSummary } from '@/userToolAction'
 import { ShieldCheck, Gavel, Eye } from '@lucide/vue'
 import { api, type ApprovalDto, type PermissionRequestDto, type SupervisionFindingDto } from '@/api'
 import { useUserActionStore } from '@/stores/userAction'
@@ -167,7 +168,7 @@ onUnmounted(() => {
         <h2><Gavel class="size-4" /> {{ t('governance.actionApprovals') }} ({{ openApprovals.length }})</h2>
         <p v-if="!openApprovals.length" class="approval-board__empty">{{ t('common.empty') }}</p>
         <article v-for="a in openApprovals" :key="a.id" class="approval-card">
-          <div class="approval-card__title">{{ a.summary }}</div>
+          <div class="approval-card__title">{{ approvalSummary(a, { t, te }) }}</div>
           <div class="approval-card__meta font-mono text-xs">{{ a.command ?? kindLabel(a.kind) }}</div>
           <UserActionStatusBadge v-if="a.governance_status" :status="a.governance_status" />
           <div class="approval-card__actions">

@@ -1770,10 +1770,19 @@ function referenceKindLabel(kind: string): string {
     route: t('settings.centerRoutes'),
     agent_default: t('settings.referenceAgentDefault'),
     mode_override: t('settings.referenceModeOverride'),
-    meeting_override: t('settings.referenceMeetingOverride'),
+    session_override: t('settings.referenceMeetingOverride'),
     recent_invocation: t('settings.referenceRecentInvocation'),
   }
   return map[kind] ?? kind
+}
+
+/** A reference's detail in words: a route's candidate position, or the referencing record's status (a recent invocation's detail is an id). */
+function referenceDetailLabel(reference: ModelReferenceDto): string | null {
+  const detail = reference.detail
+  if (!detail || reference.reference_kind === 'recent_invocation') return detail ?? null
+  const candidate = /^candidate:(\d+)$/.exec(detail)
+  if (candidate) return t('settings.referenceCandidate', { position: candidate[1] })
+  return te(`agentCenter.filter.${detail}`) ? t(`agentCenter.filter.${detail}`) : detail
 }
 
 async function saveProvider() {
@@ -2425,7 +2434,7 @@ import '../settings/settings.css'
                       </div>
                       <div v-if="modelReferenceRows[`${provider.id}:${model.model_id}`]" class="model-reference-rows">
                         <span v-for="(reference, index) in modelReferenceRows[`${provider.id}:${model.model_id}`]" :key="index">
-                          {{ referenceKindLabel(reference.reference_kind) }}<template v-if="reference.detail"> · {{ reference.detail }}</template>
+                          {{ referenceKindLabel(reference.reference_kind) }}<template v-if="reference.detail"> · {{ referenceDetailLabel(reference) }}</template>
                         </span>
                         <span v-if="modelReferenceRows[`${provider.id}:${model.model_id}`].length === 0" class="quiet">{{ t('settings.noModelReferences') }}</span>
                       </div>

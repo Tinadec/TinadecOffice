@@ -4,6 +4,7 @@ import {
   userToolActionIdempotencyKey,
   userToolActionApprovalStatus,
   userToolActionNeedsDecision,
+  approvalSummary,
   userToolActionDetail,
   userToolActionReason,
   userToolActionStatusMessage,
@@ -132,6 +133,12 @@ describe('user tool action projection', () => {
     expect(userToolActionNeedsDecision('snapshot_required')).toBe(false)
     const words = createI18n({ legacy: false, locale: 'en', messages: { en } }).global
     expect(userToolActionStatusMessage(action({ status: 'outcome_unknown' }), 'Save file', words)).toContain('unknown')
+  })
+
+  it('words an approval summary only when Core marked it as one of its fixed sentences', () => {
+    const words = createI18n({ legacy: false, locale: 'en', messages: { en } }).global
+    expect(approvalSummary({ summary: "User requested 'write_file'.", summary_code: 'user_requested', tool_id: 'write_file' }, words)).toBe('You asked to run write_file.')
+    expect(approvalSummary({ summary: 'write_file → notes.md', tool_id: 'write_file' }, words)).toBe('write_file → notes.md')
   })
 
   it('words a stopped action from its category and keeps Core\'s message as the detail', () => {

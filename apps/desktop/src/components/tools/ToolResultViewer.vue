@@ -3,13 +3,14 @@ import { computed, ref, watch } from 'vue'
 import { Check, ChevronDown, ChevronRight, Copy, Folder } from '@lucide/vue'
 import type { ToolExecutionTimelineItemDto } from '@/api'
 import { useI18n } from 'vue-i18n'
+import { toolExecutionSummary } from '@/lib/toolExecutionText'
 import { useStatusLabels } from '@/lib/statusLabels'
 
 const props = defineProps<{
   toolExecution: ToolExecutionTimelineItemDto
   defaultExpanded?: boolean
 }>()
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { statusLabel } = useStatusLabels()
 
 const expanded = ref(props.defaultExpanded ?? false)
@@ -82,8 +83,8 @@ function toggle() {
 
     <div v-if="expanded" class="tool-result-body">
       <div class="tool-result-default">
-        <div v-if="toolExecution.summary" class="tool-result-summary">
-          {{ toolExecution.summary }}
+        <div v-if="toolExecution.summary" class="tool-result-summary" :title="toolExecution.summary">
+          {{ toolExecutionSummary(toolExecution, { t, te }) }}
         </div>
         <div v-if="evidenceLines.length > 0" class="tool-result-evidence">
           <div v-for="(line, idx) in evidenceLines" :key="idx" class="tool-result-evidence-row">

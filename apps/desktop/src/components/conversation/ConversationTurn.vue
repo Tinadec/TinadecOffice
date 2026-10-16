@@ -2,6 +2,7 @@
 import { RotateCcw } from '@lucide/vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { approvalSummary } from '@/userToolAction'
 import type { ApprovalDto } from '@/api'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
 import { groupRun, isCompactAnswer, type GroupedRun } from '@/lib/conversation/grouping'
@@ -29,7 +30,7 @@ const props = defineProps<{
   last?: boolean
 }>()
 const emit = defineEmits<{ edit: [payload: { id: string; content: string }] }>()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 interface RunView {
   id: string
@@ -61,7 +62,7 @@ function placeholderEntry(approval: ApprovalDto): ToolEntry {
     kind: 'tool', id: `approval:${approval.id}`, seq: 0, taskId: null, agentInstanceId: null,
     toolId: approval.tool_id ?? 'tool', status: 'awaiting_approval', risk: approval.risk ?? null,
     requiresApproval: true, mutatesWorkspace: false, approvalId: approval.id,
-    argumentsSummary: approval.summary, resourcePath: approval.resource_path ?? null,
+    argumentsSummary: approvalSummary(approval, { t, te }), resourcePath: approval.resource_path ?? null,
     command: approval.command ?? null, cwd: approval.cwd ?? null, query: null,
     toolSuccess: null, errorCategory: null, exitCode: null, timedOut: false,
     output: [], outputPartial: '', outputDropped: 0, terminalSessionId: null, changedPaths: [], startedAt: approval.created_at, endedAt: null,

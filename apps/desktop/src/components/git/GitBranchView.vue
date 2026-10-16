@@ -17,6 +17,7 @@ import {
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { approvalSummary } from '@/userToolAction'
 import { useStatusLabels } from '@/lib/statusLabels'
 import type { ApprovalDto } from '../../api'
 import { UiBadge, UiButton, UiInput, UiIslandCard, UiScrollArea } from '../ui'
@@ -77,7 +78,7 @@ const emit = defineEmits<{
   'execute-worktree': []
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { approvalStatusLabel } = useStatusLabels()
 
 // ---- State ----
@@ -382,7 +383,7 @@ defineExpose({ refresh: refreshBranches })
       <div v-if="fetchApproval" class="git-branch-checkout-approval">
         <div class="git-branch-checkout-approval-info">
           <ShieldCheck :size="13" />
-          <span>{{ fetchApproval.summary }}</span>
+          <span>{{ approvalSummary(fetchApproval, { t, te }) }}</span>
           <UiBadge :variant="fetchApproval.status === 'approved' ? 'default' : 'secondary'">
             {{ approvalStatusLabel(fetchApproval.status) }}
           </UiBadge>
@@ -411,7 +412,7 @@ defineExpose({ refresh: refreshBranches })
       <div v-if="checkoutApproval" class="git-branch-checkout-approval">
         <div class="git-branch-checkout-approval-info">
           <ShieldCheck :size="13" />
-          <span>{{ checkoutApproval.summary }}</span>
+          <span>{{ approvalSummary(checkoutApproval, { t, te }) }}</span>
           <UiBadge :variant="checkoutApproval.status === 'approved' ? 'default' : 'secondary'">
             {{ approvalStatusLabel(checkoutApproval.status) }}
           </UiBadge>
@@ -440,7 +441,7 @@ defineExpose({ refresh: refreshBranches })
       <div v-if="mergeApproval" class="git-branch-checkout-approval">
         <div class="git-branch-checkout-approval-info">
           <ShieldCheck :size="13" />
-          <span>{{ mergeApproval.summary }}</span>
+          <span>{{ approvalSummary(mergeApproval, { t, te }) }}</span>
           <UiBadge :variant="mergeApproval.status === 'approved' ? 'default' : 'secondary'">
             {{ approvalStatusLabel(mergeApproval.status) }}
           </UiBadge>
@@ -469,7 +470,7 @@ defineExpose({ refresh: refreshBranches })
       <div v-if="rebaseApproval" class="git-branch-checkout-approval">
         <div class="git-branch-checkout-approval-info">
           <ShieldCheck :size="13" />
-          <span>{{ rebaseApproval.summary }}</span>
+          <span>{{ approvalSummary(rebaseApproval, { t, te }) }}</span>
           <UiBadge :variant="rebaseApproval.status === 'approved' ? 'default' : 'secondary'">
             {{ approvalStatusLabel(rebaseApproval.status) }}
           </UiBadge>
@@ -498,7 +499,7 @@ defineExpose({ refresh: refreshBranches })
       <div v-if="deleteBranchApproval" class="git-branch-checkout-approval">
         <div class="git-branch-checkout-approval-info">
           <ShieldCheck :size="13" />
-          <span>{{ deleteBranchApproval.summary }}</span>
+          <span>{{ approvalSummary(deleteBranchApproval, { t, te }) }}</span>
           <UiBadge :variant="deleteBranchApproval.status === 'approved' ? 'default' : 'secondary'">
             {{ approvalStatusLabel(deleteBranchApproval.status) }}
           </UiBadge>
@@ -527,7 +528,7 @@ defineExpose({ refresh: refreshBranches })
       <div v-if="renameBranchApproval" class="git-branch-checkout-approval">
         <div class="git-branch-checkout-approval-info">
           <ShieldCheck :size="13" />
-          <span>{{ renameBranchApproval.summary }}</span>
+          <span>{{ approvalSummary(renameBranchApproval, { t, te }) }}</span>
           <UiBadge :variant="renameBranchApproval.status === 'approved' ? 'default' : 'secondary'">
             {{ approvalStatusLabel(renameBranchApproval.status) }}
           </UiBadge>
@@ -566,7 +567,7 @@ defineExpose({ refresh: refreshBranches })
       <div v-if="worktreeApproval" class="git-branch-checkout-approval">
         <div class="git-branch-checkout-approval-info">
           <ShieldCheck :size="14" />
-          <span>{{ worktreeApproval.summary }}</span>
+          <span>{{ approvalSummary(worktreeApproval, { t, te }) }}</span>
           <UiBadge :variant="worktreeApproval.status === 'approved' ? 'default' : 'secondary'">{{ approvalStatusLabel(worktreeApproval.status) }}</UiBadge>
         </div>
         <div v-if="canDecideWorktreeApproval" class="git-approval-decide">

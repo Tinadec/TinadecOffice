@@ -14,6 +14,7 @@ import type { ToolExecutionTimelineItemDto } from '@/api'
 import { toolIconOf } from '@/lib/toolPresentation'
 import ToolInvocationCard from './ToolInvocationCard.vue'
 import { useI18n } from 'vue-i18n'
+import { toolExecutionSummary } from '@/lib/toolExecutionText'
 import { useStatusLabels } from '@/lib/statusLabels'
 
 const props = defineProps<{
@@ -32,7 +33,7 @@ const statusFilter = ref<StatusFilter>('all')
 const sortOrder = ref<SortOrder>('desc')
 const expandedIds = ref<Set<string>>(new Set())
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const { statusLabel, riskLabel } = useStatusLabels()
 
 const filterOptions: Array<{ key: StatusFilter; icon: typeof ListFilter }> = [
@@ -221,12 +222,12 @@ function onViewDetails(exec: ToolExecutionTimelineItemDto) {
                 </span>
                 <span class="tool-timeline-duration">{{ formatDuration(execution.duration_ms) }}</span>
                 <span class="tool-timeline-risk">{{ riskLabel(execution.risk) }}</span>
-                <span class="tool-timeline-layer">{{ execution.provider_layer }}</span>
+                <span class="tool-timeline-layer">{{ te(`orchestrationPanel.layer.${execution.provider_layer}`) ? t(`orchestrationPanel.layer.${execution.provider_layer}`) : execution.provider_layer }}</span>
                 <span v-if="execution.approval_id" class="tool-timeline-approval-id">
                   {{ t('toolPanel.approvalId', { id: execution.approval_id }) }}
                 </span>
               </div>
-              <p v-if="execution.summary" class="tool-timeline-summary-text">{{ execution.summary }}</p>
+              <p v-if="execution.summary" class="tool-timeline-summary-text" :title="execution.summary">{{ toolExecutionSummary(execution, { t, te }) }}</p>
               <div v-if="execution.evidence.length > 0" class="tool-timeline-evidence">
                 <span
                   v-for="(item, idx) in execution.evidence.slice(0, 3)"

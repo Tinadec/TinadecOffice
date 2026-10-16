@@ -2,6 +2,7 @@
 import { computed, inject, onMounted, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue'
 import { Bot, CheckCircle2, Circle, FileCode2, GitBranch, ListTodo, MessageSquare, ShieldCheck, Target, Wrench } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { approvalSummary } from '@/userToolAction'
 import type { SpatialObject } from '@/lib/spatialObjects'
 import { homeController as c } from '@/controllers/HomeController'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
@@ -140,7 +141,7 @@ async function readFile(path: string) {
           @update:shell-command="c.shellCommand.value = $event" />
         <template v-else>
           <p v-if="!approvals.length" class="space-muted">{{ t('space.noApprovals') }}</p>
-          <div v-for="a in approvals" :key="a.id" class="space-todo-row"><ShieldCheck :size="18" /><div>{{ a.summary }}<small>{{ status(a.status) }}</small></div></div>
+          <div v-for="a in approvals" :key="a.id" class="space-todo-row"><ShieldCheck :size="18" /><div>{{ approvalSummary(a, { t, te }) }}<small>{{ status(a.status) }}</small></div></div>
         </template>
       </template>
       <ToolCallCard v-else-if="object.kind === 'tool' && object.tool && !preview" :tool-call="object.tool" :run-id="runId" @approve="c.decideApprovalById($event, 'approved')" @reject="c.decideApprovalById($event, 'rejected')" />

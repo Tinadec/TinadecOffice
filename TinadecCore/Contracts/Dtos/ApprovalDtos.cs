@@ -70,6 +70,14 @@ public sealed class ApprovalResponseDto
     public string Summary { get; init; } = string.Empty;
 
     /// <summary>
+    /// Set when <see cref="Summary"/> is one of Core's fixed English sentences rather than a projected fact:
+    /// <c>user_requested</c>, <c>retry_after_unknown</c>, <c>permission_request</c>. Clients word it with
+    /// <see cref="ToolId"/>; Summary stays the diagnostic text.
+    /// </summary>
+    [JsonPropertyName("summary_code")]
+    public string? SummaryCode { get; init; }
+
+    /// <summary>
     /// Redacted, bounded projection of the tool call parameters — the payload a
     /// reviewer needs to decide. Never the raw parameters: file bodies and MCP
     /// payloads come back as a size plus hash, and secret-shaped keys are dropped.

@@ -728,7 +728,8 @@ public sealed class ControlPlaneService
         if (run is { } runIdValue) q = q.Where(x => x.RunId == runIdValue);
         var rows = await q.ToListAsync(ct);
         rows.Sort((a, b) => b.CreatedAt.CompareTo(a.CreatedAt));
-        var result = rows.Select(ToResponse).Cast<object>().ToList();
+        var retries = await RetryExecutionIdsAsync(db, rows, ct);
+        var result = rows.Select(row => ToResponse(row, retries)).Cast<object>().ToList();
         if (string.IsNullOrWhiteSpace(status) || string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase))
         {
             var permissions = await _authorization.ListPermissionRequestsAsync(null, run, null, ct).ConfigureAwait(false);
@@ -827,7 +828,7 @@ public sealed class ControlPlaneService
     {
         await using var db = await _lifecycle.CreateDbContextAsync(ct);
         var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
-        if (row is not null) return Results.Ok(ToResponse(row));
+        if (row is not null) return Results.Ok(ToResponse(row, await RetryExecutionIdsAsync(db, [row], ct)));
         var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
         if (permission is null) return Results.NotFound();
         if (permission.Request.Status is not (PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser))
@@ -1096,14 +1097,26 @@ public sealed class ControlPlaneService
         return new RunScopeOutcome(row.Id, grant.Id, released);
     }
 
-    private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row)
+    /// <summary>Executions behind these approvals that retry an unknown outcome; their approval rows carry a fixed retry sentence.</summary>
+    private static async Task<HashSet<Guid>> RetryExecutionIdsAsync(LifecycleDbContext db, IReadOnlyCollection<ApprovalRequestRecord> rows, CancellationToken ct)
+    {
+        var executionIds = rows.Where(row => row.ExecutionId is not null).Select(row => row.ExecutionId!.Value).Distinct().ToList();
+        if (executionIds.Count == 0) return [];
+        return (await db.ToolExecutions.AsNoTracking().Where(x => executionIds.Contains(x.Id) && x.Attempt > 1)
+            .Select(x => x.Id).ToListAsync(ct)).ToHashSet();
+    }
+
+    private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row, IReadOnlySet<Guid> retryExecutions)
     {
         // Rows minted before the evidence digest landed decode to nothing and keep
         // showing only their stored summary — the projection never invents facts.
         var hasEvidence = ApprovalEvidenceProjector.TryDecode(row.ArgumentsDigest, out var evidence);
         return new ApprovalResponseDto
         {
-            Id = row.Id, ProjectId = row.ProjectId, SessionId = row.SessionId, RunId = row.RunId, TaskId = row.TaskId, AgentInstanceId = row.AgentInstanceId, ExecutionId = row.ExecutionId, Kind = row.Kind, ToolId = row.ToolId, Risk = row.Risk, Summary = row.Summary, Arguments = hasEvidence ? evidence.Arguments : string.Empty, Command = evidence.Command, Cwd = evidence.WorkingDirectory, ResourcePath = evidence.ResourcePath, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason, DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt
+            Id = row.Id, ProjectId = row.ProjectId, SessionId = row.SessionId, RunId = row.RunId, TaskId = row.TaskId, AgentInstanceId = row.AgentInstanceId, ExecutionId = row.ExecutionId, Kind = row.Kind, ToolId = row.ToolId, Risk = row.Risk, Summary = row.Summary,
+            // The fixed sentences two mint sites store (a user action's approval, a retry after an unknown outcome).
+            SummaryCode = row.Kind == "user_tool" ? "user_requested" : row.ExecutionId is { } execution && retryExecutions.Contains(execution) ? "retry_after_unknown" : null,
+            Arguments = hasEvidence ? evidence.Arguments : string.Empty, Command = evidence.Command, Cwd = evidence.WorkingDirectory, ResourcePath = evidence.ResourcePath, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason, DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt
         };
     }
 
@@ -1152,6 +1165,7 @@ public sealed class ControlPlaneService
             ToolId = resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase) ? resource[7..] : resource,
             Risk = value.Risk,
             Summary = evidence?.Summary ?? "Tool permission request requires authorization.",
+            SummaryCode = evidence is null ? "permission_request" : null,
             Arguments = evidence?.Arguments ?? JsonSerializer.Serialize(new { capability = value.Claim.Capability, action = value.Claim.Action, resource }),
             Command = evidence?.Command,
             Cwd = evidence?.WorkingDirectory,

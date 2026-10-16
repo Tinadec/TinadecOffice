@@ -82,6 +82,12 @@ export function userToolActionReason(action: Pick<UserToolActionDto, 'error_cate
     ?? (action.message?.trim() || undefined)
 }
 
+/** An approval's summary in the interface language when it is one of Core's fixed sentences; the projected fact otherwise. */
+export function approvalSummary(approval: Pick<ApprovalDto, 'summary' | 'summary_code' | 'tool_id'>, words: ErrorWords): string {
+  const key = `approval.summaryCode.${approval.summary_code}`
+  return approval.summary_code && words.te(key) ? words.t(key, { tool: approval.tool_id ?? '' }) : approval.summary
+}
+
 /** Core's own message, for a details line or tooltip, when the reason shown is a translation of it. */
 export function userToolActionDetail(action: Pick<UserToolActionDto, 'error_category' | 'message'>, words: ErrorWords): string | undefined {
   const message = action.message?.trim() || undefined

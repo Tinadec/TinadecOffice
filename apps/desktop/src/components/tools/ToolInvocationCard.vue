@@ -74,12 +74,10 @@ const formattedTime = computed(() => {
   }
 })
 
-const paramHints = computed(() => {
-  const summary = props.toolExecution.summary
-  if (!summary) return []
-  const parts = summary.split(/[;,]/).map((s) => s.trim()).filter(Boolean).slice(0, 4)
-  return parts
-})
+/** The call's own facts (command, target, search term), not Core's English narration of its last event. */
+const paramHints = computed(() =>
+  [props.toolExecution.command, props.toolExecution.resource_path ?? props.toolExecution.arguments_summary, props.toolExecution.query]
+    .filter((value): value is string => Boolean(value)))
 
 function toggle() {
   expanded.value = !expanded.value

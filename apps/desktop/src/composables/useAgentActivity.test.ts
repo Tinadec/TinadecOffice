@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // api.ts reads `window.tinadec?.gatewayUrl?.()` at module top level, so this suite
 // needs the same DOM-ish global as api.test.ts.
+import { errorCategoryMessage } from '@/lib/apiError'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import i18n from '@/i18n'
 vi.mock('@/lib/scopedEventSource', () => ({ ScopedEventSource: class { constructor(url: string) { return new EventSource(url) } } }))
@@ -191,8 +192,9 @@ describe('useAgentActivity event wiring', () => {
     const step = harness.thinkingSteps.value.find((item) => item.type === 'tool')
     expect(step, 'a failed dispatch must appear in the reasoning trail').toBeDefined()
     expect(step!.description).toContain('write_file')
-    // The category is what the model acted on, so it must reach the user too.
-    expect(step!.description).toContain('not_approved')
+    // The category is what the model acted on, so it must reach the user too: in words, with the code in the details.
+    expect(step!.description).toContain(errorCategoryMessage('not_approved')!)
+    expect(step!.details).toMatchObject({ category: 'not_approved' })
     expect(harness.progressEvents.value.some((event) => event.type === 'tool.execution.failed')).toBe(true)
   })
 

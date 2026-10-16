@@ -142,10 +142,10 @@ const hasActivity = computed(
           <div class="agent-banner-title-row">
             <strong>{{ activity.activeAgentName ?? t('activity.agentFallback') }}</strong>
             <span v-if="activity.activeAgentRole" class="agent-banner-role">{{ activity.activeAgentRole }}</span>
-            <span class="agent-banner-status-tag">{{ statusConfig.label }}</span>
+            <!-- Core's run summary is its English narration of the last transition: diagnostic, so a tooltip. -->
+            <span class="agent-banner-status-tag" :title="activity.runSummary ?? undefined">{{ statusConfig.label }}</span>
           </div>
           <div class="agent-banner-meta">
-            <span v-if="activity.runSummary" class="agent-banner-summary">{{ activity.runSummary }}</span>
             <span v-if="startedTimeLabel" class="agent-banner-time">
               <Clock :size="11" />
               {{ startedTimeLabel }}
@@ -372,15 +372,6 @@ const hasActivity = computed(
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.agent-banner-summary {
-  overflow: hidden;
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 320px;
 }
 
 .agent-banner-time {

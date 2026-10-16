@@ -29,6 +29,7 @@ import {
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { approvalSummary } from '@/userToolAction'
 import { useStatusLabels } from '@/lib/statusLabels'
 import { UiSelectField } from '@/components/ui'
 import type { ApprovalDto } from '../../api'
@@ -830,7 +831,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
         <div v-if="resolveConflictApproval" class="git-conflict-approval">
           <div class="git-conflict-approval-info">
             <ShieldCheck :size="13" />
-            <span>{{ resolveConflictApproval.summary }}</span>
+            <span>{{ approvalSummary(resolveConflictApproval, { t, te }) }}</span>
             <span class="git-conflict-approval-status">{{ approvalStatusLabel(resolveConflictApproval.status) }}</span>
           </div>
           <div class="git-conflict-approval-actions">
@@ -1014,7 +1015,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
         <div v-if="discardApproval" class="git-discard-approval">
           <div class="git-discard-approval-info">
             <ShieldCheck :size="13" />
-            <span>{{ discardApproval.summary }}</span>
+            <span>{{ approvalSummary(discardApproval, { t, te }) }}</span>
             <span class="git-discard-approval-status">{{ approvalStatusLabel(discardApproval.status) }}</span>
           </div>
           <div class="git-discard-approval-actions">

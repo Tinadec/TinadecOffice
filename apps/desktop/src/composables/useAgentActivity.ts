@@ -613,7 +613,7 @@ export function useAgentActivity(
     } else {
       // failed / outcome_unknown: name the category, because "the tool failed" gives
       // a reader nothing to act on and the category is what the model acted on.
-      const label = category ? t('activity.toolFailedWith', { tool: toolId, category }) : t('activity.toolFailed', { tool: toolId })
+      const label = category ? t('activity.toolFailedWith', { tool: toolId, category: errorCategoryMessage(category) ?? category }) : t('activity.toolFailed', { tool: toolId })
       thinkingSteps.value = [
         ...thinkingSteps.value,
         {

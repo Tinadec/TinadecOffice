@@ -311,6 +311,8 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         var actionDetail = await client.GetFromJsonAsync<JsonElement>($"/api/v1/approvals/{actionApprovalId}");
         Assert.Equal("user_tool", actionDetail.GetProperty("kind").GetString());
         Assert.Equal("write_file", actionDetail.GetProperty("tool_id").GetString());
+        // The stored summary is a fixed sentence, so it is named for clients that word it themselves.
+        Assert.Equal("user_requested", actionDetail.GetProperty("summary_code").GetString());
         Assert.EndsWith("user-action.txt", actionDetail.GetProperty("resource_path").GetString(), StringComparison.Ordinal);
         var actionArguments = actionDetail.GetProperty("arguments").GetString() ?? string.Empty;
         Assert.Contains("filepath", actionArguments, StringComparison.Ordinal);

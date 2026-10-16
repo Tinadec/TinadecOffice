@@ -247,10 +247,10 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
             <div class="agent-panel-status-info">
               <div class="agent-panel-status-title-row">
                 <strong>{{ activity.activeAgentName ?? t('agent.agent') }}</strong>
-                <span class="agent-panel-status-tag">{{ statusConfig.label }}</span>
+                <!-- Core's run summary is its English narration of the last transition: diagnostic, so a tooltip. -->
+                <span class="agent-panel-status-tag" :title="activity.runSummary ?? undefined">{{ statusConfig.label }}</span>
               </div>
               <div class="agent-panel-status-meta">
-                <span v-if="activity.runSummary" class="agent-panel-summary">{{ activity.runSummary }}</span>
                 <span v-if="elapsedLabel" class="agent-panel-elapsed">
                   <Clock :size="10" />
                   {{ elapsedLabel }}
@@ -634,15 +634,6 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.agent-panel-summary {
-  overflow: hidden;
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 200px;
 }
 
 .agent-panel-elapsed {

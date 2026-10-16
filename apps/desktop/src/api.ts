@@ -116,6 +116,8 @@ export interface ApprovalDto {
   tool_id?: string | null;
   risk?: string | null;
   summary: string;
+  /** Set when `summary` is one of Core's fixed sentences; the UI words it from `approval.summaryCode.*` with `tool_id`. */
+  summary_code?: string | null;
   /**
    * Redacted, bounded projection of the tool parameters, minted with the approval.
    * Bulk values (file bodies, patches, MCP payloads) arrive as size plus hash and
