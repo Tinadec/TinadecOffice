@@ -220,6 +220,8 @@ public sealed class ControlPlaneService
                 // code turned that difference invisible: an unread stdout pipe or a loaded machine made
                 // an installed binary read as "not detected". The note says which is which.
                 probe_note = existing ? null : probe is { Runnable: false } failed ? failed.Note : null,
+                probe_note_code = existing || probe is not { Runnable: false } ? null : probe.NoteCode,
+                probe_note_data = existing || probe is not { Runnable: false } ? null : probe.NoteData,
                 channels = HarnessChannelFacts(spec).ToArray(),
                 caveats = spec.KnownCaveats.ToArray()
             });
@@ -385,7 +387,9 @@ public sealed class ControlPlaneService
         var process = new Process { StartInfo = BuildVersionProbeStart(path, probe) };
         try
         {
-            if (!process.Start()) return new(false, $"starting '{path}' {string.Join(' ', probe.Argv)} returned false.");
+            var command = string.Join(' ', probe.Argv);
+            if (!process.Start())
+                return new(false, $"starting '{path}' {command} returned false.", "start_failed", Facts(("command", $"{path} {command}")));
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
             using var deadline = new CancellationTokenSource();
@@ -403,15 +407,17 @@ public sealed class ControlPlaneService
             catch (OperationCanceledException)
             {
                 TryKillProbeTree(process);
-                return new(false, $"'{name}' did not answer '{string.Join(' ', probe.Argv)}' within {probe.TimeoutMs} ms, so this build does not know whether it is installed.");
+                return new(false, $"'{name}' did not answer '{command}' within {probe.TimeoutMs} ms, so this build does not know whether it is installed.",
+                    "probe_timeout", Facts(("name", name), ("command", command), ("timeout_ms", probe.TimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture))));
             }
             return process.ExitCode == 0 || probe.TolerateNonZeroExit
                 ? new(true, null)
-                : new(false, $"'{name}' exited {process.ExitCode} for '{string.Join(' ', probe.Argv)}'.");
+                : new(false, $"'{name}' exited {process.ExitCode} for '{command}'.",
+                    "exit_code", Facts(("name", name), ("command", command), ("exit_code", process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture))));
         }
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException)
         {
-            return new(false, $"'{name}' could not be probed: {ex.Message}");
+            return new(false, $"'{name}' could not be probed: {ex.Message}", "probe_failed", Facts(("name", name), ("error", ex.Message)));
         }
         finally
         {
@@ -455,7 +461,11 @@ public sealed class ControlPlaneService
         return psi;
     }
 
-    private sealed record CliProbe(bool Runnable, string? Note);
+    /// <summary><paramref name="Note"/> is the English diagnostic; <paramref name="NoteCode"/> and <paramref name="NoteData"/> are what a client words.</summary>
+    private sealed record CliProbe(bool Runnable, string? Note, string? NoteCode = null, IReadOnlyDictionary<string, string>? NoteData = null);
+
+    private static IReadOnlyDictionary<string, string> Facts(params (string Name, string Value)[] facts) =>
+        facts.ToDictionary(fact => fact.Name, fact => fact.Value);
 
     /// <summary>
     /// Every channel of one harness that Core knows about, in the order the catalog declares them, with
@@ -483,18 +493,20 @@ public sealed class ControlPlaneService
                 && (ChatProtocols.Normalize(protocol) != ChatProtocols.Tui || _terminalHost.IsSupported)
                 && (ChatProtocols.Normalize(protocol) != ChatProtocols.HeadlessCli
                     || HarnessCatalog.HasVerifiedHeadlessEnvelope(harnessId));
-            return new ChannelFact(
-                channel,
-                protocol,
-                drivable,
-                drivable ? null : ChatProtocols.HarnessClientGap(protocol)
-                    ?? (ChatProtocols.Normalize(protocol) == ChatProtocols.HeadlessCli
-                        ? $"'{harnessId}' has no headless answer frame captured by this build"
-                        : null));
+            if (drivable) return new ChannelFact(channel, protocol, true, null);
+            // An undrivable channel always carries its reason: "cannot drive" on its own tells nobody what to do.
+            var normalized = ChatProtocols.Normalize(protocol);
+            return ChatProtocols.HarnessClientGap(protocol) is { } gap ? new ChannelFact(channel, protocol, false, gap)
+                : !ChatProtocols.IsDrivable(protocol)
+                    ? new ChannelFact(channel, protocol, false, $"this build has no client for protocol '{protocol}'", "protocol_unsupported")
+                : normalized == ChatProtocols.Tui
+                    ? new ChannelFact(channel, protocol, false, "this platform has no supported terminal host for a TUI session", "terminal_host_unsupported")
+                : new ChannelFact(channel, protocol, false, $"'{harnessId}' has no headless answer frame captured by this build", "headless_frame_unverified");
         }
     }
 
-    private sealed record ChannelFact(string? Channel, string Protocol, bool Drivable, string? Reason);
+    /// <summary><paramref name="Reason"/> is the English diagnostic; <paramref name="ReasonCode"/> is what a client words.</summary>
+    private sealed record ChannelFact(string? Channel, string Protocol, bool Drivable, string? Reason, string? ReasonCode = null);
 
     /// <summary>
     /// The protocols one harness actually offers: its declared channels plus, for the harnesses that

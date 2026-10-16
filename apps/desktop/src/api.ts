@@ -1059,6 +1059,8 @@ export interface HarnessChannelDto {
   protocol: string;
   drivable: boolean;
   reason?: string | null;
+  /** What `reason` is about; the UI words it from `settings.channelReason.*`. */
+  reason_code?: string | null;
 }
 
 export interface CliDiscoveryCandidateDto {
@@ -1077,6 +1079,9 @@ export interface CliDiscoveryCandidateDto {
    * harness's own ceiling. `missing` on its own reads as "not installed", which is a different claim.
    */
   probe_note?: string | null;
+  /** What `probe_note` is about; the UI words it from `settings.probeNote.*` and `probe_note_data`. */
+  probe_note_code?: string | null;
+  probe_note_data?: Record<string, string> | null;
   vendor?: string | null;
   channels?: HarnessChannelDto[];
   caveats?: string[];

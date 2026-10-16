@@ -152,6 +152,9 @@ public sealed class CliDiscoveryTests : IAsyncLifetime
         var note = claude.GetProperty("probe_note").GetString();
         Assert.NotNull(note);
         Assert.Contains("3", note);
+        // The same fact for a client that words it itself.
+        Assert.Equal("exit_code", claude.GetProperty("probe_note_code").GetString());
+        Assert.Equal("3", claude.GetProperty("probe_note_data").GetProperty("exit_code").GetString());
     }
 
     /// <summary>Writes a stub the --version probe actually passes: a .cmd shim on Windows, an

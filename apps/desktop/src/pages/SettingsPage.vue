@@ -1163,6 +1163,18 @@ function channelLabel(fact: HarnessChannelDto): string {
   return t(discoveryAffordanceLabelKey(fact))
 }
 
+/** Why this build cannot drive a channel, from its code; Core's text, then a general sentence, otherwise. */
+function channelReason(channel: HarnessChannelDto, candidate: CliDiscoveryCandidateDto): string {
+  const key = `settings.channelReason.${channel.reason_code}`
+  return channel.reason_code && te(key) ? t(key, { harness: candidate.display_name }) : channel.reason ?? t('settings.channelNotDrivableDefault')
+}
+
+/** Why a probe could not confirm the binary, from its code and facts; Core's text when there are no words for it. */
+function probeNote(candidate: CliDiscoveryCandidateDto): string | null {
+  const key = `settings.probeNote.${candidate.probe_note_code}`
+  return candidate.probe_note_code && te(key) ? t(key, candidate.probe_note_data ?? {}) : candidate.probe_note ?? null
+}
+
 const agentCenterRead = useRecoverableRead(loadAgentCenterData, {
   onSuccess: () => dismissByKey('agent-center'),
   onFailure: error => status.error(error, { key: 'agent-center', source: 'agents', action: { label: t('settings.retry'), run: loadAgentCenter } }),
@@ -2604,8 +2616,8 @@ import '../settings/settings.css'
                     <code v-if="candidate.binary_path" class="cli-discovery-path" :title="candidate.binary_path">
                       {{ candidate.binary_path }}
                     </code>
-                    <span v-else-if="candidate.status === 'missing'" class="cli-discovery-status-text muted">
-                      {{ candidate.probe_note || t('settings.notDetected') }}
+                    <span v-else-if="candidate.status === 'missing'" class="cli-discovery-status-text muted" :title="probeNote(candidate) === candidate.probe_note ? undefined : candidate.probe_note ?? undefined">
+                      {{ probeNote(candidate) || t('settings.notDetected') }}
                     </span>
                   </div>
                   <div class="cli-discovery-action">
@@ -2633,7 +2645,7 @@ import '../settings/settings.css'
                         :key="`blocked-${channel.channel ?? channel.protocol}`"
                         variant="outline"
                         class="muted-badge"
-                        :title="channel.reason ?? t('settings.channelNotDrivableDefault')"
+                        :title="channelReason(channel, candidate)"
                       >
                         {{ t('settings.channelNotDrivable', { channel: channelLabel(channel) }) }}
                       </UiBadge>
