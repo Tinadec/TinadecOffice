@@ -72,7 +72,7 @@ describe('Tools configuration', () => {
     await wrapper.get('.tools-command-bar button').trigger('click'); await flushPromises()
     expect(wrapper.get('textarea.editor').attributes('data-focus-path')).toBe('read')
     expect((wrapper.findAll('select')[0]!.element as HTMLSelectElement).value).toBe('agent-a')
-    expect(wrapper.get('.tools-command-bar').text()).toContain('Schema 1')
+    expect(wrapper.get('.tools-command-bar').text()).toContain('结构版本 1')
     expect(api.saveAgentToolSettings).not.toHaveBeenCalled()
     wrapper.unmount()
   })
