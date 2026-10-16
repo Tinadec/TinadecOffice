@@ -2883,6 +2883,11 @@ export const api = {
   closeStorageScope: (storageId: string, signal?: AbortSignal) => request<void>(`/api/v1/storage/scopes/${encodeURIComponent(storageId)}/close`, { method: 'POST', storageId: 'user', signal }),
   exportStorageScope: async (storageId: string) => {
     const response = await storageFetch(`${gatewayUrl}/api/v1/storage/scopes/${encodeURIComponent(storageId)}/export`, { method: 'POST', storageId: 'user' })
+      .catch((error: unknown) => {
+        // Same wording as every other request when the backend cannot be reached.
+        if (!(error instanceof TypeError)) throw error
+        throw new Error(i18n.global.t('common.backendUnreachable', { origin: new URL(gatewayUrl).origin, reason: error.message }))
+      })
     if (!response.ok) {
       const data = await response.json().catch(() => null)
       throw Object.assign(new Error(extractErrorMessage(data, response.statusText)), { status: response.status })
