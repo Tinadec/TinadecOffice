@@ -514,7 +514,7 @@ describe('request cancellation semantics', () => {
       throw new TypeError('Failed to fetch')
     }))
 
-    await expect(api.listSessions()).rejects.toThrow('Cannot connect to backend')
+    await expect(api.listSessions()).rejects.toMatchObject({ code: 'backend_network_unavailable', status: 0 })
   })
 })
 

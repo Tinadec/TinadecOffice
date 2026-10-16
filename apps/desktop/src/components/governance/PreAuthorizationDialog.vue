@@ -190,8 +190,7 @@ async function submit(): Promise<void> {
             <strong>{{ created.id }}</strong>
             <p>{{ created.tool_scope.join(', ') }}</p>
             <p class="quiet">
-              risk_max: {{ created.risk_max }} · max_uses: {{ created.max_uses }} ·
-              use_count: {{ created.use_count }}
+              {{ t('governance.preAuthRecordFacts', { risk: riskLabel(created.risk_max), max: created.max_uses, used: created.use_count }) }}
             </p>
           </div>
         </div>

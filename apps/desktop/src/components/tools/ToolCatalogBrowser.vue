@@ -49,7 +49,7 @@ const sourceOptions = computed(() => {
   }
   return [
     { key: 'all', label: t('toolPanel.catalog.allSources') },
-    ...[...sources].sort().map((source) => ({ key: source, label: source }))
+    ...[...sources].sort().map((source) => ({ key: source, label: source || t('toolsSettings.sourceUndeclared') }))
   ]
 })
 
@@ -99,7 +99,7 @@ const groupedTools = computed(() => {
       const found = searchResults.value.find((r) => r.tool.id === tool.id)
       if (!found) continue
     }
-    const key = tool.source || 'unknown'
+    const key = tool.source || ''
     if (!groups[key]) groups[key] = []
     groups[key].push(tool)
   }
@@ -240,7 +240,7 @@ function onExecute(tool: ToolDescriptorDto) {
       >
         <header class="tool-catalog-group-head">
           <span class="tool-catalog-group-source" :class="sourceClass(sourceKey)">
-            {{ sourceKey }}
+            {{ sourceKey || t('toolsSettings.sourceUndeclared') }}
           </span>
           <span class="tool-catalog-group-count">{{ t('toolPanel.catalog.count', groupedTools[sourceKey].length) }}</span>
         </header>

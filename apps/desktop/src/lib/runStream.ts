@@ -21,6 +21,7 @@
  */
 
 import { ref } from 'vue'
+import i18n from '@/i18n'
 import { assertHostAccess } from './hostAccess'
 import { runStorageId } from './storageScope'
 import type { SseChunk } from '@/generated/client'
@@ -194,10 +195,10 @@ export function createRunStream(options: RunStreamOptions): RunStreamHandle {
       if (stopped || connectionAbort.signal.aborted) { await response.body?.cancel(); return }
       if (!response.ok) {
         const text = await response.text().catch(() => '')
-        throw new Error(text || `SSE ${response.status} ${response.statusText}`)
+        throw new Error(text || i18n.global.t('home.stream.httpFailed', { status: response.status }))
       }
       const reader = response.body?.getReader()
-      if (!reader) throw new Error('No SSE body')
+      if (!reader) throw new Error(i18n.global.t('home.stream.noBody'))
       status.value = 'open'
       attempt = 0
       error.value = null
@@ -239,7 +240,7 @@ export function createRunStream(options: RunStreamOptions): RunStreamHandle {
           }
         }
       }
-      if (!stopped) scheduleReconnect(new Error('SSE closed before terminal event'))
+      if (!stopped) scheduleReconnect(new Error(i18n.global.t('home.stream.closedEarly')))
     } catch (cause) {
       if (stopped || connectionAbort.signal.aborted) return
       if (cause instanceof DOMException && cause.name === 'AbortError') return

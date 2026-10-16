@@ -954,7 +954,7 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
       } else if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = t('home.sendError.modelNotConfigured')
       else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = t('home.sendError.forbidden')
       else if (msg.includes('recovering')) invokeError.value = t('home.sendError.recovering')
-      else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = t('home.sendError.offline')
+      else if (!navigator.onLine || code === 'backend_network_unavailable' || code === 'backend_write_outcome_unknown' || msg.includes('Failed to fetch')) invokeError.value = t('home.sendError.offline')
       else invokeError.value = msg
       throw err
     }

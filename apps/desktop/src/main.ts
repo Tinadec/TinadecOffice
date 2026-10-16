@@ -1,4 +1,4 @@
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import { createPinia } from 'pinia'
 import * as Vue from 'vue'
 // ponytail: vue 3.5 has no vaporInteropPlugin; 3.6-rc does — tolerate either
@@ -36,19 +36,30 @@ app.use(i18n)
 // escape hatch (retry / unregister). The controller is the singleton that owns the roster.
 homeController.installErrorRecovery()
 
-// Inject localized fallback text for notification composables
-// so unknownError follows the active locale.
-setNotificationFallbackText(i18n.global.t('app.unknownError'))
-// Recovery labels for server-classified errors. The server names an action kind (retry, reload,
-// unregister_workspace, ...); the wording lives here so the API never ships UI copy.
-setErrorActionLabels({
-  retry: i18n.global.t('errors.actions.retry'),
-  reload: i18n.global.t('errors.actions.reload'),
-  open_settings: i18n.global.t('errors.actions.openSettings'),
-  open_storage_settings: i18n.global.t('errors.actions.openStorageSettings'),
-  open_tool_settings: i18n.global.t('errors.actions.openToolSettings'),
-  unregister_workspace: i18n.global.t('errors.actions.unregisterWorkspace'),
-  choose_folder: i18n.global.t('errors.actions.chooseFolder'),
+// Notification text kept outside Vue's reactivity (the unknown-error fallback and the recovery
+// labels for server-classified errors; the server names an action kind, the wording lives here so
+// the API never ships UI copy) and the document language follow the interface language: applied
+// now and again on every switch.
+function applyLocaleText(): void {
+  document.documentElement.lang = i18n.global.locale.value
+  setNotificationFallbackText(i18n.global.t('app.unknownError'))
+  setErrorActionLabels({
+    retry: i18n.global.t('errors.actions.retry'),
+    reload: i18n.global.t('errors.actions.reload'),
+    open_settings: i18n.global.t('errors.actions.openSettings'),
+    open_storage_settings: i18n.global.t('errors.actions.openStorageSettings'),
+    open_tool_settings: i18n.global.t('errors.actions.openToolSettings'),
+    unregister_workspace: i18n.global.t('errors.actions.unregisterWorkspace'),
+    choose_folder: i18n.global.t('errors.actions.chooseFolder'),
+  })
+}
+applyLocaleText()
+watch(() => i18n.global.locale.value, applyLocaleText)
+// A language picked in one window reaches the other open windows (detached panels, pets) through
+// the localStorage key i18n.ts reads on boot.
+window.addEventListener('storage', (event) => {
+  const next = event.key === 'tinadec-locale' ? i18n.global.availableLocales.find((value) => value === event.newValue) : undefined
+  if (next && next !== i18n.global.locale.value) i18n.global.locale.value = next
 })
 
 // 在挂载前初始化主题，确保 DOM 准备好后再应用样式

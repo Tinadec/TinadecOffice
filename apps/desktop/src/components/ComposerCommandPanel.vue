@@ -52,7 +52,7 @@ const emit = defineEmits<{
   'mode-label': [value: string, unavailable: boolean, icon: Component]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 const panelStyle = computed(() => getPanelStyle())
 const panelDataAttrs = computed(() => getPanelDataAttributes())
@@ -139,7 +139,7 @@ const availableModes = computed(() => {
   }))
 })
 const selectedMode = computed(() => availableModes.value.find(mode => mode.latest_published_mode_version_id === props.modeVersionId))
-watch([selectedMode, () => props.modeVersionId, loading], () => {
+watch([selectedMode, () => props.modeVersionId, loading, locale], () => {
   emit('mode-label', selectedMode.value?.display_name ?? t('commandPanel.mode'), !!props.modeVersionId && !selectedMode.value && !loading.value, selectedMode.value ? modeIcon(selectedMode.value.slug) : Layers)
 }, { immediate: true })
 // A conversation without a mode gets the first published one (Solo when the pack has it) as

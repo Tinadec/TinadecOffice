@@ -308,6 +308,7 @@ export function useAiChangeAnalysis(selectedSessionId: ComputedRef<string | null
       '- riskScore must be an integer 0-100',
       '- riskLevel must be one of: low, medium, high, critical',
       '- Keep the response strictly valid JSON',
+      `- Write summary, descriptions, testSuggestions and explanation in ${t('common.languageName')}`,
     ].join('\n')
 
     try {

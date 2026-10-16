@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import { ApiError } from './apiError'
 import { assertHostAccess } from './hostAccess'
 import { isAbortError } from './isAbortError'
@@ -39,7 +40,7 @@ export async function readBackendResponse(
       if (isAbortError(error) || error instanceof ApiError) throw error
       if (!(error instanceof TypeError) && !(error instanceof Error && error.name === 'NetworkError')) throw error
       if (attempt < delays.length) { await waitForRetry(delays[attempt]!, request.signal); continue }
-      const message = `Cannot connect to backend (${new URL(url).origin}): ${error.message}`
+      const message = i18n.global.t('common.backendUnreachable', { origin: new URL(url).origin, reason: error.message })
       throw new ApiError(message, 0, {
         code: read ? 'backend_network_unavailable' : 'backend_write_outcome_unknown',
         category: read ? 'retryable' : 'environment_unavailable',
