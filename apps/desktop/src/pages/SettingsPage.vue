@@ -2285,8 +2285,10 @@ import '../settings/settings.css'
                   </div>
                   <span v-else class="quiet">{{ t('settings.noCatalogWarnings') }}</span>
                 </div>
-                <ul v-if="modelCatalogReadiness.design_notes.length > 0" class="model-diagnostic-notes">
-                  <li v-for="note in modelCatalogReadiness.design_notes" :key="note">{{ note }}</li>
+                <!-- The deprecated receipt's design_notes are developer sentences pointing at the unified
+                     receipt; say what they mean instead, from the receipt itself. -->
+                <ul v-if="readinessReceipt?.status === 'blocked'" class="model-diagnostic-notes">
+                  <li>{{ t('settings.readinessBlockedHint') }}</li>
                 </ul>
               </section>
             </div>
