@@ -16,8 +16,10 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { UiButton, UiSelectField } from '@/components/ui'
 import { marketController } from '@/controllers/MarketController'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const { t, locale } = useI18n()
+const { userActionStatusLabel, availabilityLabel } = useStatusLabels()
 
 const {
   busy, activeProposal: proposal, proposalBusy, targetProject,
@@ -57,9 +59,10 @@ function statusLine() {
   if (awaitingDecision(row)) return t('market.awaitingDecisionHint')
   if (row.state === 'removing') return t('market.removingHint')
   if (installationUsable(row)) return t('market.installedHint')
-  if (row.action_status === 'completed') return t('market.unavailableHint', { status: row.availability || 'unknown' })
-  if (actionFinished(row)) return `${t('market.installFailed')} · ${row.action_status}`
-  return `${t('market.installingHint')} · ${row.action_status}`
+  if (row.action_status === 'completed') return t('market.unavailableHint', { status: availabilityLabel(row.availability || 'unknown') })
+  const actionStatus = row.action_status ? ` · ${userActionStatusLabel(row.action_status)}` : ''
+  if (actionFinished(row)) return `${t('market.installFailed')}${actionStatus}`
+  return `${t('market.installingHint')}${actionStatus}`
 }
 </script>
 

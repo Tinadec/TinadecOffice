@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { userActionStatusTone, statusLabel } from '@/lib/statusPresentation'
+import { useStatusLabels } from '@/lib/statusLabels'
 
 const props = defineProps<{
   status: string
-  /** Localized override; falls back to the humanized raw value. */
+  /** Localized override; otherwise the status's translated label, or the humanized raw value. */
   label?: string
 }>()
 
+const { userActionStatusLabel } = useStatusLabels()
 const tone = computed(() => userActionStatusTone(props.status))
-const text = computed(() => props.label ?? statusLabel(props.status))
+const text = computed(() => {
+  if (props.label) return props.label
+  const translated = userActionStatusLabel(props.status)
+  return translated === props.status ? statusLabel(props.status) : translated
+})
 </script>
 
 <template>

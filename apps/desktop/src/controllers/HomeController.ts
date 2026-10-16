@@ -947,7 +947,7 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
       // (docs/app-core-ui.md §4.1). The legacy invoke-stream / POST messages
       // fallbacks were removed so failures surface visibly instead of
       // silently degrading to a non-durable path.
-      if (msg.includes('mode_unavailable') || msg.includes('模式不可用')) invokeError.value = t('home.sendError.modeUnavailable')
+      if (code === 'mode_unavailable' || msg.includes('mode_unavailable')) invokeError.value = t('home.sendError.modeUnavailable')
       else if (code === 'context_conflict') {
         // §4.1-4: show revision conflict guidance; user must re-read before resending.
         invokeError.value = t('home.sendError.contextChanged')
