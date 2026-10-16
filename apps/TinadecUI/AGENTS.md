@@ -1,9 +1,9 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-10-11
-**Last Updated By:** 首页 Git 卡复审：空仓库历史/状态失败分类；保留 NavCard、窗格与空间原契约。
-**Last Verified Commit:** 5d8096c + 工作树；复审见 .tinadec_dev/reports/2026-10-11-uncommitted-review-fixes.zh-CN.md，原 Git 卡验收见 2026-10-11-home-git-widget.zh-CN.md；旧工作区/窗格证据保持独立。
-**Branch:** main
+**Last Updated:** 2026-10-16
+**Last Updated By:** 卡片与标签文字只走 Desktop 翻译键（`uie.*`、`useCardTitle()`），见 Module boundary rules。
+**Last Verified Commit:** 9406f0c + `fix/i18n-ui-debug`
+**Branch:** fix/i18n-ui-debug
 
 ### 2026-10-11 首页 Git 工作状态卡
 
@@ -122,6 +122,7 @@ The feature/right column supports **dock splits** — recursive binary split tre
 - Persistence format is versioned; a breaking snapshot-shape change bumps `snapshot.version` and is handled in `repairLayout`. No legacy-format migration shims are kept (the old PanelType migration was removed 2026-09-27).
 - Vapor: Home UIE's 19 rendering/card SFCs and the three Market cards currently use classic templates; MarketPage is classic too. Do not restore these boundaries without real-renderer verification. Other opted-in primitives stay registered in `apps/desktop/src/vapor/`; keep the registry consistent when adding/renaming components.
 - **Card context injections are reactive contracts.** `UieCardHost` provides `uie:instanceId` (stable value), `uie:cardState` (stable object identity) and `uie:active` (a `ComputedRef`). A Vapor SFC's setup runs once, so providing `props.x` directly freezes it at mount time — which is what made a card mounted behind the active tab report itself hidden forever. Consumers read `uie:active` through `inject<MaybeRefOrGetter<boolean>>` + `toValue`, which also tolerates a host that supplies a plain boolean.
+- Card and tab text comes from the Desktop locale bundles (`uie.*`, titles via `useCardTitle()`); components and engine carry no literal interface text.
 
 ## Adding a new module
 1. Create `apps/TinadecUI/src/<module>/`.

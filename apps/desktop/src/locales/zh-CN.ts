@@ -1,3 +1,4 @@
+// 所有窗口与 TinadecUI 的界面文字；en.ts 有同样的键。代码只引用键，不写文字本身。
 export default {
   toolsSettings: {
     skillPackageTooMany: '技能包超过 {max} 个文件。',

@@ -1,3 +1,4 @@
+// Interface text for every window and TinadecUI; zh-CN.ts has the same keys. Code refers to keys, never to the text.
 export default {
   toolsSettings: {
     skillPackageTooMany: 'Skill package exceeds {max} files.',

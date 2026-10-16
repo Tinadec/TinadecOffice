@@ -1,3 +1,7 @@
+/**
+ * The one i18n instance. Interface text lives only in locales/{en,zh-CN}.ts: components use useI18n(),
+ * module code i18n.global.t, pure helpers take a `Translate`; dates and numbers format with the active locale.
+ */
 import { createI18n } from 'vue-i18n'
 import zhCN from './locales/zh-CN'
 import en from './locales/en'

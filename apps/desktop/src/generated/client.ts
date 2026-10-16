@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import { readBackendResponse } from '@/lib/backendRequest'
 /**
  * Typed fetch wrapper aligned to the Gateway external contract (snake_case).
@@ -108,7 +109,7 @@ async function req<T>(path: string, init?: StorageRequestOptions): Promise<T> {
   const { response: res, text } = await readBackendResponse(url, path,
     { ...init, body: normalized.body, headers }, { storageId })
   let data: unknown = null
-  if (text) { try { data = JSON.parse(text) } catch { throw new Error(`Invalid JSON: ${text.slice(0,200)}`) } }
+  if (text) { try { data = JSON.parse(text) } catch { throw new Error(i18n.global.t('errors.invalidServerResponse', { text: text.slice(0, 200) })) } }
   if (!res.ok) {
     throw new ApiError(apiErrorMessage(data, res.statusText), res.status, data, { storageId })
   }
@@ -126,7 +127,7 @@ async function reqWithEtag<T>(path: string, init?: StorageRequestOptions): Promi
   const { response: res, text } = await readBackendResponse(url, path,
     { ...init, body: normalized.body, headers }, { storageId })
   let data: unknown = null
-  if (text) { try { data = JSON.parse(text) } catch { throw new Error(`Invalid JSON: ${text.slice(0,200)}`) } }
+  if (text) { try { data = JSON.parse(text) } catch { throw new Error(i18n.global.t('errors.invalidServerResponse', { text: text.slice(0, 200) })) } }
   if (!res.ok) {
     throw new ApiError(apiErrorMessage(data, res.statusText), res.status, data, { storageId })
   }
