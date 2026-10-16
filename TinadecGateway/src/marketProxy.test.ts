@@ -125,7 +125,7 @@ test('a market refusal keeps its own code instead of becoming conflict', async (
   }));
   assert.equal(response.status, 400);
 
-  // Outside ALLOWED_CODES a proxy would rewrite this into `conflict`, which tells the client to
+  // The code must survive the proxy: rewritten into a generic `conflict` it would tell the client to
   // retry something that will never succeed.
   assert.equal((await response.json() as { code: string }).code, 'unsupported_market_source_kind');
 });
