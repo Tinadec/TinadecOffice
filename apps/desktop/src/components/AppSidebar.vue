@@ -34,8 +34,9 @@ import RowContextMenu, { type RowMenuItem } from '@/components/RowContextMenu.vu
 import { UiButton, UiSelectField } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 import { useDebugStudio } from '@/composables/useDebugStudio'
+import { errorCodeMessage } from '@/lib/apiError'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { confirm } = useNotifications()
 const { enabled: debugStudioEnabled, load: loadDebugStudio } = useDebugStudio()
 onMounted(loadDebugStudio)
@@ -395,7 +396,7 @@ function openDebugStudio() {
         <div v-if="isExpanded(workspace.key)" :id="`workspace-sessions-${workspace.key}`" class="project-sessions sidebar-extra">
           <div v-if="workspaceLoadStates?.[workspace.key]?.status === 'loading'" class="session-empty" role="status">{{ t('common.loading') }}</div>
           <div v-else-if="workspaceLoadStates?.[workspace.key]?.status === 'error' || workspace.project?.availability === 'error'" class="workspace-load-error" role="status">
-            <span :title="workspaceLoadStates?.[workspace.key]?.message ?? workspace.project?.availability_error">{{ t('home.loadFailed') }}</span><button @click="emit('retry-workspaces', workspace.key)">{{ t('common.retry') }}</button>
+            <span :title="workspaceLoadStates?.[workspace.key]?.message ?? errorCodeMessage(workspace.project?.availability_code, undefined, { t, te }) ?? workspace.project?.availability_error">{{ t('home.loadFailed') }}</span><button @click="emit('retry-workspaces', workspace.key)">{{ t('common.retry') }}</button>
           </div>
           <div v-for="session in shownSessions(workspace.key)" :key="selectionKey(session)" class="session-row" :class="{ active: isActiveSession(session) }" @contextmenu.prevent="openMenuAtCursor($event, 'session', selectionKey(session), session.title)">
             <button class="session-item" :aria-current="isActiveSession(session) ? 'page' : undefined" :title="session.title" @click="handleSessionClick(selectionKey(session))" @dblclick.stop="renaming = { kind: 'session', id: selectionKey(session) }">

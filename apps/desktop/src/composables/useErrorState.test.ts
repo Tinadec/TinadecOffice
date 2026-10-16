@@ -15,7 +15,7 @@ describe('shared error state', () => {
       trace_id: 'trace-1',
     }))
     expect(state).toMatchObject({
-      message: 'The registered project directory is unavailable.',
+      details: 'The registered project directory is unavailable.\ntrace_id: trace-1',
       code: 'storage_scope_unavailable',
       category: 'environment_unavailable',
       retryable: false,

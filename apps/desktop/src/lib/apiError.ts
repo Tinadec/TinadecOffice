@@ -1,3 +1,5 @@
+import i18n from '@/i18n'
+
 /**
  * Who can resolve a failure, as reported by the server's error contract. Clients branch on the
  * category rather than on individual codes, so an unmodelled code still lands in a sane bucket.
@@ -76,6 +78,34 @@ function record(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null
 }
 
+/**
+ * The server's text is diagnostic (docs/error-contract: the server ships no UI copy). A code this
+ * build has words for (`errors.code.*`) is said in the interface language, with the body's string
+ * and string-list fields available as named values; any other code keeps the server's text.
+ */
+/** The caller's translator: a component passes its own `t`/`te`, module code gets the app's. */
+export interface ErrorWords {
+  t: (key: string, named?: Record<string, unknown>) => string
+  te: (key: string) => boolean
+}
+
+export function errorCodeMessage(code: string | null | undefined, body?: unknown, words: ErrorWords = i18n.global): string | undefined {
+  const key = `errors.code.${code}`
+  if (!code || !words.te(key)) return undefined
+  const named: Record<string, string | number> = {}
+  for (const [name, value] of Object.entries(record(body) ?? {})) {
+    if (typeof value === 'string' || typeof value === 'number') named[name] = value
+    else if (Array.isArray(value)) named[name] = value.filter((item) => typeof item === 'string').join(', ')
+  }
+  return words.t(key, named)
+}
+
+/** A Core error_category (why a run stopped or a call failed) in the interface language, when this build has words for it. */
+export function errorCategoryMessage(category: unknown, words: ErrorWords = i18n.global): string | undefined {
+  const key = `errors.category.${category}`
+  return typeof category === 'string' && category && words.te(key) ? words.t(key) : undefined
+}
+
 export function apiErrorMessage(body: unknown, fallback: string): string {
   const data = record(body)
   const candidates = [data?.message, record(data?.error)?.message, data?.error,
@@ -106,6 +136,8 @@ export function parseApiDiagnostics(value: unknown): ApiDiagnostic[] {
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string
+  /** What the server itself said, kept when `message` is the translated wording for `code`. */
+  readonly serverMessage?: string
   readonly trace_id?: string
   readonly storageId?: string
   readonly instance?: string
@@ -118,12 +150,15 @@ export class ApiError extends Error {
   readonly actions: ApiErrorActionKind[]
 
   constructor(message: string, status: number, body: unknown, context?: { storageId?: string }) {
-    super(message)
+    const data = record(body)
+    const code = typeof data?.code === 'string' ? data.code : undefined
+    const translated = errorCodeMessage(code, data)
+    super(translated ?? message)
     this.name = 'ApiError'
     this.storageId = context?.storageId
     this.status = status
-    const data = record(body)
-    this.code = typeof data?.code === 'string' ? data.code : undefined
+    this.code = code
+    if (translated && message && message !== translated && message !== code) this.serverMessage = message
     this.trace_id = typeof data?.trace_id === 'string' ? data.trace_id : undefined
     this.instance = typeof data?.instance === 'string' ? data.instance : undefined
     this.diagnostics = parseApiDiagnostics(data?.diagnostics)
@@ -139,11 +174,12 @@ export class ApiError extends Error {
 
 export function apiErrorDetails(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined
-  const data = error as Error & { diagnostics?: unknown; trace_id?: unknown }
+  const data = error as Error & { diagnostics?: unknown; trace_id?: unknown; serverMessage?: unknown }
   const lines = parseApiDiagnostics(data.diagnostics).map((item) => {
     const position = item.line == null ? '' : ` (${item.line}${item.column == null ? '' : `:${item.column}`})`
     return `${item.severity} ${item.code}${position}: ${item.message}`
   })
+  if (typeof data.serverMessage === 'string' && data.serverMessage) lines.unshift(data.serverMessage)
   if (typeof data.trace_id === 'string' && data.trace_id) lines.push(`trace_id: ${data.trace_id}`)
   return lines.length > 0 ? lines.join('\n') : undefined
 }

@@ -13,6 +13,7 @@ import { useNotifications } from '@/composables/useNotifications'
 import { useTerminal } from '@/composables/useTerminal'
 import { createAgentTerminalSource } from '@/composables/useTerminalSource'
 import { useToolPreview } from '@/composables/useToolPreview'
+import { errorCategoryMessage } from '@/lib/apiError'
 import { formatDuration } from '@/lib/conversation/format'
 import type { ToolEntry } from '@/lib/conversation/reducer'
 import { displayPath, entrySentence, verbKey, type VerbPhase } from '@/lib/conversation/toolSentence'
@@ -26,7 +27,7 @@ import ToolPreview from './ToolPreview.vue'
  * hands its session to the panel terminal instead.
  */
 const props = defineProps<{ entry: ToolEntry; runId: string; workspaceRoot?: string | null }>()
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { notify } = useNotifications()
 const { openAgentTerminal } = useTerminal()
 
@@ -46,7 +47,7 @@ const subject = computed(() => {
 const failure = computed(() => {
   if (phase.value !== 'failed') return ''
   if (props.entry.exitCode !== null && props.entry.exitCode !== 0) return t('conversation.tool.exitCode', { code: props.entry.exitCode })
-  return props.entry.errorCategory ?? ''
+  return errorCategoryMessage(props.entry.errorCategory, { t, te }) ?? props.entry.errorCategory ?? ''
 })
 const isShell = computed(() => sentence.value.verb === 'run')
 

@@ -1,5 +1,5 @@
 import i18n from '@/i18n'
-import { ApiError } from '@/lib/apiError'
+import { ApiError, errorCategoryMessage } from '@/lib/apiError'
 import { useHostAccess } from '@/lib/hostAccess'
 import { readSessionRoster } from '@/lib/sessionRoster'
 import { toErrorState } from '@/composables/useErrorState'
@@ -578,7 +578,7 @@ function attachRun(runId: string) {
         provisionalReplies.delete(runId)
         if (chunk.kind === 'error') {
           const payload = chunk.payload as Record<string, unknown>
-          const message = payload.safe_error_message ?? payload.message ?? payload.error_category
+          const message = errorCategoryMessage(payload.error_category) ?? payload.safe_error_message ?? payload.message ?? payload.error_category
           invokeError.value = typeof message === 'string' ? message : t('activity.runFailed')
         }
         void loadMessagesAndApprovals().catch(error => { if (!isAbortError(error)) notify.error(error, { title: t('home.sessionLoadFailed') }) })
@@ -951,8 +951,8 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
       else if (code === 'context_conflict') {
         // §4.1-4: show revision conflict guidance; user must re-read before resending.
         invokeError.value = t('home.sendError.contextChanged')
-      } else if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = t('home.sendError.modelNotConfigured')
-      else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = t('home.sendError.forbidden')
+      } else if (code === 'model_not_configured' || msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = t('home.sendError.modelNotConfigured')
+      else if (code === 'forbidden' || code === 'unauthorized' || msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = t('home.sendError.forbidden')
       else if (msg.includes('recovering')) invokeError.value = t('home.sendError.recovering')
       else if (!navigator.onLine || code === 'backend_network_unavailable' || code === 'backend_write_outcome_unknown' || msg.includes('Failed to fetch')) invokeError.value = t('home.sendError.offline')
       else invokeError.value = msg

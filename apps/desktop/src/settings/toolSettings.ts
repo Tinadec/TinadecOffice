@@ -49,7 +49,8 @@ export interface ToolSettingsEffective {
   settings?: Record<string, unknown>
   effective_settings?: Record<string, unknown>
   settings_hash: string
-  resource_diagnostics?: { kind: 'mcp' | 'skills' | 'host'; resource_id?: string | null; status: 'missing' | 'invalid' | 'disabled' | 'import_failed' | 'unavailable'; reason: string }[]
+  /** `mcp_program` diagnostics carry the program status (not_installed, outdated, invalid, needs_reinstall). */
+  resource_diagnostics?: { kind: 'mcp' | 'skills' | 'host' | 'mcp_program'; resource_id?: string | null; status: string; reason: string }[]
   [key: string]: unknown
 }
 export interface ToolMcpResource {

@@ -2,6 +2,7 @@
 // api.ts reads `window.tinadec?.gatewayUrl?.()` at module top level, so this suite
 // needs the same DOM-ish global as api.test.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import i18n from '@/i18n'
 vi.mock('@/lib/scopedEventSource', () => ({ ScopedEventSource: class { constructor(url: string) { return new EventSource(url) } } }))
 import { effectScope, ref, nextTick, type EffectScope } from 'vue'
 import { api } from '@/api'
@@ -220,7 +221,7 @@ describe('useAgentActivity event wiring', () => {
     expect(harness.activity.value.status).toBe('error')
     const step = harness.thinkingSteps.value.find((item) => item.type === 'run')
     expect(step).toBeDefined()
-    expect(step!.description).toContain('provider_server_error')
+    expect(step!.description).toContain(i18n.global.t('errors.category.provider_server_error'))
   })
 
   it('marks the assigned worker and its dispatch reason', async () => {
@@ -362,7 +363,7 @@ describe('useAgentActivity event wiring', () => {
 
     const step = harness.thinkingSteps.value.find((item) => item.id === '12-meeting-fallback')
     expect(step).toBeDefined()
-    expect(step!.description).toContain('provider_server_error')
+    expect(step!.description).toContain(i18n.global.t('errors.category.provider_server_error'))
     expect(harness.progressEvents.value.some((event) => event.type === 'meeting.response_fallback')).toBe(true)
   })
 

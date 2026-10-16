@@ -1297,16 +1297,30 @@ async function loadToolDiscovery(context?: ReadContext) {
 }
 
 
+// A classified failure is recognized by its status; the text checks remain for unclassified errors.
+/**
+ * The server's status note for a provider, when it says more than the status badge: a configured or
+ * disabled provider carries only a fixed diagnostic line there, not something to show a person.
+ */
+function providerNote(provider: { status?: string | null; status_message?: string | null }): string | null {
+  return provider.status_message && !['configured', 'disabled'].includes(provider.status ?? '') ? provider.status_message : null
+}
+
+function errorStatus(error: unknown): unknown {
+  return error && typeof error === 'object' ? (error as { status?: unknown }).status : undefined
+}
+
 function agentSaveErrorMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error)
-  if (msg.includes('412') || msg.toLowerCase().includes('revision') || msg.includes('Precondition')) return t('settings.agentConflict')
-  if (msg.includes('409') || msg.toLowerCase().includes('built-in')) return t('settings.agentBuiltInConflict')
+  if (isRevisionConflict(error)) return t('settings.agentConflict')
+  if (errorStatus(error) === 409 || msg.includes('409') || msg.toLowerCase().includes('built-in')) return t('settings.agentBuiltInConflict')
   return msg
 }
 
 function isRevisionConflict(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error)
-  return msg.includes('412') || msg.toLowerCase().includes('revision') || msg.includes('Precondition')
+  return errorStatus(error) === 412 || errorStatus(error) === 428
+    || msg.includes('412') || msg.toLowerCase().includes('revision') || msg.includes('Precondition')
 }
 
 /** One versioned write attempt: update draft (If-Match revision) then publish a new immutable version. */
@@ -2293,7 +2307,7 @@ import '../settings/settings.css'
                   <span class="provider-detail-value">{{ connectionKindLabel(selectedProviderDetail.connection_kind) }}</span>
                 </div>
               </div>
-              <div v-if="selectedProviderDetail.status_message" class="provider-status-note compact">
+              <div v-if="providerNote(selectedProviderDetail)" class="provider-status-note compact">
                 <Terminal :size="14" />
                 <span>{{ selectedProviderDetail.status_message }}</span>
               </div>
@@ -3820,7 +3834,7 @@ import '../settings/settings.css'
             </div>
           </div>
 
-          <div v-if="selectedProvider?.status_message" class="model-provider-note">
+          <div v-if="selectedProvider && providerNote(selectedProvider)" class="model-provider-note">
             <Terminal :size="14" />
             <span>{{ selectedProvider.status_message }}</span>
           </div>

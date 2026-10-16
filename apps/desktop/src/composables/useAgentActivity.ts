@@ -7,6 +7,7 @@ import {
 } from '@/api'
 import { subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import i18n from '@/i18n'
+import { errorCategoryMessage } from '@/lib/apiError'
 
 export type AgentRunStatus =
   | 'idle'
@@ -635,6 +636,8 @@ export function useAgentActivity(
   function processRunFailed(event: EventEnvelope) {
     const category = extractString(event.payload, 'error_category') ?? ''
     const message = extractString(event.payload, 'message') ?? extractString(event.payload, 'summary') ?? ''
+    // The category in words when this build knows it; the server's own text then stays in details.
+    const reason = errorCategoryMessage(category)
 
     activity.value = {
       ...activity.value,
@@ -647,14 +650,14 @@ export function useAgentActivity(
         id: `${event.seq}-run-failed`,
         type: 'run',
         title: t('activity.runFailed'),
-        description: [category, message].filter(Boolean).join(' · ') || t('activity.runFailed'),
+        description: reason ?? ([category, message].filter(Boolean).join(' · ') || t('activity.runFailed')),
         timestamp: event.ts,
         durationMs: null,
         severity: 'error',
-        details: { category },
+        details: reason && message ? { category, message } : { category },
       },
     ]
-    addProgressEvent(event.seq, event.type, 'x', category ? t('activity.runFailedWith', { category }) : t('activity.runFailed'))
+    addProgressEvent(event.seq, event.type, 'x', category ? t('activity.runFailedWith', { category: reason ?? category }) : t('activity.runFailed'))
   }
 
   function processMeetingFallback(event: EventEnvelope) {
@@ -666,7 +669,7 @@ export function useAgentActivity(
         type: 'run',
         title: t('activity.summaryDegraded'),
         description: category
-          ? t('activity.summaryDegradedWith', { category })
+          ? t('activity.summaryDegradedWith', { category: errorCategoryMessage(category) ?? category })
           : t('activity.summaryDegradedHint'),
         timestamp: event.ts,
         durationMs: null,
@@ -706,12 +709,12 @@ export function useAgentActivity(
     }
     if (event.type === 'worker.tool_failed') {
       // A fed-back tool failure is not a dead end any more: it is an iteration.
-      const label = category ? t('activity.workerToolFailedWith', { slug, category }) : t('activity.workerToolFailed', { slug })
+      const label = category ? t('activity.workerToolFailedWith', { slug, category: errorCategoryMessage(category) ?? category }) : t('activity.workerToolFailed', { slug })
       addProgressEvent(event.seq, event.type, 'alert-triangle', label)
       return
     }
     if (event.type === 'worker.budget_exhausted') {
-      addProgressEvent(event.seq, event.type, 'hourglass', t('activity.workerWrappingUp', { slug, reason: message || category || t('activity.budgetExhausted') }))
+      addProgressEvent(event.seq, event.type, 'hourglass', t('activity.workerWrappingUp', { slug, reason: errorCategoryMessage(category) ?? (message || category || t('activity.budgetExhausted')) }))
       return
     }
     if (event.type === 'worker.blocked') {

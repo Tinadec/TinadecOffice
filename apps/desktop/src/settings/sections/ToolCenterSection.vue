@@ -13,8 +13,14 @@ const ToolsOverviewPanel = defineAsyncComponent(() => import('./ToolsOverviewPan
 const ToolJsonEditor = defineAsyncComponent(() => import('./ToolJsonEditor.vue'))
 const ToolResourcesPanel = defineAsyncComponent(() => import('./ToolResourcesPanel.vue'))
 const ToolDraftDialog = defineAsyncComponent(() => import('./ToolDraftDialog.vue'))
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { riskLabel } = useStatusLabels()
+/** A resource diagnostic in the interface language; the server's reason stays available as a tooltip. */
+function diagnosticText(item: { kind: string; status: string; reason?: string | null }): string {
+  if (item.kind === 'mcp_program') return t('toolsSettings.diagnostic.mcp_program', { status: te(`toolsSettings.programStatus.${item.status}`) ? t(`toolsSettings.programStatus.${item.status}`) : item.status })
+  const key = `toolsSettings.diagnostic.${item.kind}_${item.status}`
+  return te(key) ? t(key) : item.reason || `${item.kind} · ${item.status}`
+}
 const { notify } = useNotifications()
 const tabs = [
   { id: 'overview', icon: Wrench }, { id: 'shell', icon: Terminal }, { id: 'files', icon: FileText },
@@ -204,7 +210,7 @@ onBeforeUnmount(() => { ++generation; chooseLeave?.('cancel'); window.removeEven
     <p class="quiet">{{ t('toolsSettings.nextRun') }}</p><p v-if="error" class="tools-field-error" role="alert">{{ error }}</p>
     <div class="tools-tabs" role="tablist" :aria-label="t('toolsSettings.title')"><button v-for="(item, index) in tabs" :id="`tools-tab-${item.id}`" :key="item.id" role="tab" :aria-selected="tab === item.id" :aria-controls="`tools-panel-${item.id}`" :tabindex="tab === item.id ? 0 : -1" :class="{ active: tab === item.id }" @click="selectTab(item.id)" @keydown.right.prevent="selectTab(tabs[(index + 1) % tabs.length]!.id, true)" @keydown.left.prevent="selectTab(tabs[(index + tabs.length - 1) % tabs.length]!.id, true)" @keydown.home.prevent="selectTab('overview', true)" @keydown.end.prevent="selectTab('advanced', true)"><component :is="item.icon" :size="15" />{{ t(`toolsSettings.tabs.${item.id}`) }}</button></div>
     <div :id="`tools-panel-${tab}`" role="tabpanel" :aria-labelledby="`tools-tab-${tab}`" class="tools-stage">
-      <div v-if="effective?.resource_diagnostics?.length" class="tools-validation" role="status"><strong>{{ t('toolsSettings.resourceDiagnostics') }}</strong><p v-for="item in effective.resource_diagnostics" :key="`${item.kind}:${item.resource_id}:${item.status}`">{{ item.kind }} · {{ item.resource_id || '—' }} · {{ item.status }} · {{ item.reason }}</p></div>
+      <div v-if="effective?.resource_diagnostics?.length" class="tools-validation" role="status"><strong>{{ t('toolsSettings.resourceDiagnostics') }}</strong><p v-for="item in effective.resource_diagnostics" :key="`${item.kind}:${item.resource_id}:${item.status}`" :title="diagnosticText(item) === item.reason ? undefined : item.reason">{{ item.resource_id || '—' }} · {{ diagnosticText(item) }}</p></div>
       <template v-if="tab === 'overview'"><div v-if="selectedAgent" class="tools-effective-card"><strong>{{ selectedAgent.display_name }}</strong><p>{{ t('toolsSettings.authorizationHint') }}</p><div class="model-capability-row"><span v-for="toolId in (effectiveToolIds ?? [])" :key="toolId">{{ toolId }}</span></div></div><ToolsOverviewPanel ref="overview" :key="`${projectId}:${agentId}`" :agents="agents" :agent-id="agentId" :project-id="projectId" :effective-tool-ids="effectiveToolIds" :capabilities="capabilities" :host-settings="schema?.host_settings" :effective="effective" /></template>
       <template v-else-if="tab === 'advanced'">
         <div class="tools-command-bar"><div><h3>{{ t('toolsSettings.advanced') }}</h3><p class="quiet">{{ t(agentId ? 'toolsSettings.overrideHint' : 'toolsSettings.advancedHint') }}</p><p v-if="focusPath" class="quiet">{{ t('toolsSettings.categoryFocus', { category: focusPath }) }}</p></div><UiBadge variant="outline">{{ t('toolsSettings.schemaVersion', { version: schema?.schema_version ?? '—' }) }} · {{ t('toolsSettings.revision') }} {{ document?.revision ?? '—' }}</UiBadge></div>

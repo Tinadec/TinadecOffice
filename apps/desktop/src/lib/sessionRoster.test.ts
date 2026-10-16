@@ -16,7 +16,7 @@ describe('per-scope session roster', () => {
       }),
     })
     expect(result.rows).toEqual([{ id: 'same', storage_id: 'user' }, { id: 'same', storage_id: 'healthy' }, { id: 'same', storage_id: 'broken' }])
-    expect(result.failures[0]?.error).toMatchObject({ message: 'folder gone', traceId: 'trace-1', actions: ['unregister_workspace'] })
+    expect(result.failures[0]?.error).toMatchObject({ details: 'folder gone\ntrace_id: trace-1', traceId: 'trace-1', actions: ['unregister_workspace'] })
     expect(previous).toHaveLength(2)
   })
   it('propagates cancellation instead of publishing an empty or failed roster', async () => {

@@ -47,7 +47,7 @@ describe('generated agent pack client', () => {
     }), { status: 400, headers: { 'content-type': 'application/problem+json' } })))
     for (const operation of [() => generatedApi.getAgentPack('pack'), () => generatedApi.listAgentPacks()]) {
       await expect(operation()).rejects.toMatchObject({ status: 400, code: 'configuration_invalid',
-        message: 'Configuration validation failed.', trace_id: 'trace-validation', diagnostics: [diagnostic] })
+        serverMessage: 'Configuration validation failed.', trace_id: 'trace-validation', diagnostics: [diagnostic] })
     }
   })
 

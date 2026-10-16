@@ -79,7 +79,8 @@ describe('Tools configuration', () => {
   it('shows stale resource diagnostics while leaving the effective settings view readable', async () => {
     vi.mocked(api.getEffectiveToolSettings).mockResolvedValueOnce({ settings_hash: 'effective', settings: initial, resource_diagnostics: [{ kind: 'skills', resource_id: 'removed-resource', status: 'missing', reason: 'Selected skill was deleted.' }] })
     const wrapper = create(); await flushPromises()
-    expect(wrapper.get('[role="status"]').text()).toContain('Selected skill was deleted.')
+    expect(wrapper.get('[role="status"]').text()).toContain(zh.toolsSettings.diagnostic.skills_missing)
+    expect(wrapper.get('[role="status"] p').attributes('title')).toBe('Selected skill was deleted.')
     expect(wrapper.find('.tools-value-list').exists()).toBe(false)
     await wrapper.get('#tools-tab-shell').trigger('click')
     expect(wrapper.get('.tools-value-list').text()).toContain('shell.timeout_ms')

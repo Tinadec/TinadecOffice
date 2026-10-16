@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import i18n from '@/i18n'
 import { ApiError, apiErrorDetails, isUnavailableStorageError, parseApiDiagnostics } from './apiError'
 
 describe('public API diagnostics', () => {
@@ -12,16 +13,29 @@ describe('public API diagnostics', () => {
     ])).toEqual([{ code: 'rule', message: 'Fix it.', severity: 'error' }])
   })
 
-  it('formats only diagnostics and correlation ID for notification details', () => {
+  it('formats the server text, diagnostics and correlation ID for notification details', () => {
     const error = new ApiError('Invalid.', 400, { code: 'configuration_invalid', trace_id: 'trace-1',
       diagnostics: [{ code: 'rule', message: 'Fix it.', severity: 'error', line: 3 }], private_value: 'drop' })
-    expect(apiErrorDetails(error)).toBe('error rule (3): Fix it.\ntrace_id: trace-1')
+    expect(apiErrorDetails(error)).toBe('Invalid.\nerror rule (3): Fix it.\ntrace_id: trace-1')
     expect(JSON.stringify(error)).not.toContain('drop')
     expect(apiErrorDetails(new Error('Unstructured.'))).toBeUndefined()
   })
 })
 
 describe('error contract', () => {
+  it('says a known code in the interface language and keeps the server text as a detail', () => {
+    const said = 'Provider is still referenced by model route(s): chat, planner.'
+    const error = new ApiError(said, 409, { code: 'provider_in_use', routes: ['chat', 'planner'] })
+    expect(error.message).toBe(i18n.global.t('errors.code.provider_in_use', { routes: 'chat, planner' }))
+    expect(error.message).toContain('chat, planner')
+    expect(error.serverMessage).toBe(said)
+    expect(apiErrorDetails(error)).toBe(said)
+    // A generic code carries no wording of its own: the server text is the useful part.
+    const generic = new ApiError('Name is required.', 400, { code: 'invalid_request' })
+    expect(generic.message).toBe('Name is required.')
+    expect(generic.serverMessage).toBeUndefined()
+  })
+
   it('carries the server category, retryability and known recovery actions', () => {
     const error = new ApiError('Folder is gone.', 409, {
       code: 'storage_scope_unavailable',

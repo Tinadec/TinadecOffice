@@ -19,7 +19,7 @@ describe('agent pack API client', () => {
     }), { status: 400, headers: { 'content-type': 'application/problem+json' } })))
     const error = await api.installAgentPack(GRAPH_SEED_PACK_ID, { preview_id: 'preview-1', envelope: graphSeedPackEnvelope }, { idempotency_key: 'validation-test' }).catch((error: unknown) => error)
     expect(error).toBeInstanceOf(ApiError)
-    expect(error).toMatchObject({ message: 'Configuration validation failed.', code: 'configuration_invalid', status: 400, trace_id: 'trace-validation', diagnostics: [diagnostic] })
+    expect(error).toMatchObject({ serverMessage: 'Configuration validation failed.', code: 'configuration_invalid', status: 400, trace_id: 'trace-validation', diagnostics: [diagnostic] })
     expect(JSON.stringify(error)).not.toContain('not-public')
   })
 

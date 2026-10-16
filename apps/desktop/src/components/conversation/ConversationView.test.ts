@@ -144,8 +144,11 @@ describe('ConversationView turns', () => {
 
   it('says why a run stopped in words', () => {
     const wrapper = mountView(failedRun())
-    const markers = wrapper.findAll('[data-testid="turn-marker"]').map((marker) => marker.text())
-    expect(markers).toContain('Stopped: The model provider is unavailable.')
+    const markers = wrapper.findAll('[data-testid="turn-marker"]')
+    // The category is said in the interface language; the server's own words stay as the tooltip.
+    const failure = markers.find((marker) => marker.attributes('data-marker') === 'run_failed')
+    expect(failure?.text()).toBe('Stopped: No usable model is available.')
+    expect(failure?.attributes('title')).toBe('The model provider is unavailable.')
     wrapper.unmount()
   })
 
