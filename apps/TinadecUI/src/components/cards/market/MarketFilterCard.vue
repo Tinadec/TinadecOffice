@@ -92,7 +92,7 @@ function filterLabel(key: string) {
         </button>
         <!-- A source that failed its last refresh keeps its rows; the marker says the catalog below
              is standing on stale data rather than on nothing. -->
-        <span v-if="source.last_error" class="market-source-stale" :title="source.last_error">!</span>
+        <span v-if="source.last_error" class="market-source-stale" :title="t('market.sourceStale', { error: source.last_error })">!</span>
         <UiButton
           variant="ghost"
           size="icon"

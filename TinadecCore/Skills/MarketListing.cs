@@ -31,6 +31,12 @@ internal sealed record MarketListing(
 }
 
 /// <summary>
+/// Why a catalog row cannot be installed. <paramref name="Code"/> and <paramref name="Data"/> are what a
+/// client words; <paramref name="Text"/> is the English sentence stored with the row.
+/// </summary>
+internal sealed record MarketBlocker(string Code, string Text, IReadOnlyDictionary<string, string>? Data = null);
+
+/// <summary>
 /// One row a source claims exists, before any of it is installable. <see cref="Version"/> is
 /// mandatory because "install this" without a pin is not an actionable claim, and
 /// <see cref="ManifestHash"/> is the digest of the source's own document for the row, which is what

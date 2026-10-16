@@ -23,7 +23,7 @@ const { userActionStatusLabel, availabilityLabel } = useStatusLabels()
 
 const {
   busy, activeProposal: proposal, proposalBusy, targetProject,
-  selectedItem, selectedInstallation, awaitingDecision, actionFinished, installationUsable, skillScope,
+  selectedItem, selectedInstallation, awaitingDecision, actionFinished, installationUsable, skillScope, installBlockerText,
   mcpServers, mcpReadSucceeded, mcpReason, mcpConfigPath,
   previewInstall, previewRemoval, applyProposal, discardProposal,
 } = marketController
@@ -128,7 +128,7 @@ function statusLine() {
       <!-- A listing can be true and still not be something this tool layer can start. Say which
            case it is instead of offering a button that would only fail. -->
       <p v-if="selectedItem.installable === false" class="market-blocker" data-testid="market-blocker">
-        {{ selectedItem.install_blocker || t('market.notInstallable') }}
+        {{ installBlockerText(selectedItem) }}
       </p>
 
       <label v-if="selectedItem.kind === 'skill' && !selectedInstallation" class="market-scope-picker">
@@ -217,8 +217,8 @@ function statusLine() {
         <!-- Three different answers, three different sentences. An empty list and an unreadable
              list used to look identical, which is how "the Tool Provider never started" read as
              "you have no MCP servers". -->
-        <p v-if="!mcpReadSucceeded" class="quiet" data-testid="market-mcp-unavailable">
-          {{ mcpReason || t('market.mcpUnreadable') }}
+        <p v-if="!mcpReadSucceeded" class="quiet" data-testid="market-mcp-unavailable" :title="mcpReason || undefined">
+          {{ t('market.mcpUnreadable') }}
         </p>
         <template v-else>
           <p v-if="mcpServers.length === 0" class="quiet" data-testid="market-mcp-none">
@@ -242,7 +242,7 @@ function statusLine() {
         <UiButton
           v-if="!proposal"
           :disabled="busy || proposalBusy || selectedItem.installable === false"
-          :title="selectedItem.installable === false ? (selectedItem.install_blocker ?? t('market.notInstallable')) : undefined"
+          :title="selectedItem.installable === false ? installBlockerText(selectedItem) : undefined"
           @click="previewInstall"
         >
           <Download :size="15" />

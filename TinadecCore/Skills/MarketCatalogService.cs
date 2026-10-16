@@ -478,7 +478,9 @@ public sealed class MarketCatalogService : IMarketCatalogService
             RefreshedAt = entry.RefreshedAt,
             ExpiresAt = entry.ExpiresAt,
             Installable = detail.Installable,
-            InstallBlocker = detail.InstallBlocker,
+            InstallBlocker = detail.Blocker?.Text,
+            InstallBlockerCode = detail.Blocker?.Code is { Length: > 0 } code ? code : null,
+            InstallBlockerData = detail.Blocker?.Data,
         };
     }
 
@@ -488,17 +490,17 @@ public sealed class MarketCatalogService : IMarketCatalogService
     /// turning one unreadable row into a 500 for the whole page.
     /// </summary>
     private static (string? Homepage, string? RegistryType, IReadOnlyList<string> Transports,
-        bool Installable, string? InstallBlocker) ReadDetail(string? json)
+        bool Installable, MarketBlocker? Blocker) ReadDetail(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
-            return (null, null, [], false, "This entry stores no detail.");
+            return (null, null, [], false, new("detail_missing", "This entry stores no detail."));
 
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
-                return (null, null, [], false, "This entry's stored detail could not be read back.");
+                return (null, null, [], false, new("detail_unreadable", "This entry's stored detail could not be read back."));
 
             var transports = new List<string>();
             if (root.TryGetProperty("transports", out var listed) && listed.ValueKind == JsonValueKind.Array)
@@ -516,17 +518,25 @@ public sealed class MarketCatalogService : IMarketCatalogService
             // proposal is not shown an install button.
             var installable = root.TryGetProperty("install", out var install)
                 && install.ValueKind == JsonValueKind.Object;
-            var blocker = installable
-                ? null
-                : Text(root, "install_blocker") ?? "This entry cannot be installed by this build.";
+            // Rows stored before blockers carried a code keep their sentence and get no code.
+            var blocker = installable ? null
+                : Text(root, "install_blocker") is { } stored
+                    ? new MarketBlocker(Text(root, "install_blocker_code") ?? "", stored, Facts(root, "install_blocker_data"))
+                    : new MarketBlocker("not_installable", "This entry cannot be installed by this build.");
 
             return (Text(root, "homepage"), Text(root, "registry_type"), transports, installable, blocker);
         }
         catch (JsonException)
         {
-            return (null, null, [], false, "This entry's stored detail could not be read back.");
+            return (null, null, [], false, new("detail_unreadable", "This entry's stored detail could not be read back."));
         }
     }
+
+    private static IReadOnlyDictionary<string, string>? Facts(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var facts) && facts.ValueKind == JsonValueKind.Object
+            ? facts.EnumerateObject().Where(fact => fact.Value.ValueKind == JsonValueKind.String)
+                .ToDictionary(fact => fact.Name, fact => fact.Value.GetString()!)
+            : null;
 
     private static string? Text(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String

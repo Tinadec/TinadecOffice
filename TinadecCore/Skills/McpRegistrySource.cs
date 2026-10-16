@@ -182,7 +182,7 @@ internal static class McpRegistrySource
         var registryType = FirstString(server, "packages", "registryType", "registry_type");
         var packageName = FirstString(server, "packages", "identifier", "name");
         var transports = CollectTransports(server);
-        var (install, installBlocker) = ProjectInstall(server);
+        var (install, blocker) = ProjectInstall(server);
 
         var detail = new Dictionary<string, object?>
         {
@@ -191,7 +191,9 @@ internal static class McpRegistrySource
             ["package_name"] = packageName,
             ["transports"] = transports,
             ["install"] = install,
-            ["install_blocker"] = installBlocker,
+            ["install_blocker"] = blocker?.Text,
+            ["install_blocker_code"] = blocker?.Code,
+            ["install_blocker_data"] = blocker?.Data,
         };
         var detailJson = JsonSerializer.Serialize(detail);
         if (detailJson.Length > MaxDetailChars)
@@ -208,6 +210,8 @@ internal static class McpRegistrySource
             // than no command line, and this column has to stay parseable JSON.
             detail["install"] = null;
             detail["install_blocker"] = "This entry's package description is larger than Core stores.";
+            detail["install_blocker_code"] = "detail_too_large";
+            detail["install_blocker_data"] = null;
             detailJson = JsonSerializer.Serialize(detail);
         }
 
@@ -273,18 +277,18 @@ internal static class McpRegistrySource
     /// the row is treated as a reason to run anything — the proposal this feeds is executed only
     /// after a human approves a governed <c>write_file</c>.
     /// </summary>
-    internal static (Dictionary<string, object?>? Install, string? Blocker) ProjectInstall(JsonElement server)
+    internal static (Dictionary<string, object?>? Install, MarketBlocker? Blocker) ProjectInstall(JsonElement server)
     {
         if (!server.TryGetProperty("packages", out var packages) || packages.ValueKind != JsonValueKind.Array
             || packages.EnumerateArray().FirstOrDefault(p => p.ValueKind == JsonValueKind.Object)
                 is not { ValueKind: JsonValueKind.Object } package)
         {
-            return (null, "This entry publishes no package record, so there is no command to install.");
+            return (null, new("no_package", "This entry publishes no package record, so there is no command to install."));
         }
 
         var registryType = (MarketFetch.Text(package, "registryType", "registry_type") ?? string.Empty).Trim().ToLowerInvariant();
         if (!IsIdentifierShape(registryType))
-            return (null, "This entry's registry type is missing or is not a plain name.");
+            return (null, new("registry_type_invalid", "This entry's registry type is missing or is not a plain name."));
 
         // Older schema revisions spelled the transport as a sibling string; the current one nests
         // it as {"type": "stdio"}. The tool layer only knows how to spawn a command, so anything
@@ -293,31 +297,33 @@ internal static class McpRegistrySource
             ? MarketFetch.Text(nested, "type")
             : MarketFetch.Text(package, "transport_type");
         if (transport is not null && !string.Equals(transport.Trim(), "stdio", StringComparison.OrdinalIgnoreCase))
-            return (null, $"This entry publishes a {transport.Trim()} package; the tool layer starts servers by command.");
+            return (null, new("transport_unsupported", $"This entry publishes a {transport.Trim()} package; the tool layer starts servers by command.",
+                new Dictionary<string, string> { ["transport"] = transport.Trim() }));
 
         var version = Token(MarketFetch.Text(package, "version") ?? MarketFetch.Text(server, "version"), MaxVersionChars);
         if (version is null || version is "latest" or "next" or "*" or "0.0.0")
-            return (null, "This entry has no exact version to pin, so installing it would mean trusting whatever "
-                + "the package host serves at run time.");
+            return (null, new("version_unpinned", "This entry has no exact version to pin, so installing it would mean trusting whatever "
+                + "the package host serves at run time."));
 
         var identifier = Token(MarketFetch.Text(package, "identifier", "name"), MaxIdentifierChars);
         if (identifier is null)
-            return (null, "This entry's package identifier is missing or carries characters a command line cannot "
-                + "carry safely.");
+            return (null, new("identifier_invalid", "This entry's package identifier is missing or carries characters a command line cannot "
+                + "carry safely."));
 
         var command = Token(MarketFetch.Text(package, "runtimeHint") ?? LauncherFor(registryType), MaxCommandChars);
         if (command is null)
-            return (null, $"Core has no launcher rule for registry type '{registryType}', so it cannot name a command to run.");
+            return (null, new("launcher_unknown", $"Core has no launcher rule for registry type '{registryType}', so it cannot name a command to run.",
+                new Dictionary<string, string> { ["registry_type"] = registryType }));
 
         var args = new List<string>();
         foreach (var value in RuntimeArgumentValues(package))
         {
             if (args.Count >= MaxRuntimeArguments)
-                return (null, "This entry publishes more runtime arguments than Core will review at once.");
+                return (null, new("too_many_arguments", "This entry publishes more runtime arguments than Core will review at once."));
 
             var arg = Token(Substitute(value, version), MaxCommandChars);
             if (arg is null)
-                return (null, "This entry publishes a runtime argument that is too long or carries unsafe characters.");
+                return (null, new("argument_invalid", "This entry publishes a runtime argument that is too long or carries unsafe characters."));
 
             args.Add(arg);
         }
@@ -336,7 +342,7 @@ internal static class McpRegistrySource
 
         coordinate = Token(Substitute(coordinate, version), MaxIdentifierChars + MaxVersionChars + 2);
         if (coordinate is null)
-            return (null, "The pinned package coordinate this entry describes is not a usable command argument.");
+            return (null, new("coordinate_invalid", "The pinned package coordinate this entry describes is not a usable command argument."));
 
         args.Add(coordinate);
 

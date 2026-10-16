@@ -1578,6 +1578,15 @@
           "install_blocker": {
             "type": "string"
           },
+          "install_blocker_code": {
+            "type": "string"
+          },
+          "install_blocker_data": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
           "installable": {
             "type": "boolean"
           },

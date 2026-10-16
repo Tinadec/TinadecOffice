@@ -26,6 +26,7 @@ import { isUserToolActionTerminal, userToolActionNeedsDecision } from '@/userToo
 // Module-level composables are safe (they share module refs); `useI18n` is NOT
 // callable outside setup(), so translate via the global instance instead.
 const t = i18n.global.t
+const te = i18n.global.te
 const { notify, status, dismissByKey } = useNotifications()
 
 const sources = ref<ExtensionSourceDto[]>([])
@@ -316,7 +317,7 @@ async function previewInstall() {
     return
   }
   if (item.installable === false) {
-    notify.warning({ message: item.install_blocker || t('market.notInstallable'), source: 'market' })
+    notify.warning({ message: installBlockerText(item), source: 'market' })
     return
   }
   proposalBusy.value = true
@@ -410,7 +411,12 @@ async function refreshSource(sourceId: string) {
     // A refresh that was blocked or never reached the market leaves the catalog standing, which
     // looks exactly like success from the outside. Say which of the three happened.
     if (outcome.outcome !== 'fetched') {
-      throw new Error(outcome.reason || t('market.sourceNoAnswer', { outcome: outcome.outcome }))
+      // The outcome is the sentence; the source's own error (network, parse) is the detail.
+      const key = `market.sourceOutcome.${outcome.outcome}`
+      notify.error(te(key) ? t(key) : t('market.sourceNoAnswer', { outcome: outcome.outcome }), {
+        title: t('home.actionFailed', { action: t('market.action.refreshSource') }), details: outcome.reason || undefined, source: 'market',
+      })
+      return
     }
     notify.success({
       message: outcome.truncated_pages
@@ -442,12 +448,18 @@ function stop() {
   ++catalogEpoch; ++ledgerEpoch
 }
 
+/** Why an entry cannot be installed, from its code and facts; Core's sentence when this build has no words for it. */
+function installBlockerText(item: MarketCatalogItemDto): string {
+  const key = `market.installBlocker.${item.install_blocker_code}`
+  return item.install_blocker_code && te(key) ? t(key, item.install_blocker_data ?? {}) : item.install_blocker || t('market.notInstallable')
+}
+
 export const marketController = {
   sources, supportedKinds, catalog, installations, acpAdapters,
   mcpInventory, mcpServers, mcpSource, mcpReadSucceeded, mcpReason, mcpConfigPath,
   selectedCatalogId, kindFilter, sourceFilter, query, busy, loading,
   proposal, activeProposal, proposalBusy, sourceForm,
-  selectedItem, selectedInstallation, installationFor, awaitingDecision, actionFinished, installationUsable, skillScope,
+  selectedItem, selectedInstallation, installationFor, installBlockerText, awaitingDecision, actionFinished, installationUsable, skillScope,
   targetProjectId, targetProject,
   start, stop,
   loadAll, loadCatalog, loadInstallations,

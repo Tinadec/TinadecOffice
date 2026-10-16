@@ -382,6 +382,8 @@ const marketCatalogEntry = t.Object({
   expires_at: t.String(),
   installable: t.Boolean(),
   install_blocker: t.Optional(t.String()),
+  install_blocker_code: t.Optional(t.String()),
+  install_blocker_data: t.Optional(t.Unsafe({ type: 'object', additionalProperties: { type: 'string' } })),
 }, { additionalProperties: true });
 
 /**

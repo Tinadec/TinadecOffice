@@ -787,6 +787,9 @@ export interface MarketCatalogItemDto {
   /** False is not a defect in the entry — `install_blocker` says which case this is. */
   installable: boolean;
   install_blocker?: string;
+  /** What `install_blocker` is about; the UI words it from `market.installBlocker.*` and `install_blocker_data`. */
+  install_blocker_code?: string;
+  install_blocker_data?: Record<string, string>;
 }
 
 export interface MarketCatalogPageDto {

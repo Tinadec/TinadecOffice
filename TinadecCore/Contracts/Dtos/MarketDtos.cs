@@ -214,6 +214,14 @@ public sealed class MarketCatalogEntryDto
 
     [JsonPropertyName("install_blocker")]
     public string? InstallBlocker { get; init; }
+
+    /// <summary>Stable identifier of <see cref="InstallBlocker"/> (for example <c>version_unpinned</c>); clients word
+    /// it with <see cref="InstallBlockerData"/>, InstallBlocker stays the English diagnostic.</summary>
+    [JsonPropertyName("install_blocker_code")]
+    public string? InstallBlockerCode { get; init; }
+
+    [JsonPropertyName("install_blocker_data")]
+    public IReadOnlyDictionary<string, string>? InstallBlockerData { get; init; }
 }
 
 /// <summary>

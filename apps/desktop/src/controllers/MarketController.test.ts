@@ -78,6 +78,7 @@ const notifications = vi.hoisted(() => ({
 vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => notifications }))
 
 import { marketController, catalogKindLabel, sourceKindLabel } from './MarketController'
+import i18n from '@/i18n'
 
 const CONNECTED: McpInventoryDto = {
   source: 'tool_provider',
@@ -268,6 +269,16 @@ describe('marketController install proposals', () => {
     expect(h.previewMarketInstall).not.toHaveBeenCalled()
     expect(notifications.notify.warning).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'This entry publishes no package record.' }))
+  })
+
+  it('words a coded blocker from its code and facts instead of Core\'s sentence', async () => {
+    await showItem(catalogItem({ installable: false, install_blocker: 'Core sentence.', install_blocker_code: 'transport_unsupported', install_blocker_data: { transport: 'sse' } }))
+
+    await marketController.previewInstall()
+
+    const worded = i18n.global.t('market.installBlocker.transport_unsupported', { transport: 'sse' })
+    expect(worded).toContain('sse')
+    expect(notifications.notify.warning).toHaveBeenCalledWith(expect.objectContaining({ message: worded }))
   })
 
   it('queues the governed write and reports it as waiting, never as installed', async () => {

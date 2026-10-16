@@ -655,6 +655,7 @@ public sealed partial class MarketCatalogApiTests : IAsyncLifetime
         var row = listed.GetProperty("items")[0];
         Assert.False(row.GetProperty("installable").GetBoolean());
         Assert.Contains("no package", row.GetProperty("install_blocker").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("no_package", row.GetProperty("install_blocker_code").GetString());
 
         var response = await Client.PostAsJsonAsync($"/api/v1/market/catalog/{entry}/install-preview",
             new { scope = "project", project_id = await CreateProjectAsync("remote") });

@@ -1470,6 +1470,10 @@ export interface components {
       extension_id: string;
       homepage?: string;
       install_blocker?: string;
+      install_blocker_code?: string;
+      install_blocker_data?: {
+        [key: string]: string;
+      };
       installable: boolean;
       kind: string;
       manifest_hash: string;
