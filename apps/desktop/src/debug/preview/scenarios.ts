@@ -5,7 +5,6 @@
 import type { MockDataBundle } from './mockData'
 import {
   buildMockDataBundle,
-  mockDoctorWithError,
   mockReadinessBlocked,
   mockPendingApprovals,
   mockManyMessages,
@@ -45,7 +44,6 @@ export const SCENARIOS: Scenario[] = [
       orchestration: null,
       toolExecutions: [],
       events: [],
-      doctor: null,
       readiness: null,
       modelSettings: null,
       modelProviders: [],
@@ -74,7 +72,6 @@ export const SCENARIOS: Scenario[] = [
       orchestration: null,
       toolExecutions: [],
       events: [],
-      doctor: null,
       readiness: null,
       modelSettings: null,
       modelProviders: [],
@@ -115,7 +112,6 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'error',
     overrides: {
-      doctor: mockDoctorWithError(),
       readiness: mockReadinessBlocked(),
     },
   },

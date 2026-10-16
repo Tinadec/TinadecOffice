@@ -11,7 +11,6 @@ import type {
   ApprovalDto,
   OrchestrationSnapshotDto,
   ToolExecutionTimelineItemDto,
-  DoctorReportDto,
   RuntimeReadinessReceiptDto,
   ModelSettingsDto,
   ModelProviderInstanceDto,
@@ -94,7 +93,6 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
     gatewayUrl: 'http://127.0.0.1:48730',
 
     health: () => delay({ status: 'ok' }, scenario.value),
-    doctor: () => delay(data().doctor as DoctorReportDto, scenario.value),
     readiness: () => delay(data().readiness as RuntimeReadinessReceiptDto, scenario.value),
     getToolLayerReadiness: () =>
       delay(

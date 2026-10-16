@@ -628,29 +628,22 @@ export interface SaveModelProviderInstanceInput {
   enabled?: boolean;
 }
 
-export interface DoctorReportDto {
-  platform: string;
-  agent_core_version: string;
-  checks: Array<{ name: string; status: string; message: string }>;
-}
-
-export interface RuntimeReadinessComponentDto {
+/** One fixed check of Core's unified readiness receipt (database, model_route, tool_provider, …). */
+export interface ReadinessItemDto {
   id: string;
-  name: string;
+  /** ready | degraded | blocked | unavailable */
   status: string;
-  summary: string;
-  evidence: string[];
+  reason?: string | null;
+  action?: string | null;
+  checked_at?: string;
+  data?: Record<string, unknown> | null;
 }
 
+/** GET /api/v1/readiness: the overall status (ready | degraded | blocked) and the fixed items. */
 export interface RuntimeReadinessReceiptDto {
   status: string;
-  generated_at: string;
-  runtime: string;
-  receipt_id: string;
-  components: RuntimeReadinessComponentDto[];
-  ready_count: number;
-  warning_count: number;
-  blocked_count: number;
+  checked_at?: string;
+  items: ReadinessItemDto[];
 }
 
 export interface ToolLayerToolReadinessDto {
@@ -2994,7 +2987,6 @@ export const api = {
       core_version: response.ok && typeof data.version === 'string' ? data.version : null,
     }
   },
-  doctor: () => request<DoctorReportDto>('/api/v1/doctor'),
   readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),
   getToolLayerReadiness: (options?: { signal?: AbortSignal }) => request<ToolLayerReadinessReceiptDto>('/api/v1/tool-layer-readiness', options),
   listProjects: (options?: { signal?: AbortSignal; storageId?: string; lifecycleStatus?: 'active' | 'archived' | 'trashed' }) => request<ProjectDto[]>(`/api/v1/projects${options?.lifecycleStatus ? '?lifecycle_status=' + encodeURIComponent(options.lifecycleStatus) : ''}`, options),

@@ -8,6 +8,6 @@ const c = homeController
 
 <template>
   <CardScroll>
-    <DoctorTab :doctor="c.doctor.value" :readiness="c.readiness.value" />
+    <DoctorTab :readiness="c.readiness.value" />
   </CardScroll>
 </template>

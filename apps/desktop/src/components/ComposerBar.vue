@@ -2,6 +2,7 @@
 import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Plus, Settings, Sparkles, Square, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useStatusLabels } from '@/lib/statusLabels'
+import { errorCodeMessage } from '@/lib/apiError'
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, useId, type Component, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { UiButton, UiSelectField } from '@/components/ui'
@@ -38,7 +39,7 @@ import { api } from '@/api'
 import { toDirEntryView, type DirEntryDto, type DirEntryView } from '@/lib/workspaceSearch'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { runStatusLabel } = useStatusLabels()
 const router = useRouter()
 
@@ -498,7 +499,10 @@ function attachmentHint(item: PendingAttachment): string {
   if (item.errorCode === TOO_LARGE_CODE) {
     return t('composer.attachTooLarge', { max: formatAttachmentBytes(MAX_ATTACHMENT_BYTES) })
   }
-  return t('composer.attachFailed', { code: item.errorCode ?? 'unknown' })
+  if (item.errorCode === 'backend_network_unavailable' || item.errorCode === 'backend_write_outcome_unknown') return t('home.sendError.offline')
+  // A code with wording reads as a sentence; an unknown one stays visible for a bug report.
+  return errorCodeMessage(item.errorCode, undefined, { t, te })
+    ?? (item.errorCode ? t('composer.attachFailed', { code: item.errorCode }) : t('composer.attachFailedUnknown'))
 }
 
 // Chips describe rows in the session the composer was attached to. immediate covers

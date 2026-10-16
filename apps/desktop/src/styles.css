@@ -4202,22 +4202,8 @@ background: var(--surface-raised);
   line-height: 1.4;
 }
 
-.readiness-evidence {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.readiness-evidence span {
-  max-width: 100%;
-  overflow: hidden;
-  padding: 2px 6px;
+.readiness-component p.readiness-action {
   color: var(--text-muted);
-  background: var(--bg-tertiary);
-  border-radius: 999px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10px;
 }
 
 /* TaskGraphPanel - Codex 风格紧凑步骤列表 */

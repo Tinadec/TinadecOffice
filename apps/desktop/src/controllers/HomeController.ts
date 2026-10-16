@@ -11,7 +11,6 @@ import {
   type ApprovalDto,
   type ApprovalRuleDto,
   type CreateApprovalRuleInput,
-  type DoctorReportDto,
   type EventEnvelope,
   type MessageDto,
   type ModelSettingsDto,
@@ -66,7 +65,6 @@ const messages = ref<MessageDto[]>([])
 const approvals = ref<ApprovalDto[]>([])
 const approvalRules = ref<ApprovalRuleDto[]>([])
 const events = ref<EventEnvelope[]>([])
-const doctor = ref<DoctorReportDto | null>(null)
 const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
 const modelSettings = ref<ModelSettingsDto | null>(null)
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)
@@ -312,7 +310,6 @@ async function loadInitial() {
         } finally { if (restoring) suppressProjectSessionsReload = false }
         if (read === initialRead) dismissByKey('home-load')
       }).catch(reason => failure(reason, 'home-load', t('home.workspacesLoadFailed'))),
-      api.doctor().then(report => { if (read === initialRead) { doctor.value = report; dismissByKey('home-doctor') } }).catch(reason => failure(reason, 'home-doctor', t('home.doctorLoadFailed'))),
       api.readiness().then(receipt => {
         if (read !== initialRead) return
         readiness.value = receipt
@@ -1322,7 +1319,7 @@ watch(canAccessBackend, ready => {
     return
   }
   if (hostAccessStatus.value?.error?.code === 'desktop_restart_required' || hostAccessStatus.value?.error?.code === 'host_bridge_unavailable') {
-    for (const key of ['home-load', 'home-doctor', 'home-readiness']) dismissByKey(key)
+    for (const key of ['home-load', 'home-readiness']) dismissByKey(key)
   }
   initialRead++; sessionListRead++; sessionListAbort?.abort(); sessionLoadAbort?.abort()
   for (const stream of runStreams.values()) stream.disconnect()
@@ -1361,7 +1358,6 @@ export const homeController = {
   approvalRules,
   events,
   recentEvents,
-  doctor,
   readiness,
   modelSettings,
   orchestration,

@@ -6,7 +6,6 @@ import { flushPromises } from '@vue/test-utils'
 const h = vi.hoisted(() => ({
   createUserToolActionForPath: vi.fn(),
   listProjects: vi.fn(async () => []),
-  doctor: vi.fn(async () => null),
   readiness: vi.fn(async () => ({ items: [] })),
   listSessions: vi.fn(async (_project?: string, _signal?: AbortSignal, _storage?: string) => []),
   readWorkspace: vi.fn(),
@@ -59,7 +58,6 @@ vi.mock('@/lib/pendingAttachments', () => ({
 vi.mock('@/api', () => ({
   api: {
     listProjects: h.listProjects,
-    doctor: h.doctor,
     readiness: h.readiness,
     listSessions: h.listSessions,
     readWorkspace: h.readWorkspace,
@@ -740,7 +738,6 @@ describe('HomeController initial load', () => {
       path: 'C:/workspace/demo',
       created_at: '2026-10-07T00:00:00Z',
     }] as never[])
-    h.doctor.mockResolvedValueOnce(null)
     h.readiness.mockResolvedValueOnce({ items: [] } as never)
     h.listSessions.mockImplementationOnce((_projectId?: string, signal?: AbortSignal) => {
       rosterSignal = signal!
@@ -762,7 +759,7 @@ describe('HomeController initial load', () => {
 })
 
 describe('HomeController independent storage scopes', () => {
-  it('leaves local IPC recovery to the host banner without three backend-load notifications', async () => {
+  it('leaves local IPC recovery to the host banner without backend-load notifications', async () => {
     homeController.start()
     await flushPromises()
     setHostAccessStatus({ state: 'unavailable', managed: true })
@@ -771,16 +768,15 @@ describe('HomeController independent storage scopes', () => {
     h.dismissByKey.mockClear()
     const unavailable = new ApiError('Restart desktop', 503, { code: 'desktop_restart_required', category: 'environment_unavailable', retryable: false, actions: [] })
     h.listProjects.mockRejectedValueOnce(unavailable)
-    h.doctor.mockRejectedValueOnce(unavailable)
     h.readiness.mockRejectedValueOnce(unavailable)
     setHostAccessStatus({ state: 'ready', managed: true })
     await flushPromises()
     expect(h.bannerError).not.toHaveBeenCalled()
-    for (const key of ['home-load', 'home-doctor', 'home-readiness']) expect(h.dismissByKey).toHaveBeenCalledWith(key)
+    for (const key of ['home-load', 'home-readiness']) expect(h.dismissByKey).toHaveBeenCalledWith(key)
     h.dismissByKey.mockClear()
     setHostAccessStatus({ state: 'restart_required', managed: true, error: { code: 'desktop_restart_required', message: 'Restart desktop' } })
     await nextTick()
-    for (const key of ['home-load', 'home-doctor', 'home-readiness']) expect(h.dismissByKey).toHaveBeenCalledWith(key)
+    for (const key of ['home-load', 'home-readiness']) expect(h.dismissByKey).toHaveBeenCalledWith(key)
     setHostAccessStatus({ state: 'ready', managed: true })
     await flushPromises()
   })
@@ -788,7 +784,6 @@ describe('HomeController independent storage scopes', () => {
     setHostAccessStatus({ state: 'unavailable', managed: true })
     await nextTick()
     h.listProjects.mockResolvedValueOnce([{ id: 'recover-project', storage_id: 'recover-scope', name: 'recovered', path: 'C:/recovered' }] as never)
-    h.doctor.mockRejectedValueOnce(new Error('diagnostic service failed'))
     h.readiness.mockRejectedValueOnce(new Error('readiness service failed'))
     h.listSessions.mockImplementation(async (_project?: string, _signal?: AbortSignal, storage?: string) => storage === 'recover-scope'
       ? [{ id: 'recover-session', storage_id: storage, project_id: 'recover-project', title: 'retained' }] as never : [])
@@ -796,7 +791,6 @@ describe('HomeController independent storage scopes', () => {
     await flushPromises()
     expect(homeController.projects.value[0]?.id).toBe('recover-project')
     expect(homeController.sessions.value[0]?.id).toBe('recover-session')
-    expect(h.bannerError).toHaveBeenCalledWith(expect.objectContaining({ key: 'home-doctor' }))
     expect(h.bannerError).toHaveBeenCalledWith(expect.objectContaining({ key: 'home-readiness' }))
     expect(h.createSession).not.toHaveBeenCalled()
     expect(h.migrateSession).not.toHaveBeenCalled()

@@ -1,16 +1,31 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { DoctorReportDto, RuntimeReadinessReceiptDto } from '../api'
+import type { RuntimeReadinessReceiptDto } from '../api'
 import StatusPill from './StatusPill.vue'
 
-defineProps<{
-  doctor: DoctorReportDto | null
+/** Core's unified readiness receipt (GET /api/v1/readiness): the overall status and its fixed checks. */
+const props = defineProps<{
   readiness: RuntimeReadinessReceiptDto | null
 }>()
 
-const { t, te } = useI18n()
-/** A readiness or check status in words; one this build does not know is shown as it came. */
+const { t, te, locale } = useI18n()
+/** A status or check name in words; one this build does not know is shown as it came. */
 const statusLabel = (status: string) => te(`doctor.status.${status}`) ? t(`doctor.status.${status}`) : status
+const itemName = (id: string) => te(`doctor.item.${id}`) ? t(`doctor.item.${id}`) : id
+
+const counts = computed(() => {
+  const items = props.readiness?.items ?? []
+  return {
+    ready: items.filter((item) => item.status === 'ready').length,
+    warning: items.filter((item) => item.status === 'degraded' || item.status === 'unavailable').length,
+    blocked: items.filter((item) => item.status === 'blocked').length,
+  }
+})
+const checkedAt = computed(() => {
+  const value = props.readiness?.checked_at ? new Date(props.readiness.checked_at) : null
+  return value && !Number.isNaN(value.getTime()) ? value.toLocaleTimeString(locale.value) : ''
+})
 </script>
 
 <template>
@@ -18,38 +33,27 @@ const statusLabel = (status: string) => te(`doctor.status.${status}`) ? t(`docto
     <div class="readiness-head">
       <div>
         <strong>{{ t('doctor.readiness') }}</strong>
-        <span>{{ readiness.runtime }}</span>
+        <span v-if="checkedAt">{{ t('doctor.checkedAt', { time: checkedAt }) }}</span>
       </div>
       <StatusPill :status="readiness.status" :label="statusLabel(readiness.status)" />
     </div>
 
     <div class="readiness-metrics">
-      <span><strong>{{ readiness.ready_count }}</strong> {{ t('doctor.counts.ready') }}</span>
-      <span><strong>{{ readiness.warning_count }}</strong> {{ t('doctor.counts.warning') }}</span>
-      <span><strong>{{ readiness.blocked_count }}</strong> {{ t('doctor.counts.blocked') }}</span>
+      <span><strong>{{ counts.ready }}</strong> {{ t('doctor.counts.ready') }}</span>
+      <span><strong>{{ counts.warning }}</strong> {{ t('doctor.counts.warning') }}</span>
+      <span><strong>{{ counts.blocked }}</strong> {{ t('doctor.counts.blocked') }}</span>
     </div>
 
     <div class="readiness-components">
-      <div v-for="component in readiness.components" :key="component.id" class="readiness-component">
+      <div v-for="item in readiness.items" :key="item.id" class="readiness-component" :data-item="item.id">
         <div class="readiness-component-head">
-          <StatusPill :status="component.status" :label="statusLabel(component.status)" />
-          <strong>{{ component.name }}</strong>
+          <StatusPill :status="item.status" :label="statusLabel(item.status)" />
+          <strong>{{ itemName(item.id) }}</strong>
         </div>
-        <p>{{ component.summary }}</p>
-        <div class="readiness-evidence">
-          <span v-for="item in component.evidence.slice(0, 3)" :key="item">{{ item }}</span>
-        </div>
+        <p v-if="item.reason">{{ item.reason }}</p>
+        <p v-if="item.action" class="readiness-action">{{ item.action }}</p>
       </div>
     </div>
   </section>
-
-  <section class="panel">
-    <div class="panel-title">
-      <span>{{ t('doctor.dependencies') }}</span>
-    </div>
-    <div v-for="check in doctor?.checks ?? []" :key="check.name" class="doctor-row">
-      <StatusPill :status="check.status" :label="statusLabel(check.status)" />
-      <strong>{{ check.name }}</strong>
-    </div>
-  </section>
+  <p v-else class="quiet">{{ t('doctor.unavailable') }}</p>
 </template>

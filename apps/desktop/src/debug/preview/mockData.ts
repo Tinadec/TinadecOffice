@@ -10,7 +10,6 @@ import type {
   OrchestrationSnapshotDto,
   ToolExecutionTimelineItemDto,
   EventEnvelope,
-  DoctorReportDto,
   RuntimeReadinessReceiptDto,
   ModelSettingsDto,
   ModelProviderInstanceDto,
@@ -1166,67 +1165,31 @@ export function mockEvents(sessionId: string): EventEnvelope[] {
 // Doctor / Readiness
 // ============================================================
 
-export function mockDoctor(): DoctorReportDto {
-  return {
-    platform: 'win32-x64',
-    agent_core_version: '0.4.2',
-    checks: [
-      { name: 'gateway', status: 'ok', message: '网关运行在 127.0.0.1:48730' },
-      { name: 'model_provider', status: 'ok', message: '已配置 3 个 provider，2 个就绪' },
-      { name: 'tool_registry', status: 'ok', message: '16 个工具已注册' },
-      { name: 'agent_runtime', status: 'ok', message: '15 个 agent 已加载' },
-      { name: 'event_hub', status: 'ok', message: '事件总线正常' },
-    ],
-  }
-}
-
-export function mockDoctorWithError(): DoctorReportDto {
-  return {
-    platform: 'win32-x64',
-    agent_core_version: '0.4.2',
-    checks: [
-      { name: 'gateway', status: 'ok', message: '网关运行在 127.0.0.1:48730' },
-      { name: 'model_provider', status: 'error', message: 'OpenAI provider 缺少 API Key' },
-      { name: 'tool_registry', status: 'ok', message: '16 个工具已注册' },
-      { name: 'agent_runtime', status: 'warning', message: '2 个 agent 未启用' },
-      { name: 'event_hub', status: 'error', message: '事件总线连接超时' },
-    ],
-  }
-}
+// Core's unified readiness receipt (GET /api/v1/readiness), worded as the server words it today.
+const readyItems = () => [
+  { id: 'database', status: 'ready', reason: '数据库可达（sqlite）', checked_at: iso(0) },
+  { id: 'core_storage', status: 'ready', reason: 'Content store 写/读/删 round trip 成功。', checked_at: iso(0) },
+  { id: 'agent_pack', status: 'ready', reason: '已激活 Agent Pack：tinadec.graph-seed@3.0.1', checked_at: iso(0) },
+  { id: 'default_mode', status: 'ready', reason: '工作区默认模式已配置。', checked_at: iso(0) },
+  { id: 'model_route', status: 'ready', reason: 'chat 路由解析到 gpt-5.4-mini。', checked_at: iso(0), data: { model: 'gpt-5.4-mini', base_url: 'https://api.openai.com/v1' } },
+  { id: 'model_provider', status: 'ready', reason: "chat provider 'OpenAI' 已启用（driver openai，model gpt-5.4-mini）。", checked_at: iso(0) },
+  { id: 'model_secret', status: 'ready', reason: 'provider 已录入 API key。', checked_at: iso(0) },
+  { id: 'model_probe', status: 'unavailable', reason: '模型探针尚未执行（结果缓存 60s，过期或路由变更后需重新探测）。', action: 'POST /api/v1/model-probe?force=true 触发一次真实 1-token 请求。', checked_at: iso(0) },
+  { id: 'tool_provider', status: 'ready', reason: 'TinadecTools 进程可用，manifest 声明 49 个工具。', checked_at: iso(0) },
+  { id: 'manifest_hash', status: 'ready', reason: 'manifest hash 已就绪。', checked_at: iso(0) },
+]
 
 export function mockReadiness(): RuntimeReadinessReceiptDto {
-  return {
-    status: 'ready',
-    generated_at: iso(0),
-    runtime: 'TinadecCore 0.4.2',
-    receipt_id: 'rcpt-001',
-    components: [
-      { id: 'gateway', name: 'Gateway', status: 'ready', summary: '网关正常运行', evidence: ['监听 127.0.0.1:48730'] },
-      { id: 'model', name: 'Model Layer', status: 'ready', summary: '2/3 provider 就绪', evidence: ['openai: ready', 'anthropic: ready', 'local: disabled'] },
-      { id: 'tools', name: 'Tool Layer', status: 'ready', summary: '16 个工具可用', evidence: ['builtin: 12', 'extension: 4'] },
-      { id: 'agents', name: 'Agent Runtime', status: 'warning', summary: '13/15 agent 启用', evidence: ['planning: 7/7', 'execution: 6/8'] },
-    ],
-    ready_count: 3,
-    warning_count: 1,
-    blocked_count: 0,
-  }
+  return { status: 'ready', checked_at: iso(0), items: readyItems() }
 }
 
 export function mockReadinessBlocked(): RuntimeReadinessReceiptDto {
   return {
     status: 'blocked',
-    generated_at: iso(0),
-    runtime: 'TinadecCore 0.4.2',
-    receipt_id: 'rcpt-002',
-    components: [
-      { id: 'gateway', name: 'Gateway', status: 'ready', summary: '网关正常运行', evidence: ['监听 127.0.0.1:48730'] },
-      { id: 'model', name: 'Model Layer', status: 'blocked', summary: '无可用 provider', evidence: ['openai: missing api key', 'anthropic: connection refused', 'local: disabled'] },
-      { id: 'tools', name: 'Tool Layer', status: 'ready', summary: '16 个工具可用', evidence: ['builtin: 12', 'extension: 4'] },
-      { id: 'agents', name: 'Agent Runtime', status: 'blocked', summary: '0/15 agent 启用', evidence: ['planning: 0/7', 'execution: 0/8'] },
-    ],
-    ready_count: 2,
-    warning_count: 0,
-    blocked_count: 2,
+    checked_at: iso(0),
+    items: readyItems().map((item) => item.id === 'model_secret'
+      ? { ...item, status: 'blocked', reason: 'provider 尚未录入 API key。', action: '在模型中心为 provider OpenAI 录入 API key（模型中心 → provider → 编辑 → 保存 API key）。' }
+      : item),
   }
 }
 
@@ -2080,7 +2043,6 @@ export interface MockDataBundle {
   orchestration: OrchestrationSnapshotDto | null
   toolExecutions: ToolExecutionTimelineItemDto[]
   events: EventEnvelope[]
-  doctor: DoctorReportDto | null
   readiness: RuntimeReadinessReceiptDto | null
   modelSettings: ModelSettingsDto | null
   modelProviders: ModelProviderInstanceDto[]
@@ -2110,7 +2072,6 @@ export function buildMockDataBundle(sessionId: string = 'sess-tinadec-1001'): Mo
     orchestration: mockOrchestrationSnapshot(sessionId),
     toolExecutions: mockToolExecutions(sessionId),
     events: mockEvents(sessionId),
-    doctor: mockDoctor(),
     readiness: mockReadiness(),
     modelSettings: mockModelSettings(),
     modelProviders: mockModelProviders(),
