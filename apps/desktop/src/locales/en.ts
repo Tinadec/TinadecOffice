@@ -3170,6 +3170,11 @@ retry: 'Retry',
       agent: 'agent',
     },
   },
+  web: {
+    gatewayManaged: 'The Gateway URL is managed by the web deployment.',
+    petsUnavailable: 'Pets are not available in the web version.',
+    panelsUnavailable: 'Panel windows are not available in the web version.',
+  },
   common: {
     copyName: '{name} (copy)',
     backendUnreachable: 'Cannot connect to backend ({origin}): {reason}',

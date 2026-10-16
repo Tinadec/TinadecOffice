@@ -3168,6 +3168,11 @@ retry: '重试',
       agent: '智能体',
     },
   },
+  web: {
+    gatewayManaged: '网页版的网关地址由部署方管理。',
+    petsUnavailable: '网页版不支持桌面宠物。',
+    panelsUnavailable: '网页版不支持独立面板窗口。',
+  },
   common: {
     copyName: '{name}（副本）',
     backendUnreachable: '无法连接后端（{origin}）：{reason}',

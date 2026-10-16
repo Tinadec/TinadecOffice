@@ -8,11 +8,13 @@
  * DO NOT modify this file to add new platform features — keep all platform
  * difference concentrated here.
  */
+import i18n from '@/i18n'
 
 const noop = () => {}
 
-function rejectNotAvailable(reason: string): Promise<never> {
-  return Promise.reject(new Error(reason))
+/** The reason is a locale key, read when the call is made so it follows the interface language. */
+function rejectNotAvailable(reasonKey: string): Promise<never> {
+  return Promise.reject(new Error(i18n.global.t(reasonKey)))
 }
 
 // ponytail: terminal is intentionally left undefined so useTerminal.ts
@@ -32,10 +34,10 @@ function rejectNotAvailable(reason: string): Promise<never> {
     }),
 
   saveGatewayUrl: () =>
-    rejectNotAvailable('Gateway URL is managed by the web deployment.'),
+    rejectNotAvailable('web.gatewayManaged'),
 
   resetGatewayUrl: () =>
-    rejectNotAvailable('Gateway URL is managed by the web deployment.'),
+    rejectNotAvailable('web.gatewayManaged'),
 
   restartApp: () => {
     window.location.reload()
@@ -63,23 +65,23 @@ function rejectNotAvailable(reason: string): Promise<never> {
     fetchCatalog: () => Promise.resolve([]),
     getCurrent: () => Promise.resolve(null),
     getWindowPet: () => Promise.resolve(null),
-    create: () => rejectNotAvailable('Pets are not available in the web version.'),
-    close: () => rejectNotAvailable('Pets are not available in the web version.'),
-    setCurrentBounds: () => rejectNotAvailable('Pets are not available in the web version.'),
-    setCurrentClickThrough: () => rejectNotAvailable('Pets are not available in the web version.'),
-    closeCurrent: () => rejectNotAvailable('Pets are not available in the web version.'),
+    create: () => rejectNotAvailable('web.petsUnavailable'),
+    close: () => rejectNotAvailable('web.petsUnavailable'),
+    setCurrentBounds: () => rejectNotAvailable('web.petsUnavailable'),
+    setCurrentClickThrough: () => rejectNotAvailable('web.petsUnavailable'),
+    closeCurrent: () => rejectNotAvailable('web.petsUnavailable'),
     onChanged: () => noop,
-    download: () => rejectNotAvailable('Pets are not available in the web version.'),
-    setEnabled: () => rejectNotAvailable('Pets are not available in the web version.'),
-    openFolder: () => rejectNotAvailable('Pets are not available in the web version.'),
-    remove: () => rejectNotAvailable('Pets are not available in the web version.'),
+    download: () => rejectNotAvailable('web.petsUnavailable'),
+    setEnabled: () => rejectNotAvailable('web.petsUnavailable'),
+    openFolder: () => rejectNotAvailable('web.petsUnavailable'),
+    remove: () => rejectNotAvailable('web.petsUnavailable'),
   },
 
   // -- Terminal (left undefined — see note above) --
 
   // -- Detachable panels (no-ops in browser) --
   detachPanel: () => Promise.resolve(null),
-  reattachPanel: () => rejectNotAvailable('Panel windows are not available in the web version.'),
+  reattachPanel: () => rejectNotAvailable('web.panelsUnavailable'),
   closePanelWindow: noop,
   focusPanelWindow: noop,
   getPanelWindows: () => Promise.resolve([]),
