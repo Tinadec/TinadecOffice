@@ -182,7 +182,7 @@ declare global {
       resetGatewayUrl: () => Promise<{ gateway_url: string; source: 'default' | 'environment'; managed: boolean }>;
       discoverServices: () => Promise<DiscoveredService[]>;
       restartApp: () => Promise<void>;
-      selectWorkspaceFolders: () => Promise<string[]>;
+      selectWorkspaceFolders: (title?: string) => Promise<string[]>;
       setStorageWritePolicy: (storageId: string, allow: boolean) => Promise<{ storage_id: string; allow_storage_write: boolean }>;
       storageAction: (storageId: string, action: 'configure' | 'cleanup' | 'content-collect' | 'storage-delete' | 'unregister', input?: Record<string, unknown>) => Promise<unknown>;
       saveUserStorageRoot: (root: string) => Promise<{ user_root: string; path: string; restart_required: boolean }>;

@@ -29,15 +29,26 @@ export function hostBridgeFailure(error: unknown): HostConnectionStatus {
   } }
 }
 
+/** The main process names host failures by code; their wording is this window's language. */
+const HOST_ERROR_KEYS: Record<string, string> = {
+  host_identity_rejected: 'host.identityRejected',
+  host_identity_unavailable: 'host.identityUnavailable',
+  host_connection_stopped: 'host.connectionStopped',
+}
+export function localizeHostStatus(status: HostConnectionStatus): HostConnectionStatus {
+  const key = status.error ? HOST_ERROR_KEYS[status.error.code] : undefined
+  return key && status.error ? { ...status, error: { ...status.error, message: i18n.global.t(key) } } : status
+}
+
 /** Missing methods on an existing preload must fail closed; a bare browser is preview. */
 export async function readHostStatus(bridge?: HostStatusBridge): Promise<HostConnectionStatus> {
   if (!bridge) return { state: 'preview', managed: false }
   if (typeof bridge.getHostStatus !== 'function') return restartRequired()
-  try { return await bridge.getHostStatus() } catch (error) { return hostBridgeFailure(error) }
+  try { return localizeHostStatus(await bridge.getHostStatus()) } catch (error) { return hostBridgeFailure(error) }
 }
 
 export async function retryHostStatus(bridge?: HostStatusBridge): Promise<HostConnectionStatus> {
   if (!bridge) return { state: 'preview', managed: false }
   if (typeof bridge.retryHostConnection !== 'function') return restartRequired()
-  try { return await bridge.retryHostConnection() } catch (error) { return hostBridgeFailure(error) }
+  try { return localizeHostStatus(await bridge.retryHostConnection()) } catch (error) { return hostBridgeFailure(error) }
 }

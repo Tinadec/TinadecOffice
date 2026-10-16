@@ -29,7 +29,8 @@ import TerminalView from './TerminalView.vue'
 import { useTerminal, type TerminalInstance } from '@/composables/useTerminal'
 import { useNotifications } from '@/composables/useNotifications'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
+const shellLabel = (shell: { id: string; label: string }) => (te(`terminal.shellName.${shell.id}`) ? t(`terminal.shellName.${shell.id}`) : shell.label)
 const { notify } = useNotifications()
 
 const props = defineProps<{
@@ -99,10 +100,11 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
   showShellMenu.value = false
   
   try {
+    const shell = availableShells.value.find((s) => s.id === shellId)
     const result = await createTerminal({
       shellId: shellId || (availableShells.value[0]?.id ?? 'default'),
       cwd: props.cwd,
-      title: availableShells.value.find((s) => s.id === shellId)?.label ?? t('terminal.defaultTitle'),
+      title: shell ? shellLabel(shell) : t('terminal.defaultTitle'),
     })
     
     if (!result) {
@@ -383,7 +385,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
               @click="handleNewTerminal(shell.id)"
             >
               <TerminalSquare :size="14" />
-              <span>{{ shell.label }}</span>
+              <span>{{ shellLabel(shell) }}</span>
             </button>
           </div>
         </div>

@@ -177,7 +177,12 @@ async function selectBackgroundFile(type: BackgroundType): Promise<string | null
   }
 
   try {
-    const result = await tinadec.selectBackgroundFile(type)
+    const result = await tinadec.selectBackgroundFile(type, {
+      title: i18n.global.t('settings.bgPickTitle'),
+      image: i18n.global.t('settings.bgPickImages'),
+      video: i18n.global.t('settings.bgPickVideos'),
+      all: i18n.global.t('settings.bgPickAll'),
+    })
     return result || null
   } catch (error) {
     console.error('Failed to select background file:', error)

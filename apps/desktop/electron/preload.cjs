@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   resetGatewayUrl: () => ipcRenderer.invoke('tinadec:gateway-url-reset'),
   discoverServices: () => ipcRenderer.invoke('tinadec:discover-services'),
   restartApp: () => ipcRenderer.invoke('tinadec:restart'),
-  selectWorkspaceFolders: () => ipcRenderer.invoke('tinadec:select-workspace-folders'),
+  selectWorkspaceFolders: (title) => ipcRenderer.invoke('tinadec:select-workspace-folders', title),
   minimizeWindow: () => ipcRenderer.send('tinadec:minimize'),
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),
   closeWindow: () => ipcRenderer.send('tinadec:close'),
@@ -59,7 +59,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   },
   
   // --- Background File Selection API ---
-  selectBackgroundFile: (type) => ipcRenderer.invoke('tinadec:select-background-file', type),
+  selectBackgroundFile: (type, text) => ipcRenderer.invoke('tinadec:select-background-file', type, text),
 
   // --- Background Image Read API (Monet color extraction) ---
   readImageAsDataUrl: (source) => ipcRenderer.invoke('tinadec:read-image-data-url', source),

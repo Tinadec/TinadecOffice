@@ -74,7 +74,7 @@ async function addFolders() {
   if (!canAccessBackend.value) return
   picking.value = true; failure.clear(); failureOperation.value = 'preview'
   try {
-    const paths = await window.tinadec.selectWorkspaceFolders()
+    const paths = await window.tinadec.selectWorkspaceFolders(t('workspaceEditor.pickTitle'))
     if (version !== read) return
     if (!paths.length) return
     const seen = new Set(form.value.roots.map(root => folderIdentity(root.path)))

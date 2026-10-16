@@ -21,13 +21,15 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell 
 const path = require('node:path');
 const { configureElectronStorage } = require('./storagePaths.cjs');
 const { createLogSink } = require('./logSink.cjs');
+// Startup failures show before any window exists, so there is no interface language to follow yet:
+// they say it in both languages, like the renderer's crash fallback.
 const hostPaths = (() => {
   try { return configureElectronStorage(app); }
-  catch (error) { dialog.showErrorBox('Desktop storage configuration error', error.message); app.exit(1); throw error; }
+  catch (error) { dialog.showErrorBox('桌面存储配置错误 / Desktop storage configuration error', error.message); app.exit(1); throw error; }
 })();
 const hostLogSink = (() => {
   try { return createLogSink(hostPaths.hostLogs); }
-  catch (error) { dialog.showErrorBox('Logging configuration error', error.message); app.exit(1); throw error; }
+  catch (error) { dialog.showErrorBox('日志配置错误 / Logging configuration error', error.message); app.exit(1); throw error; }
 })();
 for (const level of ['log', 'info', 'warn', 'error']) {
   const original = console[level].bind(console);
@@ -179,8 +181,8 @@ async function createWindow() {
   return win;
 }
 
-ipcMain.handle('tinadec:select-workspace-folders', async (event) => {
-  return require('./workspaceFolders.cjs').selectWorkspaceFolders(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender, dialog });
+ipcMain.handle('tinadec:select-workspace-folders', async (event, title) => {
+  return require('./workspaceFolders.cjs').selectWorkspaceFolders(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender, dialog }, title);
 });
 
 function appConfigSnapshot() {
@@ -342,41 +344,33 @@ ipcMain.handle('tinadec:pet-remove', async (_event, slug) => {
 });
 
 // --- Background File Selection IPC ---
-ipcMain.handle('tinadec:select-background-file', async (event, type) => {
+// The dialog's wording comes from the renderer, where the locale bundles live; without it the OS
+// default title and the bare extension lists stand in, so no language is spelled out here.
+const BACKGROUND_EXTENSIONS = {
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'],
+  video: ['mp4', 'webm', 'ogg', 'mov', 'avi'],
+};
+const dialogText = (value) => (typeof value === 'string' && value.trim() && value.length <= 200 ? value : undefined);
+ipcMain.handle('tinadec:select-background-file', async (event, type, text) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return null;
-  
-  let filters = [];
-  
-  switch (type) {
-    case 'image':
-      filters = [
-        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'] },
-        { name: 'All Files', extensions: ['*'] }
-      ];
-      break;
-    case 'video':
-      filters = [
-        { name: 'Videos', extensions: ['mp4', 'webm', 'ogg', 'mov', 'avi'] },
-        { name: 'All Files', extensions: ['*'] }
-      ];
-      break;
-    default:
-      filters = [
-        { name: 'All Files', extensions: ['*'] }
-      ];
-  }
-  
+
+  const extensions = BACKGROUND_EXTENSIONS[type];
+  const filters = [
+    ...(extensions ? [{ name: dialogText(text?.[type]) ?? extensions.join(', '), extensions }] : []),
+    { name: dialogText(text?.all) ?? '*', extensions: ['*'] },
+  ];
+
   const result = await dialog.showOpenDialog(win, {
     properties: ['openFile'],
-    title: 'Select Background File',
-    filters: filters
+    title: dialogText(text?.title),
+    filters,
   });
-  
+
   if (result.canceled || result.filePaths.length === 0) {
     return null;
   }
-  
+
   return result.filePaths[0];
 });
 
@@ -532,7 +526,7 @@ app.whenReady().then(async () => {
   let gatewayUrl;
   try { gatewayUrl = loadAppConfig(appConfigFile()).gateway_url; }
   catch (error) {
-    dialog.showErrorBox('TinadecOffice', `无法读取 TOML 配置 ${appConfigFile()}：${error.message}`);
+    dialog.showErrorBox('TinadecOffice', `无法读取 TOML 配置 / Cannot read the TOML configuration\n${appConfigFile()}\n${error.message}`);
     app.quit(); return;
   }
   process.env.TINADEC_RESOLVED_GATEWAY_URL = gatewayUrl;

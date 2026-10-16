@@ -44,27 +44,38 @@ async function loadAppConfig(): Promise<void> {
   gatewayUrlDraft.value = appConfig.value.gateway_url
 }
 
+/** The same rules the main process enforces, worded in the interface language before the IPC call. */
 function normalizedGatewayDraft(): string {
-  const url = new URL(gatewayUrlDraft.value.trim())
+  let url: URL
+  try { url = new URL(gatewayUrlDraft.value.trim()) } catch { throw new Error(t('settings.gatewayUrlInvalid')) }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(t('settings.gatewayUrlInvalid'))
+  if (url.username || url.password || url.search || url.hash) throw new Error(t('settings.gatewayUrlNoExtras'))
   return url.toString().replace(/\/$/, '')
 }
 
 async function testGatewayConnection(): Promise<void> {
   dismissByKey('gateway-config')
   gatewayConnectionState.value = 'testing'
+  let gatewayUrl: string
   try {
-    const gatewayUrl = normalizedGatewayDraft()
+    gatewayUrl = normalizedGatewayDraft()
+  } catch (error) {
+    gatewayConnectionState.value = 'failed'
+    status.error({ key: 'gateway-config', source: 'gateway', message: error instanceof Error ? error.message : t('settings.gatewayUrlInvalid') })
+    return
+  }
+  try {
     const response = await fetch(`${gatewayUrl}/api/v1/health`, {
       headers: { accept: 'application/json', 'x-tinadec-storage-id': 'user' },
       signal: AbortSignal.timeout(5000),
     })
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+    if (!response.ok) throw new Error(t('settings.gatewayConnectionHttp', { status: response.status }))
     gatewayConnectionState.value = 'ready'
     notify.success({ message: t('settings.gatewayConnectionReady'), source: 'gateway' })
   } catch (error) {
+    // The browser's own wording ("Failed to fetch", a timeout) stays as detail under a translated message.
     gatewayConnectionState.value = 'failed'
-    status.error({ key: 'gateway-config', source: 'gateway', message: error instanceof Error ? error.message : t('settings.gatewayConnectionFailed') })
+    status.error({ key: 'gateway-config', source: 'gateway', message: t('settings.gatewayConnectionFailed'), details: error instanceof Error ? error.message : undefined })
   }
 }
 

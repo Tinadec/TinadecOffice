@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { api } from '@/api'
 import i18n from '@/i18n'
 import { setHostAccessStatus } from '@/lib/hostAccess'
-import { readHostStatus, retryHostStatus, type HostConnectionStatus } from '@/lib/hostConnection'
+import { localizeHostStatus, readHostStatus, retryHostStatus, type HostConnectionStatus } from '@/lib/hostConnection'
 
 /** Public liveness and private host readiness are separate. Only both admit business work. */
 export type ConnectionState = 'connecting' | 'connected' | 'timeout' | 'disconnected' | 'host_unavailable' | 'host_rejected' | 'host_restart_required' | 'preview'
@@ -109,8 +109,9 @@ export function useConnection() {
     started = true
     const epoch = generation
     const host = bridge()
-    unsubscribeHost = host?.onHostStatusChanged?.(next => {
+    unsubscribeHost = host?.onHostStatusChanged?.(pushed => {
       if (epoch !== generation) return
+      const next = localizeHostStatus(pushed)
       applyHostStatus(next)
       if (next.state === 'ready') {
         // Let any older read settle, then verify public liveness against the new snapshot.
