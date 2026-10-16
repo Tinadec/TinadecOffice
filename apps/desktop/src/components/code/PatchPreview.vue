@@ -9,6 +9,8 @@ import { useNotifications } from '@/composables/useNotifications'
 import {
   userToolActionIdempotencyKey,
   userToolActionNeedsDecision,
+  userToolActionDetail,
+  userToolActionReason,
   userToolActionStatusMessage,
   userToolActionToApproval,
   userToolApprovalId,
@@ -29,7 +31,7 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { getMonaco, isDark } = useMonaco()
 const { notify } = useNotifications()
 
@@ -215,13 +217,13 @@ function publishAction(action: UserToolActionDto): void {
 }
 
 async function handleActionStatus(action: UserToolActionDto): Promise<void> {
-  feedback.value = userToolActionStatusMessage(action, t('code.patch.operation', { path: props.filePath }), t)
+  feedback.value = userToolActionStatusMessage(action, t('code.patch.operation', { path: props.filePath }), { t, te })
   if (action.status === 'completed') {
     await finishPatch(action)
     return
   }
   if (action.status === 'blocked' || action.status === 'failed') {
-    notify.error(action.message ?? action.status, { title: t('code.patch.blocked'), source: 'code', key: 'code-patch-action' })
+    notify.error(userToolActionReason(action, { t, te }) ?? feedback.value, { title: t('code.patch.blocked'), details: userToolActionDetail(action, { t, te }), source: 'code', key: 'code-patch-action' })
     return
   }
   if (action.status === 'outcome_unknown') {

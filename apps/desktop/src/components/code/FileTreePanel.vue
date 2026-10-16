@@ -22,6 +22,8 @@ import { searchedFilePaths, toDirEntryView, type DirEntryDto, type DirEntryView,
 import {
   userToolActionIdempotencyKey,
   userToolActionNeedsDecision,
+  userToolActionDetail,
+  userToolActionReason,
   userToolActionStatusMessage,
   userToolActionToApproval,
   userToolApprovalId,
@@ -48,7 +50,7 @@ const props = defineProps<{
   approvals?: ApprovalDto[]
   selectedSessionId?: string | null
 }>()
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { notify, status, dismissByKey } = useNotifications()
 
 const emit = defineEmits<{
@@ -308,11 +310,11 @@ function publishAction(action: UserToolActionDto, summary: string): void {
     return
   }
   if (action.status === 'blocked' || action.status === 'failed') {
-    notify.error(action.message ?? action.status, { title: t('code.tree.operationBlocked'), source: 'code', key: `code-tree-action-${action.id}` })
+    notify.error(userToolActionReason(action, { t, te }) ?? userToolActionStatusMessage(action, summary, { t, te }), { title: t('code.tree.operationBlocked'), details: userToolActionDetail(action, { t, te }), source: 'code', key: `code-tree-action-${action.id}` })
     return
   }
   if (action.status === 'outcome_unknown') {
-    notify.warning({ message: userToolActionStatusMessage(action, summary, t), source: 'code', key: `code-tree-action-${action.id}` })
+    notify.warning({ message: userToolActionStatusMessage(action, summary, { t, te }), source: 'code', key: `code-tree-action-${action.id}` })
     return
   }
   if (userToolActionNeedsDecision(action.status)) {
@@ -340,9 +342,9 @@ async function resumeAction(action: UserToolActionDto, summary: string): Promise
     } else if (userToolActionNeedsDecision(latest.status)) {
       publishAction(latest, summary)
     } else if (latest.status === 'blocked' || latest.status === 'failed') {
-      notify.error(latest.message ?? latest.status, { title: t('code.tree.operationFailed'), source: 'code', key: `code-tree-action-${latest.id}` })
+      notify.error(userToolActionReason(latest, { t, te }) ?? userToolActionStatusMessage(latest, summary, { t, te }), { title: t('code.tree.operationFailed'), details: userToolActionDetail(latest, { t, te }), source: 'code', key: `code-tree-action-${latest.id}` })
     } else if (latest.status === 'outcome_unknown') {
-      notify.warning({ message: userToolActionStatusMessage(latest, summary, t), source: 'code', key: `code-tree-action-${latest.id}` })
+      notify.warning({ message: userToolActionStatusMessage(latest, summary, { t, te }), source: 'code', key: `code-tree-action-${latest.id}` })
     }
   } catch (err) {
     notify.error(err, { title: t('code.tree.resumeFailed'), source: 'code', key: 'code-tree-action-resume' })
@@ -373,7 +375,7 @@ const pendingActionList = computed(() => Array.from(pendingActions.value.values(
   .filter((action) => action.status !== 'completed')
   .map((action) => {
     const summary = pendingActionSummaries.value.get(action.id) ?? t('code.tree.operation')
-    return { action, summary, message: userToolActionStatusMessage(action, summary, t) }
+    return { action, summary, message: userToolActionStatusMessage(action, summary, { t, te }) }
   }))
 
 function flattenTree(nodes: TreeNode[], depth: number, acc: FlatNode[]): FlatNode[] {

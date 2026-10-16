@@ -161,7 +161,7 @@ describe('Tool resource manager', () => {
       await wrapper.findAll('.tools-resource-editor button').at(-1)!.trigger('click'); await flushPromises()
       await vi.advanceTimersByTimeAsync(12_000); await flushPromises()
       expect(wrapper.get('[role="alert"]').text()).toContain('Rejected by owner')
-      expect(wrapper.get('.tools-resource-result').text()).toContain('blocked')
+      expect(wrapper.get('.tools-resource-result').text()).toContain('受阻')
       await vi.advanceTimersByTimeAsync(60_000)
       expect(api.getUserToolAction).toHaveBeenCalledTimes(1)
       wrapper.unmount()

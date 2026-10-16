@@ -173,7 +173,7 @@ export function useGitOperation(
   selectedSessionId: () => string | null,
   approvals: () => ApprovalDto[],
 ) {
-  const { t } = useI18n()
+  const { t, te } = useI18n()
   const { notify } = useNotifications()
   // Every Git mutation mirrors into the unified store so approval panels and
   // the recovery page observe one source of client-side action state.
@@ -495,7 +495,7 @@ export function useGitOperation(
 
   function actionCompleted(action: UserToolActionDto | null): boolean {
     if (!action) return false
-    const message = userToolActionStatusMessage(action, action.tool_id, t)
+    const message = userToolActionStatusMessage(action, action.tool_id, { t, te })
     if (action.status === 'blocked' && action.error_category === 'snapshot_failed') {
       // Surface the one-time override instead of a generic warning.
       snapshotOverrideCandidate.value = action

@@ -10,6 +10,8 @@ import { readFileText, type DirEntryDto, type ReadFileDataDto } from '@/lib/work
 import {
   userToolActionIdempotencyKey,
   userToolActionNeedsDecision,
+  userToolActionDetail,
+  userToolActionReason,
   userToolActionStatusMessage,
   userToolActionToApproval,
   userToolApprovalId,
@@ -32,7 +34,7 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { getMonaco, isDark } = useMonaco()
 const { notify } = useNotifications()
 
@@ -199,13 +201,13 @@ function publishAction(action: UserToolActionDto): void {
 }
 
 async function handleActionStatus(action: UserToolActionDto): Promise<void> {
-  feedback.value = userToolActionStatusMessage(action, t('code.editor.saveOperation', { path: props.filePath }), t)
+  feedback.value = userToolActionStatusMessage(action, t('code.editor.saveOperation', { path: props.filePath }), { t, te })
   if (action.status === 'completed') {
     await finishSave(action)
     return
   }
   if (action.status === 'blocked' || action.status === 'failed') {
-    notify.error(action.message ?? action.status, { title: t('code.editor.saveBlocked'), source: 'code', key: 'code-editor-action' })
+    notify.error(userToolActionReason(action, { t, te }) ?? feedback.value, { title: t('code.editor.saveBlocked'), details: userToolActionDetail(action, { t, te }), source: 'code', key: 'code-editor-action' })
     return
   }
   if (action.status === 'outcome_unknown') {

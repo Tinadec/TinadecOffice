@@ -1,5 +1,5 @@
 import type { ApprovalDto, UserToolActionDto } from './api'
-import type { Translate } from './i18n'
+import { errorCategoryMessage, errorCodeMessage, type ErrorWords } from './lib/apiError'
 
 const TERMINAL_STATUSES = new Set(['completed', 'blocked', 'failed', 'outcome_unknown'])
 const DECISION_STATUSES = new Set(['awaiting_delegate', 'awaiting_user', 'awaiting_approval'])
@@ -44,9 +44,10 @@ export function userToolActionNeedsDecision(status: string): boolean {
 export function userToolActionStatusMessage(
   action: UserToolActionDto,
   operation: string,
-  t: Translate,
+  words: ErrorWords,
 ): string {
-  const detail = action.message?.trim()
+  const { t } = words
+  const detail = userToolActionReason(action, words)
   switch (action.status) {
     case 'snapshot_required':
       return t('userAction.status.snapshotRequired', { operation })
@@ -69,6 +70,22 @@ export function userToolActionStatusMessage(
     default:
       return detail ? t('userAction.status.otherDetail', { operation, detail }) : t('userAction.status.other', { operation, status: action.status })
   }
+}
+
+/**
+ * Why an action stopped, in the interface language when this build has words for its
+ * `error_category`; Core's message (diagnostic text, such as a tool's own output) otherwise.
+ */
+export function userToolActionReason(action: Pick<UserToolActionDto, 'error_category' | 'message'>, words: ErrorWords): string | undefined {
+  return errorCodeMessage(action.error_category, undefined, words)
+    ?? errorCategoryMessage(action.error_category, words)
+    ?? (action.message?.trim() || undefined)
+}
+
+/** Core's own message, for a details line or tooltip, when the reason shown is a translation of it. */
+export function userToolActionDetail(action: Pick<UserToolActionDto, 'error_category' | 'message'>, words: ErrorWords): string | undefined {
+  const message = action.message?.trim() || undefined
+  return message && message !== userToolActionReason(action, words) ? message : undefined
 }
 
 /**

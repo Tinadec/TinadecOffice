@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { CheckCircle2, FileWarning, RefreshCw } from '@lucide/vue'
 import { useUserActionStore } from '@/stores/userAction'
-import { userToolActionStatusMessage } from '@/userToolAction'
+import { userToolActionDetail, userToolActionReason, userToolActionStatusMessage } from '@/userToolAction'
 
 /**
  * Read-only inspection surface for `outcome_unknown` actions.
@@ -16,7 +16,7 @@ import { userToolActionStatusMessage } from '@/userToolAction'
 const route = useRoute()
 const router = useRouter()
 const store = useUserActionStore()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const working = ref(false)
 const loadError = ref<string | null>(null)
@@ -26,7 +26,7 @@ const action = computed(() => store.get(actionId.value))
 const isUnknown = computed(() => action.value?.status === 'outcome_unknown')
 
 const statusText = computed(() =>
-  action.value ? userToolActionStatusMessage(action.value, action.value.tool_id, t) : '',
+  action.value ? userToolActionStatusMessage(action.value, action.value.tool_id, { t, te }) : '',
 )
 
 async function load(): Promise<void> {
@@ -100,7 +100,7 @@ onBeforeUnmount(() => {
         <div><dt>{{ t('governance.recoveryFacts.auditReference') }}</dt><dd class="font-mono text-xs">{{ action.audit_reference }}</dd></div>
         <div v-if="action.snapshot_id"><dt>{{ t('governance.recoveryFacts.snapshot') }}</dt><dd class="font-mono text-xs">{{ action.snapshot_id }}</dd></div>
         <div v-if="action.recovery_reason"><dt>{{ t('governance.recoveryFacts.lastReason') }}</dt><dd>{{ action.recovery_reason }}</dd></div>
-        <div v-if="action.message"><dt>{{ t('governance.recoveryFacts.message') }}</dt><dd>{{ action.message }}</dd></div>
+        <div v-if="action.message"><dt>{{ t('governance.recoveryFacts.message') }}</dt><dd :title="userToolActionDetail(action, { t, te })">{{ userToolActionReason(action, { t, te }) }}</dd></div>
       </dl>
 
       <footer v-if="isUnknown" class="recovery-page__actions">

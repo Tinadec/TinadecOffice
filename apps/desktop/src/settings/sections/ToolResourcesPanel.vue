@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useStatusLabels } from '@/lib/statusLabels'
 import { UiBadge, UiButton, UiInput, UiSelectField } from '@/components/ui'
 import { api as baseApi, type ToolMcpResource, type ToolMcpInput, type ToolSkillResource } from '@/api'
 import { scopedApi, projectStorageId, selectionIdentity } from '@/lib/storageScope'
 import { useNotifications } from '@/composables/useNotifications'
 import { formatSettings, validateSettings, type ToolJsonSchema } from '@/settings/toolSettings'
 import { decodeSkillAsset, skillNameFromDocument, SKILL_ASSET_MAX_BYTES, SKILL_PACKAGE_MAX_BYTES, validateSkillPackagePaths } from '@/settings/skillPackage'
-import { isUserToolActionTerminal } from '@/userToolAction'
+import { isUserToolActionTerminal, userToolActionReason } from '@/userToolAction'
 const ToolJsonEditor = defineAsyncComponent(() => import('./ToolJsonEditor.vue'))
 const ToolDraftDialog = defineAsyncComponent(() => import('./ToolDraftDialog.vue'))
 const props = defineProps<{ kind: 'mcp' | 'skills'; projectId: string; selection: string[] | null; inherited?: boolean; agentScope?: boolean; effectiveSelection?: string[] | null; canBind: boolean }>()
 const api = scopedApi(baseApi, () => projectStorageId(props.projectId))
 const emit = defineEmits<{ binding: [ids: string[] | null, inherit?: boolean]; dirty: [value: boolean]; changed: [] }>()
 const { t, te } = useI18n()
+const { userActionStatusLabel } = useStatusLabels()
 const { confirm, notify } = useNotifications()
 const rows = ref<(ToolMcpResource | ToolSkillResource)[]>([])
 const scope = ref<'shared' | 'project'>('shared')
@@ -56,7 +58,7 @@ function stopActionPoll() { if (actionTimer !== null) clearTimeout(actionTimer);
 function followAction(actionId: string, status: string) {
   stopActionPoll(); actionStartedAt = Date.now()
   const current = contextEpoch
-  const update = (next: string) => { result.value = t(scope.value === 'shared' ? 'toolsSettings.skillQueuedShared' : 'toolsSettings.skillQueued', { status: next, id: actionId }) }
+  const update = (next: string) => { result.value = t(scope.value === 'shared' ? 'toolsSettings.skillQueuedShared' : 'toolsSettings.skillQueued', { status: userActionStatusLabel(next), id: actionId }) }
   update(status)
   if (isUserToolActionTerminal(status)) return
   const poll = async () => {
@@ -69,7 +71,7 @@ function followAction(actionId: string, status: string) {
         actionTimer = null
         await refresh()
         if (current === contextEpoch) {
-          if (action.status !== 'completed') error.value = action.message || t('toolsSettings.skillActionFailed', { status: action.status })
+          if (action.status !== 'completed') error.value = userToolActionReason(action, { t, te }) || t('toolsSettings.skillActionFailed', { status: userActionStatusLabel(action.status) })
           emit('changed')
         }
         return
