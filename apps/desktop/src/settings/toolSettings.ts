@@ -38,11 +38,16 @@ export interface ToolCapabilities {
   reason?: string | null
   settings_hash?: string | null
   capabilities?: {
-    ripgrep?: { available: boolean; path?: string; reason?: string }
-    shells?: { id: string; available: boolean; path?: string; reason?: string }[]
+    ripgrep?: { available: boolean; path?: string; reason?: string; reason_code?: string }
+    shells?: { id: string; available: boolean; path?: string; reason?: string; reason_code?: string }[]
     sandbox?: { supported: boolean; initialized: boolean; frozen_grants: boolean }
     web?: { supported: boolean; address_guard: boolean }
   } | null
+}
+/** Why a probed executable (ripgrep, a shell) is missing, in the interface language from its code; the host's text when there are no words for it. */
+export function capabilityReason(item: { reason?: string; reason_code?: string } | undefined, words: { t: (key: string) => string; te: (key: string) => boolean }): string | undefined {
+  const key = `toolsSettings.capabilityReason.${item?.reason_code}`
+  return item?.reason_code && words.te(key) ? words.t(key) : item?.reason
 }
 export interface ToolSettingsEffective {
   schema_version?: number

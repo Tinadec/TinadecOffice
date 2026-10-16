@@ -79,7 +79,7 @@ defineExpose({ refresh })
     <strong>{{ t('toolsSettings.availableTools', { count: visibleTools.length }) }}</strong>
     <p class="quiet">{{ t('toolsSettings.effectiveScopeHint') }}</p>
     <div class="model-capability-row"><span v-for="resource in resources" :key="resource.label">{{ resource.label }} · {{ resource.count ?? '—' }}</span></div>
-    <p v-if="!capabilities?.capabilities" class="quiet">{{ capabilities?.reason || t('toolsSettings.executionUnknown') }}</p>
+    <p v-if="!capabilities?.capabilities" class="quiet" :title="capabilities?.reason ?? undefined">{{ t(capabilities?.reason ? 'toolsSettings.diagnostic.host_unavailable' : 'toolsSettings.executionUnknown') }}</p>
     <p v-else class="quiet">{{ t('toolsSettings.capabilitySummary', { rg: t(capabilities.capabilities.ripgrep?.available ? 'toolsSettings.detected' : 'toolsSettings.unavailable'), sandbox: t(capabilities.capabilities.sandbox?.supported ? 'toolsSettings.detected' : 'toolsSettings.unavailable') }) }}</p>
   </div>
   <div class="model-section-header"><h3>{{ t('settings.toolDiscovery') }}</h3><UiBadge variant="outline">{{ visibleResults.length }}</UiBadge></div>

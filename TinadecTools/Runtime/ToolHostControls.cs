@@ -47,7 +47,12 @@ internal static class ToolHostControls
             writer.WriteStartObject("ripgrep");
             writer.WriteBoolean("available", rgAvailable);
             writer.WriteString("path", rgPath);
-            if (!rgAvailable) writer.WriteString("reason", "Ripgrep executable was not found at the configured or resolved path.");
+            // reason_code is what a client words; reason stays the English diagnostic.
+            if (!rgAvailable)
+            {
+                writer.WriteString("reason_code", "not_found");
+                writer.WriteString("reason", "Ripgrep executable was not found at the configured or resolved path.");
+            }
             writer.WriteEndObject();
             writer.WriteStartArray("shells");
             foreach (var id in new[] { "auto", "cmd", "powershell", "pwsh", "bash" })
@@ -65,7 +70,11 @@ internal static class ToolHostControls
                 writer.WriteStartObject(); writer.WriteString("id", id);
                 writer.WriteBoolean("available", path is not null);
                 if (path is not null) writer.WriteString("path", path);
-                else writer.WriteString("reason", executable is null ? "Unsupported on this platform." : "Executable was not found in PATH.");
+                else
+                {
+                    writer.WriteString("reason_code", executable is null ? "unsupported_platform" : "not_in_path");
+                    writer.WriteString("reason", executable is null ? "Unsupported on this platform." : "Executable was not found in PATH.");
+                }
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
