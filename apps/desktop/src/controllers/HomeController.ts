@@ -1186,9 +1186,10 @@ async function executeCatalogTool(tool: ToolDescriptorDto) {
       ? await api.executeToolRuntime(tool.id, { session_id: sessionId, cwd, arguments: {} })
       : await api.executeCodeTool(tool.id, { session_id: sessionId, cwd, arguments: {} })
     if (response.approval_summary) {
-      notify.info({ key: `tool-approval-${tool.id}`, title: t('home.toolNeedsApproval'), message: response.approval_summary, source: 'tools' })
+      // Core's approval_summary and summary are diagnostic English; the notification says it in words.
+      notify.info({ key: `tool-approval-${tool.id}`, title: t('home.toolNeedsApproval'), message: t('activity.toolNeedsApproval', { tool: tool.display_name }), details: response.approval_summary, source: 'tools' })
     } else {
-      notify.success({ key: `tool-complete-${tool.id}`, title: t('home.toolCompleted'), message: response.summary, source: 'tools' })
+      notify.success({ key: `tool-complete-${tool.id}`, title: t('home.toolCompleted'), message: t('activity.toolCompleted', { tool: tool.display_name }), source: 'tools' })
     }
     await loadMessagesAndApprovals()
   })

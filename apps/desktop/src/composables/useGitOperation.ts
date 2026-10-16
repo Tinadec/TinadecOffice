@@ -419,15 +419,6 @@ export function useGitOperation(
   )
   const canRequestFetchApproval = computed(() => Boolean(cwd.value && sid.value))
 
-  function mutationCompleted(result: CodeToolExecuteResultDto): boolean {
-    if (result.status !== 'completed') {
-      notify.warning({ message: result.summary, source: 'git' })
-      return false
-    }
-    notify.success({ message: result.summary, source: 'git' })
-    return true
-  }
-
   function notifyOperationError(err: unknown, fallback: string) {
     notify.error(err instanceof Error ? err : fallback, { source: 'git' })
   }

@@ -63,7 +63,7 @@ async function loadWorktrees() {
       arguments: { action: 'worktrees' }
     })
     if (res.status === 'blocked') {
-      notify.warning({ message: res.summary || t('context.gitWorktreeNeedsApproval'), source: 'git' })
+      notify.warning({ message: t('context.gitWorktreeNeedsApproval'), details: res.summary || undefined, source: 'git' })
     }
     const data = (res.data ?? {}) as { worktrees?: unknown }
     worktrees.value = Array.isArray(data.worktrees)
