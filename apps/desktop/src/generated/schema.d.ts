@@ -2647,6 +2647,10 @@ export interface components {
       path: string;
       project_id?: string | null;
       reason?: string | null;
+      reason_code?: string | null;
+      reason_data?: {
+        [key: string]: string;
+      } | null;
       resource_id: string;
       revision: number;
       scope: string;

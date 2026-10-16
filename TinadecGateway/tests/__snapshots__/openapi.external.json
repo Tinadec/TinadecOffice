@@ -6365,6 +6365,17 @@
             "nullable": true,
             "type": "string"
           },
+          "reason_code": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reason_data": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "object"
+          },
           "resource_id": {
             "type": "string"
           },

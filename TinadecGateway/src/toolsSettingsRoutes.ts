@@ -25,6 +25,7 @@ export const toolsSettingsSchemas = {
     resource_id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, scope: { type: 'string' },
     project_id: { type: 'string', nullable: true }, enabled: { type: 'boolean' }, valid: { type: 'boolean' }, path: { type: 'string' }, content_hash: { type: 'string' }, revision: { type: 'integer' }, content: { type: 'string', nullable: true },
     file_hash: { type: 'string', nullable: true }, reason: { type: 'string', nullable: true },
+    reason_code: { type: 'string', nullable: true }, reason_data: { type: 'object', nullable: true, additionalProperties: { type: 'string' } },
     user_action_id: { type: 'string', nullable: true }, action_status: { type: 'string', nullable: true },
     package_hash: { type: 'string' }, package_reference: { type: 'string' }, source: { type: 'string' }, version: { type: 'string', nullable: true }, commit: { type: 'string', nullable: true }, availability: { type: 'string' }, package_files: { type: 'array', items: ref('ToolSkillPackageFile') },
   }, required: ['resource_id', 'name', 'description', 'scope', 'enabled', 'valid', 'path', 'revision', 'content_hash'], additionalProperties: true },

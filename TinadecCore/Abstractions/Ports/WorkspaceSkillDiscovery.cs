@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -7,8 +8,11 @@ namespace TinadecCore.Abstractions.Ports;
 /// <summary>The settings catalog and runtime index share these discovery and boundary checks.</summary>
 public static class WorkspaceSkillDiscovery
 {
+    /// <summary>One SKILL.md as found. <paramref name="Reason"/> is the English sentence; <paramref name="ReasonCode"/>
+    /// and <paramref name="ReasonData"/> name the same reason for clients that word it themselves.</summary>
     public sealed record Entry(string Name, string Description, string RelativePath, string FullPath,
-        string? Content, string ContentHash, bool Enabled, bool Valid, string? Reason);
+        string? Content, string ContentHash, bool Enabled, bool Valid, string? Reason,
+        string? ReasonCode = null, IReadOnlyDictionary<string, string>? ReasonData = null);
 
     public static IReadOnlyList<Entry> Discover(string rootPath, IReadOnlyList<string>? skillRoots = null)
     {
@@ -26,7 +30,7 @@ public static class WorkspaceSkillDiscovery
                 if (!IsContained(rootPath, directory))
                 {
                     entries.Add(new(Path.GetFileName(directory), "", Path.GetRelativePath(rootPath, directory), directory,
-                        null, "", false, false, "directory link resolves outside the workspace root"));
+                        null, "", false, false, "directory link resolves outside the workspace root", "outside_root"));
                     return;
                 }
                 var file = Path.Combine(directory, WorkspaceSkillPolicy.SkillFileName);
@@ -34,7 +38,8 @@ public static class WorkspaceSkillDiscovery
                 {
                     var entry = Read(rootPath, file);
                     if (entry.Valid && !names.Add(entry.Name))
-                        entry = entry with { Valid = false, Reason = $"another skill already claims the name '{entry.Name}'" };
+                        entry = entry with { Valid = false, Reason = $"another skill already claims the name '{entry.Name}'",
+                            ReasonCode = "duplicate_name", ReasonData = new Dictionary<string, string> { ["name"] = entry.Name } };
                     entries.Add(entry);
                     return;
                 }
@@ -43,7 +48,7 @@ public static class WorkspaceSkillDiscovery
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
                 entries.Add(new(Path.GetFileName(directory), "", Path.GetRelativePath(rootPath, directory), directory,
-                    null, "", false, false, "directory could not be read"));
+                    null, "", false, false, "directory could not be read", "unreadable"));
             }
         }
     }
@@ -54,26 +59,29 @@ public static class WorkspaceSkillDiscovery
         var relative = Path.GetRelativePath(rootPath, path).Replace('\\', '/');
         try
         {
-            if (!IsContained(rootPath, path)) return Invalid("path or link resolves outside the workspace root");
+            if (!IsContained(rootPath, path)) return Invalid("outside_root", "path or link resolves outside the workspace root");
             if (new FileInfo(path).Length > WorkspaceSkillPolicy.MaxFileBytes)
-                return Invalid($"is larger than {WorkspaceSkillPolicy.MaxFileBytes} bytes");
+                return Invalid("too_large", $"is larger than {WorkspaceSkillPolicy.MaxFileBytes} bytes",
+                    new Dictionary<string, string> { ["max_kib"] = (WorkspaceSkillPolicy.MaxFileBytes / 1024).ToString(CultureInfo.InvariantCulture) });
             var content = File.ReadAllText(path);
             var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
             var enabled = true;
             var parse = content;
-            if (!WorkspaceSkillPolicy.TryRead(parse, name, relative, out var skill, out var reason)
-                && reason.Contains("marked off", StringComparison.Ordinal))
+            var problem = WorkspaceSkillPolicy.Check(parse, name, relative, out var skill);
+            if (problem?.Code == "disabled_in_file")
             {
                 enabled = false;
                 parse = SetEnabled(content, true);
-                WorkspaceSkillPolicy.TryRead(parse, name, relative, out skill, out reason);
+                problem = WorkspaceSkillPolicy.Check(parse, name, relative, out skill);
             }
+            problem ??= enabled ? null : new WorkspaceSkillPolicy.Problem("disabled_in_file", "disabled in SKILL.md frontmatter");
             return new(name, skill?.Description ?? "", relative, path, content, hash, enabled, skill is not null,
-                skill is null ? reason : enabled ? null : "disabled in SKILL.md frontmatter");
+                problem?.Reason, problem?.Code, problem?.Data);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        { return Invalid("could not be read"); }
-        Entry Invalid(string reason) => new(name, "", relative, path, null, "", false, false, reason);
+        { return Invalid("unreadable", "could not be read"); }
+        Entry Invalid(string code, string reason, IReadOnlyDictionary<string, string>? data = null) =>
+            new(name, "", relative, path, null, "", false, false, reason, code, data);
     }
 
     public static string SetEnabled(string content, bool enabled)

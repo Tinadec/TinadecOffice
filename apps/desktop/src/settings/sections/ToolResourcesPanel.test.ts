@@ -63,6 +63,17 @@ describe('Tool resource manager', () => {
     expect(project.findAll('.tools-resource-row button').some(button => button.text() === '删除')).toBe(false)
     project.unmount()
   })
+  it('words skill reasons from their codes and keeps Core\'s sentence as the tooltip', async () => {
+    const broken = { ...skill, resource_id: '22222222-2222-2222-2222-222222222222', scope: 'shared', project_id: null, valid: false, path: '/skills/other/SKILL.md', reason: "name 'qa' does not match its directory 'other'", reason_code: 'name_directory_mismatch', reason_data: { name: 'qa', directory: 'other' } }
+    const newer = { ...broken, resource_id: '33333333-3333-3333-3333-333333333333', path: '/skills/newer/SKILL.md', reason: 'A reason from a newer Core.', reason_code: 'from_a_newer_core', reason_data: null }
+    vi.mocked(api.listToolSkills).mockResolvedValue({ skills: [broken, newer], diagnostics: [], source: 'core' })
+    const wrapper = create('skills'); await flushPromises()
+    const line = wrapper.findAll('.tools-resource-row small').find(small => small.text().includes('不一致'))!
+    expect(line.text()).toBe('名称「qa」与所在文件夹「other」不一致。')
+    expect(line.attributes('title')).toBe(broken.reason)
+    expect(wrapper.findAll('.tools-validation li').map(item => item.text())).toEqual(['/skills/other/SKILL.md: 名称「qa」与所在文件夹「other」不一致。', '/skills/newer/SKILL.md: A reason from a newer Core.'])
+    wrapper.unmount()
+  })
   it('preserves the masked MCP environment and revision and keeps edits after a save refusal', async () => {
     const wrapper = create('mcp'); await flushPromises()
     await wrapper.get('.tools-resource-row button').trigger('click'); await flushPromises()

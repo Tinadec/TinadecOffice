@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -96,6 +97,13 @@ public static class WorkspaceSkillPolicy
     public sealed record Refusal(string RelativePath, string Reason);
 
     /// <summary>
+    /// Why a SKILL.md cannot be advertised. <paramref name="Code"/> is stable (<c>name_invalid</c>…) so a
+    /// client can word it in its own language from <paramref name="Data"/>; <paramref name="Reason"/> is the
+    /// English sentence the model and the logs read.
+    /// </summary>
+    public sealed record Problem(string Code, string Reason, IReadOnlyDictionary<string, string>? Data = null);
+
+    /// <summary>
     /// Parses one SKILL.md. <paramref name="directoryName"/> is the directory that held the file,
     /// which the name must match: <c>load the thing the index named</c> and <c>open the path the
     /// index showed</c> have to be the same operation, and a mismatch is how a copied skill directory
@@ -108,15 +116,18 @@ public static class WorkspaceSkillPolicy
         out Skill? skill,
         out string reason)
     {
+        var problem = Check(content, directoryName, relativePath, out skill);
+        reason = problem?.Reason ?? string.Empty;
+        return problem is null;
+    }
+
+    /// <summary><see cref="TryRead"/> with the refusal as a <see cref="Problem"/>; null when the skill can be advertised.</summary>
+    public static Problem? Check(string content, string directoryName, string relativePath, out Skill? skill)
+    {
         skill = null;
-        reason = string.Empty;
 
         var match = FrontmatterPattern.Match(content);
-        if (!match.Success)
-        {
-            reason = "no YAML frontmatter block between '---' lines";
-            return false;
-        }
+        if (!match.Success) return new("no_frontmatter", "no YAML frontmatter block between '---' lines");
 
         string? name = null;
         string? description = null;
@@ -143,64 +154,50 @@ public static class WorkspaceSkillPolicy
             else if (string.Equals(key, "description", StringComparison.OrdinalIgnoreCase)) description ??= value;
         }
 
-        if (disabled)
-        {
-            // Reported rather than skipped: a workspace whose skill went quiet with no explanation is
-            // the same debugging wall this policy already refuses to build for a malformed file.
-            reason = $"marked off by its own '{DisabledKey}:' frontmatter";
-            return false;
-        }
-
-        if (!ValidateName(name, out var nameReason))
-        {
-            reason = nameReason;
-            return false;
-        }
-
-        if (!ValidateDescription(description, out var descriptionReason))
-        {
-            reason = descriptionReason;
-            return false;
-        }
-
+        // Reported rather than skipped: a workspace whose skill went quiet with no explanation is
+        // the same debugging wall this policy already refuses to build for a malformed file.
+        if (disabled) return new("disabled_in_file", $"marked off by its own '{DisabledKey}:' frontmatter");
+        if (NameProblem(name) is { } nameProblem) return nameProblem;
+        if (DescriptionProblem(description) is { } descriptionProblem) return descriptionProblem;
         if (!string.Equals(name, directoryName, StringComparison.Ordinal))
-        {
-            reason = $"name '{name}' does not match its directory '{directoryName}'";
-            return false;
-        }
+            return new("name_directory_mismatch", $"name '{name}' does not match its directory '{directoryName}'",
+                new Dictionary<string, string> { ["name"] = name!, ["directory"] = directoryName });
 
         skill = new Skill(name!, description!, relativePath);
-        return true;
+        return null;
     }
 
     /// <summary>Name rule, stated as the reference states it.</summary>
     public static bool ValidateName(string? name, out string reason)
     {
-        if (string.IsNullOrEmpty(name)) { reason = "frontmatter has no 'name'"; return false; }
-        if (name.Length > MaxNameLength) { reason = $"name is longer than {MaxNameLength} characters"; return false; }
-        if (!ValidNamePattern.IsMatch(name))
-        {
-            reason = "name must be lowercase letters, digits and single hyphens, and may not start or end with a hyphen";
-            return false;
-        }
-
-        reason = string.Empty;
-        return true;
+        var problem = NameProblem(name);
+        reason = problem?.Reason ?? string.Empty;
+        return problem is null;
     }
+
+    private static Problem? NameProblem(string? name) =>
+        string.IsNullOrEmpty(name) ? new("name_missing", "frontmatter has no 'name'")
+        : name.Length > MaxNameLength ? new("name_too_long", $"name is longer than {MaxNameLength} characters", Limit(MaxNameLength))
+        : !ValidNamePattern.IsMatch(name)
+            ? new("name_invalid", "name must be lowercase letters, digits and single hyphens, and may not start or end with a hyphen")
+            : null;
 
     /// <summary>Description rule: required, capped, and the only thing the model sees to decide on.</summary>
     public static bool ValidateDescription(string? description, out string reason)
     {
-        if (string.IsNullOrEmpty(description)) { reason = "frontmatter has no 'description'"; return false; }
-        if (description.Length > MaxDescriptionLength)
-        {
-            reason = $"description is longer than {MaxDescriptionLength} characters";
-            return false;
-        }
-
-        reason = string.Empty;
-        return true;
+        var problem = DescriptionProblem(description);
+        reason = problem?.Reason ?? string.Empty;
+        return problem is null;
     }
+
+    private static Problem? DescriptionProblem(string? description) =>
+        string.IsNullOrEmpty(description) ? new("description_missing", "frontmatter has no 'description'")
+        : description.Length > MaxDescriptionLength
+            ? new("description_too_long", $"description is longer than {MaxDescriptionLength} characters", Limit(MaxDescriptionLength))
+            : null;
+
+    private static IReadOnlyDictionary<string, string> Limit(int max) =>
+        new Dictionary<string, string> { ["max"] = max.ToString(CultureInfo.InvariantCulture) };
 
     /// <summary>The handful of values that mean "no, this skill is on".</summary>
     private static bool IsExplicitNegation(string value) =>

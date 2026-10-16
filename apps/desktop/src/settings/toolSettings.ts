@@ -77,7 +77,11 @@ export interface ToolSkillResource {
   relative_path?: string
   path?: string
   status?: string
+  valid?: boolean
   reason?: string | null
+  /** What `reason` is about; the UI words it from `toolsSettings.skillReason.*` and `reason_data`. */
+  reason_code?: string | null
+  reason_data?: Record<string, string> | null
   revision?: number
   content_hash?: string
   content?: string

@@ -349,7 +349,9 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.PreconditionFailed, (await client.SendAsync(stale)).StatusCode);
         var list = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tools/skills?project_id={projectId}");
         Assert.Equal(2, list.GetProperty("skills").GetArrayLength());
-        Assert.Contains("shadowed", list.GetProperty("skills").EnumerateArray().Single(x => x.GetProperty("scope").GetString() == "shared").GetProperty("reason").GetString());
+        var shadowed = list.GetProperty("skills").EnumerateArray().Single(x => x.GetProperty("scope").GetString() == "shared");
+        Assert.Contains("shadowed", shadowed.GetProperty("reason").GetString());
+        Assert.Equal("shadowed", shadowed.GetProperty("reason_code").GetString());
 
         // Source edits are allowed; management must notice them and refuse a stale review.
         var beforeEdit = (await _factory.Services.GetRequiredService<IToolSkillResourceService>().GetAsync(id, projectId))!;

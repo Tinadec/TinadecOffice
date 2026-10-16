@@ -98,6 +98,33 @@ public sealed class WorkspaceSkillPolicyTests
         Assert.DoesNotContain("no YAML frontmatter", index);
     }
 
+    /// <summary>
+    /// The sentence is for the model; a client words the refusal in its own language from a stable code
+    /// and the facts the sentence names. Discovery tells "off" from "broken" by that code, not the text.
+    /// </summary>
+    [Fact]
+    public void ARefusalCarriesAStableCodeAndTheFactsItsSentenceNames()
+    {
+        var mismatch = WorkspaceSkillPolicy.Check("---\nname: other\ndescription: Fine.\n---\n", "probe", Path_, out var skill);
+        Assert.Null(skill);
+        Assert.Equal("name_directory_mismatch", mismatch!.Code);
+        Assert.Equal("other", mismatch.Data!["name"]);
+        Assert.Equal("probe", mismatch.Data["directory"]);
+
+        var root = Directory.CreateTempSubdirectory("tinadec-skill-code-").FullName;
+        try
+        {
+            var file = Path.Combine(root, ".tinadec", "skills", "probe", "SKILL.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, "---\nname: probe\ndescription: Summarise the changelog.\ndisabled: true\n---\n\nBody.");
+            var entry = WorkspaceSkillDiscovery.Read(root, file);
+            Assert.True(entry.Valid);
+            Assert.False(entry.Enabled);
+            Assert.Equal("disabled_in_file", entry.ReasonCode);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public void DescriptionLongerThanTheFormatAllowsIsRefusedRatherThanCut()
     {

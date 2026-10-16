@@ -30,6 +30,7 @@ export default {
     programStatus: { not_installed: '未安装', outdated: '已过期', invalid: '无效', needs_reinstall: '需要重新安装' },
     connectionDisabledHint: '请先启用这个资源再测试。',
     connectionStatus: { connected: '已连接', disabled: '已停用', error: '出错', unavailable: '不可用', unknown: '未知' },
+    skillReason: { shadowed: '同名的项目技能在继承的绑定里取代了它。', package_changed: '技能包文件在 Core 之外被改动，请重新安装审核过的包。', pending_approval: '等待审批。', pending_file_action: '等待文件改动审批。', disabled: '已在设置中停用。', disabled_in_file: 'SKILL.md 里写了 disabled:，已停用。', outside_root: '路径或其中的链接指向工作区之外。', unreadable: '无法读取文件或文件夹。', too_large: 'SKILL.md 超过 {max_kib} KiB。', duplicate_name: '另一个技能已经使用名称「{name}」。', no_frontmatter: 'SKILL.md 缺少用 --- 包住的 frontmatter。', name_missing: 'frontmatter 里没有 name。', name_too_long: '名称超过 {max} 个字符。', name_invalid: '名称只能使用小写字母、数字和单个连字符，且不能以连字符开头或结尾。', description_missing: 'frontmatter 里没有 description。', description_too_long: '描述超过 {max} 个字符。', name_directory_mismatch: '名称「{name}」与所在文件夹「{directory}」不一致。' },
     sourceUndeclared: '来源未声明', usedBy: '使用智能体：{agents}', usageLoading: '正在查询使用智能体…', noUsingAgents: '暂无智能体使用', usageUnavailable: '使用情况不可用', usageFailed: '部分智能体查询失败：{agents}',
     categoryFocus: '当前类别：{category}。已配置的类别会定位到对应字段；省略的类别继承默认值。',
     projectSkillRemoval: '项目技能可在编辑中停用。删除项目文件需要使用受项目授权约束的文件操作。',

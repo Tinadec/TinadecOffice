@@ -40,8 +40,8 @@ public sealed class ToolSkillResourceService(
         if (project is not null)
             found.AddRange(WorkspaceSkillDiscovery.Discover(project.RootPath).Where(x => !knownPaths.Contains(x.FullPath)).Select(x => ProjectDto(project, x)));
         var projectNames = found.Where(x => x.Scope == "project").Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
-        found = found.Select(x => x.Scope == "shared" && projectNames.Contains(x.Name)
-            ? x with { Reason = x.Reason ?? "shadowed by a project skill with the same name for inherited bindings" } : x).ToList();
+        found = found.Select(x => x.Scope == "shared" && projectNames.Contains(x.Name) && x.Reason is null
+            ? x with { Reason = "shadowed by a project skill with the same name for inherited bindings", ReasonCode = "shadowed" } : x).ToList();
         return new(found.OrderBy(x => x.Name, StringComparer.Ordinal).ThenBy(x => x.Scope).ToArray(),
             found.Where(x => !x.Valid).Select(x => $"{x.Path}: {x.Reason}").ToArray());
     }
@@ -53,13 +53,13 @@ public sealed class ToolSkillResourceService(
         if (!resource.Valid && resource.ContentHash.Length == 0) return resource;
         var root = resource.Scope == "project" ? (await Project(projectId, cancellationToken))!.RootPath : Path.GetDirectoryName(resource.Path)!;
         var entry = WorkspaceSkillDiscovery.Read(root, resource.Path);
-        if (entry.Content is null) return resource with { Valid = false, Reason = entry.Reason };
+        if (entry.Content is null) return resource with { Valid = false, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData };
         var hash = resource.Scope == "project" ? await FileHash(root, resource.Path, cancellationToken) : entry.ContentHash;
         var packageRoot = Path.GetDirectoryName(resource.Path)!;
         var packageFiles = PackageFiles(packageRoot);
         var packageHash = ActualPackageHash(packageRoot);
         if (resource.Scope == "shared" && !string.Equals(packageHash, resource.ContentHash, StringComparison.Ordinal))
-            return resource with { Valid = false, Availability = "invalid", Reason = "Skill package bytes changed outside Core; reinstall the reviewed package.", Content = entry.Content, FileHash = hash, PackageHash = packageHash, PackageFiles = packageFiles };
+            return resource with { Valid = false, Availability = "invalid", Reason = "Skill package bytes changed outside Core; reinstall the reviewed package.", ReasonCode = "package_changed", ReasonData = null, Content = entry.Content, FileHash = hash, PackageHash = packageHash, PackageFiles = packageFiles };
         return resource with { Content = entry.Content, FileHash = hash, PackageHash = packageHash, PackageFiles = packageFiles };
     }
 
@@ -213,7 +213,7 @@ public sealed class ToolSkillResourceService(
         return new ToolSkillResourceDto
         {
             ResourceId = resourceIdForReview, Scope = "shared", Name = name, Description = skill!.Description,
-            Enabled = input.Enabled ?? true, Valid = false, Reason = "pending governed approval",
+            Enabled = input.Enabled ?? true, Valid = false, Reason = "pending governed approval", ReasonCode = "pending_approval",
             Revision = expectedRevision, ContentHash = hash, PackageHash = hash, Availability = "pending",
             Source = NormalizeSource(input.Source), Version = input.Version, Commit = input.Commit,
             PackageFiles = files.Select(x => new ToolSkillPackageFileDto
@@ -289,7 +289,7 @@ public sealed class ToolSkillResourceService(
                 ? await GetAsync(ProjectId(project, Path.GetRelativePath(project.RootPath, path).Replace('\\', '/')), project.ProjectId, cancellationToken)
                 : existing;
             return (result ?? new ToolSkillResourceDto { ResourceId = ProjectId(project, Path.GetRelativePath(project.RootPath, path).Replace('\\', '/')),
-                Scope = "project", ProjectId = project.ProjectId, Name = name, Path = path, Description = skill!.Description, Reason = "pending governed file action" })
+                Scope = "project", ProjectId = project.ProjectId, Name = name, Path = path, Description = skill!.Description, Reason = "pending governed file action", ReasonCode = "pending_file_action" })
                 with { UserActionId = action.Id, ActionStatus = action.Status };
         }
 
@@ -424,6 +424,7 @@ public sealed class ToolSkillResourceService(
         var actualHash = Directory.Exists(root) ? ActualPackageHash(root) : "";
         return new() { ResourceId = row.Id, Scope = "shared", Name = row.Name, Description = entry.Description ?? row.Description,
             Enabled = row.Enabled && entry.Enabled, Valid = entry.Valid, Reason = entry.Valid ? row.Enabled ? entry.Reason : "disabled in Core" : entry.Reason,
+            ReasonCode = entry.Valid && !row.Enabled ? "disabled" : entry.ReasonCode, ReasonData = entry.Valid && !row.Enabled ? null : entry.ReasonData,
             Path = entry.FullPath, Revision = string.Equals(actualHash, row.ContentHash, StringComparison.Ordinal) ? row.Revision : Revision(actualHash), ContentHash = actualHash, PackageHash = actualHash,
             PackageReference = row.PackageReference, Source = row.Source, Version = row.Version, Commit = row.Commit,
             Availability = entry.Valid ? row.Enabled ? "available" : "disabled" : "invalid", PackageFiles = packageFiles };
@@ -436,7 +437,7 @@ public sealed class ToolSkillResourceService(
         var root = Path.GetDirectoryName(entry.FullPath)!;
         var hash = entry.Valid ? ActualPackageHash(root) : entry.ContentHash;
         return new() { ResourceId = id, Scope = "shared", Name = entry.Name, Description = entry.Description,
-            Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, Path = entry.FullPath,
+            Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData, Path = entry.FullPath,
             Revision = Revision(hash), ContentHash = hash, PackageHash = hash,
             Availability = entry.Valid ? entry.Enabled ? "available" : "disabled" : "invalid", Source = "source",
             PackageFiles = entry.Valid ? PackageFiles(root) : [] };
@@ -482,7 +483,7 @@ public sealed class ToolSkillResourceService(
         return new()
         {
             ResourceId = ProjectId(project, entry.RelativePath), ProjectId = project.ProjectId, Scope = "project", Name = entry.Name,
-            Description = entry.Description, Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason,
+            Description = entry.Description, Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData,
             Path = entry.FullPath, ContentHash = entry.ContentHash, Revision = Revision(packageHash), PackageHash = packageHash, PackageFiles = packageFiles,
             Availability = !entry.Valid ? "invalid" : entry.Enabled ? "available" : "disabled", Source = "project",
         };

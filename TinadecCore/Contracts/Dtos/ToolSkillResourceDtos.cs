@@ -10,6 +10,11 @@ public sealed record ToolSkillResourceDto
     public bool Enabled { get; init; }
     public bool Valid { get; init; }
     public string? Reason { get; init; }
+    /// <summary>Stable identifier of <see cref="Reason"/> (for example <c>name_invalid</c>). Clients word it from this
+    /// code and <see cref="ReasonData"/>; Reason stays the English diagnostic.</summary>
+    public string? ReasonCode { get; init; }
+    /// <summary>Facts the wording of <see cref="ReasonCode"/> needs, such as a name or a limit.</summary>
+    public IReadOnlyDictionary<string, string>? ReasonData { get; init; }
     public string Path { get; init; } = "";
     public long Revision { get; init; }
     public string ContentHash { get; init; } = "";
