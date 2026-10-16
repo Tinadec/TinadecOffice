@@ -3,7 +3,11 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import zhCN from './zh-CN'
+import zhTW from './zh-TW'
 import en from './en'
+import ja from './ja'
+import ru from './ru'
+import i18n, { russianPluralRule, SUPPORTED_LOCALES } from '../i18n'
 
 // ── helpers ──────────────────────────────────────────────────────────
 type Bundle = Record<string, unknown>
@@ -20,6 +24,25 @@ function flattenLeaves(bundle: Bundle, prefix = ''): Set<string> {
   }
   return out
 }
+
+function leafValues(bundle: Bundle, prefix = ''): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const [key, value] of Object.entries(bundle)) {
+    const path = prefix ? `${prefix}.${key}` : key
+    if (value && typeof value === 'object') {
+      for (const [leaf, text] of leafValues(value as Bundle, path)) out.set(leaf, text)
+    } else {
+      out.set(path, String(value))
+    }
+  }
+  return out
+}
+
+/** Every bundle the app registers, keyed the way i18n.ts registers them. */
+const bundles: Record<string, Bundle> = { 'zh-CN': zhCN, 'zh-TW': zhTW, en, ja, ru }
+
+const placeholders = (text: string) => [...new Set(text.match(/\{[A-Za-z_][A-Za-z0-9_]*\}/g) ?? [])].sort().join(' ')
+const pluralForms = (text: string) => text.split('|').length
 
 function resolveKey(bundle: Bundle, key: string): unknown {
   let node: unknown = bundle
@@ -191,13 +214,53 @@ describe('i18n locale parity and reference integrity', () => {
     expect(verbs.length).toBeGreaterThan(0)
     assertKeysExist('Core ProposedVerbs', new Set(verbs.map((verb) => `organization.verb.${verb}`)))
   })
-  it('zh-CN and en expose the same leaf keys in every namespace', () => {
-    const zhLeaves = flattenLeaves(zhCN as Bundle)
+  it('registers exactly the bundles in this folder, so a new locale file cannot ship unregistered', () => {
+    const files = readdirSync(path.dirname(fileURLToPath(import.meta.url)))
+      .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+      .map((file) => file.slice(0, -3))
+      .sort()
+    expect(files).toEqual([...SUPPORTED_LOCALES].sort())
+    expect([...i18n.global.availableLocales].sort()).toEqual([...SUPPORTED_LOCALES].sort())
+  })
+
+  it('every locale exposes the same leaf keys as en.ts', () => {
     const enLeaves = flattenLeaves(en as Bundle)
-    const onlyZh = [...zhLeaves].filter((k) => !enLeaves.has(k))
-    const onlyEn = [...enLeaves].filter((k) => !zhLeaves.has(k))
-    expect(onlyZh, `keys missing from en.ts: ${onlyZh.join(', ')}`).toEqual([])
-    expect(onlyEn, `keys missing from zh-CN.ts: ${onlyEn.join(', ')}`).toEqual([])
+    for (const [locale, bundle] of Object.entries(bundles)) {
+      const leaves = flattenLeaves(bundle)
+      const missing = [...enLeaves].filter((k) => !leaves.has(k))
+      const extra = [...leaves].filter((k) => !enLeaves.has(k))
+      expect(missing, `keys missing from ${locale}.ts: ${missing.join(', ')}`).toEqual([])
+      expect(extra, `keys only in ${locale}.ts: ${extra.join(', ')}`).toEqual([])
+    }
+  })
+
+  it('every translation keeps the placeholders of en.ts, and plural messages carry their language\'s forms', () => {
+    const enValues = leafValues(en as Bundle)
+    for (const [locale, bundle] of Object.entries(bundles)) {
+      for (const [key, text] of leafValues(bundle)) {
+        const source = enValues.get(key) ?? ''
+        // A dropped {name} silently loses the value; an invented one renders as a raw brace.
+        expect(placeholders(text), `${locale}.ts → ${key} placeholders`).toBe(placeholders(source))
+        if (pluralForms(source) === 1) {
+          expect(pluralForms(text), `${locale}.ts → ${key} has plural forms en.ts does not`).toBe(1)
+        } else if (locale === 'ru') {
+          expect(pluralForms(text), `ru.ts → ${key} needs one | few | many`).toBe(3)
+        } else if (locale !== 'en') {
+          expect(pluralForms(text), `${locale}.ts → ${key} has one form for every count`).toBe(1)
+        }
+      }
+    }
+  })
+
+  it('picks the Russian plural form by the last digits, and single-form languages ignore the count', () => {
+    expect([1, 21, 101, 2, 4, 22, 104, 0, 5, 11, 12, 14, 25, 111].map((n) => russianPluralRule(n, 3)))
+      .toEqual([0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2])
+    expect(russianPluralRule(5, 1)).toBe(0)
+    const t = i18n.global.t
+    expect([1, 3, 5, 21].map((n) => t('orchestrationPanel.nodes', n, { locale: 'ru' })))
+      .toEqual(['1 узел', '3 узла', '5 узлов', '21 узел'])
+    expect(t('orchestrationPanel.nodes', 5, { locale: 'ja' })).toBe('5 個のノード')
+    expect(t('orchestrationPanel.nodes', 1, { locale: 'zh-TW' })).toBe('1 個節點')
   })
 
   it('every t() key referenced by agent-center panels exists in both locales', () => {

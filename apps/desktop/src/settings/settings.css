@@ -1077,11 +1077,12 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 
 .lang-options {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .lang-option {
-  flex: 1;
+  flex: 1 1 96px;
   display: flex;
   align-items: center;
   justify-content: center;

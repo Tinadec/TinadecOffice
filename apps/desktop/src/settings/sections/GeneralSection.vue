@@ -8,6 +8,7 @@ import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
 import { getDispatchPref, setDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
+import { SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n'
 
 /**
  * General section extracted from SettingsPage (D7.2).
@@ -21,10 +22,13 @@ const { t, locale } = useI18n()
 const { items: notificationItems, notify, banner, status, confirm: dismissConfirm, dismiss: dismissNotification, dismissByKey } =
   useNotifications()
 
-function setLocale(lang: string): void {
+function setLocale(lang: SupportedLocale): void {
   locale.value = lang
   localStorage.setItem('tinadec-locale', lang)
 }
+
+/** Each language is named in itself, so a reader finds theirs whatever the interface is in now. */
+const languageOptions = SUPPORTED_LOCALES.map((code) => ({ code, label: t('common.languageName', {}, { locale: code }) }))
 
 interface DesktopAppConfig {
   path?: string
@@ -335,20 +339,16 @@ void dismissConfirm
 
       <div class="lang-options gateway-config-field" data-testid="language-options">
         <UiButton
+          v-for="option in languageOptions"
+          :key="option.code"
           variant="outline"
-          :class="['lang-option', { active: locale === 'zh-CN' }]"
-          data-testid="lang-zh"
-          @click="setLocale('zh-CN')"
+          :class="['lang-option', { active: locale === option.code }]"
+          :lang="option.code"
+          :aria-pressed="locale === option.code"
+          :data-testid="`lang-${option.code}`"
+          @click="setLocale(option.code)"
         >
-          中文
-        </UiButton>
-        <UiButton
-          variant="outline"
-          :class="['lang-option', { active: locale === 'en' }]"
-          data-testid="lang-en"
-          @click="setLocale('en')"
-        >
-          English
+          {{ option.label }}
         </UiButton>
       </div>
     </section>
