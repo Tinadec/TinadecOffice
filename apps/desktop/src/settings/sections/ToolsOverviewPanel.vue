@@ -19,7 +19,7 @@ const { usage: toolUsage, loading: usageLoading, failedAgentNames: usageFailures
 function usageText(toolId: string) {
   if (props.agentId) { const agent = props.agents?.find(item => item.id === props.agentId); return agent?.display_name || agent?.slug || props.agentId }
   if (usageLoading.value) return t('toolsSettings.usageLoading')
-  return toolUsage.value[toolId]?.join('、') || t(usageFailures.value.length ? 'toolsSettings.usageUnavailable' : 'toolsSettings.noUsingAgents')
+  return toolUsage.value[toolId]?.join(t('conversation.listSeparator')) || t(usageFailures.value.length ? 'toolsSettings.usageUnavailable' : 'toolsSettings.noUsingAgents')
 }
 const manifest = ref<HarnessManifestDto | null>(null)
 const tools = ref<ToolDescriptorDto[]>([])
@@ -90,7 +90,7 @@ defineExpose({ refresh })
     <UiButton size="sm" :disabled="loading" @click="search">{{ t('toolsSettings.searchTools') }}</UiButton>
   </div>
   <p v-if="error" class="tools-field-error" role="alert">{{ error }}</p>
-  <p v-if="usageFailures.length" class="quiet" role="status">{{ t('toolsSettings.usageFailed', { agents: usageFailures.join('、') }) }}</p>
+  <p v-if="usageFailures.length" class="quiet" role="status">{{ t('toolsSettings.usageFailed', { agents: usageFailures.join(t('conversation.listSeparator')) }) }}</p>
   <div class="tools-resource-list"><article v-for="result in visibleResults" :key="result.tool.id" class="tools-resource-row tool-discovery-card" :class="{ selected: result.tool.id === requestedToolId }"><span class="tools-tool-identity"><strong>{{ result.tool.display_name }}</strong><code v-if="result.tool.display_name !== result.tool.id">{{ result.tool.id }}</code><small>{{ result.tool.description }}</small></span><span class="tools-tool-facts"><small>{{ result.tool.source || t('toolsSettings.sourceUndeclared') }} · {{ riskLabel(result.tool.risk) }}</small><small v-if="result.tool.requires_approval">{{ t('settings.approvalRequired') }}</small><small>{{ t('toolsSettings.usedBy', { agents: usageText(result.tool.id) }) }}</small></span></article></div>
   <p v-if="!loading && !error && !visibleResults.length" class="quiet">{{ t('settings.noTools') }}</p>
   <details class="tools-effective-card"><summary>{{ t('toolsSettings.runtimeDetails') }}</summary>

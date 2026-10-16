@@ -53,7 +53,7 @@ async function decide(option: SupervisionDecisionOption) {
   <div v-if="review?.reasons.length || review?.options.length" class="supervision-review" data-testid="supervision-gate">
     <div v-if="review?.reasons.length" class="supervision-reasons" data-testid="supervision-reasons">
       <div class="supervision-reasons-heading"><ShieldAlert :size="14" aria-hidden="true" /><strong>{{ t('agent.supervisionWaiting') }}</strong></div>
-      <span>{{ review.reasons.join('；') }}</span>
+      <span>{{ review.reasons.join(t('activity.reasonSeparator')) }}</span>
     </div>
     <div v-if="review?.options.length" class="supervision-actions">
       <button v-for="option in review.options" :key="option" type="button"

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const execute = vi.hoisted(() => vi.fn())
 vi.mock('@/api', () => ({ api: { executeCodeTool: execute } }))
 import { useSpatialGit } from './useSpatialGit'
+import i18n from '@/i18n'
 afterEach(() => execute.mockReset())
 
 describe('space Git read ownership', () => {
@@ -12,7 +13,9 @@ describe('space Git read ownership', () => {
     const git = scope.run(() => useSpatialGit(ref('/project')))!
     await vi.waitFor(() => expect(git.state.value.loading).toBe(false))
     expect(git.state.value.loaded).toBe(false)
-    expect(git.state.value.error).toBe('Approval needed')
+    // In words for the card; the tool's own sentence stays as the detail.
+    expect(git.state.value.error).toBe(i18n.global.t('space.gitAwaitingApproval'))
+    expect(git.state.value.errorDetail).toBe('Approval needed')
     scope.stop()
   })
   it('aborts and ignores a late read after the conversation project changed', async () => {

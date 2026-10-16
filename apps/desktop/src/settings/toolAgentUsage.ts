@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, watch } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { api as baseApi } from '@/api'
 import { scopedApi, projectStorageId } from '@/lib/storageScope'
 
@@ -18,7 +18,6 @@ export function useToolAgentUsage(
   const usage = ref<Record<string, string[]>>({})
   const loading = ref(false)
   const failedAgentNames = ref<string[]>([])
-  const error = computed(() => failedAgentNames.value.join(', '))
   let generation = 0
 
   async function refresh(): Promise<void> {
@@ -64,5 +63,5 @@ export function useToolAgentUsage(
 
   watch(() => JSON.stringify([projectId(), selectedAgentId(), agents().map(agent => [agent.id, agent.display_name, agent.slug, agent.enabled])]), () => { void refresh() }, { immediate: true })
   onScopeDispose(() => { generation++ })
-  return { usage, loading, error, failedAgentNames, refresh }
+  return { usage, loading, failedAgentNames, refresh }
 }

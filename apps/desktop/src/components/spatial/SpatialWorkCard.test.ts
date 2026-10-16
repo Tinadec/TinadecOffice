@@ -245,6 +245,8 @@ describe('SpatialWorkCard summaries and detail', () => {
     await flushPromises()
     expect(h.readFile).toHaveBeenCalledWith('/workspace', 'src/a.ts', { start_row: 1, end_row: 500 })
     expect(wrapper.get('.space-file-view summary').text()).toContain('space.currentFile')
-    expect(wrapper.get('[role="status"]').text()).toBe('File unavailable')
+    // The card words the failure; the read tool's own sentence stays as the tooltip.
+    expect(wrapper.get('[role="status"]').text()).toBe('space.fileReadFailed')
+    expect(wrapper.get('[role="status"]').attributes('title')).toBe('File unavailable')
   })
 })

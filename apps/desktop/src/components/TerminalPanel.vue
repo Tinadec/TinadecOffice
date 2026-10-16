@@ -394,7 +394,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
       <!-- Persistent reason the panel has no shell (a failed create is not a no-op) -->
       <div v-if="!spaceRuns && creationError" class="terminal-error" role="alert">
         <span class="terminal-error-text">
-          {{ t('terminal.createFailed') }}：{{ creationError.message }}
+          {{ t('terminal.createFailedWith', { error: creationError.message }) }}
         </span>
         <button
           v-if="creationError.retryable"

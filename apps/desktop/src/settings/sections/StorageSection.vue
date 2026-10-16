@@ -13,7 +13,15 @@ import type { ConfigurationDocumentDto, StorageCleanupPreviewDto, StorageContent
 import { recoveryActions, useErrorState, type ErrorState } from '@/composables/useErrorState'
 import type { ApiErrorActionKind } from '@/lib/apiError'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+/** A storage or configuration diagnostic in words from its code, keeping Core's specifics (names, lines) where the wording needs them. */
+function diagnosticText(item: Record<string, unknown>): string {
+  const message = typeof item.message === 'string' ? item.message : ''
+  const key = `storage.diagnostic.${item.code}`
+  return typeof item.code === 'string' && te(key) ? t(key, { detail: message, line: item.line ?? '', column: item.column ?? '' }) : message || JSON.stringify(item)
+}
+/** Core's own sentence, as the tooltip, when the line shows a translation of it. */
+const diagnosticTitle = (item: Record<string, unknown>) => typeof item.message === 'string' && item.message !== diagnosticText(item) ? item.message : undefined
 const categoryLabel = (category: string) => t(`storage.categoryName.${category}`, category)
 const formatTime = (iso: string) => { const date = new Date(iso); return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(locale.value) }
 const { canAccessBackend, reason: hostReason } = useHostAccess()
@@ -300,7 +308,7 @@ const failureRecovery = computed(() => recoveryActions(failure.error.value, {
       <p v-if="scopeId === 'user' && hostStorage" class="quiet">{{ t('storage.desktopStartupSource') }}: {{ t(`storage.hostSource.${hostStorage.source}`, hostStorage.source) }} · <code>{{ hostStorage.bootstrap_config }}</code> · {{ t('storage.hostUserRoot') }}: <code>{{ hostStorage.root }}</code><span v-if="hostStorage.managed"> · {{ t('storage.managedByHome') }}</span><span v-if="!hostStorage.local_services"> · {{ t('storage.externalServiceMode') }}</span></p>
       <div class="storage-actions"><UiButton variant="outline" size="sm" :disabled="busy || !canAccessBackend || scope.availability === 'error'" @click="exportScope">{{ t('storage.exportZip') }}</UiButton><UiButton v-if="scopeId !== 'user'" variant="outline" size="sm" :disabled="busy" @click="closeScope">{{ t('storage.closeProjectStorage') }}</UiButton><UiButton v-if="scopeId !== 'user'" variant="outline" size="sm" :disabled="busy || !canAccessBackend" @click="unregisterScope">{{ t('storage.unregisterProject') }}</UiButton><UiButton v-if="scope.restart_required && hostStorage?.local_services !== false" variant="outline" size="sm" :disabled="busy" @click="restart">{{ t('storage.restartToApply') }}</UiButton></div>
       <dl class="storage-paths"><div v-for="(value, key) in scope.paths" :key="key"><dt>{{ categoryLabel(String(key)) }}</dt><dd><code>{{ value }}</code></dd></div></dl>
-      <div v-if="scopeDiagnostics.length" class="tools-validation" role="status"><p v-for="(item, index) in scopeDiagnostics" :key="index">{{ item.message || JSON.stringify(item) }}</p></div>
+      <div v-if="scopeDiagnostics.length" class="tools-validation" role="status"><p v-for="(item, index) in scopeDiagnostics" :key="index" :title="diagnosticTitle(item)">{{ diagnosticText(item) }}</p></div>
       <fieldset class="storage-capability-fields" :disabled="!canAccessBackend || scope.availability === 'error'">
       <div class="storage-config"><label class="storage-field">{{ t('storage.backend') }}<UiSelectField v-model="backend" :disabled="busy" :aria-label="t('storage.backend')" :options="[{ value: 'sqlite', label: 'SQLite' }, { value: 'postgresql', label: 'PostgreSQL' }]" /></label><label class="storage-field">{{ t('storage.root') }}<UiInput v-model="root" :disabled="busy" /></label><label v-if="backend === 'postgresql'" class="storage-field">{{ t('storage.postgresReference') }}<UiInput v-model="postgresReference" :disabled="busy" :placeholder="t('storage.secretReference')" /></label><UiButton variant="outline" :disabled="busy || dirty" @click="configure">{{ t('storage.applyStorage') }}</UiButton></div>
       <label v-if="scope.scope_kind === 'project'" class="storage-policy"><input type="checkbox" :checked="scope.allow_storage_write" :disabled="busy" @change="writePolicy" />{{ t('storage.allowAgentWrites') }}</label>
@@ -314,7 +322,7 @@ const failureRecovery = computed(() => recoveryActions(failure.error.value, {
       <label class="storage-field">{{ t('storage.module') }}<UiSelectField :value="documentId" :disabled="busy" :aria-label="t('storage.module')" :options="modules.map((module) => ({ value: module, label: `${module}.toml` }))" @change="selectDocument" /></label>
       <p v-if="document" class="quiet"><code>{{ document.path }}</code> · v{{ document.version }} · {{ document.content_hash }}</p>
       <textarea v-model="text" class="storage-editor" :readonly="busy" spellcheck="false" :aria-label="t('storage.documentText')" />
-      <div v-if="diagnostics.length" class="tools-validation" role="status"><p v-for="(item, index) in diagnostics" :key="index">{{ item.message || JSON.stringify(item) }}</p></div>
+      <div v-if="diagnostics.length" class="tools-validation" role="status"><p v-for="(item, index) in diagnostics" :key="index" :title="diagnosticTitle(item)">{{ diagnosticText(item) }}</p></div>
       <div class="storage-actions"><UiButton variant="outline" :disabled="busy || !document" @click="validate">{{ t('storage.validate') }}</UiButton><UiButton :disabled="busy || !dirty || !document" @click="save">{{ t('storage.save') }}</UiButton><span v-if="dirty" class="quiet">{{ t('storage.unsavedDraft') }}</span></div>
       </fieldset>
     </template>

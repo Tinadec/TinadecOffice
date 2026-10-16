@@ -61,6 +61,8 @@ onBeforeUnmount(() => { sizeObserver?.disconnect(); fileRead++ })
 const file = ref<string | null>(null)
 const code = ref('')
 const codeError = ref('')
+/** What the read tool itself said, for the tooltip, when `codeError` is the worded failure. */
+const codeErrorDetail = ref<string>()
 const reading = ref(false)
 let fileRead = 0
 watch(() => git?.state.value.cwd, () => { fileRead++; file.value = null; code.value = ''; codeError.value = ''; reading.value = false })
@@ -68,12 +70,16 @@ async function readFile(path: string) {
   const cwd = git?.state.value.cwd
   if (!cwd || props.preview) return
   const read = ++fileRead
-  file.value = path; code.value = ''; codeError.value = ''; reading.value = true
+  file.value = path; code.value = ''; codeError.value = ''; codeErrorDetail.value = undefined; reading.value = true
   try {
     const result = await api.readFile(cwd, path, { start_row: 1, end_row: 500 })
     if (read !== fileRead) return
     const data = result.data as ReadFileDataDto
-    if (result.status === 'failed' || data.success === false) throw new Error(typeof result.data.error === 'string' ? result.data.error : result.summary)
+    if (result.status === 'failed' || data.success === false) {
+      codeError.value = t('space.fileReadFailed')
+      codeErrorDetail.value = typeof result.data.error === 'string' ? result.data.error : result.summary
+      return
+    }
     code.value = readFileText(data)
   } catch (error) { if (read === fileRead) codeError.value = error instanceof Error ? error.message : String(error) }
   finally { if (read === fileRead) reading.value = false }
@@ -121,7 +127,7 @@ async function readFile(path: string) {
         <p v-if="!git?.state.value.cwd" class="space-muted">{{ t('space.noProject') }}</p>
         <template v-else>
           <button v-if="!preview" type="button" class="space-git-refresh" @click="git?.refresh()">{{ t('space.refresh') }}</button>
-          <p v-if="git?.state.value.error" class="space-muted" role="status">{{ git.state.value.error }}</p>
+          <p v-if="git?.state.value.error" class="space-muted" role="status" :title="git.state.value.errorDetail">{{ git.state.value.error }}</p>
           <p v-if="git?.state.value.loading" class="space-muted">{{ t('space.loading') }}</p>
           <div v-if="git?.state.value.loaded" class="space-todo-row"><GitBranch :size="20" /><div>{{ git?.state.value.preview.branch }}<small>↑ {{ git?.state.value.preview.ahead ?? 0 }} · ↓ {{ git?.state.value.preview.behind ?? 0 }}</small></div></div>
           <div v-for="commit in git?.state.value.commits.slice(0, 3)" :key="commit.hash" class="space-git-commit"><code>{{ commit.short_hash }}</code> {{ commit.subject }}</div>
@@ -129,7 +135,7 @@ async function readFile(path: string) {
           <div v-for="item in git?.state.value.preview.files" :key="item.path" class="space-git-file">
             <span v-if="preview">{{ item.path }}</span><button v-else type="button" @click="readFile(item.path)"><FileCode2 :size="16" />{{ item.path }}</button>
           </div>
-          <details v-if="file && !preview" open class="space-file-view"><summary>{{ file }} · {{ t('space.currentFile') }}</summary><p v-if="reading">{{ t('space.loading') }}</p><p v-else-if="codeError" role="status">{{ codeError }}</p><pre v-else>{{ code }}</pre></details>
+          <details v-if="file && !preview" open class="space-file-view"><summary>{{ file }} · {{ t('space.currentFile') }}</summary><p v-if="reading">{{ t('space.loading') }}</p><p v-else-if="codeError" role="status" :title="codeErrorDetail">{{ codeError }}</p><pre v-else>{{ code }}</pre></details>
         </template>
       </template>
       <template v-else-if="object.kind === 'approval'">
@@ -155,8 +161,8 @@ async function readFile(path: string) {
         <p v-if="object.kind === 'task' && !object.body" class="space-muted">{{ t('space.cluster.noTaskResult') }}</p>
         <p v-else-if="object.kind === 'plan' && !object.body && !object.rows?.length" class="space-muted">{{ t('space.noPlan') }}</p>
       </template>
-      <p v-if="object.waitingFor?.length" class="space-muted space-waiting" :class="{ 'space-summary': isCompact }">{{ t('space.cluster.waitingFor', { tasks: object.waitingFor.join('、') }) }}</p>
-      <p v-if="object.unresolvedDependencies?.length" class="space-muted space-unresolved" :class="{ 'space-summary': isCompact }">{{ t('space.cluster.unresolvedDependencies', { ids: object.unresolvedDependencies.join('、') }) }}</p>
+      <p v-if="object.waitingFor?.length" class="space-muted space-waiting" :class="{ 'space-summary': isCompact }">{{ t('space.cluster.waitingFor', { tasks: object.waitingFor.join(t('conversation.listSeparator')) }) }}</p>
+      <p v-if="object.unresolvedDependencies?.length" class="space-muted space-unresolved" :class="{ 'space-summary': isCompact }">{{ t('space.cluster.unresolvedDependencies', { ids: object.unresolvedDependencies.join(t('conversation.listSeparator')) }) }}</p>
       <p v-if="object.dependencyUnverified" class="space-muted">{{ t('space.cluster.unverifiedDependencies') }}</p>
       <p v-if="object.truncated" class="space-muted">{{ t('space.cluster.truncated') }}</p>
       <template v-if="detail && !preview && object.kind === 'run'">
