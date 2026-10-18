@@ -101,11 +101,11 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Projection reads use the current EF model, so a schema added after
-            // the table was created must be reconciled before LoadRowsAsync.
-            // The migration runner uses this same bootstrap after migrations, but
-            // the wrapped projection factory is what creates its first context.
-            await DbContextSchemaBootstrapper.EnsureTablesAsync(db, cancellationToken).ConfigureAwait(false);
+            // Projection reads use the current EF model, so an older existing table
+            // needs its new columns before LoadRowsAsync. Do not create tables here:
+            // this read can run before the coordinated migrations, and creating the
+            // current shape first makes those migrations try to add its columns again.
+            await DbContextSchemaBootstrapper.EnsureColumnsAsync(db, cancellationToken).ConfigureAwait(false);
             var entities = SelectedEntities(db).ToArray();
             if (!await TablesExistAsync(db, entities, cancellationToken).ConfigureAwait(false)) return;
             Dictionary<Type, List<object>>? existing = null;

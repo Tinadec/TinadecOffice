@@ -18,6 +18,43 @@ namespace TinadecCore.Api.Tests;
 public sealed class DmaeaGraphSchemaReconciliationTests
 {
     [Fact]
+    public async Task EnsureColumns_OnFreshDatabase_LeavesTableCreationToMigrations()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"tinadec-fresh-project-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<AgentConfigurationDbContext>()
+                .UseSqlite(
+                    $"Data Source={databasePath}",
+                    migrations => migrations.MigrationsAssembly("TinadecCore.Storage.Migrations.Sqlite"))
+                .Options;
+
+            await using var db = new AgentConfigurationDbContext(options);
+            await DbContextSchemaBootstrapper.EnsureColumnsAsync(db);
+            var tables = await db.Database
+                .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM sqlite_master WHERE type = 'table' AND name = 'agent_definitions'")
+                .ToListAsync();
+            Assert.Empty(tables);
+
+            await db.Database.MigrateAsync();
+            var migratedColumns = await db.Database
+                .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM pragma_table_info('agent_definitions')")
+                .ToListAsync();
+            Assert.Contains("system_prompt", migratedColumns);
+
+            await DbContextSchemaBootstrapper.EnsureTablesAsync(db);
+            var modeColumns = await db.Database
+                .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM pragma_table_info('agent_modes')")
+                .ToListAsync();
+            Assert.Contains("runtime_policy_json", modeColumns);
+        }
+        finally
+        {
+            try { File.Delete(databasePath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task EnsureTables_CreatesDmaeaGraphTables_AndRecordInsertsSucceed()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"tinadec-dmaea-schema-{Guid.NewGuid():N}.db");

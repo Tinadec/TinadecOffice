@@ -33,13 +33,21 @@ public static class DbContextSchemaBootstrapper
         // index DDL comes from the current model and can reference columns that
         // a migrations-era table does not have yet, which aborts the whole
         // script before reconciliation ever gets a chance to add them.
-        await ReconcileModelColumnsAsync(db, cancellationToken).ConfigureAwait(false);
+        await EnsureColumnsAsync(db, cancellationToken).ConfigureAwait(false);
         var script = db.Database.GenerateCreateScript()
             .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", StringComparison.Ordinal);
         if (!string.IsNullOrWhiteSpace(script)) await db.Database.ExecuteSqlRawAsync(script, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Reconciles only columns of tables that already exist. Callers that can run
+    /// before migrations must use this instead of EnsureTablesAsync so a fresh
+    /// database still gets its tables and migration history in the normal order.
+    /// </summary>
+    public static Task EnsureColumnsAsync(DbContext db, CancellationToken cancellationToken = default) =>
+        ReconcileModelColumnsAsync(db, cancellationToken);
 
     /// <summary>
     /// Brings columns of existing tables up to the current model. The create
