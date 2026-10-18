@@ -9,10 +9,14 @@ namespace TinadecCore.Storage.Migrations.Sqlite;
 public sealed class CorrectionModePolicy : Migration
 {
     protected override void Up(MigrationBuilder m) => m.Sql("""
-        alter table agent_modes add column runtime_policy_json text null;
+        -- The projection schema bootstrapper adds model columns before the
+        -- wrapped configuration context is first queried. Keeping this marker
+        -- migration a no-op makes old databases upgrade once without making a
+        -- second schema pass fail on a duplicate column.
+        select 1;
         """);
 
     protected override void Down(MigrationBuilder m) => m.Sql("""
-        alter table agent_modes drop column runtime_policy_json;
+        select 1;
         """);
 }

@@ -68,7 +68,7 @@ public static class CorrectionEndpoints
             idempotencyKey: $"correction-answer:{runId}:{questionId}:{body.ClientRequestId}").ConfigureAwait(false);
         await lifecycle.SetRunStatusAsync(runId.ToString(), "executing", "Correction answer accepted.", cancellationToken).ConfigureAwait(false);
         await engine.EnqueueAsync(runId, cancellationToken).ConfigureAwait(false);
-        return Results.Accepted($"/api/v1/runs/{runId}/correction", new { run_id = runId, question_id = questionId, status = "resumed", trace });
+        return Results.Accepted($"/api/v1/runs/{runId}/correction", new { run_id = runId, question_id = questionId, status = "resumed", trace = trace.ToDto() });
     }
 
     private static async Task<IResult> SubmitFeedback(

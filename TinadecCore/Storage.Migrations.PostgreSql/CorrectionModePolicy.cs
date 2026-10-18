@@ -9,10 +9,13 @@ namespace TinadecCore.Storage.Migrations.PostgreSql;
 public sealed class CorrectionModePolicy : Migration
 {
     protected override void Up(MigrationBuilder m) => m.Sql("""
-        alter table agent_modes add column if not exists runtime_policy_json text null;
+        -- The projection schema bootstrapper owns idempotent model-column
+        -- reconciliation. This marker migration records that the policy surface
+        -- was introduced without racing a second column pass.
+        select 1;
         """);
 
     protected override void Down(MigrationBuilder m) => m.Sql("""
-        alter table agent_modes drop column if exists runtime_policy_json;
+        select 1;
         """);
 }
