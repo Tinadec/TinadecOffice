@@ -44,6 +44,13 @@ public static class CoreVirtualToolPolicy
     public const string SpecProposeToolId = "spec_propose";
     public static bool IsSpecPropose(string? toolId) => string.Equals(toolId, SpecProposeToolId, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Host-owned causal trace for the submitted symptom. Only a mode with the
+    /// structured investigation runtime policy receives this declaration.
+    /// </summary>
+    public const string CorrectionTraceToolId = "update_correction_trace";
+    public static bool IsCorrectionTrace(string? toolId) => string.Equals(toolId, CorrectionTraceToolId, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Upper bound on plan_update steps: a longer plan is a task list for the planner, not a working plan.</summary>
     public const int PlanUpdateMaxSteps = 20;
 
@@ -159,7 +166,8 @@ public static class CoreVirtualToolPolicy
     /// legitimately declared virtual tool is dropped as "the process does not offer it".
     /// </summary>
     public static bool IsCoreVirtual(string? toolId) =>
-        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTaskWait(toolId) || IsPlanUpdate(toolId) || IsSpecPropose(toolId) || IsReadAttachment(toolId)
+        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTaskWait(toolId) || IsPlanUpdate(toolId) || IsSpecPropose(toolId)
+        || IsCorrectionTrace(toolId) || IsReadAttachment(toolId)
         || IsTinaChat(toolId) || IsOrganization(toolId) || IsGraphView(toolId) || IsRecallEvidence(toolId) || IsEnvironment(toolId);
 
     /// <summary>

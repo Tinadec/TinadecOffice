@@ -129,6 +129,13 @@ public sealed record FrozenRunConfigurationV1(
     public FrozenGraph? Graph { get; init; }
 
     /// <summary>
+    /// Host-owned workflow selected by the frozen mode version. Null on every
+    /// ordinary mode and on bodies frozen before this field existed.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CorrectionRuntimePolicyDto? RuntimePolicy { get; init; }
+
+    /// <summary>
     /// The workspace this run is bound to, frozen at admission (root absolute
     /// path, extra read-only roots, git facts, top-level listing, path contract).
     /// Null means "this run has no workspace": projectless free-conversation
@@ -499,6 +506,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             Triggers = snapshot.Triggers,
             Orchestration = snapshot.Orchestration,
             Graph = graph,
+            RuntimePolicy = relational.RuntimePolicy,
             Workspace = workspace,
             SpaceOptions = spaceOptions,
             SpacePreparationToolIds = preparationTools.Length == 0 ? null : preparationTools

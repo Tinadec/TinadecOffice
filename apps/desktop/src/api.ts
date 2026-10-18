@@ -1499,6 +1499,13 @@ export interface AgentModeTopologyWriteDto {
   nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null; model_strategy_override?: Record<string, unknown> | null }>;
   edges: Array<{ source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
   canvas_layout?: Record<string, unknown> | null;
+  runtime_policy?: AgentModeRuntimePolicy | null;
+}
+
+export interface AgentModeRuntimePolicy {
+  kind: 'structured_investigation';
+  version: 1;
+  features: string[];
 }
 
 export interface AgentModeTopologyDto {
@@ -1510,6 +1517,7 @@ export interface AgentModeTopologyDto {
   latest_published_mode_version_id?: string | null;
   /** User-facing one-liner: what the mode does and when to pick it. */
   description?: string | null;
+  runtime_policy?: AgentModeRuntimePolicy | null;
   nodes: AgentModeNodeDto[];
   edges: AgentModeEdgeDto[];
   canvas_layout?: Record<string, unknown> | null;
@@ -3375,6 +3383,9 @@ export const api = {
   },
   // interactions (queued/insert/parallel)
   createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; clear_meeting_model_override?: boolean; expected_settings_revision?: number; space_options?: SpaceOptionsDto | null; attachment_ids?: string[]; interrupt?: boolean }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  getCorrection: (runId: string) => request<Record<string, unknown>>(`/api/v1/runs/${encodeURIComponent(runId)}/correction`),
+  answerCorrectionQuestion: (runId: string, questionId: string, body: { answer: string; option_id?: string | null; client_request_id: string }) => request<Record<string, unknown>>(`/api/v1/runs/${encodeURIComponent(runId)}/correction/questions/${encodeURIComponent(questionId)}/answer`, { method: 'POST', body: JSON.stringify(body) }),
+  submitCorrectionFeedback: (runId: string, body: { kind: 'reproduced' | 'resolved'; note?: string | null; client_request_id: string }) => request<Record<string, unknown>>(`/api/v1/runs/${encodeURIComponent(runId)}/correction/feedback`, { method: 'POST', body: JSON.stringify(body) }),
   reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
   cancelInteraction: (sessionId: string, interactionId: string) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   // --- Attachments ---

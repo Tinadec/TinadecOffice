@@ -520,6 +520,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             }
             var checkpoint = await LoadOrCreateCheckpointAsync(runId, run, sessionId, turnId, trigger, stoppingToken).ConfigureAwait(false);
             if (checkpoint is null) return;
+            if (CorrectionRuntimePolicy.IsStructuredInvestigation(configuration.RuntimePolicy))
+                checkpoint = await EnsureCorrectionAsync(run, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
             if (chatInput is not null && checkpoint.UserGoal != chatInput.Content)
             {
                 await FailRunAsync(runId, checkpoint, "tina_chat_input_locked", "The checkpoint goal no longer matches the accepted intent.", stoppingToken).ConfigureAwait(false);
@@ -690,6 +692,21 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         checkpoint = await RespondToInteractionAsync(run, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
                         break;
                     case "awaiting_user":
+                        if (CorrectionRuntimePolicy.IsStructuredInvestigation(configuration.RuntimePolicy)
+                            && checkpoint.Correction is not null)
+                        {
+                            var unanswered = checkpoint.Correction.OpenQuestions.Any(question => question.Blocking && question.AnsweredAt is null);
+                            if (!unanswered)
+                            {
+                                checkpoint.Correction.Status = "investigating";
+                                checkpoint.Correction.Revision++;
+                                checkpoint.Correction.UpdatedAt = DateTimeOffset.UtcNow;
+                                checkpoint.Phase = "executing";
+                                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "correction-resumed", stoppingToken).ConfigureAwait(false);
+                                await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, stoppingToken).ConfigureAwait(false);
+                            }
+                            break;
+                        }
                         // A resumed escalation is an explicit user choice to
                         // continue with the recorded incomplete outcome. Corrections
                         // are applied above as context patches and move the checkpoint
@@ -1185,6 +1202,42 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             PlanRevision = 0
         };
         return await SaveCheckpointAsync(initial, run.CheckpointRevision, "admitted", cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<FullDuplexCheckpointV1> EnsureCorrectionAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        if (checkpoint.Correction is not null) return checkpoint;
+
+        CorrectionTraceState trace;
+        if (string.Equals(run.RunKind, "correction_reopen", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(run.ParentRunId, out var parentRunId))
+        {
+            var parentCheckpoint = await _lifecycle.GetCurrentRunCheckpointAsync(parentRunId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (parentCheckpoint is null)
+                throw new InvalidDataException("The correction episode has no parent checkpoint.");
+            var parent = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(parentCheckpoint.Content, JsonOptions)
+                ?? throw new InvalidDataException("The correction episode parent checkpoint is empty.");
+            trace = parent.Correction is null
+                ? CorrectionTracePolicy.Create(run, checkpoint.UserGoal, parentRunId)
+                : CorrectionTracePolicy.Clone(parent.Correction, run);
+            trace.ParentRunId = parentRunId;
+        }
+        else
+        {
+            trace = CorrectionTracePolicy.Create(run, checkpoint.UserGoal);
+        }
+
+        checkpoint.Correction = trace;
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "correction-started", cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(Guid.Parse(run.RunId), "correction.trace.updated",
+            "Correction trace initialized.",
+            new { run_id = run.RunId, episode_id = trace.EpisodeId, revision = trace.Revision, trace = trace.ToDto() },
+            cancellationToken, idempotencyKey: $"correction-started:{run.RunId}").ConfigureAwait(false);
+        return checkpoint;
     }
 
     private async Task<FullDuplexCheckpointV1> PlanAsync(
@@ -1804,6 +1857,13 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 checkpoint = await HandlePlanUpdateAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
                 continue;
             }
+            if (pendingTurn is not null && CoreVirtualToolPolicy.IsCorrectionTrace(pendingTurn.ToolId))
+            {
+                var correction = await HandleCorrectionTraceAsync(run, checkpoint, pendingTurn, cancellationToken).ConfigureAwait(false);
+                checkpoint = correction.Checkpoint;
+                if (correction.Parked) return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null);
+                continue;
+            }
             if (pendingTurn is not null)
             {
                 ToolDispatchResultDto dispatch;
@@ -2021,9 +2081,35 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 {
                     pendingTurn.ErrorCategory = RunErrorTaxonomy.ToolError;
                 }
+                if (checkpoint.Correction is not null
+                    && CorrectionRuntimePolicy.IsStructuredInvestigation(configuration.RuntimePolicy))
+                {
+                    var frozenTool = configuration.ToolManifest.FirstOrDefault(item =>
+                        string.Equals(item.Id, pendingTurn.ToolId, StringComparison.OrdinalIgnoreCase));
+                    CorrectionTracePolicy.RecordToolFact(
+                        checkpoint.Correction,
+                        pendingTurn.ToolId,
+                        pendingTurn.ArgumentsJson,
+                        new ToolDispatchResultDto
+                        {
+                            Status = pendingTurn.ToolSuccess == false ? "failed" : "completed",
+                            ExecutionId = pendingTurn.ExecutionId,
+                            Result = dispatch.Result,
+                        },
+                        frozenTool?.MutatesWorkspace ?? WorkspaceToolCatalog.MutatingMembers([pendingTurn.ToolId]).Count > 0,
+                        task.WorkerHandle,
+                        snapshot?.WorkspaceSnapshotId);
+                    CorrectionTracePolicy.EvaluateCompletion(
+                        checkpoint.Correction,
+                        configuration.RuntimePolicy!,
+                        checkpoint.UserGoal,
+                        checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0);
+                }
                 task.PendingToolExecutionId = null;
                 task.PendingToolApprovalId = null;
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-result", cancellationToken).ConfigureAwait(false);
+                if (checkpoint.Correction is not null)
+                    await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
@@ -4879,6 +4965,28 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     {
         var runId = Guid.Parse(run.RunId);
 
+        if (CorrectionRuntimePolicy.IsStructuredInvestigation(configuration.RuntimePolicy)
+            && checkpoint.Correction is not null)
+        {
+            var unresolved = CorrectionTracePolicy.EvaluateCompletion(
+                checkpoint.Correction,
+                configuration.RuntimePolicy!,
+                checkpoint.UserGoal,
+                checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0);
+            if (unresolved is not null)
+            {
+                checkpoint.Phase = "awaiting_user";
+                checkpoint.MeetingResponse = null;
+                checkpoint.Correction.Status = checkpoint.Correction.Completion.Requirement == "user"
+                    ? "awaiting_user"
+                    : "blocked";
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "correction-completion-blocked", cancellationToken).ConfigureAwait(false);
+                await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, cancellationToken).ConfigureAwait(false);
+                await TrySetRunStatusAsync(run.RunId, "awaiting_user", unresolved, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+
         // Defensive finalization gate for legacy or partially committed checkpoints.
         // Unless the user explicitly accepted an incomplete outcome, finalization
         // requires a resolved pass/skipped decision plus completed tasks and evidence
@@ -6681,6 +6789,70 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         return checkpoint;
     }
 
+    private async Task<(FullDuplexCheckpointV1 Checkpoint, bool Parked)> HandleCorrectionTraceAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        WorkerToolTurn turn,
+        CancellationToken cancellationToken)
+    {
+        var task = checkpoint.Tasks.FirstOrDefault(item => item.ToolTurns.Contains(turn));
+        if (task is null) return (checkpoint, false);
+        if (checkpoint.Correction is null)
+            return (await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
+                "This run has no correction trace.", checkpoint, cancellationToken).ConfigureAwait(false), false);
+        if (!TryParseJsonObject(turn.ArgumentsJson, out var arguments))
+        {
+            return (await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
+                "update_correction_trace needs a JSON object.", checkpoint, cancellationToken).ConfigureAwait(false), false);
+        }
+
+        var error = CorrectionTracePolicy.ApplyProposal(checkpoint.Correction, arguments);
+        if (error is not null)
+        {
+            return (await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
+                error, checkpoint, cancellationToken).ConfigureAwait(false), false);
+        }
+
+        turn.ResultJson = JsonSerializer.Serialize(new
+        {
+            ok = true,
+            episode_id = checkpoint.Correction.EpisodeId,
+            revision = checkpoint.Correction.Revision,
+            phase = checkpoint.Correction.Phase,
+            trace = checkpoint.Correction.ToDto(),
+        });
+        turn.DispatchStatus = ToolDispatchStatus.Completed;
+        turn.ToolSuccess = true;
+        var pendingQuestion = checkpoint.Correction.OpenQuestions.LastOrDefault(question => question.Blocking && question.AnsweredAt is null);
+        if (pendingQuestion is not null)
+        {
+            checkpoint.Phase = "awaiting_user";
+            await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Correction requires a user answer before it can continue.", cancellationToken).ConfigureAwait(false);
+        }
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "correction-trace", cancellationToken).ConfigureAwait(false);
+        await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, cancellationToken).ConfigureAwait(false);
+        if (pendingQuestion is not null)
+        {
+            await AppendEventAsync(Guid.Parse(run.RunId), "correction.question.requested",
+                "Correction requested a user answer.",
+                new { run_id = run.RunId, episode_id = checkpoint.Correction.EpisodeId, question = pendingQuestion.ToDto(), trace_revision = checkpoint.Correction.Revision },
+                cancellationToken, idempotencyKey: $"correction-question:{checkpoint.Correction.EpisodeId}:{pendingQuestion.Id}").ConfigureAwait(false);
+            return (checkpoint, true);
+        }
+        return (checkpoint, false);
+    }
+
+    private async Task AppendCorrectionTraceEventAsync(
+        RunState run,
+        CorrectionTraceState trace,
+        CancellationToken cancellationToken)
+    {
+        await AppendEventAsync(Guid.Parse(run.RunId), "correction.trace.updated",
+            "Correction trace updated.",
+            new { run_id = run.RunId, episode_id = trace.EpisodeId, revision = trace.Revision, trace = trace.ToDto() },
+            cancellationToken, idempotencyKey: $"correction-trace:{run.RunId}:{trace.EpisodeId}:{trace.Revision}").ConfigureAwait(false);
+    }
+
     /// <summary>Parses plan_update arguments; returns the model-facing error, or null when the plan is valid.</summary>
     internal static string? TryParsePlan(string? argumentsJson, out List<TaskPlanStep> steps, out string? explanation)
     {
@@ -7209,6 +7381,8 @@ internal sealed class FullDuplexCheckpointV1
     public bool SpacePreparationComplete { get; set; }
     public string? SpaceWorktreePath { get; set; }
     public List<SpaceSpecDocument> SpaceSpecDocuments { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CorrectionTraceState? Correction { get; set; }
 
     /// <summary>
     /// Set when a graph-tier (lane-less) approval expiry parks the run on the

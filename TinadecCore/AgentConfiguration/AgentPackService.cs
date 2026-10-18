@@ -157,6 +157,7 @@ public sealed class AgentPackService : IAgentPackService
         "agent_pack_lifecycle",
         "versioned_agent_configuration",
         "frozen_agent_version_binding",
+        CorrectionRuntimePolicy.RequiredCoreCapability,
         // DmaEA graph orchestration pack surface (resources.tools, mode bindings,
         // node relationship files). Declaring it opts the pack into those semantics;
         // older Cores reject the unknown capability fail-closed.
@@ -1111,15 +1112,18 @@ public sealed class AgentPackService : IAgentPackService
                 instance_naming = binding.InstanceNaming is { } namingElement ? (object?)NormalizeObject(namingElement) : null,
             };
         }).ToArray();
-        var snapshotElement = JsonSerializer.SerializeToElement(new
+        var snapshotObject = new Dictionary<string, object?>
         {
-            schema = "tinadec.mode_version/v1",
-            mode = new { id = logical.Id, slug = resource.Slug, display_name = resource.DisplayName },
-            nodes = snapshotNodes,
-            edges = snapshotEdges,
-            bindings = snapshotBindings,
-            canvas_layout = NormalizeObject(resource.CanvasLayout)
-        }, JsonOptions);
+            ["schema"] = "tinadec.mode_version/v1",
+            ["mode"] = new { id = logical.Id, slug = resource.Slug, display_name = resource.DisplayName },
+            ["nodes"] = snapshotNodes,
+            ["edges"] = snapshotEdges,
+            ["bindings"] = snapshotBindings,
+            ["canvas_layout"] = NormalizeObject(resource.CanvasLayout)
+        };
+        if (resource.RuntimePolicy is not null)
+            snapshotObject["runtime_policy"] = resource.RuntimePolicy;
+        var snapshotElement = JsonSerializer.SerializeToElement(snapshotObject, JsonOptions);
         var snapshot = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(snapshotElement));
         var hash = Sha256Hex(Encoding.UTF8.GetBytes(snapshot));
         var latest = await db.ModeVersions.Where(item => item.AgentModeId == logical.Id).OrderByDescending(item => item.Version).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
@@ -1143,6 +1147,9 @@ public sealed class AgentPackService : IAgentPackService
         }
         logical.DisplayName = resource.DisplayName!;
         logical.Description = resource.Description;
+        logical.RuntimePolicyJson = resource.RuntimePolicy is null
+            ? null
+            : JsonSerializer.Serialize(resource.RuntimePolicy, JsonOptions);
         logical.Status = "published";
         logical.Version = version.Version;
         logical.Revision++;
@@ -1555,6 +1562,12 @@ public sealed class AgentPackService : IAgentPackService
         foreach (var mode in resources.Modes)
         {
             RequiredText(mode.DisplayName, $"mode '{mode.ResourceKey}' display_name", 256);
+            if (CorrectionRuntimePolicy.Validate(mode.RuntimePolicy) is { } policyError)
+                Invalid($"mode '{mode.ResourceKey}' {policyError}");
+            if (mode.RuntimePolicy is not null
+                && !(manifest.Compatibility?.RequiredCoreCapabilities ?? [])
+                    .Contains(CorrectionRuntimePolicy.RequiredCoreCapability, StringComparer.Ordinal))
+                Invalid($"mode '{mode.ResourceKey}' runtime_policy requires compatibility.required_core_capabilities to declare '{CorrectionRuntimePolicy.RequiredCoreCapability}'.");
             if (mode.Nodes.Count == 0) Invalid($"mode '{mode.ResourceKey}' must contain nodes.");
             EnsureUnique(mode.Nodes.Select(item => RequiredToken(item.NodeKey, $"mode '{mode.ResourceKey}' node_key", 128)), $"mode '{mode.ResourceKey}' node_key");
             EnsureUnique(mode.Edges.Select(item => RequiredToken(item.EdgeKey, $"mode '{mode.ResourceKey}' edge_key", 128)), $"mode '{mode.ResourceKey}' edge_key");

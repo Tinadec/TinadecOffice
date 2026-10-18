@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Runtime;
 
@@ -134,6 +135,10 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 throw new InvalidDataException($"Agent mode version '{modeVersionId}' is not published.");
             var nodes = ParseModeSnapshot(mv);
             var envelopes = ParseBindingEnvelopes(mv);
+            var runtimePolicy = ParseRuntimePolicy(mv);
+            var policyTools = CorrectionRuntimePolicy.IsStructuredInvestigation(runtimePolicy)
+                ? new[] { CoreVirtualToolPolicy.CorrectionTraceToolId }
+                : [];
             // 用户级运行时绑定（配置体验改造 A）：per-agent 的覆盖记录，优先级
             // user_binding > mode_node_override > agent_version.model_strategy。
             var bindings = await cfg.AgentRuntimeBindings.AsNoTracking()
@@ -272,6 +277,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     _ when edgeTargetNodeKeys.Contains(item.Node.NodeKey) => "on_demand",
                     _ => "persistent"
                 };
+                var effectiveTools = isConversation
+                    ? item.EffectiveTools.Concat(policyTools).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                    : item.EffectiveTools;
                 var entry = new RuntimeAgentRosterEntry(
                     item.Slug,
                     item.Layer,
@@ -280,7 +288,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     EffectiveCapabilities(envelopes, item),
                     isConversation,
                     isConversation ? "manage" : "read",
-                    item.EffectiveTools,
+                    effectiveTools,
                     item.Slug,
                     item.Node.AgentDefinitionId,
                     item.Node.AgentVersionId,
@@ -325,7 +333,8 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 GraphNodes = graphNodes,
                 ConversationNodeKey = conversationNodeKey,
                 ConversationTemplateSlug = conversationSlug,
-                SpawnableTemplates = spawnable
+                SpawnableTemplates = spawnable,
+                RuntimePolicy = runtimePolicy
             };
         }
         catch (Exception ex)
@@ -499,6 +508,27 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             }
         }
         return new BindingEnvelopes(nodeGrants, nodeCapabilities, templateGrants, templateToolFaces);
+    }
+
+    private static CorrectionRuntimePolicyDto? ParseRuntimePolicy(ModeVersionRecord version)
+    {
+        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return null;
+        using var document = JsonDocument.Parse(version.SnapshotJson);
+        if (!document.RootElement.TryGetProperty("runtime_policy", out var element)
+            || element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        CorrectionRuntimePolicyDto? policy;
+        try
+        {
+            policy = element.Deserialize<CorrectionRuntimePolicyDto>();
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("Mode runtime_policy is invalid.", exception);
+        }
+        if (CorrectionRuntimePolicy.Validate(policy) is { } error)
+            throw new InvalidDataException(error);
+        return policy;
     }
 
     private static bool TryBindingKey(JsonElement binding, string property, out string value)

@@ -100,7 +100,7 @@ describe('GraphSeedPack', () => {
     expect(governance.capabilities).not.toContain('user.respond')
   })
 
-  it('declares seven modes on the four orchestration tiers', () => {
+  it('declares eight modes on the four orchestration tiers', () => {
     const modes = graphSeedPackManifest.resources.modes
     expect(modes.map((mode) => mode.resource_key)).toEqual([
       'free_director',
@@ -110,10 +110,11 @@ describe('GraphSeedPack', () => {
       'plan',
       'review',
       'spec',
+      'correction',
     ])
     // Display names are the familiar words users know from other agents; the slug (the id
     // Core, tests and the icon table key on) stays the resource_key.
-    expect(modes.map((mode) => mode.display_name)).toEqual(['Team', 'Graph', 'Workflow', 'Solo', 'Plan', 'Review', 'Spec'])
+    expect(modes.map((mode) => mode.display_name)).toEqual(['Team', 'Graph', 'Workflow', 'Solo', 'Plan', 'Review', 'Spec', '纠偏'])
     for (const mode of modes) {
       expect(mode.slug).toBe(mode.resource_key)
       // The picker shows two lines of description; longer text is cut off mid-sentence.
@@ -214,7 +215,7 @@ describe('GraphSeedPack', () => {
     })
     // Distinct pipelines, not seven names for one: that is the whole point.
     expect(new Set(bound).size).toBe(modes.length)
-    expect(bound).toEqual(['free-base', 'vibe-base', 'fixed-base', 'solo-base', 'plan-base', 'review-base', 'spec-base'])
+    expect(bound).toEqual(['free-base', 'vibe-base', 'fixed-base', 'solo-base', 'plan-base', 'review-base', 'spec-base', 'correction-base'])
 
     // Each pipeline must actually carry prose — an empty template list assembles to
     // nothing, which would silently ship a mode with no instructions at all.
@@ -257,6 +258,11 @@ describe('GraphSeedPack', () => {
     // Spec: three named documents, and nothing is written before the user confirms it.
     for (const file of ['requirements.md', 'design.md', 'tasks.md']) expect(contentOf('spec-base')).toContain(file)
     expect(contentOf('spec-base')).toContain('用户确认之前不要落盘')
+    // Correction: state is a host capability, not prose; the same repro and user
+    // reproduction are explicit completion evidence, not model assertions.
+    expect(contentOf('correction-base')).toContain('update_correction_trace')
+    expect(contentOf('correction-base')).toContain('同一个聚焦 repro')
+    expect(contentOf('correction-base')).toContain('用户报告仍复现')
   })
 
   it('carries all five relationship fields on every node', () => {
@@ -287,6 +293,7 @@ describe('GraphSeedPack', () => {
       // Plan can only send out read-only investigation; Review only independent reviewers.
       plan: ['search'],
       review: ['reviewer'],
+      correction: ['search', 'global_engineering'],
     }
     for (const [key, whitelist] of Object.entries(whitelists)) {
       const mode = graphSeedPackManifest.resources.modes.find((row) => row.resource_key === key)!
@@ -306,6 +313,7 @@ describe('GraphSeedPack', () => {
       free_director: ['agent:global_engineering', 'agent:search'],
       solo: ['agent:global_engineering', 'agent:search'],
       spec: ['agent:global_engineering', 'agent:search'],
+      correction: ['agent:global_engineering', 'agent:search'],
       plan: ['agent:search'],
       review: ['agent:reviewer'],
     }
@@ -333,6 +341,15 @@ describe('GraphSeedPack', () => {
         expect(binding.tool_switches ?? {}, `${mode.resource_key} engineering switches`).toEqual({})
       }
     }
+
+    const correction = graphSeedPackManifest.resources.modes.find((mode) => mode.resource_key === 'correction')!
+    expect(correction.runtime_policy).toEqual({
+      kind: 'structured_investigation',
+      version: 1,
+      features: ['causal_trace', 'completion_contract', 'failing_repro_required', 'clarification_ledger', 'user_reproduction_reopens', 'local_hunk_revert'],
+    })
+    const correctionBinding = correction.bindings!.find((binding) => binding.node_key === 'meeting')!
+    expect(correctionBinding.tool_switches).toEqual({ plan_update: false })
   })
 
   it('grants the solo master the workspace write it needs to work itself', () => {

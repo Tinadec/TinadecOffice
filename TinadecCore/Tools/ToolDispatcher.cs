@@ -836,7 +836,9 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         if (CoreVirtualToolPolicy.IsSpecPropose(wire.ToolId))
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = true, Result = wire.Params };
 
-        if (CoreVirtualToolPolicy.IsTaskWait(wire.ToolId) || CoreVirtualToolPolicy.IsPlanUpdate(wire.ToolId))
+        if (CoreVirtualToolPolicy.IsTaskWait(wire.ToolId)
+            || CoreVirtualToolPolicy.IsPlanUpdate(wire.ToolId)
+            || CoreVirtualToolPolicy.IsCorrectionTrace(wire.ToolId))
         {
             // The run engine executes task_wait and plan_update against the task graph it owns;
             // reaching the dispatcher means the call came from outside a worker's tool loop.

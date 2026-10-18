@@ -232,6 +232,14 @@ public sealed class AgentPackModeResourceDto
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? PromptPipelineRef { get; init; }
 
+    /// <summary>
+    /// Optional host-owned workflow selected by this mode. This is deliberately
+    /// separate from agent capabilities, which remain authorization facts.
+    /// </summary>
+    [JsonPropertyName("runtime_policy")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CorrectionRuntimePolicyDto? RuntimePolicy { get; init; }
+
     [JsonPropertyName("canvas_layout")]
     public JsonElement CanvasLayout { get; init; }
 }

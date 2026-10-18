@@ -88,21 +88,30 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         Guid? parentRunId = null;
         Guid? parentTaskId = null;
         var runKind = string.IsNullOrWhiteSpace(options?.RunKind) ? "root" : options!.RunKind.Trim().ToLowerInvariant();
-        if (runKind is not ("root" or "execution_child"))
-            throw new ArgumentException("RunKind must be root or execution_child.", nameof(options));
+        if (runKind is not ("root" or "execution_child" or "correction_reopen"))
+            throw new ArgumentException("RunKind must be root, execution_child, or correction_reopen.", nameof(options));
         if (!string.IsNullOrWhiteSpace(options?.ParentRunId))
         {
-            if (!Guid.TryParse(options.ParentRunId, out var parsedParentRun) || parsedParentRun == Guid.Empty
-                || !Guid.TryParse(options.ParentTaskId, out var parsedParentTask) || parsedParentTask == Guid.Empty)
-                throw new ArgumentException("A child run requires valid parent_run_id and parent_task_id.", nameof(options));
+            if (!Guid.TryParse(options.ParentRunId, out var parsedParentRun) || parsedParentRun == Guid.Empty)
+                throw new ArgumentException("A child run requires a valid parent_run_id.", nameof(options));
+            Guid? parsedParentTask = null;
+            if (runKind == "execution_child")
+            {
+                if (!Guid.TryParse(options.ParentTaskId, out var taskId) || taskId == Guid.Empty)
+                    throw new ArgumentException("An execution child requires valid parent_task_id.", nameof(options));
+                parsedParentTask = taskId;
+            }
+            else if (runKind != "correction_reopen")
+            {
+                throw new ArgumentException("Only execution children may declare a parent task.", nameof(options));
+            }
             var parent = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == parsedParentRun
                 && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId && x.SessionId == sessionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("The parent run does not belong to this session boundary.");
-            if (RunStatusMachine.IsTerminal(parent.Status))
+            if (runKind == "execution_child" && RunStatusMachine.IsTerminal(parent.Status))
                 throw new InvalidOperationException("A terminal run cannot admit a child run.");
             parentRunId = parsedParentRun;
             parentTaskId = parsedParentTask;
-            runKind = "execution_child";
         }
         else if (runKind != "root")
         {

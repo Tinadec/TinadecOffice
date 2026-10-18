@@ -103,6 +103,7 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.Property(x => x.Slug).HasMaxLength(128).IsRequired();
             entity.Property(x => x.DisplayName).HasMaxLength(256).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(4096);
+            entity.Property(x => x.RuntimePolicyJson).HasMaxLength(4096);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Slug }).IsUnique().HasFilter("status = 'draft'");
@@ -459,6 +460,7 @@ public sealed class AgentModeRecord
     public string Slug { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? RuntimePolicyJson { get; set; }
     public string Status { get; set; } = "draft";
     public long Revision { get; set; }
     public int Version { get; set; }

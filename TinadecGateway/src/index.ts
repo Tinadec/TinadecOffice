@@ -697,6 +697,30 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Run agent lineage', tags: ['Runs'] } })
+  .get('/api/v1/runs/:runId/correction', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/runs/${params.runId}/correction`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/runs/${params.runId}/correction`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Correction trace', tags: ['Runs'] } })
+  .post('/api/v1/runs/:runId/correction/questions/:questionId/answer', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/runs/${params.runId}/correction/questions/${params.questionId}/answer`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/runs/${params.runId}/correction/questions/${params.questionId}/answer`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Answer a correction question', tags: ['Runs'] } })
+  .post('/api/v1/runs/:runId/correction/feedback', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/runs/${params.runId}/correction/feedback`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/runs/${params.runId}/correction/feedback`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Submit correction feedback', tags: ['Runs'] } })
   .get('/api/v1/runs/:runId/stream', async ({ params, query, set, request, server }) => {
     keepStreamOpen(server, request);
     const headers = forwardHeaders(request);

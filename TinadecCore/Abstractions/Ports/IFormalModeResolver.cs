@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Abstractions.Ports;
 
@@ -75,6 +76,12 @@ public sealed record FormalModeRoster(
     /// AgentVersion and hash-pinned at resolution time. Unknown slugs fail closed.
     /// </summary>
     public IReadOnlyList<DeclaredSpawnableTemplate> SpawnableTemplates { get; init; } = [];
+
+    /// <summary>
+    /// Host-owned workflow selected by the published mode. Null means ordinary
+    /// mode behavior; old mode versions remain byte-compatible.
+    /// </summary>
+    public CorrectionRuntimePolicyDto? RuntimePolicy { get; init; }
 }
 
 /// <summary>One declared communication edge of a mode graph (dispatch direction).</summary>

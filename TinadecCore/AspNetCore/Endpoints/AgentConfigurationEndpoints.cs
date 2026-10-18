@@ -597,7 +597,9 @@ public static class AgentConfigurationEndpoints
         var name = el.TryGetProperty("display_name", out var n) ? n.GetString() : el.TryGetProperty("name", out var n2) ? n2.GetString() : "mode";
         var (t,w,p)=Ctx(a);
         await using var db= await f.CreateDbContextAsync(ct);
-        var rec = new AgentModeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, Slug=Slug(slug,name!), DisplayName=name!, Description= el.TryGetProperty("description",out var d)? d.GetString():null, Status="draft", Revision=1, Version=0, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p, UpdatedByPrincipalId=p};
+        var policyResult = ParseRuntimePolicy(el);
+        if (policyResult.Error is not null) return Results.BadRequest(new { code = "invalid_runtime_policy", message = policyResult.Error });
+        var rec = new AgentModeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, Slug=Slug(slug,name!), DisplayName=name!, Description= el.TryGetProperty("description",out var d)? d.GetString():null, RuntimePolicyJson=policyResult.Json, Status="draft", Revision=1, Version=0, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p, UpdatedByPrincipalId=p};
         db.AgentModes.Add(rec); try{await db.SaveChangesAsync(ct);}catch(DbUpdateException){return Results.Conflict(new{code="conflict",message="Draft slug exists"});}
         // optional inline nodes/edges
         await UpsertModeTopology(db, rec, el, t, w, ct);
@@ -619,7 +621,7 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus).ToListAsync(ct);
         var layout=await db.CanvasLayouts.FirstOrDefaultAsync(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus, ct);
         var managed = await packs.FindManagedResourceAsync("mode", id, ct) is not null;
-        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null, model_strategy_override = n.ModelStrategyOverrideJson!=null ? JsonSerializer.Deserialize<JsonElement>(n.ModelStrategyOverrideJson) : (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
+        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, runtime_policy=rec.RuntimePolicyJson != null ? JsonSerializer.Deserialize<JsonElement>(rec.RuntimePolicyJson) : (JsonElement?)null, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null, model_strategy_override = n.ModelStrategyOverrideJson!=null ? JsonSerializer.Deserialize<JsonElement>(n.ModelStrategyOverrideJson) : (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
     }
 
     static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
@@ -633,6 +635,9 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         if(!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft mode can be published."});
         if(el.TryGetProperty("display_name",out var n)) rec.DisplayName=n.GetString()??rec.DisplayName;
         if(el.TryGetProperty("description",out var d)) rec.Description=d.GetString();
+        var policyResult = ParseRuntimePolicy(el);
+        if (policyResult.Error is not null) return Results.BadRequest(new { code = "invalid_runtime_policy", message = policyResult.Error });
+        if (el.TryGetProperty("runtime_policy", out _)) rec.RuntimePolicyJson = policyResult.Json;
         rec.Revision++; rec.UpdatedAt=DateTimeOffset.UtcNow; rec.UpdatedByPrincipalId=p; rec.Status="draft";
         await UpsertModeTopology(db, rec, el, t, w, ct);
         try{await db.SaveChangesAsync(ct);}catch(DbUpdateConcurrencyException){return Results.Json(new{code="conflict",message="Concurrent"},statusCode:412);}
@@ -764,14 +769,17 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         var layouts = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == id && x.TenantId == t && x.WorkspaceId == w && x.Status == "draft").ToListAsync(ct);
         var layout = layouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
         var canvasLayout = JsonSerializer.Deserialize<JsonElement>(layout?.LayoutJson ?? "{}");
-        var snapshot=JsonSerializer.Serialize(new
+        var snapshotObject = new Dictionary<string, object?>
         {
-            schema = "tinadec.mode_version/v1",
-            mode = new { id = rec.Id, slug = rec.Slug, display_name = rec.DisplayName },
-            nodes = frozenNodes,
-            edges = frozenEdges,
-            canvas_layout = canvasLayout
-        });
+            ["schema"] = "tinadec.mode_version/v1",
+            ["mode"] = new { id = rec.Id, slug = rec.Slug, display_name = rec.DisplayName },
+            ["nodes"] = frozenNodes,
+            ["edges"] = frozenEdges,
+            ["canvas_layout"] = canvasLayout
+        };
+        if (rec.RuntimePolicyJson is not null)
+            snapshotObject["runtime_policy"] = JsonSerializer.Deserialize<JsonElement>(rec.RuntimePolicyJson);
+        var snapshot=JsonSerializer.Serialize(snapshotObject);
         var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(snapshot))).ToLowerInvariant();
         var ver=(await db.ModeVersions.Where(x=>x.AgentModeId==id).MaxAsync(x=>(int?)x.Version, ct)??0)+1;
         db.ModeVersions.Add(new ModeVersionRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, AgentModeId=id, Version=ver, SnapshotJson=snapshot, TopologyHash=hash, WarningJson=warning, Status="published", Revision=1, CreatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p});
@@ -1159,6 +1167,7 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         created_at = r.CreatedAt,
         updated_at = r.UpdatedAt,
         archived_at = r.ArchivedAt,
+        runtime_policy = r.RuntimePolicyJson is null ? (JsonElement?)null : JsonSerializer.Deserialize<JsonElement>(r.RuntimePolicyJson),
         latest_published_mode_version_id = latestPublishedVersionId,
         // Provenance: the UI groups the directory by pack and offers per-pack
         // actions (disable/uninstall). Null for user-authored rows.
@@ -1172,4 +1181,24 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         "managed_resource_read_only",
         "Pack-managed resource is read-only",
         $"Pack '{managed.PackId}' manages {managed.ResourceKind} '{managed.ResourceKey}' ({managed.LogicalEntityId}). Clone it before customizing.");
+
+    private static (string? Json, string? Error) ParseRuntimePolicy(JsonElement body)
+    {
+        if (!body.TryGetProperty("runtime_policy", out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return (null, null);
+        if (value.ValueKind != JsonValueKind.Object)
+            return (null, "runtime_policy must be an object or null.");
+        try
+        {
+            var policy = value.Deserialize<CorrectionRuntimePolicyDto>();
+            var error = CorrectionRuntimePolicy.Validate(policy);
+            return error is null && policy is not null
+                ? (JsonSerializer.Serialize(policy), null)
+                : (null, error ?? "runtime_policy is invalid.");
+        }
+        catch (JsonException)
+        {
+            return (null, "runtime_policy is invalid.");
+        }
+    }
 }

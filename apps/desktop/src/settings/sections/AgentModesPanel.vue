@@ -5,7 +5,7 @@ import { History, Plus, RefreshCw, Search, Trash2 } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel, UiSelectField, UiSheet } from '@/components/ui'
 import AgentModeCanvas from '@/components/canvas/AgentModeCanvas.vue'
 import GovernanceRolesPanel from '@/components/agentCenter/GovernanceRolesPanel.vue'
-import { api as baseApi, type AgentDefinitionDto, type AgentModeEdgeDto, type AgentModeNodeDto, type AgentModeTopologyDto, type ModeVersionDto, type ModelProviderInstanceDto, type ModelRouteDto } from '@/api'
+import { api as baseApi, type AgentDefinitionDto, type AgentModeEdgeDto, type AgentModeNodeDto, type AgentModeRuntimePolicy, type AgentModeTopologyDto, type ModeVersionDto, type ModelProviderInstanceDto, type ModelRouteDto } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
@@ -22,6 +22,7 @@ const modeQuery = ref('')
 const modeNodes = ref<AgentModeNodeDto[]>([])
 const modeEdges = ref<AgentModeEdgeDto[]>([])
 const modeEtag = ref<string | null>(null)
+const runtimePolicyKind = ref<'none' | 'structured_investigation'>('none')
 const modeVersions = ref<ModeVersionDto[]>([])
 const modeVersionsLoading = ref(false)
 const showVersionDrawer = ref(false)
@@ -57,6 +58,13 @@ const selectedModeReadOnly = computed(() => {
   const m = selectedMode.value
   return Boolean(selectedModeId.value && (!m || m.managed || m.status === 'published' || m.status === 'archived'))
 })
+const runtimePolicy = computed<AgentModeRuntimePolicy | null>(() => runtimePolicyKind.value === 'structured_investigation'
+  ? {
+      kind: 'structured_investigation',
+      version: 1,
+      features: ['causal_trace', 'completion_contract', 'failing_repro_required', 'clarification_ledger', 'user_reproduction_reopens', 'local_hunk_revert'],
+    }
+  : null)
 
 function normalizeLayer(layer?: string): 'operation' | 'execution' {
   return layer === 'execution' ? 'execution' : 'operation'
@@ -119,6 +127,7 @@ async function selectMode(id: string) {
       label: (e.label as string | undefined) ?? undefined,
     })) as AgentModeEdgeDto[]
     modeEtag.value = m.revision != null ? String(m.revision) : null
+    runtimePolicyKind.value = m.runtime_policy?.kind === 'structured_investigation' ? 'structured_investigation' : 'none'
     // Fold the managed/status facts back onto the list row so the read-only notice
     // reflects the live resource state for pack-installed published modes too.
     if (m.managed !== undefined || m.status) {
@@ -137,6 +146,7 @@ async function selectMode(id: string) {
     modeNodes.value = []
     modeEdges.value = []
     modeEtag.value = null
+    runtimePolicyKind.value = 'none'
     notify.error(error, { title: t('agentCenter.loadModesFailed') })
   }
 }
@@ -148,6 +158,7 @@ consumeRequest(pendingModeId, async (modeId) => {
   modeNodes.value = []
   modeEdges.value = []
   modeEtag.value = null
+  runtimePolicyKind.value = 'none'
   if (!modes.value.some((mode) => mode.id === modeId)) await loadModes()
   if (generation !== modeNavigationGeneration) return
   if (!modes.value.some((mode) => mode.id === modeId)) {
@@ -168,6 +179,7 @@ async function createMode() {
       display_name: `mode-${Date.now().toString(36).slice(0, 6)}`,
       nodes: [],
       edges: [],
+      runtime_policy: null,
       canvas_layout: {}
     })
     await loadModes()
@@ -204,7 +216,7 @@ async function saveModeDraft() {
   if (!selectedModeId.value || selectedModeReadOnly.value) return
   modeBusy.value = true
   try {
-    await api.updateAgentModeDraft(selectedModeId.value, { ...toCoreTopology(modeNodes.value, modeEdges.value), canvas_layout: {} }, modeEtag.value)
+    await api.updateAgentModeDraft(selectedModeId.value, { ...toCoreTopology(modeNodes.value, modeEdges.value), runtime_policy: runtimePolicy.value, canvas_layout: {} }, modeEtag.value)
     notify.success({ message: t('agentCenter.modeDraftSaved') })
     await loadModes()
   } catch (e) {
@@ -237,6 +249,7 @@ async function cloneSelectedMode() {
       display_name: t('common.copyName', { name: source.display_name }),
       description: source.description ?? null,
       ...toCoreTopology(modeNodes.value, modeEdges.value),
+      runtime_policy: runtimePolicy.value,
       canvas_layout: {}
     })
     await loadModes()
@@ -400,6 +413,18 @@ defineExpose({ loadModes })
       <span>{{ selectedMode.managed ? t('agentPack.managedReadOnly') : t('agentCenter.publishedReadOnlyHint') }}</span>
     </div>
 
+    <div v-if="selectedModeId" class="ac-mode-policy">
+      <UiLabel>{{ t('settings.runtimePolicy') }}</UiLabel>
+      <UiSelectField
+        v-model="runtimePolicyKind"
+        :disabled="selectedModeReadOnly"
+        :options="[
+          { value: 'none', label: t('settings.runtimePolicyNone') },
+          { value: 'structured_investigation', label: t('settings.runtimePolicyStructuredInvestigation') },
+        ]"
+      />
+    </div>
+
     <div class="center-workbench workbench-duo">
       <aside class="center-resource-rail ac-mode-rail">
         <div class="model-provider-search">
@@ -540,6 +565,14 @@ defineExpose({ loadModes })
   gap: 8px;
   flex-wrap: wrap;
 }
+.ac-mode-policy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+}
+.ac-mode-policy > :first-child { flex: 0 0 auto; }
+.ac-mode-policy > :last-child { flex: 1; min-width: 0; }
 .ac-node-strategy {
   display: flex;
   flex-direction: column;
