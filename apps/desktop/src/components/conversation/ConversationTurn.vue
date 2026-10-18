@@ -219,9 +219,13 @@ const toolCount = computed(() => {
       :compact="isCompactAnswer(answer.content, index, answers.length)"
     />
     <CorrectionFeedback
-      v-for="run in runs.filter((item) => item.correction && (item.status === 'awaiting_user' || (item.status === 'completed' && answers.some((answer) => answer.run_id === item.id))))"
+      v-for="run in runs.filter((item) => item.correction && (
+        (item.status === 'completed' && answers.some((answer) => answer.run_id === item.id))
+        || (item.status === 'awaiting_user' && item.correction.completion.requirement === 'user')
+      ))"
       :key="`correction-feedback:${run.id}`"
       :run-id="run.id"
+      :allow-reproduce="run.status === 'completed'"
       :allow-resolve="run.correction?.completion.requirement === 'user'"
     />
     <div v-if="canRetry" class="conversation-retry">

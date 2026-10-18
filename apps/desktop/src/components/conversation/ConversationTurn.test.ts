@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import en from '@/locales/en'
+import type { CorrectionTrace } from '@/lib/conversation/correction'
+import type { RunActivity } from '@/lib/conversation/reducer'
 import type { ConversationTurn as Turn } from '@/lib/conversation/turns'
 import ConversationTurn from './ConversationTurn.vue'
 
@@ -20,24 +22,54 @@ function turn(options: {
   streamingText?: string | null
   answer?: string | null
   draft?: boolean
+  correction?: CorrectionTrace
 }): Turn {
   return {
     id: 'turn-1',
     user: null,
     runs: [{
       run: { id: 'run-1', status: options.status },
-      activity: null,
+      activity: options.correction ? activity(options.correction) : null,
       streamingText: options.streamingText ?? null,
     }],
     answers: options.answer
       ? [{
           id: 'msg-1', session_id: 's', role: 'assistant', content: options.answer,
-          created_at: '2026-10-18T00:00:00Z',
+          run_id: 'run-1', created_at: '2026-10-18T00:00:00Z',
         } as Turn['answers'][number]]
       : [],
     phase: 'running',
     startedAt: '2026-10-18T00:00:00Z',
     endedAt: null,
+  }
+}
+
+function correction(requirement: CorrectionTrace['completion']['requirement'], question = false): CorrectionTrace {
+  return {
+    episodeId: 'episode-1', runId: 'run-1', parentRunId: null, revision: 1,
+    phase: 'OBSERVE', status: 'investigating', goal: 'fix', symptom: 'broken', doneWhen: 'works',
+    summary: '', reason: '', rootCause: 'UNKNOWN', recheck: null, confidence: 'low',
+    intervention: null, prediction: null, verdict: null, fix: null, verify: null,
+    hypotheses: [], evidence: [], interventions: [],
+    completion: {
+      requirement, authority: requirement === 'user' ? 'user' : 'machine', status: 'blocked',
+      modifiedArtifacts: [], verifiedArtifacts: [], strongestCheck: null,
+      failedBeforeExecutionId: null, passedAfterExecutionId: null,
+      unresolvedReason: null, verifiedAt: null,
+    },
+    openQuestions: question ? [{
+      id: 'q-1', question: 'Which environment?', blocking: true, options: [],
+      answer: null, askedAt: null, answeredAt: null,
+    }] : [],
+    createdAt: null, updatedAt: null,
+  }
+}
+
+function activity(trace: CorrectionTrace): RunActivity {
+  return {
+    runId: 'run-1', version: 1, entries: [], tasks: new Map(),
+    firstAt: null, lastAt: null, failure: null, review: null, correction: trace,
+    byId: new Map(), seen: new Set(), executionByApproval: new Map(),
   }
 }
 
@@ -132,5 +164,48 @@ describe('conversation turn drafting placeholder', () => {
       global,
     })
     expect(wrapper.find('[data-testid="turn-waiting"]').exists()).toBe(false)
+  })
+
+  it('offers only user confirmation while a user-authority correction is parked', () => {
+    const wrapper = mount(ConversationTurn, {
+      props: {
+        turn: turn({ status: 'awaiting_user', correction: correction('user') }),
+        revision: 1,
+        approvals: [],
+      },
+      global,
+    })
+    const feedback = wrapper.find('[data-testid="correction-feedback"]')
+    expect(feedback.exists()).toBe(true)
+    expect(feedback.text()).toContain('Resolved')
+    expect(feedback.text()).not.toContain('Still reproduces')
+  })
+
+  it('shows the clarification gate without post-completion feedback', () => {
+    const wrapper = mount(ConversationTurn, {
+      props: {
+        turn: turn({ status: 'awaiting_user', correction: correction('diagnostics', true) }),
+        revision: 1,
+        approvals: [],
+      },
+      global,
+    })
+    expect(wrapper.find('[data-testid="correction-question-gate"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="correction-feedback"]').exists()).toBe(false)
+  })
+
+  it('offers both outcomes only after a correction produced its answer', () => {
+    const wrapper = mount(ConversationTurn, {
+      props: {
+        turn: turn({ status: 'completed', answer: 'fixed', correction: correction('user') }),
+        revision: 2,
+        approvals: [],
+      },
+      global,
+    })
+    const feedback = wrapper.find('[data-testid="correction-feedback"]')
+    expect(feedback.exists()).toBe(true)
+    expect(feedback.text()).toContain('Still reproduces')
+    expect(feedback.text()).toContain('Resolved')
   })
 })

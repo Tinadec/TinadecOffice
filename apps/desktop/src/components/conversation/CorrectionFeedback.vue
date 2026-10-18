@@ -6,7 +6,14 @@ import { api } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
 import { UiButton } from '@/components/ui'
 
-const props = defineProps<{ runId: string; allowResolve?: boolean }>()
+const props = withDefaults(defineProps<{
+  runId: string
+  allowReproduce?: boolean
+  allowResolve?: boolean
+}>(), {
+  allowReproduce: true,
+  allowResolve: false,
+})
 const { t } = useI18n()
 const { notify } = useNotifications()
 const busy = ref(false)
@@ -31,7 +38,7 @@ async function submit(kind: 'reproduced' | 'resolved') {
 <template>
   <div class="correction-feedback" data-testid="correction-feedback">
     <span>{{ t('conversation.correction.feedbackPrompt') }}</span>
-    <UiButton size="sm" variant="outline" :disabled="busy" @click="submit('reproduced')">
+    <UiButton v-if="allowReproduce" size="sm" variant="outline" :disabled="busy" @click="submit('reproduced')">
       <RotateCcw :size="12" aria-hidden="true" />{{ t('conversation.correction.stillReproduces') }}
     </UiButton>
     <UiButton v-if="allowResolve" size="sm" variant="outline" :disabled="busy" @click="submit('resolved')">
