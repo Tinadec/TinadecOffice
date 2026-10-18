@@ -1,12 +1,20 @@
 const HOST_HEADER = 'X-Tinadec-Host-Control';
 
+function managedApiPorts(environment = process.env) {
+  const configured = String(environment.TINADEC_MANAGED_API_PORTS ?? '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(value => /^\d{2,5}$/.test(value));
+  return new Set(configured.length > 0 ? configured : ['48730', '48731']);
+}
+
 function isManagedApiUrl(value) {
   try {
     const url = new URL(value);
     // Identity proof is obtained for this exact IPv4 origin. localhost may
     // resolve to a separate IPv6 listener and must not inherit that proof.
     return url.protocol === 'http:' && url.hostname === '127.0.0.1'
-      && ['48730', '48731'].includes(url.port) && !url.username && !url.password
+      && managedApiPorts().has(url.port) && !url.username && !url.password
       && (url.pathname === '/api/v1' || url.pathname.startsWith('/api/v1/'));
   } catch { return false; }
 }

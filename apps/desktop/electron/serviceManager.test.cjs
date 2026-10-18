@@ -82,6 +82,17 @@ test('only packaged exact local gateways are managed and localhost canonicalizes
   assert.equal(shouldManageLocalServices(true, 'https://gateway.example.com'), false);
 });
 
+test('an isolated packaged host may manage its declared gateway port', () => {
+  assert.equal(canonicalLocalGatewayUrl(
+    'http://localhost:48740',
+    { TINADEC_MANAGED_API_PORTS: '48740,48741' },
+  ), 'http://127.0.0.1:48740');
+  assert.equal(canonicalLocalGatewayUrl(
+    'http://localhost:48741',
+    { TINADEC_MANAGED_API_PORTS: '48740,48741' },
+  ), 'http://127.0.0.1:48741');
+});
+
 test('remote, development, and non-default local gateways do not start services', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tinadec-service-skip-'));
   try {

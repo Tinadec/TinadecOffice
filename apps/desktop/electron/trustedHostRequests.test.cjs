@@ -37,6 +37,19 @@ test('only fixed local Core/Gateway API URLs receive a host credential', () => {
     assert.equal(isManagedApiUrl(value), false, value);
 });
 
+test('an isolated host may declare its own loopback API ports', () => {
+  const previous = process.env.TINADEC_MANAGED_API_PORTS;
+  process.env.TINADEC_MANAGED_API_PORTS = '48740, 48741';
+  try {
+    assert.equal(isManagedApiUrl('http://127.0.0.1:48740/api/v1/events'), true);
+    assert.equal(isManagedApiUrl('http://127.0.0.1:48741/api/v1/health'), true);
+    assert.equal(isManagedApiUrl('http://127.0.0.1:48730/api/v1/events'), false);
+  } finally {
+    if (previous === undefined) delete process.env.TINADEC_MANAGED_API_PORTS;
+    else process.env.TINADEC_MANAGED_API_PORTS = previous;
+  }
+});
+
 test('trusted registered main frame is signed for HTTP and SSE without mutating renderer headers', () => {
   const { send } = hostFixture();
   const requestHeaders = { accept: 'text/event-stream', 'x-tinadec-storage-id': 'project', 'x-tinadec-host-control': 'forged' };

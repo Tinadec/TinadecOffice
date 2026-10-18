@@ -39,14 +39,24 @@ function officeRootFor({ platform, localAppDataPath, environment, homedirImpl })
   return storagePaths(environment ?? {}, () => homedirImpl?.() || environment?.HOME || homedir()).root;
 }
 
-function canonicalLocalGatewayUrl(gatewayUrl) {
+function managedApiPorts(environment = process.env) {
+  const configured = String(environment.TINADEC_MANAGED_API_PORTS ?? '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(value => /^\d{2,5}$/.test(value));
+  if (configured.length > 0) return new Set(configured);
+  const gatewayPort = String(environment.TINADEC_GATEWAY_PORT ?? '').trim();
+  return new Set(gatewayPort ? [gatewayPort] : ['48730']);
+}
+
+function canonicalLocalGatewayUrl(gatewayUrl, environment = process.env) {
   if (typeof gatewayUrl !== 'string' || !gatewayUrl.trim()) return null;
   try {
     const url = new URL(gatewayUrl.trim());
     if (
       url.protocol !== 'http:' ||
       !['127.0.0.1', 'localhost'].includes(url.hostname) ||
-      url.port !== '48730' ||
+      !managedApiPorts(environment).has(url.port) ||
       (url.pathname !== '/' && url.pathname !== '') ||
       url.username ||
       url.password ||
@@ -55,7 +65,7 @@ function canonicalLocalGatewayUrl(gatewayUrl) {
     ) {
       return null;
     }
-    return DEFAULT_GATEWAY_URL;
+    return `http://127.0.0.1:${url.port}`;
   } catch {
     return null;
   }
