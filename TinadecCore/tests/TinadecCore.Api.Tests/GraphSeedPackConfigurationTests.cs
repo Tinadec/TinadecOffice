@@ -170,7 +170,7 @@ public sealed class GraphSeedPackConfigurationTests : IDisposable
             await using (var db = await Agents(services).CreateDbContextAsync())
             {
                 Assert.Equal(14, await db.AgentDefinitions.CountAsync());
-                Assert.Equal(8, await db.AgentModes.CountAsync());
+                Assert.Equal(7, await db.AgentModes.CountAsync());
                 oldRows = await CaptureExistingPackRowsAsync(db);
             }
             var result = await InstallAsync(services, graph);

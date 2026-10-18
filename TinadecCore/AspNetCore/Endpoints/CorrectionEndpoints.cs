@@ -10,7 +10,8 @@ public static class CorrectionEndpoints
 {
     public static IEndpointRouteBuilder MapCorrectionEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/runs/{runId:guid}/correction", GetCorrection);
+        app.MapGet("/api/v1/runs/{runId:guid}/correction", GetCorrection)
+            .Produces<CorrectionTraceDto>(StatusCodes.Status200OK);
         app.MapPost("/api/v1/runs/{runId:guid}/correction/questions/{questionId}/answer", AnswerQuestion);
         app.MapPost("/api/v1/runs/{runId:guid}/correction/feedback", SubmitFeedback);
         return app;
@@ -137,6 +138,11 @@ public static class CorrectionEndpoints
             ParentRunId: runId,
             RunKind: "correction_reopen",
             SessionSettingsCaptured: true), cancellationToken).ConfigureAwait(false);
+        await lifecycle.AppendEventAsync(runId, "correction.episode.reopened",
+            new { run_id = runId, reopened_run_id = submitted.RunId, episode_id = loaded.Checkpoint.Correction!.EpisodeId },
+            "Correction episode reopened.",
+            cancellationToken: cancellationToken,
+            idempotencyKey: $"correction-reopened:{runId}:{submitted.RunId}").ConfigureAwait(false);
         return Results.Accepted($"/api/v1/runs/{submitted.RunId}/correction",
             new { run_id = submitted.RunId, turn_id = submitted.TurnId, episode_id = loaded.Checkpoint.Correction!.EpisodeId, status = "reopened" });
     }

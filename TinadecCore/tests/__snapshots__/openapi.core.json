@@ -712,6 +712,16 @@
               "string"
             ]
           },
+          "runtime_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CorrectionRuntimePolicyDto"
+              }
+            ]
+          },
           "slug": {
             "type": [
               "null",
@@ -1327,6 +1337,430 @@
         "required": [
           "backend"
         ],
+        "type": "object"
+      },
+      "CorrectionCompletionDto": {
+        "properties": {
+          "authority": {
+            "type": "string"
+          },
+          "modified_artifacts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "repro": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CorrectionReproductionDto"
+              }
+            ]
+          },
+          "requirement": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "strongest_check": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CorrectionVerificationDto"
+              }
+            ]
+          },
+          "unresolved_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "verified_artifacts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "verified_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionEvidenceDto": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "execution_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "strength": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionHypothesisDto": {
+        "properties": {
+          "confidence": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kill_criterion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "statement": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionInterventionDto": {
+        "properties": {
+          "execution_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "reverted_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "revertible": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionQuestionDto": {
+        "properties": {
+          "answer": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "answered_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "asked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionReproductionDto": {
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "failed_before_command": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "failed_before_execution_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "passed_after_command": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "passed_after_execution_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionRuntimePolicyDto": {
+        "properties": {
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionTraceDto": {
+        "properties": {
+          "completion": {
+            "$ref": "#/components/schemas/CorrectionCompletionDto"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "done_when": {
+            "type": "string"
+          },
+          "episode_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectionEvidenceDto"
+            },
+            "type": "array"
+          },
+          "fix": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "goal": {
+            "type": "string"
+          },
+          "hypotheses": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectionHypothesisDto"
+            },
+            "type": "array"
+          },
+          "intervention": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "interventions": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectionInterventionDto"
+            },
+            "type": "array"
+          },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectionQuestionDto"
+            },
+            "type": "array"
+          },
+          "parent_run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "prediction": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recheck": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "revision": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "root_cause": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "symptom": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "verdict": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "verify": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CorrectionVerificationDto": {
+        "properties": {
+          "command": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "execution_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "exit_code": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "succeeded": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
         "type": "object"
       },
       "CreateApprovalDelegationRequestDto": {
@@ -11182,6 +11616,90 @@
         ]
       }
     },
+    "/api/v1/runs/{runId}/correction": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionTraceDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CorrectionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/correction/feedback": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CorrectionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/correction/questions/{questionId}/answer": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "questionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CorrectionEndpoints"
+        ]
+      }
+    },
     "/api/v1/runs/{runId}/orchestration": {
       "get": {
         "parameters": [
@@ -15550,6 +16068,9 @@
   "tags": [
     {
       "name": "TinadecCore.Api"
+    },
+    {
+      "name": "CorrectionEndpoints"
     },
     {
       "name": "AgentConfigurationEndpoints"

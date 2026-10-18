@@ -14,6 +14,7 @@ describe('GraphSeedPack', () => {
     expect(graphSeedPackManifest.metadata.owner).toBe('tinadec')
     expect(graphSeedPackManifest.metadata.product_id).toBe('tinadec-core')
     expect(graphSeedPackManifest.metadata.version).toBe(GRAPH_SEED_PACK_VERSION)
+    expect(graphSeedPackManifest.compatibility.required_core_capabilities).toContain('structured_investigation_v1')
 
     // Three execution templates, TWO conversation identities — `meeting` (no tools, it only
     // orchestrates) and `solo_master` (holds tools and does the work itself) — and one standing

@@ -63,6 +63,23 @@ internal sealed class CorrectionTraceState
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };
+
+    public string PromptContext()
+    {
+        var lines = new List<string>
+        {
+            $"[Correction] phase={Phase}; status={Status}; goal={Goal}; symptom={Symptom}; done_when={DoneWhen}",
+            $"root_cause={RootCause}; completion={Completion.Requirement}/{Completion.Status}; unresolved={Completion.UnresolvedReason ?? "none"}",
+        };
+        if (Hypotheses.Count > 0)
+            lines.Add("hypotheses: " + string.Join(" | ", Hypotheses.Take(8).Select(item => $"{item.Id}:{item.Statement} ({item.Status})")));
+        if (Evidence.Count > 0)
+            lines.Add("evidence: " + string.Join(" | ", Evidence.TakeLast(8).Select(item => $"{item.Kind}:{item.Summary}")));
+        var pending = OpenQuestions.Where(question => question.Blocking && question.AnsweredAt is null).ToArray();
+        if (pending.Length > 0)
+            lines.Add("open_questions: " + string.Join(" | ", pending.Select(item => $"{item.Id}:{item.Question}")));
+        return string.Join("\n", lines);
+    }
 }
 
 internal sealed class CorrectionHypothesisState
@@ -588,6 +605,8 @@ internal static class CorrectionTracePolicy
             using var document = JsonDocument.Parse(argumentsJson);
             return ReadString(document.RootElement, "path")
                 ?? ReadString(document.RootElement, "file_path")
+                ?? ReadString(document.RootElement, "filepath")
+                ?? ReadString(document.RootElement, "filePath")
                 ?? ReadString(document.RootElement, "resource_path");
         }
         catch (JsonException)

@@ -630,6 +630,18 @@ export interface paths {
     /** Run control (pause/resume/cancel) */
     post: operations["postApiV1RunsByRunIdControl"];
   };
+  "/api/v1/runs/{runId}/correction": {
+    /** Correction trace */
+    get: operations["getApiV1RunsByRunIdCorrection"];
+  };
+  "/api/v1/runs/{runId}/correction/feedback": {
+    /** Submit correction feedback */
+    post: operations["postApiV1RunsByRunIdCorrectionFeedback"];
+  };
+  "/api/v1/runs/{runId}/correction/questions/{questionId}/answer": {
+    /** Answer a correction question */
+    post: operations["postApiV1RunsByRunIdCorrectionQuestionsByQuestionIdAnswer"];
+  };
   "/api/v1/runs/{runId}/orchestration": {
     /** Run orchestration */
     get: operations["getApiV1RunsByRunIdOrchestration"];
@@ -5044,6 +5056,46 @@ export interface operations {
           expected_context_revision?: number;
           [key: string]: unknown;
         };
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Correction trace */
+  getApiV1RunsByRunIdCorrection: {
+    parameters: {
+      path: {
+        runId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Submit correction feedback */
+  postApiV1RunsByRunIdCorrectionFeedback: {
+    parameters: {
+      path: {
+        runId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Answer a correction question */
+  postApiV1RunsByRunIdCorrectionQuestionsByQuestionIdAnswer: {
+    parameters: {
+      path: {
+        runId: string;
+        questionId: string;
       };
     };
     responses: {

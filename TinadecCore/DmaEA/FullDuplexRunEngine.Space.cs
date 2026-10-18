@@ -14,6 +14,7 @@ internal sealed partial class FullDuplexRunEngine
 
     internal static string WithSpaceContext(FullDuplexCheckpointV1 checkpoint, string taskContext) => taskContext
         + (checkpoint.SpaceWorktreePath is { } root ? $"\nActual execution root for this run: {root}. All tool paths must use this worktree, not the original checkout." : "")
+        + (checkpoint.Correction is { } correction ? "\n" + correction.PromptContext() : "")
         + (checkpoint.SpaceSpecDocuments.Count == 0 ? "" : "\nConfirmed specifications (authoritative, do not ask for their confirmation again):\n"
             + string.Join("\n\n", checkpoint.SpaceSpecDocuments.Select(document => $"[{document.Stage}, revision {document.Revision}, hash {document.ContentHash}]\n{document.Content}"))
             + (checkpoint.SpaceSpecDocuments.Count == SpecStages.Length
