@@ -27,6 +27,8 @@ export function describeEntry(entry: FeedEntry | null, t: Translate, workspaceRo
       const current = entry.steps.find((step) => step.status === 'in_progress')
       return current?.step ?? null
     }
+    case 'correction':
+      return entry.trace.summary || entry.trace.reason || null
     default:
       return null
   }

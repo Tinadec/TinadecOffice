@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Brain, ChevronRight, ListChecks, PenLine, ShieldAlert, Wrench } from '@lucide/vue'
+import { Brain, ChevronRight, CircleHelp, Crosshair, ListChecks, PenLine, RotateCcw, ScanSearch, ShieldAlert, ShieldCheck, Wrench } from '@lucide/vue'
 import { computed, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -55,7 +55,7 @@ function isLive(entry: FeedEntry): boolean {
   return false
 }
 
-type StatusKind = 'drafting' | 'planning' | 'thinking' | 'tool'
+type StatusKind = 'drafting' | 'planning' | 'thinking' | 'tool' | 'locating' | 'fixing' | 'verifying' | 'backtracking' | 'question'
 
 interface StatusStep {
   kind: StatusKind
@@ -67,6 +67,11 @@ const statusIcons = {
   planning: ListChecks,
   thinking: Brain,
   tool: Wrench,
+  locating: ScanSearch,
+  fixing: Crosshair,
+  verifying: ShieldCheck,
+  backtracking: RotateCcw,
+  question: CircleHelp,
 } as const
 
 function latest(entries: readonly FeedEntry[], kind: 'plan' | 'reasoning'): PlanEntry | ReasoningEntry | null {
@@ -79,6 +84,15 @@ function latest(entries: readonly FeedEntry[], kind: 'plan' | 'reasoning'): Plan
 
 const statusStep = computed<StatusStep>(() => {
   void props.revision
+  if (props.activity.correction) {
+    const trace = props.activity.correction
+    const pending = trace.openQuestions.find((question) => question.blocking && !question.answeredAt)
+    if (pending) return { kind: 'question', label: pending.question }
+    if (trace.phase === 'INTERVENE') return { kind: 'fixing', label: trace.summary || t('conversation.correction.phase.intervene') }
+    if (trace.phase === 'CONVERGE') return { kind: 'verifying', label: trace.summary || t('conversation.correction.phase.converge') }
+    if (trace.phase === 'BACKTRACK') return { kind: 'backtracking', label: trace.summary || t('conversation.correction.phase.backtrack') }
+    return { kind: 'locating', label: trace.summary || t('conversation.correction.phase.observe') }
+  }
   const current = [...props.activity.entries].reverse().find(isLive)
   if (current?.kind === 'tool') {
     const sentence = entrySentence(current, props.workspaceRoot)

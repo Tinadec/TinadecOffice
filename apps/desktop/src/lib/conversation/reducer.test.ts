@@ -148,6 +148,48 @@ describe('sub-agents', () => {
   })
 })
 
+describe('correction trace', () => {
+  it('keeps one correction node and replaces the full snapshot in place', () => {
+    const s = new EventScript()
+    s.emit('run-1', 'correction.trace.updated', {
+      trace: {
+        episode_id: 'ep-1', run_id: 'run-1', revision: 1, phase: 'OBSERVE', status: 'investigating',
+        goal: '修复恢复状态', symptom: '重开后消失', done_when: '同一测试通过',
+        hypotheses: [{ id: 'H1', statement: '写入遗漏', status: 'testing', evidence_ids: [] }],
+        evidence: [], open_questions: [],
+        completion: { requirement: 'test', authority: 'machine', status: 'blocked', modified_artifacts: [], verified_artifacts: [] },
+      },
+    })
+    s.emit('run-1', 'correction.trace.updated', {
+      trace: {
+        episode_id: 'ep-1', run_id: 'run-1', revision: 2, phase: 'CONVERGE', status: 'ready',
+        summary: '验证通过', goal: '修复恢复状态', symptom: '重开后消失', done_when: '同一测试通过',
+        hypotheses: [{ id: 'H1', statement: '写入遗漏', status: 'confirmed', evidence_ids: ['ev:1'] }],
+        evidence: [{ id: 'ev:1', source: 'tool', kind: 'verification_passed', strength: 'strong', summary: 'npm test' }],
+        open_questions: [],
+        completion: { requirement: 'test', authority: 'machine', status: 'ready', modified_artifacts: ['src/a.ts'], verified_artifacts: ['src/a.ts'] },
+      },
+    })
+    const run = hydrate(s.events).runs.get('run-1')!
+    expect(run.entries.filter((entry) => entry.kind === 'correction')).toHaveLength(1)
+    expect(run.correction).toMatchObject({ episodeId: 'ep-1', revision: 2, phase: 'CONVERGE', status: 'ready' })
+    expect(groupRun(run, false).nodes.some((node) => node.type === 'correction')).toBe(true)
+  })
+
+  it('keeps a blocking question in the run state', () => {
+    const s = new EventScript()
+    s.emit('run-1', 'correction.trace.updated', {
+      trace: {
+        episode_id: 'ep-2', run_id: 'run-1', revision: 1, phase: 'OBSERVE', status: 'awaiting_user',
+        open_questions: [{ id: 'Q1', question: '你看到的是哪个窗口？', blocking: true, options: ['开发版', '安装版'] }],
+        completion: { requirement: 'user', authority: 'user', status: 'blocked' },
+      },
+    })
+    const run = hydrate(s.events).runs.get('run-1')!
+    expect(run.correction?.openQuestions[0]).toMatchObject({ id: 'Q1', blocking: true })
+  })
+})
+
 describe('markers, dedup and versions', () => {
   it('reads an interrupt request and its cut as one marker on the target run', () => {
     const markers = hydrate(interruptedRun().events).runs.get('run-1')!.entries.filter((e) => e.kind === 'marker')

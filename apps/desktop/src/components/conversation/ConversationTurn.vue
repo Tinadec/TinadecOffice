@@ -15,6 +15,9 @@ import ApprovalCard from './ApprovalCard.vue'
 import AssistantAnswer from './AssistantAnswer.vue'
 import TurnMarker from './TurnMarker.vue'
 import SupervisionGate from './SupervisionGate.vue'
+import CorrectionQuestionGate from './CorrectionQuestionGate.vue'
+import CorrectionFeedback from './CorrectionFeedback.vue'
+import type { CorrectionQuestion, CorrectionTrace } from '@/lib/conversation/correction'
 
 /**
  * One turn: the user's message, then for each run its work, the approvals it is waiting
@@ -46,6 +49,8 @@ interface RunView {
   orphanApprovals: ApprovalDto[]
   /** A supervision escalation this run is parked on, ready for the gate. */
   review: SupervisionReview | null
+  correction: CorrectionTrace | null
+  correctionQuestion: CorrectionQuestion | null
   streamingText: string | null
 }
 
@@ -87,7 +92,9 @@ const runs = computed<RunView[]>(() => {
     const review = grouped?.review
       ? gateReview(run.id, grouped.review.reasons, grouped.review.options, grouped.review.brief)
       : props.supervisionReviews?.[run.id] ?? null
-    return { id: run.id, status: run.status, live, parked, working: live && !parked, activity, grouped, orphanApprovals, review, streamingText }
+    const correction = activity?.correction ?? null
+    const correctionQuestion = correction?.openQuestions.find((question) => question.blocking && !question.answeredAt) ?? null
+    return { id: run.id, status: run.status, live, parked, working: live && !parked, activity, grouped, orphanApprovals, review, correction, correctionQuestion, streamingText }
   })
 })
 
@@ -173,6 +180,7 @@ const toolCount = computed(() => {
         />
       </div>
       <SupervisionGate :review="run.review" />
+      <CorrectionQuestionGate v-if="run.correctionQuestion" :run-id="run.id" :question="run.correctionQuestion" />
       <!-- Why a run stopped is never folded away with its work. -->
       <TurnMarker v-if="run.activity?.failure" type="run_failed" :data="{ category: run.activity.failure.category, message: run.activity.failure.message }" />
       <TurnMarker v-if="run.status === 'cancelled'" type="run_cancelled" />
@@ -209,6 +217,12 @@ const toolCount = computed(() => {
       :tool-count="index === answers.length - 1 ? toolCount : 0"
       :last="last && index === answers.length - 1"
       :compact="isCompactAnswer(answer.content, index, answers.length)"
+    />
+    <CorrectionFeedback
+      v-for="run in runs.filter((item) => item.correction && (item.status === 'awaiting_user' || (item.status === 'completed' && answers.some((answer) => answer.run_id === item.id))))"
+      :key="`correction-feedback:${run.id}`"
+      :run-id="run.id"
+      :allow-resolve="run.correction?.completion.requirement === 'user'"
     />
     <div v-if="canRetry" class="conversation-retry">
       <button type="button" class="conversation-text-button" :title="t('conversation.turn.retryHint')" data-testid="turn-retry" @click="retry">

@@ -120,6 +120,11 @@ export const ORCHESTRATION_EVENT_TYPES = [
   'task.wait_resolved',
   // An agent's own step-by-step plan (plan_update), resent whole on every change.
   'plan.updated',
+  'correction.trace.updated',
+  'correction.question.requested',
+  'correction.question.answered',
+  'correction.feedback.received',
+  'correction.episode.reopened',
   'orchestration.mode_tier_decided',
   'orchestration.directive.rejected',
   'capability.recommended',

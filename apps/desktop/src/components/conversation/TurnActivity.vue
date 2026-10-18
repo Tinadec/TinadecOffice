@@ -10,6 +10,7 @@ import ReasoningBlock from './ReasoningBlock.vue'
 import ToolRow from './ToolRow.vue'
 import AgentTodos from './AgentTodos.vue'
 import AgentGroup from './AgentGroup.vue'
+import CorrectionTrace from './CorrectionTrace.vue'
 
 defineOptions({ name: 'TurnActivity' })
 
@@ -39,6 +40,7 @@ function waitNames(entry: WaitEntry): string {
         <span>{{ node.entry.status === 'waiting' ? t('conversation.wait.waiting', { names: waitNames(node.entry) }) : t('conversation.wait.resolved', { names: waitNames(node.entry) }) }}</span>
       </template>
       <AgentTodos v-else-if="node.type === 'plan'" :entry="node.entry" />
+      <CorrectionTrace v-else-if="node.type === 'correction'" :trace="node.entry.trace" />
       <AgentGroup v-else-if="node.type === 'agents'" :agents="node.agents" :run-id="runId" :workspace-root="workspaceRoot" />
       <template v-else-if="node.type === 'marker'">
         <TurnMarker :type="node.entry.type" :data="node.entry.data" />

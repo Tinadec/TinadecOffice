@@ -19,6 +19,7 @@ function activity(entries: RunActivity['entries']): RunActivity {
     lastAt: '2026-10-18T00:00:03Z',
     failure: null,
     review: null,
+    correction: null,
     byId: new Map(entries.map((entry) => [entry.id, entry])),
     seen: new Set(),
     executionByApproval: new Map(),

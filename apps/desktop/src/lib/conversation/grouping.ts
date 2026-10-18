@@ -3,6 +3,7 @@ import type {
   FeedEntry,
   MarkerEntry,
   PlanEntry,
+  CorrectionEntry,
   ReasoningEntry,
   RunActivity,
   SubAgent,
@@ -55,6 +56,7 @@ export type FeedNode =
   | { type: 'wait'; id: string; entry: WaitEntry }
   | { type: 'agents'; id: string; agents: SubAgentNode[] }
   | { type: 'plan'; id: string; entry: PlanEntry }
+  | { type: 'correction'; id: string; entry: CorrectionEntry }
   | { type: 'marker'; id: string; entry: MarkerEntry }
   | { type: 'supervision'; id: string; entry: SupervisionEntry }
 
@@ -188,6 +190,9 @@ function build(context: Context, scope: string | null, requester: SubAgent | nul
         break
       case 'plan':
         nodes.push({ type: 'plan', id: entry.id, entry })
+        break
+      case 'correction':
+        nodes.push({ type: 'correction', id: entry.id, entry })
         break
       case 'marker':
         nodes.push({ type: 'marker', id: entry.id, entry })
