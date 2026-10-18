@@ -26,6 +26,11 @@ internal sealed class CorrectionTraceState
     public string? Verdict { get; set; }
     public string? Fix { get; set; }
     public string? Verify { get; set; }
+    public string? LastFeedbackRequestId { get; set; }
+    public string? LastFeedbackKind { get; set; }
+    public string? LastFeedbackNote { get; set; }
+    public Guid? ReopenedRunId { get; set; }
+    public Guid? ReopenedTurnId { get; set; }
     public List<CorrectionHypothesisState> Hypotheses { get; set; } = [];
     public List<CorrectionEvidenceState> Evidence { get; set; } = [];
     public List<CorrectionInterventionState> Interventions { get; set; } = [];
@@ -204,6 +209,7 @@ internal sealed class CorrectionQuestionState
     public bool Blocking { get; set; }
     public List<string> Options { get; set; } = [];
     public string? Answer { get; set; }
+    public string? AnswerRequestId { get; set; }
     public DateTimeOffset AskedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? AnsweredAt { get; set; }
 
@@ -275,6 +281,11 @@ internal static class CorrectionTracePolicy
                 Verdict = clone.Verdict,
                 Fix = clone.Fix,
                 Verify = clone.Verify,
+                LastFeedbackRequestId = null,
+                LastFeedbackKind = null,
+                LastFeedbackNote = null,
+                ReopenedRunId = null,
+                ReopenedTurnId = null,
                 Hypotheses = clone.Hypotheses,
                 Evidence = clone.Evidence,
                 Interventions = clone.Interventions,
@@ -287,10 +298,21 @@ internal static class CorrectionTracePolicy
 
     private static readonly JsonSerializerOptions CorrectionJson = new(JsonSerializerDefaults.Web);
 
-    public static string? ApplyProposal(CorrectionTraceState trace, JsonElement arguments)
+    public static string? ApplyProposal(
+        CorrectionTraceState trace,
+        JsonElement arguments,
+        CorrectionRuntimePolicyDto? policy = null)
     {
         if (arguments.ValueKind != JsonValueKind.Object)
             return "update_correction_trace requires an object.";
+        if (policy is not null
+            && arguments.TryGetProperty("open_questions", out var questionProposal)
+            && questionProposal.ValueKind == JsonValueKind.Array
+            && questionProposal.GetArrayLength() > 0
+            && !CorrectionRuntimePolicy.Has(policy, CorrectionRuntimePolicy.ClarificationLedgerFeature))
+        {
+            return "This correction mode does not enable the clarification ledger.";
+        }
 
         var phase = String(arguments, "phase")?.ToUpperInvariant();
         if (phase is not (null or "OBSERVE" or "INTERVENE" or "CONVERGE" or "BACKTRACK"))
@@ -340,6 +362,23 @@ internal static class CorrectionTracePolicy
 
         if (arguments.TryGetProperty("open_questions", out var questions) && questions.ValueKind == JsonValueKind.Array)
         {
+            var existingBlocking = trace.OpenQuestions
+                .FirstOrDefault(question => question.Blocking && question.AnsweredAt is null)
+                ?.Id;
+            var requestedBlocking = questions.EnumerateArray().Take(MaxQuestions)
+                .Where(item => item.ValueKind == JsonValueKind.Object
+                    && item.TryGetProperty("blocking", out var blocking)
+                    && blocking.ValueKind == JsonValueKind.True)
+                .Select(item => String(item, "id"))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (requestedBlocking.Length > 1
+                || (existingBlocking is not null && requestedBlocking.Any(id => id != existingBlocking)))
+            {
+                return "Only one blocking correction question can be open at a time.";
+            }
             foreach (var item in questions.EnumerateArray().Take(MaxQuestions))
             {
                 var id = String(item, "id");

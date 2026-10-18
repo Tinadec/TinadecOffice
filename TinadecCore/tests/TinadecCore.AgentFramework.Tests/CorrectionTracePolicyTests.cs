@@ -44,6 +44,56 @@ public sealed class CorrectionTracePolicyTests
     }
 
     [Fact]
+    public void OnlyOneBlockingQuestionCanRemainOpen()
+    {
+        var trace = CorrectionTracePolicy.Create(Run("run-question"), "需要用户澄清");
+        using var first = JsonDocument.Parse("""
+            {
+              "open_questions": [
+                {"id":"q1","question":"哪个项目？","blocking":true,"options":["A","B"]}
+              ]
+            }
+            """);
+        using var second = JsonDocument.Parse("""
+            {
+              "open_questions": [
+                {"id":"q2","question":"哪个环境？","blocking":true,"options":["本地","生产"]}
+              ]
+            }
+            """);
+
+        Assert.Null(CorrectionTracePolicy.ApplyProposal(trace, first.RootElement));
+        Assert.Equal(
+            "Only one blocking correction question can be open at a time.",
+            CorrectionTracePolicy.ApplyProposal(trace, second.RootElement));
+        Assert.Equal("q1", Assert.Single(trace.OpenQuestions).Id);
+    }
+
+    [Fact]
+    public void ClarificationLedgerMustBeEnabledByTheModePolicy()
+    {
+        var trace = CorrectionTracePolicy.Create(Run("run-policy"), "需要用户澄清");
+        var causalOnly = new CorrectionRuntimePolicyDto
+        {
+            Kind = CorrectionRuntimePolicy.StructuredInvestigationKind,
+            Version = CorrectionRuntimePolicy.StructuredInvestigationVersion,
+            Features = [CorrectionRuntimePolicy.CausalTraceFeature],
+        };
+        using var proposal = JsonDocument.Parse("""
+            {
+              "open_questions": [
+                {"id":"q1","question":"哪个项目？","blocking":true}
+              ]
+            }
+            """);
+
+        Assert.Equal(
+            "This correction mode does not enable the clarification ledger.",
+            CorrectionTracePolicy.ApplyProposal(trace, proposal.RootElement, causalOnly));
+        Assert.Empty(trace.OpenQuestions);
+    }
+
+    [Fact]
     public void MutationInvalidatesVerificationAndRequiresSameFocusedRepro()
     {
         var trace = CorrectionTracePolicy.Create(Run("run-2"), "修复状态恢复，必须跑同一个 test");
