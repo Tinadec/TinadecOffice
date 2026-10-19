@@ -160,7 +160,7 @@ public sealed class GraphSeedPackConfigurationTests : IDisposable
         var graphBytes = await File.ReadAllBytesAsync(graphPath);
         var graphDigest = SHA256.HashData(graphBytes);
         var graph = await ReadEnvelopeAsync(graphPath);
-        Assert.Equal("3.1.0", graph.Manifest!.Metadata!.Version);
+        Assert.Equal("3.1.1", graph.Manifest!.Metadata!.Version);
         var bootstrap = await ReadEnvelopeAsync(FindRepositoryFile("TinadecCore", "tests", "TinadecCore.Api.Tests", "Fixtures", "bootstrap-pack.json"));
         var oldRows = new Dictionary<string, string>();
         string? installedDigest = null;
@@ -175,7 +175,7 @@ public sealed class GraphSeedPackConfigurationTests : IDisposable
             }
             var result = await InstallAsync(services, graph);
             Assert.Equal("installed", result.Status);
-            Assert.Equal("3.1.0", result.ActiveVersion);
+            Assert.Equal("3.1.1", result.ActiveVersion);
             Assert.Equal(graph.Integrity!.Digest, result.IntegrityDigest);
             installedDigest = result.IntegrityDigest;
             await services.GetRequiredService<IConfigurationProjectionCoordinator>().CompileAsync();
@@ -195,7 +195,7 @@ public sealed class GraphSeedPackConfigurationTests : IDisposable
             Assert.Equal(2, await rebuilt.AgentDefinitions.CountAsync(x => x.Slug == "meeting" && x.Status == "published"));
             var detail = await restarted.GetRequiredService<IAgentPackService>().GetAsync("tinadec.graph.seed-pack");
             Assert.NotNull(detail);
-            Assert.Equal("3.1.0", detail.ActiveVersion);
+            Assert.Equal("3.1.1", detail.ActiveVersion);
             Assert.Equal(installedDigest, detail.IntegrityDigest);
             Assert.Equal("up_to_date", (await restarted.GetRequiredService<IAgentPackService>().PreviewAsync(graph)).Action);
         }
