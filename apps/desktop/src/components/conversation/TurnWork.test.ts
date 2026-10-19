@@ -75,4 +75,58 @@ describe('turn work phase status', () => {
     expect(wrapper.find('[data-testid="turn-status-icon"]').classes()).toContain('lucide-list-checks')
     wrapper.unmount()
   })
+
+  it('keeps the correction phase icon and label after the work settles', () => {
+    const settled = activity([])
+    settled.correction = {
+      episodeId: 'episode-1',
+      runId: 'run-1',
+      parentRunId: null,
+      revision: 9,
+      phase: 'CONVERGE',
+      status: 'ready',
+      goal: 'Fix the failing test',
+      symptom: 'npm test fails',
+      doneWhen: 'npm test passes',
+      summary: '',
+      reason: 'The same focused test now passes.',
+      rootCause: 'The implementation used subtraction.',
+      recheck: null,
+      confidence: 'high',
+      intervention: null,
+      prediction: null,
+      verdict: null,
+      fix: null,
+      verify: null,
+      hypotheses: [],
+      evidence: [],
+      interventions: [],
+      completion: {
+        requirement: 'test',
+        authority: 'machine',
+        status: 'ready',
+        modifiedArtifacts: ['src/sum.js'],
+        verifiedArtifacts: ['src/sum.js'],
+        strongestCheck: null,
+        failedBeforeExecutionId: 'test-fail',
+        passedAfterExecutionId: 'test-pass',
+        unresolvedReason: null,
+        verifiedAt: '2026-10-18T00:00:03Z',
+      },
+      openQuestions: [],
+      createdAt: '2026-10-18T00:00:00Z',
+      updatedAt: '2026-10-18T00:00:03Z',
+    }
+    const wrapper = mount(TurnWork, {
+      props: {
+        activity: settled, nodes: [], working: false, openByDefault: false,
+        runId: 'run-1', runStatus: 'completed', revision: 2,
+      },
+      global,
+    })
+
+    expect(wrapper.get('[data-testid="turn-correction-summary"]').text()).toBe('Verifying the result')
+    expect(wrapper.find('[data-testid="turn-correction-summary-icon"]').classes()).toContain('lucide-shield-check')
+    wrapper.unmount()
+  })
 })

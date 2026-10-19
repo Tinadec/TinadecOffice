@@ -159,6 +159,11 @@ const summary = computed(() => {
         <ShieldAlert class="conversation-glyph conversation-glyph--waiting" aria-hidden="true" />
         <span class="conversation-fold-waiting" role="status" data-testid="turn-waiting-fold">{{ t('conversation.turn.awaiting.generic') }}</span>
       </template>
+      <template v-else-if="activity.correction">
+        <component :is="statusIcon" class="conversation-glyph" data-testid="turn-correction-summary-icon" aria-hidden="true" />
+        <span class="conversation-correction-summary" data-testid="turn-correction-summary">{{ statusStep.label }}</span>
+        <span class="conversation-fold-meta">{{ summary }}</span>
+      </template>
       <span v-else :class="{ 'shimmer-once': justSettled }" data-testid="turn-summary">{{ summary }}</span>
       <ChevronRight class="conversation-fold-chevron" aria-hidden="true" />
     </CollapsibleTrigger>
@@ -172,4 +177,5 @@ const summary = computed(() => {
 .conversation-work-trigger { color: var(--text-secondary); }
 .conversation-glyph--waiting { color: var(--accent-warning, #e3b341); }
 .conversation-fold-waiting { color: var(--accent-warning, #e3b341); font-size: 12px; }
+.conversation-correction-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 12px; }
 </style>
