@@ -13,15 +13,18 @@ internal sealed class FormalModeResolver : IFormalModeResolver
 {
     private readonly ISessionLocator _sessions;
     private readonly IDbContextFactory<AgentConfigurationDbContext> _cfgFactory;
+    private readonly GlobalAgentConfiguration _globalConfiguration;
     private readonly ILogger<FormalModeResolver> _logger;
 
     public FormalModeResolver(
         ISessionLocator sessions,
         IDbContextFactory<AgentConfigurationDbContext> cfgFactory,
+        GlobalAgentConfiguration globalConfiguration,
         ILogger<FormalModeResolver> logger)
     {
         _sessions = sessions;
         _cfgFactory = cfgFactory;
+        _globalConfiguration = globalConfiguration;
         _logger = logger;
     }
 
@@ -47,7 +50,10 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             if (session is null) return null;
             effectiveModeVersionId = modeVersionIdOverride ?? session.ModeVersionId;
             if (effectiveModeVersionId is null) return null;
-            await using var cfg = await _cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var factory = await AgentConfigurationLookup.SelectModeFactoryAsync(
+                _cfgFactory, _globalConfiguration, session.TenantId, session.WorkspaceId,
+                effectiveModeVersionId.Value, ct).ConfigureAwait(false);
+            await using var cfg = await factory.CreateDbContextAsync(ct).ConfigureAwait(false);
             var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
                 x.Id == effectiveModeVersionId.Value
                 && x.TenantId == session.TenantId
@@ -87,7 +93,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
     {
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null) return null;
-        await using var cfg = await _cfgFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var factory = await AgentConfigurationLookup.SelectCatalogFactoryAsync(
+            _cfgFactory, _globalConfiguration, session.TenantId, session.WorkspaceId, cancellationToken).ConfigureAwait(false);
+        await using var cfg = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var candidates = await (from mode in cfg.AgentModes.AsNoTracking()
                                 join version in cfg.ModeVersions.AsNoTracking() on mode.Id equals version.AgentModeId
                                 where mode.TenantId == session.TenantId && mode.WorkspaceId == session.WorkspaceId
@@ -125,7 +133,10 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         if (modeVersionId is null) return null;
         try
         {
-            await using var cfg = await _cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var factory = await AgentConfigurationLookup.SelectModeFactoryAsync(
+                _cfgFactory, _globalConfiguration, sess.TenantId, sess.WorkspaceId,
+                modeVersionId.Value, ct).ConfigureAwait(false);
+            await using var cfg = await factory.CreateDbContextAsync(ct).ConfigureAwait(false);
             var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
                 x.Id == modeVersionId.Value
                 && x.TenantId == sess.TenantId

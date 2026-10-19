@@ -61,12 +61,12 @@ public sealed class ReadinessService
 
     private readonly IDatabaseReadiness _database;
     private readonly IDbContextFactory<AgentConfigurationDbContext> _agentConfig;
+    private readonly GlobalAgentConfiguration _globalAgentConfig;
     private readonly IDbContextFactory<ModelControlDbContext> _models;
     private readonly IContentStore _content;
     private readonly ISecretStore _secrets;
     private readonly ITenantContextAccessor _tenant;
     private readonly IModelProvider _modelProvider;
-    private readonly AgentPackService _agentPacks;
     private readonly IToolProvider _toolProvider;
     private readonly ModelProbeService _modelProbe;
     private readonly IConfiguration _configuration;
@@ -77,12 +77,12 @@ public sealed class ReadinessService
     public ReadinessService(
         IDatabaseReadiness database,
         IDbContextFactory<AgentConfigurationDbContext> agentConfig,
+        GlobalAgentConfiguration globalAgentConfig,
         IDbContextFactory<ModelControlDbContext> models,
         IContentStore content,
         ISecretStore secrets,
         ITenantContextAccessor tenant,
         IModelProvider modelProvider,
-        AgentPackService agentPacks,
         IToolProvider toolProvider,
         ModelProbeService modelProbe,
         IConfiguration configuration,
@@ -90,12 +90,12 @@ public sealed class ReadinessService
     {
         _database = database;
         _agentConfig = agentConfig;
+        _globalAgentConfig = globalAgentConfig;
         _models = models;
         _content = content;
         _secrets = secrets;
         _tenant = tenant;
         _modelProvider = modelProvider;
-        _agentPacks = agentPacks;
         _toolProvider = toolProvider;
         _modelProbe = modelProbe;
         _configuration = configuration;
@@ -207,19 +207,14 @@ public sealed class ReadinessService
     // ──────────────────────────────────────────────────────────
     private async Task<ReadinessItem[]> CheckAgentPackAndDefaultModeAsync(DateTimeOffset checkedAt, CancellationToken cancellationToken)
     {
-        IReadOnlyList<AgentPackInstallationView> packs;
-        WorkspaceDefaultsRecord? defaults;
+        IReadOnlyList<(string PackId, string Status, string? ActiveVersion)> packs;
+        Guid? defaultModeVersionId;
         try
         {
-            packs = await _agentPacks.ListAsync(cancellationToken).ConfigureAwait(false);
-            await using var db = await _agentConfig.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
             var tenant = _tenant.Current;
-            // SQLite cannot translate DateTimeOffset ORDER BY; the per-tenant row
-            // count is tiny, so order client-side instead.
-            var defaultRows = await db.WorkspaceDefaults.AsNoTracking()
-                .Where(item => item.TenantId == tenant.TenantId && item.WorkspaceId == tenant.WorkspaceId)
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            defaults = defaultRows.OrderByDescending(item => item.UpdatedAt).FirstOrDefault();
+            packs = await _globalAgentConfig.ListPacksAsync(tenant.TenantId, tenant.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            defaultModeVersionId = await AgentConfigurationLookup.GetDefaultModeVersionIdAsync(
+                _agentConfig, _globalAgentConfig, tenant.TenantId, tenant.WorkspaceId, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -256,7 +251,7 @@ public sealed class ReadinessService
                 }
             };
         }
-        else if (defaults is not null)
+        else if (defaultModeVersionId is not null)
         {
             agentPack = new ReadinessItem
             {
@@ -281,7 +276,7 @@ public sealed class ReadinessService
             };
         }
 
-        var hasDefaultMode = defaults is { ArchivedAt: null, DefaultModeVersionId: not null };
+        var hasDefaultMode = defaultModeVersionId is not null;
         var defaultMode = new ReadinessItem
         {
             Id = "default_mode",
@@ -292,7 +287,7 @@ public sealed class ReadinessService
                 : "The workspace has no active default agent mode; creating conversations and submitting interactions will be refused.",
             Action = hasDefaultMode ? null : "Publish a mode in Agent Center and make it the workspace default, or install an agent pack that contains a mode.",
             CheckedAt = checkedAt,
-            Data = hasDefaultMode ? new { mode_version_id = defaults!.DefaultModeVersionId } : null
+            Data = hasDefaultMode ? new { mode_version_id = defaultModeVersionId } : null
         };
         return [agentPack, defaultMode];
     }

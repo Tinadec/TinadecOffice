@@ -107,7 +107,7 @@ public static class StorageEndpoints
             catch (TinadecCore.Runtime.ActiveRunConflictException ex) { return Results.Conflict(new { code = "active_run_conflict", message = ex.Message, run_id = ex.RunId }); }
         });
 
-        app.MapGet("/api/v1/sessions", async (string? projectId, string? project_id, string? lifecycle_status, string? lifecycleStatus, HttpContext http, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
+        app.MapGet("/api/v1/sessions", async (string? projectId, string? project_id, string? lifecycle_status, string? lifecycleStatus, HttpContext http, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, GlobalAgentConfiguration globalConfig, CancellationToken ct) =>
         {
             var selected = projectId ?? project_id;
             if (selected is not null && !Guid.TryParse(selected, out var parsed)) return Results.BadRequest(new { code = "INVALID_PROJECT_ID" });
@@ -121,20 +121,22 @@ public static class StorageEndpoints
                 {
                     await using var lease = await registry.AcquireAsync(scope.StorageId, ct).ConfigureAwait(false);
                     var records = await lease.Services.GetRequiredService<ProjectSessionStore>().ListSessionsAsync(selected is null ? null : Guid.Parse(selected), status, ct).ConfigureAwait(false);
-                    var defaults = await LoadSessionModeDefaultsAsync(records, lease.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>(), ct).ConfigureAwait(false);
+                    var defaults = await LoadSessionModeDefaultsAsync(records,
+                        lease.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>(),
+                        lease.Services.GetRequiredService<GlobalAgentConfiguration>(), ct).ConfigureAwait(false);
                     foreach (var record in records) aggregate.Add(ToSessionEnriched(record, scope.StorageId, defaults));
                 }
                 return Results.Ok(aggregate);
             }
             var sessions = await store.ListSessionsAsync(selected is null ? null : Guid.Parse(selected), status, ct).ConfigureAwait(false);
-            var sessionDefaults = await LoadSessionModeDefaultsAsync(sessions, cfgFactory, ct).ConfigureAwait(false);
+            var sessionDefaults = await LoadSessionModeDefaultsAsync(sessions, cfgFactory, globalConfig, ct).ConfigureAwait(false);
             var enriched = new List<object>(sessions.Count);
             var scopeStorageId = http.RequestServices.GetService<IScopeStorageLocations>()?.StorageId;
             foreach (var s in sessions) enriched.Add(ToSessionEnriched(s, scopeStorageId, sessionDefaults));
             return Results.Ok(enriched);
         });
 
-        app.MapPost("/api/v1/sessions", async (CreateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IAgentModelResolver modelResolver, ITenantContextAccessor tenant, CancellationToken ct) =>
+        app.MapPost("/api/v1/sessions", async (CreateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, GlobalAgentConfiguration globalConfig, IAgentModelResolver modelResolver, ITenantContextAccessor tenant, CancellationToken ct) =>
         {
             Guid? projectId = null;
             if (!string.IsNullOrWhiteSpace(request.ProjectId))
@@ -146,23 +148,20 @@ public static class StorageEndpoints
             {
                 var spaceOptions = ToSpaceOptions(request.SpaceOptions);
                 ProjectSessionStore.ValidateSessionSettings(request.ViewMode ?? "flat", request.PermissionMode, spaceOptions);
-                await ValidateWorkflowAsync(spaceOptions, tenant.Current.TenantId, tenant.Current.WorkspaceId, cfgFactory, ct).ConfigureAwait(false);
+                await ValidateWorkflowAsync(spaceOptions, tenant.Current.TenantId, tenant.Current.WorkspaceId, cfgFactory, globalConfig, ct).ConfigureAwait(false);
                 Guid? modeVersionId = request.ModeVersionId;
                 string? conversationNodeKey = null;
                 string? conversationTemplateSlug = null;
-                await using (var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false))
+                if (modeVersionId is null)
+                    modeVersionId = await AgentConfigurationLookup.GetDefaultModeVersionIdAsync(
+                        cfgFactory, globalConfig, tenant.Current.TenantId, tenant.Current.WorkspaceId, ct).ConfigureAwait(false);
+                if (modeVersionId is null)
+                    return AgentModeNotConfigured("A published default Agent Mode must be configured before creating a session.");
+                var modeFactory = await AgentConfigurationLookup.SelectModeFactoryAsync(
+                    cfgFactory, globalConfig, tenant.Current.TenantId, tenant.Current.WorkspaceId,
+                    modeVersionId.Value, ct).ConfigureAwait(false);
+                await using (var cfg = await modeFactory.CreateDbContextAsync(ct).ConfigureAwait(false))
                 {
-                    if (modeVersionId is null)
-                    {
-                        modeVersionId = await cfg.WorkspaceDefaults.AsNoTracking()
-                            .Where(x => x.TenantId == tenant.Current.TenantId
-                                && x.WorkspaceId == tenant.Current.WorkspaceId
-                                && x.Status == "active" && x.ArchivedAt == null)
-                            .Select(x => x.DefaultModeVersionId)
-                            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
-                    }
-                    if (modeVersionId is null)
-                        return AgentModeNotConfigured("A published default Agent Mode must be configured before creating a session.");
                     var modeVersion = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == modeVersionId
                         && x.TenantId == tenant.Current.TenantId && x.WorkspaceId == tenant.Current.WorkspaceId
                         && x.Status == "published", ct).ConfigureAwait(false);
@@ -197,14 +196,14 @@ public static class StorageEndpoints
                 }
                 var session = await store.CreateSessionAsync(projectId, request.Title, modeVersionId.Value, modelOverride, conversationNodeKey, conversationTemplateSlug, ct,
                     viewMode: request.ViewMode ?? "flat", permissionMode: request.PermissionMode, spaceOptions: spaceOptions).ConfigureAwait(false);
-                return Results.Created($"/api/v1/sessions/{session.Id}", await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
+                return Results.Created($"/api/v1/sessions/{session.Id}", await ToSessionEnrichedAsync(session, cfgFactory, globalConfig, ct).ConfigureAwait(false));
             }
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "PROJECT_NOT_FOUND" }); }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_SESSION", message = ex.Message }); }
             catch (InvalidDataException ex) { return Results.BadRequest(new { code = "invalid_model_override", message = ex.Message }); }
         });
 
-        app.MapPatch("/api/v1/sessions/{sessionId}", async (string sessionId, UpdateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IAgentModelResolver modelResolver, CancellationToken ct) =>
+        app.MapPatch("/api/v1/sessions/{sessionId}", async (string sessionId, UpdateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, GlobalAgentConfiguration globalConfig, IAgentModelResolver modelResolver, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             try
@@ -213,7 +212,7 @@ public static class StorageEndpoints
                 if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
                 var spaceOptions = ToSpaceOptions(request.SpaceOptions);
                 ProjectSessionStore.ValidateSessionSettings(session.ViewMode ?? "flat", request.PermissionMode, spaceOptions);
-                await ValidateWorkflowAsync(spaceOptions, session.TenantId, session.WorkspaceId, cfgFactory, ct).ConfigureAwait(false);
+                await ValidateWorkflowAsync(spaceOptions, session.TenantId, session.WorkspaceId, cfgFactory, globalConfig, ct).ConfigureAwait(false);
                 if (request.ClearMeetingModelOverride && request.MeetingModelOverride is not null)
                     return Results.BadRequest(new { code = "invalid_model_override", message = "Cannot set and clear meeting_model_override together." });
                 if (request.ClearModeVersion && request.ModeVersionId is not null)
@@ -221,18 +220,15 @@ public static class StorageEndpoints
                 var requestedMode = request.ModeVersionId;
                 if (request.ClearModeVersion)
                 {
-                    await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                    requestedMode = await cfg.WorkspaceDefaults.AsNoTracking()
-                        .Where(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId && x.Status == "active" && x.ArchivedAt == null)
-                        .Select(x => x.DefaultModeVersionId).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+                    requestedMode = await AgentConfigurationLookup.GetDefaultModeVersionIdAsync(
+                        cfgFactory, globalConfig, session.TenantId, session.WorkspaceId, ct).ConfigureAwait(false);
                     if (requestedMode is null) return AgentModeNotConfigured("No published default mode is configured.");
                 }
                 if (requestedMode is { } requestedModeVersionId)
                 {
-                    await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                    var published = await cfg.ModeVersions.AsNoTracking().AnyAsync(x => x.Id == requestedModeVersionId
-                        && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId
-                        && x.Status == "published", ct).ConfigureAwait(false);
+                    var published = await AgentConfigurationLookup.HasPublishedModeAsync(
+                        cfgFactory, globalConfig, session.TenantId, session.WorkspaceId,
+                        requestedModeVersionId, ct).ConfigureAwait(false);
                     if (!published) return Results.BadRequest(new { code = "invalid_mode_version", message = "mode_version_id must reference a published Agent Mode version in this workspace." });
                 }
                 if (request.MeetingModelOverride is { } requestedOverride)
@@ -249,7 +245,7 @@ public static class StorageEndpoints
                     clearMeetingModelOverride: request.ClearMeetingModelOverride, title: request.Title,
                     expectedSettingsRevision: request.ExpectedSettingsRevision).ConfigureAwait(false);
                 if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
-                return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
+                return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, globalConfig, ct).ConfigureAwait(false));
             }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_SESSION", message = ex.Message }); }
             catch (InvalidDataException ex) { return Results.BadRequest(new { code = "invalid_model_override", message = ex.Message }); }
@@ -529,7 +525,8 @@ public static class StorageEndpoints
     /// paths keep the lazy fallback so a lone read still works.
     /// </summary>
     private static async Task<Dictionary<(Guid TenantId, Guid WorkspaceId), Guid?>> LoadSessionModeDefaultsAsync(
-        IReadOnlyCollection<SessionRecord> sessions, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct)
+        IReadOnlyCollection<SessionRecord> sessions, IDbContextFactory<AgentConfigurationDbContext> cfgFactory,
+        GlobalAgentConfiguration globalConfig, CancellationToken ct)
     {
         var result = new Dictionary<(Guid, Guid), Guid?>();
         var tenantIds = sessions.Select(x => x.TenantId).Distinct().ToArray();
@@ -537,19 +534,38 @@ public static class StorageEndpoints
         if (tenantIds.Length == 0) return result;
         try
         {
+            if (!ReferenceEquals(cfgFactory, globalConfig.Factory))
+            {
+                await using var user = await globalConfig.Factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                var globalRows = await (from defaults in user.WorkspaceDefaults.AsNoTracking()
+                                        join version in user.ModeVersions.AsNoTracking() on defaults.DefaultModeVersionId equals version.Id
+                                        where tenantIds.Contains(defaults.TenantId) && workspaceIds.Contains(defaults.WorkspaceId)
+                                            && defaults.Status == "active" && defaults.ArchivedAt == null
+                                            && version.Status == "published"
+                                        select new { defaults.TenantId, defaults.WorkspaceId, VersionId = (Guid?)version.Id })
+                    .ToListAsync(ct).ConfigureAwait(false);
+                foreach (var row in globalRows)
+                    if (row.VersionId is not null) result[(row.TenantId, row.WorkspaceId)] = row.VersionId;
+            }
             await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-            var rows = await cfg.WorkspaceDefaults.AsNoTracking()
-                .Where(x => tenantIds.Contains(x.TenantId) && workspaceIds.Contains(x.WorkspaceId))
-                .Select(x => new { x.TenantId, x.WorkspaceId, x.DefaultModeVersionId })
+            var rows = await (from defaults in cfg.WorkspaceDefaults.AsNoTracking()
+                              join version in cfg.ModeVersions.AsNoTracking() on defaults.DefaultModeVersionId equals version.Id
+                              where tenantIds.Contains(defaults.TenantId) && workspaceIds.Contains(defaults.WorkspaceId)
+                                  && defaults.Status == "active" && defaults.ArchivedAt == null
+                                  && version.Status == "published"
+                              select new { defaults.TenantId, defaults.WorkspaceId, VersionId = (Guid?)version.Id })
                 .ToListAsync(ct).ConfigureAwait(false);
-            foreach (var row in rows) result[(row.TenantId, row.WorkspaceId)] = row.DefaultModeVersionId;
+            foreach (var row in rows)
+                if (row.VersionId is not null && !result.ContainsKey((row.TenantId, row.WorkspaceId)))
+                    result[(row.TenantId, row.WorkspaceId)] = row.VersionId;
         }
         catch { }
         return result;
     }
 
-    private static async Task<object> ToSessionEnrichedAsync(SessionRecord session, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct, string? storageId = null)
-        => ToSessionEnriched(session, storageId, await LoadSessionModeDefaultsAsync([session], cfgFactory, ct).ConfigureAwait(false));
+    private static async Task<object> ToSessionEnrichedAsync(SessionRecord session, IDbContextFactory<AgentConfigurationDbContext> cfgFactory,
+        GlobalAgentConfiguration globalConfig, CancellationToken ct, string? storageId = null)
+        => ToSessionEnriched(session, storageId, await LoadSessionModeDefaultsAsync([session], cfgFactory, globalConfig, ct).ConfigureAwait(false));
 
     private static object ToSessionEnriched(
         SessionRecord session,
@@ -573,13 +589,26 @@ public static class StorageEndpoints
     internal static SpaceRunOptionsDto? ToSpaceOptionsDto(SpaceRunOptions? options) => options is null ? null
         : new(options.PlanFirst, options.SpecEnabled, options.MultiAgent, options.WorkflowModeVersionId, options.BulletinBoard, options.Worktree);
 
-    internal static async Task ValidateWorkflowAsync(SpaceRunOptions? options, Guid tenantId, Guid workspaceId, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct)
+    internal static Task ValidateWorkflowAsync(SpaceRunOptions? options, Guid tenantId, Guid workspaceId,
+        IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
+        ValidateWorkflowAsync(options, tenantId, workspaceId, cfgFactory, null, ct);
+
+    internal static async Task ValidateWorkflowAsync(SpaceRunOptions? options, Guid tenantId, Guid workspaceId,
+        IDbContextFactory<AgentConfigurationDbContext> cfgFactory, GlobalAgentConfiguration? globalConfig, CancellationToken ct)
     {
         if (options?.WorkflowModeVersionId is not { } versionId) return;
+        var published = globalConfig is null
+            ? await HasPublishedModeLocallyAsync(cfgFactory, tenantId, workspaceId, versionId, ct).ConfigureAwait(false)
+            : await AgentConfigurationLookup.HasPublishedModeAsync(cfgFactory, globalConfig, tenantId, workspaceId, versionId, ct).ConfigureAwait(false);
+        if (!published) throw new ArgumentException("workflow_mode_version_id must reference a published mode in this workspace.");
+    }
+
+    private static async Task<bool> HasPublishedModeLocallyAsync(IDbContextFactory<AgentConfigurationDbContext> cfgFactory,
+        Guid tenantId, Guid workspaceId, Guid versionId, CancellationToken ct)
+    {
         await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var version = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == versionId
+        return await cfg.ModeVersions.AsNoTracking().AnyAsync(x => x.Id == versionId
             && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.Status == "published", ct).ConfigureAwait(false);
-        if (version is null) throw new ArgumentException("workflow_mode_version_id must reference a published mode in this workspace.");
     }
 
     private static object ToTransferReceipt(TinadecCore.Runtime.SessionScopeTransferReceipt receipt) => new

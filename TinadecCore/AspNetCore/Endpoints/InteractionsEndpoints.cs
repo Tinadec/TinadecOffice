@@ -8,6 +8,7 @@ using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
+using TinadecCore.Runtime;
 
 namespace TinadecCore.AspNetCore.Endpoints;
 
@@ -37,7 +38,7 @@ public static class InteractionsEndpoints
         return app;
     }
 
-    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, IMessageAttachmentStore attachments, StorageLifecycleService lifecycle, ILifecycleManager lifecycleManager, CancellationToken ct)
+    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, GlobalAgentConfiguration globalConfig, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, IMessageAttachmentStore attachments, StorageLifecycleService lifecycle, ILifecycleManager lifecycleManager, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         if (el.ValueKind != JsonValueKind.Object) return Results.BadRequest(new { code = "invalid_request", message = "Body must be a JSON object." });
@@ -268,11 +269,9 @@ public static class InteractionsEndpoints
         // mode_version validation if provided
         if (modeVersionId.HasValue)
         {
-            await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
-            var mvRec = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
-                x.Id == modeVersionId.Value && x.TenantId == session.TenantId
-                && x.WorkspaceId == session.WorkspaceId && x.Status == "published", ct);
-            if (mvRec is null) return Results.BadRequest(new { code = "invalid_request", message = "mode_version_id must reference a published mode in this workspace" });
+            var published = await AgentConfigurationLookup.HasPublishedModeAsync(cfgFactory, globalConfig,
+                session.TenantId, session.WorkspaceId, modeVersionId.Value, ct).ConfigureAwait(false);
+            if (!published) return Results.BadRequest(new { code = "invalid_request", message = "mode_version_id must reference a published mode in this workspace" });
         }
 
         // Mode identity is the published ModeVersion only. Resolution order:
@@ -282,12 +281,8 @@ public static class InteractionsEndpoints
         modeVersionId ??= session.ModeVersionId;
         if (modeVersionId is null)
         {
-            await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
-            modeVersionId = await cfg.WorkspaceDefaults.AsNoTracking()
-                .Where(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId
-                    && x.Status == "active" && x.ArchivedAt == null)
-                .Select(x => x.DefaultModeVersionId)
-                .FirstOrDefaultAsync(ct);
+            modeVersionId = await AgentConfigurationLookup.GetDefaultModeVersionIdAsync(
+                cfgFactory, globalConfig, session.TenantId, session.WorkspaceId, ct).ConfigureAwait(false);
         }
         if (modeVersionId is null)
             return Results.Conflict(new { code = "agent_mode_not_configured", message = "A published Agent Mode must be configured before creating an interaction." });
@@ -295,21 +290,16 @@ public static class InteractionsEndpoints
         // A disabled pack fails explicitly: the run must not silently fall back to
         // a different roster than the one the user is looking at. The client is
         // told which pack to re-enable (or to pick another mode).
-        await using (var guard = await cfgFactory.CreateDbContextAsync(ct))
+        var ownerPack = await AgentConfigurationLookup.FindPackAsync(cfgFactory, globalConfig,
+            session.TenantId, session.WorkspaceId, modeVersionId.Value, ct).ConfigureAwait(false);
+        if (ownerPack is { } owner && !string.Equals(owner.Status, "active", StringComparison.Ordinal))
         {
-            var ownerPack = await (from mode in guard.AgentModes.AsNoTracking()
-                                   join version in guard.ModeVersions.AsNoTracking() on mode.Id equals version.AgentModeId
-                                   join resource in guard.AgentPackManagedResources.AsNoTracking() on mode.Id equals resource.LogicalEntityId
-                                   join installation in guard.AgentPackInstallations.AsNoTracking() on resource.InstallationId equals installation.Id
-                                   where version.Id == modeVersionId.Value && version.Status == "published"
-                                   select new { installation.PackId, installation.Status }).FirstOrDefaultAsync(ct);
-            if (ownerPack is not null && !string.Equals(ownerPack.Status, "active", StringComparison.Ordinal))
-                return Results.Conflict(new
-                {
-                    code = "pack_disabled",
-                    message = $"Agent pack '{ownerPack.PackId}' is disabled. Enable it or choose a mode from an enabled pack.",
-                    pack_id = ownerPack.PackId
-                });
+            return Results.Conflict(new
+            {
+                code = "pack_disabled",
+                message = $"Agent pack '{owner.PackId}' is disabled. Enable it or choose a mode from an enabled pack.",
+                pack_id = owner.PackId
+            });
         }
 
         if (dispatchMode == "insert" && (hasExplicitModelOverride || clearModelOverride))

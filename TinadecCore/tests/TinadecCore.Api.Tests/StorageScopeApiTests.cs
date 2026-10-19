@@ -3,9 +3,12 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.Persistence;
 using TinadecCore.Runtime;
 
@@ -57,6 +60,78 @@ public sealed class StorageScopeApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await client.SendAsync(unknown)).StatusCode);
         var aggregate = await client.GetFromJsonAsync<JsonElement>("/api/v1/sessions");
         Assert.Contains(aggregate.EnumerateArray(), x => x.GetProperty("id").GetString() == session.GetProperty("id").GetString() && x.GetProperty("storage_id").GetString() == a.GetProperty("storage_id").GetString());
+    }
+
+    [Fact]
+    public async Task AgentPacksAreGlobal_AndAProjectSessionUsesTheUsersPublishedMode()
+    {
+        using var client = _factory!.CreateClient();
+        // Open the project first, so it has the pre-upgrade local catalog users
+        // actually have. The global pack install must not depend on reinitializing it.
+        var project = await OpenAsync(client, "global-pack");
+        var storageId = project.GetProperty("storage_id").GetString()!;
+        var projectId = project.GetProperty("project_id").GetString()!;
+        var graphPath = FindRepositoryFile("apps", "desktop", "src", "agentPacks", "GraphSeedPack", "manifest.json");
+        var envelope = AgentPackService.CreateEnvelope(
+            JsonSerializer.Deserialize<AgentPackManifestDto>(
+                await File.ReadAllTextAsync(graphPath),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))!);
+        var packs = _factory.Services.GetRequiredService<IAgentPackService>();
+        var preview = await packs.PreviewAsync(envelope);
+        Assert.Contains(preview.Action, new[] { "install", "upgrade", "up_to_date" });
+        if (preview.Action is "install" or "upgrade")
+        {
+            await packs.ApplyAsync(preview.PackId,
+                new AgentPackApplyRequestDto { PreviewId = preview.PreviewId, Envelope = envelope },
+                preview.Revision, "storage-scope-global-pack");
+        }
+
+        var userConfig = _factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>();
+        Guid modeVersionId;
+        await using (var user = await userConfig.CreateDbContextAsync())
+        {
+            var correction = await user.AgentModes.AsNoTracking().SingleAsync(mode => mode.Slug == "correction");
+            modeVersionId = await user.ModeVersions.AsNoTracking()
+                .Where(version => version.AgentModeId == correction.Id && version.Status == "published")
+                .OrderByDescending(version => version.Version)
+                .Select(version => version.Id)
+                .FirstAsync();
+        }
+
+        using var create = new HttpRequestMessage(HttpMethod.Post, "/api/v1/sessions")
+        {
+            Content = JsonContent.Create(new { project_id = projectId, title = "Global mode session", mode_version_id = modeVersionId })
+        };
+        create.Headers.Add("X-Tinadec-Storage-Id", storageId);
+        var createdResponse = await client.SendAsync(create);
+        Assert.True(createdResponse.IsSuccessStatusCode, await ExplainAsync(createdResponse));
+        var session = await createdResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        Assert.Equal(modeVersionId, session.GetProperty("mode_version_id").GetGuid());
+
+        var registry = _factory.Services.GetRequiredService<IStorageScopeRegistry>();
+        await using var projectLease = await registry.AcquireAsync(storageId);
+        await using (var projectConfig = await projectLease.Services
+            .GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync())
+        {
+            Assert.False(await projectConfig.ModeVersions.AsNoTracking().AnyAsync(version => version.Id == modeVersionId));
+            Assert.False(await projectConfig.AgentPackInstallations.AsNoTracking()
+                .AnyAsync(pack => pack.PackId == "tinadec.graph.seed-pack"));
+        }
+        var roster = await projectLease.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterForModeAsync(sessionId, modeVersionId);
+        Assert.NotNull(roster);
+        Assert.Equal("meeting", roster.ConversationTemplateSlug);
+        Assert.Contains(roster.Operation, node => node.Id == "meeting");
+
+        using var globalPacks = new HttpRequestMessage(HttpMethod.Get, "/api/v1/agent-packs");
+        globalPacks.Headers.Add("X-Tinadec-Storage-Id", storageId);
+        var globalPacksResponse = await client.SendAsync(globalPacks);
+        Assert.True(globalPacksResponse.IsSuccessStatusCode, await ExplainAsync(globalPacksResponse));
+        var installed = await globalPacksResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains(installed.EnumerateArray(), pack =>
+            pack.GetProperty("pack_id").GetString() == "tinadec.graph.seed-pack"
+            && pack.GetProperty("active_version").GetString() == "3.1.1");
     }
 
     [Fact]
@@ -470,6 +545,16 @@ public sealed class StorageScopeApiTests : IAsyncLifetime
     /// </summary>
     private async Task<string> ExplainAsync(HttpResponseMessage response)
         => $"{await response.Content.ReadAsStringAsync()} | server cause: {_factory!.LastFailure()}";
+
+    private static string FindRepositoryFile(params string[] segments)
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            var candidate = Path.Combine([directory.FullName, .. segments]);
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException("Repository test resource was not found: " + Path.Combine(segments));
+    }
 
     private async Task<JsonElement> OpenAsync(HttpClient client, string name)
     {

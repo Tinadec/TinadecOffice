@@ -10,7 +10,8 @@ namespace TinadecCore.Runtime;
 
 internal sealed class TinaChatIdentityBoundary(
     IDbContextFactory<TenancyDbContext> tenants,
-    IDbContextFactory<AgentConfigurationDbContext> agents) : ITinaChatIdentityBoundary
+    IDbContextFactory<AgentConfigurationDbContext> agents,
+    GlobalAgentConfiguration globalConfiguration) : ITinaChatIdentityBoundary
 {
     public Task<bool> IsWorkspaceMemberAsync(Guid tenantId, Guid workspaceId, Guid principalId, CancellationToken ct) =>
         MembershipAsync(tenantId, workspaceId, principalId, administrator: false, ct);
@@ -35,6 +36,12 @@ internal sealed class TinaChatIdentityBoundary(
 
     public async Task<bool> IsAgentDefinitionAvailableAsync(Guid tenantId, Guid workspaceId, Guid definitionId, CancellationToken ct)
     {
+        if (!ReferenceEquals(agents, globalConfiguration.Factory))
+        {
+            await using var global = await globalConfiguration.Factory.CreateDbContextAsync(ct);
+            if (await global.AgentDefinitions.AnyAsync(x => x.Id == definitionId && x.TenantId == tenantId && x.WorkspaceId == workspaceId
+                && x.Enabled && x.ArchivedAt == null, ct)) return true;
+        }
         await using var db = await agents.CreateDbContextAsync(ct);
         return await db.AgentDefinitions.AnyAsync(x => x.Id == definitionId && x.TenantId == tenantId && x.WorkspaceId == workspaceId
             && x.Enabled && x.ArchivedAt == null, ct);
@@ -46,6 +53,7 @@ internal sealed class TinaChatRunService(
     ITinaChatService chat,
     ITenantContextAccessor tenant,
     IDbContextFactory<AgentConfigurationDbContext> configuration,
+    GlobalAgentConfiguration globalConfiguration,
     ProjectSessionStore sessions,
     IFullDuplexRunCoordinator coordinator) : ITinaChatRunService
 {
@@ -53,17 +61,17 @@ internal sealed class TinaChatRunService(
     {
         var scope = tenant.Current;
         ConversationIdentityResolver.ConversationIdentity conversationIdentity;
-        await using (var db = await configuration.CreateDbContextAsync(ct))
+        var modeFactory = await AgentConfigurationLookup.SelectModeFactoryAsync(
+            configuration, globalConfiguration, scope.TenantId, scope.WorkspaceId, request.ModeVersionId, ct);
+        await using (var db = await modeFactory.CreateDbContextAsync(ct))
         {
             var mode = await db.ModeVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == request.ModeVersionId
                 && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "published", ct)
                 ?? throw new TinaChatException(400, "invalid_mode_version", "Execution requires a published mode in the receiving workspace.");
-            var ownerPack = await (from resource in db.AgentPackManagedResources.AsNoTracking()
-                                   join installation in db.AgentPackInstallations.AsNoTracking() on resource.InstallationId equals installation.Id
-                                   where resource.LogicalEntityId == mode.AgentModeId
-                                   select new { installation.PackId, installation.Status }).FirstOrDefaultAsync(ct);
-            if (ownerPack is not null && ownerPack.Status != "active")
-                throw new TinaChatException(409, "pack_disabled", $"Agent pack '{ownerPack.PackId}' is disabled. Enable it before admitting a handoff.");
+            var ownerPack = await AgentConfigurationLookup.FindPackAsync(configuration, globalConfiguration,
+                scope.TenantId, scope.WorkspaceId, request.ModeVersionId, ct);
+            if (ownerPack is { } owner && owner.Status != "active")
+                throw new TinaChatException(409, "pack_disabled", $"Agent pack '{owner.PackId}' is disabled. Enable it before admitting a handoff.");
             var definitions = await db.AgentDefinitions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
                 .Select(x => new ConversationIdentityResolver.DefinitionInput(x.Id, x.Slug, x.Layer, x.CapabilitiesJson)).ToListAsync(ct);
             conversationIdentity = ConversationIdentityResolver.Resolve(mode.SnapshotJson, definitions)

@@ -21,7 +21,8 @@ internal sealed class TinaChatHandoffGateway(
     ITinaChatToolGateway inner,
     ITinaChatRunService runs,
     ITenantContextAccessor tenant,
-    IDbContextFactory<AgentConfigurationDbContext> configuration) : ITinaChatToolGateway
+    IDbContextFactory<AgentConfigurationDbContext> configuration,
+    GlobalAgentConfiguration globalConfiguration) : ITinaChatToolGateway
 {
     public const string HandoffToolId = "tina_chat_execute_intent";
 
@@ -68,10 +69,9 @@ internal sealed class TinaChatHandoffGateway(
         if (current.TenantId != call.TenantId || current.WorkspaceId != call.WorkspaceId)
             throw new TinaChatException(403, "tina_chat_scope_mismatch",
                 "This run's workspace is not the one the handoff path is authorised for, so no mode can be resolved for it.");
-        await using var db = await configuration.CreateDbContextAsync(ct);
-        var defaults = await db.WorkspaceDefaults.AsNoTracking().SingleOrDefaultAsync(
-            x => x.TenantId == call.TenantId && x.WorkspaceId == call.WorkspaceId && x.Status == "active", ct);
-        return defaults?.DefaultModeVersionId ?? throw new TinaChatException(409, "agent_mode_not_configured",
+        var defaultModeVersionId = await AgentConfigurationLookup.GetDefaultModeVersionIdAsync(
+            configuration, globalConfiguration, call.TenantId, call.WorkspaceId, ct);
+        return defaultModeVersionId ?? throw new TinaChatException(409, "agent_mode_not_configured",
             "This workspace has no published default mode, so tina_chat_execute_intent needs an explicit mode_version_id.");
     }
 

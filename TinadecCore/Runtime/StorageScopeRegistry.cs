@@ -433,6 +433,9 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
         services.AddTinadecPersistence(configuration, scope.Root);
         services.AddTinadecCore();
         _registerHttp(services);
+        // Agent packs are installed once in the user scope. Project runtimes keep
+        // project sessions/runs but resolve pack modes from this host-owned source.
+        services.Replace(ServiceDescriptor.Singleton(_host.GetRequiredService<GlobalAgentConfiguration>()));
         var policy = new HostProjectWritePolicy(registration.AllowStorageWrite);
         services.Replace(ServiceDescriptor.Singleton<IProjectStorageWritePolicy>(policy));
         services.Replace(ServiceDescriptor.Singleton<ISecretStore>(_host.GetRequiredService<ISecretStore>()));

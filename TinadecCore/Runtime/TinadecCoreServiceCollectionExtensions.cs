@@ -67,7 +67,8 @@ public static class TinadecCoreServiceCollectionExtensions
             sp.GetRequiredService<TinaChatService>(),
             sp.GetRequiredService<ITinaChatRunService>(),
             sp.GetRequiredService<ITenantContextAccessor>(),
-            sp.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>())));
+            sp.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>(),
+            sp.GetRequiredService<GlobalAgentConfiguration>())));
         // The session as a graph (runs, instances, tasks, leases, organization members): composed here
         // because only the host reads across those modules. Serves graph_view and the topology endpoint.
         services.AddSingleton<ISessionTopology, SessionTopologyService>();
@@ -85,6 +86,7 @@ public static class TinadecCoreServiceCollectionExtensions
         // packageable. The composition root replaces its fail-closed placeholder
         // with the Core-state resolver only in the full runtime.
         services.Replace(ServiceDescriptor.Singleton<IAuthorizationContextResolver, CoreAuthorizationContextResolver>());
+        services.AddSingleton<GlobalAgentConfiguration>();
         services.AddSingleton<TinadecCore.Abstractions.Ports.IFormalModeResolver, FormalModeResolver>();
         services.AddSingleton<IAgentModelResolver, AgentModelResolver>();
         // The pack purge reaches the run/memory stores through this port so

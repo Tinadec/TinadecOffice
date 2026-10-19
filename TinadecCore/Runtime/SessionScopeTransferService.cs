@@ -259,12 +259,17 @@ public sealed class SessionScopeTransferService : ISessionScopeTransferService, 
     private static async Task RebindFutureConfigurationAsync(IServiceProvider target, SessionDataGraph graph, CancellationToken cancellationToken)
     {
         var session = graph.Entities.SelectMany(e => e.Rows).OfType<SessionRecord>().Single();
-        await using var cfg = await target.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var modeId = await cfg.WorkspaceDefaults.AsNoTracking().Where(d => d.TenantId == session.TenantId && d.WorkspaceId == session.WorkspaceId
-            && d.Status == "active" && d.ArchivedAt == null).Select(d => d.DefaultModeVersionId).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-        var mode = modeId is null ? null : await cfg.ModeVersions.AsNoTracking().SingleOrDefaultAsync(m => m.Id == modeId
-            && m.TenantId == session.TenantId && m.WorkspaceId == session.WorkspaceId && m.Status == "published", cancellationToken).ConfigureAwait(false);
-        if (mode is null) throw new InvalidOperationException("Publish a default Agent Mode in the destination project before moving this session.");
+        var local = target.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>();
+        var global = target.GetRequiredService<GlobalAgentConfiguration>();
+        var modeId = await AgentConfigurationLookup.GetDefaultModeVersionIdAsync(
+            local, global, session.TenantId, session.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Publish a default Agent Mode in the destination project before moving this session.");
+        var modeFactory = await AgentConfigurationLookup.SelectModeFactoryAsync(
+            local, global, session.TenantId, session.WorkspaceId, modeId, cancellationToken).ConfigureAwait(false);
+        await using var cfg = await modeFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var mode = await cfg.ModeVersions.AsNoTracking().SingleOrDefaultAsync(m => m.Id == modeId
+            && m.TenantId == session.TenantId && m.WorkspaceId == session.WorkspaceId && m.Status == "published", cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The destination default Agent Mode is unavailable.");
         var definitions = await cfg.AgentDefinitions.AsNoTracking().Where(a => a.TenantId == session.TenantId && a.WorkspaceId == session.WorkspaceId)
             .Select(a => new ConversationIdentityResolver.DefinitionInput(a.Id, a.Slug, a.Layer, a.CapabilitiesJson)).ToListAsync(cancellationToken).ConfigureAwait(false);
         var identity = ConversationIdentityResolver.Resolve(mode.SnapshotJson, definitions)

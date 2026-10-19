@@ -38,7 +38,11 @@ public static class StorageScopeHttpExtensions
         var registry = context.RequestServices.GetRequiredService<IStorageScopeRegistry>();
         var ids = context.Request.Headers[StorageHeader];
         if (ids.Count > 1) { await ErrorAsync(context, 400, "invalid_storage_scope", "Exactly one storage scope header is allowed."); return; }
-        var id = ids.Count == 0 ? "user" : ids.ToString();
+        // Agent packs are installed once for the application. A project header must
+        // never create a second, divergent pack installation inside that project.
+        var id = context.Request.Path.StartsWithSegments("/api/v1/agent-packs")
+            ? "user"
+            : ids.Count == 0 ? "user" : ids.ToString();
         try
         {
             var runControl = context.Request.Path.StartsWithSegments("/api/v1/runs")

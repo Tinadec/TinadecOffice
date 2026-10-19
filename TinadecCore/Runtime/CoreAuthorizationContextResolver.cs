@@ -18,17 +18,20 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
     private readonly ILifecycleManager _lifecycle;
     private readonly IDbContextFactory<AgentControlDbContext> _instances;
     private readonly IDbContextFactory<AgentConfigurationDbContext> _configuration;
+    private readonly GlobalAgentConfiguration _globalConfiguration;
     private readonly IContentStore _content;
 
     public CoreAuthorizationContextResolver(
         ILifecycleManager lifecycle,
         IDbContextFactory<AgentControlDbContext> instances,
         IDbContextFactory<AgentConfigurationDbContext> configuration,
+        GlobalAgentConfiguration globalConfiguration,
         IContentStore content)
     {
         _lifecycle = lifecycle;
         _instances = instances;
         _configuration = configuration;
+        _globalConfiguration = globalConfiguration;
         _content = content;
     }
 
@@ -120,10 +123,8 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
 
         if (instance.AgentVersionId is { } versionId && versionId != Guid.Empty)
         {
-            await using var cfg = await _configuration.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var version = await cfg.AgentVersions.AsNoTracking().SingleOrDefaultAsync(x =>
-                x.Id == versionId && x.AgentDefinitionId == instance.AgentDefinitionId && x.Status == "published"
-                && x.TenantId == request.TenantId && x.WorkspaceId == request.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            var version = await FindAgentVersionAsync(instance.AgentDefinitionId, versionId,
+                request.TenantId, request.WorkspaceId, cancellationToken).ConfigureAwait(false);
             if (version is not null)
             {
                 if (!string.Equals(instance.AgentVersionHash, version.ContentHash, StringComparison.OrdinalIgnoreCase))
@@ -168,6 +169,28 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
         }
 
         return rules;
+    }
+
+    private async Task<AgentVersionRecord?> FindAgentVersionAsync(
+        Guid definitionId,
+        Guid versionId,
+        Guid tenantId,
+        Guid workspaceId,
+        CancellationToken cancellationToken)
+    {
+        if (!ReferenceEquals(_configuration, _globalConfiguration.Factory))
+        {
+            await using var global = await _globalConfiguration.Factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var found = await global.AgentVersions.AsNoTracking().FirstOrDefaultAsync(x =>
+                x.Id == versionId && x.AgentDefinitionId == definitionId && x.Status == "published"
+                && x.TenantId == tenantId && x.WorkspaceId == workspaceId, cancellationToken).ConfigureAwait(false);
+            if (found is not null) return found;
+        }
+
+        await using var cfg = await _configuration.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await cfg.AgentVersions.AsNoTracking().FirstOrDefaultAsync(x =>
+            x.Id == versionId && x.AgentDefinitionId == definitionId && x.Status == "published"
+            && x.TenantId == tenantId && x.WorkspaceId == workspaceId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<Guid?> ResolveAgentVersionIdAsync(Guid tenantId, Guid workspaceId, Guid agentInstanceId, CancellationToken cancellationToken = default)
