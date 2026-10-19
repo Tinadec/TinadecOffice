@@ -109,32 +109,72 @@ public static class CorrectionEndpoints
         var requestId = body!.ClientRequestId!.Trim();
         var note = string.IsNullOrWhiteSpace(body.Note) ? null : Bound(body.Note.Trim(), 2000);
         var idempotencyKey = $"correction-feedback:{runId}:{requestId}";
-        var loaded = await LoadAsync(runId, lifecycle, cancellationToken).ConfigureAwait(false);
-        if (loaded.Error is not null) return loaded.Error;
-        var sourceRun = loaded.Run!;
-        var policy = loaded.Configuration!.RuntimePolicy!;
-        var trace = loaded.Checkpoint!.Correction!;
-        var replay = string.Equals(trace.LastFeedbackRequestId, requestId, StringComparison.Ordinal);
-        if (replay && (
-            !string.Equals(trace.LastFeedbackKind, kind, StringComparison.Ordinal)
-            || !string.Equals(trace.LastFeedbackNote, note, StringComparison.Ordinal)))
-        {
-            return Conflict("idempotency_key_reused", "This client_request_id was already used with different feedback.");
-        }
+        var first = await MutateLatestAsync(
+            runId,
+            lifecycle,
+            (sourceRun, configuration, checkpoint) =>
+            {
+                var policy = configuration.RuntimePolicy!;
+                var trace = checkpoint.Correction!;
+                var replay = string.Equals(trace.LastFeedbackRequestId, requestId, StringComparison.Ordinal);
+                if (replay && (
+                    !string.Equals(trace.LastFeedbackKind, kind, StringComparison.Ordinal)
+                    || !string.Equals(trace.LastFeedbackNote, note, StringComparison.Ordinal)))
+                {
+                    return Conflict("idempotency_key_reused", "This client_request_id was already used with different feedback.");
+                }
 
+                if (kind == "resolved")
+                {
+                    if (replay)
+                        return Results.Ok(new { run_id = runId, status = "resolved", trace = trace.ToDto() });
+                    if (!CorrectionRuntimePolicy.Has(policy, CorrectionRuntimePolicy.CompletionContractFeature)
+                        || trace.Completion.Requirement != "user")
+                        return Conflict("correction_user_authority_required", "This correction can only be resolved by its required machine verification.");
+                    trace.LastFeedbackRequestId = requestId;
+                    trace.LastFeedbackKind = kind;
+                    trace.LastFeedbackNote = note;
+                    CorrectionTracePolicy.MarkUserResolved(trace, note);
+                    checkpoint.Phase = sourceRun.Status == RunStatus.Completed ? "completed" : "finalizing";
+                    return null;
+                }
+
+                if (!CorrectionRuntimePolicy.Has(policy, CorrectionRuntimePolicy.UserReproductionReopensFeature))
+                    return Conflict("correction_reopen_not_enabled", "This mode does not enable user reproduction reopening.");
+                if (replay && trace.ReopenedRunId is { } existingRunId)
+                {
+                    return Results.Accepted($"/api/v1/runs/{existingRunId}/correction",
+                        new
+                        {
+                            run_id = existingRunId,
+                            turn_id = trace.ReopenedTurnId,
+                            episode_id = trace.EpisodeId,
+                            status = "reopened",
+                        });
+                }
+                if (sourceRun.Status != RunStatus.Completed)
+                    return Conflict("correction_not_completed", "Only a completed correction can be reopened by user reproduction.");
+                if (!replay)
+                {
+                    trace.LastFeedbackRequestId = requestId;
+                    trace.LastFeedbackKind = kind;
+                    trace.LastFeedbackNote = note;
+                    CorrectionTracePolicy.Reopen(trace, note ?? string.Empty);
+                }
+                return null;
+            },
+            kind == "resolved" ? "correction-user-resolved" : "correction-reopened",
+            cancellationToken,
+            idempotencyKey).ConfigureAwait(false);
+        if (first.Response is not null) return first.Response;
+
+        var sourceRun = first.Run!;
+        var configuration = first.Configuration!;
+        var checkpoint = first.Checkpoint!;
+        var saved = first.Saved!;
+        var trace = checkpoint.Correction!;
         if (kind == "resolved")
         {
-            if (replay)
-                return Results.Ok(new { run_id = runId, status = "resolved", trace = trace.ToDto() });
-            if (!CorrectionRuntimePolicy.Has(policy, CorrectionRuntimePolicy.CompletionContractFeature)
-                || loaded.Checkpoint!.Correction!.Completion.Requirement != "user")
-                return Conflict("correction_user_authority_required", "This correction can only be resolved by its required machine verification.");
-            trace.LastFeedbackRequestId = requestId;
-            trace.LastFeedbackKind = kind;
-            trace.LastFeedbackNote = note;
-            CorrectionTracePolicy.MarkUserResolved(trace, note);
-            loaded.Checkpoint.Phase = sourceRun.Status == RunStatus.Completed ? "completed" : "finalizing";
-            var saved = await SaveAsync(runId, lifecycle, loaded.Checkpoint, "correction-user-resolved", cancellationToken, idempotencyKey).ConfigureAwait(false);
             await lifecycle.AppendEventAsync(runId, "correction.feedback.received",
                 new { run_id = runId, kind, note, trace = trace.ToDto() },
                 "User confirmed the correction.",
@@ -148,35 +188,9 @@ public static class CorrectionEndpoints
             return Results.Ok(new { run_id = runId, status = "resolved", revision = saved.Revision, trace = trace.ToDto() });
         }
 
-        if (!CorrectionRuntimePolicy.Has(policy, CorrectionRuntimePolicy.UserReproductionReopensFeature))
-            return Conflict("correction_reopen_not_enabled", "This mode does not enable user reproduction reopening.");
-        if (replay && trace.ReopenedRunId is { } existingRunId)
-        {
-            return Results.Accepted($"/api/v1/runs/{existingRunId}/correction",
-                new
-                {
-                    run_id = existingRunId,
-                    turn_id = trace.ReopenedTurnId,
-                    episode_id = trace.EpisodeId,
-                    status = "reopened",
-                });
-        }
-        if (!replay)
-        {
-            if (sourceRun.Status != RunStatus.Completed)
-                return Conflict("correction_not_completed", "Only a completed correction can be reopened by user reproduction.");
-            trace.LastFeedbackRequestId = requestId;
-            trace.LastFeedbackKind = kind;
-            trace.LastFeedbackNote = note;
-            CorrectionTracePolicy.Reopen(trace, note ?? string.Empty);
-            if (CorrectionRuntimePolicy.Has(policy, CorrectionRuntimePolicy.LocalHunkRevertFeature))
-            {
-                var rollback = await TryRollbackAsync(trace, snapshots, cancellationToken).ConfigureAwait(false);
-                if (rollback is not null) trace.Reason = rollback;
-            }
-            var saved = await SaveAsync(runId, lifecycle, loaded.Checkpoint, "correction-reopened", cancellationToken, idempotencyKey).ConfigureAwait(false);
-            loaded.Checkpoint.CheckpointRevision = saved.Revision;
-        }
+        string? rollback = null;
+        if (CorrectionRuntimePolicy.Has(configuration.RuntimePolicy, CorrectionRuntimePolicy.LocalHunkRevertFeature))
+            rollback = await TryRollbackAsync(trace, snapshots, cancellationToken).ConfigureAwait(false);
         await lifecycle.AppendEventAsync(runId, "correction.feedback.received",
             new { run_id = runId, kind, note, trace = trace.ToDto() },
             "User reported that the symptom still reproduces.",
@@ -190,24 +204,82 @@ public static class CorrectionEndpoints
             sourceRun.PermissionMode,
             TargetRunId: null,
             ExpectedContextRevision: null,
-            ModeVersionId: loaded.Configuration.ModeVersionId,
+            ModeVersionId: configuration.ModeVersionId,
             ParentRunId: runId,
             RunKind: "correction_reopen",
             SessionSettingsCaptured: true), cancellationToken).ConfigureAwait(false);
-        trace.ReopenedRunId = submitted.RunId;
-        trace.ReopenedTurnId = submitted.TurnId;
-        trace.Revision++;
-        trace.UpdatedAt = DateTimeOffset.UtcNow;
-        var linked = await SaveAsync(runId, lifecycle, loaded.Checkpoint, "correction-reopened-linked", cancellationToken,
+        var linked = await MutateLatestAsync(
+            runId,
+            lifecycle,
+            (_, _, latest) =>
+            {
+                var latestTrace = latest.Correction!;
+                if (!string.Equals(latestTrace.LastFeedbackRequestId, requestId, StringComparison.Ordinal))
+                    return Conflict("correction_feedback_superseded", "A newer correction feedback request superseded this one.");
+                latestTrace.ReopenedRunId = submitted.RunId;
+                latestTrace.ReopenedTurnId = submitted.TurnId;
+                if (rollback is not null) latestTrace.Reason = rollback;
+                latestTrace.Revision++;
+                latestTrace.UpdatedAt = DateTimeOffset.UtcNow;
+                return null;
+            },
+            "correction-reopened-linked",
+            cancellationToken,
             $"{idempotencyKey}:reopened").ConfigureAwait(false);
-        loaded.Checkpoint.CheckpointRevision = linked.Revision;
+        if (linked.Response is not null) return linked.Response;
         await lifecycle.AppendEventAsync(runId, "correction.episode.reopened",
-            new { run_id = runId, reopened_run_id = submitted.RunId, episode_id = trace.EpisodeId },
+            new { run_id = runId, reopened_run_id = submitted.RunId, episode_id = linked.Checkpoint!.Correction!.EpisodeId },
             "Correction episode reopened.",
             cancellationToken: cancellationToken,
             idempotencyKey: $"correction-reopened:{runId}:{submitted.RunId}").ConfigureAwait(false);
         return Results.Accepted($"/api/v1/runs/{submitted.RunId}/correction",
-            new { run_id = submitted.RunId, turn_id = submitted.TurnId, episode_id = loaded.Checkpoint.Correction!.EpisodeId, status = "reopened" });
+            new { run_id = submitted.RunId, turn_id = submitted.TurnId, episode_id = linked.Checkpoint.Correction.EpisodeId, status = "reopened" });
+    }
+
+    private static async Task<(
+        RunState? Run,
+        FrozenRunConfigurationV1? Configuration,
+        FullDuplexCheckpointV1? Checkpoint,
+        RunCheckpoint? Saved,
+        IResult? Response)> MutateLatestAsync(
+        Guid runId,
+        ILifecycleManager lifecycle,
+        Func<RunState, FrozenRunConfigurationV1, FullDuplexCheckpointV1, IResult?> mutate,
+        string purpose,
+        CancellationToken cancellationToken,
+        string? idempotencyKey = null)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var loaded = await LoadAsync(runId, lifecycle, cancellationToken).ConfigureAwait(false);
+            if (loaded.Error is not null)
+                return (loaded.Run, loaded.Configuration, loaded.Checkpoint, null, loaded.Error);
+            var response = mutate(loaded.Run!, loaded.Configuration!, loaded.Checkpoint!);
+            if (response is not null)
+                return (loaded.Run, loaded.Configuration, loaded.Checkpoint, null, response);
+            try
+            {
+                var saved = await SaveAsync(
+                    runId,
+                    lifecycle,
+                    loaded.Checkpoint!,
+                    purpose,
+                    cancellationToken,
+                    idempotencyKey).ConfigureAwait(false);
+                loaded.Checkpoint!.CheckpointRevision = saved.Revision;
+                return (loaded.Run, loaded.Configuration, loaded.Checkpoint, saved, null);
+            }
+            catch (RunCheckpointConflictException) when (attempt < 4)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), cancellationToken).ConfigureAwait(false);
+            }
+            catch (RunCheckpointConflictException)
+            {
+                return (loaded.Run, loaded.Configuration, loaded.Checkpoint, null,
+                    Conflict("correction_checkpoint_conflict", "The correction changed while feedback was being recorded. Retry the request."));
+            }
+        }
+        throw new InvalidOperationException("Correction feedback retry loop exited without a result.");
     }
 
     private static async Task<(RunState? Run, FullDuplexCheckpointV1? Checkpoint, FrozenRunConfigurationV1? Configuration, IResult? Error)>
