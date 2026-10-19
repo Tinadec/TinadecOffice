@@ -3,7 +3,7 @@ import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import http from "http";
 import { ensureFreshViteCache, installedVersionResolver } from "./viteCacheGuard.mjs";
-import { developmentEnvironment } from "./developmentEnvironment.mjs";
+import { developmentCdpPort, developmentEnvironment } from "./developmentEnvironment.mjs";
 import { developmentBackendIsReady } from "./backendReadiness.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +17,8 @@ const cacheDecision = ensureFreshViteCache({ appRoot: rootDir, resolveVersion: i
 if (cacheDecision.action === "wiped") {
   console.log(`[dev] Cleared node_modules/.vite (dependency stamp ${cacheDecision.reason}).`);
 }
+const cdpPort = developmentCdpPort();
+if (cdpPort) console.log(`[dev] Electron CDP enabled on loopback port ${cdpPort}.`);
 
 function createSpawnOpts(extraEnv = {}, trustedHost = false) {
   const env = developmentEnvironment(extraEnv, trustedHost);
@@ -161,9 +163,16 @@ async function main() {
     ? "[dev] Vite and the shared backend are ready, starting Electron..."
     : "[dev] Vite is ready, starting the Electron recovery interface...");
 
-  const electronProcess = isWindows
-    ? spawn("npx electron .", [], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true))
-    : spawn("npx", ["electron", "."], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true));
+  const electronArgs = [
+    "electron",
+    ...(cdpPort ? [`--remote-debugging-port=${cdpPort}`] : []),
+    ".",
+  ];
+  const electronProcess = spawn(
+    "npx",
+    electronArgs,
+    createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true),
+  );
 
   electronProcess.stdout.on("data", (data) => {
     process.stdout.write(`[electron] ${data}`);
