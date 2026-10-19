@@ -47,3 +47,23 @@ test('both managed endpoints must prove their own role before the host becomes t
     return fetchImpl(url);
   } }), /gateway cannot prove/);
 });
+
+test('an isolated host accepts only its declared Core/Gateway ports', async () => {
+  const fetchImpl = async url => {
+    const request = new URL(url);
+    const role = request.port === '48741' ? 'core' : 'gateway';
+    const value = request.searchParams.get('nonce');
+    return Response.json({ role, nonce: value, proof: proof(role, token, value) });
+  };
+  const environment = {
+    TINADEC_CORE_URL: 'http://127.0.0.1:48741',
+    TINADEC_GATEWAY_URL: 'http://127.0.0.1:48740',
+    TINADEC_MANAGED_API_PORTS: '48740,48741',
+  };
+
+  assert.equal(await verifyManagedHost(token, { fetchImpl, environment }), true);
+  await assert.rejects(
+    verifyHostIdentity('http://127.0.0.1:48742', 'core', token, { fetchImpl, environment }),
+    /managed local/,
+  );
+});

@@ -2,11 +2,37 @@ const { createHmac, randomBytes, timingSafeEqual } = require('node:crypto');
 
 function identityError(code, message) { return Object.assign(new Error(message), { code }); }
 
-async function verifyHostIdentity(baseUrl, role, token, { fetchImpl = globalThis.fetch, timeoutMs = 2000, signal, nonceFactory = () => randomBytes(32).toString('base64url') } = {}) {
+function configuredManagedPorts(value) {
+  const values = Array.isArray(value)
+    ? value
+    : String(value ?? '').split(',');
+  return values
+    .map(port => String(port).trim())
+    .filter(port => /^\d{2,5}$/.test(port) && Number(port) > 0 && Number(port) <= 65535);
+}
+
+function allowedManagedPorts(role, options = {}) {
+  const managedPorts = configuredManagedPorts(
+    options.managedPorts
+      ?? options.environment?.TINADEC_MANAGED_API_PORTS
+      ?? process.env.TINADEC_MANAGED_API_PORTS,
+  );
+  if (managedPorts.length > 0) return new Set(managedPorts);
+  return new Set([role === 'core' ? '48731' : role === 'gateway' ? '48730' : '']);
+}
+
+async function verifyHostIdentity(baseUrl, role, token, {
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 2000,
+  signal,
+  nonceFactory = () => randomBytes(32).toString('base64url'),
+  managedPorts,
+  environment,
+} = {}) {
   const endpoint = new URL(baseUrl);
-  const expectedPort = role === 'core' ? '48731' : role === 'gateway' ? '48730' : undefined;
-  if (!expectedPort || endpoint.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(endpoint.hostname)
-    || endpoint.port !== expectedPort || endpoint.username || endpoint.password || endpoint.pathname !== '/' || endpoint.search || endpoint.hash)
+  const expectedPorts = allowedManagedPorts(role, { managedPorts, environment });
+  if (!expectedPorts.has(endpoint.port) || endpoint.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(endpoint.hostname)
+    || endpoint.username || endpoint.password || endpoint.pathname !== '/' || endpoint.search || endpoint.hash)
     throw identityError('host_endpoint_invalid', 'Host identity is limited to the managed local Core/Gateway endpoints.');
   if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43,256}$/.test(token)) throw identityError('host_credential_invalid', 'A trusted startup credential is required to verify the local host.');
   const nonce = nonceFactory();
@@ -25,10 +51,13 @@ async function verifyHostIdentity(baseUrl, role, token, { fetchImpl = globalThis
   return true;
 }
 
-async function verifyManagedHost(token, options) {
+async function verifyManagedHost(token, options = {}) {
+  const environment = options.environment ?? process.env;
+  const coreUrl = options.coreUrl ?? environment.TINADEC_CORE_URL ?? 'http://127.0.0.1:48731';
+  const gatewayUrl = options.gatewayUrl ?? environment.TINADEC_GATEWAY_URL ?? 'http://127.0.0.1:48730';
   await Promise.all([
-    verifyHostIdentity('http://127.0.0.1:48731', 'core', token, options),
-    verifyHostIdentity('http://127.0.0.1:48730', 'gateway', token, options),
+    verifyHostIdentity(coreUrl, 'core', token, options),
+    verifyHostIdentity(gatewayUrl, 'gateway', token, options),
   ]);
   return true;
 }
