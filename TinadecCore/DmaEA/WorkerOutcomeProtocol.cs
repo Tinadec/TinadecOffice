@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace TinadecCore.DmaEA;
 
 /// <summary>
@@ -9,6 +11,20 @@ internal static class WorkerOutcomeProtocol
 {
     internal const string Marker = "TASK_OUTCOME:";
     internal const string CriterionMarker = "CRITERION_EVIDENCE:";
+    private const string TextToolCallSummary =
+        "The worker emitted a tool call as text; tool calls are only accepted as structured function calls.";
+
+    private static readonly Regex DsmlCallBlock = new(
+        @"<[|｜]\s*DSML\s*[|｜]\s*(?<tag>calls|invoke)\b[^>]*>.*?</[|｜]\s*DSML\s*[|｜]\s*\k<tag>\s*>",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
+    private static readonly Regex LegacyCallBlock = new(
+        @"<(?:tool_call|function_call)\b[^>]*>.*?</(?:tool_call|function_call)\s*>",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
+    private static readonly Regex OrphanDsmlTag = new(
+        @"</?[|｜]\s*DSML\s*[|｜]\s*(?:calls|invoke)\b[^>]*>",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     internal const string Instructions =
         "最终一轮不再调用工具时，先按每条成功标准原文各输出一行 "
@@ -29,7 +45,17 @@ internal static class WorkerOutcomeProtocol
 
     internal static Parsed Parse(string? value, bool requireExplicit = false)
     {
-        var text = (value ?? string.Empty).Replace("\r\n", "\n").Trim();
+        var sanitized = SanitizeToolCallMarkup(value);
+        var text = sanitized.Text;
+        if (sanitized.Removed && text.Length == 0)
+        {
+            return new Parsed(
+                "blocked",
+                TextToolCallSummary,
+                Criteria: [],
+                Explicit: false,
+                MissingRequiredMarker: requireExplicit);
+        }
         var lines = text.Split('\n').ToList();
         var lastNonEmpty = lines.FindLastIndex(line => !string.IsNullOrWhiteSpace(line));
         if (lastNonEmpty >= 0)
@@ -76,6 +102,26 @@ internal static class WorkerOutcomeProtocol
         }
         return new Parsed("completed", legacySummary, legacyCriteria, Explicit: false);
     }
+
+    /// <summary>
+    /// Some providers serialize a rejected structured tool call back into the
+    /// assistant text channel. That markup is protocol debris, never evidence,
+    /// and must not reach task summaries or the conversation renderer.
+    /// </summary>
+    internal static SanitizedText SanitizeToolCallMarkup(string? value)
+    {
+        var normalized = (value ?? string.Empty).Replace("\r\n", "\n").Trim();
+        var sanitized = DsmlCallBlock.Replace(normalized, string.Empty);
+        sanitized = LegacyCallBlock.Replace(sanitized, string.Empty);
+        var withoutOrphans = OrphanDsmlTag.Replace(sanitized, string.Empty);
+        var removed = !string.Equals(normalized, withoutOrphans, StringComparison.Ordinal);
+        if (!removed) return new SanitizedText(normalized, false);
+
+        sanitized = Regex.Replace(withoutOrphans, @"\n{3,}", "\n\n").Trim();
+        return new SanitizedText(sanitized, true);
+    }
+
+    internal sealed record SanitizedText(string Text, bool Removed);
 
     private static IReadOnlyList<CriterionEvidence> ExtractCriterionEvidence(List<string> lines)
     {

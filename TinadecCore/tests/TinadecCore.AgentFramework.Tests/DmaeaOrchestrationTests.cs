@@ -301,6 +301,48 @@ public sealed class DmaeaOrchestrationTests
     }
 
     [Fact]
+    public void WorkerOutcomeProtocol_ReplacesPureDsmlToolTextWithABlockedSummary()
+    {
+        const string output = """
+            <｜DSML｜ calls>
+            <｜DSML｜ invoke name="update_correction_trace">
+            <｜DSML｜ parameter name="phase">CONVERGE</｜DSML｜ parameter>
+            </｜DSML｜ invoke>
+            </｜DSML｜ calls>
+            """;
+
+        var parsed = WorkerOutcomeProtocol.Parse(output, requireExplicit: true);
+
+        Assert.Equal("blocked", parsed.Status);
+        Assert.Equal(
+            "The worker emitted a tool call as text; tool calls are only accepted as structured function calls.",
+            parsed.Summary);
+        Assert.DoesNotContain("DSML", parsed.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("update_correction_trace", parsed.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkerOutcomeProtocol_KeepsProseAroundDsmlToolText()
+    {
+        const string output = """
+            已定位求和函数，但预算在复验前耗尽。
+            <｜DSML｜ calls>
+            <｜DSML｜ invoke name="update_correction_trace">
+            <｜DSML｜ parameter name="phase">CONVERGE</｜DSML｜ parameter>
+            </｜DSML｜ invoke>
+            </｜DSML｜ calls>
+            TASK_OUTCOME: blocked
+            """;
+
+        var parsed = WorkerOutcomeProtocol.Parse(output, requireExplicit: true);
+
+        Assert.Equal("blocked", parsed.Status);
+        Assert.Equal("已定位求和函数，但预算在复验前耗尽。", parsed.Summary);
+        Assert.True(parsed.Explicit);
+        Assert.DoesNotContain("DSML", parsed.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TaskOutcomeFacts_OverrideASyntheticPassAndEventuallyEscalate()
     {
         var task = new DurableTaskNode
