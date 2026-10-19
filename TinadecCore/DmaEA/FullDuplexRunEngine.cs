@@ -4322,17 +4322,36 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             }, cancellationToken).ConfigureAwait(false);
         }
         MapCriterionVerdicts(checkpoint, verdict);
-        verdict = EnforceTaskOutcomeFacts(
-            checkpoint.Tasks,
-            verdict,
-            checkpoint.SupervisionRound,
-            configuration.Supervision.MaxRevisionRounds);
-        verdict = EnforceCriterionFacts(
-            checkpoint.Tasks,
-            verdict,
-            checkpoint.SupervisionRound,
-            configuration.Supervision.MaxRevisionRounds,
-            requireSupervisorEvidence: !supervisionSkipped);
+        var correctionCompletionReady = CorrectionRuntimePolicy.Has(
+                configuration.RuntimePolicy,
+                CorrectionRuntimePolicy.CompletionContractFeature)
+            && checkpoint.Correction is not null
+            && CorrectionTracePolicy.EvaluateCompletion(
+                checkpoint.Correction,
+                configuration.RuntimePolicy!,
+                checkpoint.UserGoal,
+                checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0) is null;
+        if (correctionCompletionReady)
+        {
+            verdict = new SupervisionVerdict(
+                SupervisionDecision.Pass,
+                verdict.Reasons.Append("Host correction completion is ready; task closeout status cannot override verified facts.").ToArray(),
+                []);
+        }
+        else
+        {
+            verdict = EnforceTaskOutcomeFacts(
+                checkpoint.Tasks,
+                verdict,
+                checkpoint.SupervisionRound,
+                configuration.Supervision.MaxRevisionRounds);
+            verdict = EnforceCriterionFacts(
+                checkpoint.Tasks,
+                verdict,
+                checkpoint.SupervisionRound,
+                configuration.Supervision.MaxRevisionRounds,
+                requireSupervisorEvidence: !supervisionSkipped);
+        }
         verdict = EnforceRevisionBudget(
             verdict,
             checkpoint.SupervisionRound,
@@ -4421,7 +4440,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "lane-escalation-parked", cancellationToken).ConfigureAwait(false);
         }
         checkpoint.Phase = "finalizing";
-        return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "reviewed", cancellationToken).ConfigureAwait(false);
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "reviewed", cancellationToken).ConfigureAwait(false);
+        if (correctionCompletionReady && checkpoint.Correction is not null)
+            await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, cancellationToken).ConfigureAwait(false);
+        return checkpoint;
     }
 
     /// <summary>

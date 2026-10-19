@@ -110,6 +110,7 @@ public sealed class CorrectionTracePolicyTests
         Assert.Equal("test-pass", trace.Completion.Repro.PassedAfterExecutionId);
         Assert.Null(CorrectionTracePolicy.EvaluateCompletion(trace, Policy, "修复状态恢复，必须跑同一个 test", true));
         Assert.Equal("ready", trace.Completion.Status);
+        Assert.Equal("CONVERGE", trace.Phase);
     }
 
     [Fact]
