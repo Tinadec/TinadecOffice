@@ -698,11 +698,36 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                             var unanswered = checkpoint.Correction.OpenQuestions.Any(question => question.Blocking && question.AnsweredAt is null);
                             if (!unanswered)
                             {
-                                checkpoint.Correction.Status = "investigating";
-                                checkpoint.Correction.Revision++;
-                                checkpoint.Correction.UpdatedAt = DateTimeOffset.UtcNow;
-                                checkpoint.Phase = "executing";
-                                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "correction-resumed", stoppingToken).ConfigureAwait(false);
+                                var completionUnresolved = CorrectionTracePolicy.EvaluateCompletion(
+                                    checkpoint.Correction,
+                                    configuration.RuntimePolicy!,
+                                    checkpoint.UserGoal,
+                                    checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0);
+                                if (completionUnresolved is null)
+                                {
+                                    checkpoint.Correction.Status = "ready";
+                                    checkpoint.Correction.Phase = "CONVERGE";
+                                    checkpoint.Correction.Revision++;
+                                    checkpoint.Correction.UpdatedAt = DateTimeOffset.UtcNow;
+                                    checkpoint.Phase = "finalizing";
+                                    checkpoint = await SaveCheckpointAsync(
+                                        checkpoint,
+                                        checkpoint.CheckpointRevision,
+                                        "correction-finalizing",
+                                        stoppingToken).ConfigureAwait(false);
+                                }
+                                else
+                                {
+                                    checkpoint.Correction.Status = "investigating";
+                                    checkpoint.Correction.Revision++;
+                                    checkpoint.Correction.UpdatedAt = DateTimeOffset.UtcNow;
+                                    checkpoint.Phase = "executing";
+                                    checkpoint = await SaveCheckpointAsync(
+                                        checkpoint,
+                                        checkpoint.CheckpointRevision,
+                                        "correction-resumed",
+                                        stoppingToken).ConfigureAwait(false);
+                                }
                                 await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, stoppingToken).ConfigureAwait(false);
                             }
                             break;
