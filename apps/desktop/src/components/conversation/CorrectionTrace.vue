@@ -19,18 +19,23 @@ const artifacts = computed(() => ({
   modified: props.trace.completion.modifiedArtifacts.length,
   verified: props.trace.completion.verifiedArtifacts.length,
 }))
+const effectiveStatus = computed(() => {
+  if (props.trace.status === 'resolved' || props.trace.status === 'reopened') return props.trace.status
+  if (props.trace.completion.status === 'ready') return 'ready'
+  return props.trace.status
+})
 const phaseLabel = computed(() => t(`conversation.correction.phase.${props.trace.phase.toLowerCase()}`))
 </script>
 
 <template>
-  <details class="conversation-correction" :open="trace.status !== 'resolved'">
+  <details class="conversation-correction" :open="effectiveStatus !== 'resolved'">
     <summary class="conversation-correction-summary">
       <component :is="phaseIcon" :size="13" aria-hidden="true" />
       <span>{{ phaseLabel }}</span>
       <span v-if="trace.summary" class="conversation-correction-muted">{{ trace.summary }}</span>
       <span class="conversation-correction-spacer" />
       <span class="conversation-correction-badge">
-        {{ t(`conversation.correction.status.${trace.status}`, { fallback: trace.status }) }}
+        {{ t(`conversation.correction.status.${effectiveStatus}`, { fallback: effectiveStatus }) }}
       </span>
     </summary>
 
