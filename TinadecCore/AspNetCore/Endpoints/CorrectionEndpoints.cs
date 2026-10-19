@@ -295,6 +295,11 @@ public static class CorrectionEndpoints
             var checkpoint = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(current.Content, FrozenRunConfigurationV1.JsonOptions);
             if (configuration?.RuntimePolicy is null || checkpoint?.Correction is null)
                 return (run, checkpoint, configuration, NotFound("correction_not_found", "This run has no correction trace."));
+            // The durable row revision is the CAS authority. The serialized
+            // checkpoint body can lag it (the engine and event fold update the
+            // row independently), so using the body value turns every retry into
+            // the same stale compare-and-swap.
+            checkpoint.CheckpointRevision = current.Revision;
             return (run, checkpoint, configuration, null);
         }
         catch (KeyNotFoundException)
