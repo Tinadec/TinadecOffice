@@ -756,7 +756,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 }
 
                 last = response;
-                var category = WireErrorCategory(response.Error);
+                var failureMessage = response.FailureMessage;
+                var category = WireErrorCategory(failureMessage);
                 var retry = safeReadRetry && (category is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit) && attempt <= retryLimit;
                 await AppendEventAsync(execution.RunId, "tool.execution.failed", $"Tool '{descriptor.Id}' failed ({category}).", new
                 {
@@ -765,6 +766,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                     tool_id = descriptor.Id,
                     attempt,
                     category,
+                    message = SafeMessage(failureMessage),
                     retryable = retry
                 }, cancellationToken, execution.TaskId, descriptor.Id, retry ? "warning" : "error").ConfigureAwait(false);
                 if (!retry) break;
@@ -777,8 +779,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             if (pump is not null) await pump.CompleteAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
         }
 
-        var finalCategory = WireErrorCategory(last?.Error);
-        var message = SafeMessage(last?.Error);
+        var finalCategory = WireErrorCategory(last?.FailureMessage);
+        var message = SafeMessage(last?.FailureMessage);
         if (execution.MutatesWorkspace && finalCategory is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit)
         {
             // A mutating call that timed out or died may or may not have taken

@@ -502,6 +502,32 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Assert.Equal("warning", Assert.IsType<string>(completedEvent.Payload["severity"]));
     }
 
+    [Fact]
+    public async Task ResumeAsync_WireFailureStringResult_PreservesProviderMessage()
+    {
+        var tools = new[] { Tool("shell") };
+        var provider = new ConfigurableToolProvider(tools, (request, _, _) => Task.FromResult(new ToolWireResponseDto
+        {
+            CallId = request.ToolCallId,
+            IsSuccess = false,
+            Result = JsonSerializer.SerializeToElement("Sandbox credential not found: TinaSbx_453f69f14b00.dat")
+        }));
+        var (dispatcher, _, sessionId, _, execution) = await PrepareReadOnlyExecutionAsync(
+            tools, provider, "disp:wire-failure-message", toolId: "shell");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.Equal("Sandbox credential not found: TinaSbx_453f69f14b00.dat", row.SafeErrorMessage);
+
+        var events = await LifecycleManager().ReplayEventsAsync(sessionId, 0);
+        var failedEvent = Assert.Single(events, e => e.EventType == "tool.execution.failed");
+        var payload = Assert.IsType<JsonElement>(failedEvent.Payload["payload"]);
+        Assert.Equal("Sandbox credential not found: TinaSbx_453f69f14b00.dat", payload.GetProperty("message").GetString());
+    }
+
     // ── Core-owned virtual tools inside a PROJECT-backed session ───────────
 
     [Fact]

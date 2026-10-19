@@ -280,7 +280,7 @@ public static class DirectToolEndpoints
             Data = data,
             RequiresApproval = descriptor.RequiresApproval || descriptor.MutatesWorkspace,
             ApprovalSummary = descriptor.RequiresApproval || descriptor.MutatesWorkspace ? "Use /api/v1/user/tool-actions for governed writes." : null,
-            Error = response.Error
+            Error = response.FailureMessage
         };
 
     private static bool TryValidateManifest(ToolManifestDto manifest, out (string Code, string Message)? error)

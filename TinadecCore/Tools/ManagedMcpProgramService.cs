@@ -76,7 +76,7 @@ public sealed class ManagedMcpProgramService(IMcpResourceRegistry resources, ISc
                     Params = JsonSerializer.SerializeToElement(new { manager = preview.Manager, package = preview.Package, version = preview.Version,
                         package_root = preview.PackageRoot, server_arguments = preview.ServerArguments, plan_hash = preview.PlanHash }) }, TimeSpan.FromMinutes(10), cancellationToken);
                 if (!response.IsSuccess || response.Result is not { } result || !result.TryGetProperty("success", out var success) || !success.GetBoolean())
-                    throw new ToolSettingsException("mcp_program_install_failed", "The approved program installer failed: " + (response.Error ?? response.Result?.ToString()), 409);
+                    throw new ToolSettingsException("mcp_program_install_failed", "The approved program installer failed: " + (response.FailureMessage ?? response.Result?.ToString()), 409);
                 var command = result.GetProperty("launch_command").GetString()!;
                 var args = result.GetProperty("launch_arguments").EnumerateArray().Select(x => x.GetString()!).ToArray();
                 var launchArguments = new TomlArray(); foreach (var arg in args) launchArguments.Add(arg);

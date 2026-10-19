@@ -40,6 +40,21 @@ public sealed class ToolWireResponseDto
 
     [JsonPropertyName("error")]
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Tool handlers historically put a wire-level failure message in `result`
+    /// even though responses also expose `error`. Read both so the durable safe
+    /// message does not collapse to the generic "Tool call failed".
+    /// </summary>
+    [JsonIgnore]
+    public string? FailureMessage =>
+        IsSuccess
+            ? null
+            : !string.IsNullOrWhiteSpace(Error)
+                ? Error
+                : Result is { ValueKind: JsonValueKind.String } result
+                    ? result.GetString()
+                    : null;
 }
 
 /// <summary>
