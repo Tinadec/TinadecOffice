@@ -89,7 +89,10 @@ const commandPage = ref<ComposerPage>('root')
 const modeLabel = ref(t('commandPanel.mode'))
 const modeGlyph = shallowRef<Component>(Layers)
 const modeUnavailable = ref(false)
-const permissionChoice = computed(() => permissionChoices.find(choice => choice.value === props.permission)!)
+// Sessions created by older clients may carry a legacy permission spelling (for
+// example "ask"). Keep the actual permission untouched, but never let the toolbar
+// dereference an undefined choice while rendering that session.
+const permissionChoice = computed(() => permissionChoices.find(choice => choice.value === props.permission) ?? permissionChoices[0])
 const permissionLabel = computed(() => t(permissionChoice.value.label))
 const enabledSpaceLabels = computed(() => props.spatial ? [
   ...composerSettings.filter(setting => 'toggle' in setting && props.spaceOptions?.[setting.toggle]).map(setting => t(setting.label)),

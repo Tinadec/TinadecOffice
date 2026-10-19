@@ -149,7 +149,7 @@ watch([availableModes, () => props.modeVersionId, loading], ([modes, current, bu
   emit('update:modeVersionId', modes[0]!.latest_published_mode_version_id!)
 })
 const workflowName = computed(() => availableModes.value.find(mode => mode.latest_published_mode_version_id === space.value.workflow_mode_version_id)?.display_name)
-const currentPermission = computed(() => permissionChoices.find(choice => choice.value === props.permission)!)
+const currentPermission = computed(() => permissionChoices.find(choice => choice.value === props.permission) ?? permissionChoices[0])
 const permissionName = computed(() => t(currentPermission.value.label))
 const title = computed(() => {
   if (page.value === 'root') return t('composer.commands')

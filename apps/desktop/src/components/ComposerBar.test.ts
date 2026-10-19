@@ -859,6 +859,14 @@ describe('ComposerBar unified command panel', () => {
     wrapper.unmount()
   })
 
+  it('keeps legacy unknown permission sessions renderable with neutral chrome', async () => {
+    const wrapper = mountComposer({ permission: 'ask' as never })
+
+    expect(wrapper.find('.permission-selector-label').text()).toBe('permission.default')
+    expect(wrapper.find('.permission-selector-trigger .composer-permission-icon').attributes('data-risk')).toBe('neutral')
+    wrapper.unmount()
+  })
+
   it.each(['search', 'option'])('Enter from %s confirms a permission, closes the panel and restores the draft focus', async from => {
     const wrapper = mount(ComposerBar, { attachTo: document.body, props: { busy: false, permission: 'default', modelValue: 'keep this draft' } })
     await wrapper.find('.permission-selector-trigger').trigger('click')
