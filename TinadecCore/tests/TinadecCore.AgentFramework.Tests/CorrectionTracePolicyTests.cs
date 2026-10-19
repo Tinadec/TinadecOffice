@@ -139,6 +139,26 @@ public sealed class CorrectionTracePolicyTests
     }
 
     [Fact]
+    public void FocusedReproIgnoresOnlyKnownExitCodeCaptureSyntax()
+    {
+        var trace = CorrectionTracePolicy.Create(Run("run-normalize"), "修复状态恢复，必须跑同一个 test");
+        Fact(trace, "shell", """{"command":"npm test 2>&1; echo \"EXIT_CODE=$?\""}""", "test-fail", """{"exit_code":1}""", false);
+        Fact(trace, "replace_lines", """{"path":"src/state.ts"}""", "edit-1", """{"success":true}""", true);
+        Fact(trace, "shell", """{"command":"npm test"}""", "test-pass", """{"exit_code":0}""", false);
+
+        Assert.Null(CorrectionTracePolicy.EvaluateCompletion(trace, Policy, trace.Goal, true));
+        Assert.Equal("ready", trace.Completion.Status);
+
+        var different = CorrectionTracePolicy.Create(Run("run-normalize-different"), "修复状态恢复，必须跑同一个 test");
+        Fact(different, "shell", """{"command":"npm test && echo done"}""", "test-fail-2", """{"exit_code":1}""", false);
+        Fact(different, "replace_lines", """{"path":"src/state.ts"}""", "edit-2", """{"success":true}""", true);
+        Fact(different, "shell", """{"command":"npm test"}""", "test-pass-2", """{"exit_code":0}""", false);
+
+        Assert.NotNull(CorrectionTracePolicy.EvaluateCompletion(different, Policy, different.Goal, true));
+        Assert.Equal("blocked", different.Completion.Status);
+    }
+
+    [Fact]
     public void DiagnosticsRequireEveryModifiedArtifact()
     {
         var trace = CorrectionTracePolicy.Create(Run("run-3"), "修复普通代码问题");

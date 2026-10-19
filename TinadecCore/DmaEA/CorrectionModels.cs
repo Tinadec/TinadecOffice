@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
@@ -767,8 +768,21 @@ internal static class CorrectionTracePolicy
             ? item.EnumerateArray().Where(row => row.ValueKind == JsonValueKind.String).Select(row => row.GetString()!.Trim()).Where(row => row.Length > 0).ToList()
             : [];
 
-    private static string NormalizeCommand(string? command) =>
-        string.Join(' ', (command ?? string.Empty).Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    private static readonly Regex ExitCodeCaptureSuffix = new(
+        """(?is)(?:\s*;\s*|\s+&&\s+)(?:echo|printf|write-output)\s+(?:"EXIT_CODE=\$\?"|'EXIT_CODE=\$\?'|EXIT_CODE=\$\?|\$LASTEXITCODE|"%ERRORLEVEL%")\s*$""",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex StderrRedirectSuffix = new(
+        """(?is)\s+2>&1\s*$""",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static string NormalizeCommand(string? command)
+    {
+        var normalized = string.Join(' ', (command ?? string.Empty).Trim()
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        normalized = ExitCodeCaptureSuffix.Replace(normalized, string.Empty).Trim();
+        return StderrRedirectSuffix.Replace(normalized, string.Empty).Trim();
+    }
 
     private static bool SamePath(string left, string right) =>
         string.Equals(left.Replace('\\', '/'), right.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
