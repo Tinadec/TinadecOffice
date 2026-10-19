@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using TinadecCore.DmaEA;
 
 namespace TinadecCore.AgentFramework.Tests;
@@ -45,9 +46,11 @@ public sealed class ToolRoundsPolicyTests : IDisposable
         Assert.Equal(0, snapshot.Tools.Overrides["refactor"]);
         Assert.Equal(0, snapshot.Tools.Overrides["investigate"]);
         Assert.Equal(ToolRuntimePolicy.DefaultMaxToolCalls, snapshot.Tools.MaxToolCalls);
-        Assert.Equal(65536, snapshot.Context.DefaultTokenBudget);
+        Assert.Equal(131072, snapshot.Context.DefaultTokenBudget);
+        Assert.Equal(0, snapshot.Context.TaskTokenBudget);
+        Assert.Equal(0, snapshot.Context.EffectiveTaskTokenBudget);
         Assert.Equal(128, snapshot.Context.RecentMessageLimit);
-        Assert.Equal(ContextPolicy.DefaultRunTokenBudget, snapshot.Context.RunTokenBudget);
+        Assert.Equal(0, snapshot.Context.RunTokenBudget);
         Assert.Equal(48000, snapshot.Triggers.ContextTokenThreshold);
         Assert.True(snapshot.Triggers.ContextTokenThreshold < snapshot.Context.DefaultTokenBudget);
     }
@@ -57,6 +60,28 @@ public sealed class ToolRoundsPolicyTests : IDisposable
     {
         Assert.Throws<InvalidDataException>(() => LoadSnapshot(
             [.. BaselineToml(), "", "[tools.task_round_overrides]", $"test = {ToolRuntimePolicy.MaxTaskOverrideRounds + 1}"]));
+    }
+
+    [Fact]
+    public void Parse_SeparatesTheContextWindowFromTheTaskTokenFuse()
+    {
+        var omitted = LoadSnapshot(BaselineToml(tokenBudget: 8192));
+        Assert.Equal(0, omitted.Context.TaskTokenBudget);
+        Assert.Equal(0, omitted.Context.EffectiveTaskTokenBudget);
+        Assert.Equal(8192, omitted.Context.DefaultTokenBudget);
+
+        var explicitUnlimited = LoadSnapshot(BaselineToml(tokenBudget: 8192, taskTokenBudget: 0));
+        Assert.Equal(0, explicitUnlimited.Context.TaskTokenBudget);
+        Assert.Equal(0, explicitUnlimited.Context.EffectiveTaskTokenBudget);
+        Assert.Equal(8192, explicitUnlimited.Context.DefaultTokenBudget);
+
+        var legacyFrozen = JsonSerializer.Deserialize<ContextPolicy>(
+            """{"DefaultTokenBudget":8192,"RecentMessageLimit":24,"OptimisticRevision":true,"RunTokenBudget":1048576}""");
+        Assert.NotNull(legacyFrozen);
+        Assert.Null(legacyFrozen.TaskTokenBudget);
+        Assert.Equal(8192, legacyFrozen.EffectiveTaskTokenBudget);
+
+        Assert.Throws<InvalidDataException>(() => LoadSnapshot(BaselineToml(taskTokenBudget: -1)));
     }
 
     [Fact]
@@ -202,7 +227,7 @@ public sealed class ToolRoundsPolicyTests : IDisposable
     private static ToolRuntimePolicy Policy(int maxRounds, IReadOnlyDictionary<string, int>? overrides = null) =>
         new("tinadec-tools", true, true, 120, maxRounds, overrides);
 
-    private static string[] BaselineToml(int maxToolRounds = 4, int? maxToolCalls = null, int tokenBudget = 8192)
+    private static string[] BaselineToml(int maxToolRounds = 4, int? maxToolCalls = null, int tokenBudget = 8192, int? taskTokenBudget = null)
     {
         var lines = new List<string>
         {
@@ -234,6 +259,7 @@ public sealed class ToolRoundsPolicyTests : IDisposable
             "default_timeout_seconds = 120",
             $"max_tool_rounds = {maxToolRounds}"
         };
+        if (taskTokenBudget is { } taskFuse) lines.Insert(lines.IndexOf("optimistic_revision = true"), $"task_token_budget = {taskFuse}");
         if (maxToolCalls is { } fuse) lines.Add($"max_tool_calls = {fuse}");
         return [.. lines];
     }

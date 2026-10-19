@@ -26,15 +26,16 @@ lanes_enabled = false
 max_lanes_per_run = 4
 max_tasks_per_lane = 6
 
-# Context policy. default_token_budget is the per-task context budget the loop
-# guard enforces; run_token_budget is the run-wide counterpart and is a FUSE,
-# not a budget -- crossing either one ends the active task with a hand-off
-# summary instead of failing the run. All values below are fuse-level initial
-# values pending calibration against measured P95 usage.
+# Context policy. default_token_budget is the finite context-window allocation
+# used to pack and compress prompts; it is not a cumulative spend cap.
+# task_token_budget and run_token_budget are cumulative token fuses. Both ship
+# disabled: repeated calls, consecutive errors, empty turns and hard tool-call
+# ceilings still stop abnormal workers without cutting normal long investigations.
 [context]
-default_token_budget = 65536
+default_token_budget = 131072
+task_token_budget = 0
+run_token_budget = 0
 recent_message_limit = 128
-run_token_budget = 1048576
 optimistic_revision = true
 
 [memory]

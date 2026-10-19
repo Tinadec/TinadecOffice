@@ -2181,7 +2181,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         task.ToolTurns.Count,
                         configuration.Tools.MaxToolCalls,
                         task.TokensUsed,
-                        configuration.Context.DefaultTokenBudget,
+                        configuration.Context.EffectiveTaskTokenBudget,
                         Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
                         configuration.Context.RunTokenBudget,
                         task.ToolTurns
@@ -2268,7 +2268,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         Iteration = task.ToolRounds - 1,
                         MaxIterations = roundLimit,
                         TokensUsed = task.TokensUsed,
-                        TokenBudget = configuration.Context.DefaultTokenBudget,
+                        TokenBudget = configuration.Context.EffectiveTaskTokenBudget,
                         ToolCallCount = task.ToolTurns.Count,
                         MaxToolCalls = configuration.Tools.MaxToolCalls,
                         // Repeat detection only inspects the trailing run, so the tail
@@ -4218,7 +4218,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 calls_this_round = model.Calls.Count,
                 calls_total = task.ToolTurns.Count + model.Calls.Count,
                 task_tokens_used = task.TokensUsed,
-                task_token_budget = configuration.Context.DefaultTokenBudget,
+                task_token_budget = configuration.Context.EffectiveTaskTokenBudget,
                 run_tokens_used = Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
                 run_token_budget = configuration.Context.RunTokenBudget
             }, cancellationToken, taskId: task.TaskId, idempotencyKey: idempotencyKey).ConfigureAwait(false);
@@ -4257,7 +4257,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 calls_issued = task.ToolTurns.Count,
                 dropped_calls = model.Calls.Count,
                 task_tokens_used = task.TokensUsed,
-                task_token_budget = configuration.Context.DefaultTokenBudget,
+                task_token_budget = configuration.Context.EffectiveTaskTokenBudget,
                 run_tokens_used = Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
                 run_token_budget = configuration.Context.RunTokenBudget,
                 max_tool_calls = configuration.Tools.MaxToolCalls

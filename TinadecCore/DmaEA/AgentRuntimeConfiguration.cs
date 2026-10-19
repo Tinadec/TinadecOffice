@@ -19,6 +19,12 @@ public sealed record SupervisionPolicy(bool RequiredBeforeFinal, int MaxRevision
 public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimit, bool OptimisticRevision)
 {
     /// <summary>
+    /// Shipped per-task token fuse. Zero disables it; loop detection still stops
+    /// repeated calls, consecutive errors and malformed model behaviour.
+    /// </summary>
+    public const int DefaultTaskTokenBudget = 0;
+
+    /// <summary>
     /// Default run-wide token fuse. A run is many tasks, so this sits well above
     /// any single task's context budget; it exists to stop an unattended run
     /// burning tokens without bound, not to cap how much work a run may do.
@@ -32,6 +38,16 @@ public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimi
     /// disables the gate; a TOML without the key keeps the default fuse.
     /// </summary>
     public int RunTokenBudget { get; init; } = DefaultRunTokenBudget;
+
+    /// <summary>
+    /// Per-task cumulative token fuse (<c>[context] task_token_budget</c>).
+    /// Zero disables this gate. Null is the legacy frozen-config shape: those
+    /// runs keep the old effective value (<see cref="DefaultTokenBudget"/>) so
+    /// resuming them does not silently remove a safety boundary.
+    /// </summary>
+    public int? TaskTokenBudget { get; init; }
+
+    public int EffectiveTaskTokenBudget => TaskTokenBudget ?? DefaultTokenBudget;
 
     public static void Validate(ContextPolicy policy)
     {
@@ -47,6 +63,10 @@ public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimi
         if (policy.RunTokenBudget < 0)
         {
             throw new InvalidDataException("run_token_budget must not be negative (0 disables the run-level gate).");
+        }
+        if (policy.TaskTokenBudget is < 0)
+        {
+            throw new InvalidDataException("task_token_budget must not be negative (0 disables the per-task gate).");
         }
     }
 }
@@ -460,7 +480,8 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             Integer(context, "recent_message_limit", 24),
             Boolean(context, "optimistic_revision"))
         {
-            RunTokenBudget = Integer(context, "run_token_budget", ContextPolicy.DefaultRunTokenBudget)
+            RunTokenBudget = Integer(context, "run_token_budget", ContextPolicy.DefaultRunTokenBudget),
+            TaskTokenBudget = Integer(context, "task_token_budget", ContextPolicy.DefaultTaskTokenBudget)
         };
         ContextPolicy.Validate(contextPolicy);
         // The compression threshold and the context budget are one mechanism: if
