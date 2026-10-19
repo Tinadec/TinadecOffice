@@ -1,0 +1,132 @@
+[MCP] INFO: Using security level from environment: balanced
+[MCP] INFO: Using security level from environment: balanced
+[MCP] INFO: Security level changed to: balanced
+[MCP] INFO: Security Manager initialized with config: {
+  enableSandbox: true,
+  enableInputValidation: true,
+  enableAuditLog: true,
+  enableScreenshotEncryption: true,
+  defaultRiskThreshold: 'medium',
+  sandboxTimeout: 5000,
+  maxExecutionTime: 30000,
+  securityLevel: 'balanced'
+}
+[MCP] INFO: Electron MCP Server starting...
+[MCP] INFO: Electron MCP Server running on stdio
+[MCP] INFO: Available tools: get_electron_window_info, take_screenshot, send_command_to_electron, read_electron_logs
+{
+  "tools": [
+    {
+      "name": "get_electron_window_info",
+      "description": "Get information about running Electron applications and their windows. Automatically detects any Electron app with remote debugging enabled (port 9222).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeChildren": {
+            "type": "boolean",
+            "description": "Include child windows information"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "take_screenshot",
+      "description": "Take a screenshot of any running Electron application window. Returns base64 image data for AI analysis. No files created unless outputPath is specified.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "outputPath": {
+            "type": "string",
+            "description": "Path to save the screenshot (optional, defaults to temp directory)"
+          },
+          "windowTitle": {
+            "type": "string",
+            "description": "Specific window title to screenshot (optional)"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "send_command_to_electron",
+      "description": "Send JavaScript commands to any running Electron application via Chrome DevTools Protocol. \n\nEnhanced UI interaction commands:\n- 'find_elements': Analyze all interactive elements (buttons, inputs, selects) with their properties\n- 'click_by_text': Click elements by their visible text, aria-label, or title\n- 'click_by_selector': Securely click elements by CSS selector\n- 'fill_input': Fill input fields by selector, placeholder text, or associated label\n- 'select_option': Select dropdown options by value or text\n- 'send_keyboard_shortcut': Send keyboard shortcuts like 'Ctrl+N', 'Meta+N', 'Enter', 'Escape'\n- 'navigate_to_hash': Safely navigate to hash routes (e.g., '#create', '#settings')\n- 'get_page_structure': Get organized overview of page elements (buttons, inputs, selects, links)\n- 'debug_elements': Get debugging info about buttons and form elements on the page\n- 'verify_form_state': Check current form state and validation status\n- 'get_title', 'get_url', 'get_body_text': Basic page information\n- 'eval': Execute custom JavaScript code with enhanced error reporting\n\nIMPORTANT: Arguments must be passed as an object with the correct properties:\n\nExamples:\n- click_by_selector: {\"selector\": \"button.submit-btn\"}\n- click_by_text: {\"text\": \"Submit\"}\n- fill_input: {\"placeholder\": \"Enter name\", \"value\": \"John Doe\"}\n- fill_input: {\"selector\": \"#email\", \"value\": \"user@example.com\"}\n- send_keyboard_shortcut: {\"text\": \"Enter\"}\n- eval: {\"code\": \"document.title\"}\n\nUse 'get_page_structure' or 'debug_elements' first to understand available elements, then use specific interaction commands.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Command to send to the Electron process"
+          },
+          "args": {
+            "type": "object",
+            "properties": {
+              "selector": {
+                "type": "string",
+                "description": "CSS selector for targeting elements (required for click_by_selector, click_button)"
+              },
+              "text": {
+                "type": "string",
+                "description": "Text content for searching or keyboard input (required for click_by_text, send_keyboard_shortcut)"
+              },
+              "value": {
+                "type": "string",
+                "description": "Value to input into form fields (required for fill_input)"
+              },
+              "placeholder": {
+                "type": "string",
+                "description": "Placeholder text to identify input fields (alternative to selector for fill_input)"
+              },
+              "message": {
+                "type": "string",
+                "description": "Message or content for specific commands"
+              },
+              "code": {
+                "type": "string",
+                "description": "JavaScript code to execute (for eval command)"
+              }
+            },
+            "additionalProperties": false,
+            "description": "Arguments for the command - must be an object with appropriate properties based on the command type"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "read_electron_logs",
+      "description": "Read console logs and output from running Electron applications. Useful for debugging and monitoring app behavior.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "logType": {
+            "type": "string",
+            "enum": [
+              "console",
+              "main",
+              "renderer",
+              "all"
+            ],
+            "description": "Type of logs to read"
+          },
+          "lines": {
+            "type": "number",
+            "description": "Number of recent lines to read (default: 100)"
+          },
+          "follow": {
+            "type": "boolean",
+            "description": "Whether to follow/tail the logs"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  ]
+}

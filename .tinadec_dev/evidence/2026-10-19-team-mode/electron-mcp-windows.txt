@@ -1,0 +1,33 @@
+[MCP] INFO: Using security level from environment: balanced
+[MCP] INFO: Using security level from environment: balanced
+[MCP] INFO: Security level changed to: balanced
+[MCP] INFO: Security Manager initialized with config: {
+  enableSandbox: true,
+  enableInputValidation: true,
+  enableAuditLog: true,
+  enableScreenshotEncryption: true,
+  defaultRiskThreshold: 'medium',
+  sandboxTimeout: 5000,
+  maxExecutionTime: 30000,
+  securityLevel: 'balanced'
+}
+[MCP] INFO: Electron MCP Server starting...
+[MCP] INFO: Electron MCP Server running on stdio
+[MCP] INFO: Available tools: get_electron_window_info, take_screenshot, send_command_to_electron, read_electron_logs
+[MCP] INFO: Tool call: get_electron_window_info
+[MCP] INFO: Secure execution started [6f8e1f9d-5963-4c3f-a845-5471dcdc20de] { command: 'get_window_info', operationType: 'window_info' }
+[MCP] INFO: Security Event [window_info]: SUCCESS {
+  sessionId: '6f8e1f9d-5963-4c3f-a845-5471dcdc20de',
+  riskLevel: 'low',
+  executionTime: 3
+}
+[MCP] INFO: Secure execution completed [6f8e1f9d-5963-4c3f-a845-5471dcdc20de] { success: true, executionTime: 3, riskLevel: 'low' }
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Window Information:\n\n{\n  \"platform\": \"win32\",\n  \"devToolsPort\": 9222,\n  \"windows\": [\n    {\n      \"id\": \"E61E67A7BADC8AC38688A753F1C891A0\",\n      \"title\": \"DevTools\",\n      \"url\": \"devtools://devtools/bundled/devtools_app.html?remoteBase=https://chrome-devtools-frontend.appspot.com/serve_file/@69bf1c67cb894365d151bd020bb0171fd583633a/&can_dock=&toolbarColor=rgba(223,223,223,1)&textColor=rgba(0,0,0,1)&experiments=true\",\n      \"type\": \"page\",\n      \"description\": \"\",\n      \"webSocketDebuggerUrl\": \"ws://localhost:9222/devtools/page/E61E67A7BADC8AC38688A753F1C891A0\"\n    },\n    {\n      \"id\": \"BE7BCB6151EB4A1AD2ED7D74FACCDD94\",\n      \"title\": \"TinadecOffice\",\n      \"url\": \"http://127.0.0.1:5173/#/\",\n      \"type\": \"page\",\n      \"description\": \"\",\n      \"webSocketDebuggerUrl\": \"ws://localhost:9222/devtools/page/BE7BCB6151EB4A1AD2ED7D74FACCDD94\"\n    }\n  ],\n  \"totalTargets\": 2,\n  \"electronTargets\": 2,\n  \"processInfo\": {},\n  \"message\": \"Found running Electron application with 2 windows on port 9222\",\n  \"automationReady\": true\n}"
+    }
+  ],
+  "isError": false
+}

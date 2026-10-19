@@ -1,5 +1,11 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-19 Team 子智能体标题与 Electron MCP
+
+Team 的 planner 任务没有 `task.dispatched`，`worker.assigned` 是第一个可渲染任务身份的事件。reducer 必须从该事件接收 `title`；`SubAgentCard` 的任务行不能再只依赖 dispatch 路径，否则真实界面只会显示 `search#1` 和状态，无法告诉用户每个执行者负责什么。Desktop reducer 定向测试覆盖该回放形态。
+
+开发 Electron 的 CDP 默认仍关闭。只有显式设置 `TINADEC_DEV_CDP_PORT=9222` 才启动 `--remote-debugging-port`；端口在进入 shell-spawn argv 前由 `developmentCdpPort` 校验为 1024–65535 的整数。`electron-mcp-server` 连接后走同一 CDP 目标，不要把 Computer Use 的窗口截图当作 Electron MCP 验收。
+
 ## 2026-10-19 纠偏模式对话流
 
 `GraphSeedPack` 的 Correction 模式在 `TurnWork` 内以 `CorrectionTrace` 呈现，不新增流外面板、run 胶囊或独立 trace store。reducer 只消费 SSE 的完整 `correction.trace.updated` snapshot，按 episode id 替换同一节点；`correction.question.requested` 的问题门和 `CorrectionFeedback` 的“仍复现/已解决”都在折叠外。`TurnWork` 对 OBSERVE/INTERVENE/CONVERGE/BACKTRACK 使用 Lucide 阶段图标；parked run 不闪烁，仍在 live status 里显示最近步骤。
