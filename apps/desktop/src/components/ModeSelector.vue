@@ -3,9 +3,11 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ChevronDown, Moon } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { usePanelStyles } from '@/composables/usePanelStyles'
-import { api, type AgentModeTopologyDto } from '@/api'
+import { api as baseApi, type AgentModeTopologyDto } from '@/api'
+import { scopedApi } from '@/lib/storageScope'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 
+const globalApi = scopedApi(baseApi, () => 'user')
 const { t } = useI18n()
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 const panelStyle = computed(() => getPanelStyle())
@@ -28,10 +30,13 @@ const dropdownStyle = ref<Record<string, string>>({})
 // 六值 agent_mode 词表已从契约删除：Core 只认 mode_version_id，列表里不再有
 // 与包无关的固定项，也不做「对话模式/拓扑」分组——那两组本来就是同一批包模式。
 const modeVersions = ref<AgentModeTopologyDto[]>([])
+const legacyModeVersions = ref<AgentModeTopologyDto[]>([])
 
 const availableVersions = computed(() => {
   const seen = new Set<string>()
-  return sortModes(modeVersions.value.filter((v) => {
+  const published = (list: AgentModeTopologyDto[]) => list.some(v => v.status === 'published' && v.latest_published_mode_version_id)
+  const catalog = published(modeVersions.value) ? modeVersions.value : legacyModeVersions.value
+  return sortModes(catalog.filter((v) => {
     if (v.status !== 'published' || !v.latest_published_mode_version_id) return false
     // 同一模式可能存在多行 published（运维/夹具安装各一条，Core 把去重责任下放给
     // 客户端）；按用户可见的 display_name 去重——两行名字相同，用户就分不出来。
@@ -43,7 +48,8 @@ const availableVersions = computed(() => {
 })
 
 const selectedVersion = computed(() =>
-  availableVersions.value.find(v => v.latest_published_mode_version_id === props.modeVersionId) ?? null
+  [...availableVersions.value, ...legacyModeVersions.value]
+    .find(v => v.latest_published_mode_version_id === props.modeVersionId) ?? null
 )
 // 已选 version 失效（被禁用/卸载/跨工作区残留）时不再高亮；发送时 mode_version_id
 // 仍然带着，服务端会以 pack_disabled / invalid_request 显式失败，绝不静默回落。
@@ -55,10 +61,16 @@ function versionSummary(version: AgentModeTopologyDto): string {
 }
 
 async function loadModeVersions() {
-  try {
-    const list = await api.listAgentModeTopologies()
-    modeVersions.value = Array.isArray(list) ? (list as AgentModeTopologyDto[]) : []
-  } catch { /* gateway offline：列表留空，触发器显示「跟随默认」 */ }
+  const [globalResult, localResult] = await Promise.allSettled([
+    globalApi.listAgentModeTopologies(),
+    baseApi.listAgentModeTopologies(),
+  ])
+  modeVersions.value = globalResult.status === 'fulfilled' && Array.isArray(globalResult.value)
+    ? globalResult.value
+    : []
+  legacyModeVersions.value = localResult.status === 'fulfilled' && Array.isArray(localResult.value)
+    ? localResult.value
+    : []
 }
 
 function selectVersion(versionId: string | null) {

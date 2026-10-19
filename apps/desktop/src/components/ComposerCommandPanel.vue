@@ -2,7 +2,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
 import { ArrowLeft, Bot, Check, ChevronRight, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, Sparkles, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { api, type AgentModeTopologyDto, type SpaceOptionsDto } from '@/api'
+import { api as baseApi, type AgentModeTopologyDto, type SpaceOptionsDto } from '@/api'
+import { scopedApi } from '@/lib/storageScope'
 import type { PermissionLevel } from '@/types/mode'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } from '@/lib/appCommands'
@@ -15,6 +16,7 @@ import type { AgentDirectoryItemDto } from '@/api'
 import type { ReasoningEffortChoice } from '@/lib/reasoningEffort'
 import ReasoningEffortSlider from './ReasoningEffortSlider.vue'
 
+const globalApi = scopedApi(baseApi, () => 'user')
 const props = defineProps<{
   open: boolean
   anchor: HTMLElement | null
@@ -65,6 +67,7 @@ const query = ref('')
 const rootQuery = ref('')
 const index = ref(0)
 const modes = ref<AgentModeTopologyDto[]>([])
+const legacyModes = ref<AgentModeTopologyDto[]>([])
 const loading = ref(false)
 const modeError = ref(false)
 const space = computed(() => props.spaceOptions ?? defaultSpaceOptions())
@@ -130,7 +133,9 @@ watch(page, async (next, previous) => {
 
 const availableModes = computed(() => {
   const seen = new Set<string>()
-  return sortModes(modes.value.filter(mode => {
+  const published = (list: AgentModeTopologyDto[]) => list.some(mode => mode.status === 'published' && mode.latest_published_mode_version_id)
+  const catalog = published(modes.value) ? modes.value : legacyModes.value
+  return sortModes(catalog.filter(mode => {
     if (mode.status !== 'published' || !mode.latest_published_mode_version_id) return false
     const key = mode.display_name.trim().toLowerCase()
     if (seen.has(key)) return false
@@ -138,7 +143,8 @@ const availableModes = computed(() => {
     return true
   }))
 })
-const selectedMode = computed(() => availableModes.value.find(mode => mode.latest_published_mode_version_id === props.modeVersionId))
+const selectedMode = computed(() => [...availableModes.value, ...legacyModes.value]
+  .find(mode => mode.latest_published_mode_version_id === props.modeVersionId))
 watch([selectedMode, () => props.modeVersionId, loading, locale], () => {
   emit('mode-label', selectedMode.value?.display_name ?? t('commandPanel.mode'), !!props.modeVersionId && !selectedMode.value && !loading.value, selectedMode.value ? modeIcon(selectedMode.value.slug) : Layers)
 }, { immediate: true })
@@ -438,11 +444,12 @@ async function loadCatalogs() {
   loading.value = true
   void props.defaultModel?.load()
   void props.agentModels?.load()
-  const results = await Promise.allSettled([api.listAgentModeTopologies()])
+  const results = await Promise.allSettled([globalApi.listAgentModeTopologies(), baseApi.listAgentModeTopologies()])
   if (sequence !== loadSequence) return
-  const [modeResult] = results
+  const [modeResult, legacyResult] = results
   modeError.value = modeResult.status === 'rejected'
   if (modeResult.status === 'fulfilled') modes.value = Array.isArray(modeResult.value) ? modeResult.value : []
+  if (legacyResult.status === 'fulfilled') legacyModes.value = Array.isArray(legacyResult.value) ? legacyResult.value : []
   loading.value = false
 }
 watch(() => props.open, async open => {

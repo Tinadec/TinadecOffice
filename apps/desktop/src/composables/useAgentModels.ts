@@ -1,8 +1,10 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from '@/composables/useNotifications'
-import { api, type AgentDirectoryItemDto } from '@/api'
-import { selectedStorage } from '@/lib/storageScope'
+import { api as baseApi, type AgentDirectoryItemDto } from '@/api'
+import { scopedApi } from '@/lib/storageScope'
+
+const api = scopedApi(baseApi, () => 'user')
 
 /** A provider instance and model; `model` is null for runtimes that pick their own (CLI/ACP). */
 export interface ModelChoice {
@@ -31,7 +33,8 @@ function named(strategy: StrategyLike): NamedStrategy | null {
  * Without a model of its own an agent runs on what it is configured with: its node in the mode,
  * else its definition. Where that names nothing (every shipped agent), it follows the default — the
  * default model (the model center's chat route) at the root of a run, the model of the agent that
- * spawned it otherwise. Requests run in the current storage scope, like the rest of the composer.
+ * spawned it otherwise. Agents and their runtime bindings are application-level pack resources;
+ * only the session/run that uses them stays in the current project scope.
  */
 export function useAgentModels(options: { conversationSlug: Ref<string>; modeVersionId: Ref<string | null | undefined> }) {
   const { t } = useI18n()
@@ -134,12 +137,6 @@ export function useAgentModels(options: { conversationSlug: Ref<string>; modeVer
     }
   }
 
-  watch(selectedStorage, () => {
-    epoch++
-    loaded.value = false
-    error.value = false
-    void load()
-  })
   return { agents, loaded, error, busy, load, conversationAgent, otherAgents, usageInMode, ownStrategy, fixedChoice, configuredStrategy, effectiveChoice, setModel }
 }
 
