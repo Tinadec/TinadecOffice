@@ -605,13 +605,15 @@ internal static class CorrectionTracePolicy
             return completion.UnresolvedReason;
         }
 
+        var statusChanged = !string.Equals(trace.Status, "ready", StringComparison.Ordinal);
+        var phaseChanged = !string.Equals(trace.Phase, "CONVERGE", StringComparison.Ordinal);
         completion.Status = "ready";
         completion.UnresolvedReason = null;
         completion.VerifiedAt = DateTimeOffset.UtcNow;
         trace.Status = "ready";
-        if (!string.Equals(trace.Phase, "CONVERGE", StringComparison.Ordinal))
+        trace.Phase = "CONVERGE";
+        if (statusChanged || phaseChanged)
         {
-            trace.Phase = "CONVERGE";
             trace.Revision++;
             trace.UpdatedAt = DateTimeOffset.UtcNow;
         }

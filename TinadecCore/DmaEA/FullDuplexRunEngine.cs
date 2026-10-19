@@ -5038,12 +5038,22 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         if (CorrectionRuntimePolicy.Has(configuration.RuntimePolicy, CorrectionRuntimePolicy.CompletionContractFeature)
             && checkpoint.Correction is not null)
         {
+            var correctionRevisionBefore = checkpoint.Correction.Revision;
             var unresolved = CorrectionTracePolicy.EvaluateCompletion(
                 checkpoint.Correction,
                 configuration.RuntimePolicy!,
                 checkpoint.UserGoal,
                 checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0);
             correctionCompletionReady = unresolved is null;
+            if (correctionCompletionReady && checkpoint.Correction.Revision != correctionRevisionBefore)
+            {
+                checkpoint = await SaveCheckpointAsync(
+                    checkpoint,
+                    checkpoint.CheckpointRevision,
+                    "correction-completion-ready",
+                    cancellationToken).ConfigureAwait(false);
+                await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, cancellationToken).ConfigureAwait(false);
+            }
             if (unresolved is not null)
             {
                 checkpoint.Phase = "awaiting_user";
