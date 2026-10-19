@@ -1,5 +1,11 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-19 纠偏模式对话流
+
+`GraphSeedPack` 的 Correction 模式在 `TurnWork` 内以 `CorrectionTrace` 呈现，不新增流外面板、run 胶囊或独立 trace store。reducer 只消费 SSE 的完整 `correction.trace.updated` snapshot，按 episode id 替换同一节点；`correction.question.requested` 的问题门和 `CorrectionFeedback` 的“仍复现/已解决”都在折叠外。`TurnWork` 对 OBSERVE/INTERVENE/CONVERGE/BACKTRACK 使用 Lucide 阶段图标；parked run 不闪烁，仍在 live status 里显示最近步骤。
+
+桌面类型和 API 入口在 `lib/conversation/correction.ts`、`api.ts` 的 correction 方法和五个 locale 的 `conversation.correction`/`settings.runtimePolicy*`。新增模式图标必须在 `lib/modePresentation.ts` 登记；新增 Core virtual tool 必须同步 `toolPresentation`。验证要求至少 typecheck、reducer/组件定向和真实 Electron 的 SSE/交互截图；不要以 happy-dom 截图代替真实 Electron。
+
 ## 2026-10-18 真实 Electron：监督裁决送达 + 阶段步骤 + SSE 根因
 
 **业务事件流此前在 Electron 里实际是断的。** `ScopedEventSource` 以 `this.fetchImpl(...)` 调用原生 fetch，绑定到了事件源实例，Electron 抛 `TypeError: Failed to execute 'fetch' on 'Window': Illegal invocation`；重连 catch 吞掉错误，所以心跳看起来正常、`model.*`/`tool.*`/`supervision.*` 一条都进不了对话流。修法是取局部 `const fetchImpl = this.fetchImpl` 后无绑定调用；`scopedEventSource.test.ts` 用普通 `function`（调用时 `this === source` 会失败）钉住真实原生语义。真实旧会话 `B4B56D9A…` 重开后，`supervision.user_review.requested` 的原因和 continue/correct/cancel 三个按钮都出现并可操作。
