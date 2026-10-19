@@ -1,0 +1,11 @@
+Verified against the live project and user scopes:
+
+C:\git\agent\RouterAPI\.tinadec\config\runtime.toml
+C:\Users\lincu\.tinadec\config\runtime.toml
+
+[context]
+default_token_budget = 131072
+task_token_budget = 0
+recent_message_limit = 128
+run_token_budget = 0
+optimistic_revision = true
