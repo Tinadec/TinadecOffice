@@ -143,6 +143,27 @@ internal sealed class AclManager : IDisposable
         _rules.Clear();
     }
 
+    /// <summary>
+    /// Revokes the temporary grants off the command's critical path. The static
+    /// reference counts keep a rule alive if the next command re-applies it
+    /// before this timer fires.
+    /// </summary>
+    internal void RevokeAllAfter(TimeSpan delay)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(delay).ConfigureAwait(false);
+                RevokeAll();
+            }
+            catch
+            {
+                // Best effort: the next sandbox reset retries cleanup.
+            }
+        });
+    }
+
     private void RestoreReadExceptions()
     {
         lock (Gate)

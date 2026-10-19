@@ -31,7 +31,7 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
         if (!IsInitialized)
             throw new InvalidOperationException("Sandbox not initialized. Call EnsureSetupAsync first.");
 
-        using var aclManager = new AclManager(SandboxAccountManager.AccountName);
+        var aclManager = new AclManager(SandboxAccountManager.AccountName);
 
         ApplyAcls(aclManager, permissions);
 
@@ -52,7 +52,7 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
         finally
         {
             if (!persistGrants)
-                aclManager.RevokeAll();
+                aclManager.RevokeAllAfter(TimeSpan.FromSeconds(30));
         }
     }
 
