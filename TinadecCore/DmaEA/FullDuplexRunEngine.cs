@@ -5008,6 +5008,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
+        var correctionCompletionReady = false;
 
         if (CorrectionRuntimePolicy.Has(configuration.RuntimePolicy, CorrectionRuntimePolicy.CompletionContractFeature)
             && checkpoint.Correction is not null)
@@ -5017,6 +5018,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 configuration.RuntimePolicy!,
                 checkpoint.UserGoal,
                 checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0);
+            correctionCompletionReady = unresolved is null;
             if (unresolved is not null)
             {
                 checkpoint.Phase = "awaiting_user";
@@ -5052,7 +5054,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         // Unless the user explicitly accepted an incomplete outcome, finalization
         // requires a resolved pass/skipped decision plus completed tasks and evidence
         // for every success criterion. A corrupted phase cannot manufacture success.
-        if (!checkpoint.UserAcceptedIncompleteOutcome)
+        if (!checkpoint.UserAcceptedIncompleteOutcome && !correctionCompletionReady)
         {
             var supervisorRequired = configuration.Supervision.RequiredBeforeFinal
                 && configuration.OperationAgents.Any(agent =>
