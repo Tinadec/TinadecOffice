@@ -277,9 +277,16 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     _ when edgeTargetNodeKeys.Contains(item.Node.NodeKey) => "on_demand",
                     _ => "persistent"
                 };
-                var effectiveTools = isConversation
-                    ? item.EffectiveTools.Concat(policyTools).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-                    : item.EffectiveTools;
+                // The conversation identity plans; execution identities perform the
+                // actual reads, writes and tests. A correction proposal tool that is
+                // only visible to the planner can never record the causal state that
+                // the planner is describing, so every executable holder receives it.
+                // It remains a proposal-only virtual tool: Core still owns verified
+                // and resolved facts.
+                var effectiveTools = item.EffectiveTools
+                    .Concat(policyTools)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 var entry = new RuntimeAgentRosterEntry(
                     item.Slug,
                     item.Layer,
@@ -323,7 +330,18 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             var graphNodes = resolved
                 .Select(item => new DeclaredGraphNode(item.Node.NodeKey, item.Slug, item.Layer))
                 .ToArray();
-            var spawnable = await ResolveSpawnableTemplatesAsync(cfg, mv, nodes, sess.TenantId, sess.WorkspaceId, envelopes, ct).ConfigureAwait(false);
+            var spawnable = (await ResolveSpawnableTemplatesAsync(
+                    cfg, mv, nodes, sess.TenantId, sess.WorkspaceId, envelopes, ct).ConfigureAwait(false))
+                .Select(template => policyTools.Length == 0
+                    ? template
+                    : template with
+                    {
+                        ToolScope = template.ToolScope
+                            .Concat(policyTools)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToArray()
+                    })
+                .ToArray();
 
             return new FormalModeRoster(operation, execution, mv.Id, mv.Version, mv.TopologyHash, $"mode:{mv.AgentModeId}:{mv.Version}")
             {

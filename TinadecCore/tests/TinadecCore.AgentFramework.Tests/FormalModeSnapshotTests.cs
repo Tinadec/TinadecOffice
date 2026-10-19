@@ -58,6 +58,36 @@ public sealed class FormalModeSnapshotTests
         Assert.Contains("content hash verification failed", error.InnerException!.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ResolveRoster_StructuredInvestigation_ExposesTraceProposalToEveryExecutableIdentity()
+    {
+        await using var fixture = await FormalModeFixture.CreateAsync(structuredInvestigation: true);
+
+        var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterAsync(fixture.SessionId);
+
+        Assert.NotNull(roster);
+        Assert.All(roster.Operation.Concat(roster.Execution), agent =>
+            Assert.Contains(CoreVirtualToolPolicy.CorrectionTraceToolId, agent.AllowedTools));
+        var spawnable = Assert.Single(roster.SpawnableTemplates, agent => agent.Slug == "task_planner");
+        Assert.Contains(CoreVirtualToolPolicy.CorrectionTraceToolId, spawnable.ToolScope);
+    }
+
+    [Fact]
+    public async Task ResolveRoster_OrdinaryMode_DoesNotExposeCorrectionTraceProposal()
+    {
+        await using var fixture = await FormalModeFixture.CreateAsync();
+
+        var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterAsync(fixture.SessionId);
+
+        Assert.NotNull(roster);
+        Assert.All(roster.Operation.Concat(roster.Execution), agent =>
+            Assert.DoesNotContain(CoreVirtualToolPolicy.CorrectionTraceToolId, agent.AllowedTools));
+        Assert.All(roster.SpawnableTemplates, agent =>
+            Assert.DoesNotContain(CoreVirtualToolPolicy.CorrectionTraceToolId, agent.ToolScope));
+    }
+
     private sealed class FormalModeFixture : IAsyncDisposable
     {
         private readonly string _root;
@@ -85,7 +115,9 @@ public sealed class FormalModeSnapshotTests
         public Guid MeetingVersionV1 { get; }
         public Guid PromptVersionV1 { get; }
 
-        public static async Task<FormalModeFixture> CreateAsync(bool tamperAgentHash = false)
+        public static async Task<FormalModeFixture> CreateAsync(
+            bool tamperAgentHash = false,
+            bool structuredInvestigation = false)
         {
             var root = Path.Combine(Path.GetTempPath(), "tinadec-formal-mode-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -186,7 +218,12 @@ public sealed class FormalModeSnapshotTests
                                 effective_tools = new[] { "read_file" },
                                 prompt_pipeline_id = promptPipelineId,
                                 prompt_version_id = promptVersionV1,
-                                prompt_version_hash = promptV1Hash
+                                prompt_version_hash = promptV1Hash,
+                                relationship = new
+                                {
+                                    agent_types = Array.Empty<string>(),
+                                    allowed_dispatch_targets = Array.Empty<string>()
+                                }
                             },
                             new
                             {
@@ -198,11 +235,32 @@ public sealed class FormalModeSnapshotTests
                                 effective_tools = Array.Empty<string>(),
                                 prompt_pipeline_id = promptPipelineId,
                                 prompt_version_id = promptVersionV1,
-                                prompt_version_hash = promptV1Hash
+                                prompt_version_hash = promptV1Hash,
+                                relationship = new
+                                {
+                                    agent_types = structuredInvestigation ? new[] { "task_planner" } : Array.Empty<string>(),
+                                    allowed_dispatch_targets = structuredInvestigation ? new[] { "task_planner" } : Array.Empty<string>()
+                                }
                             }
                         },
                         edges = Array.Empty<object>(),
-                        canvas_layout = (object?)null
+                        canvas_layout = (object?)null,
+                        runtime_policy = structuredInvestigation
+                            ? new
+                            {
+                                kind = "structured_investigation",
+                                version = 1,
+                                features = new[]
+                                {
+                                    "causal_trace",
+                                    "completion_contract",
+                                    "failing_repro_required",
+                                    "clarification_ledger",
+                                    "user_reproduction_reopens",
+                                    "local_hunk_revert"
+                                }
+                            }
+                            : null
                     });
                     db.ModeVersions.Add(new ModeVersionRecord
                     {
@@ -259,7 +317,7 @@ public sealed class FormalModeSnapshotTests
             ModelStrategyJson = "{\"kind\":\"inherit\"}",
             ToolScopeJson = "[]",
             SourceKind = "custom",
-            SourceKey = slug,
+            SourceKey = $"{slug}:{id:N}",
             Status = "published",
             Revision = version,
             Version = version,
