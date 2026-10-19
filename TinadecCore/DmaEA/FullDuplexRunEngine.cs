@@ -2502,6 +2502,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             {
                 task_id = task.TaskId,
                 task_key = task.TaskKey,
+                title = task.Title,
                 handle = task.WorkerHandle,
                 requested_agent = task.RequestedAgent,
                 agent_slug = selected.Agent.Id,

@@ -595,6 +595,7 @@ function reduce(record: RunActivity, event: EventEnvelope, payload: Payload): bo
       const taskKey = str(payload, 'task_key')
       const agent = record.tasks.get(taskId) ?? adoptDispatch(record, taskId, taskKey) ?? task(record, taskId)
       agent.taskKey = taskKey ?? agent.taskKey
+      agent.title = str(payload, 'title') ?? agent.title
       agent.handle = str(payload, 'handle') ?? agent.handle
       agent.agentSlug = str(payload, 'agent_slug') ?? agent.agentSlug
       agent.reason = str(payload, 'reason')

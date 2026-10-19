@@ -1741,6 +1741,8 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
             .ToList();
         var tierEvent = Assert.Single(runEvents, e => e.EventType == "orchestration.mode_tier_decided");
         Assert.Equal("free_form", ((JsonElement)tierEvent.Payload["payload"]!).GetProperty("tier").GetString());
+        var assignment = Assert.Single(runEvents, e => e.EventType == "worker.assigned");
+        Assert.Equal("写探针", ((JsonElement)assignment.Payload["payload"]!).GetProperty("title").GetString());
 
         var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage").ConfigureAwait(false);
         var workers = lineage!.Where(instance => instance.GetProperty("layer").GetString() == "execution").ToArray();

@@ -128,6 +128,26 @@ describe('sub-agents', () => {
     expect(run.byId.get('dispatch:real')).toMatchObject({ taskId: 'real', synthetic: false })
   })
 
+  it('shows a planner-created task title carried by worker.assigned', () => {
+    const s = new EventScript()
+    s.emit('run-1', 'worker.assigned', {
+      task_id: 'planned',
+      task_key: 'inspect-root-project',
+      title: 'Inspect the RouterAPI root project',
+      handle: 'search#1',
+      agent_slug: 'search',
+      reason: 'coordinator_assigned',
+    })
+
+    const run = hydrate(s.events).runs.get('run-1')!
+
+    expect(run.tasks.get('planned')).toMatchObject({
+      handle: 'search#1',
+      title: 'Inspect the RouterAPI root project',
+      status: 'running',
+    })
+  })
+
   it('marks the solo master as the run itself and gives planner tasks a synthetic anchor', () => {
     const s = new EventScript()
     s.emit('run-1', 'worker.assigned', { task_id: 'solo', task_key: 'goal', agent_slug: 'meeting', reason: 'solo_master' })
