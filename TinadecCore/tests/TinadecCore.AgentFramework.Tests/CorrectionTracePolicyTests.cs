@@ -113,6 +113,32 @@ public sealed class CorrectionTracePolicyTests
     }
 
     [Fact]
+    public void ParallelMergeKeepsTheNewerVerificationAndAllAuditFacts()
+    {
+        var owner = CorrectionTracePolicy.Create(Run("run-merge"), "修复状态恢复，必须跑同一个 test");
+        Fact(owner, "read_file", """{"path":"src/state.ts"}""", "read-1", """{"success":true}""", false);
+        Fact(owner, "shell", """{"command":"npm test"}""", "test-fail", """{"exit_code":1}""", false);
+        Fact(owner, "replace_lines", """{"path":"src/state.ts"}""", "edit-1", """{"success":true}""", true);
+        Assert.NotNull(CorrectionTracePolicy.EvaluateCompletion(owner, Policy, owner.Goal, true));
+
+        var worker = JsonSerializer.Deserialize<CorrectionTraceState>(
+            JsonSerializer.Serialize(owner))!;
+        Fact(worker, "shell", """{"command":"npm test"}""", "test-pass", """{"exit_code":0}""", false);
+        Assert.Null(CorrectionTracePolicy.EvaluateCompletion(worker, Policy, worker.Goal, true));
+
+        var merged = CorrectionTracePolicy.Merge(owner, worker);
+
+        Assert.Equal(owner.EpisodeId, merged.EpisodeId);
+        Assert.Equal("ready", merged.Completion.Status);
+        Assert.Equal("test-fail", merged.Completion.Repro!.FailedBeforeExecutionId);
+        Assert.Equal("test-pass", merged.Completion.Repro.PassedAfterExecutionId);
+        Assert.Contains("src/state.ts", merged.Completion.VerifiedArtifacts);
+        Assert.Contains(merged.Evidence, item => item.ExecutionId == "test-fail");
+        Assert.Contains(merged.Evidence, item => item.ExecutionId == "test-pass");
+        Assert.Contains(merged.Evidence, item => item.ExecutionId == "edit-1");
+    }
+
+    [Fact]
     public void DiagnosticsRequireEveryModifiedArtifact()
     {
         var trace = CorrectionTracePolicy.Create(Run("run-3"), "修复普通代码问题");

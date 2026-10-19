@@ -296,6 +296,38 @@ internal static class CorrectionTracePolicy
             }
             : throw new InvalidDataException("The correction state could not be cloned.");
 
+    public static CorrectionTraceState Merge(CorrectionTraceState left, CorrectionTraceState right)
+    {
+        if (left.EpisodeId != right.EpisodeId)
+            throw new InvalidDataException("Parallel correction traces belong to different episodes.");
+
+        var rightWins = right.UpdatedAt > left.UpdatedAt
+            || right.UpdatedAt == left.UpdatedAt && right.Revision >= left.Revision;
+        var winner = rightWins ? right : left;
+        var other = rightWins ? left : right;
+        var merged = JsonSerializer.Deserialize<CorrectionTraceState>(
+            JsonSerializer.Serialize(winner, CorrectionJson),
+            CorrectionJson)
+            ?? throw new InvalidDataException("The correction state could not be merged.");
+
+        merged.Evidence = left.Evidence.Concat(right.Evidence)
+            .GroupBy(item => item.Id, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(item => item.CreatedAt).First())
+            .OrderBy(item => item.CreatedAt)
+            .TakeLast(MaxEvidence)
+            .ToList();
+        merged.Interventions = left.Interventions.Concat(right.Interventions)
+            .GroupBy(item => item.Id, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(item => item.RevertedAt is not null).First())
+            .TakeLast(MaxInterventions)
+            .ToList();
+        merged.Hypotheses = MergeHypotheses(winner, other, merged.Evidence);
+        merged.OpenQuestions = MergeQuestions(winner, other);
+        merged.Revision = Math.Max(left.Revision, right.Revision) + 1;
+        merged.UpdatedAt = DateTimeOffset.UtcNow;
+        return merged;
+    }
+
     private static readonly JsonSerializerOptions CorrectionJson = new(JsonSerializerDefaults.Web);
 
     public static string? ApplyProposal(
@@ -603,6 +635,50 @@ internal static class CorrectionTracePolicy
         trace.Completion.VerifiedArtifacts = [];
         trace.Revision++;
         trace.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private static List<CorrectionHypothesisState> MergeHypotheses(
+        CorrectionTraceState winner,
+        CorrectionTraceState other,
+        IReadOnlyList<CorrectionEvidenceState> evidence)
+    {
+        var evidenceIds = evidence.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        return winner.Hypotheses.Concat(other.Hypotheses)
+            .GroupBy(item => item.Id, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .Take(MaxHypotheses)
+            .Select(item => new CorrectionHypothesisState
+            {
+                Id = item.Id,
+                Statement = item.Statement,
+                Status = item.Status,
+                KillCriterion = item.KillCriterion,
+                EvidenceIds = item.EvidenceIds.Where(evidenceIds.Contains).Distinct(StringComparer.Ordinal).ToList(),
+                Confidence = item.Confidence,
+            })
+            .ToList();
+    }
+
+    private static List<CorrectionQuestionState> MergeQuestions(
+        CorrectionTraceState winner,
+        CorrectionTraceState other)
+    {
+        var questions = winner.OpenQuestions.Concat(other.OpenQuestions)
+            .GroupBy(item => item.Id, StringComparer.Ordinal)
+            .Select(group => group
+                .OrderByDescending(item => item.AnsweredAt is not null)
+                .ThenByDescending(item => item.AnsweredAt)
+                .First())
+            .Take(MaxQuestions)
+            .ToList();
+        var blocking = questions
+            .Where(item => item.Blocking && item.AnsweredAt is null)
+            .OrderByDescending(item => winner.OpenQuestions.Any(candidate => candidate.Id == item.Id))
+            .ThenByDescending(item => item.AskedAt)
+            .FirstOrDefault();
+        foreach (var question in questions.Where(item => item.Blocking && item.AnsweredAt is null && item.Id != blocking?.Id))
+            question.Blocking = false;
+        return questions;
     }
 
     private static void AddEvidence(CorrectionTraceState trace, CorrectionEvidenceState evidence)

@@ -1613,9 +1613,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             : await Task.WhenAll(parallelToolTasks.Select(task => ExecuteParallelToolTaskAsync(
                 run, configuration, checkpoint, plannerId, task, cancellationToken, surfaces[task.TaskId]))).ConfigureAwait(false);
         var parallelWaiting = false;
+        var correctionMerged = false;
         foreach (var result in parallelResults)
         {
-            MergeParallelTaskCheckpoint(checkpoint, result.Checkpoint, result.TaskId);
+            correctionMerged |= MergeParallelTaskCheckpoint(
+                checkpoint,
+                result.Checkpoint,
+                result.TaskId,
+                configuration.RuntimePolicy,
+                checkpoint.UserGoal);
             checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage,
                 Maf18RuntimeAdapter.UsageSince(result.Checkpoint.ModelUsage, usageBeforeParallel));
             if (result.Waiting)
@@ -1627,6 +1633,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             if (result.Result is not null)
                 await ApplyTaskResultAsync(run, configuration, runId, checkpoint, result.Result, cancellationToken).ConfigureAwait(false);
         }
+        if (correctionMerged && checkpoint.Correction is not null)
+            await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, cancellationToken).ConfigureAwait(false);
         if (parallelWaiting)
         {
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting-decision", cancellationToken).ConfigureAwait(false);
@@ -1684,16 +1692,29 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         return clone;
     }
 
-    private static void MergeParallelTaskCheckpoint(
+    private static bool MergeParallelTaskCheckpoint(
         FullDuplexCheckpointV1 target,
         FullDuplexCheckpointV1 source,
-        Guid taskId)
+        Guid taskId,
+        CorrectionRuntimePolicyDto? runtimePolicy,
+        string goal)
     {
         var updated = source.Tasks.FirstOrDefault(item => item.TaskId == taskId)
             ?? throw new InvalidDataException($"Parallel worker checkpoint lost task {taskId}.");
         var index = target.Tasks.FindIndex(item => item.TaskId == taskId);
         if (index < 0) throw new InvalidDataException($"Parallel worker task {taskId} is missing from the owner checkpoint.");
         target.Tasks[index] = updated;
+        if (target.Correction is null || source.Correction is null)
+            return false;
+        if (runtimePolicy is null)
+            throw new InvalidDataException("A correction checkpoint is missing its frozen runtime policy.");
+        target.Correction = CorrectionTracePolicy.Merge(target.Correction, source.Correction);
+        CorrectionTracePolicy.EvaluateCompletion(
+            target.Correction,
+            runtimePolicy,
+            goal,
+            target.Correction.Completion.ModifiedArtifacts.Count > 0);
+        return true;
     }
 
     /// <summary>
