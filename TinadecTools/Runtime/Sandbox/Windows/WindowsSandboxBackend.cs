@@ -91,7 +91,10 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
                 UserName = SandboxAccountManager.AccountName,
                 Domain = SandboxAccountManager.AccountDomain,
                 PasswordInClearText = DpapiCredentialStore.LoadPassword(),
-                LoadUserProfile = true,
+                // The sandbox environment sets USERPROFILE/APPDATA/TEMP explicitly.
+                // Loading the local profile on every command costs tens of seconds on
+                // Windows and is not part of the security boundary.
+                LoadUserProfile = false,
                 StandardOutputEncoding = System.Text.Encoding.UTF8,
                 StandardErrorEncoding = System.Text.Encoding.UTF8
             };
@@ -195,7 +198,7 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
         psi.UserName = SandboxAccountManager.AccountName;
         psi.Domain = SandboxAccountManager.AccountDomain;
         psi.PasswordInClearText = DpapiCredentialStore.LoadPassword();
-        psi.LoadUserProfile = true;
+        psi.LoadUserProfile = false;
 
         using var process = new Process { StartInfo = psi };
         process.Start();

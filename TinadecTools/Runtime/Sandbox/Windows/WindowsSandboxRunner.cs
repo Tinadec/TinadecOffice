@@ -203,8 +203,32 @@ internal static class WindowsSandboxRunner
             catch { }
         }
 
-        var stdout = stdoutTask.GetAwaiter().GetResult();
-        var stderr = stderrTask.GetAwaiter().GetResult();
+        // A command such as `node --test` may spawn a test runner that inherits
+        // the redirected stdout/stderr handles. Waiting for the parent process to
+        // exit is necessary but not sufficient: the pipes stay open until every
+        // descendant releases them, and one background/runner child can otherwise
+        // hold the whole tool call until its outer timeout. Give the well-behaved
+        // case a short drain window, then close the sandbox job before reading the
+        // captured output.
+        var output = Task.WhenAll(stdoutTask, stderrTask);
+        if (!output.Wait(TimeSpan.FromSeconds(3)))
+        {
+            job.Kill();
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch { }
+            if (!output.Wait(TimeSpan.FromSeconds(2)))
+            {
+                return new SandboxRunnerResponse
+                {
+                    Success = false,
+                    ExitCode = -1,
+                    TimedOut = timedOut,
+                    Error = "Sandboxed child processes kept output open after the command exited."
+                };
+            }
+        }
+        var stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : new CapturedText(string.Empty, false);
+        var stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : new CapturedText(string.Empty, false);
 
         return new SandboxRunnerResponse
         {

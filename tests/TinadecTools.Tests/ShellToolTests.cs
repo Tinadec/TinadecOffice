@@ -88,6 +88,21 @@ public sealed class ShellToolTests
         Assert.Equal("quoted: two words", repo.CaptureGit("log", "-1", "--format=%s").Trim());
     }
 
+    [Fact]
+    public void RealCmd_BackgroundChildCannotHoldTheResultPipeOpen()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = RunRealCmd("start /b ping 127.0.0.1 -n 60 & echo released");
+        stopwatch.Stop();
+
+        Assert.True(response.Success, $"stdout=[{response.Stdout}] stderr=[{response.Stderr}] error=[{response.Error}]");
+        Assert.Contains("released", response.Stdout);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+            $"a detached child held the stdout pipe for {stopwatch.Elapsed}.");
+    }
+
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static SandboxRunnerResponse RunRealCmd(string command, string? workingDirectory = null)
     {
