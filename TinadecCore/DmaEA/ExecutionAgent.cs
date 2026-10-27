@@ -49,6 +49,10 @@ public sealed class ExecutionAgent
     /// No tool function has an implementation delegate, so the caller remains the
     /// sole authority for checkpointing, policy, approval, and dispatch.
     /// </summary>
+    /// <param name="fullResults">
+    /// Full text of results the checkpoint keeps only a head of (<see cref="WorkerToolTurn.ResultOnExecution"/>),
+    /// keyed by call id. A turn missing here is sent as stored.
+    /// </param>
     public async Task<WorkerModelTurn> GetNextTurnAsync(
         DmaeaRunContext ctx,
         AgentDefinition agent,
@@ -59,7 +63,8 @@ public sealed class ExecutionAgent
         int maxHistoryMessages,
         CancellationToken ct,
         IReadOnlyList<WorkerInterruption>? interruptions = null,
-        IMessageAttachmentStore? attachments = null)
+        IMessageAttachmentStore? attachments = null,
+        IReadOnlyDictionary<string, string>? fullResults = null)
     {
         var resolved = await _chatClients.ResolveChatAsync(agent.ModelRoutePurpose ?? "chat", ct).ConfigureAwait(false);
         if (!resolved.IsAvailable)
@@ -110,7 +115,8 @@ public sealed class ExecutionAgent
             interruptions ?? [],
             maxHistoryMessages,
             ct,
-            imageInput.Parts).ConfigureAwait(false);
+            imageInput.Parts,
+            fullResults).ConfigureAwait(false);
         var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
             .GetResponseAsync(conversation, options, ct)
             .ConfigureAwait(false);
@@ -177,7 +183,8 @@ public sealed class ExecutionAgent
         IReadOnlyList<WorkerInterruption> interruptions,
         int maxHistoryMessages,
         CancellationToken cancellationToken,
-        IReadOnlyList<AIContent>? goalParts = null)
+        IReadOnlyList<AIContent>? goalParts = null,
+        IReadOnlyDictionary<string, string>? fullResults = null)
     {
         var messages = new List<ChatMessage>();
         // A round the user cut off sits in the transcript where it happened: what the worker had
@@ -204,9 +211,10 @@ public sealed class ExecutionAgent
             messages.Add(new ChatMessage(ChatRole.Assistant, assistantContents));
             if (!string.IsNullOrWhiteSpace(turn.ResultJson))
             {
+                var result = turn.ResultOnExecution && fullResults?.GetValueOrDefault(turn.CallId) is { } full ? full : turn.ResultJson;
                 messages.Add(new ChatMessage(ChatRole.Tool,
                 [
-                    new FunctionResultContent(turn.CallId, ModelFacingResult(turn.ResultJson))
+                    new FunctionResultContent(turn.CallId, ModelFacingResult(result))
                 ]));
             }
             AddInterruptions(++index);
@@ -355,4 +363,13 @@ public sealed class WorkerToolTurn
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? ToolSuccess { get; set; }
+
+    /// <summary>
+    /// True when the result was too large to keep inline: <see cref="ResultJson"/> then holds a
+    /// bounded head and the full text stays on the execution row (<see cref="ExecutionId"/>), which
+    /// is where the worker conversation reads it from. Every checkpoint save rewrites every turn,
+    /// so a full copy here made each later save cost the sum of all results so far.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ResultOnExecution { get; set; }
 }

@@ -2138,7 +2138,18 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     Guid.Parse(pendingTurn.ExecutionId!), cancellationToken).ConfigureAwait(false);
                 var resultJson = dispatch.Result?.GetRawText();
                 if (string.IsNullOrWhiteSpace(resultJson)) resultJson = snapshot?.ResultJson ?? "null";
-                pendingTurn.ResultJson = resultJson;
+                // The execution row holds this result durably. A large inline copy made every later
+                // checkpoint save rewrite it (measured: one run, 85 saves, 129.6 MB, from a single
+                // 1.7 MB search result), so the checkpoint keeps a bounded head and the worker
+                // conversation reads the full text back from the execution. Only when the row is
+                // known to hold the identical text; the worktree result is parsed from the turn.
+                if (resultJson.Length > InlineToolResultChars && !pendingTurn.IsSpaceWorktreeProvisioning
+                    && string.Equals(snapshot?.ResultJson, resultJson, StringComparison.Ordinal))
+                {
+                    pendingTurn.ResultJson = ToolResultHead(resultJson, pendingTurn.ExecutionId!);
+                    pendingTurn.ResultOnExecution = true;
+                }
+                else pendingTurn.ResultJson = resultJson;
                 pendingTurn.DispatchStatus = ToolDispatchStatus.Completed;
                 pendingTurn.ToolSuccess = snapshot?.ToolSuccess;
                 if (pendingTurn.ToolSuccess != false)
@@ -2810,6 +2821,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var dispatchSection = worker.AllowedTools.Any(CoreVirtualToolPolicy.IsTaskDispatch)
             ? "\n\n" + BuildDispatchRosterSection(DispatchRosterOf(configuration))
             : string.Empty;
+        var fullResults = await LoadToolResultsKeptOnExecutionAsync(task, cancellationToken).ConfigureAwait(false);
         return await new ExecutionAgent(CreateModelFactory(configuration, checkpoint, workerDefinition,
             worker.Id, worker.ParentInstanceId, AnswerStreaming.WorkLayer, task: task), _logger).GetNextTurnAsync(
             CreateRunContext(run, checkpoint),
@@ -2825,7 +2837,47 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             configuration.Context.RecentMessageLimit,
             cancellationToken,
             task.Interruptions,
-            _services.GetService(typeof(IMessageAttachmentStore)) as IMessageAttachmentStore).ConfigureAwait(false);
+            _services.GetService(typeof(IMessageAttachmentStore)) as IMessageAttachmentStore,
+            fullResults).ConfigureAwait(false);
+    }
+
+    /// <summary>A result longer than this is kept on its execution row; the checkpoint keeps a head.</summary>
+    internal const int InlineToolResultChars = 16 * 1024;
+    private const int ToolResultHeadChars = 2 * 1024;
+
+    /// <summary>
+    /// The checkpoint's copy of a result kept on its execution: the opening characters (what run
+    /// evidence and repeat detection read) and where the rest is. Not JSON; the worker conversation
+    /// replaces it with the full text, and a model only ever sees it if that row is gone.
+    /// </summary>
+    internal static string ToolResultHead(string result, string executionId)
+    {
+        var length = Math.Min(ToolResultHeadChars, result.Length);
+        if (length < result.Length && char.IsHighSurrogate(result[length - 1])) length--;
+        return string.Concat(result.AsSpan(0, length),
+            $"\n…[{result.Length} characters in total; the full result is kept with tool execution {executionId}]");
+    }
+
+    /// <summary>
+    /// Full text of the task's results that the checkpoint keeps only a head of, read back from
+    /// their execution rows. A row that is gone leaves the head in place: the worker reads a
+    /// shortened result instead of the task failing.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>?> LoadToolResultsKeptOnExecutionAsync(
+        DurableTaskNode task, CancellationToken cancellationToken)
+    {
+        Dictionary<string, string>? results = null;
+        foreach (var turn in task.ToolTurns)
+        {
+            if (!turn.ResultOnExecution || !Guid.TryParse(turn.ExecutionId, out var executionId)) continue;
+            var execution = await _services.GetRequiredService<IToolExecutionCoordinator>()
+                .FindAsync(executionId, cancellationToken).ConfigureAwait(false);
+            if (execution?.ResultJson is { Length: > 0 } full)
+                (results ??= new Dictionary<string, string>(StringComparer.Ordinal))[turn.CallId] = full;
+            else
+                _logger.TryLogWarning("Tool execution {ExecutionId} no longer holds its result; the worker reads the checkpoint's head.", executionId);
+        }
+        return results;
     }
 
     /// <summary>

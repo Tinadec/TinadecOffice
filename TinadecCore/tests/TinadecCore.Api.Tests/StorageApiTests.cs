@@ -675,7 +675,7 @@ public sealed partial class StorageApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task FollowEventsAsync_ReturnsOnlyEventsAtOrAfterWatermark()
+    public async Task FollowEventsAsync_ReturnsOnlyEventsPastEachRunsWatermark()
     {
         var client = _factory!.CreateClient();
         var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Follow test", path = Path.Combine(_root, "workspace-follow") })).Content.ReadFromJsonAsync<JsonElement>();
@@ -684,16 +684,96 @@ public sealed partial class StorageApiTests : IAsyncLifetime
         var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Follow trigger" })).Content.ReadFromJsonAsync<JsonElement>();
         var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
         var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
-        var first = await lifecycle.AppendEventAsync(run.Id, "run.started", new { source = "follow-test" }, "Run started");
+        await lifecycle.AppendEventAsync(run.Id, "run.started", new { source = "follow-test" }, "Run started");
 
-        // A measurable wall-clock gap lets the watermark sit strictly between events.
-        await Task.Delay(60);
-        var second = await lifecycle.AppendEventAsync(run.Id, "task.assigned", new { source = "follow-test" }, "Task assigned");
+        var watermarks = new Dictionary<Guid, long>();
+        Assert.Equal("run.started", Assert.Single(await lifecycle.FollowEventsAsync(sessionId, watermarks)).EventType);
+        Assert.Equal(1, watermarks[run.Id]);
+        Assert.Empty(await lifecycle.FollowEventsAsync(sessionId, watermarks));
 
-        Assert.Equal("task.assigned", Assert.Single(await lifecycle.FollowEventsAsync(sessionId, first.Timestamp.AddMilliseconds(20))).EventType);
-        Assert.Equal(2, (await lifecycle.FollowEventsAsync(sessionId, DateTimeOffset.MinValue)).Count);
-        Assert.Empty(await lifecycle.FollowEventsAsync(sessionId, second.Timestamp.AddMilliseconds(1)));
-        Assert.Empty(await lifecycle.FollowEventsAsync(Guid.NewGuid(), DateTimeOffset.MinValue));
+        await lifecycle.AppendEventAsync(run.Id, "task.assigned", new { source = "follow-test" }, "Task assigned");
+        Assert.Equal("task.assigned", Assert.Single(await lifecycle.FollowEventsAsync(sessionId, watermarks)).EventType);
+        Assert.Empty(await lifecycle.FollowEventsAsync(sessionId, watermarks));
+
+        // A second run restarts its sequence at one; the watermark is per run, so its first
+        // event is new even though the first run already reached two.
+        var secondMessage = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Second follow trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var secondRun = await lifecycle.StartRunAsync(sessionId, secondMessage.GetProperty("id").GetGuid());
+        await lifecycle.AppendEventAsync(secondRun.Id, "run.started", new { source = "follow-test" }, "Second run started");
+        var fresh = Assert.Single(await lifecycle.FollowEventsAsync(sessionId, watermarks));
+        Assert.Equal(secondRun.Id.ToString(), fresh.RunId);
+        Assert.Equal(2, watermarks[run.Id]);
+        Assert.Equal(1, watermarks[secondRun.Id]);
+
+        Assert.Equal(3, (await lifecycle.FollowEventsAsync(sessionId, new Dictionary<Guid, long>())).Count);
+        Assert.Empty(await lifecycle.FollowEventsAsync(Guid.NewGuid(), new Dictionary<Guid, long>()));
+    }
+
+    [Fact]
+    public async Task ReplayEventsAsync_EventTypesFilterInTheIndex()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Replay filter", path = Path.Combine(_root, "workspace-replay-filter") })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Replay filter" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var runs = new List<Guid>();
+        for (var index = 0; index < 2; index++)
+        {
+            var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = $"Replay trigger {index}" })).Content.ReadFromJsonAsync<JsonElement>();
+            var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+            runs.Add(run.Id);
+            await lifecycle.AppendEventAsync(run.Id, "model.output.delta", new { delta = "a" }, "Delta");
+            await lifecycle.AppendEventAsync(run.Id, "step.result.created", new { status = "completed" }, "Step");
+            await lifecycle.AppendEventAsync(run.Id, "model.output.delta", new { delta = "b" }, "Delta");
+        }
+
+        Assert.Equal(6, (await lifecycle.ReplayEventsAsync(sessionId, 0)).Count);
+        var steps = await lifecycle.ReplayEventsAsync(sessionId, 0, eventTypes: ["step.result.created"]);
+        Assert.Equal(2, steps.Count);
+        Assert.All(steps, item => Assert.Equal("step.result.created", item.EventType));
+        var oneRun = Assert.Single(await lifecycle.ReplayRunEventsAsync(sessionId, runs[1], eventTypes: ["step.result.created"]));
+        Assert.Equal(runs[1].ToString(), oneRun.RunId);
+        Assert.Empty(await lifecycle.ReplayEventsAsync(sessionId, 0, eventTypes: []));
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_RecoveredJournalLine_AdvancesTheRunSequence()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Reconcile sequence", path = Path.Combine(_root, "workspace-reconcile-sequence") })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Reconcile sequence" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Reconcile trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        await lifecycle.AppendEventAsync(run.Id, "run.started", new { }, "Run started");
+        var lost = await lifecycle.AppendEventAsync(run.Id, "task.assigned", new { }, "Task assigned");
+
+        // The host stopped after the journal line was written but before its index row and the
+        // run's counter were committed.
+        await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            await db.EventIndex.Where(x => x.EventId == lost.EventId).ExecuteDeleteAsync();
+            await db.Runs.Where(x => x.Id == run.Id).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.LastEventSequence, 1));
+        }
+
+        await lifecycle.ReconcileAsync();
+
+        Assert.Equal(2, (await lifecycle.FindRunAsync(run.Id))!.LastEventSequence);
+        var next = await lifecycle.AppendEventAsync(run.Id, "worker.completed", new { }, "Worker completed");
+        Assert.Equal(3, next.Sequence);
+        Assert.Equal(3, (await lifecycle.FollowEventsAsync(sessionId, new Dictionary<Guid, long>())).Count);
+    }
+
+    [Fact]
+    public async Task EventsSse_WithoutASession_IsRejected()
+    {
+        var client = _factory!.CreateClient();
+        var response = await client.GetAsync("/api/v1/events");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("SESSION_REQUIRED", body.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -795,8 +875,7 @@ public sealed partial class StorageApiTests : IAsyncLifetime
         }
     }
 
-    private static async Task<string> ReadSseFrameAsync(StreamReader reader, CancellationToken cancellationToken)
-    {
+    private static async Task<string> ReadSseFrameAsync(StreamReader reader, CancellationToken cancellationToken)    {
         var lines = new List<string>();
         while (true)
         {

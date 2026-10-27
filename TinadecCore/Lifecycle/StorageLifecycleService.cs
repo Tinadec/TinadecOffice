@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -480,7 +480,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         finally { gate.Release(); }
     }
 
-    public async Task<IReadOnlyList<EventEnvelope>> ReplayEventsAsync(Guid? sessionId, long afterSequence, CancellationToken cancellationToken = default)
+    /// <param name="eventTypes">
+    /// Narrows the replay in the index query. A projection that needs a handful of event kinds
+    /// should name them: most of a session's rows are model output deltas, and every row that
+    /// survives the query costs a journal read.
+    /// </param>
+    public async Task<IReadOnlyList<EventEnvelope>> ReplayEventsAsync(Guid? sessionId, long afterSequence, CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? eventTypes = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var query = db.EventIndex.AsNoTracking().Where(x => x.Sequence > afterSequence);
@@ -490,6 +496,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             if (session is null) return [];
             query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
         }
+        if (eventTypes?.ToArray() is { } types) query = query.Where(x => types.Contains(x.EventType));
         var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
         return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
     }
@@ -498,83 +505,117 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     /// One run's events inside one session, filtered in the index query so a caller that
     /// asks about a single run does not materialise the whole session journal.
     /// </summary>
-    public async Task<IReadOnlyList<EventEnvelope>> ReplayRunEventsAsync(Guid sessionId, Guid runId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<EventEnvelope>> ReplayRunEventsAsync(Guid sessionId, Guid runId, CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? eventTypes = null)
     {
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null) return [];
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await db.EventIndex.AsNoTracking()
+        var query = db.EventIndex.AsNoTracking()
             .Where(x => x.SessionId == sessionId && x.RunId == runId
-                && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
+                && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
+        if (eventTypes?.ToArray() is { } types) query = query.Where(x => types.Contains(x.EventType));
+        var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
         return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Incremental follow query for long-lived SSE loops. The watermark is a
-    /// wall-clock lower bound on the event index, so each call reads only rows
-    /// committed at or after that instant instead of rescanning the whole
-    /// session journal. Callers keep a small overlap window and de-duplicate
-    /// by per-run sequence because sequences are allocated per run.
-    /// ponytail: timestamp watermark suits the local single-host store; a global
-    /// monotonic sequence column is the upgrade path if a multi-host PostgreSQL
-    /// deployment ever needs strict cursor semantics.
+    /// Incremental follow query for long-lived SSE loops. Sequences are allocated per run and
+    /// committed in order under the run's append gate, together with the run's
+    /// <c>last_event_sequence</c>, so "what is new" is exactly the rows past each run's
+    /// watermark: one read of the runs' sequence heads, then an indexed (run_id, sequence)
+    /// range read for the runs that moved. The previous timestamp watermark could not be
+    /// compared in SQLite and re-read every index row of the session (or, unfiltered, of the
+    /// whole scope) on every 200 ms tick.
     /// </summary>
-    public async Task<IReadOnlyList<EventEnvelope>> FollowEventsAsync(Guid? sessionId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default)
+    /// <param name="watermarks">
+    /// Highest sequence already read per run. Advanced to the highest index row read, including
+    /// a row whose journal line cannot be materialised, so a damaged line is read once and not
+    /// on every tick.
+    /// </param>
+    public async Task<IReadOnlyList<EventEnvelope>> FollowEventsAsync(Guid? sessionId, IDictionary<Guid, long> watermarks, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(watermarks);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var query = db.EventIndex.AsNoTracking().AsQueryable();
+        var runs = db.Runs.AsNoTracking();
         if (sessionId is { } id)
         {
             var session = await _sessions.FindAsync(id, cancellationToken).ConfigureAwait(false);
             if (session is null) return [];
-            query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
+            runs = runs.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
         }
-        // ponytail: EF Core SQLite cannot translate DateTimeOffset comparisons
-        // (see ListLeaseEligibleRunsAsync), so the watermark filters in memory
-        // over slim index projections; file bodies are read only for surviving rows.
-        var candidates = await query
-            .Select(x => new EventIndexRecord { RunId = x.RunId, Sequence = x.Sequence, Timestamp = x.Timestamp, ByteOffset = x.ByteOffset, ByteLength = x.ByteLength })
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        return await MaterializeAsync(candidates.Where(x => x.Timestamp >= sinceUtc).ToList(), cancellationToken).ConfigureAwait(false);
+        var heads = await runs.Select(x => new { x.Id, x.LastEventSequence }).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var rows = new List<EventIndexRecord>();
+        foreach (var head in heads)
+        {
+            watermarks.TryGetValue(head.Id, out var seen);
+            if (head.LastEventSequence <= seen) continue;
+            var query = db.EventIndex.AsNoTracking().Where(x => x.RunId == head.Id && x.Sequence > seen);
+            if (sessionId is { } scoped) query = query.Where(x => x.SessionId == scoped);
+            var fresh = await query
+                .Select(x => new EventIndexRecord { RunId = x.RunId, Sequence = x.Sequence, Timestamp = x.Timestamp, ByteOffset = x.ByteOffset, ByteLength = x.ByteLength })
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            if (fresh.Count == 0) continue;
+            watermarks[head.Id] = fresh.Max(x => x.Sequence);
+            rows.AddRange(fresh);
+        }
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<List<EventEnvelope>> MaterializeAsync(List<EventIndexRecord> rows, CancellationToken cancellationToken)
     {
         rows = rows.OrderBy(x => x.Timestamp).ThenBy(x => x.Sequence).ToList();
         var events = new List<EventEnvelope>(rows.Count);
-        foreach (var row in rows)
+        // One handle per run journal for the whole pass. Opening a file is the dominant cost on
+        // Windows (measured: 1,295 rows of one session 692 ms with an open per row, 40 ms with an
+        // open per journal), and a session replay reads the same few journals hundreds of times.
+        var journals = new Dictionary<Guid, FileStream?>();
+        try
         {
-            var filePath = _paths.EventLog(row.RunId);
-            if (!File.Exists(filePath)) continue;
-            await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            stream.Seek(row.ByteOffset, SeekOrigin.Begin);
-            var bytes = new byte[row.ByteLength];
-            var read = 0;
-            while (read < bytes.Length)
+            foreach (var row in rows)
             {
-                var count = await stream.ReadAsync(bytes.AsMemory(read), cancellationToken).ConfigureAwait(false);
-                if (count == 0) break;
-                read += count;
+                if (!journals.TryGetValue(row.RunId, out var stream))
+                {
+                    var filePath = _paths.EventLog(row.RunId);
+                    stream = File.Exists(filePath)
+                        ? new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)
+                        : null;
+                    journals[row.RunId] = stream;
+                }
+                if (stream is null) continue;
+                stream.Seek(row.ByteOffset, SeekOrigin.Begin);
+                var bytes = new byte[row.ByteLength];
+                var read = 0;
+                while (read < bytes.Length)
+                {
+                    var count = await stream.ReadAsync(bytes.AsMemory(read), cancellationToken).ConfigureAwait(false);
+                    if (count == 0) break;
+                    read += count;
+                }
+                if (read != bytes.Length) continue;
+                EventFileRecord? record;
+                try
+                {
+                    record = JsonSerializer.Deserialize<EventFileRecord>(bytes, JsonOptions);
+                }
+                catch (JsonException)
+                {
+                    // 与 ReconcileAsync 同一容错口径：单个损坏/错位的事件行（追加写入途中
+                    // 进程被强杀，或 event_index 的 ByteOffset/ByteLength 与文件实际字节错位）
+                    // 不得让整个 replay/follow 端点 500——那会打断整条事件流，聊天与运行状态
+                    // 全部不可见。文件行本身通常仍合法（ReconcileAsync 启动时按换行重建索引会
+                    // 补齐缺失行），这里只跳过索引错位的单行并留痕，保持事件流可用。
+                    _diagnostics.Add($"Ignoring malformed JSONL record for run {row.RunId} at byte {row.ByteOffset}.");
+                    continue;
+                }
+                if (record is null) continue;
+                events.Add(new EventEnvelope { Version = record.Version, EventId = record.EventId.ToString(), EventType = record.EventType, Timestamp = record.Timestamp, SessionId = record.SessionId.ToString(), RunId = record.RunId.ToString(), Payload = new Dictionary<string, object?> { ["sequence"] = record.Sequence, ["summary"] = record.Summary, ["severity"] = record.Severity, ["payload"] = record.Payload } });
             }
-            if (read != bytes.Length) continue;
-            EventFileRecord? record;
-            try
-            {
-                record = JsonSerializer.Deserialize<EventFileRecord>(bytes, JsonOptions);
-            }
-            catch (JsonException)
-            {
-                // 与 ReconcileAsync 同一容错口径：单个损坏/错位的事件行（追加写入途中
-                // 进程被强杀，或 event_index 的 ByteOffset/ByteLength 与文件实际字节错位）
-                // 不得让整个 replay/follow 端点 500——那会打断整条事件流，聊天与运行状态
-                // 全部不可见。文件行本身通常仍合法（ReconcileAsync 启动时按换行重建索引会
-                // 补齐缺失行），这里只跳过索引错位的单行并留痕，保持事件流可用。
-                _diagnostics.Add($"Ignoring malformed JSONL record for run {row.RunId} at byte {row.ByteOffset}.");
-                continue;
-            }
-            if (record is null) continue;
-            events.Add(new EventEnvelope { Version = record.Version, EventId = record.EventId.ToString(), EventType = record.EventType, Timestamp = record.Timestamp, SessionId = record.SessionId.ToString(), RunId = record.RunId.ToString(), Payload = new Dictionary<string, object?> { ["sequence"] = record.Sequence, ["summary"] = record.Summary, ["severity"] = record.Severity, ["payload"] = record.Payload } });
+        }
+        finally
+        {
+            foreach (var stream in journals.Values)
+                if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false);
         }
         return events;
     }
@@ -591,41 +632,25 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<Guid>> ListCancelledRunsMissingTerminalStreamAsync(
         CancellationToken cancellationToken = default)
     {
+        // One correlated query instead of listing every cancelled run and sending the whole id
+        // list back: this runs every 15 s for each mounted scope and the run history only grows.
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var cancelled = await db.Runs.AsNoTracking()
-            .Where(x => x.Status == "cancelled" && x.TurnId != null)
+        return await db.Runs.AsNoTracking()
+            .Where(x => x.Status == "cancelled" && x.TurnId != null
+                && !db.RunStream.Any(stream => stream.RunId == x.Id && stream.Kind == "done" && stream.FinishReason == "cancelled"))
             .Select(x => x.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (cancelled.Count == 0) return [];
-
-        var closed = await db.RunStream.AsNoTracking()
-            .Where(x => cancelled.Contains(x.RunId)
-                && x.Kind == "done"
-                && x.FinishReason == "cancelled")
-            .Select(x => x.RunId)
-            .Distinct()
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var closedSet = closed.ToHashSet();
-        return cancelled.Where(id => !closedSet.Contains(id)).ToArray();
     }
 
     public async Task<IReadOnlyList<Guid>> ListFailedRunsMissingTerminalStreamAsync(
         CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var failed = await db.Runs.AsNoTracking()
-            .Where(x => x.Status == "failed" && x.TurnId != null)
+        return await db.Runs.AsNoTracking()
+            .Where(x => x.Status == "failed" && x.TurnId != null
+                && !db.RunStream.Any(stream => stream.RunId == x.Id && stream.Kind == "error"))
             .Select(x => x.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (failed.Count == 0) return [];
-
-        var closed = await db.RunStream.AsNoTracking()
-            .Where(x => failed.Contains(x.RunId) && x.Kind == "error")
-            .Select(x => x.RunId)
-            .Distinct()
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var closedSet = closed.ToHashSet();
-        return failed.Where(id => !closedSet.Contains(id)).ToArray();
     }
 
     public async Task<IReadOnlyList<Guid>> ListTerminalRunsWithPendingQueuedInteractionsAsync(
@@ -652,11 +677,14 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<RunRecord>> ListLeaseEligibleRunsAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         var nowUnixMilliseconds = now.ToUnixTimeMilliseconds();
-        var admissionGrace = now.AddSeconds(-RecoveryPolicy.AdmissionGraceSeconds);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // Terminal and awaiting runs carry no lease, so without the status predicate this
+        // 2-second engine scan loaded every run the scope ever had. Status is plain text and
+        // stays in SQL; the in-memory checks below remain the authority (case, grace window).
         // ponytail: EF Core SQLite cannot translate DateTimeOffset comparisons, so the admission-grace
         // filter runs in memory; a stored unix-ms column would keep it in SQL when the runs table grows.
         var runs = await db.Runs.AsNoTracking()
+            .Where(x => !NeverLeaseEligibleStatuses.Contains(x.Status))
             .Where(x => x.LeaseOwner == null || x.LeaseExpiresUnixMilliseconds == null || x.LeaseExpiresUnixMilliseconds <= nowUnixMilliseconds)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         // Protection + grace come from the shared RecoveryPolicy (plan §4.3 item 5):
@@ -666,6 +694,9 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             .Where(x => RecoveryPolicy.IsAdmissionGraceElapsed(x.CreatedAt, now))
             .OrderBy(x => x.UpdatedAt).ToList();
     }
+
+    private static readonly string[] NeverLeaseEligibleStatuses =
+        ["completed", "failed", "cancelled", .. RecoveryPolicy.AwaitingDecisionStatuses];
 
     /// <summary>
     /// Persists one resolved run configuration as immutable content. Repeating the
@@ -1178,6 +1209,11 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         // already indexed under a different run stays a skip, not a duplicate-key insert.
         var known = (await db.EventIndex.AsNoTracking().Select(x => x.EventId)
             .ToListAsync(cancellationToken).ConfigureAwait(false)).ToHashSet();
+        // A line can reach the journal while its index row and the run's sequence counter do
+        // not (the host stopped between the two writes). Re-indexing the line without moving the
+        // counter left the run one append away from a duplicate (run_id, sequence) key, and left
+        // the session follow, which reads each run's counter, blind to the row.
+        var recoveredHeads = new Dictionary<Guid, long>();
         foreach (var run in runs)
         {
             var path = _paths.EventLog(run.Id);
@@ -1200,6 +1236,8 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                     if (known.Add(record.EventId))
                     {
                         db.EventIndex.Add(new EventIndexRecord { EventId = record.EventId, TenantId = run.TenantId, WorkspaceId = run.WorkspaceId, RunId = record.RunId, SessionId = record.SessionId, ProjectId = record.ProjectId, EventType = record.EventType, Severity = record.Severity, Sequence = record.Sequence, TaskId = record.TaskId, ApprovalId = record.ApprovalId, ToolId = record.ToolId, Summary = record.Summary, SchemaVersion = record.Version, PayloadHash = Convert.ToHexString(SHA256.HashData(bytes.AsSpan(offset, newline - offset))).ToLowerInvariant(), RelativeFilePath = Path.Combine("events", run.Id + ".events.jsonl"), ByteOffset = offset, ByteLength = length, Timestamp = record.Timestamp });
+                        if (record.RunId == run.Id && record.Sequence > Math.Max(run.LastEventSequence, recoveredHeads.GetValueOrDefault(run.Id)))
+                            recoveredHeads[run.Id] = record.Sequence;
                     }
                 }
                 catch (JsonException)
@@ -1210,6 +1248,11 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             }
         }
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var (runId, head) in recoveredHeads)
+        {
+            await db.Runs.Where(x => x.Id == runId && x.LastEventSequence < head)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.LastEventSequence, head), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public async Task MigrateAsync(CancellationToken cancellationToken = default)

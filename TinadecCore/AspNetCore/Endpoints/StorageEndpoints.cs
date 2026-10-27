@@ -22,23 +22,40 @@ public static class StorageEndpoints
             if (http.RequestServices.GetService<IStorageScopeRegistry>() is { } registry
                 && (!http.Request.Headers.ContainsKey(StorageScopeHttpExtensions.StorageHeader) || http.Request.Headers[StorageScopeHttpExtensions.StorageHeader] == "user"))
             {
-                var projects = new List<object>();
-                foreach (var scope in registry.List().Where(x => x.ScopeKind == "project"))
-                {
-                    try
+                // Each scope mounts independently (a few seconds for a first mount), so they are
+                // opened side by side; rows keep the registry's order and failures are projected
+                // afterwards, one at a time, because that touches the request context.
+                var scopes = registry.List().Where(x => x.ScopeKind == "project").ToArray();
+                var outcomes = new (List<object>? Rows, Exception? Error)[scopes.Length];
+                await Parallel.ForEachAsync(Enumerable.Range(0, scopes.Length),
+                    new ParallelOptions { MaxDegreeOfParallelism = StorageScopeRegistry.MountParallelism, CancellationToken = ct },
+                    async (index, token) =>
                     {
-                        await using var lease = await registry.AcquireAsync(scope.StorageId, ct).ConfigureAwait(false);
-                        var workspace = (registry as IWorkspaceRegistry)?.ReadWorkspace(scope.StorageId);
-                        projects.AddRange((await lease.Services.GetRequiredService<ProjectSessionStore>().ListProjectsAsync(selected, ct).ConfigureAwait(false)).Select(x => ToProject(x, scope.StorageId, workspace, scope)));
-                    }
-                    catch (Exception ex) when (!ct.IsCancellationRequested && StorageScopeRowError.CanRepresent(ex))
+                        var scope = scopes[index];
+                        try
+                        {
+                            await using var lease = await registry.AcquireAsync(scope.StorageId, token).ConfigureAwait(false);
+                            var workspace = (registry as IWorkspaceRegistry)?.ReadWorkspace(scope.StorageId);
+                            outcomes[index] = ((await lease.Services.GetRequiredService<ProjectSessionStore>().ListProjectsAsync(selected, token).ConfigureAwait(false))
+                                .Select(x => ToProject(x, scope.StorageId, workspace, scope)).ToList(), null);
+                        }
+                        catch (Exception ex) when (!token.IsCancellationRequested && StorageScopeRowError.CanRepresent(ex))
+                        {
+                            outcomes[index] = (null, ex);
+                        }
+                    }).ConfigureAwait(false);
+                var projects = new List<object>();
+                for (var index = 0; index < scopes.Length; index++)
+                {
+                    if (outcomes[index].Rows is { } rows) projects.AddRange(rows);
+                    else if (outcomes[index].Error is { } error)
                     {
                         // A scope that cannot mount is still listed: a workspace the person can see and act on
                         // beats one that silently disappears. The row carries the same classification contract as
                         // an error response, so the client can offer the same recovery actions here and in a toast.
-                        var failure = StorageScopeRowError.From(http, ex);
+                        var failure = StorageScopeRowError.From(http, error);
                         if (selected == TinadecCore.Memory.LifecycleStatuses.Active)
-                            projects.Add(UnavailableProject(scope, failure));
+                            projects.Add(UnavailableProject(scopes[index], failure));
                     }
                 }
                 return Results.Ok(projects);
@@ -363,13 +380,21 @@ public static class StorageEndpoints
         app.MapGet("/api/v1/events", async (HttpContext context, string? sessionId, string? session_id, long? afterSeq, long? after_seq, StorageLifecycleService lifecycle, CancellationToken ct) =>
         {
             var selected = sessionId ?? session_id;
+            // The feed is a session's live view. An unfiltered subscription has no consumer: every
+            // renderer subscriber scopes to a session, and the desktop no longer opens one this way.
+            // It used to replay the whole scope's journal (and, before that, re-read every index row
+            // on each 200 ms tick) for nobody.
+            if (selected is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsJsonAsync(new { code = "SESSION_REQUIRED", message = "Live events are read for one session: pass session_id." }, ct).ConfigureAwait(false);
+                return;
+            }
             Guid? selectedSessionId = null;
-            if (selected is not null)
             {
                 if (!Guid.TryParse(selected, out var parsed)) { context.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
                 selectedSessionId = parsed;
-            }
-            var cursor = afterSeq ?? after_seq ?? 0;
+            }            var cursor = afterSeq ?? after_seq ?? 0;
             if (context.Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
                 && long.TryParse(lastEventId.ToString(), out var headerCursor))
             {
@@ -390,26 +415,27 @@ public static class StorageEndpoints
                 // Event sequences are allocated per run, so the client-facing
                 // Last-Event-ID cursor cannot be used as a database key once a
                 // new run restarts at sequence one. The initial replay honors
-                // the cursor; follow cycles poll a timestamp watermark and
-                // de-duplicate by per-run sequence instead of rescanning the
-                // whole journal on every tick.
+                // the cursor; follow cycles keep a per-run watermark and read
+                // only the runs whose sequence head moved past it.
                 var lastSequenceByRun = new Dictionary<string, long>(StringComparer.Ordinal);
+                var followWatermarks = new Dictionary<Guid, long>();
                 var unsequencedSeenIds = new HashSet<string>(StringComparer.Ordinal);
                 var lastHeartbeat = DateTimeOffset.UtcNow;
                 var initialReplay = true;
-                var followSince = DateTimeOffset.MinValue;
 
                 while (!ct.IsCancellationRequested)
                 {
                     var events = initialReplay
                         ? await lifecycle.ReplayEventsAsync(selectedSessionId, 0, ct).ConfigureAwait(false)
-                        : await lifecycle.FollowEventsAsync(selectedSessionId, followSince, ct).ConfigureAwait(false);
+                        : await lifecycle.FollowEventsAsync(selectedSessionId, followWatermarks, ct).ConfigureAwait(false);
                     var wrote = false;
                     foreach (var item in events)
                     {
-                        if (item.Timestamp > followSince) followSince = item.Timestamp - EventFollowOverlap;
                         var sequence = GetEventSequence(item);
                         var runKey = item.RunId ?? string.Empty;
+                        if (initialReplay && sequence is not null && Guid.TryParse(item.RunId, out var replayedRun)
+                            && sequence.Value > followWatermarks.GetValueOrDefault(replayedRun))
+                            followWatermarks[replayedRun] = sequence.Value;
                         if (sequence is not null)
                         {
                             if (lastSequenceByRun.TryGetValue(runKey, out var seen) && sequence.Value <= seen) continue;
@@ -655,7 +681,6 @@ public static class StorageEndpoints
     private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
 
     private static readonly TimeSpan EventFollowPollInterval = TimeSpan.FromMilliseconds(200);
-    private static readonly TimeSpan EventFollowOverlap = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan EventHeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 

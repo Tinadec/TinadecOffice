@@ -68,6 +68,12 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
     private Task? _disposeTask;
     public StorageScopeDescriptor User { get; }
 
+    /// <summary>
+    /// How many project scopes may mount at once. Mounts of distinct scopes share no state here
+    /// (each owns its Lazy, files and database), so callers that open every scope run them side by side.
+    /// </summary>
+    public const int MountParallelism = 4;
+
     public StorageScopeRegistry(IServiceProvider host, IConfiguration configuration, Action<IServiceCollection> registerHttp)
     {
         _host = host; _configuration = configuration; _registerHttp = registerHttp;

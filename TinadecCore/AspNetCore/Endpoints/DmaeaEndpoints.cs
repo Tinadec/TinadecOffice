@@ -120,7 +120,11 @@ public static class DmaeaEndpoints
                     : ProjectFrozenGraph(frozenRun, snapshotJson);
             }
             if (run is null) return Results.Json(new { run = (object?)null, graph = declaredGraph, nodes = Array.Empty<object>(), lanes = Array.Empty<object>(), flows = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
-            var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
+            // The snapshot describes one run, so it reads that run's events only, and only the
+            // kinds it projects: the desktop refreshes this view after every live event batch,
+            // and most of a session's rows are model output deltas it never looks at. Reading the
+            // whole session also labelled other runs' step results with this run's id.
+            var events = await lifecycle.ReplayRunEventsAsync(sessionGuid, run.Id, ct, SessionOrchestrationEventTypes);
             var checkpointRow = await lifecycle.GetCurrentRunCheckpointAsync(run.Id, ct);
             FullDuplexCheckpointV1? checkpoint = null;
             if (checkpointRow is not null)
@@ -258,8 +262,8 @@ public static class DmaeaEndpoints
             }
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
             var events = runGuid is { } run
-                ? await lifecycle.ReplayRunEventsAsync(sessionGuid, run, ct)
-                : await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
+                ? await lifecycle.ReplayRunEventsAsync(sessionGuid, run, ct, ToolTimelineEventTypes)
+                : await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct, ToolTimelineEventTypes);
             var items = BuildToolExecutionTimeline(events, sessionId);
             IReadOnlyList<object> page = limit is { } take && items.Count > take ? items.Skip(items.Count - take).ToList() : items;
             return Results.Ok(page);
@@ -269,7 +273,7 @@ public static class DmaeaEndpoints
         {
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
-            var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
+            var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct, TaskNodeEventTypes);
             var nodes = events.Where(e => e.EventType is "task.assigned" or "step.result.created" or "worker.completed" or "worker.blocked" or "worker.failed").Select(e => new
             {
                 id = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id"),
@@ -368,7 +372,7 @@ public static class DmaeaEndpoints
                     taskLaneById.TryAdd(task.TaskId.ToString(), LaneOfTask(task));
                 }
             }
-            var events = (await lifecycle.ReplayEventsAsync(run.SessionId, 0, ct)).Where(e => e.RunId == runGuid.ToString()).ToList();
+            var events = await lifecycle.ReplayRunEventsAsync(run.SessionId, runGuid, ct, RunOrchestrationEventTypes);
             // Agent display names for the run's instances (plan 配置体验改造 B)：
             // 前端不再显示 role/slug/GUID 兜底。
             var agentInstanceRows = await instances.ListByRunAsync(runGuid, ct);
@@ -870,15 +874,26 @@ public static class DmaeaEndpoints
         return null;
     }
 
+    // Event kinds each projection reads, passed to the replay so the index query filters them
+    // instead of every row costing a journal read. Keep each list equal to what its projection
+    // matches on: a kind missing here silently disappears from the view.
+    private static readonly string[] ToolTimelineEventTypes =
+    [
+        "step.result.created", "task.assigned",
+        "tool.execution.requested", "tool.execution.completed", "tool.execution.failed", "tool.execution.outcome_unknown",
+        "approval.requested", "approval.decided", "governance.permission_decided"
+    ];
+    private static readonly string[] TaskNodeEventTypes =
+        ["task.assigned", "step.result.created", "worker.completed", "worker.blocked", "worker.failed"];
+    private static readonly string[] SessionOrchestrationEventTypes = TaskNodeEventTypes;
+    private static readonly string[] RunOrchestrationEventTypes =
+        ["task.dispatched", .. TaskNodeEventTypes, "supervision.requested", "supervision.completed", "context.packed"];
+
     private static IReadOnlyList<object> BuildToolExecutionTimeline(
         IReadOnlyList<TinadecCore.Contracts.Events.EventEnvelope> events,
         string sessionId)
     {
-        var relevant = events.Where(e => e.EventType is "step.result.created" or "task.assigned"
-                or "tool.execution.requested" or "tool.execution.completed"
-                or "tool.execution.failed" or "tool.execution.outcome_unknown"
-                or "approval.requested" or "approval.decided" or "governance.permission_decided")
-            .ToList();
+        var relevant = events.Where(e => ToolTimelineEventTypes.Contains(e.EventType)).ToList();
 
         // A policy-level permission decision may only carry permission_request_id.
         // approval.requested is the durable bridge from that request to the concrete
