@@ -7,6 +7,7 @@ import i18n from '@/i18n'
 vi.mock('@/lib/scopedEventSource', () => ({ ScopedEventSource: class { constructor(url: string) { return new EventSource(url) } } }))
 import { effectScope, ref, nextTick, type EffectScope } from 'vue'
 import { api } from '@/api'
+import { followSession } from '@/lib/sessionEventBus'
 import { REPLAY_FALLBACK_MS, TOOL_REFRESH_DELAY_MS, useAgentActivity } from './useAgentActivity'
 
 /**
@@ -59,6 +60,9 @@ describe('useAgentActivity event wiring', () => {
 
   afterEach(() => {
     scope.stop()
+    // The bus keeps one connection per window, so the next case starts from "no session":
+    // `followSession` returns early whenever the id it is given is already the followed one.
+    followSession(null)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -67,6 +71,10 @@ describe('useAgentActivity event wiring', () => {
     const sessionId = ref<string | null>(null)
     const harness = scope.run(() => useAgentActivity(sessionId))!
     sessionId.value = 's-1'
+    // A window holds no feed of its own until it follows a session — that is the caller's
+    // job, and the composable only registers the handler. Point this window at the session
+    // the way the home controller does, then the subscription under test has a connection.
+    followSession('s-1')
     await nextTick()
     const source = FakeEventSource.instances[0]
     expect(source, 'the composable must subscribe once a session is selected').toBeDefined()

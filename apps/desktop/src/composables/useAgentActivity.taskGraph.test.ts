@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/scopedEventSource', () => ({ ScopedEventSource: class { constructor(url: string) { return new EventSource(url) } } }))
 import { effectScope, nextTick, ref, type EffectScope } from 'vue'
 import { api } from '@/api'
+import { followSession } from '@/lib/sessionEventBus'
 import { useAgentActivity } from './useAgentActivity'
 
 class FakeEventSource {
@@ -54,6 +55,8 @@ describe('useAgentActivity task graph projection', () => {
 
   afterEach(() => {
     scope.stop()
+    // One connection per window: leave the bus unfollowed so the next case can open its own.
+    followSession(null)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -62,6 +65,9 @@ describe('useAgentActivity task graph projection', () => {
     const sessionId = ref<string | null>(null)
     const harness = scope.run(() => useAgentActivity(sessionId))!
     sessionId.value = 's-1'
+    // The composable registers a handler; a window only receives frames once it follows the
+    // session, which is what the home controller does before this card is ever shown.
+    followSession('s-1')
     await nextTick()
     const source = FakeEventSource.instances[0]
     expect(source).toBeDefined()

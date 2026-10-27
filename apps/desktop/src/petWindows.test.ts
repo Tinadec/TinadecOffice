@@ -27,7 +27,10 @@ describe('local pet window shell', () => {
     expect(router).toContain("path: '/pet'")
     expect(app).toContain("const isPetWindow = window.location.hash.startsWith('#/pet')")
     // Child windows skip the splash but still observe their own host authorization.
-    expect(app).toContain('if (!isPetWindow) void startConnection()')
+    // The companion capsule is a standalone window too, so the guard names both rather than
+    // the pet alone: neither may open the main window's backend connection or command palette.
+    expect(app).toContain('const isStandaloneWindow = isPetWindow || isCompanionWindow')
+    expect(app).toContain('if (!isStandaloneWindow) void startConnection()')
     expect(app).toContain('const entryReady = ref(isChildWindow)')
     expect(desktopPetPage).toContain('background: transparent !important')
     expect(desktopPetPage).toContain("from '@/pets/petRuntime'")
