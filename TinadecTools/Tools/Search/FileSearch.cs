@@ -77,6 +77,25 @@ public sealed class FileSearchLine
     [JsonPropertyName("content")]
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>
+    /// true = content is a window of a longer line (see <see cref="ContentStart"/>/<see cref="LineLength"/>).
+    /// A matched line can be a whole minified file; returning it entire put megabytes into the
+    /// model's context and into every run checkpoint written after the call.
+    /// </summary>
+    [JsonPropertyName("content_truncated")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ContentTruncated { get; set; }
+
+    /// <summary>Character offset of content within the original line; only when truncated.</summary>
+    [JsonPropertyName("content_start")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ContentStart { get; set; }
+
+    /// <summary>Length of the original line in characters; only when truncated.</summary>
+    [JsonPropertyName("line_length")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LineLength { get; set; }
+
     /// <summary>true = 命中行；false = 上下文行</summary>
     [JsonPropertyName("is_match")]
     public bool IsMatch { get; set; }
@@ -125,7 +144,7 @@ internal partial class FileSearchJsonContext : JsonSerializerContext { }
 
 public static class FileSearch
 {
-    [ToolFunction("file_search", Description = "Search file contents in the run workspace (ripgrep). path must be an absolute directory path inside the workspace ('.' = the workspace root); results carry filepath/line_number/content plus per-file hashes.")]
+    [ToolFunction("file_search", Description = "Search file contents in the run workspace (ripgrep). path must be an absolute directory path inside the workspace ('.' = the workspace root); results carry filepath/line_number/content plus per-file hashes. A line longer than 400 characters is returned as a window around its first match (content_truncated, content_start, line_length) with at most 16 submatches; use read_file for the full line.")]
     public static async ValueTask<FileSearchResponse> HandleAsync(
         FileSearchParams args,
         CancellationToken cancellationToken)

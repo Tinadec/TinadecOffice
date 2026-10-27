@@ -251,6 +251,82 @@ public sealed class FileSearchTests : IDisposable
         Assert.NotNull(resp.Error);
     }
 
+    // ── 超长行（压缩文件） ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task MinifiedLine_IsClippedToAWindowAroundTheFirstMatch()
+    {
+        if (_rgPath is null) return;
+        var dir = CreateTempDir();
+        // One 200 KB line with the needle deep inside, like a minified JSON metadata file.
+        var line = new string('x', 120_000) + "NEEDLE" + new string('y', 80_000);
+        WriteFile(dir, "minified.json", line + "\n");
+
+        var resp = await FileSearch.HandleAsync(
+            new FileSearchParams { Pattern = "NEEDLE", Path = dir },
+            CancellationToken.None);
+
+        Assert.True(resp.Success, resp.Error);
+        var match = Assert.Single(resp.Lines);
+        Assert.True(match.ContentTruncated);
+        Assert.True(match.Content.Length <= RipgrepRunner.MaxLineChars);
+        Assert.Contains("NEEDLE", match.Content);
+        Assert.Equal(line.Length, match.LineLength);
+        Assert.Equal(line.IndexOf("NEEDLE", StringComparison.Ordinal) - match.ContentStart, match.Content.IndexOf("NEEDLE", StringComparison.Ordinal));
+        Assert.Equal("NEEDLE", Assert.Single(match.Submatches!).Text);
+    }
+
+    [Fact]
+    public async Task ManyMatchesOnOneLine_KeepABoundedSubmatchList()
+    {
+        if (_rgPath is null) return;
+        var dir = CreateTempDir();
+        WriteFile(dir, "dense.txt", string.Concat(Enumerable.Repeat("id,", 5_000)) + "\n");
+
+        var resp = await FileSearch.HandleAsync(
+            new FileSearchParams { Pattern = "id", Path = dir },
+            CancellationToken.None);
+
+        Assert.True(resp.Success, resp.Error);
+        var match = Assert.Single(resp.Lines);
+        Assert.Equal(RipgrepRunner.MaxSubmatchesPerLine, match.Submatches!.Count);
+        Assert.True(match.Content.Length <= RipgrepRunner.MaxLineChars);
+    }
+
+    [Fact]
+    public async Task ShortLine_IsReturnedWhole_WithoutTruncationFields()
+    {
+        if (_rgPath is null) return;
+        var dir = CreateTempDir();
+        WriteFile(dir, "short.txt", "plain hello line\n");
+
+        var resp = await FileSearch.HandleAsync(
+            new FileSearchParams { Pattern = "hello", Path = dir },
+            CancellationToken.None);
+
+        var match = Assert.Single(resp.Lines);
+        Assert.Equal("plain hello line", match.Content);
+        Assert.False(match.ContentTruncated);
+        Assert.Null(match.ContentStart);
+        Assert.Null(match.LineLength);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(500)]
+    [InlineData(999)]
+    public void ClipWindow_KeepsTheAnchorAndNeverSplitsASurrogatePair(int anchor)
+    {
+        // Every character here is a surrogate pair, so any odd boundary would split one.
+        var line = string.Concat(Enumerable.Repeat("😀", 500));
+        var (start, length) = RipgrepRunner.ClipWindow(line, anchor, 101);
+
+        Assert.True(length <= 101);
+        Assert.False(char.IsLowSurrogate(line[start]));
+        Assert.False(char.IsHighSurrogate(line[start + length - 1]));
+        Assert.InRange(anchor, start, start + length);
+    }
+
     // ── 辅助方法 ──────────────────────────────────────────────────────────────
 
     private string CreateTempDir()

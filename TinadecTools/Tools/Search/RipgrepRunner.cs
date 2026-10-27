@@ -275,6 +275,12 @@ internal static class RipgrepRunner
         return psi;
     }
 
+    /// <summary>Longest line content returned; a longer line becomes a window around its first match.</summary>
+    internal const int MaxLineChars = 400;
+
+    /// <summary>A short pattern in a minified file can match thousands of times on one line.</summary>
+    internal const int MaxSubmatchesPerLine = 16;
+
     private static FileSearchLine? ToSearchLine(RgData? data, bool isMatch)
     {
         if (data is null) return null;
@@ -292,19 +298,59 @@ internal static class RipgrepRunner
             IsMatch    = isMatch
         };
 
+        if (content.Length > MaxLineChars)
+        {
+            var anchor = isMatch && data.Submatches is { Count: > 0 } ? CharIndexOfByte(content, data.Submatches[0].Start) : 0;
+            var (start, length) = ClipWindow(content, anchor, MaxLineChars);
+            result.Content = content.Substring(start, length);
+            result.ContentTruncated = true;
+            result.ContentStart = start;
+            result.LineLength = content.Length;
+        }
+
         if (isMatch && data.Submatches is { Count: > 0 })
         {
             result.Submatches = data.Submatches
+                .Take(MaxSubmatchesPerLine)
                 .Select(s => new MatchSpan
                 {
                     Start = s.Start,
                     End   = s.End,
-                    Text  = s.Match?.Text ?? string.Empty
+                    Text  = Clip(s.Match?.Text ?? string.Empty)
                 })
                 .ToList();
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Window of at most <paramref name="max"/> characters that keeps <paramref name="anchor"/> in
+    /// view (a quarter of the window before it) and never splits a surrogate pair.
+    /// </summary>
+    internal static (int Start, int Length) ClipWindow(string line, int anchor, int max)
+    {
+        if (line.Length <= max) return (0, line.Length);
+        var start = Math.Clamp(anchor - max / 4, 0, line.Length - max);
+        if (char.IsLowSurrogate(line[start])) start++;
+        var length = Math.Min(max, line.Length - start);
+        if (start + length < line.Length && char.IsHighSurrogate(line[start + length - 1])) length--;
+        return (start, length);
+    }
+
+    /// <summary>rg reports submatch offsets in bytes of the UTF-8 line.</summary>
+    private static int CharIndexOfByte(string line, int byteOffset)
+    {
+        if (byteOffset <= 0) return 0;
+        var bytes = Encoding.UTF8.GetBytes(line);
+        return Encoding.UTF8.GetCharCount(bytes, 0, Math.Min(byteOffset, bytes.Length));
+    }
+
+    private static string Clip(string text)
+    {
+        if (text.Length <= MaxLineChars) return text;
+        var (start, length) = ClipWindow(text, 0, MaxLineChars);
+        return text.Substring(start, length);
     }
 
     private static FileSearchResponse Fail(string error) =>
