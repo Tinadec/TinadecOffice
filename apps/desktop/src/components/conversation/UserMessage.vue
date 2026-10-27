@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, Copy, FileText, Pencil } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type MessageDto } from '@/api'
 import type { MessageAttachmentSummaryDto } from '@/generated/client'
@@ -19,6 +19,7 @@ const emit = defineEmits<{ edit: [payload: { id: string; content: string }] }>()
 const { t, locale } = useI18n()
 
 const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
 const editing = ref(false)
 const draft = ref('')
 
@@ -31,8 +32,13 @@ const attachments = computed(() => props.message.attachments ?? [])
 function copy() {
   void navigator.clipboard?.writeText(props.message.content)
   copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => { copied.value = false; copiedTimer = null }, 2500)
 }
+
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer)
+})
 
 function startEdit() {
   draft.value = props.message.content

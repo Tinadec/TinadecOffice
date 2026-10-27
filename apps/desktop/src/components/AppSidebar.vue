@@ -973,7 +973,7 @@ watch([displayName, () => props.collapsed], async () => {
 .sidebar-workspace-options { position: fixed; inset: auto; margin: 0; width: 236px; padding: 6px; border: 1px solid var(--border-muted); border-radius: 12px; background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--shadow-card-subtle); opacity: 0; transform: translateY(-6px) scale(0.98); transform-origin: top right; pointer-events: none; transition: opacity 160ms ease-out, transform 160ms ease-out, display 160ms allow-discrete, overlay 160ms allow-discrete; }
 .sidebar-workspace-options:popover-open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
 @starting-style { .sidebar-workspace-options:popover-open { opacity: 0; transform: translateY(-6px) scale(0.98); } }
-@media (prefers-reduced-motion: reduce) { .sidebar-workspace-options { transition: none; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sidebar-workspace-options { transition: none; transform: none; } .sidebar-option.drag-source { transition: none; } }
 .sidebar-workspace-options-title { margin: 4px 8px 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--text-muted); }
 /* One row = one block of the list below it: the checkbox toggles it, the handle reorders it. */
 .sidebar-option { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 8px; border-radius: 8px; background: transparent; color: var(--text-primary); cursor: pointer; }
@@ -983,7 +983,11 @@ watch([displayName, () => props.collapsed], async () => {
 .sidebar-option-grip { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 2px; border-radius: 4px; color: var(--text-muted); opacity: 0.45; cursor: grab; transition: opacity 120ms ease; }
 .sidebar-option:hover .sidebar-option-grip, .sidebar-option:focus-within .sidebar-option-grip, .sidebar-option.drag-source .sidebar-option-grip { opacity: 1; }
 .sidebar-option-grip:active { cursor: grabbing; }
-.sidebar-option.drag-source { opacity: 0.55; }
+.sidebar-option.drag-source {
+  opacity: 0.55;
+  /* Over-damped spring (k 1200, c 80, zeta ~1.15): monotonic settle, no overshoot. */
+  transition: opacity 250ms linear(0, 0.068 5%, 0.202 10%, 0.344 15%, 0.473 20%, 0.582 25%, 0.671 30%, 0.742 35%, 0.798 40%, 0.842 45%, 0.877 50%, 0.904 55%, 0.925 60%, 0.942 65%, 0.955 70%, 0.965 75%, 0.973 80%, 0.979 85%, 0.983 90%, 0.987 95%, 0.99 100%);
+}
 .sidebar-option.drag-over-before::before, .sidebar-option.drag-over-after::after { content: ''; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 1px; background: var(--accent-primary); pointer-events: none; }
 .sidebar-option.drag-over-before::before { top: -1px; }
 .sidebar-option.drag-over-after::after { bottom: -1px; }

@@ -191,8 +191,8 @@
                      0 2px 8px rgba(0, 0, 0, 0.22);
 
   /* Card boundary & subtle elevation */
-  --border-card: rgba(0, 0, 0, 0.08);
-  --border-card-active: rgba(0, 0, 0, 0.12);
+  --border-card: rgba(255, 255, 255, 0.07);
+  --border-card-active: rgba(255, 255, 255, 0.11);
   --shadow-card-subtle: 0 1px 3px rgba(0, 0, 0, 0.08),
                         0 4px 12px rgba(0, 0, 0, 0.05);
   --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
@@ -3228,6 +3228,15 @@ margin-top: 4px;
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+  /* Avoid orphaned last words in prose paragraphs. */
+  text-wrap: pretty;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  text-wrap: balance;
 }
 
 .markdown-body > * + * {
@@ -3987,6 +3996,11 @@ textarea:focus,
 input:focus {
   border-color: var(--border-input-focus);
   box-shadow: var(--shadow-focus);
+}
+
+/* Composer: a double ring that bites the frame instead of a bare outline. */
+.composer-box:focus-within {
+  box-shadow: var(--shadow-panel), 0 0 0 1px var(--border-card-active), 0 0 0 3px var(--accent-soft);
 }
 
 .icon-button,
@@ -4751,6 +4765,7 @@ Triggered by the page-level transition on the parent .settings-page. */
   gap: 3px;
   margin-top: 4px;
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   justify-content: flex-end;
 }
