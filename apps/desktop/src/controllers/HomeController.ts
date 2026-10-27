@@ -1455,9 +1455,12 @@ function onEvent(handler: (event: EventEnvelope) => void): () => void {
 }
 
 async function handleSessionEvent(event: EventEnvelope) {
-  const bySeq = new Map(events.value.map((item) => [item.seq, item]))
-  bySeq.set(event.seq, event)
-  events.value = [...bySeq.values()].sort((left, right) => left.seq - right.seq).slice(-80)
+  // The journal's sequence is per run, so the run is part of the identity: keying on the
+  // number alone let a second run's event overwrite the first run's at the same sequence.
+  const key = `${event.run_id ?? ''}\u0000${event.seq}`
+  const byKey = new Map(events.value.map((item) => [`${item.run_id ?? ''}\u0000${item.seq}`, item]))
+  byKey.set(key, event)
+  events.value = [...byKey.values()].slice(-80)
   // Core took a waiting message out of the queue: it runs now, was rejected, or was dequeued.
   if (event.type === 'interaction.queued_executed' || event.type === 'interaction.queue_cancelled' || event.type === 'interaction.queued_unreadable') {
     const directive = event.payload?.['directive_id']
@@ -1590,6 +1593,11 @@ function start() {
   if (canAccessBackend.value) void loadInitial()
   subscribeToSessionEvents(handleSessionEvent, { onOpen: sessionStreamOpened, onHeartbeat: sessionReplayFinished })
   followSession(currentSession.value ? selectionKey(currentSession.value) : selectedSessionId.value)
+  // A transport that stays down is retried when the host becomes reachable again; the bus needs
+  // the session pointed at it then, because it left no connection to resume.
+  watch(canAccessBackend, ready => {
+    if (ready && started) followSession(currentSession.value ? selectionKey(currentSession.value) : selectedSessionId.value)
+  })
 }
 
 export const homeController = {

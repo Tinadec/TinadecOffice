@@ -114,12 +114,29 @@ describe('sessionEventBus', () => {
   })
 
   it('closes the connection when the last owner leaves', () => {
+    bus.followSession('s-1')
     const release = bus.subscribeToSessionEvents(() => {})
     expect(liveSources).toHaveLength(1)
     release()
     expect(liveSources[0]!.closed).toBe(1)
+    bus.followSession('s-1')
     expect(bus.subscribeToSessionEvents(() => {})).toBeTypeOf('function')
     expect(connect).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * The feed is one session's live view: Core rejects a subscription that names no session, and
+   * a window showing none (the welcome screen) has nothing to receive.
+   */
+  it('holds no connection while the window shows no session', () => {
+    const release = bus.subscribeToSessionEvents(() => {})
+    expect(connect).not.toHaveBeenCalled()
+    bus.followSession('s-1')
+    expect(connect).toHaveBeenCalledTimes(1)
+    bus.followSession(null)
+    expect(liveSources[0]!.closed).toBe(1)
+    expect(bus.isStreamingSession()).toBe(false)
+    release()
   })
 
   it('reconnects once when the window moves to another session', () => {
@@ -135,7 +152,7 @@ describe('sessionEventBus', () => {
   })
 
   it('scopes an owner to its session without dropping frames that name none', () => {
-    bus.followSession(null)
+    bus.followSession('s-1')
     const release = bus.subscribeToSessionEvents(() => {})
     const scope = ref<string | null>('s-1')
     const scoped: EventEnvelope[] = []

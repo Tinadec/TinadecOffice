@@ -1,7 +1,7 @@
 import { ref, watch, type Ref } from 'vue'
 import { useHostAccess } from './hostAccess'
 import { api, type EventEnvelope } from '@/api'
-import { sessionStorageId, selectedStorageId } from './storageScope'
+import { sessionStorageId, setSelectedStorage, selectedStorageId } from './storageScope'
 
 type Handler = (event: EventEnvelope) => unknown
 
@@ -76,6 +76,8 @@ function heartbeat() {
 function open() {
   close()
   if (subscriptions.size === 0 || paused || !canAccessBackend.value) return
+  // A window showing no session has nothing to receive: the feed is one session's live view.
+  if (followed.value === null) return
   try {
     sourceStorageId = followed.value ? sessionStorageId(followed.value) : selectedStorageId()
     source = api.connectEvents(followed.value, deliver, heartbeat)
@@ -94,12 +96,30 @@ function close() {
   source = null
 }
 
-/** Point this window's stream at a session. Null is the unfiltered feed. */
+/**
+ * Point this window's stream at a session. Its request is a session's live view — Core rejects a
+ * subscription that names none — so a window showing no session holds no connection.
+ */
 export function followSession(sessionId: string | null): void {
   if (followed.value === sessionId && !paused) return
   paused = false
   followed.value = sessionId
+  if (sessionId !== null) {
+    // The request takes its storage scope from this module's selection, so follow the session's
+    // own scope: a session from another project cannot be read from the current one's header.
+    const storage = sessionStorageId(sessionId)
+    if (storage !== selectedStorageId()) setSelectedStorage(storage)
+  }
   open()
+}
+
+/**
+ * Whether this window's feed can currently be seen carrying a session — what a card backed by
+ * connectivity, not by the transcript, shows. False covers "no connection" as well as "the
+ * connection is not filtered to this session".
+ */
+export function isStreamingSession(): boolean {
+  return !paused && source !== null && followed.value !== null
 }
 
 /** A transfer closes its source feed while Core acquires exclusive scope leases. */
@@ -119,8 +139,8 @@ export function suspendFollowingStorage(storageId: string): () => void {
 }
 
 /**
- * Receive session events. Without `scope` the subscriber sees every frame the
- * connection carries, including the unfiltered feed before a session exists.
+ * Receive session events for the session this window follows. Without `scope` a subscriber
+ * sees every frame the connection carries, which already belong to that one session.
  */
 export function subscribeToSessionEvents(
   handler: Handler,

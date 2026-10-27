@@ -105,8 +105,40 @@ describe('Markdown content islands', () => {
     wrapper.unmount()
   })
 
-  it('preserves completed block DOM and table focus when later streaming prose changes', async () => {
-    const completed = '```js\nconst answer = 42;\n```\n\n| 列 |\n| --- |\n| 值 |\n\n'
+  /**
+   * A paced stream changes the text every animation frame. Parsing, sanitising and highlighting
+   * the whole reply on each of those frames is what made a long answer stutter, so a streaming
+   * reply is parsed on a cadence while settled content is shown at once.
+   */
+  it('parses a streaming reply on a cadence, then parses the settled text immediately', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = render('第一段', { streaming: true })
+      expect(wrapper.get('.markdown-prose').text()).toBe('第一段')
+      for (const text of ['第一段 加', '第一段 加 **粗', '第一段 加 **粗体**']) {
+        await wrapper.setProps({ content: text })
+        await wrapper.vm.$nextTick()
+      }
+      // Still the text parsed before the burst: nothing of the burst is rendered yet.
+      expect(wrapper.text()).not.toContain('粗体')
+      vi.advanceTimersByTime(80)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.get('.markdown-prose strong').text()).toBe('粗体')
+
+      const before = wrapper.get('.markdown-prose').element
+      await wrapper.setProps({ content: '第一段 加 **粗体** 结束', streaming: false })
+      await wrapper.vm.$nextTick()
+      // Settled text does not wait for the cadence; the block itself is reused, so its content
+      // is what proves the parse happened.
+      expect(wrapper.get('.markdown-prose').element).toBe(before)
+      expect(wrapper.get('.markdown-prose').element.textContent).toContain('结束')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves completed block DOM and table focus when later streaming prose changes', async () => {    const completed = '```js\nconst answer = 42;\n```\n\n| 列 |\n| --- |\n| 值 |\n\n'
     const wrapper = render(completed + '后续文字')
     const code = wrapper.get('pre code').element
     const region = wrapper.get<HTMLElement>('.markdown-table-scroll').element

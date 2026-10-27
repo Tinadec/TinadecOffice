@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, type Component } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Copy, Info, Lightbulb, MessageSquareWarning, OctagonAlert, TriangleAlert } from '@lucide/vue'
 import { Marked } from 'marked'
@@ -15,6 +15,13 @@ import UiIslandCard from './ui/island-card.vue'
 const props = defineProps<{
   content: string
   /**
+   * The content is still being revealed. Parsing then runs at most once per
+   * <see cref="PARSE_INTERVAL_MS"/> instead of on every frame: a paced stream changes the text
+   * every animation frame, and re-parsing, sanitising and highlighting the whole reply at 60 Hz
+   * costs more than the frame it shows up in (measured: 20-37 ms per parse of a 12K reply).
+   */
+  streaming?: boolean
+  /**
    * Optional document-reference resolver. When omitted the renderer behaves exactly as
    * before (space mode and the sub-agent cards pass nothing); when supplied, an inline
    * code span or a link that resolves to a real workspace file becomes a clickable
@@ -28,6 +35,28 @@ const props = defineProps<{
 const emit = defineEmits<{ 'open-doc': [ref: DocumentRef] }>()
 
 const { t } = useI18n()
+
+const PARSE_INTERVAL_MS = 80
+/** What `blocks` parses: the newest content, or the newest one that is old enough to parse. */
+const parsedContent = ref(props.content)
+let parseTimer: ReturnType<typeof setTimeout> | null = null
+let parsedAt = 0
+
+function parseNow() {
+  if (parseTimer !== null) { clearTimeout(parseTimer); parseTimer = null }
+  parsedAt = performance.now()
+  parsedContent.value = props.content
+}
+
+watch([() => props.content, () => props.streaming], () => {
+  // Settled content is shown at once: a late throttled parse would make the final reply differ
+  // from the one the next render reads.
+  if (!props.streaming) { parseNow(); return }
+  if (parseTimer !== null) return
+  const wait = Math.max(0, PARSE_INTERVAL_MS - (performance.now() - parsedAt))
+  if (wait === 0) parseNow()
+  else parseTimer = setTimeout(parseNow, wait)
+})
 
 /**
  * A reply is continuous prose plus island cards: code, tables, quotes and
@@ -223,7 +252,7 @@ const blocks = computed<MarkdownBlock[]>(() => {
   // Late reference verifications bump this counter; reading it here re-parses the reply
   // exactly once per settled batch instead of once per streaming delta.
   void props.docRefsVersion
-  const raw = marked.parse(props.content, {
+  const raw = marked.parse(parsedContent.value, {
     breaks: true,
     gfm: true,
     async: false,
@@ -382,6 +411,7 @@ async function copyCode(block: Extract<MarkdownBlock, { kind: 'code' }>, index: 
 onBeforeUnmount(() => {
   if (feedbackTimer) clearTimeout(feedbackTimer)
   if (anchorTimer) clearTimeout(anchorTimer)
+  if (parseTimer !== null) clearTimeout(parseTimer)
 })
 </script>
 
