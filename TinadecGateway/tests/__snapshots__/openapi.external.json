@@ -979,6 +979,965 @@
         ],
         "type": "object"
       },
+      "CompanionActivity": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "companion_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "conversation_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "summary": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "CompanionActivityList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionActivity"
+        },
+        "type": "array"
+      },
+      "CompanionAutonomy": {
+        "additionalProperties": true,
+        "properties": {
+          "daily_action_budget": {
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "interval_minutes": {
+            "type": "integer"
+          },
+          "paused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "paused",
+          "interval_minutes",
+          "daily_action_budget"
+        ],
+        "type": "object"
+      },
+      "CompanionAutonomyTickResult": {
+        "additionalProperties": true,
+        "properties": {
+          "acted": {
+            "type": "boolean"
+          },
+          "action": {
+            "enum": [
+              "none",
+              "create_group",
+              "invite",
+              "send_message"
+            ],
+            "type": "string"
+          },
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompanionActivity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "conversation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompanionConversation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompanionMessage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "acted",
+          "action",
+          "reason",
+          "activity",
+          "conversation",
+          "message"
+        ],
+        "type": "object"
+      },
+      "CompanionConnection": {
+        "additionalProperties": true,
+        "properties": {
+          "authorization": {
+            "enum": [
+              "configured",
+              "authorized",
+              "revoked"
+            ],
+            "type": "string"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "mcp | server | phone | external_agent",
+            "type": "string"
+          },
+          "last_checked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "runtime_status": {
+            "enum": [
+              "unsupported",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "kind",
+          "name",
+          "authorization",
+          "runtime_status",
+          "enabled",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CompanionConnectionList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionConnection"
+        },
+        "type": "array"
+      },
+      "CompanionConnectionOverview": {
+        "additionalProperties": true,
+        "properties": {
+          "authorization": {
+            "enum": [
+              "configured",
+              "authorized",
+              "revoked"
+            ],
+            "type": "string"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "companion_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "mcp | server | phone | external_agent",
+            "type": "string"
+          },
+          "last_checked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "runtime_status": {
+            "enum": [
+              "unsupported",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "kind",
+          "name",
+          "authorization",
+          "runtime_status",
+          "enabled",
+          "revision",
+          "companion_name"
+        ],
+        "type": "object"
+      },
+      "CompanionConnectionOverviewList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionConnectionOverview"
+        },
+        "type": "array"
+      },
+      "CompanionConversation": {
+        "additionalProperties": true,
+        "properties": {
+          "autonomy_paused": {
+            "type": "boolean"
+          },
+          "can_open": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "private",
+              "group"
+            ],
+            "type": "string"
+          },
+          "last_message_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "last_message_preview": {
+            "nullable": true,
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/CompanionMember"
+            },
+            "type": "array"
+          },
+          "message_count": {
+            "type": "integer"
+          },
+          "origin": {
+            "enum": [
+              "user",
+              "companion"
+            ],
+            "type": "string"
+          },
+          "parent_conversation_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "turn_budget": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "origin",
+          "can_open",
+          "autonomy_paused",
+          "turn_budget",
+          "message_count",
+          "members"
+        ],
+        "type": "object"
+      },
+      "CompanionConversationList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionConversation"
+        },
+        "type": "array"
+      },
+      "CompanionDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "autonomy": {
+            "$ref": "#/components/schemas/CompanionAutonomy"
+          },
+          "autonomy_enabled": {
+            "type": "boolean"
+          },
+          "autonomy_paused": {
+            "type": "boolean"
+          },
+          "avatar": {
+            "nullable": true,
+            "type": "string"
+          },
+          "connection_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current_activity": {
+            "enum": [
+              "idle",
+              "thinking",
+              "paused"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_activity_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "memory_count": {
+            "type": "integer"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "model_provider_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "model_purpose": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "persona_document": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "skill_count": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "archived",
+              "paused"
+            ],
+            "type": "string"
+          },
+          "tagline": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tagline",
+          "avatar",
+          "status",
+          "model_purpose",
+          "model_provider_id",
+          "model",
+          "autonomy_enabled",
+          "autonomy_paused",
+          "revision",
+          "created_at",
+          "updated_at",
+          "memory_count",
+          "skill_count",
+          "connection_count",
+          "last_activity_at",
+          "current_activity",
+          "autonomy"
+        ],
+        "type": "object"
+      },
+      "CompanionList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionSummary"
+        },
+        "type": "array"
+      },
+      "CompanionMember": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "member_kind": {
+            "enum": [
+              "user",
+              "companion"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "left"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_kind",
+          "display_name",
+          "joined_at",
+          "status"
+        ],
+        "type": "object"
+      },
+      "CompanionMemory": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "index_status": {
+            "description": "indexed | pending | deleted",
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "source_conversation_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "source_kind": {
+            "description": "user | companion_run | group_message",
+            "type": "string"
+          },
+          "source_message_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "content",
+          "source_kind",
+          "index_status",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CompanionMemoryList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionMemory"
+        },
+        "type": "array"
+      },
+      "CompanionMessage": {
+        "additionalProperties": true,
+        "properties": {
+          "addressed_to": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "author_companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "author_kind": {
+            "enum": [
+              "user",
+              "companion",
+              "system"
+            ],
+            "type": "string"
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "seq",
+          "author_kind",
+          "author_name",
+          "body",
+          "addressed_to"
+        ],
+        "type": "object"
+      },
+      "CompanionMessageList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionMessage"
+        },
+        "type": "array"
+      },
+      "CompanionRun": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "config_revision": {
+            "type": "integer"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "depth": {
+            "type": "integer"
+          },
+          "error_code": {
+            "nullable": true,
+            "type": "string"
+          },
+          "error_message": {
+            "nullable": true,
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "loaded_memory_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "loaded_skill_binding_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reply_message_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "rounds": {
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "trigger_message_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "conversation_id",
+          "status",
+          "depth",
+          "config_revision",
+          "loaded_memory_ids",
+          "loaded_skill_binding_ids",
+          "rounds"
+        ],
+        "type": "object"
+      },
+      "CompanionSendMessageResult": {
+        "additionalProperties": true,
+        "properties": {
+          "duplicate": {
+            "type": "boolean"
+          },
+          "message": {
+            "$ref": "#/components/schemas/CompanionMessage"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/CompanionRun"
+            },
+            "type": "array"
+          },
+          "skipped_runs": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "companion_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "companion_id",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "message",
+          "runs",
+          "skipped_runs",
+          "duplicate"
+        ],
+        "type": "object"
+      },
+      "CompanionSettings": {
+        "additionalProperties": true,
+        "properties": {
+          "autonomy_paused": {
+            "type": "boolean"
+          },
+          "main_companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "main_companion_id",
+          "autonomy_paused",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CompanionSkill": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "instructions": {
+            "nullable": true,
+            "type": "string"
+          },
+          "last_loaded_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "last_loaded_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pack_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "pack_version": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "source_kind": {
+            "description": "manual | pack",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "name",
+          "source_kind",
+          "enabled",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CompanionSkillList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionSkill"
+        },
+        "type": "array"
+      },
+      "CompanionSummary": {
+        "additionalProperties": true,
+        "properties": {
+          "autonomy_enabled": {
+            "type": "boolean"
+          },
+          "autonomy_paused": {
+            "type": "boolean"
+          },
+          "avatar": {
+            "nullable": true,
+            "type": "string"
+          },
+          "connection_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current_activity": {
+            "enum": [
+              "idle",
+              "thinking",
+              "paused"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_activity_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "memory_count": {
+            "type": "integer"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "model_provider_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "model_purpose": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "skill_count": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "archived",
+              "paused"
+            ],
+            "type": "string"
+          },
+          "tagline": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tagline",
+          "avatar",
+          "status",
+          "model_purpose",
+          "model_provider_id",
+          "model",
+          "autonomy_enabled",
+          "autonomy_paused",
+          "revision",
+          "created_at",
+          "updated_at",
+          "memory_count",
+          "skill_count",
+          "connection_count",
+          "last_activity_at",
+          "current_activity"
+        ],
+        "type": "object"
+      },
       "ConfigurationDocument": {
         "properties": {
           "content_hash": {
@@ -8187,6 +9146,941 @@
         "summary": "Execute user tool (Core-owned)",
         "tags": [
           "Tools"
+        ]
+      }
+    },
+    "/api/v1/companion-connections": {
+      "get": {
+        "operationId": "getApiV1Companion-connections",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConnectionOverviewList"
+                }
+              }
+            },
+            "description": "List every companion connection binding with its owner name"
+          }
+        },
+        "summary": "List every companion connection binding with its owner name",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-conversations": {
+      "get": {
+        "operationId": "getApiV1Companion-conversations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConversationList"
+                }
+              }
+            },
+            "description": "List every conversation across companions (companion_id, kind, origin, limit)"
+          }
+        },
+        "summary": "List every conversation across companions (companion_id, kind, origin, limit)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-conversations/{conversationId}": {
+      "get": {
+        "operationId": "getApiV1Companion-conversationsByConversationId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConversation"
+                }
+              }
+            },
+            "description": "Read one companion conversation with members"
+          }
+        },
+        "summary": "Read one companion conversation with members",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-conversations/{conversationId}/members": {
+      "post": {
+        "operationId": "postApiV1Companion-conversationsByConversationIdMembers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConversation"
+                }
+              }
+            },
+            "description": "Invite a companion (creates a linked group from a private chat)"
+          }
+        },
+        "summary": "Invite a companion (creates a linked group from a private chat)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-conversations/{conversationId}/members/{companionId}": {
+      "delete": {
+        "operationId": "deleteApiV1Companion-conversationsByConversationIdMembersByCompanionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConversation"
+                }
+              }
+            },
+            "description": "Remove a companion from a conversation"
+          }
+        },
+        "summary": "Remove a companion from a conversation",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-conversations/{conversationId}/messages": {
+      "get": {
+        "operationId": "getApiV1Companion-conversationsByConversationIdMessages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMessageList"
+                }
+              }
+            },
+            "description": "List messages after a seq cursor (after_seq, limit)"
+          }
+        },
+        "summary": "List messages after a seq cursor (after_seq, limit)",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Companion-conversationsByConversationIdMessages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSendMessageResult"
+                }
+              }
+            },
+            "description": "Post a user message and create the runs it owes (Idempotency-Key)"
+          }
+        },
+        "summary": "Post a user message and create the runs it owes (Idempotency-Key)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-conversations/{conversationId}/pause": {
+      "post": {
+        "operationId": "postApiV1Companion-conversationsByConversationIdPause",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConversation"
+                }
+              }
+            },
+            "description": "Pause or resume a conversation"
+          }
+        },
+        "summary": "Pause or resume a conversation",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-runs/{runId}": {
+      "get": {
+        "operationId": "getApiV1Companion-runsByRunId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionRun"
+                }
+              }
+            },
+            "description": "Poll one companion run"
+          }
+        },
+        "summary": "Poll one companion run",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-settings": {
+      "get": {
+        "operationId": "getApiV1Companion-settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSettings"
+                }
+              }
+            },
+            "description": "Read companion settings (main companion and global autonomy pause)"
+          }
+        },
+        "summary": "Read companion settings (main companion and global autonomy pause)",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1Companion-settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSettings"
+                }
+              }
+            },
+            "description": "Update companion settings"
+          }
+        },
+        "summary": "Update companion settings",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions": {
+      "get": {
+        "operationId": "getApiV1Companions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionList"
+                }
+              }
+            },
+            "description": "List companions (optionally including archived)"
+          }
+        },
+        "summary": "List companions (optionally including archived)",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Companions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionDetail"
+                }
+              }
+            },
+            "description": "Create a companion"
+          }
+        },
+        "summary": "Create a companion",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/activity": {
+      "get": {
+        "operationId": "getApiV1CompanionsActivity",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionActivityList"
+                }
+              }
+            },
+            "description": "Companion activity feed"
+          }
+        },
+        "summary": "Companion activity feed",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionDetail"
+                }
+              }
+            },
+            "description": "Read a companion profile and autonomy rules"
+          }
+        },
+        "summary": "Read a companion profile and autonomy rules",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1CompanionsByCompanionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionDetail"
+                }
+              }
+            },
+            "description": "Update a companion profile (If-Match revision)"
+          }
+        },
+        "summary": "Update a companion profile (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/archive": {
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionDetail"
+                }
+              }
+            },
+            "description": "Archive a companion (If-Match revision)"
+          }
+        },
+        "summary": "Archive a companion (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/autonomy/tick": {
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdAutonomyTick",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionAutonomyTickResult"
+                }
+              }
+            },
+            "description": "Run one bounded autonomy tick for a companion"
+          }
+        },
+        "summary": "Run one bounded autonomy tick for a companion",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/connections": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdConnections",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConnectionList"
+                }
+              }
+            },
+            "description": "List companion connection bindings"
+          }
+        },
+        "summary": "List companion connection bindings",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdConnections",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConnection"
+                }
+              }
+            },
+            "description": "Bind a connection to a companion"
+          }
+        },
+        "summary": "Bind a connection to a companion",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/connections/{bindingId}": {
+      "delete": {
+        "operationId": "deleteApiV1CompanionsByCompanionIdConnectionsByBindingId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete a connection binding (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1CompanionsByCompanionIdConnectionsByBindingId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConnection"
+                }
+              }
+            },
+            "description": "Update a connection binding (If-Match revision)"
+          }
+        },
+        "summary": "Update a connection binding (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/conversations": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdConversations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConversationList"
+                }
+              }
+            },
+            "description": "List conversations for a companion"
+          }
+        },
+        "summary": "List conversations for a companion",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdConversations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionConversation"
+                }
+              }
+            },
+            "description": "Ensure a private chat or create a group"
+          }
+        },
+        "summary": "Ensure a private chat or create a group",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/memories": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdMemories",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMemoryList"
+                }
+              }
+            },
+            "description": "List or search private memories (q, limit)"
+          }
+        },
+        "summary": "List or search private memories (q, limit)",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdMemories",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMemory"
+                }
+              }
+            },
+            "description": "Write a private memory"
+          }
+        },
+        "summary": "Write a private memory",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/memories/{memoryId}": {
+      "delete": {
+        "operationId": "deleteApiV1CompanionsByCompanionIdMemoriesByMemoryId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "memoryId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete a private memory (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1CompanionsByCompanionIdMemoriesByMemoryId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "memoryId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMemory"
+                }
+              }
+            },
+            "description": "Edit a private memory (If-Match revision)"
+          }
+        },
+        "summary": "Edit a private memory (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/skills": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdSkills",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSkillList"
+                }
+              }
+            },
+            "description": "List companion skill bindings"
+          }
+        },
+        "summary": "List companion skill bindings",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdSkills",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSkill"
+                }
+              }
+            },
+            "description": "Bind a skill to a companion"
+          }
+        },
+        "summary": "Bind a skill to a companion",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/skills/{bindingId}": {
+      "delete": {
+        "operationId": "deleteApiV1CompanionsByCompanionIdSkillsByBindingId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete a skill binding (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1CompanionsByCompanionIdSkillsByBindingId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSkill"
+                }
+              }
+            },
+            "description": "Update a skill binding (If-Match revision)"
+          }
+        },
+        "summary": "Update a skill binding (If-Match revision)",
+        "tags": [
+          "Companions"
         ]
       }
     },
@@ -15758,6 +17652,9 @@
     },
     {
       "name": "System"
+    },
+    {
+      "name": "Companions"
     }
   ]
 }

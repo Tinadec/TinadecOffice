@@ -1,5 +1,15 @@
 # GATEWAY KNOWLEDGE
 
+## 2026-10-29 跨伙伴会话列表进入契约
+
+`companionRoutes.ts` 增加 `GET /api/v1/companion-conversations`（跨伙伴会话索引，`companion_id / kind / origin / limit`），路由表变成 **21 路径 / 32 操作**，`companionRoutes.test.ts` 的规模 pin 与用例表同步更新。`CompanionConversation` schema 新增 **`origin`（user|companion）** 与 **`can_open`**，两者都是 required：客户端据此分「我建的群」与「伙伴自建的群」，也据此判断能不能打开，而不是自行假设。`runtime_status` 仍是 `unsupported | unknown`——没有探测就没有「在线」，改 schema 之前不要先在 UI 里写死。
+
+## 2026-10-28 Companion 契约代理
+
+`src/companionRoutes.ts` 的 `registerCompanionRoutes` 按 Core 的 `CompanionEndpoints.cs` / `CompanionConversationEndpoints.cs` 逐条挂载 **20 路径 / 31 操作**，注册顺序固定为静态路由在前（`/api/v1/companions/activity` 必须先于 `/api/v1/companions/:companionId`；Elysia 先注册者生效，否则 `activity` 会被当成伙伴 id）。每条都用 `proxyRaw` 原样转发路径、查询串、JSON 正文、状态码与 ProblemDetails；`If-Match` / `ETag` / `Idempotency-Key` 经 `forwardHeaders` 透传，`DELETE` 的 204 空体不补正文。Gateway 不缓存、不重算、不生成第二真相源：伙伴身份、可见性、revision、预算与拒绝全部归 Core。外部契约新增 `Companion*` schemas 与 `Companions` tag，快照随测试再生成；`errorMapper` 保留 `companion_*` 拒绝码，不降级成 `conflict`。
+
+**验证**：`bun test src` **115/115**（18 文件），其中 `companionRoutes.test.ts` 6 例逐条转发路径 / 查询 / 正文 / 状态、头透传、拒绝码、静态路由与 20/31 契约钉死。**未验证**：真实 Core + Gateway 联调（本轮上游全部是 mock，不据此声称 Core 数据库或拒绝语义已在真机成立）。
+
 ## 2026-10-25 Request timing, model-center snapshot, shared run→session lookup
 
 `src/timing.ts` puts `Server-Timing` on **every** response. Only `total` is unconditional — segments appear where a route measures itself (`snapshot.<part>` on the model-center snapshot, `task-nodes.*` / `context-versions.*` on the two run-scoped routes). The header must be emitted from three places, not one: `onRequest` (OPTIONS 204, 401), `onError` (thrown and unmatched requests, which never reach `onAfterHandle`) and `onAfterHandle`. `finalizeRequestTiming` is single-shot because `onError` and `onAfterHandle` are not on the same path.
@@ -40,8 +50,8 @@ The root-owned isolated acceptance additionally used real Core/Gateway and Elect
 
 scope-enabled Core所有业务API需要privatehost凭据，health/challenge为公开例外；Gateway不得从本身env为匿名loopback签发。JSON/raw/cursor SSE都必须保留请求已有hostheader，403 host_authorization_required需保留诊断code。Gateway自身host-challenge仅返回nonce/角色绑定HMAC，不发送key或业务facts；无key503，nonce限定单43字符base64url。OpenAPI全局私有security scheme与两个公开例外同步描述。
 
-**Last Updated:** 2026-10-10
-**Last Updated By:** APP-HOME-107 接口回归：规范公开错误投影、AgentPack失败ETag、工作区可用性与nullable契约；隔离真实证据单列。
+**Last Updated:** 2026-10-28
+**Last Updated By:** Companion 契约代理：20 路径/31 操作、静态路由先注册、If-Match/Idempotency-Key 透传与 Companion* schemas。
 **Last Verified Commit:** 607b7406（本轮五组代码提交）+ 文档工作树；Windows证据与未验收边界见 .tinadec_dev/reports/2026-10-10-interface-regression.zh-CN.md。
 **Branch:** main
 

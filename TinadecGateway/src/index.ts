@@ -38,6 +38,8 @@ import {
   agentPackProblemResponse,
 } from './agentPackOpenApi.js';
 import { externalDtoSchemas, externalJsonRequest, externalJsonResponse } from './externalDtoOpenApi.js';
+import { registerCompanionRoutes } from './companionRoutes.js';
+import { companionOpenApiSchemas } from './companionOpenApi.js';
 import { registerTinaChatRoutes, tinaChatSchemas } from './tinaChatRoutes.js';
 import { registerOrganizationRoutes, organizationSchemas } from './organizationRoutes.js';
 import { registerToolsSettingsRoutes, toolsSettingsSchemas } from './toolsSettingsRoutes.js';
@@ -169,11 +171,11 @@ const app = new Elysia()
       info: { title: 'Tinadec Gateway External API', version: 'v1', description: 'Stateless gateway facade – all snake_case, RFC9457 ProblemDetails, full-duplex SSE. With Core storage scopes enabled, every /api/v1 request except GET health and host-challenge requires a private trusted host credential. Managed Electron first verifies endpoint HMAC identity and injects credentials only in the main-process network layer; anonymous loopback, Agent shells, and unbound web/remote clients have no API authority.' },
       security: [{ TinadecHostControl: [] }],
       tags: [
-        { name: 'Projects' }, { name: 'Sessions' }, { name: 'Messages' }, { name: 'Runs' }, { name: 'Health' }, { name: 'ModelCenter' }, { name: 'AgentCenter' }, { name: 'Agents' }, { name: 'Interactions' }, { name: 'PromptPipelines' }, { name: 'Tools' }, { name: 'System' }
+        { name: 'Projects' }, { name: 'Sessions' }, { name: 'Messages' }, { name: 'Runs' }, { name: 'Health' }, { name: 'ModelCenter' }, { name: 'AgentCenter' }, { name: 'Agents' }, { name: 'Interactions' }, { name: 'PromptPipelines' }, { name: 'Tools' }, { name: 'System' }, { name: 'Companions' }
       ],
       // TypeBox emits valid OpenAPI schemas, but its union types are not structurally
       // assignable to openapi-types' narrower SchemaObject declaration.
-      components: { securitySchemes: { TinadecHostControl: { type: 'apiKey', in: 'header', name: 'X-Tinadec-Host-Control', description: 'Private trusted host credential required by scope-enabled Core. Never expose it to Agent, renderer JavaScript, TOML, or a public frontend. Gateway only forwards a supplied credential and never signs anonymous local requests.' } }, schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...tinaChatSchemas, ...organizationSchemas, ...toolsSettingsSchemas, ...storageSchemas } as never },
+      components: { securitySchemes: { TinadecHostControl: { type: 'apiKey', in: 'header', name: 'X-Tinadec-Host-Control', description: 'Private trusted host credential required by scope-enabled Core. Never expose it to Agent, renderer JavaScript, TOML, or a public frontend. Gateway only forwards a supplied credential and never signs anonymous local requests.' } }, schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...companionOpenApiSchemas, ...tinaChatSchemas, ...organizationSchemas, ...toolsSettingsSchemas, ...storageSchemas } as never },
     }
   }))
   .onError(({ code, error, set, request }) => {
@@ -2754,6 +2756,7 @@ const app = new Elysia()
     return result;
   }, { detail: { summary: 'Execute user tool (Core-owned)', tags: ['Tools'], description: 'Core resolves the registered workspace root and invokes the Tool Provider.' } });
 
+registerCompanionRoutes(app, forwardHeaders);
 registerTinaChatRoutes(app, forwardHeaders);
 registerOrganizationRoutes(app, forwardHeaders);
 registerToolsSettingsRoutes(app, forwardHeaders);
