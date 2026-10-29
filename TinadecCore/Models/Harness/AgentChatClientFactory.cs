@@ -54,6 +54,9 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
     public Task<ChatResolution> ResolveChatAsync(string routePurpose, CancellationToken cancellationToken = default) =>
         _resolver.ResolveChatAsync(routePurpose, cancellationToken);
 
+    public Task<ChatResolution> ResolveModelChatAsync(Guid providerInstanceId, string? modelName = null, CancellationToken cancellationToken = default) =>
+        _resolver.ResolveModelChatAsync(providerInstanceId, modelName, cancellationToken);
+
     public async Task<IChatClient> CreateAsync(ChatResolution resolution, CancellationToken cancellationToken = default)
     {
         var client = await (ChatProtocols.Normalize(resolution.Protocol) switch

@@ -20,6 +20,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapDmaeaEndpoints();
         endpoints.MapCorrectionEndpoints();
         endpoints.MapAgentConfigurationEndpoints();
+        endpoints.MapCompanionEndpoints();
         endpoints.MapModelAgentControlEndpoints();
         endpoints.MapAgentPackEndpoints();
         endpoints.MapInteractionsEndpoints();

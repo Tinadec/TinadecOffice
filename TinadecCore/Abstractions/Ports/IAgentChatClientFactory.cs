@@ -19,6 +19,14 @@ public interface IAgentChatClientFactory
     Task<ChatResolution> ResolveChatAsync(string routePurpose, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Resolves one explicitly named provider model, bypassing the route table — the seam the
+    /// companion domain uses to honour a companion's pinned model. Default: unavailable, so
+    /// existing fakes and resolvers keep compiling and stay honest about what they cannot do.
+    /// </summary>
+    Task<ChatResolution> ResolveModelChatAsync(Guid providerInstanceId, string? modelName = null, CancellationToken cancellationToken = default)
+        => Task.FromResult(new ChatResolution { IsAvailable = false, Error = "This factory cannot resolve a pinned provider model." });
+
+    /// <summary>
     /// Builds the protocol-appropriate client. Asynchronous because CLI protocols
     /// (<see cref="ChatProtocols.Acp"/>, <see cref="ChatProtocols.OpencodeServe"/>) may spawn
     /// or probe a local agent server process.

@@ -148,7 +148,40 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         var candidate = await db.RouteCandidates.AsNoTracking().Where(x => x.RouteVersionId == routeVersion.Id).OrderBy(x => x.Position).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (candidate is null) return Unavailable("Chat route has no candidates.");
 
-        var provider = await db.Providers.AsNoTracking().Where(x => x.Id == candidate.ProviderInstanceId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        return await ResolveProviderChatAsync(db, candidate.ProviderInstanceId, candidate.Model, route.Id, routeVersion.Id, candidate.Position, "route", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Resolves one explicitly named provider model — the companion domain's pinned model. The
+    /// tenant boundary moves to the provider row here because there is no route to carry it: a
+    /// provider of another tenant is the same "not found" answer, never a resolution.
+    /// </summary>
+    public async Task<ChatResolution> ResolveModelChatAsync(Guid providerInstanceId, string? modelName, CancellationToken cancellationToken = default)
+    {
+        var tenant = _tenant.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var provider = await db.Providers.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == providerInstanceId && x.TenantId == tenant.TenantId && x.DeletedAt == null, cancellationToken).ConfigureAwait(false);
+        if (provider is null) return Unavailable("Chat provider instance was not found for this tenant.");
+        return await ResolveProviderChatAsync(db, providerInstanceId, modelName, null, null, 0, "companion", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Builds a chat resolution from one provider instance. Shared by the route path (the route
+    /// candidate names provider and model) and the pinned path above, so protocol, key and
+    /// capability rules cannot drift between the two callers.
+    /// </summary>
+    private async Task<ChatResolution> ResolveProviderChatAsync(
+        ModelControlDbContext db,
+        Guid providerInstanceId,
+        string? candidateModel,
+        Guid? routeId,
+        Guid? routeVersionId,
+        int candidatePosition,
+        string strategySource,
+        CancellationToken cancellationToken)
+    {
+        var provider = await db.Providers.AsNoTracking().Where(x => x.Id == providerInstanceId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (provider is null) return Unavailable("Chat route references a missing provider instance.");
         if (!provider.Enabled) return Unavailable("Configured chat provider is disabled.");
 
@@ -162,7 +195,7 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         var processBacked = ChatProtocols.IsProcessTransport(protocol);
         var harnessOwned = processBacked || protocol == ChatProtocols.OpencodeServe;
 
-        var model = string.IsNullOrWhiteSpace(candidate.Model) ? String("model") : candidate.Model;
+        var model = string.IsNullOrWhiteSpace(candidateModel) ? String("model") : candidateModel;
         if (string.IsNullOrWhiteSpace(model) && !harnessOwned) return Unavailable("Chat model name is not configured.");
         model ??= provider.Driver; // CLI runtimes select their own model; the route just names the runtime.
         var imageInput = ImageInputCapability.Resolve(doc.RootElement, protocol, model);
@@ -213,10 +246,10 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
             HomePath = String("home_path"),
             ProviderInstanceId = provider.Id,
             ProviderVersionId = providerVersion.Id,
-            RouteId = route.Id,
-            RouteVersionId = routeVersion.Id,
-            CandidatePosition = candidate.Position,
-            StrategySource = "route"
+            RouteId = routeId,
+            RouteVersionId = routeVersionId,
+            CandidatePosition = candidatePosition,
+            StrategySource = strategySource
         };
     }
 

@@ -40,7 +40,12 @@ public static class StorageScopeHttpExtensions
         if (ids.Count > 1) { await ErrorAsync(context, 400, "invalid_storage_scope", "Exactly one storage scope header is allowed."); return; }
         // Agent packs are installed once for the application. A project header must
         // never create a second, divergent pack installation inside that project.
-        var id = context.Request.Path.StartsWithSegments("/api/v1/agent-packs")
+        // Companions are one user-level application domain too: their identity, memories
+        // and conversations must never be split into a per-project store by a storage
+        // header, so every /api/v1/companions and /api/v1/companion-* route stays on "user".
+        var companionPath = context.Request.Path.StartsWithSegments("/api/v1/companions")
+            || context.Request.Path.StartsWithSegments("/api/v1/companion-");
+        var id = context.Request.Path.StartsWithSegments("/api/v1/agent-packs") || companionPath
             ? "user"
             : ids.Count == 0 ? "user" : ids.ToString();
         try

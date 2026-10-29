@@ -34,6 +34,7 @@
     <ProjectReference Include="..\Governance\TinadecCore.Governance.csproj" />
     <ProjectReference Include="..\Tools\TinadecCore.Tools.csproj" />
     <ProjectReference Include="..\TinaChat\TinadecCore.TinaChat.csproj" />
+    <ProjectReference Include="..\Companion\TinadecCore.Companion.csproj" />
     <ProjectReference Include="..\AgentGraph\TinadecCore.AgentGraph.csproj" />
     <ProjectReference Include="..\Exploration\TinadecCore.Exploration.csproj" />
     <ProjectReference Include="..\Storage.Migrations.Sqlite\TinadecCore.Storage.Migrations.Sqlite.csproj" />

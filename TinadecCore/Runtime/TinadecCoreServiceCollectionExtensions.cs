@@ -15,6 +15,7 @@ using TinadecCore.Prompts;
 using TinadecCore.Skills;
 using TinadecCore.Tenancy;
 using TinadecCore.AgentGraph;
+using TinadecCore.Companion;
 using TinadecCore.Exploration;
 using TinadecCore.TinaChat;
 using TinadecCore.Tools;
@@ -50,6 +51,7 @@ public static class TinadecCoreServiceCollectionExtensions
         new LoopGuardModuleRegistrar().Register(builder);
         new ToolsModuleRegistrar().Register(builder);
         new DmaEAModuleRegistrar().Register(builder);
+        new CompanionModuleRegistrar().Register(builder);
 
         new AgentGraphModuleRegistrar().Register(builder);
         new ExplorationModuleRegistrar().Register(builder);
