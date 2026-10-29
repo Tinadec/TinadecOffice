@@ -68,6 +68,8 @@ export function installPreviewShimIfNeeded(): void {
       return Promise.resolve({ companion_mode_enabled: enabled })
     },
     companion: {
+      // The browser preview has no main-process proxy and no host credential: say so, never fake data.
+      api: () => Promise.resolve({ status: 503, body: { code: 'desktop_host_required', message: i18n.global.t('host.previewShim') } }),
       getState: () => Promise.resolve({ ...companionState }),
       expand: () => Promise.resolve(updateCompanion({ expanded: true })),
       collapse: () => Promise.resolve(updateCompanion({ expanded: false })),

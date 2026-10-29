@@ -31,6 +31,10 @@ describe('local pet window shell', () => {
     // the pet alone: neither may open the main window's backend connection or command palette.
     expect(app).toContain('const isStandaloneWindow = isPetWindow || isCompanionWindow')
     expect(app).toContain('if (!isStandaloneWindow) void startConnection()')
+    // `/companion-center` is a main-window route. A prefix test on '#/companion' would make it a
+    // standalone window and skip the connection, so the guard must compare the whole hash path.
+    expect(app).toContain("hashRoutePath(window.location.hash) === '#/companion'")
+    expect(app).not.toContain("window.location.hash.startsWith('#/companion')")
     expect(app).toContain('const entryReady = ref(isChildWindow)')
     expect(desktopPetPage).toContain('background: transparent !important')
     expect(desktopPetPage).toContain("from '@/pets/petRuntime'")

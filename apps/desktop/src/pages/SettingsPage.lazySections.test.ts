@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
-import { defineComponent, h, Fragment, vaporInteropPlugin } from 'vue'
+import { defineComponent, h, Fragment, onMounted, vaporInteropPlugin } from 'vue'
 import en from '@/locales/en'
 import SettingsPage from './SettingsPage.vue'
 import { setHostAccessStatus } from '@/lib/hostAccess'
+import { requestCompanion } from '@/lib/pageRequests'
 
 /**
  * Opening settings used to issue sixteen reads for two sections the user had not opened —
@@ -16,12 +17,26 @@ import { setHostAccessStatus } from '@/lib/hostAccess'
  * the machine running the test happens to be.
  */
 const mocks = vi.hoisted(() => {
-  const calls = { model: [] as string[], agent: [] as string[] }
+  const calls = { model: [] as string[], agent: [] as string[], companion: [] as string[] }
   return { calls }
 })
 
 const MODEL_READS = ['getModelCenterSnapshot', 'listModelProviders', 'listModelRoutes', 'getModelReadiness']
 const AGENT_READS = ['listAgents', 'listAgentModes', 'listAgentCandidates', 'getToolLayerReadiness', 'getAgentPack']
+
+/**
+ * The companion section is stood in for by a component that performs its own first read on
+ * mount, exactly as the real one does. What is graded here is the page: it must not mount the
+ * section before the user enters, and must not remount it for a second visit.
+ */
+const CompanionSectionStub = defineComponent({
+  name: 'CompanionSection',
+  props: { companionRequest: { type: Object, default: null } },
+  setup() {
+    onMounted(() => { mocks.calls.companion.push('getSettings') })
+    return () => h('div', { 'data-testid': 'companion-section-stub' })
+  },
+})
 
 vi.mock('@/api', () => ({
   api: new Proxy({}, {
@@ -55,6 +70,7 @@ vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => ({
 beforeEach(() => {
   mocks.calls.model.length = 0
   mocks.calls.agent.length = 0
+  mocks.calls.companion.length = 0
   setHostAccessStatus({ state: 'ready', managed: true })
   const storage = new Map<string, string>()
   Object.defineProperty(window, 'localStorage', { configurable: true, value: {
@@ -70,7 +86,7 @@ async function mountSettings() {
   const transition = defineComponent({ inheritAttrs: false, setup(_, { slots }) { return () => h(Fragment, null, slots.default?.()) } })
   const wrapper = mount(SettingsPage, { global: {
     plugins: [vaporInteropPlugin, createPinia(), createI18n({ legacy: false, locale: 'en', messages: { en } })],
-    stubs: { PersonalSection: true, Transition: transition, transition, Teleport: true },
+    stubs: { PersonalSection: true, CompanionSection: CompanionSectionStub, Transition: transition, transition, Teleport: true },
   } })
   await flushPromises()
   return wrapper
@@ -107,6 +123,37 @@ describe('settings opens without reading the sections nobody asked for', () => {
     await agentNav().trigger('click')
     await flushPromises()
     expect(mocks.calls.agent.length).toBe(first)
+    wrapper.unmount()
+  })
+
+  it('mounts the companion section only on entry and keeps it alive afterwards', async () => {
+    const wrapper = await mountSettings()
+    const companionNav = () => wrapper.findAll('.settings-nav-item').find(button => button.attributes('aria-label') === en.settings.companions.title)!
+    expect(mocks.calls.companion).toEqual([])
+
+    await companionNav().trigger('click')
+    await flushPromises()
+    const first = mocks.calls.companion.length
+    expect(first).toBeGreaterThan(0)
+
+    await wrapper.findAll('.settings-nav-item').find(button => button.attributes('aria-label') === en.settings.model)!.trigger('click')
+    await flushPromises()
+    await companionNav().trigger('click')
+    await flushPromises()
+    // The component stayed mounted through the switch, so its reads were not spent twice.
+    expect(mocks.calls.companion.length).toBe(first)
+    wrapper.unmount()
+  })
+
+  it('opens the companion section on the deep-linked companion', async () => {
+    const wrapper = await mountSettings()
+    requestCompanion('companion-7')
+    await flushPromises()
+    const section = wrapper.findComponent(CompanionSectionStub)
+    expect(section.exists()).toBe(true)
+    expect(section.props('companionRequest')).toEqual({ id: 'companion-7', seq: 1 })
+    expect(wrapper.findAll('.settings-nav-item').find(button => button.attributes('aria-current') === 'page')!.attributes('aria-label'))
+      .toBe(en.settings.companions.title)
     wrapper.unmount()
   })
 })

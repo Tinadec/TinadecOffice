@@ -1,5 +1,43 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-29 伙伴中心重做：共享快照、选中联动、伙伴域外壳
+
+伙伴中心不是「四张各读各的列表」，而是**左选人 / 中看事 / 右看这个人**的观察台。四张卡仍是 UIE 卡片（`companionList / companionFeed / companionGroups / companionConnections`，布局可拖拽可恢复），但**数据只有一个来源**：`src/lib/companionStore.ts` 单例单轮询（10s，`document.hidden` 停），一次 `Promise.allSettled` 取 `listCompanions / listActivity / listAllConversations / listConnectionsOverview`，按来源分别记失败；`loading` 只到首帧。旧实现四张卡各开定时器，其中三张各自 `listCompanions`、群聊卡再按伙伴数各拉一次会话，一轮 `4+N` 个请求且四栏可能不同帧——**这是本次重做的主因，不是样式**。`useCompanionCenter()` 做挂载计数：至少一张卡在，定时器才存在；`refreshCompanionCenter()` 单飞，四卡同时挂载也只读一轮。
+
+**选中态是页面级的**：`selectCompanion(id)`（再点取消）驱动中栏按伙伴过滤、右栏群聊与连接只显示该伙伴。`feedFilter` 也放在 store 里，因为两个入口都改它：动态卡的筛选 chips 与侧栏「需要我处理 / 全部动态」。
+
+**侧栏与工作页同一个组件、同一套两端**：`AppSidebar` 新增 `companionDomain`，品牌头与页脚（账号 + 模式切换 / 设置 / 折叠）完全不动，只把中间换掉——隐藏 `.sidebar-nav`（新对话 / 市场 / 调试）与 `.workspace-section`（工作区 / 会话），换成 `companion-nav` 三项。`.sidebar-companion .sidebar-nav-companion { flex: 1 }` 是必需的：`.workspace-section` 原来是那个撑满列的，摘掉后页脚会浮到上面。中心页因此**不再 `homeController.start()`**，项目与会话传空数组——伙伴页不读工作域。
+
+**动态流按事件类型出文案，不再显示 Core 的中文 `summary`**：`eventGroupCreated / eventMemberInvited / eventMessage / eventRunCompleted / eventRunFailed …` 五语齐全，未知 kind 才退回服务端原文。用户发言与用户建群的 `companion_id` 是 null，过去在流里是**空作者**，现在走「我」。筛选 `需我处理` = `run_failed`（伙伴域没有审批 / 等待确认语义，别造）。按天分组、相对时间用 `Intl.RelativeTimeFormat`（`numeric:'auto'` 才会说「昨天」）。
+
+**群聊分「我建立的 / 伙伴建立的」**：靠 Core 新的会话 `origin` 字段，**不能靠成员表**——用户和伙伴建的群都带 user 成员，这一点是这次才发现并写进契约的。群卡带暂停 / 恢复（`pauseConversation`）与只读消息（显示最近 20 条并写明共多少条）；中心不提供发送框。
+
+**连接卡**：跟随选中伙伴过滤，展示 `enabled=false`（已停用）、授权态与运行时态；`runtime_status` 目前只有 `unsupported / unknown` 两个值，**没有任何握手探测**，所以「在线」永远不成立，卡片写「未探测」而不是假装。顶部一行汇总「N 个连接 · M 个已授权 · K 个未探测」。
+
+**设置直达**：`requestCompanion(id, tab?)` 扩展为带页签的请求，`SettingsPage` 把 `{ id, seq, tab? }` 交给 `CompanionSection`，后者用 `:key="selectedId:editorRequestSeq"` 重挂 `CompanionEditor` 并传 `initial-tab`——否则同一个伙伴第二次点「记忆」不会换页签（key 没变，watch 也不会触发两次同值）。
+
+**布局迁移**：`companionCenter` 的预设版本是 `PRESET_REVISIONS.companionCenter = 2`；`useUie.loadLayout` 遇到 `stored.presetRevision < 当前值` 就重建为预设，水合路径也改走 `loadLayout`（首帧发生在水合之前，只改 showPage 会被水合时的旧快照覆盖回去）。没有这条，改了预设老用户永远看不到新版。
+
+**顺手修掉的存量问题**（都在本轮工作树里、非本次改动引入）：`CompanionSection.vue` 结尾的 `void companionInitial` 让整个分区挂载即抛错；`CompanionEditor.vue` 用命名导入取头像组件的默认导出；`settings.companions` 的 `avatarDefault/model/modelDefault/modelHint/modelListFailed` 只有 zh-CN 有（en/ja/ru/zh-TW 缺），另有四语言残留的 `modelPurpose*` 死键；`HomeGitPlacement.test.ts` 把首页磁贴数写成 `FEATURE_CATALOG.length - 1`，伙伴卡进目录后必然错，已改为 `catalogEntriesForPage('home')`。
+
+**门禁**：Desktop `vitest` **207 文件通过 / 1 跳过**（`CompanionCenterPage` 12、`CompanionSection` 8、`HomeGitPlacement` 2、`i18nParity` 8、`AppSidebar` 40 等）；`vue-tsc --noEmit` **exit 0 零错误**；TinadecUI `vitest` **185/185**（含新增的预设版本迁移 2 条）；Gateway `bun test src` **115/115**；Core Companion 定向 **26 条全部在单跑时通过**，整集并行跑会出现**轮换的 1–2 条失败**（真 HTTP host + 后台 runtime 争用，失败项每次都不同，单跑必过）——这是环境性的，不是回归。**未验证**：真实 Electron 里的伙伴中心视觉与拖拽、真实 Gateway + Core 联调、生产 `vite build` 未跑。
+
+## 2026-10-28 伙伴模式：独立应用域接入
+
+伙伴从「边缘胶囊空壳」接成独立应用域。主窗口侧栏的模式菜单变成三项（平面 / 空间 / 伙伴中心），第三项只发 `go-companion-center` 并跳 `/companion-center`，不改当前工作会话；`App.vue` 的伙伴窗判定由 `#/companion` 前缀改为精确路由，否则 `/companion-center` 会被当成卫星窗而跳过宿主门禁与连接启动（`petWindows.test.ts` 钉住这条）。
+
+伙伴窗（`CompanionPage.vue`）现在读默认主伙伴与其私聊：消息按真实 `author_kind` 呈现（你 / 伙伴 / 系统），运行中与失败原因来自 run 的 `code` / `message`，没有模型路由时显示「宿主未配置可用模型」而不是伪造回复；发送、切换对话对象、邀请成员（`share_history` 默认关闭，显式勾选才复制历史）、暂停 / 恢复会话与伙伴都在这里。轮询按 `after_seq` 收敛；收起 / 展开、主窗口切模式不丢草稿与已加载消息。
+
+`/companion-center` 是同一 UIE store 的另一布局（`useUiePage('companionCenter')` + 预设：左伙伴列表、中动态流、右群聊与连接总览），四张卡 `companionList / companionFeed / companionGroups / companionConnections` 全部读真实数据，10 秒轮询并在 `document.hidden` 时停止。首页磁贴与「+」菜单按当前页过滤，伙伴卡不进首页。
+
+设置新增「伙伴」分区（`SettingsPage.vue` 的 `companions`，首次进入才挂载、之后保活），编辑器覆盖身份 / 头像 / 模型用途、人格文档（与表单同一 `revision` 的 PATCH）、记忆（增改删 / 检索，删除立即消失）、Skill（手册 / 已装包引用、启停）、连接（新增 / 授权 / 撤销 / 删除，`configured` 不冒充在线）、自主规则（开关 / 间隔 / 每日额度 / 暂停 / 手动 tick）、默认主伙伴与全局暂停。412 冲突呈现并重新载入，草稿保留。
+
+主进程代理 `electron/companionApi.cjs`：只接受伙伴窗 sender（`isCompanionWindowSender`），origin 固定为受管 Gateway URL，`X-Tinadec-Host-Control` 由主进程注入、渲染层拿不到；方法与路径走 14 条白名单（读设置 / 伙伴 / 活动 / 会话 / 消息 / run，以及发送、邀请、退群、暂停、建群、手动 tick），拒绝绝对 URL、`..`、非白名单路径与非白名单方法；JSON body ≤ 64 KiB；返回 `{status, body}`，超时与网关不可达映射为稳定错误。
+
+五语文案：伙伴域键在 zh-CN / zh-TW / en / ja / ru 齐全且占位符一致；`memoryCount / skillCount / connectionCount` 补 en / ru 复数形式；自主 tick 的原因码与 Core 实际返回对齐（`companion_not_active / invalid_target / duplicate_group / duplicate_member / conversation_paused / duplicate_message` 等）。`i18nParity` 的卡片源现在也读 `.ts`，伙伴中心共享的轮询 / 错误文案不再无人看守。
+
+**门禁**：Desktop 定向 vitest 10 文件 **104/104**（CompanionPage 21、CompanionCenterPage 7、CompanionSection 7、SettingsPage 懒挂载 5、AppSidebar 40、uieCardRegistry 2、BrowserTabBar 3、petWindows 1、settingsCssContract 10、i18nParity 8）；`node --test apps/desktop/electron/companionApi.test.cjs` **9/9**；`vue-tsc --noEmit` **exit 0、零错误**；TinadecUI `vitest` **183/183**（16 文件）；Gateway `bun test src` **115/115**；Core Companion 定向测试 **25/25**。生产 `vite build` 跑满 8 分钟仍停在 transforming、`dist/index.html` 时间戳未更新，已终止，**未完成/未验证，不得声称构建通过**。**未验证**：真实 Electron 里的伙伴窗视觉与权限走查、真实模型回复质量、真实 Gateway + Core 联调——本轮全部是组件 / IPC / 契约级证据，浏览器预览不能替代 Electron 权限结论。
+
 ## 2026-10-27 工作空间精确文件、附件曝光与延迟上传
 
 `WorkspaceRootsPanel` 现在同时管理工作目录与 `project.files[]`。拖入文件夹仍就地加入 roots；拖入文件默认绑定**原路径**，通过同一个 `saveWorkspace` 写入 `[[workspace.files]]`，不再为了读一个文件授权父目录。复制保留为显式按钮并继续走主进程 `workspaceImport`；第三条按钮“附到当前对话”只把文件放进作曲器待发状态，不创建会话。
@@ -387,8 +425,8 @@ The deb keeps Electron's existing dependency list and explicitly requires `libca
 
 scope-enabled Core 全部业务 API 要求私有宿主头，health/challenge 两个公开探针除外。main 先验证 Core/Gateway nonce/角色绑定 HMAC，不能按公开指纹复用伪服务；验证后仅为登记主/panel/debug 主frame在精确入口访问固定local API签发，导航/iframe/未知窗口/远程均不继承，重验失败撤权。敏感IPC同样复核主frame。dev共享启动key，仅Electron保留、Vite剥除，main收到后移除env；默认不开放CDP。Electron43.3.0隔离夹具已验证HTTP/SSE、HMAC、主/辅助路由、iframe拒绝、导航/端点撤权及redirect剥离，不替代完整产品UI或安装验收。
 
-**Last Updated:** 2026-10-23
-**Last Updated By:** 发送按钮的“正在发送”只活到 Core 收下消息（`busy` = 发送在途，不再并入 `working`；`run()` 交出 `accept`；新会话不再重复读转录）；同日还有模式目录只读会话所在存储作用域（修 `mode_unavailable` 死循环）。
+**Last Updated:** 2026-10-28
+**Last Updated By:** 伙伴模式独立应用域接入：三模式入口、伙伴窗私聊、伙伴中心、设置分区与主进程白名单代理；五语文案与原因码对齐。
 **Last Verified Commit:** 0ca6e0fb + 本轮工作树（发送闩语义 + 模式目录作用域修复）；历史证据见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md 与 2026-10-11-home-git-widget.zh-CN.md。
 **Branch:** main
 

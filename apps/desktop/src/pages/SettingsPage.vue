@@ -60,6 +60,7 @@ import PersonalSection from '@/settings/sections/PersonalSection.vue'
 import PetsSection from '@/settings/sections/PetsSection.vue'
 import ToolCenterSection from '@/settings/sections/ToolCenterSection.vue'
 import TinaChatSection from '@/settings/sections/TinaChatSection.vue'
+import CompanionSection from '@/settings/sections/CompanionSection.vue'
 import {
   api as baseApi,
   type AgentCandidateDto,
@@ -145,7 +146,7 @@ import PromptEngineeringMerged from '@/settings/sections/PromptEngineeringMerged
 import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue'
 import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'
 import ModelParametersEditor from '@/settings/sections/ModelParametersEditor.vue'
-import { consumeRequest, pendingAgentId, pendingModeId, pendingPromptId, pendingToolId, pendingToolAgentId, requestToolAgent, pendingModelProviderId, pendingSettingsSection } from '@/lib/pageRequests'
+import { consumeRequest, pendingAgentId, pendingModeId, pendingPromptId, pendingToolId, pendingToolAgentId, requestToolAgent, pendingModelProviderId, pendingSettingsSection, pendingCompanionId, type CompanionSettingsTab } from '@/lib/pageRequests'
 import { routesAfterModelRemoval } from '@/lib/modelRouteEdits'
 import { readinessReason } from '@/lib/readinessText'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
@@ -159,7 +160,7 @@ import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { isAbortError } from '@/lib/isAbortError'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 
-type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'companionAvatar' | 'apiDocs' | 'about'
+type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'companionAvatar' | 'apiDocs' | 'about'
 
 type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
 
@@ -261,6 +262,14 @@ const activeSection = ref<SettingsSection>('personal')
 const toolCenterRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
 const storageRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
 const agentCenterTab = ref<AgentCenterTab>('agents')
+/**
+ * The companion section is mounted on first entry and then kept alive: its reads belong to the
+ * section, so unmounting it on every switch would re-read characters the user already saw. A deep
+ * link carries `{ id, seq }` — the seq makes the same companion id a fresh request.
+ */
+const companionsMounted = ref(false)
+const companionRequest = ref<{ id: string; seq: number; tab?: CompanionSettingsTab } | null>(null)
+let companionRequestSeq = 0
 // Pets section moved to settings/sections/PetsSection.vue (D7.2)
 
 /**
@@ -277,6 +286,8 @@ const isCenteredSection = computed(() => CENTERED_SECTIONS.has(activeSection.val
 async function selectSettingsSection(section: SettingsSection) {
   if (section !== 'storage' && activeSection.value === 'storage' && storageRef.value && !await storageRef.value.canLeave()) return false
   if (section !== 'tools' && activeSection.value === 'tools' && toolCenterRef.value && !await toolCenterRef.value.canLeave()) return false
+  // Mounting is the first read; `v-show` afterwards keeps the already-read section alive.
+  if (section === 'companions') companionsMounted.value = true
   activeSection.value = section
   return true
 }
@@ -441,6 +452,7 @@ const navItems = computed(() => [
   { key: 'storage' as const, icon: Database, label: t('settings.storage') },
   { key: 'model' as const, icon: KeyRound, label: t('settings.model') },
   { key: 'agentCenter' as const, icon: Workflow, label: t('settings.agentCenter') },
+  { key: 'companions' as const, icon: Bot, label: t('settings.companions.title') },
   { key: 'tools' as const, icon: Terminal, label: t('settings.toolLayer') },
   { key: 'tinachat' as const, icon: MessagesSquare, label: t('tinaChat.manage') },
   { key: 'archive' as const, icon: Archive, label: t('settings.archiveTrash') },
@@ -2203,6 +2215,16 @@ function readinessStatusLabel(status: string) {
 consumeRequest(pendingSettingsSection, (section) => {
   selectSettingsSection(section as SettingsSection)
 })
+// The companion centre / failure recovery opens one companion: switch the section and hand the
+// id (and, when the caller meant a specific panel, the editor tab) to the still-mounted section.
+consumeRequest(pendingCompanionId, async (request) => {
+  companionRequest.value = {
+    id: request.id,
+    seq: ++companionRequestSeq,
+    ...(request.tab ? { tab: request.tab } : {}),
+  }
+  await selectSettingsSection('companions')
+})
 consumeRequest(pendingModelProviderId, async (providerId) => {
   const generation = ++providerNavigationGeneration
   requestedProviderId.value = providerId
@@ -3890,6 +3912,12 @@ import '../settings/settings.css'
         </template>
     </div>
     </Transition>
+
+    <!-- Entered once, then kept mounted: the section's reads happen on mount, so a later visit
+         must not spend them again (the section owns its own refresh button). -->
+    <div v-if="companionsMounted" v-show="activeSection === 'companions'" class="settings-section-wrapper">
+      <CompanionSection :companion-request="companionRequest" />
+    </div>
 
     <div v-if="showModelModal" class="model-provider-modal" @click.self="showModelModal = false">
       <UiCard class="model-provider-modal-content">

@@ -1550,6 +1550,14 @@ button.agent-topology-node:hover,
   background: transparent;
 }
 
+/* Companion domain: the work-domain middle is gone, so the companion nav has to take the
+   free space the workspace list used to hold. Without this the footer floats up under the
+   nav instead of sitting on the bottom edge like every other page. */
+.sidebar-companion .sidebar-nav-companion {
+  flex: 1;
+  min-height: 0;
+}
+
 /* ===== Browser-style floating tab bar ===== */
 .browser-tab-bar {
   display: flex;

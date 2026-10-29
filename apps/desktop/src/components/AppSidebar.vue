@@ -26,6 +26,9 @@ import {
   Sparkles,
   Store,
   Trash2,
+  TriangleAlert,
+  Activity,
+  Users,
   ArrowUp,
   ArrowDown,
 } from '@lucide/vue'
@@ -58,6 +61,14 @@ const props = defineProps<{
   busy: boolean
   collapsed?: boolean
   spaceActive?: boolean
+  /** The companion centre is the third destination of the view menu; active while its page is open. */
+  companionCenterActive?: boolean
+  /**
+   * The companion centre mounts this same sidebar, with the same brand header and the same footer
+   * (profile + the three shell buttons). Only the work-domain middle — new chat, market, the
+   * workspace/session list — is replaced by companion navigation.
+   */
+  companionDomain?: boolean
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
   workspaceLoadStates?: Record<string, WorkspaceLoadState>
@@ -71,6 +82,9 @@ const emit = defineEmits<{
   'go-settings': []
   'go-personal': []
   'go-market': []
+  'go-companion-center': []
+  /** Companion-domain shortcuts: which view the centre should show next. */
+  'companion-nav': [target: 'all' | 'attention' | 'settings']
   'change-view': [mode: 'flat' | 'space']
   'toggle-collapse': []
   'rename-project': [id: string, name: string]
@@ -165,6 +179,12 @@ function changeView(mode: 'flat' | 'space') {
   viewMenu.value?.hidePopover()
   viewMenuTrigger?.focus({ preventScroll: true })
   emit('change-view', mode)
+}
+/** The observing page is a third destination, not a third session view. */
+function openCompanionCenter() {
+  viewMenu.value?.hidePopover()
+  viewMenuTrigger?.focus({ preventScroll: true })
+  emit('go-companion-center')
 }
 
 // ---- Lifecycle management (context menu + inline rename) ----
@@ -662,7 +682,7 @@ watch([displayName, () => props.collapsed], async () => {
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ 'sidebar-collapsed': collapsed }" :style="panelStyle" v-bind="panelDataAttrs">
+  <aside class="sidebar" :class="{ 'sidebar-collapsed': collapsed, 'sidebar-companion': companionDomain }" :style="panelStyle" v-bind="panelDataAttrs">
     <div class="sidebar-topbar">
       <div class="brand">
         <BrandLogo :size="14" class="sidebar-icon brand-logo-icon" />
@@ -670,7 +690,7 @@ watch([displayName, () => props.collapsed], async () => {
       </div>
     </div>
 
-    <nav class="sidebar-nav">
+    <nav v-if="!companionDomain" class="sidebar-nav">
       <UiButton
         variant="ghost"
         size="sm"
@@ -705,9 +725,47 @@ watch([displayName, () => props.collapsed], async () => {
       </UiButton>
     </nav>
 
+    <!-- Companion domain: the same chrome, none of the work-domain middle. These entries change
+         what the centre shows; they never touch the work session or the selected project. -->
+    <nav v-if="companionDomain" class="sidebar-nav sidebar-nav-companion" :aria-label="t('sidebar.companionNav')">
+      <UiButton
+        variant="ghost"
+        size="sm"
+        class="sidebar-nav-item w-full justify-start"
+        :title="t('sidebar.companionAttention')"
+        data-testid="companion-nav-attention"
+        @click="emit('companion-nav', 'attention')"
+      >
+        <TriangleAlert :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.companionAttention') }}</span>
+      </UiButton>
+      <UiButton
+        variant="ghost"
+        size="sm"
+        class="sidebar-nav-item w-full justify-start"
+        :title="t('sidebar.companionAll')"
+        data-testid="companion-nav-all"
+        @click="emit('companion-nav', 'all')"
+      >
+        <Activity :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.companionAll') }}</span>
+      </UiButton>
+      <UiButton
+        variant="ghost"
+        size="sm"
+        class="sidebar-nav-item w-full justify-start"
+        :title="t('sidebar.companionSettings')"
+        data-testid="companion-nav-settings"
+        @click="emit('companion-nav', 'settings')"
+      >
+        <Users :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.companionSettings') }}</span>
+      </UiButton>
+    </nav>
+
     <!-- The heading and the scrollport share one hover region: the "new workspace"
          action belongs to this block, not to the whole sidebar. -->
-    <div class="workspace-section">
+    <div v-if="!companionDomain" class="workspace-section">
       <div class="workspace-section-heading">
         <button class="workspace-section-toggle" :aria-expanded="!list.state.value.collapsed" aria-controls="sidebar-workspaces" @click="list.state.value.collapsed = !list.state.value.collapsed">
           <span class="sidebar-label">{{ t('sidebar.workspaces') }}</span>
@@ -858,7 +916,7 @@ watch([displayName, () => props.collapsed], async () => {
           popovertargetaction="toggle"
           @click="openViewMenu"
         >
-          <Waypoints v-if="spaceActive" :size="16" /><LayoutGrid v-else :size="16" />
+          <Users v-if="companionCenterActive" :size="16" /><Waypoints v-else-if="spaceActive" :size="16" /><LayoutGrid v-else :size="16" />
         </UiButton>
         <UiButton
           variant="ghost"
@@ -890,8 +948,9 @@ watch([displayName, () => props.collapsed], async () => {
       @close="menuTarget = null"
     />
     <div :id="viewMenuId" ref="viewMenu" popover class="sidebar-view-menu" :style="viewMenuStyle" role="dialog" :aria-label="t('space.switchView')" @beforetoggle="updateViewMenuState">
-      <button :aria-pressed="!spaceActive" :autofocus="!spaceActive" @click="changeView('flat')"><LayoutGrid :size="18" />{{ t('space.flat') }}</button>
+      <button :aria-pressed="!spaceActive && !companionCenterActive" :autofocus="!spaceActive && !companionCenterActive" @click="changeView('flat')"><LayoutGrid :size="18" />{{ t('space.flat') }}</button>
       <button :aria-pressed="!!spaceActive" :autofocus="!!spaceActive" @click="changeView('space')"><Waypoints :size="18" />{{ t('space.title') }}</button>
+      <button type="button" :aria-pressed="!!companionCenterActive" :autofocus="!!companionCenterActive" @click="openCompanionCenter"><Users :size="18" />{{ t('space.companionCenter') }}</button>
     </div>
     <div
       :id="optionsMenuId"

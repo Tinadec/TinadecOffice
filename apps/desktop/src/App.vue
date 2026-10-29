@@ -47,7 +47,14 @@ const isChildWindow = new URLSearchParams(window.location.search).get('splash') 
 const isPetWindow = window.location.hash.startsWith('#/pet')
 // The companion capsule/panel is its own always-on-top window: transparent, no splash, no
 // backend coupling of its own. It shares this bundle only, so it gets the bare RouterView.
-const isCompanionWindow = window.location.hash.startsWith('#/companion')
+// The center page's path also begins with "/companion", so this compares the whole hash path:
+// a prefix test would strand `/companion-center` in the satellite window and skip the backend
+// connection the main shell needs.
+function hashRoutePath(hash: string): string {
+  const query = hash.indexOf('?')
+  return query === -1 ? hash : hash.slice(0, query)
+}
+const isCompanionWindow = hashRoutePath(window.location.hash) === '#/companion'
 const isStandaloneWindow = isPetWindow || isCompanionWindow
 const { t } = useI18n()
 setGraphSeedPackTranslator((key, params) => String(t(key, params ?? {})))

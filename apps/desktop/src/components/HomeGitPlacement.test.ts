@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
-import { FEATURE_CATALOG } from '../../../TinadecUI/src/components/cards/home/featureCatalog'
+import { FEATURE_CATALOG, catalogEntriesForPage } from '../../../TinadecUI/src/components/cards/home/featureCatalog'
 const dispatch = vi.fn()
 vi.mock('../../../TinadecUI/src/components/useUie', () => ({ useUie: () => ({ dispatch, scope: ref({ kind: 'page', pageId: 'home' }), snapshot: ref({ revision: 1 }) }) }))
 vi.mock('@/composables/useElementSize', () => ({ useResponsiveMode: () => ({ isCompact: ref(false) }) }))
@@ -33,8 +33,9 @@ describe('Home feature panel Git widget placement', () => {
       GitStatusWidget: { template: '<button class="git-status-widget" @click="$emit(\'open\')" />', emits: ['open'] },
     } } })
     expect(FEATURE_CATALOG.find(entry => entry.descriptorId === 'git')).toBeTruthy()
-    // Every catalog page except Git, which the status widget replaces on the grid.
-    expect(wrapper.findAll('.panel-home-card')).toHaveLength(FEATURE_CATALOG.length - 1)
+    // Every Home entry except Git, which the status widget replaces on the grid. Counting the whole
+    // catalog would break the moment another page (the companion centre) adds its own cards.
+    expect(wrapper.findAll('.panel-home-card')).toHaveLength(catalogEntriesForPage('home').length - 1)
     expect(wrapper.find('.git-status-widget').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('context.homeGit')
     await wrapper.find('.git-status-widget').trigger('click')

@@ -430,6 +430,29 @@ describe('AppSidebar lifecycle management', () => {
     wrapper.unmount()
   })
 
+  it('offers the companion center as a third destination without changing the session view', async () => {
+    const wrapper = factory({}, document.body)
+    const trigger = wrapper.get<HTMLButtonElement>('[title="space.switchView"]')
+    const menu = wrapper.get<HTMLDivElement>('.sidebar-view-menu')
+    const hide = vi.fn(() => dispatchViewToggle(menu.element, 'closed'))
+    Object.defineProperty(menu.element, 'hidePopover', { configurable: true, value: hide })
+    await trigger.trigger('click')
+    dispatchViewToggle(menu.element, 'open')
+
+    const choices = menu.findAll<HTMLButtonElement>('button')
+    expect(choices).toHaveLength(3)
+    expect(choices[2]!.text()).toBe('space.companionCenter')
+
+    choices[2]!.element.focus()
+    await choices[2]!.trigger('click')
+    expect(wrapper.emitted('go-companion-center')).toHaveLength(1)
+    // Choosing the observing page is not a flat/space switch, and the popover closes.
+    expect(wrapper.emitted('change-view')).toBeUndefined()
+    expect(hide).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(trigger.element)
+    wrapper.unmount()
+  })
+
   it('keeps the observer-side navigation clickable while a run is busy', async () => {
     // 这条原本是聊天室的用例（它是唯一刻意不接 :disabled="busy" 的按钮）；聊天室界面删除后，
     // 同一个保证落在市场按钮上——busy 期间挡住导航就是运行中连页面都切不了。

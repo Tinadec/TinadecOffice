@@ -197,6 +197,112 @@ export interface paths {
      */
     post: operations["postApiV1CodeToolsByToolIdExecute"];
   };
+  "/api/v1/companion-connections": {
+    /** List every companion connection binding with its owner name */
+    get: operations["getApiV1Companion-connections"];
+  };
+  "/api/v1/companion-conversations": {
+    /** List every conversation across companions (companion_id, kind, origin, limit) */
+    get: operations["getApiV1Companion-conversations"];
+  };
+  "/api/v1/companion-conversations/{conversationId}": {
+    /** Read one companion conversation with members */
+    get: operations["getApiV1Companion-conversationsByConversationId"];
+  };
+  "/api/v1/companion-conversations/{conversationId}/members": {
+    /** Invite a companion (creates a linked group from a private chat) */
+    post: operations["postApiV1Companion-conversationsByConversationIdMembers"];
+  };
+  "/api/v1/companion-conversations/{conversationId}/members/{companionId}": {
+    /** Remove a companion from a conversation */
+    delete: operations["deleteApiV1Companion-conversationsByConversationIdMembersByCompanionId"];
+  };
+  "/api/v1/companion-conversations/{conversationId}/messages": {
+    /** List messages after a seq cursor (after_seq, limit) */
+    get: operations["getApiV1Companion-conversationsByConversationIdMessages"];
+    /** Post a user message and create the runs it owes (Idempotency-Key) */
+    post: operations["postApiV1Companion-conversationsByConversationIdMessages"];
+  };
+  "/api/v1/companion-conversations/{conversationId}/pause": {
+    /** Pause or resume a conversation */
+    post: operations["postApiV1Companion-conversationsByConversationIdPause"];
+  };
+  "/api/v1/companion-runs/{runId}": {
+    /** Poll one companion run */
+    get: operations["getApiV1Companion-runsByRunId"];
+  };
+  "/api/v1/companion-settings": {
+    /** Read companion settings (main companion and global autonomy pause) */
+    get: operations["getApiV1Companion-settings"];
+    /** Update companion settings */
+    patch: operations["patchApiV1Companion-settings"];
+  };
+  "/api/v1/companions": {
+    /** List companions (optionally including archived) */
+    get: operations["getApiV1Companions"];
+    /** Create a companion */
+    post: operations["postApiV1Companions"];
+  };
+  "/api/v1/companions/activity": {
+    /** Companion activity feed */
+    get: operations["getApiV1CompanionsActivity"];
+  };
+  "/api/v1/companions/{companionId}": {
+    /** Read a companion profile and autonomy rules */
+    get: operations["getApiV1CompanionsByCompanionId"];
+    /** Update a companion profile (If-Match revision) */
+    patch: operations["patchApiV1CompanionsByCompanionId"];
+  };
+  "/api/v1/companions/{companionId}/archive": {
+    /** Archive a companion (If-Match revision) */
+    post: operations["postApiV1CompanionsByCompanionIdArchive"];
+  };
+  "/api/v1/companions/{companionId}/autonomy/tick": {
+    /** Run one bounded autonomy tick for a companion */
+    post: operations["postApiV1CompanionsByCompanionIdAutonomyTick"];
+  };
+  "/api/v1/companions/{companionId}/connections": {
+    /** List companion connection bindings */
+    get: operations["getApiV1CompanionsByCompanionIdConnections"];
+    /** Bind a connection to a companion */
+    post: operations["postApiV1CompanionsByCompanionIdConnections"];
+  };
+  "/api/v1/companions/{companionId}/connections/{bindingId}": {
+    /** Delete a connection binding (If-Match revision) */
+    delete: operations["deleteApiV1CompanionsByCompanionIdConnectionsByBindingId"];
+    /** Update a connection binding (If-Match revision) */
+    patch: operations["patchApiV1CompanionsByCompanionIdConnectionsByBindingId"];
+  };
+  "/api/v1/companions/{companionId}/conversations": {
+    /** List conversations for a companion */
+    get: operations["getApiV1CompanionsByCompanionIdConversations"];
+    /** Ensure a private chat or create a group */
+    post: operations["postApiV1CompanionsByCompanionIdConversations"];
+  };
+  "/api/v1/companions/{companionId}/memories": {
+    /** List or search private memories (q, limit) */
+    get: operations["getApiV1CompanionsByCompanionIdMemories"];
+    /** Write a private memory */
+    post: operations["postApiV1CompanionsByCompanionIdMemories"];
+  };
+  "/api/v1/companions/{companionId}/memories/{memoryId}": {
+    /** Delete a private memory (If-Match revision) */
+    delete: operations["deleteApiV1CompanionsByCompanionIdMemoriesByMemoryId"];
+    /** Edit a private memory (If-Match revision) */
+    patch: operations["patchApiV1CompanionsByCompanionIdMemoriesByMemoryId"];
+  };
+  "/api/v1/companions/{companionId}/skills": {
+    /** List companion skill bindings */
+    get: operations["getApiV1CompanionsByCompanionIdSkills"];
+    /** Bind a skill to a companion */
+    post: operations["postApiV1CompanionsByCompanionIdSkills"];
+  };
+  "/api/v1/companions/{companionId}/skills/{bindingId}": {
+    /** Delete a skill binding (If-Match revision) */
+    delete: operations["deleteApiV1CompanionsByCompanionIdSkillsByBindingId"];
+    /** Update a skill binding (If-Match revision) */
+    patch: operations["patchApiV1CompanionsByCompanionIdSkillsByBindingId"];
+  };
   "/api/v1/configuration/documents": {
     /** GET /api/v1/configuration/documents */
     get: operations["getApiV1ConfigurationDocuments"];
@@ -1393,6 +1499,286 @@ export interface components {
       run_id: string;
       status: string;
       task_node_id: string;
+      [key: string]: unknown;
+    };
+    CompanionActivity: {
+      /** Format: uuid */
+      companion_id?: string | null;
+      companion_name?: string | null;
+      /** Format: uuid */
+      conversation_id?: string | null;
+      conversation_title?: string | null;
+      /** Format: date-time */
+      created_at: string;
+      detail?: string | null;
+      /** Format: uuid */
+      id: string;
+      kind: string;
+      payload?: {
+        [key: string]: unknown;
+      } | null;
+      summary?: string | null;
+      [key: string]: unknown;
+    };
+    CompanionActivityList: components["schemas"]["CompanionActivity"][];
+    CompanionAutonomy: {
+      daily_action_budget: number;
+      enabled: boolean;
+      interval_minutes: number;
+      paused: boolean;
+      [key: string]: unknown;
+    };
+    CompanionAutonomyTickResult: {
+      acted: boolean;
+      /** @enum {string} */
+      action: "none" | "create_group" | "invite" | "send_message";
+      activity: components["schemas"]["CompanionActivity"] | null;
+      conversation: components["schemas"]["CompanionConversation"] | null;
+      message: components["schemas"]["CompanionMessage"] | null;
+      reason: string | null;
+      [key: string]: unknown;
+    };
+    CompanionConnection: {
+      /** @enum {string} */
+      authorization: "configured" | "authorized" | "revoked";
+      /** Format: uuid */
+      companion_id: string;
+      enabled: boolean;
+      endpoint?: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @description mcp | server | phone | external_agent */
+      kind: string;
+      /** Format: date-time */
+      last_checked_at?: string | null;
+      name: string;
+      revision: number;
+      /** @enum {string} */
+      runtime_status: "unsupported" | "unknown";
+      [key: string]: unknown;
+    };
+    CompanionConnectionList: components["schemas"]["CompanionConnection"][];
+    CompanionConnectionOverview: {
+      /** @enum {string} */
+      authorization: "configured" | "authorized" | "revoked";
+      /** Format: uuid */
+      companion_id: string;
+      companion_name: string | null;
+      enabled: boolean;
+      endpoint?: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @description mcp | server | phone | external_agent */
+      kind: string;
+      /** Format: date-time */
+      last_checked_at?: string | null;
+      name: string;
+      revision: number;
+      /** @enum {string} */
+      runtime_status: "unsupported" | "unknown";
+      [key: string]: unknown;
+    };
+    CompanionConnectionOverviewList: components["schemas"]["CompanionConnectionOverview"][];
+    CompanionConversation: {
+      autonomy_paused: boolean;
+      can_open: boolean;
+      /** Format: date-time */
+      created_at?: string;
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "private" | "group";
+      /** Format: date-time */
+      last_message_at?: string | null;
+      last_message_preview?: string | null;
+      members: components["schemas"]["CompanionMember"][];
+      message_count: number;
+      /** @enum {string} */
+      origin: "user" | "companion";
+      /** Format: uuid */
+      parent_conversation_id?: string | null;
+      title?: string | null;
+      turn_budget: number;
+      [key: string]: unknown;
+    };
+    CompanionConversationList: components["schemas"]["CompanionConversation"][];
+    CompanionDetail: {
+      autonomy: components["schemas"]["CompanionAutonomy"];
+      autonomy_enabled: boolean;
+      autonomy_paused: boolean;
+      avatar: string | null;
+      connection_count: number;
+      /** Format: date-time */
+      created_at: string;
+      /** @enum {string} */
+      current_activity: "idle" | "thinking" | "paused";
+      /** Format: uuid */
+      id: string;
+      /** Format: date-time */
+      last_activity_at: string | null;
+      memory_count: number;
+      model: string | null;
+      /** Format: uuid */
+      model_provider_id: string | null;
+      model_purpose: string;
+      name: string;
+      persona_document?: string | null;
+      revision: number;
+      skill_count: number;
+      /** @enum {string} */
+      status: "active" | "archived" | "paused";
+      tagline: string | null;
+      /** Format: date-time */
+      updated_at: string;
+      [key: string]: unknown;
+    };
+    CompanionList: components["schemas"]["CompanionSummary"][];
+    CompanionMember: {
+      /** Format: uuid */
+      companion_id?: string | null;
+      display_name: string;
+      /** Format: date-time */
+      joined_at: string;
+      /** @enum {string} */
+      member_kind: "user" | "companion";
+      /** @enum {string} */
+      status: "active" | "left";
+      [key: string]: unknown;
+    };
+    CompanionMemory: {
+      /** Format: uuid */
+      companion_id: string;
+      content: string;
+      /** Format: date-time */
+      created_at?: string;
+      /** Format: uuid */
+      id: string;
+      /** @description indexed | pending | deleted */
+      index_status: string;
+      revision: number;
+      /** Format: uuid */
+      source_conversation_id?: string | null;
+      /** @description user | companion_run | group_message */
+      source_kind: string;
+      /** Format: uuid */
+      source_message_id?: string | null;
+      /** Format: date-time */
+      updated_at?: string;
+      [key: string]: unknown;
+    };
+    CompanionMemoryList: components["schemas"]["CompanionMemory"][];
+    CompanionMessage: {
+      addressed_to: string[];
+      /** Format: uuid */
+      author_companion_id?: string | null;
+      /** @enum {string} */
+      author_kind: "user" | "companion" | "system";
+      author_name: string;
+      body: string;
+      /** Format: uuid */
+      conversation_id: string;
+      /** Format: date-time */
+      created_at?: string;
+      /** Format: uuid */
+      id: string;
+      /** Format: int64 */
+      seq: number;
+      [key: string]: unknown;
+    };
+    CompanionMessageList: components["schemas"]["CompanionMessage"][];
+    CompanionRun: {
+      /** Format: uuid */
+      companion_id: string;
+      config_revision: number;
+      /** Format: uuid */
+      conversation_id: string;
+      /** Format: date-time */
+      created_at?: string;
+      depth: number;
+      error_code?: string | null;
+      error_message?: string | null;
+      /** Format: date-time */
+      finished_at?: string | null;
+      /** Format: uuid */
+      id: string;
+      loaded_memory_ids: string[];
+      loaded_skill_binding_ids: string[];
+      /** Format: uuid */
+      reply_message_id?: string | null;
+      rounds: number;
+      /** Format: date-time */
+      started_at?: string | null;
+      /** @enum {string} */
+      status: "queued" | "running" | "completed" | "failed";
+      /** Format: uuid */
+      trigger_message_id?: string | null;
+      [key: string]: unknown;
+    };
+    CompanionSendMessageResult: {
+      duplicate: boolean;
+      message: components["schemas"]["CompanionMessage"];
+      runs: components["schemas"]["CompanionRun"][];
+      skipped_runs: {
+          /** Format: uuid */
+          companion_id: string;
+          reason: string;
+          [key: string]: unknown;
+        }[];
+      [key: string]: unknown;
+    };
+    CompanionSettings: {
+      autonomy_paused: boolean;
+      /** Format: uuid */
+      main_companion_id: string | null;
+      revision: number;
+      [key: string]: unknown;
+    };
+    CompanionSkill: {
+      /** Format: uuid */
+      companion_id: string;
+      enabled: boolean;
+      /** Format: uuid */
+      id: string;
+      instructions?: string | null;
+      /** Format: date-time */
+      last_loaded_at?: string | null;
+      /** Format: uuid */
+      last_loaded_run_id?: string | null;
+      name: string;
+      pack_id?: string | null;
+      pack_version?: string | null;
+      revision: number;
+      /** @description manual | pack */
+      source_kind: string;
+      [key: string]: unknown;
+    };
+    CompanionSkillList: components["schemas"]["CompanionSkill"][];
+    CompanionSummary: {
+      autonomy_enabled: boolean;
+      autonomy_paused: boolean;
+      avatar: string | null;
+      connection_count: number;
+      /** Format: date-time */
+      created_at: string;
+      /** @enum {string} */
+      current_activity: "idle" | "thinking" | "paused";
+      /** Format: uuid */
+      id: string;
+      /** Format: date-time */
+      last_activity_at: string | null;
+      memory_count: number;
+      model: string | null;
+      /** Format: uuid */
+      model_provider_id: string | null;
+      model_purpose: string;
+      name: string;
+      revision: number;
+      skill_count: number;
+      /** @enum {string} */
+      status: "active" | "archived" | "paused";
+      tagline: string | null;
+      /** Format: date-time */
+      updated_at: string;
       [key: string]: unknown;
     };
     ConfigurationDocument: {
@@ -3665,6 +4051,484 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** List every companion connection binding with its owner name */
+  "getApiV1Companion-connections": {
+    responses: {
+      /** @description List every companion connection binding with its owner name */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConnectionOverviewList"];
+        };
+      };
+    };
+  };
+  /** List every conversation across companions (companion_id, kind, origin, limit) */
+  "getApiV1Companion-conversations": {
+    responses: {
+      /** @description List every conversation across companions (companion_id, kind, origin, limit) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConversationList"];
+        };
+      };
+    };
+  };
+  /** Read one companion conversation with members */
+  "getApiV1Companion-conversationsByConversationId": {
+    parameters: {
+      path: {
+        conversationId: string;
+      };
+    };
+    responses: {
+      /** @description Read one companion conversation with members */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** Invite a companion (creates a linked group from a private chat) */
+  "postApiV1Companion-conversationsByConversationIdMembers": {
+    parameters: {
+      path: {
+        conversationId: string;
+      };
+    };
+    responses: {
+      /** @description Invite a companion (creates a linked group from a private chat) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** Remove a companion from a conversation */
+  "deleteApiV1Companion-conversationsByConversationIdMembersByCompanionId": {
+    parameters: {
+      path: {
+        conversationId: string;
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Remove a companion from a conversation */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** List messages after a seq cursor (after_seq, limit) */
+  "getApiV1Companion-conversationsByConversationIdMessages": {
+    parameters: {
+      path: {
+        conversationId: string;
+      };
+    };
+    responses: {
+      /** @description List messages after a seq cursor (after_seq, limit) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMessageList"];
+        };
+      };
+    };
+  };
+  /** Post a user message and create the runs it owes (Idempotency-Key) */
+  "postApiV1Companion-conversationsByConversationIdMessages": {
+    parameters: {
+      path: {
+        conversationId: string;
+      };
+    };
+    responses: {
+      /** @description Post a user message and create the runs it owes (Idempotency-Key) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSendMessageResult"];
+        };
+      };
+    };
+  };
+  /** Pause or resume a conversation */
+  "postApiV1Companion-conversationsByConversationIdPause": {
+    parameters: {
+      path: {
+        conversationId: string;
+      };
+    };
+    responses: {
+      /** @description Pause or resume a conversation */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** Poll one companion run */
+  "getApiV1Companion-runsByRunId": {
+    parameters: {
+      path: {
+        runId: string;
+      };
+    };
+    responses: {
+      /** @description Poll one companion run */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionRun"];
+        };
+      };
+    };
+  };
+  /** Read companion settings (main companion and global autonomy pause) */
+  "getApiV1Companion-settings": {
+    responses: {
+      /** @description Read companion settings (main companion and global autonomy pause) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSettings"];
+        };
+      };
+    };
+  };
+  /** Update companion settings */
+  "patchApiV1Companion-settings": {
+    responses: {
+      /** @description Update companion settings */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSettings"];
+        };
+      };
+    };
+  };
+  /** List companions (optionally including archived) */
+  getApiV1Companions: {
+    responses: {
+      /** @description List companions (optionally including archived) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionList"];
+        };
+      };
+    };
+  };
+  /** Create a companion */
+  postApiV1Companions: {
+    responses: {
+      /** @description Create a companion */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionDetail"];
+        };
+      };
+    };
+  };
+  /** Companion activity feed */
+  getApiV1CompanionsActivity: {
+    responses: {
+      /** @description Companion activity feed */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionActivityList"];
+        };
+      };
+    };
+  };
+  /** Read a companion profile and autonomy rules */
+  getApiV1CompanionsByCompanionId: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Read a companion profile and autonomy rules */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionDetail"];
+        };
+      };
+    };
+  };
+  /** Update a companion profile (If-Match revision) */
+  patchApiV1CompanionsByCompanionId: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Update a companion profile (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionDetail"];
+        };
+      };
+    };
+  };
+  /** Archive a companion (If-Match revision) */
+  postApiV1CompanionsByCompanionIdArchive: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Archive a companion (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionDetail"];
+        };
+      };
+    };
+  };
+  /** Run one bounded autonomy tick for a companion */
+  postApiV1CompanionsByCompanionIdAutonomyTick: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Run one bounded autonomy tick for a companion */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionAutonomyTickResult"];
+        };
+      };
+    };
+  };
+  /** List companion connection bindings */
+  getApiV1CompanionsByCompanionIdConnections: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List companion connection bindings */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConnectionList"];
+        };
+      };
+    };
+  };
+  /** Bind a connection to a companion */
+  postApiV1CompanionsByCompanionIdConnections: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Bind a connection to a companion */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConnection"];
+        };
+      };
+    };
+  };
+  /** Delete a connection binding (If-Match revision) */
+  deleteApiV1CompanionsByCompanionIdConnectionsByBindingId: {
+    parameters: {
+      path: {
+        companionId: string;
+        bindingId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Update a connection binding (If-Match revision) */
+  patchApiV1CompanionsByCompanionIdConnectionsByBindingId: {
+    parameters: {
+      path: {
+        companionId: string;
+        bindingId: string;
+      };
+    };
+    responses: {
+      /** @description Update a connection binding (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConnection"];
+        };
+      };
+    };
+  };
+  /** List conversations for a companion */
+  getApiV1CompanionsByCompanionIdConversations: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List conversations for a companion */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConversationList"];
+        };
+      };
+    };
+  };
+  /** Ensure a private chat or create a group */
+  postApiV1CompanionsByCompanionIdConversations: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Ensure a private chat or create a group */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** List or search private memories (q, limit) */
+  getApiV1CompanionsByCompanionIdMemories: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List or search private memories (q, limit) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMemoryList"];
+        };
+      };
+    };
+  };
+  /** Write a private memory */
+  postApiV1CompanionsByCompanionIdMemories: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Write a private memory */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMemory"];
+        };
+      };
+    };
+  };
+  /** Delete a private memory (If-Match revision) */
+  deleteApiV1CompanionsByCompanionIdMemoriesByMemoryId: {
+    parameters: {
+      path: {
+        companionId: string;
+        memoryId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Edit a private memory (If-Match revision) */
+  patchApiV1CompanionsByCompanionIdMemoriesByMemoryId: {
+    parameters: {
+      path: {
+        companionId: string;
+        memoryId: string;
+      };
+    };
+    responses: {
+      /** @description Edit a private memory (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMemory"];
+        };
+      };
+    };
+  };
+  /** List companion skill bindings */
+  getApiV1CompanionsByCompanionIdSkills: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List companion skill bindings */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSkillList"];
+        };
+      };
+    };
+  };
+  /** Bind a skill to a companion */
+  postApiV1CompanionsByCompanionIdSkills: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Bind a skill to a companion */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSkill"];
+        };
+      };
+    };
+  };
+  /** Delete a skill binding (If-Match revision) */
+  deleteApiV1CompanionsByCompanionIdSkillsByBindingId: {
+    parameters: {
+      path: {
+        companionId: string;
+        bindingId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Update a skill binding (If-Match revision) */
+  patchApiV1CompanionsByCompanionIdSkillsByBindingId: {
+    parameters: {
+      path: {
+        companionId: string;
+        bindingId: string;
+      };
+    };
+    responses: {
+      /** @description Update a skill binding (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSkill"];
+        };
       };
     };
   };

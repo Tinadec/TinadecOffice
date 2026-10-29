@@ -22,6 +22,10 @@ export const pendingModeId = ref<string | null>(null)
 export const pendingPromptId = ref<string | null>(null)
 export const pendingToolId = ref<string | null>(null)
 export const pendingToolAgentId = ref<string | null>(null)
+/** Which companion editor tab a deep link should land on. */
+export type CompanionSettingsTab = 'identity' | 'memory' | 'skills' | 'connections' | 'autonomy'
+export interface CompanionRequest { id: string; tab?: CompanionSettingsTab }
+export const pendingCompanionId = ref<CompanionRequest | null>(null)
 
 export function requestConversation(sessionId: string): void {
   pendingConversationId.value = sessionId
@@ -42,6 +46,15 @@ export function requestMode(modeId: string): void { pendingModeId.value = modeId
 export function requestPrompt(promptId: string): void { pendingPromptId.value = promptId }
 export function requestTool(toolId: string): void { pendingToolId.value = toolId }
 export function requestToolAgent(agentId: string): void { pendingToolAgentId.value = agentId }
+
+/**
+ * Opens the settings companion section on one companion (the companion centre and failure
+ * recovery are the callers). Settings owns the section switch, so only the id travels here —
+ * plus the editor tab when the caller means "this companion's memories", not "this companion".
+ */
+export function requestCompanion(companionId: string, tab?: CompanionSettingsTab): void {
+  pendingCompanionId.value = tab ? { id: companionId, tab } : { id: companionId }
+}
 
 /**
  * A page arms one consumer per request. The callback runs when a value lands

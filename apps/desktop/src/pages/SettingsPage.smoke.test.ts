@@ -116,6 +116,7 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       'PromptEngineeringMerged',
       'RuntimeInstancesPanel',
       'AgentPacksPanel',
+      'CompanionSection',
     ]
     for (const name of sections) {
       expect(settingsPageSource).toContain(`import ${name} from '@/settings/sections/${name}.vue'`)

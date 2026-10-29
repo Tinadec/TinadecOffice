@@ -112,6 +112,11 @@ const panelSources = import.meta.glob(
     './../pages/RecoveryCheckPage.vue',
     './../pages/SnapshotsPage.vue',
     './../pages/DesktopPetPage.vue',
+    // The companion window's chat: its empty states, failure reasons and invite dialog all speak.
+    './../pages/CompanionPage.vue',
+    // Companion settings: the user-wide switchboard, the editor and its five panels.
+    './../settings/sections/CompanionSection.vue',
+    './../settings/sections/companion/*.vue',
     './../components/governance/PreAuthorizationDialog.vue',
     './../components/governance/SnapshotOverrideDialog.vue',
     // The code page and its Git panels, including the approval and status lines built in script.
@@ -170,7 +175,9 @@ function cardSources(): Record<string, string> {
   for (const group of readdirSync(root, { withFileTypes: true })) {
     if (!group.isDirectory()) continue
     for (const file of readdirSync(path.join(root, group.name))) {
-      if (!file.endsWith('.vue')) continue
+      // A card's script helper speaks too: the companion center's shared poll file builds its
+      // failure text with t(), and nothing else would notice a dead key there.
+      if (!file.endsWith('.vue') && !file.endsWith('.ts')) continue
       const rel = `TinadecUI/cards/${group.name}/${file}`
       out[rel] = readFileSync(path.join(root, group.name, file), 'utf8')
     }
