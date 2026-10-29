@@ -36,6 +36,9 @@
 - 拼装是**单一实现** `scripts/release-body.mjs`：CI（`desktop-release.yml` 的 `Compose release notes`）与本地补写都调它。`node scripts/release-body.mjs v0.3.0 --update` = 重新拼装并 `gh release edit`（只改正文，不动 tag 与资产）；`--out <file>` 只预览。
 - 缺 `docs/releases/<tag>.md` 时脚本**不失败**（发版不该被文案卡住），只升 `::warning::`，并在 body 留 `<!-- release-notes: ... is missing -->` 便于事后 grep。
 - 两个坑：`gh release create` 的 `--notes-file` 与 `--generate-notes` **互斥**；generate-notes 的 body **自带 `## What's Changed` 标题**，拼接时不要重复加。
+- **发版前先看 main 最后一次 `Desktop release` 是不是绿的**。`create-version.yml` 只校验版本号与 tag 是否已存在，**不跑测试**；tag 构建的红灯完全继承 main 的状态，而 main 的 push 构建失败不会通知任何人。v0.4.1 首次 tag 就是被 f7d7aa82/b97834ad 遗留的三处过时断言打红（详见 `2026-10-28.md`）。查法：`gh run list --workflow=desktop-release.yml --limit 3`。
+- **tag 已推送但 release 未创建时，删 tag 重建是安全的**：build job 红则 release job 因 `needs` 不跑，`gh release view <tag>` 报 not found 即可确认。删远端 tag 后重新 dispatch `create-version.yml`，它会从 main HEAD 重新打 tag。不要为此升版本号。
+- 版本号要改**两处**：`apps/desktop/package.json` 与 `package-lock.json` 中 `apps/desktop` 包的 version。预览正文时 tag 还不存在，`release-body.mjs` 要用 `--auto-notes <假文件>` 跳过 `generate-notes` 的网络调用。
 
 ## 环境硬约束
 - **TinadTools 宿主禁用反射序列化**（`JsonSerializerIsReflectionEnabledByDefault=false`）：动态 JSON payload 必须用 `Utf8JsonWriter` 手写或 source-gen context（`ShellToolJsonContext` 等），否则运行时 InvalidOperationException。
