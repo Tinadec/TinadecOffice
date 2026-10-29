@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   saveCompanionMode: (enabled) => ipcRenderer.invoke('tinadec:companion-mode-save', enabled),
   // The companion page is the only caller that succeeds here; the main process checks the sender.
   companion: {
+    api: (method, path, body) => ipcRenderer.invoke('tinadec:companion-api', { method, path, body }),
     getState: () => ipcRenderer.invoke('tinadec:companion-state'),
     expand: () => ipcRenderer.invoke('tinadec:companion-expand'),
     collapse: () => ipcRenderer.invoke('tinadec:companion-collapse'),

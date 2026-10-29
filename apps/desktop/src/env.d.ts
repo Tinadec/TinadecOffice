@@ -222,7 +222,15 @@ declare global {
     side: 'left' | 'right';
   }
 
+  /** Result of one whitelisted companion proxy call; never carries the host credential. */
+  interface CompanionProxyResult {
+    status: number;
+    body: unknown;
+  }
+
   interface CompanionApi {
+    /** Companion domain read/speak/invite/pause paths, proxied by the main process. */
+    api: (method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown) => Promise<CompanionProxyResult>;
     getState: () => Promise<CompanionState>;
     expand: () => Promise<CompanionState>;
     collapse: () => Promise<CompanionState>;

@@ -94,6 +94,7 @@ const {
   setCurrentPetWindowClickThrough,
 } = require('./petWindow.cjs');
 const companionWindow = require('./companionWindow.cjs');
+const { createCompanionApiBridge } = require('./companionApi.cjs');
 const {
   downloadPet,
   ensureBuiltinPets,
@@ -458,6 +459,21 @@ ipcMain.handle('tinadec:companion-move', (event, top) => {
 ipcMain.handle('tinadec:companion-side', (event, nextSide) => {
   requireCompanionSender(event);
   return companionWindow.setSide(nextSide);
+});
+
+// The companion window's companion-domain traffic. It cannot act as a trusted host, so this is the
+// only route to the Gateway: a fixed managed origin, the main-process credential, and a whitelist
+// of read/speak/invite/pause paths. The bridge refuses any other sender itself.
+ipcMain.handle('tinadec:companion-api', async (event, payload) => {
+  if (!trustedHostReady) return { status: 503, body: { code: 'host_not_ready' } };
+  const baseUrl = canonicalLocalGatewayUrl(process.env.TINADEC_RESOLVED_GATEWAY_URL);
+  if (!baseUrl) return { status: 503, body: { code: 'host_not_ready' } };
+  const bridge = createCompanionApiBridge({
+    baseUrl,
+    token: hostControl.serviceToken,
+    isCompanionWindowSender: companionWindow.isCompanionWindowSender,
+  });
+  return bridge(event, payload);
 });
 
 // The interface language lives in the renderer (localStorage + lazily loaded bundles), so the tray
