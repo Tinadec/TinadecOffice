@@ -218,16 +218,58 @@ function buildDebugPreset(ctx: PresetContext): UieLayoutSnapshot {
   return snapshot
 }
 
+function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
+  const n = ctx.nextInstanceId
+  const snapshot = createEmptySnapshot('companionCenter')
+  snapshot.gap = 8
+  snapshot.edgeInset = 8
+
+  const list = card(n(), 'companionList')
+  const feed = card(n(), 'companionFeed')
+  const groups = card(n(), 'companionGroups')
+  const connections = card(n(), 'companionConnections')
+
+  snapshot.cards = {
+    [list.id]: list,
+    [feed.id]: feed,
+    [groups.id]: groups,
+    [connections.id]: connections,
+  }
+  // Observing the companion domain, not chatting: list (who), feed (what happened),
+  // groups + connections (where and with what). The feed is the immersive center.
+  snapshot.columns = {
+    left: column('left', 280, 8, 'float', [list.id], list.id),
+    center: column('center', 0, 8, 'immersive', [feed.id], feed.id),
+    right: column('right', 380, 8, 'float', [groups.id, connections.id], groups.id),
+  }
+  snapshot.focusedCardId = feed.id
+  return snapshot
+}
+
 export const PRESET_BUILDERS: Record<UiePageId, (ctx: PresetContext) => UieLayoutSnapshot> = {
   home: buildHomePreset,
   settings: buildSettingsPreset,
   market: buildMarketPreset,
   code: buildCodePreset,
   debug: buildDebugPreset,
+  companionCenter: buildCompanionCenterPreset,
+}
+
+/**
+ * Bumped when a page's authored layout changes enough that a stored snapshot should be replaced.
+ * Pages with no entry never migrate, which is the safe default: a preset edit is otherwise only
+ * felt by fresh installs.
+ */
+export const PRESET_REVISIONS: Partial<Record<UiePageId, number>> = {
+  // The companion centre went from four unrelated panels to a selection-driven centre; a stored
+  // snapshot would keep the old reading of it with no way back.
+  companionCenter: 2,
 }
 
 export function buildPreset(pageId: UiePageId, ctx: PresetContext): UieLayoutSnapshot {
   const builder = PRESET_BUILDERS[pageId]
   if (!builder) throw new Error(`buildPreset: unknown page '${pageId}'`)
-  return builder(ctx)
+  const snapshot = builder(ctx)
+  const presetRevision = PRESET_REVISIONS[pageId]
+  return presetRevision === undefined ? snapshot : { ...snapshot, presetRevision }
 }

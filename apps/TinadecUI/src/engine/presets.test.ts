@@ -34,8 +34,27 @@ describe('built-in presets', () => {
     expect(preset.columns.right.collapsed).toBe(true)
   })
 
+  it('companion center preset lays out list, feed and the groups/connections stack', () => {
+    const preset = buildPreset('companionCenter', { nextInstanceId: nextId() })
+    expect(preset.pageId).toBe('companionCenter')
+    expect(preset.gap).toBe(8)
+    expect(preset.edgeInset).toBe(8)
+    expect(preset.columns.left.width).toBe(280)
+    expect(preset.columns.center.surfaceMode).toBe('immersive')
+    expect(preset.columns.right.width).toBe(380)
+
+    const descriptors = (slot: 'left' | 'center' | 'right') =>
+      preset.columns[slot].primary.tabIds.map((id) => preset.cards[id].descriptorId)
+    expect(descriptors('left')).toEqual(['companionList'])
+    expect(descriptors('center')).toEqual(['companionFeed'])
+    // Groups and connections share the right stack as two tabs.
+    expect(descriptors('right')).toEqual(['companionGroups', 'companionConnections'])
+    // Four cards, all singleton/movable/closable descriptors in the registry.
+    expect(Object.keys(preset.cards)).toHaveLength(4)
+  })
+
   it('every page has a non-empty preset', () => {
-    for (const pageId of ['home', 'settings', 'market', 'code', 'debug'] as const) {
+    for (const pageId of ['home', 'settings', 'market', 'code', 'debug', 'companionCenter'] as const) {
       const preset = buildPreset(pageId, { nextInstanceId: nextId() })
       expect(preset.pageId).toBe(pageId)
       expect(Object.keys(preset.cards).length).toBeGreaterThan(0)

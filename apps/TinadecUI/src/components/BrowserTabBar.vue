@@ -25,8 +25,8 @@ import { useCardTitle } from './cardTitle'
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui'
 import { useDetachedTabs } from '@/composables/useDetachedTabs'
 import { useDockDrag, type DockDropTarget } from '@/composables/useDockDrag'
-import { FEATURE_CATALOG } from './cards/home/featureCatalog'
-import type { PersistedCardInstance, UieSlotId } from '../engine/types'
+import { catalogEntriesForPage } from './cards/home/featureCatalog'
+import type { PersistedCardInstance, UiePageId, UieSlotId } from '../engine/types'
 
 const { t } = useI18n()
 const cardTitle = useCardTitle()
@@ -46,6 +46,8 @@ const props = defineProps<{
   paneId?: string
   /** Show the "restore single panel" button (dock has >1 panes). */
   canRestore?: boolean
+  /** Page whose catalog entries the "+" menu lists (defaults to Home). */
+  pageId?: UiePageId
 }>()
 
 const emit = defineEmits<{
@@ -70,6 +72,9 @@ const featureInstances = computed(() =>
   props.instances.filter((i) => i.id !== props.homeInstance?.id),
 )
 const detachedTabs = computed(() => detached.detachedTabs.value)
+// The "+" menu offers what the current page can host, not every feature page:
+// companion cards belong to the companion center and must not appear on Home.
+const menuFeatures = computed(() => catalogEntriesForPage(props.pageId ?? 'home'))
 
 // ---- "+" new-tab dropdown menu ----
 const menuOpen = ref(false)
@@ -323,7 +328,7 @@ onUnmounted(() => {
         :style="menuStyle"
       >
         <button
-          v-for="feature in FEATURE_CATALOG"
+          v-for="feature in menuFeatures"
           :key="feature.descriptorId"
           class="feature-panel-menu-item"
           role="menuitem"

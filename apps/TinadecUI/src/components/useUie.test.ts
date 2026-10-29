@@ -248,3 +248,49 @@ describe('useUie per-project layouts', () => {
     expect(leftWidth()).toBe(333)
   })
 })
+
+describe('preset revisions for redesigned pages', () => {
+  function companionRegistry() {
+    const reg = createCardRegistry()
+    for (const type of ['companionList', 'companionFeed', 'companionGroups', 'companionConnections']) {
+      reg.register({
+        type, component: {} as never, minWidth: 200, minHeight: 160,
+        singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '',
+      })
+    }
+    return reg
+  }
+
+  it('replaces a stored layout that predates the page preset revision', async () => {
+    const seeded = createUie({ registry: companionRegistry() })
+    seeded.showPage('companionCenter')
+    const legacy = { ...seeded.snapshot.value } as Record<string, unknown>
+    // A snapshot written before the redesign carries no revision at all.
+    delete legacy.presetRevision
+    const store = memoryLayerStore({ version: 1, pageByPageId: { companionCenter: legacy } } as unknown as LayoutStorageBlob)
+
+    __resetUieForTests()
+    const uie = createUie({ registry: companionRegistry(), persistence: { store } })
+    uie.showPage('companionCenter')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Presets alone only reach fresh installs; the stored arrangement was replaced instead.
+    expect(uie.snapshot.value.presetRevision).toBe(2)
+  })
+
+  it('keeps a stored layout that already matches the page preset revision', async () => {
+    const seeded = createUie({ registry: companionRegistry() })
+    seeded.showPage('companionCenter')
+    const current = { ...seeded.snapshot.value, columns: { ...seeded.snapshot.value.columns } }
+    current.columns.left = { ...current.columns.left, width: 333 }
+    const store = memoryLayerStore({ version: 1, pageByPageId: { companionCenter: current } } as LayoutStorageBlob)
+
+    __resetUieForTests()
+    const uie = createUie({ registry: companionRegistry(), persistence: { store } })
+    uie.showPage('companionCenter')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // A user who has already arranged the new page keeps their arrangement.
+    expect(uie.snapshot.value.columns.left.width).toBe(333)
+  })
+})

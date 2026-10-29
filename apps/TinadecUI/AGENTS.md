@@ -1,9 +1,19 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-10-26
-**Last Updated By:** 工作空间卡片（`workspace` descriptor + 目录项，不进预设页签），见文首条目。
+**Last Updated:** 2026-10-29
+**Last Updated By:** 伙伴中心四卡改造（共享快照 / 选中联动）与页级预设版本 `presetRevision`。
 **Last Verified Commit:** a33b959d + 工作空间卡片本轮工作树
 **Branch:** main
+
+### 2026-10-29 伙伴中心四卡改造 + 页级预设版本
+
+四张伙伴卡从「各拉各的」改为读 `@/lib/companionStore`（Desktop 侧单例，单轮询 + 共享选中态），`useCompanionPoll` 已删除，同目录只剩 `companionText.ts`（诚实错误文案 + 时间格式化）。卡内不再 import `companionApi` 取列表，只在用户动作里调它（读消息、暂停会话 / 伙伴）。
+
+**`UieLayoutSnapshot.presetRevision`**：`PRESET_REVISIONS` 里登记过的页面，`buildPreset` 会带上版本号；`useUie.loadLayout` 在 `stored.presetRevision < 当前值` 时改用预设，**水合路径也必须走 `loadLayout`**（首帧早于水合，只改 `showPage` 会被旧快照盖回去）。`repairLayout` 会保留这个字段，否则再存一轮就丢了。页面上没登记就没有迁移，这是刻意的默认值：改预设本来只影响全新安装。
+
+**连接卡的运行时态要说实话**：契约里 `runtime_status` 只有 `unsupported / unknown`，`'online'` 在类型上不可达（比较它会被 TS 判成 unintentional comparison）。UI 保留「在线」这一支以便将来接探测，但计数用 `String(...) !== 'online'` 并写明「未探测」，不要因为想好看就把 `configured` 说成在线。
+
+**动态流文案来自 kind + payload**，不是服务端 `summary`；`payload.preview / title / error_code / companion_name` 由 Core 补齐。卡片源码里的 `t()` 键会被 `i18nParity` 扫描，加一句文案就得五种语言齐全。
 
 ### 2026-10-26 工作空间卡片（`workspace`）
 

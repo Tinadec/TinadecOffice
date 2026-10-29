@@ -27,6 +27,11 @@ function openPersonal() {
   void router.push('/settings')
 }
 
+/** The observing page. It is a route, so the selected project/session is untouched. */
+function openCompanionCenter() {
+  void router.push('/companion-center')
+}
+
 function toggleCollapse() {
   const col = uie.snapshot.value.columns.left
   uie.bus.dispatch({
@@ -60,6 +65,7 @@ function toggleCollapse() {
   @unregister-workspace="c.unregisterWorkspace($event)"
     @go-market="router.push('/market')"
     @go-settings="router.push('/settings')"
+    @go-companion-center="openCompanionCenter"
     @go-personal="openPersonal"
     @change-view="router.push($event === 'space' ? '/space' : '/')"
     @toggle-collapse="toggleCollapse"

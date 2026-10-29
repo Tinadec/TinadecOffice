@@ -19,6 +19,10 @@ import WorkspaceCard from './home/WorkspaceCard.vue'
 import MarketFilterCard from './market/MarketFilterCard.vue'
 import MarketCatalogCard from './market/MarketCatalogCard.vue'
 import MarketDetailCard from './market/MarketDetailCard.vue'
+import CompanionListCard from './companion/CompanionListCard.vue'
+import CompanionFeedCard from './companion/CompanionFeedCard.vue'
+import CompanionGroupsCard from './companion/CompanionGroupsCard.vue'
+import CompanionConnectionsCard from './companion/CompanionConnectionsCard.vue'
 import type { UieCardDescriptor } from '../../engine/types'
 
 /**
@@ -62,6 +66,12 @@ export function buildUieRegistry(): CardRegistry {
     { type: 'marketFilter', component: MarketFilterCard, minWidth: 240, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
     { type: 'marketCatalog', component: MarketCatalogCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
     { type: 'marketDetail', component: MarketDetailCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
+    // The companion center observes the companion domain. Each panel is one view of the same
+    // read-only data; opening two of the same kind would duplicate the poll, not add a view.
+    { type: 'companionList', component: CompanionListCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
+    { type: 'companionFeed', component: CompanionFeedCard, minWidth: 280, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
+    { type: 'companionGroups', component: CompanionGroupsCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
+    { type: 'companionConnections', component: CompanionConnectionsCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
   ]
 
   for (const c of cards) reg.register(c)

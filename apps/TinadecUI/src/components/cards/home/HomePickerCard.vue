@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useUie } from '../../useUie'
 import { useResponsiveMode } from '@/composables/useElementSize'
 import { homeController } from '@/controllers/HomeController'
-import { FEATURE_CATALOG } from './featureCatalog'
+import { catalogEntriesForPage } from './featureCatalog'
 import GitStatusWidget from './GitStatusWidget.vue'
 
 const { t } = useI18n()
@@ -30,11 +30,11 @@ const currentContext = computed(() => {
 const rootRef = ref<HTMLElement | null>(null)
 const { isCompact } = useResponsiveMode(rootRef)
 
-// The feature list is the shared catalog; the approval card additionally
-// shows the pending-count badge. Git is the one catalog entry that is not a
-// tile here: it has its own status widget above the grid.
+// The feature list is the shared catalog, restricted to this page: entries declared for the
+// companion center are tabs there and must not become Home tiles. Git is the one catalog entry
+// that is not a tile here: it has its own status widget above the grid.
 const features = computed(() =>
-  FEATURE_CATALOG
+  catalogEntriesForPage('home')
     .filter((entry) => entry.descriptorId !== 'git')
     .map((entry) =>
       entry.descriptorId === 'approval'

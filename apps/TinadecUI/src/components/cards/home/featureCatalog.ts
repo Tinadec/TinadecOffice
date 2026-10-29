@@ -7,12 +7,15 @@ import {
   GitBranch,
   Globe,
   Layers3,
+  MessagesSquare,
+  PlugZap,
   ShieldCheck,
   Stethoscope,
   TerminalSquare,
   Users,
   type LucideIcon,
 } from '@lucide/vue'
+import type { UiePageId } from '../../../engine/types'
 
 // ---------------------------------------------------------------------------
 // featureCatalog — the shared catalog of feature-panel pages.
@@ -36,6 +39,11 @@ export interface FeatureCatalogEntry {
   icon: LucideIcon
   /** Accent color used for the icon tile / hover border. */
   color: string
+  /**
+   * UIE pages this entry belongs to. Defaults to `['home']`: a feature added to the
+   * workspace grid must not appear on an observing page, and vice versa.
+   */
+  pages?: readonly UiePageId[]
   /** Optional pending-count badge (set by consumers, e.g. the approval card). */
   badge?: () => number
 }
@@ -60,7 +68,21 @@ export const FEATURE_CATALOG: FeatureCatalogEntry[] = [
   // It is appended rather than placed next to the document cards because it is the one tile
   // that changes what the agent is authorized on, not another way to read the workspace.
   { descriptorId: 'workspace', titleKey: 'context.homeWorkspace', descKey: 'context.homeWorkspaceDesc', icon: FolderTree, color: '#d29922' },
+  // Companion-center cards. They belong to the observing page only: the Home grid is the
+  // workspace, and a companion tile there would suggest a second workspace entry.
+  { descriptorId: 'companionList', titleKey: 'context.companionList', descKey: 'context.companionListDesc', icon: Users, color: '#db61a2', pages: ['companionCenter'] },
+  { descriptorId: 'companionFeed', titleKey: 'context.companionFeed', descKey: 'context.companionFeedDesc', icon: Activity, color: '#58a6ff', pages: ['companionCenter'] },
+  { descriptorId: 'companionGroups', titleKey: 'context.companionGroups', descKey: 'context.companionGroupsDesc', icon: MessagesSquare, color: '#a371f7', pages: ['companionCenter'] },
+  { descriptorId: 'companionConnections', titleKey: 'context.companionConnections', descKey: 'context.companionConnectionsDesc', icon: PlugZap, color: '#3fb950', pages: ['companionCenter'] },
 ]
+
+/**
+ * The entries a given UIE page may show. An entry without `pages` belongs to Home only;
+ * a page filter that silently listed everything would put the partner cards on Home.
+ */
+export function catalogEntriesForPage(pageId: UiePageId): FeatureCatalogEntry[] {
+  return FEATURE_CATALOG.filter((entry) => (entry.pages ?? ['home']).includes(pageId))
+}
 
 /**
  * Every descriptor that renders as a tab must be listed above: `featureIconFor` falls back

@@ -327,6 +327,7 @@ onUnmounted(() => {
       :slot-id="slotId"
       :pane-id="paneId"
       :can-restore="canRestore"
+      :page-id="uie.pageId.value"
       @home="goHome"
       @activate="activate"
       @close="close"

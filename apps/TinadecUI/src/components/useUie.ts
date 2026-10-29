@@ -1,7 +1,7 @@
 import { computed, ref, shallowRef, type Ref } from 'vue'
 import { createCommandBus, type CommandBus } from '../engine/commandBus'
 import type { CardRegistry } from '../engine/registry'
-import { buildPreset } from '../engine/presets'
+import { buildPreset, PRESET_REVISIONS } from '../engine/presets'
 import { repairLayout, type RepairContext } from '../engine/repair'
 import { computeGeometry } from '../engine/constraints'
 import { emptySpace } from '../engine/spatial'
@@ -141,10 +141,10 @@ export function createUie(options: UieStoreOptions): UieStore {
         if (!loaded) return
         // Resolve for the page shown *now*: a cold deep link may already have
         // switched away from the initial page before the disk read resolved.
-        const stored = layerStore.resolveSnapshot(snapshot.value.pageId, activeProjectId.value)
-        if (stored) {
-          restoreSnapshot(stored)
-        }
+        // Goes through loadLayout so a page whose preset moved on is rebuilt here too —
+        // the first paint happens before hydration, so this is the pass that would
+        // otherwise put the old arrangement back.
+        loadLayout(snapshot.value.pageId)
       })
       .catch((err) => {
         console.error('[uie] layout hydrate/restore failed:', err)
@@ -176,7 +176,12 @@ export function createUie(options: UieStoreOptions): UieStore {
   /** Show `page`'s effective layout for the active project (stored, else preset). */
   function loadLayout(page: UiePageId) {
     const stored = options.persistence?.store.resolveSnapshot(page, activeProjectId.value)
-    if (stored) restoreSnapshot(stored)
+    // A page that was redesigned replaces its stored layout instead of restoring it: presets alone
+    // only reach fresh installs, so an existing user would never see the new arrangement.
+    const wantedRevision = PRESET_REVISIONS[page]
+    const stale = stored !== null && stored !== undefined && wantedRevision !== undefined
+      && (stored.presetRevision ?? 0) < wantedRevision
+    if (stored && !stale) restoreSnapshot(stored)
     else bus.loadSnapshot(buildPreset(page, { nextInstanceId: createUieInstanceId }))
     scope.value = writeScopeFor(page, activeProjectId.value)
   }

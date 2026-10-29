@@ -161,6 +161,49 @@ describe('repairLayout', () => {
     expect(code.edgeInset).toBe(0)
     const debug = repairLayout({ version: 1, pageId: 'debug', columns: {}, cards: {} }, ctx)
     expect(debug.edgeInset).toBe(0)
+    // companionCenter is a float page too, but its default is asserted with a preset below.
+    const legacyCenter = repairLayout({ version: 1, pageId: 'companionCenter', columns: {}, cards: {} }, ctx)
+    expect(legacyCenter.pageId).toBe('companionCenter')
+    expect(legacyCenter.edgeInset).toBe(8)
+  })
+
+  it('keeps a valid companionCenter snapshot on its own page', () => {
+    const ctx = makeCtx()
+    const preset = buildPreset('companionCenter', { nextInstanceId: () => `center-${Math.random()}` })
+    const out = repairLayout({ ...preset, edgeInset: undefined }, ctx)
+
+    expect(out.pageId).toBe('companionCenter')
+    expect(out.edgeInset).toBe(8)
+    expect(out.gap).toBe(8)
+    expect(Object.values(out.cards).map((card) => card.descriptorId).sort()).toEqual([
+      'companionConnections',
+      'companionFeed',
+      'companionGroups',
+      'companionList',
+    ])
+    expect(out.columns.left.primary.tabIds).toHaveLength(1)
+    expect(out.columns.center.primary.tabIds).toHaveLength(1)
+    expect(out.columns.right.primary.tabIds).toHaveLength(2)
+  })
+
+  it('falls back to home for an unknown page id, without touching the companion page', () => {
+    const ctx = makeCtx()
+    const unknown = repairLayout({ version: 1, pageId: 'chatroom', columns: {}, cards: {} }, ctx)
+    expect(unknown.pageId).toBe('home')
+    // An empty persisted companionCenter entry stays on its page; navigation uses the preset.
+    const legacy = repairLayout({ version: 1, pageId: 'companionCenter', columns: {}, cards: {} }, ctx)
+    expect(legacy.pageId).toBe('companionCenter')
+    expect(Object.keys(legacy.cards)).toHaveLength(0)
+  })
+
+  it('leaves an existing home snapshot untouched after companionCenter exists', () => {
+    const ctx = makeCtx()
+    const homePreset = buildPreset('home', { nextInstanceId: () => `home-${Math.random()}` })
+    const out = repairLayout(homePreset, ctx)
+    expect(out.pageId).toBe('home')
+    expect(Object.values(out.cards).map((card) => card.descriptorId).sort())
+      .toEqual(Object.values(homePreset.cards).map((card) => card.descriptorId).sort())
+    expect(out.edgeInset).toBe(8)
   })
 
   it('preserves a valid edgeInset and falls back to page default for garbage', () => {

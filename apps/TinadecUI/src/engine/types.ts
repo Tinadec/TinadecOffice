@@ -9,7 +9,7 @@ import type { Component } from 'vue'
 // so every part can be unit-tested without mounting components.
 // ---------------------------------------------------------------------------
 
-export type UiePageId = 'home' | 'settings' | 'market' | 'code' | 'debug'
+export type UiePageId = 'home' | 'settings' | 'market' | 'code' | 'debug' | 'companionCenter'
 export type UieSlotId = 'left' | 'center' | 'right'
 /** secondary only exists when a column is vertically split. */
 export type UieStackId = 'primary' | 'secondary'
@@ -39,6 +39,12 @@ export interface UieLayoutSnapshot {
   /** Optional session canvas branch; old column snapshots remain version 1. */
   space?: import('./spatial').SpatialLayout
   version: 1
+  /**
+   * Which authored layout produced this snapshot (see `PRESET_REVISIONS`). A stored snapshot whose
+   * revision is older than the page's current one is replaced by the preset: without it a page that
+   * was redesigned keeps showing the old arrangement forever, because presets only affect installs.
+   */
+  presetRevision?: number
   /** Monotonic counter for optimistic concurrency (expectedRevision checks). */
   revision: number
   pageId: UiePageId
