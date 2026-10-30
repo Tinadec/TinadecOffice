@@ -38,7 +38,7 @@ for (const level of ['log', 'info', 'warn', 'error']) {
     try { hostLogSink.write('electron', `${new Date().toISOString()} ${level} ${require('node:util').format(...values)}\n`); } catch { /* stderr remains available if disk writes fail */ }
   };
 }
-const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCloseToTray } = require('./appConfig.cjs');
+const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCompanionCapsuleStyle, saveCompanionCapsuleReveal, saveCloseToTray } = require('./appConfig.cjs');
 const { discoverServices } = require('./serviceDiscovery.cjs');
 const { ensureLocalServices, stopLocalServices, canonicalLocalGatewayUrl } = require('./serviceManager.cjs');
 const { createHostControl } = require('./hostControl.cjs');
@@ -434,6 +434,29 @@ ipcMain.handle('tinadec:companion-mode-save', async (event, enabled) => {
   return appConfigSnapshot();
 });
 
+// Which shape the collapsed capsule draws: the pet leaning out of the edge, or a bare grip. The
+// style also decides the capsule's width, so there is no width setting any more — only this.
+ipcMain.handle('tinadec:companion-capsule-style-save', (event, style) => {
+  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) {
+    throw new Error('Companion capsule style requires the trusted main host page.');
+  }
+  // saveCompanionCapsuleStyle validates the known styles before anything is persisted.
+  const saved = saveCompanionCapsuleStyle(appConfigFile(), style);
+  companionWindow.setCapsuleStyle(saved.companion_capsule_style);
+  return appConfigSnapshot();
+});
+
+// How much of that pet stays on screen (10 / 50 / 100 percent). It moves the same window sideways
+// rather than resizing it, so the figure is never cropped.
+ipcMain.handle('tinadec:companion-capsule-reveal-save', (event, reveal) => {
+  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) {
+    throw new Error('Companion capsule reveal requires the trusted main host page.');
+  }
+  const saved = saveCompanionCapsuleReveal(appConfigFile(), reveal);
+  companionWindow.setCapsuleReveal(saved.companion_capsule_reveal);
+  return appConfigSnapshot();
+});
+
 function requireCompanionSender(event) {
   if (!companionWindow.isCompanionWindowSender(event.sender)) {
     throw new Error('Companion window IPC is only available to the companion window.');
@@ -459,6 +482,13 @@ ipcMain.handle('tinadec:companion-move', (event, top) => {
 ipcMain.handle('tinadec:companion-side', (event, nextSide) => {
   requireCompanionSender(event);
   return companionWindow.setSide(nextSide);
+});
+
+// The third shape. `expanded` stays as a derived field so an older renderer that only knows the
+// two-state world still reads a coherent answer.
+ipcMain.handle('tinadec:companion-mode', (event, nextMode) => {
+  requireCompanionSender(event);
+  return companionWindow.setMode(nextMode);
 });
 
 // The companion window's companion-domain traffic. It cannot act as a trusted host, so this is the
@@ -770,11 +800,15 @@ app.whenReady().then(async () => {
   let gatewayUrl;
   let storedCloseToTray;
   let storedCompanionMode;
+  let storedCapsuleStyle;
+  let storedCapsuleReveal;
   try {
     const config = readDesktopConfig();
     gatewayUrl = config.gateway_url;
     storedCloseToTray = config.close_to_tray;
     storedCompanionMode = config.companion_mode_enabled;
+    storedCapsuleStyle = config.companion_capsule_style;
+    storedCapsuleReveal = config.companion_capsule_reveal;
   }
   catch (error) {
     dialog.showErrorBox('TinadecOffice', `无法读取 TOML 配置 / Cannot read the TOML configuration\n${appConfigFile()}\n${error.message}`);
@@ -917,6 +951,10 @@ app.whenReady().then(async () => {
   // The companion is restored last: it must not delay the main window, and its failure is a
   // cosmetic loss rather than a startup failure, so the error is logged and startup continues.
   if (storedCompanionMode) {
+    // Set before creating: the window's first bounds must already use the stored style (it decides
+    // the width) and reveal (it decides how much of that width is on screen).
+    companionWindow.setCapsuleStyle(storedCapsuleStyle);
+    companionWindow.setCapsuleReveal(storedCapsuleReveal);
     await companionWindow.createCompanionWindow().catch((error) => {
       console.error('[tinadec] companion window failed to open:', error?.message ?? error);
     });

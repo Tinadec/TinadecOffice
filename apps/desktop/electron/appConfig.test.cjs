@@ -12,9 +12,17 @@ const {
   resetGatewayUrl,
   saveGatewayUrl,
   saveCloseToTray,
+  saveCompanionCapsuleReveal,
+  saveCompanionCapsuleStyle,
   saveCompanionMode,
   saveDebugStudioEnabled,
 } = require('./appConfig.cjs');
+const {
+  CAPSULE_REVEALS,
+  CAPSULE_STYLES,
+  DEFAULT_CAPSULE_REVEAL,
+  DEFAULT_CAPSULE_STYLE,
+} = require('./companionGeometry.cjs');
 
 test('normalizes and validates Gateway URLs', () => {
   assert.equal(normalizeGatewayUrl(' https://office.example.com/ '), 'https://office.example.com');
@@ -231,8 +239,60 @@ test('saving companion mode keeps comments and the other tables intact', () => {
   });
 });
 
-/** Run the actual main IPC registration without Electron startup or user-root access. */
-function mainConfigFixture(configFile) {
+test('capsule style defaults to the peek and reads only the two supported styles', () => {
+  temporaryConfig((file) => {
+    assert.equal(loadAppConfig(file, {}).companion_capsule_style, DEFAULT_CAPSULE_STYLE);
+    for (const style of CAPSULE_STYLES) {
+      fs.writeFileSync(file, `[companion]\ncapsule_style = "${style}"\n`);
+      assert.equal(loadAppConfig(file, {}).companion_capsule_style, style);
+      // Dotted keys and single quotes are valid TOML too.
+      fs.writeFileSync(file, `companion.capsule_style = '${style}'\n`);
+      assert.equal(loadAppConfig(file, {}).companion_capsule_style, style);
+    }
+    // An unknown style comes from a newer build or a hand-edited file: fall back, never refuse to
+    // start the app over a display preference.
+    for (const value of ['"fullscreen"', '""', '"Peek"']) {
+      fs.writeFileSync(file, `[companion]\ncapsule_style = ${value}\n`);
+      assert.equal(loadAppConfig(file, {}).companion_capsule_style, DEFAULT_CAPSULE_STYLE);
+    }
+    // A value of the wrong type is a broken file, the same way a non-integer width is.
+    for (const value of ['true', '1', '[1]', '{ style = "grip" }']) {
+      fs.writeFileSync(file, `[companion]\ncapsule_style = ${value}\n`);
+      assert.throws(() => loadAppConfig(file, {}), /companion\.capsule_style must be a string/);
+    }
+  });
+});
+
+test('saving a capsule style rewrites one quoted string and keeps the rest of the file intact', () => {
+  temporaryConfig((file) => {
+    fs.writeFileSync(file, '# docked companion\r\n[companion]\r\nenabled = true\r\n');
+
+    const saved = saveCompanionCapsuleStyle(file, 'grip', {});
+    assert.equal(saved.companion_capsule_style, 'grip');
+    // The boolean in the same table is not disturbed.
+    assert.equal(saved.companion_mode_enabled, true);
+    const after = fs.readFileSync(file, 'utf8');
+    assert.ok(after.includes('# docked companion'), 'comments survive');
+    assert.equal(parse(after).companion.capsule_style, 'grip');
+
+    // Changing it again replaces the literal in place rather than appending a second key.
+    saveCompanionCapsuleStyle(file, 'peek', {});
+    const rewritten = fs.readFileSync(file, 'utf8');
+    const settings = rewritten.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('capsule_style'));
+    assert.deepEqual(settings, ['capsule_style = "peek"']);
+
+    // A file without a [companion] table gains one; an unknown style is refused untouched.
+    fs.writeFileSync(file, 'gateway_url = "https://stored.example.com"\n');
+    saveCompanionCapsuleStyle(file, 'grip', {});
+    assert.equal(parse(fs.readFileSync(file, 'utf8')).companion.capsule_style, 'grip');
+    const intact = fs.readFileSync(file, 'utf8');
+    assert.throws(() => saveCompanionCapsuleStyle(file, 'fullscreen', {}), /must be one of peek, grip/);
+    assert.throws(() => saveCompanionCapsuleStyle(file, 1, {}), /must be a string/);
+    assert.equal(fs.readFileSync(file, 'utf8'), intact);
+  });
+});
+
+/** Run the actual main IPC registration without Electron startup or user-root access. */function mainConfigFixture(configFile) {
   const handlers = new Map();
   const state = {
     trusted: true,
@@ -242,7 +302,7 @@ function mainConfigFixture(configFile) {
     closed: 0,
     // The companion module is a stub here: these records are what the IPC handlers forwarded to it.
     companionSenderId: null,
-    companion: { applied: [], moved: [], sides: [], expanded: 0, collapsed: 0, closed: 0, checks: 0, applyError: null },
+    companion: { applied: [], moved: [], sides: [], styles: [], reveals: [], expanded: 0, collapsed: 0, closed: 0, checks: 0, applyError: null },
   };
   const makeWindow = (id, destroyed = false) => ({
     id,
@@ -275,6 +335,12 @@ function mainConfigFixture(configFile) {
       saveDebugStudioEnabled: (file, enabled) => saveDebugStudioEnabled(file, enabled, env),
       saveCloseToTray: (file, enabled) => saveCloseToTray(file, enabled, env),
       saveCompanionMode: (file, enabled) => saveCompanionMode(file, enabled, env),
+      saveCompanionCapsuleStyle: (file, style) => saveCompanionCapsuleStyle(file, style, env),
+      saveCompanionCapsuleReveal: (file, reveal) => saveCompanionCapsuleReveal(file, reveal, env),
+    },
+    // The bridge is built per call inside the IPC handler and immediately invoked.
+    './companionApi.cjs': {
+      createCompanionApiBridge: () => async () => ({ status: 503, body: { code: 'companion_api_stubbed' } }),
     },
     // Real geometry/window work belongs to companionWindow.test.cjs; here the module only has to
     // answer main.cjs's destructuring and record which calls the IPC handlers forwarded.
@@ -291,6 +357,8 @@ function mainConfigFixture(configFile) {
       isCompanionWindowSender: (sender) => state.companionSenderId !== null && sender?.id === state.companionSenderId,
       moveTo: (top) => { state.companion.moved.push(top); return { open: true, expanded: false, side: 'right' }; },
       scheduleCollapseCheck: () => { state.companion.checks++; },
+      setCapsuleStyle: (style) => { state.companion.styles.push(style); return { open: true, expanded: false, side: 'right', capsuleStyle: style }; },
+      setCapsuleReveal: (reveal) => { state.companion.reveals.push(reveal); return { open: true, expanded: false, side: 'right', capsuleReveal: reveal }; },
       setSide: (side) => { state.companion.sides.push(side); return { open: true, expanded: false, side }; },
       snapshot: () => ({ open: true, expanded: false, side: 'right' }),
     },
@@ -480,6 +548,119 @@ test('actual main IPC stores companion mode only for the trusted main page and k
     await assert.rejects(save(fixture.event, false), /companion window unavailable/);
     assert.deepEqual(fixture.state.companion.applied, [true]);
     assert.equal(parse(fs.readFileSync(file, 'utf8')).companion.enabled, false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('capsule reveal defaults to the middle step and reads only the three steps', () => {
+  temporaryConfig((file) => {
+    assert.equal(loadAppConfig(file, {}).companion_capsule_reveal, DEFAULT_CAPSULE_REVEAL);
+    for (const reveal of CAPSULE_REVEALS) {
+      fs.writeFileSync(file, `[companion]\ncapsule_reveal = ${reveal}\n`);
+      assert.equal(loadAppConfig(file, {}).companion_capsule_reveal, reveal);
+      fs.writeFileSync(file, `companion.capsule_reveal = ${reveal}\n`);
+      assert.equal(loadAppConfig(file, {}).companion_capsule_reveal, reveal);
+    }
+    // A step outside the three is a display preference, not a broken file.
+    for (const reveal of [0, 25, 60, 101, -10]) {
+      fs.writeFileSync(file, `[companion]\ncapsule_reveal = ${reveal}\n`);
+      assert.equal(loadAppConfig(file, {}).companion_capsule_reveal, DEFAULT_CAPSULE_REVEAL);
+    }
+    // A non-integer is a type error, the same way the style treats a non-string.
+    for (const value of ['"50"', 'true', '49.5', '[50]', '{ value = 50 }']) {
+      fs.writeFileSync(file, `[companion]\ncapsule_reveal = ${value}\n`);
+      assert.throws(() => loadAppConfig(file, {}), /companion\.capsule_reveal must be an integer/);
+    }
+  });
+});
+
+test('saving a capsule reveal rewrites one integer and leaves the style alone', () => {
+  temporaryConfig((file) => {
+    fs.writeFileSync(file, '# docked companion\r\n[companion]\r\ncapsule_style = "grip"\r\n');
+
+    const saved = saveCompanionCapsuleReveal(file, 10, {});
+    assert.equal(saved.companion_capsule_reveal, 10);
+    assert.equal(saved.companion_capsule_style, 'grip');
+    const after = fs.readFileSync(file, 'utf8');
+    assert.ok(after.includes('# docked companion'), 'comments survive');
+    assert.equal(parse(after).companion.capsule_reveal, 10);
+    assert.equal(parse(after).companion.capsule_style, 'grip');
+
+    saveCompanionCapsuleReveal(file, 100, {});
+    const rewritten = fs.readFileSync(file, 'utf8');
+    const settings = rewritten.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('capsule_reveal'));
+    assert.deepEqual(settings, ['capsule_reveal = 100']);
+
+    // A file without a [companion] table gains one; an unknown step is refused untouched.
+    fs.writeFileSync(file, 'gateway_url = "https://stored.example.com"\n');
+    saveCompanionCapsuleReveal(file, 50, {});
+    assert.equal(parse(fs.readFileSync(file, 'utf8')).companion.capsule_reveal, 50);
+    const intact = fs.readFileSync(file, 'utf8');
+    assert.throws(() => saveCompanionCapsuleReveal(file, 25, {}), /must be one of 10, 50, 100/);
+    assert.throws(() => saveCompanionCapsuleReveal(file, '50', {}), /must be an integer/);
+    assert.equal(fs.readFileSync(file, 'utf8'), intact);
+  });
+});
+
+test('actual main IPC persists and applies the capsule style only for the trusted main page', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tinadec-companion-style-'));
+  try {
+    const file = path.join(root, 'desktop.toml');
+    fs.writeFileSync(file, '[companion]\nenabled = true\n');
+    const fixture = mainConfigFixture(file);
+    const save = fixture.handlers.get('tinadec:companion-capsule-style-save');
+    assert.ok(save, 'the capsule-style channel is registered');
+
+    // Only the trusted main document may restyle the capsule: a detached panel cannot.
+    assert.throws(() => save(fixture.panelEvent, 'grip'), /trusted main host page/);
+    fixture.state.trusted = false;
+    assert.throws(() => save(fixture.event, 'grip'), /trusted main host page/);
+    fixture.state.trusted = true;
+    assert.deepEqual(fixture.state.companion.styles, []);
+
+    // An unknown style is refused before anything is written or applied.
+    assert.throws(() => save(fixture.event, 'fullscreen'), /must be one of peek, grip/);
+    assert.throws(() => save(fixture.event, 1), /must be a string/);
+    assert.deepEqual(fixture.state.companion.styles, []);
+    assert.equal(parse(fs.readFileSync(file, 'utf8')).companion.capsule_style, undefined);
+
+    const saved = save(fixture.event, 'grip');
+    assert.equal(saved.companion_capsule_style, 'grip');
+    // The live capsule is restyled with the value that was actually persisted.
+    assert.deepEqual(fixture.state.companion.styles, ['grip']);
+    const document = parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(document.companion.capsule_style, 'grip');
+    // The companion-mode flag in the same table survives the edit.
+    assert.equal(document.companion.enabled, true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('actual main IPC persists and applies the capsule reveal only for the trusted main page', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tinadec-companion-reveal-'));
+  try {
+    const file = path.join(root, 'desktop.toml');
+    fs.writeFileSync(file, '[companion]\nenabled = true\n');
+    const fixture = mainConfigFixture(file);
+    const save = fixture.handlers.get('tinadec:companion-capsule-reveal-save');
+    assert.ok(save, 'the capsule-reveal channel is registered');
+
+    // Only the trusted main document may park more or less of the capsule on screen.
+    assert.throws(() => save(fixture.panelEvent, 10), /trusted main host page/);
+    fixture.state.trusted = false;
+    assert.throws(() => save(fixture.event, 10), /trusted main host page/);
+    fixture.state.trusted = true;
+    assert.deepEqual(fixture.state.companion.reveals, []);
+
+    // An unknown step is refused before anything is written or applied.
+    assert.throws(() => save(fixture.event, 25), /must be one of 10, 50, 100/);
+    assert.throws(() => save(fixture.event, '50'), /must be an integer/);
+    assert.deepEqual(fixture.state.companion.reveals, []);
+    assert.equal(parse(fs.readFileSync(file, 'utf8')).companion.capsule_reveal, undefined);
+
+    const saved = save(fixture.event, 10);
+    assert.equal(saved.companion_capsule_reveal, 10);
+    // The live capsule is parked with the value that was actually persisted.
+    assert.deepEqual(fixture.state.companion.reveals, [10]);
+    assert.equal(parse(fs.readFileSync(file, 'utf8')).companion.capsule_reveal, 10);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

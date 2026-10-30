@@ -218,8 +218,14 @@ declare global {
   /** Collapsed or expanded, the companion window's own view of itself; the main process owns it. */
   interface CompanionState {
     open: boolean;
+    /** The window's shape. `expanded` is derived from this and kept for older callers. */
+    mode: 'capsule' | 'panel' | 'immersive';
     expanded: boolean;
     side: 'left' | 'right';
+    /** How the collapsed capsule draws itself; it is also what decides the capsule's width. */
+    capsuleStyle: 'peek' | 'grip';
+    /** Percent of the peeking pet that stays on screen (10 / 50 / 100). */
+    capsuleReveal: number;
   }
 
   /** Result of one whitelisted companion proxy call; never carries the host credential. */
@@ -237,6 +243,8 @@ declare global {
     /** Move the window so its top edge sits at `top` in screen coordinates (clamped to the work area). */
     moveTo: (top: number) => Promise<CompanionState>;
     setSide: (side: 'left' | 'right') => Promise<CompanionState>;
+    /** Switch between the capsule, the panel and the immersive column. */
+    setMode: (mode: 'capsule' | 'panel' | 'immersive') => Promise<CompanionState>;
     onStateChanged: (callback: (state: CompanionState) => void) => () => void;
   }
 
@@ -265,6 +273,10 @@ declare global {
       setInterfaceLocale: (locale: string) => void;
       /** Show or hide the docked companion capsule (desktop.toml `[companion] enabled`). */
       saveCompanionMode: (enabled: boolean) => Promise<{ companion_mode_enabled: boolean }>;
+      /** Which shape the collapsed capsule draws (desktop.toml `[companion] capsule_style`). */
+      saveCompanionCapsuleStyle: (style: 'peek' | 'grip') => Promise<{ companion_capsule_style: string }>;
+      /** How much of the peeking pet stays on screen (desktop.toml `[companion] capsule_reveal`). */
+      saveCompanionCapsuleReveal: (reveal: number) => Promise<{ companion_capsule_reveal: number }>;
       /** The companion window's own geometry gestures; other windows are rejected by the main process. */
       companion: CompanionApi;
       saveGatewayUrl: (gatewayUrl: string) => Promise<{ gateway_url: string; source: 'user'; managed: false }>;

@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('tinadec', {
 
   // --- Companion mode (docked capsule / panel) ---
   saveCompanionMode: (enabled) => ipcRenderer.invoke('tinadec:companion-mode-save', enabled),
+  saveCompanionCapsuleStyle: (style) => ipcRenderer.invoke('tinadec:companion-capsule-style-save', style),
+  saveCompanionCapsuleReveal: (reveal) => ipcRenderer.invoke('tinadec:companion-capsule-reveal-save', reveal),
   // The companion page is the only caller that succeeds here; the main process checks the sender.
   companion: {
     api: (method, path, body) => ipcRenderer.invoke('tinadec:companion-api', { method, path, body }),
@@ -65,6 +67,7 @@ contextBridge.exposeInMainWorld('tinadec', {
     collapse: () => ipcRenderer.invoke('tinadec:companion-collapse'),
     moveTo: (top) => ipcRenderer.invoke('tinadec:companion-move', top),
     setSide: (side) => ipcRenderer.invoke('tinadec:companion-side', side),
+    setMode: (mode) => ipcRenderer.invoke('tinadec:companion-mode', mode),
     onStateChanged: (callback) => {
       const handler = (_event, state) => callback(state);
       ipcRenderer.on('tinadec:companion-state-changed', handler);

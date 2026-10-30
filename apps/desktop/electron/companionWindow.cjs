@@ -28,7 +28,15 @@ let win = null;
 let side = 'right';
 let centerY = null;
 let displayId = null;
-let expanded = false;
+/**
+ * One of `capsule` / `panel` / `immersive`. Only two of them have a size: immersive is the panel's
+ * call layout, so it shares the panel's bounds. The shape is authoritative here, never in the page.
+ */
+let mode = 'capsule';
+/** `peek` or `grip`; it decides the collapsed window's width (see `collapsedWidth`). */
+let capsuleStyle = geometry.DEFAULT_CAPSULE_STYLE;
+/** Percent of the peeking figure that stays on screen; the grip ignores it. */
+let capsuleReveal = geometry.DEFAULT_CAPSULE_REVEAL;
 let saveTimer = null;
 let blurTimer = null;
 let displayListenersAttached = false;
@@ -47,16 +55,43 @@ function displayFor() {
   return screen.getPrimaryDisplay();
 }
 
+/**
+ * How wide the collapsed window is, and how much of it stays on screen.
+ *
+ * The width is never a preference: the peek is exactly the leaning figure's box. The *reveal* is
+ * — it parks the same box further out or further in, so 10% shows a sliver and 100% shows the whole
+ * pet. A grip has nothing to reveal, so it sits entirely on screen at its own small width.
+ */
+function collapsedWidth() {
+  return capsuleStyle === 'grip' ? geometry.GRIP_WIDTH : geometry.PEEK_WIDTH;
+}
+
+function collapsedReveal() {
+  return capsuleStyle === 'grip' ? 1 : capsuleReveal / 100;
+}
+
 function currentBounds() {
   const area = displayFor().workArea;
   const anchor = centerY ?? area.height / 2;
-  return expanded
-    ? geometry.panelBounds(area, side, anchor)
-    : geometry.capsuleBounds(area, side, anchor);
+  // Capsule and open shapes are the only two sizes. `immersive` is the panel's call layout, so it
+  // resolves to the panel's rect — the window must not take the screen over when it opens.
+  if (mode === 'capsule') {
+    return geometry.collapsedBounds(area, side, anchor, collapsedWidth(), collapsedReveal());
+  }
+  return geometry.panelBounds(area, side, anchor);
 }
 
+// `expanded` is kept as a derived field: existing renderers and tests read it, and the two open
+// shapes are still "the panel is showing" from their point of view.
 function snapshot() {
-  return { open: Boolean(win && !win.isDestroyed()), expanded, side };
+  return {
+    open: Boolean(win && !win.isDestroyed()),
+    mode,
+    expanded: mode !== 'capsule',
+    side,
+    capsuleStyle,
+    capsuleReveal,
+  };
 }
 
 function broadcastState() {
@@ -92,10 +127,61 @@ function inWorkArea() {
 function moveTo(top) {
   if (!Number.isFinite(top)) return snapshot();
   const area = inWorkArea();
-  const height = expanded ? geometry.panelSize(area).height : geometry.CAPSULE.height;
+  const height = currentShapeHeight(area);
   centerY = geometry.clampCenter(geometry.centerFromWindowTop(top, area, height), area, height);
   applyBounds();
   schedulePersist();
+  return snapshot();
+}
+
+/** The dragged shape's height, so a drag converts back to the same anchor it was reported from. */
+function currentShapeHeight(area) {
+  return mode === 'capsule' ? geometry.CAPSULE_HEIGHT : geometry.panelSize(area).height;
+}
+
+/**
+ * Switch the collapsed capsule between the pet peeking out and a bare grip.
+ *
+ * The two styles are different widths, so a live capsule has to be resized; an open panel is left
+ * alone and the style is simply remembered for the next collapse.
+ */
+function setCapsuleStyle(next) {
+  const normalized = geometry.normalizeCapsuleStyle(next);
+  if (normalized === capsuleStyle) return snapshot();
+  capsuleStyle = normalized;
+  if (mode === 'capsule') applyBounds();
+  broadcastState();
+  return snapshot();
+}
+
+/**
+ * Park more or less of the peeking figure past the screen edge.
+ *
+ * Only the position changes — the window keeps the figure's full box — so a live capsule just moves
+ * sideways and the pet is never cropped. The grip ignores the value, but it is remembered for the
+ * next peek.
+ */
+function setCapsuleReveal(next) {
+  const normalized = geometry.normalizeCapsuleReveal(next);
+  if (normalized === capsuleReveal) return snapshot();
+  capsuleReveal = normalized;
+  if (mode === 'capsule' && capsuleStyle === 'peek') applyBounds();
+  broadcastState();
+  return snapshot();
+}
+
+/**
+ * Switch shapes. The vertical anchor survives every transition, so growing from the capsule to the
+ * immersive column keeps the companion at the height the user dragged it to.
+ */
+function setMode(next) {
+  const normalized = geometry.normalizeMode(next);
+  if (normalized === mode) return snapshot();
+  mode = normalized;
+  clearTimeout(blurTimer);
+  blurTimer = null;
+  applyBounds();
+  broadcastState();
   return snapshot();
 }
 
@@ -110,14 +196,9 @@ function setSide(nextSide) {
 }
 
 function setExpanded(next) {
-  const value = Boolean(next);
-  if (value === expanded) return snapshot();
-  expanded = value;
-  clearTimeout(blurTimer);
-  blurTimer = null;
-  applyBounds();
-  broadcastState();
-  return snapshot();
+  // Already open: opening again must not demote an immersive column back to the panel.
+  if (next && mode !== 'capsule') return snapshot();
+  return setMode(next ? 'panel' : 'capsule');
 }
 
 /**
@@ -131,7 +212,7 @@ function scheduleCollapseCheck() {
   clearTimeout(blurTimer);
   blurTimer = setTimeout(() => {
     blurTimer = null;
-    if (!expanded || !win || win.isDestroyed()) return;
+    if (mode === 'capsule' || !win || win.isDestroyed()) return;
     // Focus inside any TinadecOffice window keeps the panel open — the user asked for that
     // explicitly — while null means another application (or the desktop) took focus.
     if (BrowserWindow.getFocusedWindow()) return;
@@ -165,7 +246,7 @@ async function createCompanionWindow() {
   side = geometry.normalizeSide(stored?.side);
   centerY = Number.isFinite(stored?.centerY) ? stored.centerY : null;
   displayId = Number.isInteger(stored?.displayId) ? stored.displayId : null;
-  expanded = false;
+  mode = 'capsule';
   attachDisplayListeners();
 
   const created = new BrowserWindow({
@@ -218,7 +299,7 @@ function closeCompanionWindow() {
   clearTimeout(saveTimer);
   blurTimer = null;
   saveTimer = null;
-  expanded = false;
+  mode = 'capsule';
   if (win && !win.isDestroyed()) win.close();
   win = null;
 }
@@ -251,6 +332,9 @@ module.exports = {
   isCompanionWindowSender,
   moveTo,
   scheduleCollapseCheck,
+  setCapsuleReveal,
+  setCapsuleStyle,
+  setMode,
   setSide,
   snapshot,
 };

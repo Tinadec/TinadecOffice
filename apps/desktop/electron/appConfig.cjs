@@ -2,6 +2,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { isDeepStrictEqual } = require('node:util');
 const { parse, stringify } = require('smol-toml');
+const {
+  CAPSULE_REVEALS,
+  CAPSULE_STYLES,
+  DEFAULT_CAPSULE_REVEAL,
+  DEFAULT_CAPSULE_STYLE,
+  normalizeCapsuleReveal,
+  normalizeCapsuleStyle,
+} = require('./companionGeometry.cjs');
 
 const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:48730';
 
@@ -37,7 +45,9 @@ function loadAppConfig(configFile, env = process.env, options = {}) {
   const debugStudioEnabled = readDebugStudioEnabled(stored);
   const preferences = { debug_studio_enabled: debugStudioEnabled,
     close_to_tray: readCloseToTray(stored) ?? options.defaultCloseToTray ?? false,
-    companion_mode_enabled: readCompanionModeEnabled(stored) };
+    companion_mode_enabled: readCompanionModeEnabled(stored),
+    companion_capsule_style: readCompanionCapsuleStyle(stored),
+    companion_capsule_reveal: readCompanionCapsuleReveal(stored) };
   const managedUrl = env.TINADEC_GATEWAY_URL?.trim();
   if (managedUrl) {
     return { gateway_url: normalizeGatewayUrl(managedUrl), source: 'environment', managed: true, path: configFile,
@@ -85,18 +95,56 @@ function readCloseToTray(document) {
   return value;
 }
 
-/** The companion-mode flag; a missing table or key means the panel stays off. */
-function readCompanionModeEnabled(document) {
+/** The `[companion]` table, validated once for every key read out of it. */
+function readCompanionTable(document) {
   const companionTable = document.companion;
   if (companionTable !== undefined && (!companionTable || typeof companionTable !== 'object'
       || Array.isArray(companionTable) || companionTable instanceof Date)) {
     throw new Error('desktop.toml companion must be a table.');
   }
-  const value = companionTable?.enabled;
+  return companionTable;
+}
+
+/** The companion-mode flag; a missing table or key means the panel stays off. */
+function readCompanionModeEnabled(document) {
+  const value = readCompanionTable(document)?.enabled;
   if (value !== undefined && typeof value !== 'boolean') {
     throw new Error('desktop.toml companion.enabled must be a boolean.');
   }
   return value ?? false;
+}
+
+/**
+ * Which shape the collapsed capsule draws: the pet's head peeking out, or a bare grip.
+ *
+ * The style decides how wide the capsule is, so there is no width key any more — an old
+ * `capsule_width` line in the file is simply an unused key. An unknown style is a display
+ * preference from a newer or hand-edited file, so it falls back to the default; a value of the
+ * wrong type is a broken file and throws, like every other key here.
+ */
+function readCompanionCapsuleStyle(document) {
+  const value = readCompanionTable(document)?.capsule_style;
+  if (value === undefined) return DEFAULT_CAPSULE_STYLE;
+  if (typeof value !== 'string') {
+    throw new Error('desktop.toml companion.capsule_style must be a string.');
+  }
+  return normalizeCapsuleStyle(value);
+}
+
+/**
+ * How much of the peeking pet stays on screen, in percent.
+ *
+ * A number outside the three steps is a display preference, not a broken file: it falls back rather
+ * than refusing to start the app. A non-integer is a type error and does throw, like every other
+ * numeric key here.
+ */
+function readCompanionCapsuleReveal(document) {
+  const value = readCompanionTable(document)?.capsule_reveal;
+  if (value === undefined) return DEFAULT_CAPSULE_REVEAL;
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new Error('desktop.toml companion.capsule_reveal must be an integer.');
+  }
+  return normalizeCapsuleReveal(value);
 }
 
 function writeDocumentSource(configFile, source) {
@@ -115,11 +163,19 @@ function writeDocument(configFile, document) {
  *
  * `expected` is the whole document *after* the edit, so a candidate only wins when re-parsing it
  * yields exactly that document: matching another table, a comment, or a multiline string can never
- * take effect. The value is a boolean, so neither half of the replacement needs escaping.
+ * take effect. Only booleans and integers are supported, and neither needs escaping — the regex
+ * just has to recognise the value kind; the re-parse check above is what proves the edit.
  */
 function tableScalarDocumentSource(source, expected, table, key) {
   const value = expected[table][key];
-  const setting = `${key} = ${value}`;
+  const setting = `${key} = ${typeof value === 'string' ? JSON.stringify(value) : value}`;
+  // A capturing group: the replacement below slices the old literal out by `match[2].length`.
+  const literal = typeof value === 'boolean'
+    ? '(true|false)'
+    // Strings are written double-quoted, and the key may already hold either quote style.
+    : typeof value === 'string'
+      ? '("(?:[^"\\\\]|\\\\.)*"|\'[^\']*\')'
+      : '(-?\\d+)';
   const quotedKey = `(?:${key}|"${key}"|'${key}')`;
   const quotedTable = `(?:${table}|"${table}"|'${table}')`;
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
@@ -128,7 +184,7 @@ function tableScalarDocumentSource(source, expected, table, key) {
     catch { return false; }
   };
 
-  const scalar = new RegExp(`(${quotedKey}[ \\t]*=[ \\t]*)(true|false)\\b`, 'g');
+  const scalar = new RegExp(`(${quotedKey}[ \\t]*=[ \\t]*)${literal}\\b`, 'g');
   for (const match of source.matchAll(scalar)) {
     const position = match.index + match[1].length;
     const candidate = source.slice(0, position) + value + source.slice(position + match[2].length);
@@ -195,6 +251,48 @@ function saveCompanionMode(configFile, enabled, env = process.env) {
   return loadAppConfig(configFile, env);
 }
 
+/**
+ * Persist how much of the peeking pet stays on screen. Like the style, the value is validated
+ * before anything is written, so desktop.toml can never hold a step the window cannot park at.
+ */
+function saveCompanionCapsuleReveal(configFile, reveal, env = process.env) {
+  if (typeof reveal !== 'number' || !Number.isInteger(reveal)) {
+    throw new Error('Companion capsule reveal must be an integer.');
+  }
+  const normalized = normalizeCapsuleReveal(reveal);
+  if (normalized !== reveal) {
+    throw new Error(`Companion capsule reveal must be one of ${CAPSULE_REVEALS.join(', ')} (received ${reveal}).`);
+  }
+  const source = readDocumentSource(configFile);
+  const document = parse(source);
+  readCompanionCapsuleReveal(document);
+  document.companion ??= Object.create(null);
+  document.companion.capsule_reveal = normalized;
+  writeDocumentSource(configFile, tableScalarDocumentSource(source, document, 'companion', 'capsule_reveal'));
+  return loadAppConfig(configFile, env);
+}
+
+/**
+ * Persist which capsule style is drawn. Like every setting here, the value is validated before
+ * anything is written, so desktop.toml can never hold a style the window does not know how to draw.
+ */
+function saveCompanionCapsuleStyle(configFile, style, env = process.env) {
+  if (typeof style !== 'string') {
+    throw new Error('Companion capsule style must be a string.');
+  }
+  const normalized = normalizeCapsuleStyle(style);
+  if (normalized !== style) {
+    throw new Error(`Companion capsule style must be one of ${CAPSULE_STYLES.join(', ')} (received ${style}).`);
+  }
+  const source = readDocumentSource(configFile);
+  const document = parse(source);
+  readCompanionCapsuleStyle(document);
+  document.companion ??= Object.create(null);
+  document.companion.capsule_style = normalized;
+  writeDocumentSource(configFile, tableScalarDocumentSource(source, document, 'companion', 'capsule_style'));
+  return loadAppConfig(configFile, env);
+}
+
 function saveGatewayUrl(configFile, value, env = process.env) {
   if (env.TINADEC_GATEWAY_URL?.trim()) {
     throw new Error('Gateway URL is managed by TINADEC_GATEWAY_URL.');
@@ -233,6 +331,8 @@ module.exports = {
   resetGatewayUrl,
   saveGatewayUrl,
   saveCloseToTray,
+  saveCompanionCapsuleReveal,
+  saveCompanionCapsuleStyle,
   saveCompanionMode,
   saveDebugStudioEnabled,
   saveUserStorageRoot,
