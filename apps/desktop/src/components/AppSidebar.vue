@@ -187,6 +187,20 @@ function openCompanionCenter() {
   emit('go-companion-center')
 }
 
+/**
+ * The top switch: 项目 keeps the work domain, 伙伴 opens the observing page.
+ *
+ * Both sides are the same rail — that is why this is a switch rather than navigation: choosing a
+ * domain changes what the whole window is about, not which panel is in front.
+ */
+function switchDomain(next: 'projects' | 'companions') {
+  if (next === 'companions') {
+    if (!props.companionDomain) emit('go-companion-center')
+    return
+  }
+  if (props.companionDomain) emit('change-view', 'flat')
+}
+
 // ---- Lifecycle management (context menu + inline rename) ----
 interface MenuTarget {
   kind: 'project' | 'session' | 'free'
@@ -688,6 +702,33 @@ watch([displayName, () => props.collapsed], async () => {
         <BrandLogo :size="14" class="sidebar-icon brand-logo-icon" />
         <TinadecCalligraphy :size="14" class="sidebar-label brand-calligraphy" />
       </div>
+    </div>
+
+    <!-- One rail, two domains: the same island shows either the work domain (projects, sessions)
+         or the companion domain. A two-way switch, not a tab strip — there is one card here, and
+         the mode it is in decides what the whole window shows. -->
+    <div
+      v-if="!collapsed"
+      class="sidebar-domain-switch"
+      role="tablist"
+      :aria-label="t('sidebar.domainSwitch')"
+    >
+      <button
+        type="button"
+        role="tab"
+        class="sidebar-domain-option"
+        :aria-selected="!companionDomain"
+        data-testid="sidebar-domain-projects"
+        @click="switchDomain('projects')"
+      >{{ t('sidebar.domainProjects') }}</button>
+      <button
+        type="button"
+        role="tab"
+        class="sidebar-domain-option"
+        :aria-selected="companionDomain"
+        data-testid="sidebar-domain-companions"
+        @click="switchDomain('companions')"
+      >{{ t('sidebar.domainCompanions') }}</button>
     </div>
 
     <nav v-if="!companionDomain" class="sidebar-nav">

@@ -31,36 +31,31 @@ const api = vi.hoisted(() => ({
   patchCompanion: vi.fn(async () => ({})),
 }))
 
-vi.mock('@/lib/uiEngine', () => ({ useUiePage: () => ({ ready: lifecycle.ready, showPage: lifecycle.showPage }) }))
-vi.mock('@/components/AppHeader.vue', () => ({ default: defineComponent({ render: () => h('header') }) }))
-// The sidebar is the shared shell component; this suite is about the centre's four cards.
-vi.mock('@/components/AppSidebar.vue', () => ({
-  default: defineComponent({
-    props: { companionDomain: { type: Boolean, default: false } },
-    emits: ['companion-nav'],
-    render() {
-      return h('nav', { class: 'sidebar-probe', 'data-companion-domain': String(this.companionDomain) }, [
-        h('button', { class: 'nav-attention', onClick: () => this.$emit('companion-nav', 'attention') }),
-      ])
-    },
-  }),
+// The engine owns page selection: `useUiePage(pageId)` switches the shared layout on mount, so the
+// route itself never calls showPage. Recording it here keeps the assertion about which page this is.
+vi.mock('@/lib/uiEngine', () => ({
+  useUiePage: (pageId: string) => {
+    lifecycle.showPage(pageId)
+    return { ready: lifecycle.ready, showPage: lifecycle.showPage }
+  },
 }))
 vi.mock('@/lib/companionApi', () => ({ companionApi: api }))
 
-// The canvas is replaced by the four center cards directly: this suite is about what
-// the cards read and say, not about UIE geometry (covered by the UIE engine tests).
+// The shell and its canvas are replaced by the four center cards directly: this suite is about what
+// the cards read and say, not about UIE geometry (covered by the UIE engine tests). The page owns no
+// sidebar of its own any more — the shared nav card draws it inside the layout.
 vi.mock('@tinadec/ui', async () => {
   const { defineComponent: define, h: hyperscript } = await import('vue')
   const List = (await import('../../../TinadecUI/src/components/cards/companion/CompanionListCard.vue')).default
   const Feed = (await import('../../../TinadecUI/src/components/cards/companion/CompanionFeedCard.vue')).default
   const Groups = (await import('../../../TinadecUI/src/components/cards/companion/CompanionGroupsCard.vue')).default
   const Connections = (await import('../../../TinadecUI/src/components/cards/companion/CompanionConnectionsCard.vue')).default
+  const canvasProbe = () => hyperscript('div', { class: 'canvas-probe' }, [
+    hyperscript(List), hyperscript(Feed), hyperscript(Groups), hyperscript(Connections),
+  ])
   return {
-    UieCanvas: define({
-      render: () => hyperscript('div', { class: 'canvas-probe' }, [
-        hyperscript(List), hyperscript(Feed), hyperscript(Groups), hyperscript(Connections),
-      ]),
-    }),
+    UieCanvas: define({ render: canvasProbe }),
+    UieShell: define({ render: canvasProbe }),
   }
 })
 
@@ -176,12 +171,16 @@ describe('companion center route', () => {
     expect(wrapper.get('.canvas-probe').findAll('section.companion-card')).toHaveLength(4)
   })
 
-  it('mounts the shared sidebar in companion domain, without work projects or sessions', async () => {
+  it('mounts the shared shell instead of drawing a sidebar of its own', async () => {
     const wrapper = create()
     await flushPromises()
 
-    const sidebar = wrapper.get('.sidebar-probe')
-    expect(sidebar.attributes('data-companion-domain')).toBe('true')
+    // The regression this pins: this route used to hand-roll a bare 264px column beside the canvas,
+    // so its sidebar had none of the island material the rest of the app uses.
+    expect(wrapper.find('.sidebar-probe').exists()).toBe(false)
+    expect(wrapper.find('.center-sidebar').exists()).toBe(false)
+    // Everything comes from the shell: header, nav island and canvas are the shared ones.
+    expect(wrapper.find('.canvas-probe').exists()).toBe(true)
   })
 
   it('reads the whole domain once for four cards instead of once per card', async () => {

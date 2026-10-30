@@ -180,10 +180,12 @@ describe('repairLayout', () => {
       'companionFeed',
       'companionGroups',
       'companionList',
+      'nav',
     ])
+    // The sidebar island stands alone on the left rail; the roster joins the feature panel.
     expect(out.columns.left.primary.tabIds).toHaveLength(1)
     expect(out.columns.center.primary.tabIds).toHaveLength(1)
-    expect(out.columns.right.primary.tabIds).toHaveLength(2)
+    expect(out.columns.right.primary.tabIds).toHaveLength(3)
   })
 
   it('falls back to home for an unknown page id, without touching the companion page', () => {

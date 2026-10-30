@@ -224,23 +224,27 @@ function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.gap = 8
   snapshot.edgeInset = 8
 
+  const nav = card(n(), 'nav')
   const list = card(n(), 'companionList')
   const feed = card(n(), 'companionFeed')
   const groups = card(n(), 'companionGroups')
   const connections = card(n(), 'companionConnections')
 
   snapshot.cards = {
+    [nav.id]: nav,
     [list.id]: list,
     [feed.id]: feed,
     [groups.id]: groups,
     [connections.id]: connections,
   }
-  // Observing the companion domain, not chatting: list (who), feed (what happened),
-  // groups + connections (where and with what). The feed is the immersive center.
+  // The left rail is the shared nav card and nothing else: one island, so it gets no tab strip.
+  // The centre is the immersive feed; the roster joins the feature panel on the right, which keeps
+  // the same top inset as every other page so it clears the window controls.
   snapshot.columns = {
-    left: column('left', 280, 8, 'float', [list.id], list.id),
+    left: column('left', 260, 8, 'float', [nav.id], nav.id),
     center: column('center', 0, 8, 'immersive', [feed.id], feed.id),
-    right: column('right', 380, 8, 'float', [groups.id, connections.id], groups.id),
+    right: column('right', 380, HOME_GEOMETRY.rightTopInset, 'float',
+      [list.id, groups.id, connections.id], list.id),
   }
   snapshot.focusedCardId = feed.id
   return snapshot
@@ -263,7 +267,8 @@ export const PRESET_BUILDERS: Record<UiePageId, (ctx: PresetContext) => UieLayou
 export const PRESET_REVISIONS: Partial<Record<UiePageId, number>> = {
   // The companion centre went from four unrelated panels to a selection-driven centre; a stored
   // snapshot would keep the old reading of it with no way back.
-  companionCenter: 2,
+  // 3 adds the shared nav card to the left rail, so the centre stops drawing its own sidebar.
+  companionCenter: 3,
 }
 
 export function buildPreset(pageId: UiePageId, ctx: PresetContext): UieLayoutSnapshot {

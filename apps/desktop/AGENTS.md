@@ -1,5 +1,15 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-30 伙伴中心改为共用外壳（侧栏回归岛式）
+
+伙伴中心（`/companion-center`）原先自己拼了一个 `.center-sidebar` + 裸 `AppSidebar`，紧贴窗口边缘、没有 UIE 卡片材质，和首页/空间的悬浮岛完全不是一套。现在：
+
+- `CompanionCenterPage.vue` 只剩 `<UieShell />`（等同 `HomePage`），不再挂任何侧栏；页面只负责 `useUiePage('companionCenter')` 和 ready 事件。
+- **左列只有一张 `nav` 卡**：UIE 的 `showTabBar` 在单标签时不渲染标签条，所以左侧是一个干净的岛，不会出现"新标签页"那种条。`PRESET_REVISIONS.companionCenter` 升到 3 让旧快照被替换。
+- **侧栏顶部是「项目 / 伙伴」两段开关**（`.sidebar-domain-switch`）：伙伴域点「项目」发出 `change-view: flat`，项目域点「伙伴」发出 `go-companion-center`。这是**域切换**（整个窗口讲什么），不是同一张卡上的标签页——所以既不是 UIE 的 tab strip，也没有 "+"。
+- **右列是功能面板**：`[companionList, companionGroups, companionConnections]`，`topInset = HOME_GEOMETRY.rightTopInset (48)`，和平面模式一样避让窗口控制键。名单因此不再和侧栏抢位置。
+- `NavCard.vue` 按页面 id 切域（`navDomain.ts` 的 `isCompanionDomainPage`，纯函数、有单测）：伙伴中心传 `companion-domain`，项目/会话置空，`companion-nav` 转成 `setFeedFilter` / 设置页。因此侧栏是**同一个组件、同一套材质**，只是中间内容不同。
+
 ## 2026-10-30 胶囊两种样式：探头 / 拉手（`[companion] capsule_style`）
 
 `peek`（默认）把**整个伙伴**斜着靠在屏幕边上，`grip` 只画一条 10×84 的窄柄。**窗宽不归用户设**：它由倾斜后整帧的包围盒决定（`PEEK_HEIGHT` / `PEEK_WIDTH` 由 `W·sinθ + H·cosθ ≤ CAPSULE_HEIGHT` 反解，θ = 22°，当前 92 高 / 113 宽）。

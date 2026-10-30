@@ -1558,6 +1558,46 @@ button.agent-topology-node:hover,
   min-height: 0;
 }
 
+/* One rail, two domains. The switch sits under the brand and above whatever middle the domain
+   has — projects and sessions, or the companion entries. It is a two-way choice about what the
+   whole window is about, so it reads as a segmented control, not as tabs on one card. */
+.sidebar-domain-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin: 0 10px 6px;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.sidebar-domain-option {
+  padding: 5px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar-domain-option:hover {
+  color: var(--text-primary);
+}
+
+.sidebar-domain-option[aria-selected='true'] {
+  background: var(--surface-selected, var(--bg-secondary));
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+}
+
+.sidebar-domain-option:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
 /* ===== Browser-style floating tab bar ===== */
 .browser-tab-bar {
   display: flex;

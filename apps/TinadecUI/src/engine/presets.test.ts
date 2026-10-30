@@ -39,18 +39,23 @@ describe('built-in presets', () => {
     expect(preset.pageId).toBe('companionCenter')
     expect(preset.gap).toBe(8)
     expect(preset.edgeInset).toBe(8)
-    expect(preset.columns.left.width).toBe(280)
+    // The left rail is the shared nav card at the work-page width, not a bespoke column.
+    expect(preset.columns.left.width).toBe(260)
     expect(preset.columns.center.surfaceMode).toBe('immersive')
     expect(preset.columns.right.width).toBe(380)
 
     const descriptors = (slot: 'left' | 'center' | 'right') =>
       preset.columns[slot].primary.tabIds.map((id) => preset.cards[id].descriptorId)
-    expect(descriptors('left')).toEqual(['companionList'])
+    // The left rail is one card — the shared nav island — so it gets no tab strip.
+    expect(descriptors('left')).toEqual(['nav'])
     expect(descriptors('center')).toEqual(['companionFeed'])
-    // Groups and connections share the right stack as two tabs.
-    expect(descriptors('right')).toEqual(['companionGroups', 'companionConnections'])
-    // Four cards, all singleton/movable/closable descriptors in the registry.
-    expect(Object.keys(preset.cards)).toHaveLength(4)
+    // The roster joins the feature panel on the right, ahead of groups and connections.
+    expect(descriptors('right')).toEqual(['companionList', 'companionGroups', 'companionConnections'])
+    // Five cards: the shared sidebar plus the four companion panels.
+    expect(Object.keys(preset.cards)).toHaveLength(5)
+    // The feature panel clears the window controls exactly like the work pages do.
+    expect(preset.columns.right.topInset).toBe(48)
+    expect(preset.columns.left.topInset).toBe(8)
   })
 
   it('every page has a non-empty preset', () => {

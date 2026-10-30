@@ -1,15 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import WorkspaceEditorDialog from '@/components/WorkspaceEditorDialog.vue'
 import { homeController } from '@/controllers/HomeController'
 import { requestSettingsSection } from '@/lib/pageRequests'
+import { setFeedFilter } from '@/lib/companionStore'
 import { useUie } from '../../useUie'
+import { isCompanionDomainPage } from './navDomain'
 import { useRoute, useRouter } from 'vue-router'
 
 const router = useRouter()
 const route = useRoute()
 const c = homeController
 const uie = useUie()
+
+/**
+ * The companion centre mounts the same nav card as the work pages, in its companion domain.
+ *
+ * Same island, same brand header, same footer — only the middle changes: no projects, no sessions,
+ * and the entries re-aim the centre instead of selecting a session. Deciding this from the page id
+ * keeps one sidebar component instead of a second copy that drifts.
+ */
+const companionDomain = computed(() => isCompanionDomainPage(uie.snapshot.value.pageId))
 
 async function openSession(id: string) {
   await c.setSelectedSession(id)
@@ -32,6 +44,16 @@ function openCompanionCenter() {
   void router.push('/companion-center')
 }
 
+/** The companion nav only re-aims the centre; it never touches the work selection. */
+function handleCompanionNav(target: 'all' | 'attention' | 'settings') {
+  if (target === 'settings') {
+    requestSettingsSection('companions')
+    void router.push('/settings')
+    return
+  }
+  setFeedFilter(target === 'attention' ? 'attention' : 'all')
+}
+
 function toggleCollapse() {
   const col = uie.snapshot.value.columns.left
   uie.bus.dispatch({
@@ -49,13 +71,15 @@ function toggleCollapse() {
 
 <template>
   <AppSidebar
-    :projects="c.projects.value"
-    :sessions="c.visibleSessions.value"
-    :selected-project-id="c.selectedProjectId.value"
-    :selected-session-id="route.path === '/' || route.path === '/space' ? c.selectedSessionId.value : null"
+    :projects="companionDomain ? [] : c.projects.value"
+    :sessions="companionDomain ? [] : c.visibleSessions.value"
+    :selected-project-id="companionDomain ? null : c.selectedProjectId.value"
+    :selected-session-id="companionDomain ? null : (route.path === '/' || route.path === '/space' ? c.selectedSessionId.value : null)"
     :space-active="route.path === '/space'"
+    :companion-center-active="companionDomain"
+    :companion-domain="companionDomain"
     :busy="c.busy.value"
-    :workspace-load-states="c.workspaceLoadStates.value"
+    :workspace-load-states="companionDomain ? {} : c.workspaceLoadStates.value"
     :collapsed="uie.snapshot.value.columns.left?.collapsed"
     @select-session="openSession($event)"
     @create-session="createSession($event)"
@@ -67,6 +91,7 @@ function toggleCollapse() {
     @go-settings="router.push('/settings')"
     @go-companion-center="openCompanionCenter"
     @go-personal="openPersonal"
+    @companion-nav="handleCompanionNav"
     @change-view="router.push($event === 'space' ? '/space' : '/')"
     @toggle-collapse="toggleCollapse"
     @rename-project="(id, name) => c.renameProject(id, name)"
