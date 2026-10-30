@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import zh from '@/locales/zh-CN'
 import CompanionPage from './CompanionPage.vue'
+import CompanionStage from '@/components/pets/CompanionStage.vue'
 import type {
   CompanionConversation,
   CompanionMember,
@@ -20,9 +21,18 @@ import type {
  * these tests only if the mirror agreed — which is what the broadcast-only fakes rule out.
  */
 
-const CAPSULE_RIGHT: CompanionState = { open: true, expanded: false, side: 'right' }
-const PANEL_RIGHT: CompanionState = { open: true, expanded: true, side: 'right' }
-const PANEL_LEFT: CompanionState = { open: true, expanded: true, side: 'left' }
+const CAPSULE_RIGHT: CompanionState = {
+  open: true, mode: 'capsule', expanded: false, side: 'right', capsuleStyle: 'peek', capsuleReveal: 50,
+}
+const PANEL_RIGHT: CompanionState = {
+  open: true, mode: 'panel', expanded: true, side: 'right', capsuleStyle: 'peek', capsuleReveal: 50,
+}
+const PANEL_LEFT: CompanionState = {
+  open: true, mode: 'panel', expanded: true, side: 'left', capsuleStyle: 'peek', capsuleReveal: 50,
+}
+const IMMERSIVE_RIGHT: CompanionState = {
+  open: true, mode: 'immersive', expanded: true, side: 'right', capsuleStyle: 'peek', capsuleReveal: 50,
+}
 
 // Every page answers Escape on `window`; a wrapper left mounted keeps collapsing in later tests.
 enableAutoUnmount(afterEach)
@@ -37,11 +47,17 @@ let companion: {
   collapse: ReturnType<typeof vi.fn>
   moveTo: ReturnType<typeof vi.fn>
   setSide: ReturnType<typeof vi.fn>
+  setMode: ReturnType<typeof vi.fn>
   onStateChanged: ReturnType<typeof vi.fn>
 }
 
 function broadcast(patch: Partial<CompanionState>): CompanionState {
   state = { ...state, ...patch }
+  // `mode` and `expanded` are two views of one fact. A fake that only moved one of them would let
+  // the page read the other and still look right, which is exactly the bug these tests exist for.
+  if (patch.expanded !== undefined && patch.mode === undefined) {
+    state.mode = patch.expanded ? 'panel' : 'capsule'
+  }
   listener?.({ ...state })
   return { ...state }
 }
@@ -62,6 +78,11 @@ function click(target: Element, detail: number): void {
   target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail }))
 }
 
+/** A real double click bubbles, exactly like the one the gesture handler has to filter. */
+function doubleClick(target: Element): void {
+  target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }))
+}
+
 function pressEscape(): KeyboardEvent {
   const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
   window.dispatchEvent(event)
@@ -78,6 +99,7 @@ beforeEach(() => {
     collapse: vi.fn(async () => broadcast({ expanded: false })),
     moveTo: vi.fn(async () => ({ ...state })),
     setSide: vi.fn(async (side: 'left' | 'right') => broadcast({ side })),
+    setMode: vi.fn(async (mode: 'capsule' | 'panel' | 'immersive') => broadcast({ mode, expanded: mode !== 'capsule' })),
     onStateChanged: vi.fn((callback: (next: CompanionState) => void) => {
       listener = callback
       return disposeState
@@ -296,12 +318,12 @@ describe('panel drag and teardown', () => {
 
 const NOW = '2026-10-28T08:00:00.000Z'
 
-function summaryFixture(id: string, name: string): CompanionSummary {
+function summaryFixture(id: string, name: string, avatar: string | null = null): CompanionSummary {
   return {
     id,
     name,
     tagline: null,
-    avatar: null,
+    avatar,
     model_purpose: 'companion_chat',
     model: null,
     model_provider_id: null,
@@ -758,5 +780,270 @@ describe('companion chat', () => {
     window.dispatchEvent(new Event('resize'))
     await flushPromises()
     expect((wrapper.get('.companion-input').element as HTMLInputElement).value).toBe('unfinished draft')
+  })
+})
+
+describe('companion capsule face', () => {
+  /** The capsule shape, not the panel: `mountChat` opens the panel because chat lives there. */
+  function mountCapsule(api: ReturnType<typeof vi.fn>) {
+    companion.api = api
+    state = { ...CAPSULE_RIGHT }
+    return create()
+  }
+
+  it('wears the selected companion as the capsule instead of a grip', async () => {
+    const harness = createChatApi({ companions: [summaryFixture('companion-a', 'Aria', 'fox')] })
+    const wrapper = mountCapsule(harness.api)
+    await flushPromises()
+
+    // The peek style draws the pet's head, animated frame by frame, and no handle.
+    expect(wrapper.get('.companion-capsule').classes()).toContain('companion-capsule--peek')
+    expect(wrapper.find('[data-testid="companion-stage"]').exists()).toBe(true)
+    expect(wrapper.find('.companion-capsule-grip').exists()).toBe(false)
+    expect(wrapper.find('.companion-capsule-glyph').exists()).toBe(false)
+  })
+
+  it('draws a bare handle when the grip style is chosen', async () => {
+    const harness = createChatApi({ companions: [summaryFixture('companion-a', 'Aria', 'fox')] })
+    companion.api = harness.api
+    state = { ...CAPSULE_RIGHT, capsuleStyle: 'grip' }
+    const wrapper = create()
+    await flushPromises()
+
+    // A grip is not a window onto the pet: no sprite at all, just the handle and the mood dot.
+    expect(wrapper.get('.companion-capsule').classes()).toContain('companion-capsule--grip')
+    expect(wrapper.find('[data-testid="companion-stage"]').exists()).toBe(false)
+    expect(wrapper.find('.companion-capsule-grip').exists()).toBe(true)
+    expect(wrapper.get('.companion-capsule-status').classes()).toContain('is-idle')
+  })
+
+  it('falls back to a glyph when the companion has no pet, and stays idle', async () => {
+    const harness = createChatApi({ companions: [summaryFixture('companion-a', 'Aria')] })
+    const wrapper = mountCapsule(harness.api)
+    await flushPromises()
+
+    expect(wrapper.find('.companion-capsule-pet').exists()).toBe(false)
+    expect(wrapper.find('.companion-capsule-glyph').exists()).toBe(true)
+    // The capsule only claims states this window can observe; with nothing running it is idle.
+    expect(wrapper.get('.companion-capsule-status').classes()).toContain('is-idle')
+    expect(wrapper.get('.companion-capsule-status').classes()).not.toContain('is-failed')
+  })
+})
+
+describe('immersive shape', () => {
+  it('asks the main process for the immersive column and renders whatever shape it reports', async () => {
+    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
+    companion.api = harness.api
+    state = { ...PANEL_RIGHT }
+    const wrapper = create()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-immersive-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(companion.setMode).toHaveBeenCalledWith('immersive')
+    const panel = wrapper.get('.companion-panel')
+    expect(panel.classes()).toContain('companion-panel--immersive')
+    expect(wrapper.get('[data-testid="companion-immersive-toggle"]').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('walks back out to the panel on Escape instead of closing the companion', async () => {
+    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
+    companion.api = harness.api
+    state = { ...IMMERSIVE_RIGHT }
+    const wrapper = create()
+    await flushPromises()
+
+    const event = pressEscape()
+    await flushPromises()
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(companion.setMode).toHaveBeenCalledWith('panel')
+    // Escape inside the immersive shape is a step out, not a dismissal.
+    expect(companion.collapse).not.toHaveBeenCalled()
+    expect(wrapper.find('.companion-panel').exists()).toBe(true)
+  })
+
+  it('keeps the capsule a single click away from the immersive shape', async () => {
+    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
+    companion.api = harness.api
+    state = { ...IMMERSIVE_RIGHT }
+    const wrapper = create()
+    await flushPromises()
+
+    click(wrapper.get(`[aria-label="${zh.companion.collapse}"]`).element, 1)
+    await flushPromises()
+
+    expect(companion.collapse).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.companion-capsule').exists()).toBe(true)
+  })
+
+  it('gives the panel a short strip and the call a full figure', async () => {
+    const harness = createChatApi({
+      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
+      messages: { 'conv-companion-a': [] },
+    })
+    companion.api = harness.api
+    state = { ...PANEL_RIGHT }
+    const wrapper = create()
+    await flushPromises()
+
+    // The panel's strip is 88px: enough for a standing figure, small enough to keep the chat usable.
+    expect(wrapper.getComponent(CompanionStage).props('height')).toBe(88)
+
+    await wrapper.get('[data-testid="companion-immersive-toggle"]').trigger('click')
+    await flushPromises()
+
+    // The figure grows inside the same window — the window itself never does.
+    const callHeight = wrapper.getComponent(CompanionStage).props('height') as number
+    expect(callHeight).toBeGreaterThan(88)
+    expect(callHeight).toBeLessThanOrEqual(500)
+  })
+
+  it('opens the call when the figure itself is clicked', async () => {
+    const harness = createChatApi({
+      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
+      messages: { 'conv-companion-a': [] },
+    })
+    companion.api = harness.api
+    state = { ...PANEL_RIGHT }
+    const wrapper = create()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-stage-expand"]').trigger('click')
+    await flushPromises()
+
+    // The pet is the door: no toolbar button needed, and the same main-process call is made.
+    expect(companion.setMode).toHaveBeenCalledWith('immersive')
+    expect(wrapper.find('.companion-call').exists()).toBe(true)
+  })
+
+  it('turns immersive into a call: figure, one subtitle, one input, no pickers', async () => {
+    const harness = createChatApi({
+      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
+      messages: {
+        'conv-companion-a': [
+          messageFixture('m1', 'conv-companion-a', 1, 'user', 'User', '在吗'),
+          messageFixture('m2', 'conv-companion-a', 2, 'companion', 'Aria', '在的，说吧', 'companion-a'),
+        ],
+      },
+    })
+    companion.api = harness.api
+    state = { ...IMMERSIVE_RIGHT }
+    const wrapper = create()
+    await flushPromises()
+
+    expect(wrapper.find('.companion-call').exists()).toBe(true)
+    // A call has no companion or conversation switchers.
+    expect(wrapper.find('.companion-pickers').exists()).toBe(false)
+    // The scrollback is still mounted but out of sight, so stepping back into the panel is instant.
+    // Asserted on the attribute, not `isVisible()`: happy-dom's computed style ignores the inline
+    // `display: none` that `v-show` writes, and the directive itself is what this test cares about.
+    expect(wrapper.get('.companion-chat').attributes('style')).toContain('display: none')
+    expect(wrapper.findAll('.companion-input')).toHaveLength(1)
+
+    const lines = wrapper.findAll('.companion-call-line')
+    expect(lines).toHaveLength(2)
+    expect(lines[1].text()).toContain('在的，说吧')
+    expect(lines[1].classes()).not.toContain('is-past')
+    // The line before it stays as dimmed context instead of a log.
+    expect(lines[0].classes()).toContain('is-past')
+  })
+
+  it('waves when the face is clicked and sends nothing', async () => {
+    const harness = createChatApi({
+      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
+      messages: { 'conv-companion-a': [] },
+    })
+    companion.api = harness.api
+    state = { ...PANEL_RIGHT }
+    const wrapper = create()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-greet"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.companion-header-face').classes()).toContain('is-greeting')
+    // A local acknowledgement: the companion domain has no emote endpoint, so nothing is posted.
+    expect(apiCalls(harness.calls, 'POST', '/messages')).toHaveLength(0)
+  })
+})
+
+describe('companion presence', () => {
+  /** A companion with a pet, so a stage exists; the panel is where every gesture lives. */
+  function mountWithPet(options: ChatApiOptions = {}) {
+    const harness = createChatApi({
+      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
+      messages: { 'conv-companion-a': [] },
+      ...options,
+    })
+    return { harness, wrapper: mountChat(harness.api) }
+  }
+
+  it('replaces the conversation label with what the companion is doing', async () => {
+    const running = runFixture('run-live', 'companion-a', 'conv-companion-a')
+    const { wrapper } = mountWithPet({ sendRuns: [running] })
+    await flushPromises()
+
+    // Idle: the subtitle names the conversation, which nothing else in the header does.
+    expect(wrapper.get('.companion-subtitle').text())
+      .toBe(zh.companion.chat.privateSubtitle.replace('{name}', 'Aria'))
+
+    await wrapper.get('.companion-input').setValue('hello')
+    await wrapper.get('.companion-composer').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('.companion-subtitle').text()).toBe(zh.companion.stateThinking)
+    expect(wrapper.findAll('.companion-run-dots > span')).toHaveLength(3)
+  })
+
+  it('turns the send key into a pause while a turn is in flight', async () => {
+    const running = runFixture('run-live', 'companion-a', 'conv-companion-a')
+    const { harness, wrapper } = mountWithPet({ sendRuns: [running] })
+    await flushPromises()
+
+    expect(wrapper.get('.companion-send').attributes('aria-label')).toBe(zh.companion.chat.send)
+
+    await wrapper.get('.companion-input').setValue('hello')
+    await wrapper.get('.companion-composer').trigger('submit')
+    await flushPromises()
+
+    const key = wrapper.get('.companion-send')
+    expect(key.classes()).toContain('is-pause')
+    expect(key.attributes('aria-label')).toBe(zh.companion.chat.pauseAction)
+
+    await key.trigger('click')
+    await flushPromises()
+
+    // Core cannot cancel a run, so this pauses the conversation and says so — it never pretends to
+    // stop the reply that is already being written.
+    const pauses = apiCalls(harness.calls, 'POST', '/pause')
+    expect(pauses).toHaveLength(1)
+    expect((pauses[0].body as { paused: boolean }).paused).toBe(true)
+  })
+
+  it('pats the companion on a double click over blank space, and never on a message', async () => {
+    const { harness, wrapper } = mountWithPet({
+      messages: {
+        'conv-companion-a': [messageFixture('m1', 'conv-companion-a', 1, 'user', 'User', 'hello')],
+      },
+    })
+    await flushPromises()
+
+    // Double-clicking text is selection, not affection.
+    doubleClick(wrapper.get('.companion-msg-body').element)
+    await flushPromises()
+    expect(wrapper.find('.companion-pat-note').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="companion-stage"]').classes())
+      .not.toContain('companion-stage--jumping')
+
+    doubleClick(wrapper.get('.companion-chat').element)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="companion-stage"]').classes()).toContain('companion-stage--jumping')
+    expect(wrapper.get('.companion-pat-note').text()).toBe(zh.companion.pat)
+    // A gesture is not a message: nothing is posted and no transcript line is invented.
+    expect(apiCalls(harness.calls, 'POST', '/messages')).toHaveLength(0)
+    expect(wrapper.findAll('.companion-msg')).toHaveLength(1)
   })
 })

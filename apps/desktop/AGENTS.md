@@ -1,5 +1,67 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-30 胶囊两种样式：探头 / 拉手（`[companion] capsule_style`）
+
+`peek`（默认）把**整个伙伴**斜着靠在屏幕边上，`grip` 只画一条 10×84 的窄柄。**窗宽不归用户设**：它由倾斜后整帧的包围盒决定（`PEEK_HEIGHT` / `PEEK_WIDTH` 由 `W·sinθ + H·cosθ ≤ CAPSULE_HEIGHT` 反解，θ = 22°，当前 92 高 / 113 宽）。
+
+**露出比例是另一个轴，而且是可设的**（`[companion] capsule_reveal` = 10 / 50 / 100，默认 50）。它不动窗宽、不裁图：窗宽始终是整帧，`boundsFor()` 的 `visibleFraction` 只把窗口整体往屏幕外推，露在屏幕上的部分就是这一档。所以"宽度是整张画面大小、露出是局部露多少"这两件事在代码里也确实是两个参数。grip 没有立绘可露，`collapsedReveal()` 直接返回 1（整窗在屏内），设置页也把这一项隐藏。
+
+`[companion] capsule_width` 已删除，旧文件里的同名行按未知键忽略。**改 `PEEK_HEIGHT` / `PEEK_TILT_DEGREES` 必须同步改页面里的 `:height` 和 `rotate()`**，否则斜着的立绘会缺角。
+
+**peek 没有壳**：旧胶囊那圈 pill 边框 + 半透明底，正是"把立绘塞进相框"的违和来源，已整体删除（`border: 0`、无 `::before`）。现在只有一颗被裁到头部、斜靠在屏幕边上的头：240px 的图塞进 120px 窗口（`align-items: flex-start` + `margin-top: -8px`），外层容器绕顶部中心 `rotate(±12deg)`，**贴右向左倾、贴左向右倾**。旋转和呼吸分属两层元素——`transform` 只有一个，同一个元素不能既转又缩。
+
+**hover 提示改成底部徽标**：整面 scrim + 箭头会盖住脸，现在是 20px 圆徽标从底部淡入；grip 没有徽标（柄本身就是要拉的东西）。焦点环对 grip 落在柄上，不对着透明的 32×120 窗口画框。
+
+**设置里只有样式一项**：宽度选项已删（宽度是画出来的结果，不是偏好），选 grip 时也没有第二项要跟着变。
+
+## 2026-10-30 伙伴沉浸态（第三形态）与立绘舞台
+
+伙伴窗从两形态（胶囊 / 面板）扩到三形态：`capsule` / `panel` / `immersive`。**`mode` 是权威，`expanded` 降级为派生字段**（`mode !== 'capsule'`），`snapshot()` 同时给两者——旧调用方读 `expanded` 仍然自洽，新代码读 `mode`。`setExpanded(true)` 在已展开时不做事，所以“从沉浸态再点一次展开”不会把列降回面板。
+
+**沉浸是布局，不是尺寸**：窗口只有胶囊、面板两个大小，`immersive` 共用面板的 rect（`currentBounds()` 只有两支），因为产品要求明确——**进入沉浸不许把窗口撑大**。`mode` 仍三态，几何只有两态。
+
+**沉浸是面板里的独立分支，不是修饰类**：`.companion-call` = 立绘 → 字幕（最近两条，前一条淡出）→ 底部唯一输入框；伙伴/会话 picker、邀请、停靠按钮在这个形态里都不渲染。消息列表用 `v-show` 留在 DOM 里但不可见，所以切回面板不重新拉取，草稿和已加载消息都在；`watch(mode)` 在回面板时补一次 `scrollToBottom`——隐藏元素没有 scrollTop 可留。
+
+**Esc 是分层退出，不是一键关闭**：`immersive → panel → capsule`。从沉浸态按 Esc 只退一层，因为“我打开了更大的视图”和“我要收起这个应用”是两件事，合成一步会让用户丢掉刚放大看到的上下文。
+
+**三形态共用同一个 `<section>`**：`companion-panel` 同时承载 panel 与 immersive，切换时消息列表的 DOM 不重建。立绘也是两个形态各自一处（面板 88px 条 / 通话占满剩余高度），但用的是同一个 `CompanionStage`。
+
+**立绘是 CSS 背景逐帧，不是 canvas**：`components/pets/CompanionStage.vue` 把整张图集按 `height * rows` 缩放，每帧只改 `background-position`，帧序列直接调 `petFrameAt()`（`PET_STATES` 的唯一出处，行号/帧数/时长都不在这里重算）。**不能用 canvas**：伙伴窗是 `app://`、宠物图是 `tinadec-pet://`，画进 canvas 会 taint，`getImageData` 直接抛；`DesktopPetPage` 之所以能用 canvas 是因为它拿的是 data URL。`Image()` 只用来量一次图集尺寸（`parsePetSprite`），量不到就整块不渲染，而不是画半张错位的网格。
+
+`rAF` 每帧都跑、但**只在帧号变化时才写响应式状态**：六帧 1.1s 的行约 5 次/秒换帧，不判重就等于每秒 60 次重渲染同一张图。
+
+**立绘只在沉浸态出场**：面板 340×520 里塞 200px 立绘会把对话压到 290px，而 header 的 30px 头像已经表达了“谁在说话”。CSS 注释里写了这条，别再往面板里搬。
+
+**点头像 = 挥手，纯本地**：`companion-header-face` 是按钮，点击设 `impulse='waving'` 一个周期后归零，同时给头像本身一个 `companion-greet` 摆动。**不发送任何请求**——伙伴域没有 emote 端点，编一个假接口比一个“什么都没承诺”的视觉回应更差。`stageState = impulse ?? observedStageState`，所以沉浸态能看到真正的 waving 行，面板态看到头像摆动。
+
+**picker 是原生 `<select>` 加壳，不是自绘下拉**：`appearance: none` + 背景 SVG 箭头（`<select>` 不能有 `::after`，只能用 `background-image`，且必须 `background-color` 与 `background-image` 分开写，简写会把箭头冲掉），左侧加一个 24px 的伙伴头像 chip。**没有换成自绘下拉**：那要自己处理 teleport（340px 窗口会裁菜单）、键盘、外部点击与焦点恢复，收益只是“菜单里能看到头像”，而原生控件的无障碍是白拿的。
+
+**composer 改成自增高 `textarea`**：`rows=1`，`height` 由 `scrollHeight` 夹到 96px（四行）后滚动，`resize: none`（否则用户拖动会和 setHeight 打架）。**Enter 发送 / Shift+Enter 换行 / `event.isComposing` 时不提交**——最后一条是中文输入法选词时按 Enter 不能误发的唯一保证。
+
+**门禁**：`node --test` 定向 **62/62**（geometry 12，含 immersive 三例）；`vitest` CompanionPage **28/28**（新增沉浸 4 + greet 1）、i18nParity 8/8、settingsCssContract 10/10、GeneralSection 15/15；`vue-tsc --noEmit` **exit 0**。生产 `vite build` 在 `--max-old-space-size=8192` 下 **13m18s 通过**，产物里能查到 `.companion-capsule .companion-capsule-pet`、`companion-capsule-enter`、`companion-width-option`（**不加这个堆参数，本机会跑十几分钟毫无输出**——不是卡死，是 GC 在 0.6GB 可用物理内存下原地打转）。
+
+**未验证**：真实 Electron 里三种形态的观感（尤其沉浸态 520×1064 在 1080p 上的实际留白）、立绘逐帧是否真的动起来（happy-dom 不加载 `Image`，测试只断言舞台存在）、`tinadec-pet://` 位图在 200px 高时的清晰度、`prefers-reduced-motion` 下挥手/呼吸的实际表现。
+
+## 2026-10-30 伙伴胶囊：四档宽度 + 半露头
+
+胶囊不再是「三个 grip 点 + 实心圆角条」，而是一个宽可选的角色窗口：默认 **60×120**，`desktop.toml [companion] capsule_width` 取 **36 / 48 / 60 / 72** 之一。宽度是唯一变量，高度恒为 `CAPSULE_HEIGHT = 120`，所以换宽度不会让伙伴在垂直方向跳动——`capsuleBounds(workArea, side, centerY, width)` 只改 `width` 与 `x`。
+
+**为什么这四档，以及为什么「半露头」不是特技。** 宠物帧是 192×208；窗口高 120 意味着整帧缩放到 120 高、显示宽约 110.77px，窗口比它窄，左右就被自然裁掉——胶囊里永远是同一个人，只是屏边多藏一点或少藏一点。可见帧宽约 36→33% / 48→43% / 60→54% / 72→65%。**早期草案把这条算错过**（写「36 只剩一道鼻梁」）：那是拿窗口宽直接除原始帧宽、忘了缩放。按 110.77px 的实际显示宽，36 也有三分之一，只是刚好切在肩膀内侧。
+
+**胶囊里是宠物，不是按钮。** `CompanionPage.vue` 用 `AgentPetAvatar`（`pet-slug` 取选中伙伴的 `avatar`）按 120px 高铺满，超出胶囊宽度的部分由窗口裁掉。CSS 必须写 `.companion-capsule .companion-capsule-pet` 双类：两者都是 scoped，`AgentPetAvatar` 的 `width: var(--agent-avatar-size)` 在 import 时就注入了，单类选择器会被它盖掉、宠物缩成 20px。背板走 `::before` 半透明填充而不是 `backdrop-filter`——**透明窗口的合成层里没有桌面像素**，`backdrop-filter` 只会是一层空模糊。呼吸是 CSS `transform: scale`（4.2s，`transform-origin: bottom center`），不换帧：换帧要图集 rows，而 120px 高的窗口里逐帧收益接近零。
+
+**状态点只画能观测到的状态**：`thinking`（有 pending run）、`failed`（run 失败）、`paused`（会话暂停）、其余 `idle`。伙伴窗拿不到审批数据，所以**没有 `review` 状态**，也不为它编一个颜色。`is-*` 类名与 `PET_STATES` 无关，只服务胶囊这一处。
+
+**宽度是偏好，不是几何常量。** `companionGeometry.cjs` 导出 `CAPSULE_WIDTHS` / `DEFAULT_CAPSULE_WIDTH` / `CAPSULE_HEIGHT`，原来的 `CAPSULE` 对象**已删除**——留着它，下一个人就会以为宽度是常量（这正是本轮要拆掉的东西）。非四档的**整数**回落默认（一个显示偏好不该让应用拒绝启动），**非整数**抛错（与 `companion.enabled` 的类型纪律一致）；`saveCompanionCapsuleWidth` 在写盘前就拒绝非四档，所以 `desktop.toml` 与真实窗口永远不会说两个值。
+
+**写入链路只有一条**：设置页「常规 → 胶囊宽度」（四段 `.companion-width-option`，预览按真实相对宽度画）→ `tinadec:companion-capsule-width-save`（**主窗口 webContents + `isTrustedHostSender`**，与 `companion-mode-save` 同门）→ `saveCompanionCapsuleWidth` 归一化 → `companionWindow.setCapsuleWidth()`。**启动时必须在 `createCompanionWindow()` 之前 `setCapsuleWidth(storedCapsuleWidth)`**，否则首帧 bounds 用默认宽度、到 `ready-to-show` 之后才被修正，用户会看到一次跳变。`snapshot()` 现在带 `capsuleWidth`，渲染层不需要也不应该自己记它。
+
+**顺手修掉的既有缺口**：`appConfig.test.cjs` 的 `mainConfigFixture` 一直没有 `./companionApi.cjs` 的 stub，`main.cjs:97` 的 require 在 fixture 里直接抛，导致 6 个 main IPC 用例（Debug Studio 2、close-to-tray、companion mode、几何通道、host status）**长期是红的**，只是没人把「11 failed」当回归读。补上 `createCompanionApiBridge` 后同批全绿。
+
+**门禁**：`node --test` 定向 **59/59**（companionGeometry 9、appConfig 21 含新增 3、companionLayoutStore、companionApi、mainStartup、tray）；`vitest` CompanionPage **23/23**（新增 2：有宠物走 `AgentPetAvatar`、无宠物回落 glyph 且状态点为 idle）、GeneralSection **15/15**（新增 4：四档渲染与选中态、缺省 60、写回、失败回滚）、i18nParity 8/8、settingsCssContract 10/10；`vue-tsc --noEmit` **exit 0**。减少动效偏好下三处动画（入场 / 呼吸 / 状态脉冲）全部关闭。
+
+**未验证**：真实 Electron 里四个宽度的实际裁切观感与 `tinadec-pet://` 位图在胶囊里的清晰度、伙伴窗无 `avatar` 时 glyph 的实际尺寸。本条之后，`panel 340×520` 与胶囊的切换逻辑未动：本轮只改宽度与外观，**沉浸态（第三形态）还没做**。
+
 ## 2026-10-29 伙伴中心重做：共享快照、选中联动、伙伴域外壳
 
 伙伴中心不是「四张各读各的列表」，而是**左选人 / 中看事 / 右看这个人**的观察台。四张卡仍是 UIE 卡片（`companionList / companionFeed / companionGroups / companionConnections`，布局可拖拽可恢复），但**数据只有一个来源**：`src/lib/companionStore.ts` 单例单轮询（10s，`document.hidden` 停），一次 `Promise.allSettled` 取 `listCompanions / listActivity / listAllConversations / listConnectionsOverview`，按来源分别记失败；`loading` 只到首帧。旧实现四张卡各开定时器，其中三张各自 `listCompanions`、群聊卡再按伙伴数各拉一次会话，一轮 `4+N` 个请求且四栏可能不同帧——**这是本次重做的主因，不是样式**。`useCompanionCenter()` 做挂载计数：至少一张卡在，定时器才存在；`refreshCompanionCenter()` 单飞，四卡同时挂载也只读一轮。
@@ -78,13 +140,13 @@
 
 ## 2026-10-26 开发伙伴模式第一片：一个窗口两种形态（胶囊 / 面板）
 
-设置「常规 → 伙伴模式」开关（`desktop.toml [companion] enabled`）打开后，屏幕边缘出现 24×108 胶囊；点击、或在胶囊上向内拖动 ≥26px 展开成 340×520 面板。面板第一版**只是空壳**（标题、占位、收起按钮），不含聊天或快捷入口；Esc 收起；焦点离开所有 TinadecOffice 窗口时自动收起，但焦点落到主窗口/分离面板时保持打开。窗口跨应用始终置顶。
+设置「常规 → 伙伴模式」开关（`desktop.toml [companion] enabled`）打开后，屏幕边缘出现 24×108 胶囊（**尺寸已过期**：2026-10-30 起默认 60×120 且四档可选，见顶部条目）；点击、或在胶囊上向内拖动 ≥26px 展开成 340×520 面板。面板第一版**只是空壳**（标题、占位、收起按钮），不含聊天或快捷入口；Esc 收起；焦点离开所有 TinadecOffice 窗口时自动收起，但焦点落到主窗口/分离面板时保持打开。窗口跨应用始终置顶。
 
 **一个窗口，两种尺寸，不是两个窗口。** `companionWindow.cjs` 用 `setBounds` 在 `capsuleBounds` / `panelBounds` 之间切换，所以两形态不可能停在不同显示器上，收起只是一次 resize 而不是窗间交接。窗口参数为 `frame:false`、`transparent`、`hasShadow:false`、`thickFrame:false`、`resizable/maximizable/minimizable:false`、`skipTaskbar`、`alwaysOnTop`（macOS 用 `floating` 并 `setVisibleOnAllWorkspaces(..., {visibleOnFullScreen:true})`）、`show:false` + `ready-to-show` 里 `showInactive()`（启动与展开都不抢焦点）。`TINADEC_DISABLE_TRANSPARENCY=1` 时退化为不透明深色底，仅作兜底。**透明窗口没有系统阴影**：胶囊/面板的每条边都必须自己画，`CompanionPage.vue` 里 `:global(html/body/#app) { background: transparent !important }` 不是可选装饰——缺了它，24×108 的胶囊会变成一块不透明矩形。
 
 几何在 `companionGeometry.cjs`（纯函数、无 Electron import，`node --test` 直接跑）：两形态共用一个 `centerY`（相对显示器工作区）+ `displayId` 锚点，`EDGE_MARGIN=8`，窗口贴工作区左/右边缘，`panelSize` 在小屏上收窄。拖胶囊与拖面板都折算回同一个锚点，所以拖动后切换形态仍停在用户放的位置。显示器增删/分辨率变化时重投影，存的显示器不在了回主屏；位置写 `userData/companion-layout.json`。
 
-**形态权威在主进程。** 渲染层只读 `tinadec:companion-state` 并订阅 `tinadec:companion-state-changed`（`{open, expanded, side}`），**从不自行翻转 `expanded`**：失焦收起、显示器变化、设置开关都发生在渲染层看不见的地方，本地副本会和真实 bounds 打架。所有命令 `.then(applyState)`，失败只 `console.warn`，不假装成功。这一点由 `CompanionPage.test.ts` 的“命令只广播”替身钉住——改成本地 state 会让其中一个用例变红。
+**形态权威在主进程。** 渲染层只读 `tinadec:companion-state` 并订阅 `tinadec:companion-state-changed`（`{open, expanded, side, capsuleWidth}`），**从不自行翻转 `expanded`**：失焦收起、显示器变化、设置开关都发生在渲染层看不见的地方，本地副本会和真实 bounds 打架。所有命令 `.then(applyState)`，失败只 `console.warn`，不假装成功。这一点由 `CompanionPage.test.ts` 的“命令只广播”替身钉住——改成本地 state 会让其中一个用例变红。
 
 手势全在 `CompanionPage.vue`：胶囊上按左键拖动，4px 轴锁分垂直/水平；垂直走 `moveTo(windowTop + dy)`，水平累计**内向**行程（左侧向右、右侧向左）≥26px 展开。拖动结束后 350ms 内抑制 `click`——拖动收尾仍会发 click，那不是“打开”——而键盘激活 `event.detail === 0` 永远直通。面板 header 的拖动同样走 `moveTo`，停靠按钮 `@pointerdown.stop` 不触发拖动。**「从屏幕外起手向内滑动」在 Electron 里做不到**：指针事件只存在于窗口内，屏幕外没有窗口就没有事件；当前实现是“在胶囊上向内拖”，同一意图在平台能力内的可达形式。
 

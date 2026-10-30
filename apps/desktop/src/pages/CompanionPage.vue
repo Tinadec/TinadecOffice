@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, Send, UserPlus } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, Maximize2, Minimize2, Pause, PawPrint, Send, UserPlus } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ApiError } from '@/lib/apiError'
 import { formatClock } from '@/lib/conversation/format'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
+import CompanionStage from '@/components/pets/CompanionStage.vue'
+import { PET_STATES, type PetState } from '@/pets/petRuntime'
 import {
   companionBridge,
   type CompanionConversation,
@@ -20,8 +22,18 @@ import {
 const { t, locale } = useI18n()
 const state = ref<CompanionState | null>(null)
 const dragging = ref(false)
-const expanded = computed(() => state.value?.expanded === true)
+/**
+ * The shape is the main process's answer. `mode` is the source of truth; `expanded` is derived so
+ * the two-state language in the rest of this file (and in older snapshots) still reads correctly.
+ */
+const mode = computed<'capsule' | 'panel' | 'immersive'>(() => {
+  if (state.value?.mode) return state.value.mode
+  return state.value?.expanded === true ? 'panel' : 'capsule'
+})
+const expanded = computed(() => mode.value !== 'capsule')
 const side = computed<'left' | 'right'>(() => state.value?.side ?? 'right')
+/** Masked the same way `mode` is: the main process decides, the page draws. */
+const capsuleStyle = computed<'peek' | 'grip'>(() => state.value?.capsuleStyle ?? 'peek')
 
 const SWIPE_EXPAND_PX = 26
 const AXIS_LOCK_PX = 4
@@ -142,10 +154,37 @@ function endPanelDrag(event: PointerEvent): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Escape' || !expanded.value) return
+  if (event.key !== 'Escape' || mode.value === 'capsule') return
   event.preventDefault()
+  // Immersive is one step further in than the panel, so Escape walks back out the way the user
+  // came in instead of closing everything at once.
+  if (mode.value === 'immersive') {
+    setMode('panel')
+    return
+  }
   collapse()
 }
+
+/** Grow into the reading shape; the panel keeps its scroll position because it is the same DOM. */
+function enterImmersive(): void {
+  if (mode.value === 'immersive') return
+  setMode('immersive')
+}
+
+function exitImmersive(): void {
+  if (mode.value !== 'immersive') return
+  setMode('panel')
+}
+
+function setMode(next: 'capsule' | 'panel' | 'immersive'): void {
+  command(() => window.tinadec.companion.setMode(next), 'setMode')
+}
+
+// Coming back from the call shape remounts the scrollback's visibility; a hidden log has no
+// scrollTop to keep, so pin it to the newest line the way the user left it.
+watch(mode, (next, previous) => {
+  if (next === 'panel' && previous === 'immersive') scrollToBottom()
+})
 
 // ── Chat state ────────────────────────────────────────────────────────
 // The companion window is not a trusted host: every read/write goes through the main-process
@@ -197,7 +236,107 @@ const thinking = computed(() => trackedRunIds.value.some((id) => isPending(runs.
 const failures = computed(() => trackedRunIds.value
   .map((id) => runs.value[id])
   .filter((run): run is CompanionRun => run != null && run.status === 'failed'))
+/**
+ * The selected companion's pet. The capsule crops it to the head (a 240px figure inside a 120px
+ * window, leaned out of the edge), and the panel header shows the same pet as a small face, so
+ * both shapes agree about who is talking.
+ */
+const companionPetSlug = computed(() => activeCompanion.value?.avatar ?? '')
+/**
+ * Only states the companion window can actually observe: a pending run, a failed run, and the
+ * conversation's own pause flag. There is no approval surface here, so the capsule never claims
+ * to be waiting for a decision it cannot show.
+ */
+const capsuleMood = computed<'idle' | 'thinking' | 'failed' | 'paused'>(() => {
+  if (failures.value.length > 0) return 'failed'
+  if (thinking.value) return 'thinking'
+  if (paused.value) return 'paused'
+  return 'idle'
+})
+/**
+ * The atlas row for the same fact. `paused` deliberately maps to `idle`: the atlas has no sleeping
+ * row, and pretending a paused companion is "waiting" would read as work in progress.
+ */
+const observedStageState = computed<PetState>(() => {
+  if (capsuleMood.value === 'thinking') return 'waiting'
+  if (capsuleMood.value === 'failed') return 'failed'
+  return 'idle'
+})
+
+/**
+ * A local interaction, not a message: clicking the companion's face makes it wave for one cycle.
+ * Nothing is sent anywhere — the companion domain has no emote endpoint, and inventing a fake one
+ * would be worse than a visual acknowledgement that claims nothing.
+ */
+const impulse = ref<PetState | null>(null)
+const greeting = ref(false)
+/** Caption for the head pat. It floats over the conversation and is never a message. */
+const patNote = ref('')
+let impulseTimer: ReturnType<typeof setTimeout> | undefined
+
+const stageState = computed<PetState>(() => impulse.value ?? observedStageState.value)
+
+/**
+ * Play one atlas row for exactly as long as that row lasts, then hand the stage back to whatever
+ * the run is actually doing. One shared timer: two gestures in a row must not fight over the stage.
+ */
+function playImpulse(next: PetState, note = ''): void {
+  impulse.value = next
+  patNote.value = note
+  greeting.value = next === 'waving'
+  clearTimeout(impulseTimer)
+  impulseTimer = setTimeout(() => {
+    impulse.value = null
+    greeting.value = false
+    patNote.value = ''
+  }, PET_STATES[next].durationMs)
+}
+
+function greet(): void {
+  playImpulse('waving')
+}
+
+/**
+ * Double-clicking the panel's blank space pats the companion.
+ *
+ * Local for the same reason greeting is: the companion domain has no emote endpoint, and a
+ * fabricated line in the transcript would be a lie about who said it. A double-click that lands on
+ * text, a control or the invite sheet is selection, not affection, so it is ignored.
+ */
+function pat(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.companion-msg, button, a, input, textarea, select, .companion-invite')) return
+  playImpulse('jumping', t('companion.pat'))
+}
+
+/**
+ * How tall the standing figure is in the call shape.
+ *
+ * The window does not grow for the call, so this is a share of the panel: 60% leaves room for the
+ * subtitles and the composer underneath without crowding them, and the 180/500 rails keep the head
+ * in frame on a short display and the sprite narrower than the column (width = height * 192/208).
+ */
+const viewportHeight = ref(typeof window === 'undefined' ? 0 : window.innerHeight)
+const callStageHeight = computed(() => {
+  const target = Math.round(viewportHeight.value * 0.6)
+  return Math.min(500, Math.max(180, target))
+})
+
+function onViewportResize(): void {
+  viewportHeight.value = window.innerHeight
+}
+
+/** The last exchange, oldest first: a call shows what was just said, not the backlog. */
+const callLines = computed(() => messages.value
+  .filter((message) => message.author_kind !== 'system')
+  .slice(-2))
+
 const headerSubtitle = computed(() => {
+  // What the companion is doing outranks what the conversation is called: a stall or a running
+  // turn is the thing worth a subtitle, and the picker row below already names the conversation.
+  if (failures.value.length > 0) return t('companion.stateFailed')
+  if (thinking.value) return t('companion.stateThinking')
+  if (paused.value) return t('companion.statePaused')
   const conversation = activeConversation.value
   if (!conversation) return activeCompanion.value?.tagline ?? t('companion.subtitle')
   if (conversation.kind === 'group') {
@@ -443,6 +582,26 @@ function idempotencyKey(): string | undefined {
   }
 }
 
+const composerRef = ref<HTMLTextAreaElement | null>(null)
+/** Four lines, then the box scrolls: a long instruction should be readable without eating the chat. */
+const COMPOSER_MAX_HEIGHT = 96
+
+function resizeComposer(): void {
+  const element = composerRef.value
+  if (!element) return
+  element.style.height = 'auto'
+  element.style.height = `${Math.min(element.scrollHeight, COMPOSER_MAX_HEIGHT)}px`
+}
+
+watch(draft, () => { void nextTick(resizeComposer) })
+
+/** Enter sends, Shift+Enter is a newline, and an IME composition never submits by accident. */
+function onComposerKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  event.preventDefault()
+  void send()
+}
+
 async function send(): Promise<void> {
   const body = draft.value.trim()
   const conversation = activeConversation.value
@@ -464,6 +623,21 @@ async function send(): Promise<void> {
   } finally {
     sending.value = false
   }
+}
+
+/**
+ * One key, two meanings: while a turn is in flight it pauses the conversation, otherwise it sends.
+ *
+ * It says "pause" and not "stop" on purpose — Core has no cancel endpoint for a companion run, so
+ * a stop button would promise an interruption this window cannot deliver. Pausing stops the
+ * companion from speaking up on its own; the reply already being written still lands.
+ */
+function onComposerAction(): void {
+  if (thinking.value) {
+    void togglePause()
+    return
+  }
+  void send()
 }
 
 async function refreshRuns(): Promise<void> {
@@ -599,6 +773,7 @@ async function confirmInvite(): Promise<void> {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', onViewportResize)
   document.addEventListener('visibilitychange', onVisibilityChange)
   // Subscribe before reading: a state change that lands during the read must win over the
   // snapshot, so the initial value is only applied while nothing has arrived yet.
@@ -614,7 +789,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', onViewportResize)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  clearTimeout(impulseTimer)
   stopPolling()
   disposeState?.()
   disposeState = undefined
@@ -632,8 +809,9 @@ onBeforeUnmount(() => {
     }"
   >
     <button
-      v-if="!expanded"
+      v-if="mode === 'capsule'"
       class="companion-capsule"
+      :class="[`companion-capsule--${capsuleStyle}`, `companion-capsule--${side}`]"
       type="button"
       :title="t('companion.expand')"
       :aria-label="t('companion.expand')"
@@ -644,11 +822,24 @@ onBeforeUnmount(() => {
       @pointercancel="endCapsuleDrag"
       @click="onCapsuleClick"
     >
-      <span class="companion-grip" aria-hidden="true">
-        <span class="companion-grip-dot" />
-        <span class="companion-grip-dot" />
-        <span class="companion-grip-dot" />
+      <span v-if="capsuleStyle === 'peek'" class="companion-capsule-stage" aria-hidden="true">
+        <span class="companion-capsule-tilt">
+          <!-- 92px and 22° are PEEK_HEIGHT / PEEK_TILT_DEGREES in companionGeometry.cjs: the window
+               is sized so this frame fits while leaning, so the two numbers move together. -->
+          <CompanionStage
+            v-if="companionPetSlug"
+            class="companion-peek-pet"
+            :pet-slug="companionPetSlug"
+            :state="stageState"
+            :height="92"
+            :alt="activeCompanion?.name ?? ''"
+          />
+          <span v-else class="companion-capsule-glyph"><PawPrint :size="22" /></span>
+        </span>
       </span>
+      <!-- The grip is only a handle: no pet, nothing to read, just something to pull. -->
+      <span v-else class="companion-capsule-grip" aria-hidden="true"><span /></span>
+      <span class="companion-capsule-status" :class="`is-${capsuleMood}`" />
       <span class="companion-capsule-chevron" aria-hidden="true">
         <ChevronLeft v-if="side === 'right'" :size="15" />
         <ChevronRight v-else :size="15" />
@@ -658,6 +849,7 @@ onBeforeUnmount(() => {
     <section
       v-else
       class="companion-panel"
+      :class="`companion-panel--${mode}`"
       role="region"
       :aria-label="t('companion.title')"
       :title="t('companion.dragHint')"
@@ -667,12 +859,27 @@ onBeforeUnmount(() => {
       @pointercancel="endPanelDrag"
     >
       <header class="companion-header">
+        <button
+          v-if="companionPetSlug"
+          class="companion-header-face"
+          :class="{ 'is-greeting': greeting }"
+          type="button"
+          :title="t('companion.greet')"
+          :aria-label="t('companion.greet')"
+          data-testid="companion-greet"
+          @pointerdown.stop
+          @click="greet"
+        >
+          <AgentPetAvatar :pet-slug="companionPetSlug" :alt="headerTitle" :size="30" />
+        </button>
+        <span v-else class="companion-header-glyph" aria-hidden="true"><PawPrint :size="16" /></span>
         <div class="companion-heading">
           <p class="companion-title">{{ headerTitle }}</p>
           <p class="companion-subtitle">{{ headerSubtitle }}</p>
         </div>
         <div class="companion-actions">
           <button
+            v-if="mode !== 'immersive'"
             class="companion-action"
             type="button"
             :title="t('companion.chat.invite')"
@@ -708,7 +915,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <button
-            v-if="side === 'right'"
+            v-if="mode !== 'immersive' && side === 'right'"
             class="companion-action"
             type="button"
             :title="t('companion.dockLeft')"
@@ -719,7 +926,7 @@ onBeforeUnmount(() => {
             <ChevronsLeft :size="15" />
           </button>
           <button
-            v-else
+            v-else-if="mode !== 'immersive'"
             class="companion-action"
             type="button"
             :title="t('companion.dockRight')"
@@ -728,6 +935,19 @@ onBeforeUnmount(() => {
             @click="dock('right')"
           >
             <ChevronsRight :size="15" />
+          </button>
+          <button
+            class="companion-action"
+            type="button"
+            :title="mode === 'immersive' ? t('companion.exitImmersive') : t('companion.immersive')"
+            :aria-label="mode === 'immersive' ? t('companion.exitImmersive') : t('companion.immersive')"
+            :aria-pressed="mode === 'immersive'"
+            data-testid="companion-immersive-toggle"
+            @pointerdown.stop
+            @click="mode === 'immersive' ? exitImmersive() : enterImmersive()"
+          >
+            <Minimize2 v-if="mode === 'immersive'" :size="15" />
+            <Maximize2 v-else :size="15" />
           </button>
           <button
             class="companion-action"
@@ -743,7 +963,89 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <div v-if="companions.length" class="companion-pickers" @pointerdown.stop>
+      <!-- The panel keeps a strip above the conversation, and the strip is itself the door:
+           clicking the companion is what "放大" should mean, not hunting for a toolbar button. -->
+      <button
+        v-if="mode === 'panel' && companionPetSlug"
+        class="companion-stage-button"
+        type="button"
+        :title="t('companion.immersive')"
+        :aria-label="t('companion.immersive')"
+        data-testid="companion-stage-expand"
+        @pointerdown.stop
+        @click="enterImmersive"
+      >
+        <CompanionStage
+          class="companion-panel-stage"
+          :pet-slug="companionPetSlug"
+          :state="stageState"
+          :height="88"
+          :alt="headerTitle"
+        />
+      </button>
+
+      <!-- Immersive is a call, not a scrollback: the standing figure, the last exchange as
+           subtitles, one input. The log below stays mounted but hidden, so stepping back into the
+           panel is instant and keeps the conversation it already had. -->
+      <div v-if="mode === 'immersive'" class="companion-call" @dblclick="pat">
+        <CompanionStage
+          v-if="companionPetSlug"
+          class="companion-call-stage"
+          :pet-slug="companionPetSlug"
+          :state="stageState"
+          :height="callStageHeight"
+          :alt="headerTitle"
+        />
+        <span v-else class="companion-call-glyph" aria-hidden="true"><PawPrint :size="30" /></span>
+
+        <div class="companion-call-subtitles" aria-live="polite">
+          <p v-if="booting || chatLoading" class="companion-call-note">{{ t('companion.chat.loading') }}</p>
+          <p v-else-if="loadError" class="companion-call-note companion-call-note--error">
+            {{ loadError }}
+            <button class="companion-retry" type="button" @click="boot">{{ t('companion.chat.retry') }}</button>
+          </p>
+          <p v-else-if="companions.length === 0" class="companion-call-note">
+            {{ t('companion.chat.noCompanionsBody') }}
+          </p>
+          <template v-else>
+            <p v-if="callLines.length === 0" class="companion-call-note">{{ t('companion.chat.noMessages') }}</p>
+            <p
+              v-for="(line, index) in callLines"
+              :key="line.id"
+              class="companion-call-line"
+              :class="{ 'is-past': index < callLines.length - 1 }"
+            >
+              <span class="companion-call-author">{{ authorLabel(line) }}</span>
+              <span class="companion-call-body">{{ line.body }}</span>
+            </p>
+            <p v-if="paused" class="companion-call-status">{{ t('companion.chat.pausedBadge') }}</p>
+            <p v-if="thinking" class="companion-call-status">
+              <span class="companion-run-dots" aria-hidden="true"><span /><span /><span /></span>
+              {{ t('companion.chat.thinking') }}
+            </p>
+            <p
+              v-for="failure in failures"
+              :key="failure.id"
+              class="companion-call-status companion-call-status--failed"
+            >
+              {{ runFailureText(failure) }}
+            </p>
+            <p v-if="chatError" class="companion-call-status companion-call-status--failed">
+              {{ chatError }}
+              <button class="companion-retry" type="button" @click="retryChat">{{ t('companion.chat.retry') }}</button>
+            </p>
+            <p v-if="sendError" class="companion-call-status companion-call-status--failed">{{ sendError }}</p>
+          </template>
+        </div>
+      </div>
+
+      <!-- The pat caption belongs to whatever shape is open, so it lives on the panel, not the log. -->
+      <p v-if="patNote" class="companion-pat-note" aria-live="polite">{{ patNote }}</p>
+
+      <div v-if="companions.length && mode !== 'immersive'" class="companion-pickers" @pointerdown.stop>
+        <span v-if="companionPetSlug" class="companion-picker-face" aria-hidden="true">
+          <AgentPetAvatar :pet-slug="companionPetSlug" :size="22" :alt="headerTitle" />
+        </span>
         <select
           class="companion-select companion-companion-select"
           :value="selectedCompanionId ?? ''"
@@ -765,7 +1067,7 @@ onBeforeUnmount(() => {
         </select>
       </div>
 
-      <div class="companion-chat" @pointerdown.stop>
+      <div v-show="mode !== 'immersive'" class="companion-chat" @pointerdown.stop @dblclick="pat">
         <p v-if="booting" class="companion-chat-state">{{ t('companion.chat.loading') }}</p>
         <div v-else-if="loadError" class="companion-chat-state companion-chat-state--error">
           <p class="companion-chat-state-body">{{ loadError }}</p>
@@ -808,7 +1110,8 @@ onBeforeUnmount(() => {
 
           <p v-if="paused" class="companion-run companion-run--paused">{{ t('companion.chat.pausedBadge') }}</p>
           <p v-if="thinking" class="companion-run companion-run--thinking">
-            <span class="companion-run-dot" aria-hidden="true" />{{ t('companion.chat.thinking') }}
+            <span class="companion-run-dots" aria-hidden="true"><span /><span /><span /></span>
+            {{ t('companion.chat.thinking') }}
           </p>
           <p v-for="failure in failures" :key="failure.id" class="companion-run companion-run--failed">
             {{ runFailureText(failure) }}
@@ -865,22 +1168,27 @@ onBeforeUnmount(() => {
         @submit.prevent="send"
         @pointerdown.stop
       >
-        <input
+        <textarea
+          ref="composerRef"
           v-model="draft"
           class="companion-input"
-          type="text"
+          rows="1"
           :placeholder="t('companion.chat.placeholder')"
           :aria-label="t('companion.chat.placeholder')"
           :disabled="!activeConversation || sending || chatLoading"
+          @keydown="onComposerKeydown"
         />
         <button
           class="companion-send"
-          type="submit"
-          :title="t('companion.chat.send')"
-          :aria-label="t('companion.chat.send')"
-          :disabled="!canSend"
+          :class="{ 'is-pause': thinking }"
+          type="button"
+          :title="thinking ? t('companion.chat.pauseHint') : t('companion.chat.send')"
+          :aria-label="thinking ? t('companion.chat.pauseAction') : t('companion.chat.send')"
+          :disabled="thinking ? pauseBusy || !activeConversation : !canSend"
+          @click="onComposerAction"
         >
-          <Send :size="15" />
+          <Pause v-if="thinking" :size="14" />
+          <Send v-else :size="15" />
         </button>
       </form>
     </section>
@@ -914,70 +1222,219 @@ onBeforeUnmount(() => {
 
 .companion-capsule {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  align-items: center;
-  justify-content: center;
+  display: block;
   width: 100%;
   height: 100%;
   padding: 0;
-  border: 1px solid var(--border-default);
-  border-radius: 999px;
+  overflow: hidden;
+  border: 0;
   color: var(--text-muted);
-  background: var(--bg-secondary);
+  background: transparent;
   cursor: grab;
   touch-action: none;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  /* The capsule slides in from behind the screen edge, so collapsing reads as the companion
+     ducking back rather than the button simply reappearing. */
+  animation: companion-capsule-enter 260ms cubic-bezier(0.2, 0, 0, 1) both;
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.companion-capsule:hover {
-  border-color: var(--accent-primary);
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
+/* No shell: a pill behind the pet is what made the old capsule read as a picture in a frame. The
+   window itself is transparent, so both styles stand on the desktop on their own. */
+
+/* Hovering leans the capsule into the screen by 4px: the character notices you before you click.
+   This has to be `transform` while the entrance animation owns `translate` — a `both`-filled
+   animation beats any normal declaration on the property it animates, forever. */
+.companion-capsule:hover,
+.companion-capsule:focus-visible {
+  transform: translateX(var(--capsule-nudge, 0));
 }
 
 .companion-capsule:focus-visible {
   outline: 2px solid var(--accent-primary);
-  outline-offset: -3px;
+  outline-offset: -2px;
 }
 
 .companion--dragging .companion-capsule {
   cursor: grabbing;
 }
 
-.companion-grip {
+/* `--capsule-enter-x` slides in from behind the screen edge; `--capsule-nudge` is the hover lean,
+   inward on whichever side the companion is docked. */
+.companion--side-right .companion-capsule { --capsule-enter-x: 16px; --capsule-nudge: -4px; }
+.companion--side-left .companion-capsule { --capsule-enter-x: -16px; --capsule-nudge: 4px; }
+
+@keyframes companion-capsule-enter {
+  from { opacity: 0; translate: var(--capsule-enter-x, 0) 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* The peek: the whole pet, leaned out of the screen edge. The window is sized from this frame
+   (companionGeometry.cjs's PEEK_HEIGHT / PEEK_WIDTH), so the tilt is only a rotation — nothing is
+   cropped by it. Clip and tilt are two elements because the breathing animation owns `transform`:
+   one element cannot rotate and scale from the same property. */
+.companion-capsule-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.companion-capsule-tilt {
+  position: absolute;
+  inset: 0;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  transition: opacity 120ms ease;
+  align-items: center;
+  justify-content: center;
+  transform-origin: 50% 50%;
 }
 
-.companion-grip-dot {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
+/* Leaning inward, over the screen: a right-docked pet tilts left, a left-docked one tilts right. */
+.companion-capsule--right .companion-capsule-tilt { transform: rotate(-22deg); }
+.companion-capsule--left .companion-capsule-tilt { transform: rotate(22deg); }
+
+.companion-peek-pet {
+  flex: none;
+  animation: companion-breathe 4.2s ease-in-out infinite;
+  transform-origin: 50% 50%;
 }
 
-.companion-capsule-chevron {
+/* A grip has no character to show: the window is transparent apart from one narrow handle. */
+.companion-capsule-grip {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  opacity: 0;
-  color: var(--accent-primary);
-  transition: opacity 120ms ease;
 }
 
-.companion-capsule:hover .companion-grip,
-.companion-capsule:focus-visible .companion-grip {
-  opacity: 0;
+.companion-capsule-grip > span {
+  width: 10px;
+  height: 84px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  box-shadow: 0 0 0 1px var(--border-default), 0 2px 8px rgb(0 0 0 / 18%);
+  transition: box-shadow 140ms ease, background-color 140ms ease;
 }
+
+.companion-capsule--grip:hover .companion-capsule-grip > span {
+  background: var(--bg-tertiary);
+  box-shadow: 0 0 0 1px var(--accent-primary), 0 2px 10px rgb(0 0 0 / 24%);
+}
+
+/* The handle is the entire affordance; a scrim and an arrow over it would only add noise. */
+.companion-capsule--grip .companion-capsule-chevron {
+  display: none;
+}
+
+/* Focus has to land on the handle, not on the transparent window around it. */
+.companion-capsule--grip:focus-visible {
+  outline: none;
+}
+
+.companion-capsule--grip:focus-visible .companion-capsule-grip > span {
+  box-shadow: 0 0 0 1px var(--accent-primary), 0 0 0 3px var(--accent-soft);
+}
+
+/* On a grip the pet's mood has nowhere else to show, so the dot rides on top of the handle. */
+.companion-capsule--grip .companion-capsule-status {
+  top: 20px;
+  left: 50%;
+  margin-top: 0;
+  transform: translateX(-50%);
+}
+
+.companion-capsule-glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+/* The status dot sits on the inward edge — the screen border hides the outward one. */
+.companion-capsule-status {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
+.companion--side-right .companion-capsule-status { left: 7px; }
+.companion--side-left .companion-capsule-status { right: 7px; }
+
+.companion-capsule-status.is-thinking {
+  background: var(--accent-primary);
+  animation: companion-status-pulse 1.4s ease-in-out infinite;
+}
+
+.companion-capsule-status.is-failed { background: var(--accent-danger); }
+.companion-capsule-status.is-paused { background: var(--accent-warning); opacity: 0.75; }
+
+/* At rest the capsule shows the companion, not a control. On hover a small badge appears on the
+   side that is actually on screen — the outer half of a peeking window hangs off the display. */
+.companion-capsule-chevron {
+  position: absolute;
+  bottom: 10px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  opacity: 0;
+  color: var(--accent-primary);
+  background: var(--bg-secondary);
+  box-shadow: 0 0 0 1px var(--border-default), 0 2px 6px rgb(0 0 0 / 26%);
+  transition: opacity 140ms ease;
+}
+
+.companion-capsule--right .companion-capsule-chevron { left: 10px; }
+.companion-capsule--left .companion-capsule-chevron { right: 10px; }
 
 .companion-capsule:hover .companion-capsule-chevron,
 .companion-capsule:focus-visible .companion-capsule-chevron {
   opacity: 1;
+}
+
+@keyframes companion-breathe {
+  0%, 100% { transform: scale(1) translateY(0); }
+  50% { transform: scale(1.028) translateY(-1px); }
+}
+
+@keyframes companion-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.78); }
+}
+
+/* Breathing, sliding in and a pulsing dot are decoration, not feedback: with reduced motion the
+   capsule is simply there, and a thinking run still reads from the dot's colour. */
+@media (prefers-reduced-motion: reduce) {
+  .companion-capsule,
+  .companion-peek-pet,
+  .companion-capsule-status.is-thinking {
+    animation: none;
+  }
+
+  /* The lean, the typing wave and the pat caption are all decoration; the state itself still reads
+     from the dot's colour, the row's text and the bubble. */
+  .companion-capsule {
+    transition: none;
+  }
+
+  .companion-capsule:hover,
+  .companion-capsule:focus-visible {
+    transform: none;
+  }
+
+  .companion-run-dots > span,
+  .companion-pat-note {
+    animation: none;
+  }
+
+  .companion-run-dots > span {
+    opacity: 0.7;
+  }
 }
 
 /* ---- Expanded panel ---- */
@@ -1020,6 +1477,51 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 10px 10px 9px 12px;
   border-bottom: 1px solid var(--border-muted);
+}
+
+/* The face doubles as the one interaction this window owns: a click makes it wave. */
+.companion-header-face {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+}
+
+.companion-header-face:hover {
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+.companion-header-face:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.companion-header-face.is-greeting {
+  animation: companion-greet 420ms cubic-bezier(0.3, 0.7, 0.4, 1);
+}
+
+@keyframes companion-greet {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  35% { transform: translateY(-4px) rotate(-6deg); }
+  70% { transform: translateY(-1px) rotate(4deg); }
+}
+
+.companion-header-glyph {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
 }
 
 .companion-heading {
@@ -1132,14 +1634,30 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border-muted);
 }
 
+.companion-picker-face {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+}
+
 .companion-select {
   flex: 1;
   min-width: 0;
-  padding: 4px 6px;
+  padding: 4px 20px 4px 8px;
   border: 1px solid var(--border-default);
   border-radius: 6px;
   color: var(--text-primary);
-  background: var(--bg-tertiary);
+  /* `background-color` + a separate `background-image`: the shorthand would drop the chevron. */
+  background-color: var(--bg-tertiary);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888888' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  appearance: none;
   font-size: 11.5px;
 }
 
@@ -1210,6 +1728,29 @@ onBeforeUnmount(() => {
   margin: auto;
   color: var(--text-muted);
   font-size: 11.5px;
+}
+
+/* The pat reaction floats over the conversation instead of entering it: it acknowledges a gesture,
+   it is not something either side said, so it must never look like a message. It sits on the panel
+   so it shows in both open shapes, just above the composer. */
+.companion-pat-note {
+  position: absolute;
+  right: 14px;
+  bottom: 58px;
+  z-index: 2;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-size: 11px;
+  pointer-events: none;
+  animation: companion-pat-in 200ms ease-out both;
+}
+
+@keyframes companion-pat-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .companion-msg {
@@ -1300,6 +1841,131 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+/* The panel's strip: 88px is the most the 340x520 panel can give before the conversation drops
+   under ~280px, which is still four or five bubbles. */
+.companion-panel-stage {
+  margin: 2px 0 2px;
+  background: radial-gradient(ellipse at 50% 100%, var(--accent-soft) 0%, transparent 72%);
+}
+
+/* ---- Immersive call ---- */
+
+/* A call screen, not a chat window: the figure takes the height, the last exchange sits under it
+   as subtitles, and the composer below is the only control. Nothing here scrolls. */
+.companion-call {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 0;
+  padding: 6px 18px 12px;
+  overflow: hidden;
+  cursor: default;
+}
+
+/* The figure is a control: one click on the pet opens the call. The toolbar button stays for the
+   people who never think to click an illustration. */
+.companion-stage-button {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.companion-stage-button:hover .companion-panel-stage {
+  filter: brightness(1.06);
+}
+
+.companion-stage-button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.companion-call-glyph {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
+.companion-call-subtitles {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 5px;
+  align-items: center;
+  width: 100%;
+  /* Reserved so the composer does not jump when the first line lands. */
+  min-height: 46px;
+  text-align: center;
+}
+
+.companion-call-line {
+  margin: 0;
+  max-width: 100%;
+}
+
+.companion-call-author {
+  display: block;
+  margin-bottom: 1px;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.companion-call-body {
+  display: block;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* The line before it stays on screen, dimmed and smaller: enough context to follow the exchange
+   without turning the call back into a scrollback. */
+.companion-call-line.is-past {
+  opacity: 0.42;
+}
+
+.companion-call-line.is-past .companion-call-body {
+  font-size: 12.5px;
+}
+
+.companion-call-status {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.companion-call-status--failed {
+  color: #e29393;
+}
+
+.companion-call-note {
+  margin: 0;
+  max-width: 320px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.companion-call-note--error {
+  color: #e29393;
+}
+
 .companion-run {
   display: flex;
   flex-shrink: 0;
@@ -1324,23 +1990,29 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
-.companion-run-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-primary);
-  animation: companion-pulse 1.1s ease-in-out infinite;
+/* Three dots in a travelling wave: one pulsing dot reads as a status light, three read as someone
+   typing. Same 1.1s cycle as before, so nothing else about the row changes. */
+.companion-run-dots {
+  display: inline-flex;
+  flex: none;
+  gap: 3px;
+  align-items: center;
 }
 
-@keyframes companion-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
+.companion-run-dots > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: companion-typing 1.1s ease-in-out infinite;
+}
 
-  50% {
-    opacity: 1;
-  }
+.companion-run-dots > span:nth-child(2) { animation-delay: 0.16s; }
+.companion-run-dots > span:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes companion-typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
 }
 
 .companion-chat-error {
@@ -1380,13 +2052,19 @@ onBeforeUnmount(() => {
 .companion-input {
   flex: 1;
   min-width: 0;
-  height: 28px;
-  padding: 0 9px;
+  min-height: 28px;
+  max-height: 96px;
+  padding: 5px 9px;
   border: 1px solid var(--border-default);
   border-radius: 7px;
   color: var(--text-primary);
   background: var(--bg-tertiary);
+  font-family: inherit;
   font-size: 12px;
+  line-height: 1.45;
+  /* The height is set from `scrollHeight`; letting the user drag it would fight that. */
+  resize: none;
+  overflow-y: auto;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -1421,6 +2099,12 @@ onBeforeUnmount(() => {
 .companion-send:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* The same key while a turn is running: a quieter fill, because pausing is not the primary act. */
+.companion-send.is-pause {
+  color: var(--text-secondary);
+  background: transparent;
 }
 
 /* ---- Invite dialog (inline, never a second window) ---- */

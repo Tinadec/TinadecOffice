@@ -50,6 +50,8 @@ interface DesktopAppConfig {
   managed: boolean
   close_to_tray?: boolean
   companion_mode_enabled?: boolean
+  companion_capsule_style?: 'peek' | 'grip'
+  companion_capsule_reveal?: number
 }
 
 const appConfig = ref<DesktopAppConfig>({ gateway_url: api.gatewayUrl, source: 'default', managed: false })
@@ -66,11 +68,40 @@ const closeToTrayBusy = ref(false)
 const companionMode = ref(false)
 const companionModeBusy = ref(false)
 
+/**
+ * desktop.toml `[companion] capsule_style`: whether the collapsed capsule shows the pet's head
+ * peeking out of the screen edge, or a bare handle. There is no width setting: each style has the
+ * width its drawing needs — one head for the peek, a sliver for the grip.
+ */
+const CAPSULE_STYLE_OPTIONS = ['peek', 'grip'] as const
+type CapsuleStyle = (typeof CAPSULE_STYLE_OPTIONS)[number]
+const capsuleStyle = ref<CapsuleStyle>('peek')
+const capsuleStyleBusy = ref(false)
+
+/**
+ * desktop.toml `[companion] capsule_reveal`: how much of the peeking pet stays on screen.
+ *
+ * Not the same axis as a width would be: the pet is drawn at one size either way, and this only
+ * parks the window further out (10% — a sliver of shoulder) or further in (100% — the whole pet).
+ */
+const CAPSULE_REVEAL_OPTIONS = [10, 50, 100] as const
+const capsuleReveal = ref<number>(50)
+const capsuleRevealBusy = ref(false)
+
+/** Explicit keys rather than a template string, so every label is a literal a scan can find. */
+function capsuleStyleLabel(style: CapsuleStyle): string {
+  return style === 'peek'
+    ? t('settings.companionCapsuleStylePeek')
+    : t('settings.companionCapsuleStyleGrip')
+}
+
 async function loadAppConfig(): Promise<void> {
   appConfig.value = await window.tinadec.getAppConfig()
   gatewayUrlDraft.value = appConfig.value.gateway_url
   closeToTray.value = appConfig.value.close_to_tray === true
   companionMode.value = appConfig.value.companion_mode_enabled === true
+  capsuleStyle.value = appConfig.value.companion_capsule_style ?? 'peek'
+  capsuleReveal.value = appConfig.value.companion_capsule_reveal ?? 50
 }
 
 /**
@@ -108,6 +139,41 @@ async function setCompanionMode(enabled: boolean): Promise<void> {
     notify.error(error, { title: t('settings.companionModeSaveFailed') })
   } finally {
     companionModeBusy.value = false
+  }
+}
+
+/**
+ * The stored style and the live capsule are updated by the main process in one call, so a write
+ * that fails never leaves this section showing a style the capsule is not drawing.
+ */
+async function setCapsuleStyle(style: CapsuleStyle): Promise<void> {
+  if (capsuleStyleBusy.value || capsuleStyle.value === style) return
+  const previous = capsuleStyle.value
+  capsuleStyle.value = style
+  capsuleStyleBusy.value = true
+  try {
+    capsuleStyle.value = (await window.tinadec.saveCompanionCapsuleStyle(style)).companion_capsule_style as CapsuleStyle
+  } catch (error) {
+    capsuleStyle.value = previous
+    notify.error(error, { title: t('settings.companionCapsuleStyleSaveFailed') })
+  } finally {
+    capsuleStyleBusy.value = false
+  }
+}
+
+/** Same contract as the style: the stored step and the live capsule move together in one call. */
+async function setCapsuleReveal(reveal: number): Promise<void> {
+  if (capsuleRevealBusy.value || capsuleReveal.value === reveal) return
+  const previous = capsuleReveal.value
+  capsuleReveal.value = reveal
+  capsuleRevealBusy.value = true
+  try {
+    capsuleReveal.value = (await window.tinadec.saveCompanionCapsuleReveal(reveal)).companion_capsule_reveal
+  } catch (error) {
+    capsuleReveal.value = previous
+    notify.error(error, { title: t('settings.companionCapsuleRevealSaveFailed') })
+  } finally {
+    capsuleRevealBusy.value = false
   }
 }
 
@@ -513,6 +579,67 @@ void dismissConfirm
             data-testid="companion-mode-switch"
             @update:model-value="setCompanionMode"
           />
+        </div>
+      </div>
+
+      <div class="gateway-config-field">
+        <UiLabel>{{ t('settings.companionCapsuleStyle') }}</UiLabel>
+        <div
+          class="companion-choice-options"
+          role="radiogroup"
+          :aria-label="t('settings.companionCapsuleStyle')"
+          data-testid="companion-style-options"
+        >
+          <button
+            v-for="option in CAPSULE_STYLE_OPTIONS"
+            :key="option"
+            type="button"
+            role="radio"
+            class="companion-choice-option"
+            :class="{ active: capsuleStyle === option }"
+            :aria-checked="capsuleStyle === option"
+            :disabled="capsuleStyleBusy"
+            :data-testid="`companion-style-${option}`"
+            @click="setCapsuleStyle(option)"
+          >
+            <span class="companion-style-preview" :class="`is-${option}`" aria-hidden="true" />
+            <span class="companion-choice-label">{{ capsuleStyleLabel(option) }}</span>
+          </button>
+        </div>
+        <div class="gateway-config-meta">
+          <span>{{ t('settings.companionCapsuleStyleHint') }}</span>
+        </div>
+      </div>
+
+      <!-- Only the peek has a figure to reveal; a grip is a handle with nothing behind it. -->
+      <div v-if="capsuleStyle === 'peek'" class="gateway-config-field">
+        <UiLabel>{{ t('settings.companionCapsuleReveal') }}</UiLabel>
+        <div
+          class="companion-choice-options"
+          role="radiogroup"
+          :aria-label="t('settings.companionCapsuleReveal')"
+          data-testid="companion-reveal-options"
+        >
+          <button
+            v-for="option in CAPSULE_REVEAL_OPTIONS"
+            :key="option"
+            type="button"
+            role="radio"
+            class="companion-choice-option"
+            :class="{ active: capsuleReveal === option }"
+            :aria-checked="capsuleReveal === option"
+            :disabled="capsuleRevealBusy"
+            :data-testid="`companion-reveal-${option}`"
+            @click="setCapsuleReveal(option)"
+          >
+            <span class="companion-reveal-preview" aria-hidden="true">
+              <span :style="{ width: `${option}%` }" />
+            </span>
+            <span class="companion-choice-label">{{ option }}%</span>
+          </button>
+        </div>
+        <div class="gateway-config-meta">
+          <span>{{ t('settings.companionCapsuleRevealHint') }}</span>
         </div>
       </div>
     </section>

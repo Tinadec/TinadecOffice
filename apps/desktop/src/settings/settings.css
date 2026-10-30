@@ -1127,6 +1127,113 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   outline-offset: 2px;
 }
 
+/* Companion capsule width: four pills drawn at their real relative widths, so the choice reads as
+   "how much of the pet shows" instead of four unexplained numbers. */
+.companion-choice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.companion-choice-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-button);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.companion-choice-option:hover:not(:disabled) {
+  background: var(--surface-button-hover);
+}
+
+.companion-choice-option.active {
+  background: var(--surface-selected);
+  color: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent);
+}
+
+.companion-choice-option:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.companion-choice-option:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.companion-choice-label {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* The capsule style previews: a head leaning out of the edge, or a bare handle. They are drawn
+   rather than captured so they follow the interface colour instead of a screenshot going stale. */
+.companion-style-preview {
+  position: relative;
+  display: block;
+  width: 26px;
+  height: 34px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.companion-style-preview.is-peek::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: -3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+  transform: rotate(-12deg);
+}
+
+.companion-style-preview.is-grip::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  width: 5px;
+  height: 24px;
+  margin-left: -2.5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+/* The reveal preview: how much of the edge strip the pet occupies, anchored to the screen side. */
+.companion-reveal-preview {
+  position: relative;
+  display: block;
+  width: 26px;
+  height: 34px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.companion-reveal-preview > span {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  background: currentColor;
+  opacity: 0.5;
+}
+
 /* Conversation flow: one segmented switch of five density words, connected with hairlines like
    the view toggles, plus a single line describing the chosen step. */
 .flow-style-switch {

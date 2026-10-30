@@ -56,6 +56,8 @@ const bridge = {
   getAppConfig: vi.fn(),
   saveCloseToTray: vi.fn(),
   saveCompanionMode: vi.fn(),
+  saveCompanionCapsuleStyle: vi.fn(),
+  saveCompanionCapsuleReveal: vi.fn(),
   onCloseToTrayChanged: vi.fn((callback: (value: { close_to_tray: boolean }) => void) => {
     trayListener = callback
     return () => { trayListener = undefined }
@@ -82,6 +84,8 @@ beforeEach(() => {
   bridge.getAppConfig.mockResolvedValue({ gateway_url: 'http://127.0.0.1:48730', source: 'default', managed: false, close_to_tray: false, companion_mode_enabled: false })
   bridge.saveCloseToTray.mockImplementation(async (enabled: boolean) => ({ close_to_tray: enabled }))
   bridge.saveCompanionMode.mockImplementation(async (enabled: boolean) => ({ companion_mode_enabled: enabled }))
+  bridge.saveCompanionCapsuleStyle.mockImplementation(async (style: string) => ({ companion_capsule_style: style }))
+  bridge.saveCompanionCapsuleReveal.mockImplementation(async (reveal: number) => ({ companion_capsule_reveal: reveal }))
   vi.stubGlobal('tinadec', bridge)
 })
 
@@ -229,5 +233,100 @@ describe('conversation flow', () => {
     // A key the group does not own must not steal the choice.
     await wrapper.get('[data-testid="flow-style-rich"]').trigger('keydown', { key: 'a' })
     expect(conversationFlowPreset.value).toBe('rich')
+  })
+})
+
+describe('companion capsule style', () => {
+  it('offers the two capsule styles and writes the picked one', async () => {
+    const wrapper = create()
+    await flushPromises()
+
+    const options = wrapper.findAll('button[data-testid^="companion-style-"]')
+    expect(options.map((option) => option.attributes('aria-checked'))).toEqual(['true', 'false'])
+    expect(options.map((option) => option.text())).toEqual([
+      zh.settings.companionCapsuleStylePeek,
+      zh.settings.companionCapsuleStyleGrip,
+    ])
+
+    await wrapper.get('[data-testid="companion-style-grip"]').trigger('click')
+    await flushPromises()
+
+    expect(bridge.saveCompanionCapsuleStyle).toHaveBeenCalledWith('grip')
+    expect(wrapper.get('[data-testid="companion-style-grip"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('rolls the capsule style back and reports when it cannot be stored', async () => {
+    bridge.saveCompanionCapsuleStyle.mockRejectedValue(new Error('desktop.toml is read-only'))
+    const wrapper = create()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-style-grip"]').trigger('click')
+    await flushPromises()
+
+    // Never show a style the capsule is not drawing.
+    expect(wrapper.get('[data-testid="companion-style-peek"]').attributes('aria-checked')).toBe('true')
+    expect(notifications.notify.error).toHaveBeenCalled()
+  })
+
+  it('offers the three reveal steps, defaulting to the middle one', async () => {
+    const wrapper = create()
+    await flushPromises()
+
+    const options = wrapper.findAll('button[data-testid^="companion-reveal-"]')
+    expect(options.map((option) => option.attributes('aria-checked'))).toEqual(['false', 'true', 'false'])
+    expect(options.map((option) => option.text())).toEqual(['10%', '50%', '100%'])
+  })
+
+  it('writes the picked reveal and follows the stored step back', async () => {
+    const wrapper = create()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-reveal-10"]').trigger('click')
+    await flushPromises()
+
+    expect(bridge.saveCompanionCapsuleReveal).toHaveBeenCalledWith(10)
+    expect(wrapper.get('[data-testid="companion-reveal-10"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('shows the stored reveal instead of a local default', async () => {
+    bridge.getAppConfig.mockResolvedValue({
+      gateway_url: 'http://127.0.0.1:48730',
+      source: 'default',
+      managed: false,
+      close_to_tray: false,
+      companion_capsule_style: 'peek',
+      companion_capsule_reveal: 100,
+    })
+    const wrapper = create()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="companion-reveal-100"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('hides the reveal steps for a grip, which has no pet to reveal', async () => {
+    bridge.getAppConfig.mockResolvedValue({
+      gateway_url: 'http://127.0.0.1:48730',
+      source: 'default',
+      managed: false,
+      close_to_tray: false,
+      companion_capsule_style: 'grip',
+    })
+    const wrapper = create()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="companion-reveal-options"]').exists()).toBe(false)
+  })
+
+  it('rolls the reveal back and reports when it cannot be stored', async () => {
+    bridge.saveCompanionCapsuleReveal.mockRejectedValue(new Error('desktop.toml is read-only'))
+    const wrapper = create()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-reveal-10"]').trigger('click')
+    await flushPromises()
+
+    // Never show a step the capsule is not parked at.
+    expect(wrapper.get('[data-testid="companion-reveal-50"]').attributes('aria-checked')).toBe('true')
+    expect(notifications.notify.error).toHaveBeenCalled()
   })
 })
