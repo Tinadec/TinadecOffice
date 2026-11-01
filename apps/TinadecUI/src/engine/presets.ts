@@ -268,7 +268,9 @@ export const PRESET_REVISIONS: Partial<Record<UiePageId, number>> = {
   // The companion centre went from four unrelated panels to a selection-driven centre; a stored
   // snapshot would keep the old reading of it with no way back.
   // 3 adds the shared nav card to the left rail, so the centre stops drawing its own sidebar.
-  companionCenter: 3,
+  // 4 moves the roster into the right feature panel: the left rail must stay a single card, or the
+  //   column grows a tab strip above the brand.
+  companionCenter: 4,
 }
 
 export function buildPreset(pageId: UiePageId, ctx: PresetContext): UieLayoutSnapshot {

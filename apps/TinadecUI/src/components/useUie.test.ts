@@ -279,7 +279,7 @@ describe('preset revisions for redesigned pages', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     // Presets alone only reach fresh installs; the stored arrangement was replaced instead.
-    expect(uie.snapshot.value.presetRevision).toBe(3)
+    expect(uie.snapshot.value.presetRevision).toBe(4)
   })
 
   it('keeps a stored layout that already matches the page preset revision', async () => {
