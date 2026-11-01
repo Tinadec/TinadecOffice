@@ -2638,7 +2638,24 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
                 new() { Id = "mcp_list", Description = "In-process fake mcp list probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
                 new() { Id = "replace_lines", Description = "In-process fake line replace probe", RequiresApproval = true, Risk = "medium", MutatesWorkspace = true },
                 new() { Id = "insert_line", Description = "In-process fake line insert probe", RequiresApproval = true, Risk = "medium", MutatesWorkspace = true },
-                new() { Id = "delete_line", Description = "In-process fake line delete probe", RequiresApproval = true, Risk = "medium", MutatesWorkspace = true }
+                new() { Id = "delete_line", Description = "In-process fake line delete probe", RequiresApproval = true, Risk = "medium", MutatesWorkspace = true },
+                // GraphSeedPack 3.4.0: the meeting/search scopes declare the agent-browser
+                // surface. It is not a workspace mutation, but act tools are approval-gated
+                // high-risk calls; the spawnable-ceiling intersection still needs every id.
+                new() { Id = "browser_snapshot", Description = "In-process fake browser snapshot probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
+                new() { Id = "browser_tabs_list", Description = "In-process fake browser tabs probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
+                new() { Id = "browser_wait", Description = "In-process fake browser wait probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
+                new() { Id = "browser_screenshot", Description = "In-process fake browser screenshot probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
+                new() { Id = "browser_navigate", Description = "In-process fake browser navigate probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_click", Description = "In-process fake browser click probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_type", Description = "In-process fake browser type probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_press", Description = "In-process fake browser press probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_scroll", Description = "In-process fake browser scroll probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_history", Description = "In-process fake browser history probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_tab_open", Description = "In-process fake browser tab open probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_tab_select", Description = "In-process fake browser tab select probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_tab_close", Description = "In-process fake browser tab close probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_batch", Description = "In-process fake browser batch probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" }
             };
             return new ToolManifestDto
             {

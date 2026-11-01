@@ -4,6 +4,7 @@ import {
   FileText,
   Folder,
   GitBranch,
+  Globe,
   MessagesSquare,
   Package,
   Search,
@@ -24,16 +25,31 @@ import {
  *
  * The id sets below are not transcribed from a document. They are the output of a live
  * stdio session against the built provider (`tool_id: "#manifest"`, protocol v2,
- * manifest_hash `f8efeb8d6298283d7d69be2e1912b4f7f403bf69ebb1adcd31262775f8f14a8d`,
- * 50 tools) plus Core's own declarations, cited per constant. `toolPresentation.test.ts`
+ * manifest_hash `001ffc363f60977b5919819af459f73fdb9aac514f60a27cfff947d716f1d1e0`,
+ * 65 tools) plus Core's own declarations, cited per constant. `toolPresentation.test.ts`
  * pins both directions: every id this module branches on must be in a measured set, and
  * the six invented ids must never reappear as quoted tool ids anywhere in `src/`.
  */
 
 /** One entry per tool the TinadecTools child process actually advertises. */
 export const PROVIDER_TOOL_IDS = [
+  'browser_batch',
+  'browser_click',
+  'browser_history',
+  'browser_navigate',
+  'browser_press',
+  'browser_screenshot',
+  'browser_scroll',
+  'browser_snapshot',
+  'browser_tab_close',
+  'browser_tab_open',
+  'browser_tab_select',
+  'browser_tabs_list',
+  'browser_type',
+  'browser_wait',
   'command_run',
   'delete_bytes',
+  'delete_file',
   'delete_line',
   'file_search',
   'git_blame',
@@ -153,6 +169,7 @@ export type ToolKind =
   | 'git'
   | 'mcp'
   | 'sandbox'
+  | 'browser'
   | 'orchestration'
   | 'chat'
   | 'other'
@@ -172,6 +189,7 @@ const KIND_BY_ID: Record<string, ToolKind> = {
   replace_bytes: 'write',
   delete_line: 'write',
   delete_bytes: 'write',
+  delete_file: 'write',
   shell: 'shell',
   command_run: 'shell',
   mcp_invoke: 'mcp',
@@ -210,6 +228,7 @@ const ICON_BY_KIND: Record<ToolKind, Component> = {
   git: GitBranch,
   mcp: Package,
   sandbox: Shield,
+  browser: Globe,
   orchestration: Workflow,
   chat: MessagesSquare,
   other: Wrench
@@ -239,6 +258,7 @@ export function toolKindOf(toolId: string | null | undefined): ToolKind {
   const explicit = KIND_BY_ID[toolId]
   if (explicit) return explicit
   if (toolId === GIT_FACADE_TOOL_ID || toolId.startsWith('git_')) return 'git'
+  if (toolId.startsWith('browser_')) return 'browser'
   if (toolId.startsWith('tina_chat_') || toolId.startsWith('org_')) return 'chat'
   return 'other'
 }

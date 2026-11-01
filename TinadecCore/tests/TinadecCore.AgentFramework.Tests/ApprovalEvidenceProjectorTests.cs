@@ -168,6 +168,42 @@ public sealed class ApprovalEvidenceProjectorTests
     }
 
     [Fact]
+    public void BrowserType_ShowsTheTargetAndHidesTheTypedText()
+    {
+        var evidence = ApprovalEvidenceProjector.Project("browser_type", """{"ref":3,"text":"hunter2"}""");
+
+        Assert.Contains("ref 3", evidence.Summary);
+        Assert.Contains("7 chars", evidence.Summary);
+        Assert.DoesNotContain("hunter2", evidence.Arguments);
+        Assert.Contains("\"ref\":3", evidence.Arguments);
+        Assert.Contains("text_sha256", evidence.Arguments);
+        Assert.Equal("ref:3", evidence.ResourcePath);
+    }
+
+    [Fact]
+    public void BrowserBatch_RedactsNestedStepText()
+    {
+        var evidence = ApprovalEvidenceProjector.Project(
+            "browser_batch",
+            """{"steps":[{"tool":"browser_type","args":{"ref":1,"text":"secret"}},{"tool":"browser_click","args":{"ref":2}}]}""");
+
+        Assert.DoesNotContain("secret", evidence.Arguments);
+        Assert.Contains("text_sha256", evidence.Arguments);
+        Assert.Contains("Run 2 browser steps", evidence.Summary);
+        Assert.Contains("browser_type", evidence.Summary);
+    }
+
+    [Fact]
+    public void BrowserNavigate_SurfacesTheUrl()
+    {
+        var evidence = ApprovalEvidenceProjector.Project("browser_navigate", """{"url":"https://example.com/docs"}""");
+
+        Assert.Contains("https://example.com/docs", evidence.Summary);
+        Assert.Equal("https://example.com/docs", evidence.ResourcePath);
+        Assert.Contains("https://example.com/docs", evidence.Arguments);
+    }
+
+    [Fact]
     public void QueryOf_ReadsTheSearchTermFromTheRedactedProjection()
     {
         var search = ApprovalEvidenceProjector.Project("file_search", """{"pattern":"useResults","path":"src"}""");

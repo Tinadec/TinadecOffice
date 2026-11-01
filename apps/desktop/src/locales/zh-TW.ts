@@ -5194,6 +5194,11 @@ agentAvatarSaveFailed: "形象儲存失敗",
         done: "取得 {subject}",
         failed: "無法取得 {subject}",
       },
+      browse: {
+        active: "正在瀏覽 {subject}",
+        done: "瀏覽 {subject}",
+        failed: "瀏覽失敗：{subject}",
+      },
       workspace: {
         active: "正在建立工作區 {subject}",
         done: "建立工作區 {subject}",

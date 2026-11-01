@@ -153,7 +153,11 @@ public sealed record ContextPatchRequest(
     string Summary,
     Guid? RunId = null,
     Guid? AgentInstanceId = null,
-    string Kind = "supplement");
+    string Kind = "supplement",
+    // For a compaction: the last message sequence the summary actually covers. A later
+    // context build shows only messages after this point, so the summary stands in for
+    // the covered history instead of repeating beside it. Null keeps the old behaviour.
+    long? CoversThroughSequence = null);
 
 public sealed record ContextPatchApplyResult(
     Guid PatchId,
@@ -171,4 +175,5 @@ public sealed record ConversationContextPatch(
     string Kind,
     string Summary,
     string Content,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    long? CoversThroughSequence = null);

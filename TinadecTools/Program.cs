@@ -7,6 +7,7 @@ using TinadecTools.Runtime.Sandbox;
 using TinadecTools.Runtime.Sandbox.Windows;
 using TinadecTools.Tools.FileRW;
 using TinadecTools.Tools.Mcp;
+using TinadecTools.Tools.Browser;
 
 // ── internal sandbox modes ──────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ FileToolRuntime.InitializeWorkspace();
 GeneratedToolRegistry.RegisterAll();
 TinadecTools.Tools.Command.ShellToolRegistration.Register();
 TinadecTools.Tools.Web.WebFetchTool.RegisterControl();
+BrowserToolRegistration.Register();
 ToolHostControls.Register();
 
 try

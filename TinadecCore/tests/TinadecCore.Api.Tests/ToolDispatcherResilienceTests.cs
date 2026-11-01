@@ -595,6 +595,29 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ResumeAsync_RuntimeUnavailableUnsafeRead_StaysNonRetryable()
+    {
+        // A read-only call can still be non-idempotent on the other side (a browser action
+        // may have been dispatched). RetrySafety is the explicit answer, not MutatesWorkspace.
+        var tools = new[] { Tool("browser_snapshot", retrySafety: "unsafe") };
+        var provider = new ConfigurableToolProvider(tools, (_, _, _) =>
+            throw new InvalidDataException("browser host unavailable."));
+        var (dispatcher, _, _, _, execution) = await PrepareReadOnlyExecutionAsync(
+            tools, provider, "disp:attr-unsafe:0:0", toolId: "browser_snapshot");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        Assert.Equal(ToolOutcomes.Error, result.Outcome);
+        Assert.False(result.Retryable);
+        Assert.Contains("not likely to succeed", result.AgentGuidance);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.Equal(ToolOutcomes.Error, row.Outcome);
+        Assert.False(row.Retryable);
+    }
+
+    [Fact]
     public async Task PreAttributionRow_ReadsWithNullAttribution()
     {
         var (projectId, sessionId) = await CreateProjectAndSessionAsync("disp-attr-old");

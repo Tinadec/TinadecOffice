@@ -1,5 +1,17 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-11-02 Agent 浏览器：Electron 主进程桥 + 独立窗口（P1/P5 完成，P6 卡片挂载未做）
+
+内置浏览器从「预览 iframe」变成 Agent 可驱动的真实浏览器。**没有第二套 Chromium**：复用 Electron 的 `WebContentsView`，主进程只对已登记目标做 CDP。
+
+- **`electron/agentBrowser.cjs`**：`createAgentBrowserManager`。一 session 一 `BrowserWindow`（独立分区 `persist:tinadec-agent-browser`，`contextIsolation:true`、`sandbox:true`、`nodeIntegration:false`、无页面 preload），窗口内多标签，用 `setBounds` + `setVisible` 切换可见标签；窗口 shell 由 `agent-browser.html` + 专用 `agentBrowserPreload.cjs`（只暴露 `browserShell:state|command|onState` 三通道）驱动。**新建标签必须 `loadURL(url ?? 'about:blank')` 后再 attach debugger**——对全新空白 view 先 attach 再 `Page.enable` 会永久挂起（P1 探针实测）。控制态 `agent|user`、dialog/popup/下载/文件选择器硬停止、`notice.seq` 单调递增并随 `/state` 返回，未处理的对话框让后续命令返回 `browser_dialog_open`。
+- **`electron/browserBridge.cjs`**：`127.0.0.1` + 随机端口 + 32 字节 Bearer + 常量时间比较；请求体 ≤64 KiB；CDP 方法白名单（禁 `Browser.*` / `Storage.*` / `Emulation.*` / `Page.addScriptToEvaluateOnNewDocument` 等）；`Page.navigate` 只放行 http(s) 且拒绝 userinfo/云元数据；脚本体额外拦 cookie/localStorage/fetch 等 token；每 session 互斥；审计写 `state/agent-browser/audit.jsonl`。令牌文件 `<officeRoot>/state/agent-browser/bridge.json`，`app.quit` 删除。
+- **`main.cjs`**：桥在受管服务**之前**启动并写令牌；`before-quit`/`will-quit` `stopSync()` + `closeAll()`；`browserShell:state/command` IPC；`tinadec:interface-locale` 同步工具栏五语文案（`electron/agentBrowserStrings.cjs`）。
+- **打包**：`vite.config.ts` 的 `build.rollupOptions.input` 增加 `agentBrowser: agent-browser.html`；dev 用 `http://localhost:5173/agent-browser.html`，prod 用 `app://bundle/agent-browser.html`。
+- **呈现**：`src/lib/toolPresentation.ts` 的 `PROVIDER_TOOL_IDS` 现为 **65**（实测 `tool_count`），新增 `browser` kind + `Globe` 图标 + `browse` 动词，五语 `conversation.tool.browse.*`；`toolPresentation.test.ts` 的 `MEASURED_MANIFEST` 同步为 `manifest_hash=001ffc363f60977b5919819af459f73fdb9aac514f60a27cfff947d716f1d1e0`。
+- **测试**：`node --test` 新增 `browserBridge.test.cjs`（27/27 含字符串）、`agentBrowser.test.cjs`（窗口生命周期）、`agentBrowserStrings.test.cjs`；P5 真实 Electron + 真实工具进程 21/21（shadow DOM 点击、wait、popup/alert/下载/文件选择器硬停止、用户接管、双 session 并发）。`vue-tsc --noEmit` 0；定向 vitest 47/47；生产 `npm run build` **exit 0**（`✓ built in 2m 30s`、6826 modules，`dist/agent-browser.html` + `assets/agentBrowser-*.js` 已产出）。
+- **未做/未验证**：**P6 未做**——`PreviewBrowserPanel.vue` 仍是 iframe，`WebContentsView` 尚未 reparent 进主窗口/卡片（先 spike 再决定原生挂载或 `capturePage` 镜像）；shell 工具栏真实观感、安装版 `app://bundle` 入口、Windows 安装包内的 quark 清理均未实机走查；全量 desktop vitest 未跑。
+
 ## 2026-10-31 模型中心 UI/UX 重构：四页签 + 供应商主从 + 窄栏单页
 
 - **任务页签**：供应商 / 模型 / 路由 / 运行时（CLI、TUI、ACP 子页签），定义在 `modelCenterSections`，`centerTab` 把 `api` 映射为 suppliers。切页签先过 `confirmDiscardProviderDraft()`，脏表单不会被页签切走。

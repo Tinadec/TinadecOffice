@@ -140,6 +140,9 @@ public static class ApprovalEvidenceProjector
                 return new ApprovalEvidence(specification, $"Confirm {stageValue.GetString()} specification", null, null, null)
                     { CompleteSpecification = true };
 
+            if (toolId is not null && toolId.StartsWith("browser_", StringComparison.Ordinal))
+                return ProjectBrowser(toolId, root, parametersJson);
+
             var builder = new StringBuilder("{");
             string? command = null;
             string? workingDirectory = null;
@@ -194,6 +197,144 @@ public static class ApprovalEvidenceProjector
                 Truncate(resourcePath));
         }
     }
+
+    /// <summary>
+    /// Browser approvals need a sentence a person can judge: which page/ref and what the step
+    /// does. Typed text and wait conditions are never echoed; a size and a short hash pin them
+    /// instead, at any depth (a batch step's args included).
+    /// </summary>
+    private static ApprovalEvidence ProjectBrowser(string toolId, JsonElement root, string? parametersJson)
+    {
+        var digest = new JsonObject { ["tool"] = toolId };
+        var summary = toolId;
+        string? resource = null;
+
+        var url = StringField(root, "url");
+        var reference = IntField(root, "ref");
+        var key = StringField(root, "key");
+        var action = StringField(root, "action");
+        var tabId = StringField(root, "tab_id");
+        var button = StringField(root, "button");
+        var clickCount = IntField(root, "click_count");
+        var deltaX = DoubleField(root, "delta_x");
+        var deltaY = DoubleField(root, "delta_y");
+
+        if (url is not null) digest["url"] = url;
+        if (reference is not null) digest["ref"] = reference.Value;
+        if (key is not null) digest["key"] = key;
+        if (action is not null) digest["action"] = action;
+        if (tabId is not null) digest["tab_id"] = tabId;
+        if (button is not null) digest["button"] = button;
+        if (clickCount is not null) digest["click_count"] = clickCount.Value;
+        if (deltaX is not null) digest["delta_x"] = deltaX.Value;
+        if (deltaY is not null) digest["delta_y"] = deltaY.Value;
+
+        var text = StringField(root, "text");
+        if (text is not null || toolId is "browser_type" or "browser_wait")
+        {
+            var fingerprint = TextFingerprint(text);
+            digest["text_chars"] = fingerprint.Chars;
+            digest["text_sha256"] = fingerprint.Hash;
+        }
+
+        if (root.TryGetProperty("steps", out var steps) && steps.ValueKind == JsonValueKind.Array)
+        {
+            var stepArray = new JsonArray();
+            var labels = new List<string>();
+            var index = 0;
+            foreach (var step in steps.EnumerateArray())
+            {
+                if (step.ValueKind != JsonValueKind.Object) continue;
+                var stepTool = StringField(step, "tool") ?? "step";
+                var stepNode = new JsonObject { ["tool"] = stepTool };
+                if (step.TryGetProperty("args", out var stepArgs) && stepArgs.ValueKind == JsonValueKind.Object)
+                {
+                    if (IntField(stepArgs, "ref") is { } stepRef) stepNode["ref"] = stepRef;
+                    if (StringField(stepArgs, "button") is { } stepButton) stepNode["button"] = stepButton;
+                    if (StringField(stepArgs, "key") is { } stepKey) stepNode["key"] = stepKey;
+                    if (DoubleField(stepArgs, "delta_x") is { } stepDeltaX) stepNode["delta_x"] = stepDeltaX;
+                    if (DoubleField(stepArgs, "delta_y") is { } stepDeltaY) stepNode["delta_y"] = stepDeltaY;
+                    if (stepArgs.TryGetProperty("text", out _) || stepTool == "browser_type")
+                    {
+                        var stepFingerprint = TextFingerprint(StringField(stepArgs, "text"));
+                        stepNode["text_chars"] = stepFingerprint.Chars;
+                        stepNode["text_sha256"] = stepFingerprint.Hash;
+                    }
+                }
+                stepArray.Add(stepNode);
+                if (index < 3) labels.Add(stepTool);
+                index++;
+            }
+            digest["steps"] = stepArray;
+            summary = index == 0
+                ? "Run browser steps"
+                : $"Run {index} browser step{(index == 1 ? "" : "s")}: {string.Join(", ", labels)}{(index > 3 ? ", …" : "")}";
+        }
+        else
+        {
+            summary = toolId switch
+            {
+                "browser_navigate" => url is null ? "Browse" : $"Browse to {TruncateText(url, 160)}",
+                "browser_click" => reference is null ? "Click" : $"Click ref {reference}",
+                "browser_type" => reference is null ? "Type into the page" : $"Type into ref {reference} ({text?.Length ?? 0} chars)",
+                "browser_press" => key is null ? "Press a key" : $"Press {key}{(reference is null ? "" : $" on ref {reference}")}",
+                "browser_scroll" => reference is null
+                    ? $"Scroll the page by ({deltaX ?? 0}, {deltaY ?? 0})"
+                    : $"Scroll ref {reference} by ({deltaX ?? 0}, {deltaY ?? 0})",
+                "browser_history" => $"Browser {action ?? "history"}",
+                "browser_tab_open" => url is null ? "Open a browser tab" : $"Open a browser tab at {TruncateText(url, 160)}",
+                "browser_tab_select" => $"Switch to browser tab {tabId ?? "?"}",
+                "browser_tab_close" => $"Close browser tab {tabId ?? "?"}",
+                _ => toolId,
+            };
+        }
+
+        resource = toolId switch
+        {
+            "browser_navigate" or "browser_tab_open" => TruncateText(url, MaximumScalarLength),
+            "browser_tab_select" or "browser_tab_close" => TruncateText(tabId, MaximumScalarLength),
+            "browser_click" or "browser_type" or "browser_press" or "browser_scroll" when reference is not null => "ref:" + reference,
+            _ => null,
+        };
+
+        var json = digest.ToJsonString(Readable);
+        if (json.Length > MaximumDigestLength)
+        {
+            json = "{\"[digest omitted]\":\"" + DescribeBlob(parametersJson ?? string.Empty) + "\"}";
+        }
+        return new ApprovalEvidence(json, TruncateText(summary, MaximumScalarLength) ?? toolId, null, null, resource);
+    }
+
+    private static (int Chars, string Hash) TextFingerprint(string? text)
+    {
+        var value = text ?? string.Empty;
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..12].ToLowerInvariant();
+        return (value.Length, hash);
+    }
+
+    private static string? StringField(JsonElement root, string name) =>
+        root.ValueKind == JsonValueKind.Object
+        && root.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static int? IntField(JsonElement root, string name) =>
+        root.ValueKind == JsonValueKind.Object
+        && root.TryGetProperty(name, out var value)
+        && value.TryGetInt32(out var number)
+            ? number
+            : (int?)null;
+
+    private static double? DoubleField(JsonElement root, string name) =>
+        root.ValueKind == JsonValueKind.Object
+        && root.TryGetProperty(name, out var value)
+        && value.TryGetDouble(out var number)
+            ? number
+            : (double?)null;
+
+    private static string? TruncateText(string? value, int max) =>
+        value is null || value.Length <= max ? value : value[..max] + "…";
 
     /// <summary>
     /// The parameters with every secret-keyed value replaced, at any depth, and everything else

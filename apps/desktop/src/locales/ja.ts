@@ -5194,6 +5194,11 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         done: "{subject} を取得しました",
         failed: "{subject} を取得できませんでした",
       },
+      browse: {
+        active: "{subject} を閲覧中",
+        done: "{subject} を閲覧しました",
+        failed: "{subject} を閲覧できませんでした",
+      },
       workspace: {
         active: "ワークスペース {subject} を作成中",
         done: "ワークスペース {subject} を作成しました",

@@ -6595,6 +6595,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var evidence = string.Join("\n", context.Evidence.Select(item => $"[{item.Source}] {item.Content}"));
         var instructions = assembly.Instructions
             + "\n\nYou are the context compression agent. Compress the session context into a structured summary with these sections: 当前目标 / 关键约束 / 已完成事项 / 待处理事项 / 重要结论 / 风险点. Preserve the current goal and constraints exactly, keep approval conclusions, and never invent new facts.";
+        // The summary stands in for exactly the history it was shown. Recording that
+        // watermark lets the next context build drop the covered messages instead of
+        // repeating them beside the summary; a compressor whose history did not fit
+        // records no watermark and keeps the old behaviour.
+        var coveredThrough = HistoryLastSequence(context);
         var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nSession context evidence:\n{evidence}";
         var turn = await Maf18RuntimeAdapter.RunGovernanceTurnAsync(
             await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
@@ -6616,7 +6621,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             summary,
             $"Compressed session context at revision {baseRevision}.",
             checkpoint.RunId,
-            Kind: "compaction"), cancellationToken).ConfigureAwait(false);
+            Kind: "compaction",
+            CoversThroughSequence: coveredThrough), cancellationToken).ConfigureAwait(false);
         // The upper layer is archived next to what it summarised, so recall can walk from one to the other.
         await ArchiveEvidenceAsync(run, null, EvidenceKinds.Summary, $"Context summary at revision {baseRevision}", match.Agent.Id,
             summary, $"summary:{result.PatchId}", cancellationToken).ConfigureAwait(false);
@@ -6644,6 +6650,26 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 context_revision = result.CurrentRevision
             }, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// The newest message sequence the compressor actually saw, or null when it saw no
+    /// history at all. A build with no visible history (because an earlier summary already
+    /// covered every message) inherits that summary's watermark, so a new compaction cannot
+    /// silently resurrect the turns the previous one replaced.
+    /// </summary>
+    private static long? HistoryLastSequence(ContextPack context) =>
+        SequenceOf(context, "session_history", "last_sequence")
+        ?? SequenceOf(context, "session_compaction", "covers_through_sequence");
+
+    private static long? SequenceOf(ContextPack context, string source, string key)
+    {
+        var evidence = context.Evidence.FirstOrDefault(item => item.Source == source);
+        return evidence is not null
+            && evidence.Metadata.TryGetValue(key, out var text)
+            && long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var sequence)
+            ? sequence
+            : null;
     }
 
     private async Task DispatchSkillRecommendationAsync(

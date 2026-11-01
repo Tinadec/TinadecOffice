@@ -91,6 +91,11 @@ internal sealed class ContextProvider : IContextProvider
         var reviewedMemoryLimit = Math.Clamp(request.ReviewedMemoryLimit ?? settings.ReviewedMemoryLimit, 0, 64);
         var messages = await _conversations.ListMessagesAsync(parsedSessionId, recentMessageLimit, cancellationToken).ConfigureAwait(false);
         var contextRevision = await _conversations.GetContextRevisionAsync(parsedSessionId, cancellationToken).ConfigureAwait(false);
+        // Session-level patches are read once per build. The newest applied compaction is the
+        // session's compressed view; the same window supplies the run-scoped steering and facts below.
+        var sessionPatches = await _conversations
+            .ListRecentContextPatchesAsync(parsedSessionId, null, RecentSessionPatches, cancellationToken)
+            .ConfigureAwait(false);
         var latestUserMessage = messages.LastOrDefault(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase));
         var memory = reviewedMemoryLimit == 0 || string.IsNullOrWhiteSpace(latestUserMessage?.Content)
             ? Array.Empty<MemoryEntry>()
@@ -126,7 +131,7 @@ internal sealed class ContextProvider : IContextProvider
         // is steering that never happened — so they sit right after the task, ahead of history.
         if (Guid.TryParse(request.RunId, out var parsedRunId))
         {
-            candidates.AddRange(await BuildRunPatchEvidenceAsync(parsedSessionId, parsedRunId, messages, cancellationToken).ConfigureAwait(false));
+            candidates.AddRange(await BuildRunPatchEvidenceAsync(parsedSessionId, parsedRunId, messages, sessionPatches, cancellationToken).ConfigureAwait(false));
         }
 
         var attachmentEvidence = await BuildAttachmentEvidenceAsync(parsedSessionId, messages, cancellationToken).ConfigureAwait(false);
@@ -153,9 +158,23 @@ internal sealed class ContextProvider : IContextProvider
             candidates.Add(skillEvidence);
         }
 
-        if (messages.Count != 0)
+        // A compaction summary heads the raw history: it is the session's compressed view of
+        // earlier turns. When the patch records what it covered, those messages leave the
+        // history section, so the summary stands in for them instead of repeating beside them.
+        // The full window still feeds attachments and the latest-user-message memory query.
+        var latestCompaction = FindLatestCompaction(sessionPatches);
+        var compactionEvidence = BuildCompactionEvidence(latestCompaction);
+        if (compactionEvidence is not null)
         {
-            var history = string.Join('\n', messages.Select(message => $"{message.Role}: {message.Content}"));
+            candidates.Add(compactionEvidence);
+        }
+
+        var historyMessages = latestCompaction?.CoversThroughSequence is { } coveredThrough
+            ? messages.Where(message => message.Sequence > coveredThrough).ToArray()
+            : messages;
+        if (historyMessages.Count != 0)
+        {
+            var history = string.Join('\n', historyMessages.Select(message => $"{message.Role}: {message.Content}"));
             candidates.Add(new ContextEvidence
             {
                 Source = "session_history",
@@ -163,9 +182,9 @@ internal sealed class ContextProvider : IContextProvider
                 EstimatedTokens = EstimateTokens(history),
                 Metadata = new Dictionary<string, string>
                 {
-                    ["message_count"] = messages.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["first_sequence"] = messages[0].Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["last_sequence"] = messages[^1].Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    ["message_count"] = historyMessages.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["first_sequence"] = historyMessages[0].Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["last_sequence"] = historyMessages[^1].Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 }
             });
         }
@@ -223,6 +242,14 @@ internal sealed class ContextProvider : IContextProvider
 
     /// <summary>Recent patches read per build; the newest few are what an agent must act on.</summary>
     private const int RecentRunPatches = 16;
+
+    /// <summary>
+    /// Session patches read per build. The patch kind lives in the content body, so the newest
+    /// compaction is found by scanning this bounded window. It spans many turns of steering and
+    /// recorded facts without turning every context build into a full-session scan.
+    /// </summary>
+    private const int RecentSessionPatches = 32;
+    private const int MaxCompactionChars = 4_000;
     private const int MaxSteeringItems = 5;
     private const int MaxSteeringChars = 2000;
     private const int MaxRecordedFacts = 8;
@@ -243,10 +270,10 @@ internal sealed class ContextProvider : IContextProvider
         Guid sessionId,
         Guid runId,
         IReadOnlyList<ConversationMessage> messages,
+        IReadOnlyList<ConversationContextPatch> sessionPatches,
         CancellationToken cancellationToken)
     {
         var patches = await _conversations.ListRecentContextPatchesAsync(sessionId, runId, RecentRunPatches, cancellationToken).ConfigureAwait(false);
-        var sessionPatches = await _conversations.ListRecentContextPatchesAsync(sessionId, null, RecentRunPatches, cancellationToken).ConfigureAwait(false);
         static bool Supplement(ConversationContextPatch patch) => patch.Kind == "supplement" && !string.IsNullOrWhiteSpace(patch.Content);
         var supplements = patches.Where(Supplement).ToArray();
         var recorded = sessionPatches.Where(patch => Supplement(patch) && patch.AgentInstanceId is not null).ToArray();
@@ -301,6 +328,46 @@ internal sealed class ContextProvider : IContextProvider
             });
         }
         return evidence;
+    }
+
+    /// <summary>
+    /// The newest applied compaction patch, or null when the session has none. The patch kind
+    /// lives in the body, so this scans the bounded session window the caller already read.
+    /// </summary>
+    private static ConversationContextPatch? FindLatestCompaction(IReadOnlyList<ConversationContextPatch> sessionPatches) =>
+        sessionPatches.LastOrDefault(patch =>
+            string.Equals(patch.Kind, "compaction", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(patch.Content));
+
+    /// <summary>
+    /// The newest applied compaction, as the session's compressed view. It heads the raw
+    /// history instead of replacing it: the summary is a derived view, and a disagreement
+    /// between the two resolves to the newer raw messages.
+    /// </summary>
+    private static ContextEvidence? BuildCompactionEvidence(ConversationContextPatch? latest)
+    {
+        if (latest is null) return null;
+        var text = "Session context was compressed into this structured summary at revision "
+            + latest.AppliedRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ". It is a derived view, not a replacement for the original evidence. Recent raw messages follow it; "
+            + "where they disagree, the raw messages are newer.\n"
+            + Clip(latest.Content.Trim(), MaxCompactionChars);
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["patch_id"] = latest.Id.ToString("N"),
+            ["context_revision"] = latest.AppliedRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        };
+        if (latest.CoversThroughSequence is { } covered)
+        {
+            metadata["covers_through_sequence"] = covered.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return new ContextEvidence
+        {
+            Source = "session_compaction",
+            Content = text,
+            EstimatedTokens = EstimateTokens(text),
+            Metadata = metadata
+        };
     }
 
     private static string Clip(string text, int limit) => text.Length <= limit ? text : string.Concat(text.AsSpan(0, limit), "…");

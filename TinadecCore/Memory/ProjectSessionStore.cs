@@ -739,7 +739,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
                     kind = patchKind,
                     base_revision = request.BaseRevision,
                     summary = request.Summary,
-                    content = request.Content
+                    content = request.Content,
+                    covers_through_sequence = request.CoversThroughSequence
                 },
                 cancellationToken).ConfigureAwait(false);
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -1065,6 +1066,13 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         var content = root.TryGetProperty("content", out var contentNode) && contentNode.ValueKind == JsonValueKind.String
             ? contentNode.GetString() ?? string.Empty
             : string.Empty;
+        // A patch written before the watermark existed has no such property: it keeps the
+        // old "summary beside the full history" behaviour.
+        var coversThrough = root.TryGetProperty("covers_through_sequence", out var coversNode)
+            && coversNode.ValueKind == JsonValueKind.Number
+            && coversNode.TryGetInt64(out var coveredSequence)
+            ? coveredSequence
+            : (long?)null;
         return new ConversationContextPatch(
             row.Id,
             row.SessionId,
@@ -1075,7 +1083,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             kind,
             summary,
             content,
-            row.CreatedAt);
+            row.CreatedAt,
+            coversThrough);
     }
 
     private async Task<ContentReference> StoreContextDocumentAsync(

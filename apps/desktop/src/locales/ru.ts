@@ -5194,6 +5194,11 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         done: "Загружено: {subject}",
         failed: "Не удалось загрузить {subject}",
       },
+      browse: {
+        active: "Просмотр {subject}",
+        done: "Просмотрено: {subject}",
+        failed: "Не удалось просмотреть {subject}",
+      },
       workspace: {
         active: "Создание рабочей области {subject}",
         done: "Создана рабочая область {subject}",

@@ -17,10 +17,13 @@ if (typeof electron !== 'object' || !electron.app) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, protocol, screen, shell } = electron;
+const { app, BrowserWindow, Menu, Tray, WebContentsView, clipboard, dialog, ipcMain, nativeImage, protocol, screen, shell } = electron;
 const path = require('node:path');
 const { configureElectronStorage } = require('./storagePaths.cjs');
 const { createLogSink } = require('./logSink.cjs');
+const { createAgentBrowserManager } = require('./agentBrowser.cjs');
+const { createBrowserBridge } = require('./browserBridge.cjs');
+const { stringsForLocale } = require('./agentBrowserStrings.cjs');
 // Startup failures show before any window exists, so there is no interface language to follow yet:
 // they say it in both languages, like the renderer's crash fallback.
 const hostPaths = (() => {
@@ -141,6 +144,29 @@ protocol.registerSchemesAsPrivileged([
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
+// The agent browser is a satellite window owned by the main process. The bridge below is the
+// only way the .NET tool process can reach it: loopback HTTP with a token file, no global CDP
+// port and no renderer IPC on the remote content. Created eagerly so `before-quit` can always
+// remove the token file, even if the app never started the listener.
+const agentBrowserManager = createAgentBrowserManager({
+  BrowserWindow,
+  WebContentsView,
+  shell,
+  app,
+  shellUrl: () => isDev
+    ? `${(process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173').replace(/\/$/, '')}/agent-browser.html`
+    : 'app://bundle/agent-browser.html',
+  preloadPath: path.join(__dirname, 'agentBrowserPreload.cjs'),
+  stateDir: path.join(hostPaths.state, 'agent-browser'),
+  stringsForLocale,
+  logger: console,
+});
+const browserBridge = createBrowserBridge({
+  agentBrowser: agentBrowserManager,
+  officeRoot: hostPaths.root,
+  logger: console,
+});
+
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.tinadec.office');
 }
@@ -253,6 +279,7 @@ async function createWindow() {
       // The companion is a satellite, not a reason to stay alive: with the tray off, closing the
       // main window must take it down too, or `window-all-closed` never fires.
       companionWindow.closeCompanionWindow();
+      agentBrowserManager.closeAll();
       return;
     }
     event.preventDefault();
@@ -512,7 +539,14 @@ ipcMain.handle('tinadec:companion-api', async (event, payload) => {
 ipcMain.on('tinadec:interface-locale', (event, locale) => {
   if (typeof locale !== 'string' || !isTrustedHostDocumentSender(event)) return;
   trayController?.setLocale(locale);
+  agentBrowserManager.setLocale(locale);
 });
+
+// The agent browser shell is a satellite renderer with its own preload. Both handlers validate
+// the sender inside the manager (only registered shell webContents may call them), so a detached
+// panel or the main renderer cannot drive another session's browser through this surface.
+ipcMain.handle('browserShell:state', (event) => agentBrowserManager.shellState(event.sender));
+ipcMain.handle('browserShell:command', (event, payload) => agentBrowserManager.shellCommand(event.sender, payload));
 
 // --- TinadecUIE layout persistence IPC ---
 // The renderer owns layout semantics; the main process is a thin validated store.
@@ -792,11 +826,22 @@ app.on('before-quit', () => {
   persistPanelStatesForQuit();
   closeAllPetWindows();
   companionWindow.closeCompanionWindow();
+  browserBridge.stopSync();
+  agentBrowserManager.closeAll();
 });
 
 app.whenReady().then(async () => {
   // A second launch has already exited above; this one owns the local services.
   if (!hasSingleInstanceLock) return;
+
+  // Start the browser bridge before the managed services: TinadecTools reads the token file on
+  // its first browser tool call, and the file must already be there.
+  try {
+    await browserBridge.start();
+  } catch (error) {
+    console.error('[tinadec] agent browser bridge failed to start:', error?.message ?? error);
+  }
+
   let gatewayUrl;
   let storedCloseToTray;
   let storedCompanionMode;
@@ -970,6 +1015,7 @@ app.on('window-all-closed', () => {
   closeAllPanelWindows();
   closeAllPetWindows();
   companionWindow.closeCompanionWindow();
+  agentBrowserManager.closeAll();
   // A hidden main window is still an open window, so this only runs once the window really closed:
   // the preference is off, the tray could not be created, or the user is quitting.
   if (process.platform !== 'darwin' && !keepRunningInTray()) {
@@ -980,4 +1026,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   trayController?.destroy();
   trayController = null;
+  // Idempotent with before-quit; also covers quit paths that skip it.
+  browserBridge.stopSync();
+  agentBrowserManager.closeAll();
 });

@@ -334,6 +334,98 @@ public sealed partial class StorageApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ContextProvider_InjectsOnlyTheLatestAppliedCompactionSummary()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new
+        {
+            name = "Compaction context",
+            path = Path.Combine(_root, "compaction-context-workspace")
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var projectId = project.GetProperty("id").GetGuid();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new
+        {
+            project_id = projectId,
+            title = "Compaction session"
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        await PostMessageAsync(client, sessionId, "先做第一件事");
+
+        var conversations = _factory.Services.GetRequiredService<IConversationStore>();
+        var revision = await conversations.GetContextRevisionAsync(sessionId);
+        await conversations.ApplyContextPatchAsync(new ContextPatchRequest(
+            sessionId, revision, "OLD_COMPACTION_SENTINEL：旧摘要", "第一次压缩", Kind: "compaction"));
+        var applied = await conversations.GetContextRevisionAsync(sessionId);
+        var latest = await conversations.ApplyContextPatchAsync(new ContextPatchRequest(
+            sessionId, applied, "NEW_COMPACTION_SENTINEL：当前目标与关键约束", "第二次压缩", Kind: "compaction"));
+
+        var provider = _factory.Services.GetRequiredService<IContextProvider>();
+        var context = await provider.BuildContextAsync(new ContextBuildRequest(
+            sessionId.ToString(),
+            RunId: null,
+            ReviewedMemoryLimit: 0,
+            RecentMessageLimit: 32));
+
+        var compaction = Assert.Single(context.Evidence.Where(item => item.Source == "session_compaction"));
+        Assert.Contains("NEW_COMPACTION_SENTINEL", compaction.Content);
+        Assert.DoesNotContain("OLD_COMPACTION_SENTINEL", compaction.Content);
+        Assert.Equal(latest.PatchId.ToString("N"), compaction.Metadata["patch_id"]);
+        Assert.Equal(latest.AppliedRevision.ToString(), compaction.Metadata["context_revision"]);
+        // A patch written without a watermark keeps the old behaviour: the summary joins
+        // the raw history instead of standing in for it.
+        Assert.Contains("先做第一件事", Assert.Single(context.Evidence.Where(item => item.Source == "session_history")).Content);
+        Assert.DoesNotContain("covers_through_sequence", compaction.Metadata);
+    }
+
+    [Fact]
+    public async Task ContextProvider_CompactionWatermarkHidesTheHistoryItCovers()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new
+        {
+            name = "Compaction watermark",
+            path = Path.Combine(_root, "compaction-watermark-workspace")
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var projectId = project.GetProperty("id").GetGuid();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new
+        {
+            project_id = projectId,
+            title = "Compaction watermark session"
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        await PostMessageAsync(client, sessionId, "BEFORE_WATERMARK_SENTINEL");
+        await PostMessageAsync(client, sessionId, "COVERED_TAIL_SENTINEL");
+
+        var conversations = _factory.Services.GetRequiredService<IConversationStore>();
+        var revision = await conversations.GetContextRevisionAsync(sessionId);
+        var compaction = await conversations.ApplyContextPatchAsync(new ContextPatchRequest(
+            sessionId, revision, "SUMMARY_SENTINEL：前两轮已压缩", "压缩覆盖到第 2 条",
+            Kind: "compaction", CoversThroughSequence: 2));
+
+        // A newer turn arrives after the summary; it must remain visible verbatim.
+        await PostMessageAsync(client, sessionId, "AFTER_WATERMARK_SENTINEL");
+
+        var provider = _factory.Services.GetRequiredService<IContextProvider>();
+        var context = await provider.BuildContextAsync(new ContextBuildRequest(
+            sessionId.ToString(),
+            RunId: null,
+            ReviewedMemoryLimit: 0,
+            RecentMessageLimit: 32));
+
+        var summary = Assert.Single(context.Evidence.Where(item => item.Source == "session_compaction"));
+        Assert.Contains("SUMMARY_SENTINEL", summary.Content);
+        Assert.Equal(compaction.PatchId.ToString("N"), summary.Metadata["patch_id"]);
+        Assert.Equal("2", summary.Metadata["covers_through_sequence"]);
+
+        var history = Assert.Single(context.Evidence.Where(item => item.Source == "session_history"));
+        Assert.Contains("AFTER_WATERMARK_SENTINEL", history.Content);
+        Assert.DoesNotContain("BEFORE_WATERMARK_SENTINEL", history.Content);
+        Assert.DoesNotContain("COVERED_TAIL_SENTINEL", history.Content);
+        Assert.Equal("3", history.Metadata["first_sequence"]);
+    }
+
+    [Fact]
     public async Task RevertHistory_DropsMessagesFromConversation_ButKeepsRowsAndResequence()
     {
         var client = _factory!.CreateClient();

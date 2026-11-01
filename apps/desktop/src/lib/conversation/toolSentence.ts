@@ -19,6 +19,7 @@ export type ToolVerb =
   | 'git'
   | 'mcp'
   | 'fetch'
+  | 'browse'
   | 'workspace'
   | 'other'
 
@@ -56,6 +57,7 @@ const VERB_BY_KIND: Record<ToolKind, ToolVerb> = {
   git: 'git',
   mcp: 'mcp',
   sandbox: 'other',
+  browser: 'browse',
   orchestration: 'other',
   chat: 'other',
   other: 'other',
@@ -115,6 +117,13 @@ export function toolSentence(input: ToolSentenceInput, workspaceRoot?: string | 
     case 'fetch':
       subject = path ?? input.query ?? summarySubject(input.tool_id, input.arguments_summary)
       break
+    case 'browse': {
+      const action = input.tool_id.startsWith('browser_')
+        ? input.tool_id.slice('browser_'.length).replace(/_/g, ' ')
+        : input.tool_id
+      subject = path ?? action
+      break
+    }
     case 'mcp':
       subject = summarySubject(input.tool_id, input.arguments_summary)
       break

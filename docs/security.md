@@ -74,6 +74,52 @@ never as an instruction or an authorization**. What that means in the code, not 
   failure text reaches the UI only through `last_error`/`reason` fields Core itself composed, and
   Core never echoes back a fetched body.
 
+## Agent browser (2026-11-02)
+
+The built-in browser is now a real Chromium target the agent can drive, but it is a **separate,
+empty-profile browser**, not the user's browsing session. The trust boundary is the host bridge,
+not the page.
+
+- **Transport.** The Electron main process listens on `127.0.0.1` only, on a random port, behind a
+  random 32-byte bearer token compared in constant time. The token is written to
+  `TINADEC_HOME/state/agent-browser/bridge.json` (0600; directory 0700) and deleted on `app.quit`.
+  It is deliberately **not** an environment variable: tool child processes (for example the git
+  child in `TerminalRunner`) inherit the whole environment, and one inherited variable would hand
+  every descendant the ability to drive the browser.
+- **CDP allowlist, not raw debugging.** The bridge exposes selected `Page.*` / `DOM.*` /
+  `Input.*` / `Accessibility.*` / `Runtime.evaluate` / `Target.*` methods and refuses everything
+  else (`Browser.*`, `Storage.*`, `Emulation.*`, `Page.addScriptToEvaluateOnNewDocument`,
+  `Page.setDownloadBehavior`, `Page.setDocumentContent`). The model never supplies a script body:
+  every `Runtime.evaluate` / `Runtime.callFunctionOn` body is a fixed string compiled into the .NET
+  tool, and a structural test scans `TinadecTools/Tools/Browser/**` for argument interpolation into
+  a script. `Page.navigate` is restricted to `http`/`https`; `file:`, `javascript:`, `data:`,
+  `app:`, `tinadec-media:` and `devtools:` are refused at the bridge as a backstop, with host policy
+  decided in .NET first.
+- **Isolation.** Each session is a separate `WebContentsView`/window using the
+  `persist:tinadec-agent-browser` partition, `contextIsolation:true`, `sandbox:true`,
+  `nodeIntegration:false`, no page preload, `webSecurity` on. The agent browser never shares the
+  user's cookies, storage or login state; "sign in as the user and click confirm" is exactly the
+  scenario this design excludes.
+- **Network policy.** Default-deny for RFC1918, link-local and cloud metadata addresses
+  (`169.254.169.254` included). Loopback is allowed because the local dev/preview server is the
+  main use case; `allow_private_hosts` (default `false`) is the explicit opt-in for other private
+  ranges. Navigation with embedded credentials (`https://user:pass@host`) is refused.
+- **Hard stops, not retries.** User takeover, an open JavaScript dialog, a blocked popup, a
+  download, a file chooser and any upload attempt stop the run with a stable code
+  (`browser_user_in_control`, `browser_dialog_open`, `browser_popup_blocked`,
+  `browser_download_started`, `browser_file_chooser_opened`). Input already dispatched to the page
+  is never replayed; a stale `ref` is a permanent error and requires a fresh snapshot. Operation
+  tools additionally bypass auto-approve and delegation (`human-only`), and their results are
+  marked `retry=unsafe` so Core does not advertise them as retryable.
+- **Evidence.** Every bridge operation is appended to
+  `state/agent-browser/audit.jsonl` (bounded rotation) with `{time, session, tab, op, url, code}`;
+  approvals show a human-readable summary (host, step count, first actions) rather than a body
+  fingerprint. Typed text is redacted as character count plus a short hash.
+- **Known limits (v1).** Only the main frame gets refs (no OOPIF/iframe internals); uploads and
+  downloads are refused rather than routed; there is no `browser_evaluate` escape hatch; and the
+  optional card embedding (phase two) is not implemented, so the preview card still renders an
+  iframe and is not agent-drivable.
+
 ## Not In MVP
 
 - Enterprise policy center.

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Browser</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #15121a;
+        --bar: #1d1926;
+        --border: #312b3d;
+        --text: #e6e1ee;
+        --muted: #a49ab1;
+        --accent: #d2bdf5;
+        --danger: #f85149;
+        --warning: #d29922;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+      body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      #toolbar {
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        background: var(--bar);
+        border-bottom: 1px solid var(--border);
+        -webkit-app-region: drag;
+      }
+      #toolbar button, #toolbar input, #toolbar select {
+        -webkit-app-region: no-drag;
+        font: inherit;
+        color: var(--text);
+        background: #26212f;
+        border: 1px solid #3a3348;
+        border-radius: 6px;
+      }
+      #toolbar button {
+        height: 28px;
+        min-width: 28px;
+        padding: 0 8px;
+        cursor: pointer;
+      }
+      #toolbar button:hover:not(:disabled) { background: #332c40; }
+      #toolbar button:disabled { opacity: 0.4; cursor: default; }
+      #toolbar button.primary { color: #1a1420; background: var(--accent); border-color: var(--accent); }
+      #toolbar button.danger { color: #fff; background: #7a2323; border-color: #a33535; }
+      #url {
+        flex: 1 1 auto;
+        min-width: 160px;
+        height: 28px;
+        padding: 0 10px;
+        border-radius: 14px;
+        background: #211c29;
+      }
+      #url:focus { outline: 1px solid var(--accent); }
+      #tabs { height: 28px; max-width: 180px; padding: 0 6px; }
+      #state { white-space: nowrap; color: var(--muted); }
+      #state.agent { color: var(--accent); }
+      #state.user { color: var(--warning); }
+      #state.dialog { color: var(--danger); }
+      #notice {
+        position: fixed;
+        left: 8px;
+        bottom: 8px;
+        max-width: 70vw;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: #2a2234;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        display: none;
+      }
+      #notice.visible { display: block; }
+      #content { height: calc(100vh - 48px); background: var(--bg); }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="back" type="button">‹</button>
+      <button id="forward" type="button">›</button>
+      <button id="reload" type="button">⟳</button>
+      <input id="url" type="text" spellcheck="false" autocomplete="off" />
+      <select id="tabs"></select>
+      <span id="state" role="status" aria-live="polite"></span>
+      <button id="takeover" type="button"></button>
+      <button id="handback" type="button" class="primary"></button>
+      <button id="external" type="button"></button>
+      <button id="close" type="button" class="danger"></button>
+    </div>
+    <div id="content"></div>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <script type="module" src="/src/agentBrowserShell.ts"></script>
+  </body>
+</html>

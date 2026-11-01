@@ -19,15 +19,27 @@ public sealed record ToolApprovalPolicy
     /// Tools that always wait for a person, whatever the risk and permission
     /// mode (a frozen <c>full-access</c> run is the one exception). Delete tools
     /// are refused by suffix as well, whether or not they appear here.
+    /// Browser act tools are here because they change pages the user is watching;
+    /// the read-only snapshot/wait/tabs-list tools are not.
     /// </summary>
     public static readonly IReadOnlyList<string> DefaultHumanOnlyTools =
-        ["git_push", "command_run", "shell", "git_worktree_remove", "mcp_invoke"];
+    [
+        "git_push", "command_run", "shell", "git_worktree_remove", "mcp_invoke",
+        "browser_navigate", "browser_click", "browser_type", "browser_press", "browser_scroll",
+        "browser_history", "browser_tab_open", "browser_tab_select", "browser_tab_close", "browser_batch",
+    ];
 
     /// <summary>
     /// Tools a delegated gate may never decide on its own, even when they are
-    /// not human-only. Egress stays with the person in delegated modes.
+    /// not human-only. Egress and browser interactions stay with the person in
+    /// delegated modes.
     /// </summary>
-    public static readonly IReadOnlyList<string> DefaultDelegationBlockedTools = ["web_fetch", "mcp_invoke"];
+    public static readonly IReadOnlyList<string> DefaultDelegationBlockedTools =
+    [
+        "web_fetch", "mcp_invoke",
+        "browser_navigate", "browser_click", "browser_type", "browser_press", "browser_scroll",
+        "browser_history", "browser_tab_open", "browser_tab_select", "browser_tab_close", "browser_batch",
+    ];
 
     public static ToolApprovalPolicy Default { get; } = new();
 

@@ -1,0 +1,35 @@
+
+[mark] app ready
+[mark] main start
+[mark] page server ready
+[mark] manager created
+[agent-browser] bridge listening on http://127.0.0.1:51455
+[mark] bridge started
+[PASS] bridge started and wrote a token file :: {"url":"http://127.0.0.1:51455"}
+[agent-browser] loading shell about:blank
+[31948:1102/024825.603:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: 拒绝访问。 (0x5)
+[31948:1102/024825.603:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: 拒绝访问。 (0x5)
+[31948:1102/024825.603:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: 拒绝访问。 (0x5)
+[31948:1102/024825.603:ERROR:net\disk_cache\disk_cache.cc:284] Unable to create cache
+[31948:1102/024825.604:ERROR:gpu\ipc\host\gpu_disk_cache.cc:737] Gpu Cache Creation failed: -2
+[31948:1102/024825.604:ERROR:net\disk_cache\disk_cache.cc:284] Unable to create cache
+[31948:1102/024825.604:ERROR:gpu\ipc\host\gpu_disk_cache.cc:737] Gpu Cache Creation failed: -2
+[31948:1102/024825.604:ERROR:net\disk_cache\disk_cache.cc:284] Unable to create cache
+[31948:1102/024825.604:ERROR:gpu\ipc\host\gpu_disk_cache.cc:737] Gpu Cache Creation failed: -2
+[agent-browser] shell loaded
+[agent-browser] attaching debugger tab-1-188541ab
+[agent-browser] debugger ready tab-1-188541ab
+[mark] tabs/open returned
+[PASS] tabs/open creates a real window and navigates :: {"id":"tab-1-188541ab","url":"http://127.0.0.1:51454/a","title":"","loading":false,"active":true}
+[mark] tab id tab-1-188541ab
+[mark] document ready
+[PASS] Page.navigate through the bridge reaches a complete document
+[PASS] Accessibility snapshot crosses the bridge :: {"backendDOMNodeId":6}
+[PASS] DOM.getBoxModel crosses the bridge
+[PASS] real input through the bridge updates the page :: "clicked"
+[PASS] screenshot is written to disk :: {"path":"C:\\Users\\lincu\\AppData\\Local\\Temp\\tinadec-p1-probe-RPuRgk\\state\\agent-browser\\shots\\it\\shot-570ed7f2-8ccc-421e-aeaa-debc1363e6b4.png","bytes":23316,"notices":[]}
+[PASS] state reports one active tab and agent control :: {"session_id":"it","control":"agent","tabs":[{"id":"tab-1-188541ab","url":"http://127.0.0.1:51454/a","title":"","loading":false,"active":true}],"active_tab":"tab-1-188541ab","dialog":null,"notices":[],"labels":{"title":"智能体浏览器","back":"后退","forward":"前进","reload":"刷新","urlPlaceholder":"输入网址，按 Enter 打开","tabs":"标签页","agentControl":"智能体正在操作","userControl":"你已接管浏览器","takeOver":"接管","handBack":"交还给智能体","openExternal":"在系统浏览器打开","close":"关闭","loading":"正在加载…","dialogOpen":"页面弹出了对话框，智能体已暂停","noticePopup":"已阻止弹出窗口","noticePermission":"已拒绝页面权限请求：{permission}","noticeDownload":"已阻止下载：{filename}","noticeFileChooser":"页面请求选择文件，智能体已暂停","noticeRenderer":"页面渲染进程已退出","noticeNavigation":"已阻止不支持的地址"}}
+[PASS] non-allowlisted method is refused :: "browser_method_denied"
+[PASS] user takeover hard-stops the agent bridge :: "browser_user_in_control"
+
+SUMMARY {"total":10,"failed":0,"failures":[]}

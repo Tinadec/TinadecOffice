@@ -17,6 +17,7 @@ public static class ToolSettingsSchema
         search = new { enabled = true, max_results = 50, timeout_ms = (int?)null, rg_path = (string?)null, case_sensitive = false, fixed_strings = false, context_lines = 0, include_hidden = false, respect_ignore_files = true },
         git = new { enabled = true, timeout_ms = 60000, max_output_chars = 4194304, protected_branches = new[] { "main", "master" }, log_limit = 50, log_list_limit = 100, tool_budgets = new Dictionary<string,object>() },
         web = new { enabled = true, timeout_ms = 15000, max_bytes = 262144, max_chars = 12000, max_redirects = 3 },
+        browser = new { enabled = true, max_snapshot_chars = 24000, action_timeout_ms = 15000, wait_timeout_ms = 30000, allow_private_hosts = false },
         mcp = new { enabled = true, timeout_ms = 30000, server_resource_ids = (Guid[]?)null },
         skills = new { enabled = true, resource_ids = (Guid[]?)null, search_depth = 2, max_skills = 40, max_index_chars = 8000, max_file_bytes = 262144 }
     });
@@ -27,6 +28,7 @@ public static class ToolSettingsSchema
         ["read.sentinel_line_limit"] = (0,100000), ["read.directory_page_size"] = (1,500), ["read.max_file_bytes"] = (1,1073741824), ["write.max_file_bytes"] = (1,1073741824),
         ["search.max_results"] = (1,10000), ["search.context_lines"] = (0,1000), ["search.timeout_ms"] = (1,1800000), ["git.timeout_ms"] = (1,1800000), ["git.max_output_chars"] = (1,4194304), ["git.log_limit"] = (1,500), ["git.log_list_limit"] = (1,10000),
         ["web.timeout_ms"] = (1000,60000), ["web.max_bytes"] = (1,4194304), ["web.max_chars"] = (1,60000), ["web.max_redirects"] = (0,3),
+        ["browser.max_snapshot_chars"] = (2048,64000), ["browser.action_timeout_ms"] = (1000,60000), ["browser.wait_timeout_ms"] = (100,60000),
         ["mcp.timeout_ms"] = (1,1800000), ["skills.search_depth"] = (2,2), ["skills.max_skills"] = (0,1000), ["skills.max_index_chars"] = (0,1048576), ["skills.max_file_bytes"] = (262144,262144)
     };
     private static readonly IReadOnlyList<string> GitTools = ["git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_conflict_resolve", "git_discard", "git_stage", "git_unstage", "git_worktree_create", "git_worktree_remove", "git_fetch", "git_push", "git_pull", "git_file_history", "git_log_list", "git_commit", "git_log_detail", "git_status", "git_push_readiness", "git_log", "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision", "git_conflict_preview", "git_merge", "git_rebase"];

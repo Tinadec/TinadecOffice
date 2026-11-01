@@ -853,6 +853,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         // A read-only transport failure can succeed on a later attempt; a mutating call's
         // failure is only retryable when Core knows it never reached the tool.
         var retryable = !execution.MutatesWorkspace
+            && string.Equals(descriptor.RetrySafety, "safe", StringComparison.OrdinalIgnoreCase)
             && finalCategory is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit or RunErrorTaxonomy.ToolRuntimeUnavailable;
         var failedExecution = await _executions.FailAsync(execution.Id, failureStatus, finalCategory, message, cancellationToken,
             new ToolOutcomeAttribution(ToolOutcomes.Error, retryable,

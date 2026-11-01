@@ -1,0 +1,189 @@
+
+[PASS] getFullAXTree exposes backendDOMNodeId :: {"nodes":15,"backendDOMNodeId":6}
+[PASS] pushNodesByBackendIdsToFrontend resolves backend id :: {"nodeIds":[8]}
+[PASS] getBoxModel accepts backendNodeId :: {"x":41.267860412597656,"y":103.16072082519531}
+[PASS] scrollIntoViewIfNeeded accepts backendNodeId
+[PASS] resolveNode + callFunctionOn :: "BUTTON:Click me"
+[PASS] Input.dispatchMouseEvent drives a real click :: {"value":"clicked","point":[41,103],"diag":{"dpr":1.75,"focused":true,"hit":"BUTTON#btn","inner":[1000,800],"rect":[8,92.73214721679688,66.53572082519531,20.85714340209961]}}
+[PASS] real click works while the window is not focused :: {"value":"clicked","hadFocus":true}
+[PASS] real click works while the window is hidden :: {"value":"clicked","hadFocus":false}
+[PASS] Page.captureScreenshot returns a PNG :: {"bytes":25746}
+[PASS] Page.javascriptDialogOpening event :: {"defaultPrompt":"","frameId":"9BDBAA86FFBC9BB87B65712971EAEB1F","hasBrowserHandler":true,"message":"probe-dialog","type":"alert","url":"http://127.0.0.1:63097/a"}
+[PASS] Page.handleJavaScriptDialog unblocks the page :: 2
+[PASS] Page.getFrameTree exposes loaderId :: "55CCFD1680FB072F5C5448DE96E083F7"
+[PASS] navigation changes the document loaderId :: {"before":"55CCFD1680FB072F5C5448DE96E083F7","after":"1219E11A2E5AFD9A303F5A40358706BC"}
+[PASS] old backendDOMNodeId no longer resolves after navigation :: {"oldResolved":false}
+[PASS] Page.fileChooserOpened is interceptable :: {"backendNodeId":47,"frameId":"9BDBAA86FFBC9BB87B65712971EAEB1F","mode":"selectSingle"}
+[PASS] View.setVisible exists :: "function"
+[PASS] second debugger.attach fails deterministically :: "Debugger is already attached to the target"
+[PASS] focus + Input.insertText + readback :: "hello-probe"
+
+SUMMARY {
+  "total": 18,
+  "failed": 0,
+  "failures": [],
+  "results": [
+    {
+      "name": "getFullAXTree exposes backendDOMNodeId",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "nodes": 15,
+        "backendDOMNodeId": 6
+      }
+    },
+    {
+      "name": "pushNodesByBackendIdsToFrontend resolves backend id",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "nodeIds": [
+          8
+        ]
+      }
+    },
+    {
+      "name": "getBoxModel accepts backendNodeId",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "x": 41.267860412597656,
+        "y": 103.16072082519531
+      }
+    },
+    {
+      "name": "scrollIntoViewIfNeeded accepts backendNodeId",
+      "ok": true,
+      "optional": false
+    },
+    {
+      "name": "resolveNode + callFunctionOn",
+      "ok": true,
+      "optional": false,
+      "detail": "BUTTON:Click me"
+    },
+    {
+      "name": "Input.dispatchMouseEvent drives a real click",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "value": "clicked",
+        "point": [
+          41,
+          103
+        ],
+        "diag": {
+          "dpr": 1.75,
+          "focused": true,
+          "hit": "BUTTON#btn",
+          "inner": [
+            1000,
+            800
+          ],
+          "rect": [
+            8,
+            92.73214721679688,
+            66.53572082519531,
+            20.85714340209961
+          ]
+        }
+      }
+    },
+    {
+      "name": "real click works while the window is not focused",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "value": "clicked",
+        "hadFocus": true
+      }
+    },
+    {
+      "name": "real click works while the window is hidden",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "value": "clicked",
+        "hadFocus": false
+      }
+    },
+    {
+      "name": "Page.captureScreenshot returns a PNG",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "bytes": 25746
+      }
+    },
+    {
+      "name": "Page.javascriptDialogOpening event",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "defaultPrompt": "",
+        "frameId": "9BDBAA86FFBC9BB87B65712971EAEB1F",
+        "hasBrowserHandler": true,
+        "message": "probe-dialog",
+        "type": "alert",
+        "url": "http://127.0.0.1:63097/a"
+      }
+    },
+    {
+      "name": "Page.handleJavaScriptDialog unblocks the page",
+      "ok": true,
+      "optional": false,
+      "detail": 2
+    },
+    {
+      "name": "Page.getFrameTree exposes loaderId",
+      "ok": true,
+      "optional": false,
+      "detail": "55CCFD1680FB072F5C5448DE96E083F7"
+    },
+    {
+      "name": "navigation changes the document loaderId",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "before": "55CCFD1680FB072F5C5448DE96E083F7",
+        "after": "1219E11A2E5AFD9A303F5A40358706BC"
+      }
+    },
+    {
+      "name": "old backendDOMNodeId no longer resolves after navigation",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "oldResolved": false
+      }
+    },
+    {
+      "name": "Page.fileChooserOpened is interceptable",
+      "ok": true,
+      "optional": false,
+      "detail": {
+        "backendNodeId": 47,
+        "frameId": "9BDBAA86FFBC9BB87B65712971EAEB1F",
+        "mode": "selectSingle"
+      }
+    },
+    {
+      "name": "View.setVisible exists",
+      "ok": true,
+      "optional": false,
+      "detail": "function"
+    },
+    {
+      "name": "second debugger.attach fails deterministically",
+      "ok": true,
+      "optional": false,
+      "detail": "Debugger is already attached to the target"
+    },
+    {
+      "name": "focus + Input.insertText + readback",
+      "ok": true,
+      "optional": false,
+      "detail": "hello-probe"
+    }
+  ]
+}

@@ -42,8 +42,15 @@ public sealed class AutoApproveOptions
     /// deliberately absent: it cannot change the workspace, its address guard rejects
     /// private/loopback targets, and gating every fetch was the 22-minute read stall in
     /// another shape. A scope that wants a click can add it back through
-    /// <c>runtime.toml [approval] human_only_tools</c>.</summary>
-    public string[] HumanOnlyTools { get; set; } = ["git_push", "command_run", "shell", "git_worktree_remove", "mcp_invoke"];
+    /// <c>runtime.toml [approval] human_only_tools</c>. Browser act tools are listed: they
+    /// change pages the user is watching, and a raised auto-approve ceiling must not turn
+    /// them into an unattended click surface.</summary>
+    public string[] HumanOnlyTools { get; set; } =
+    [
+        "git_push", "command_run", "shell", "git_worktree_remove", "mcp_invoke",
+        "browser_navigate", "browser_click", "browser_type", "browser_press", "browser_scroll",
+        "browser_history", "browser_tab_open", "browser_tab_select", "browser_tab_close", "browser_batch",
+    ];
 
     /// <summary>
     /// The highest risk a delegated approval gate (<c>delegate-*</c> permission modes) may decide.

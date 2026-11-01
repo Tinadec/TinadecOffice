@@ -46,7 +46,16 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      // The agent browser is a separate satellite window with its own tiny shell page.
+      // Keeping it out of the main renderer bundle also keeps the full app bridge away
+      // from the window that embeds arbitrary web content.
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        agentBrowser: path.resolve(__dirname, 'agent-browser.html'),
+      },
+    },
   },
   optimizeDeps: {
     // The source graph contains intentional cyclic barrel exports (UIE components ↔

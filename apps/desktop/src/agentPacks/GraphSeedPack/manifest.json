@@ -6,7 +6,7 @@
     "owner": "tinadec",
     "product_id": "tinadec-core",
     "name": "GraphSeedPack",
-    "version": "3.3.0",
+    "version": "3.4.0",
     "description": "DmaEA 图编排种子包：八种工作模式。Solo 与 Plan 是熟悉的单智能体用法（亲自动手、先出方案），Team、Review、Spec 由协调者带着执行者完成组队、评审与规格驱动开发，Graph 与 Workflow 沿声明好的协作图推进，Correction 用宿主拥有的因果轨迹、验证契约和复现重开完成证据驱动的纠偏。协调者按职责点名执行者（固定 id：search / global_engineering / reviewer），每种模式都绑定独立的提示词管线、角色边界和工具授权；写入与高风险操作继续经过审批。每个会话同时是一个 TinaChat 组织：执行者也是成员，按派发关系互为联系人，在计划室、私聊与公告板里协作；Team 模式常驻治理审查与上下文整理两个角色：前者盯执行者之间的资源冲突，后者在任务结束与 run 收尾时把会话上下文压成结构化摘要。"
   },
   "compatibility": {
@@ -198,7 +198,7 @@
         "resource_key": "search",
         "slug": "search",
         "display_name": "检索取证智能体",
-        "description": "检索取证（只读）：在工作区、git 历史与公开网页中查找事实并给出出处。适合找代码或配置位置、读文档、查提交历史、核实现状。不能写文件、执行命令或提交。",
+        "description": "检索取证（只读）：在工作区、git 历史与公开网页中查找事实并给出出处。适合找代码或配置位置、读文档、查提交历史、核实现状。不能写文件、执行命令或提交。 可调用内置 Agent 浏览器读取公开网页；浏览、点击与输入需要人工批准。",
         "layer": "execution",
         "role": "task_executor",
         "capabilities": [
@@ -226,7 +226,21 @@
           "org_directory",
           "org_read",
           "org_send",
-          "org_contact"
+          "org_contact",
+          "browser_batch",
+          "browser_click",
+          "browser_history",
+          "browser_navigate",
+          "browser_press",
+          "browser_screenshot",
+          "browser_scroll",
+          "browser_snapshot",
+          "browser_tab_close",
+          "browser_tab_open",
+          "browser_tab_select",
+          "browser_tabs_list",
+          "browser_type",
+          "browser_wait"
         ],
         "system_prompt": "你负责检索与取证：读工作区、git 历史、已接入的信息源与公开网页，产出带出处的证据（文件路径与行号、提交号或网址）；不做任何写操作。你只看得到派给你的任务简报，最终回复就是交回给协调者的全部内容，要自足。工作区根路径与路径契约见运行时注入的工作区段，路径参数请传工作区内的绝对路径。取外部网页用 web_fetch：它会先向用户征求批准（confirm_fetch 留空就不会执行），被批准后才发出；本机、内网与云元数据地址会被策略拒绝（blocked=true），那是策略而非网络故障，别换写法重试；truncated=true 说明正文被截过，缺的部分要用 max_bytes/max_chars 再取一次，别把半页当成全页。你也是本会话组织的成员，地址就是你的句柄（例如 search#1）：派你的人、同一派发者下的其他执行者、治理角色和用户都是你的联系人。需要澄清或同步时用 org_send 直接问对方，或先用 org_read room=plan 看计划室里大家说了什么；回复不会出现在本次调用里，别等，也别把没读到的回复当成已知。",
         "enabled": true,
@@ -2489,7 +2503,22 @@
           },
           {
             "agent_ref": "agent:search",
-            "tool_switches": {},
+            "tool_switches": {
+              "browser_batch": false,
+              "browser_click": false,
+              "browser_history": false,
+              "browser_navigate": false,
+              "browser_press": false,
+              "browser_screenshot": false,
+              "browser_scroll": false,
+              "browser_snapshot": false,
+              "browser_tab_close": false,
+              "browser_tab_open": false,
+              "browser_tab_select": false,
+              "browser_tabs_list": false,
+              "browser_type": false,
+              "browser_wait": false
+            },
             "envelope": {
               "resources": {
                 "read": [
@@ -2779,7 +2808,22 @@
           },
           {
             "agent_ref": "agent:search",
-            "tool_switches": {},
+            "tool_switches": {
+              "browser_batch": false,
+              "browser_click": false,
+              "browser_history": false,
+              "browser_navigate": false,
+              "browser_press": false,
+              "browser_screenshot": false,
+              "browser_scroll": false,
+              "browser_snapshot": false,
+              "browser_tab_close": false,
+              "browser_tab_open": false,
+              "browser_tab_select": false,
+              "browser_tabs_list": false,
+              "browser_type": false,
+              "browser_wait": false
+            },
             "envelope": {
               "resources": {
                 "read": [
