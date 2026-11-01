@@ -48,6 +48,11 @@ vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof
 
 import SettingsPage from './SettingsPage.vue'
 import settingsPageSource from './SettingsPage.vue?raw'
+// The model centre's read/write seam moved into a composable: the route-ref regression it guards
+// lives there now, so the assertion has to read that file rather than the page.
+import modelCenterSource from '@/composables/useModelCenter.ts?raw'
+// The channel panes themselves moved into their own section; pin them against that source.
+import modelCenterSectionSource from '@/settings/sections/ModelCenterSection.vue?raw'
 
 describe('SettingsPage smoke (D7 safety net)', () => {
   beforeEach(() => {
@@ -117,6 +122,7 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       'RuntimeInstancesPanel',
       'AgentPacksPanel',
       'CompanionSection',
+      'ModelCenterSection',
     ]
     for (const name of sections) {
       expect(settingsPageSource).toContain(`import ${name} from '@/settings/sections/${name}.vue'`)
@@ -129,9 +135,11 @@ describe('SettingsPage smoke (D7 safety net)', () => {
     // The Routes tab, the route editor, and setDefaultChatModel all read
     // `routes.value`; a shadowing local left it permanently empty, so route
     // PUTs omitted the precondition and Core answered 428.
-    expect(settingsPageSource).toContain('routes.value = routeRows')
+    expect(modelCenterSource).toContain('routes.value = routeRows')
     // The fetched rows must not be captured by a same-named local binding.
-    expect(settingsPageSource).not.toMatch(/const \[[^\]]*\broutes\b[^\]]*\] = await Promise\.all/)
+    expect(modelCenterSource).not.toMatch(/const \[[^\]]*\broutes\b[^\]]*\] = await Promise\.all/)
+    // The page itself no longer reads routes on its own; it destructures the seam.
+    expect(settingsPageSource).toContain('} = modelCenter')
   })
 
   it('gives each harness channel a section, and states what this build can do there', async () => {
@@ -144,7 +152,7 @@ describe('SettingsPage smoke (D7 safety net)', () => {
     // default does not forward its slot, so every pane renders as an empty DOM here — a wrapper
     // assertion would pass against nothing. Overriding the stub is not available either: this repo's
     // tests use Vue's runtime-only build, so a `{ template }` stub cannot compile and the mount throws.
-    const sections = settingsPageSource.match(
+    const sections = modelCenterSectionSource.match(
       /const modelCenterSections = computed\(\(\) => \[([\s\S]*?)\n\]\)/,
     )?.[1]
     expect(sections, 'modelCenterSections declaration').toBeTruthy()
@@ -162,12 +170,13 @@ describe('SettingsPage smoke (D7 safety net)', () => {
     }
     // A literal 'CLI'/'ACP' tab would satisfy the loop above by accident, so pin that it is gone.
     expect(settingsPageSource).not.toMatch(/label: '(CLI|ACP)'/)
+    expect(modelCenterSectionSource).not.toMatch(/label: '(CLI|ACP)'/)
 
     const pane = (key: string) => {
-      const start = settingsPageSource.indexOf(`v-if="modelCenterSection === '${key}'"`)
+      const start = modelCenterSectionSource.indexOf(`v-if="modelCenterSection === '${key}'"`)
       expect(start, `pane for '${key}'`).toBeGreaterThan(-1)
-      const next = settingsPageSource.indexOf('<section v-if="modelCenterSection ===', start + 1)
-      return settingsPageSource.slice(start, next === -1 ? settingsPageSource.length : next)
+      const next = modelCenterSectionSource.indexOf('<section v-if="modelCenterSection ===', start + 1)
+      return modelCenterSectionSource.slice(start, next === -1 ? modelCenterSectionSource.length : next)
     }
 
     // The ACP pane states the permission consequence before the user connects, because Core answers
@@ -191,8 +200,9 @@ describe('SettingsPage smoke (D7 safety net)', () => {
   })
 
   it('keeps the channel copy in both locale bundles', () => {
-    // SettingsPage is not registered in i18nParity's panelSources, so a key added to the page and not
-    // to one bundle would render as a dotted string in exactly one language.
+    // The section is registered in i18nParity's panelSources, which proves every referenced key exists
+    // in both bundles. This named list stays because it pins the channel copy itself: a rename shows up
+    // as a named missing key instead of one line in a parity dump.
     const keys = [
       'centerCli', 'centerTui', 'centerAcp',
       'channelCli', 'channelTui', 'channelAcp',

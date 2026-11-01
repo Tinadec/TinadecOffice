@@ -17,9 +17,9 @@ describe('GraphSeedPack', () => {
     expect(graphSeedPackManifest.compatibility.required_core_capabilities).toContain('structured_investigation_v1')
 
     // Three execution templates, TWO conversation identities — `meeting` (no tools, it only
-    // orchestrates) and `solo_master` (holds tools and does the work itself) — and one standing
-    // governance role. The governance role is declared by the pack like any other agent (a
-    // relationship-file subscription wires it), never a Core-internal role the pack depends on.
+    // orchestrates) and `solo_master` (holds tools and does the work itself) — and two standing
+    // operation roles: governance review and context upkeep. Both are declared by the pack like
+    // any other agent, never Core-internal roles the pack quietly depends on.
     const agents = graphSeedPackManifest.resources.agents
     expect(agents.map((agent) => agent.resource_key)).toEqual([
       'meeting',
@@ -28,6 +28,7 @@ describe('GraphSeedPack', () => {
       'global_engineering',
       'reviewer',
       'governance_reviewer',
+      'context_compressor',
       'artex_director',
       'artex_planner',
       'artex_worker',
@@ -103,6 +104,15 @@ describe('GraphSeedPack', () => {
     expect(governance.layer).toBe('operation')
     expect(governance.tool_scope).toEqual(['graph_view', 'org_directory', 'org_read', 'org_send', 'org_report', 'org_execute_report', 'recall_evidence', 'environment_list'])
     expect(governance.capabilities).not.toContain('user.respond')
+
+    // Context upkeep is a governance-layer role, not an executor: Core recognizes its role
+    // name, it holds no tool and no dispatch target, and it produces a summary patch only.
+    const compressor = agents.find((agent) => agent.resource_key === 'context_compressor')!
+    expect(compressor.layer).toBe('operation')
+    expect(compressor.role).toBe('context_maintenance')
+    expect(compressor.tool_scope).toEqual([])
+    expect(compressor.capabilities).toEqual(['context.maintain'])
+    expect(compressor.capabilities).not.toContain('user.respond')
   })
 
   it('declares nine modes on the four orchestration tiers', () => {
@@ -130,16 +140,22 @@ describe('GraphSeedPack', () => {
     const bySlug = new Map(modes.map((mode) => [mode.resource_key, mode] as const))
     // free_form: one director node and no declared edges — the tier is derived from the
     // topology, so an authoring mistake here silently changes which enforcement path a run
-    // takes. Team also carries a standing governance node: an operation-layer member woken by
-    // lease conflicts, which is not a dispatch target and adds no edge.
+    // takes. Team also carries two standing operation nodes: governance review (woken by
+    // lease conflicts) and context upkeep (woken by Core's task/run close anchors). Neither
+    // is a dispatch target and neither adds an edge.
     const team = bySlug.get('free_director')!
-    expect(team.nodes.map((node) => node.node_key)).toEqual(['meeting', 'governance_reviewer'])
+    expect(team.nodes.map((node) => node.node_key)).toEqual(['meeting', 'governance_reviewer', 'context_compressor'])
     expect(team.edges).toHaveLength(0)
     const standing = team.nodes.find((node) => node.node_key === 'governance_reviewer')!
     expect(standing.layer).toBe('operation')
     expect(standing.config.conversation).toBeUndefined()
     expect(standing.relationship!.subscriptions).toEqual(['lease_conflict'])
     expect(standing.relationship!.allowed_dispatch_targets).toEqual([])
+    const standingCompressor = team.nodes.find((node) => node.node_key === 'context_compressor')!
+    expect(standingCompressor.layer).toBe('operation')
+    expect(standingCompressor.config.conversation).toBeUndefined()
+    expect(standingCompressor.relationship!.allowed_dispatch_targets).toEqual([])
+    expect(standingCompressor.relationship!.agent_types).toEqual([])
     // self_dispatch and deterministic share the same three nodes and two edges;
     // they differ in the meeting binding's envelope (deterministic removes the
     // spawn room).

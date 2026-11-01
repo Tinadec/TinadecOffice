@@ -70,6 +70,43 @@ describe('model parameter editor', () => {
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
+  it('keeps a dirty draft when the provider refreshes, and saves with the revision it was opened on', async () => {
+    const wrapper = mount(ModelParametersEditor, { props: { provider, model: 'test-model' }, global: { plugins: [i18n()] } })
+    await wrapper.get('#model-reasoning').setValue(String(stop('low')))
+    // A background refresh replaced the saved projection: the draft must not be overwritten, and its
+    // write must carry revision 7 — sending 8 would silently overwrite what the user never saw.
+    await wrapper.setProps({ provider: { ...provider, revision: 8, model_parameters: { 'test-model': { reasoning_effort: 'medium', max_output_tokens: 4096 } } } })
+    expect(wrapper.text()).toContain(en.settings.modelParametersDraftKept)
+    expect((wrapper.get('#model-reasoning').element as HTMLInputElement).value).toBe(String(stop('low')))
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.save).toHaveBeenCalledWith('provider-a', expect.objectContaining({
+      model_parameters: { 'test-model': { reasoning_effort: 'low', max_output_tokens: 8192 } },
+    }), { expected_revision: 7 })
+    wrapper.unmount()
+  })
+  it('adopts refreshed saved values while the editor is pristine', async () => {
+    const wrapper = mount(ModelParametersEditor, { props: { provider, model: 'test-model' }, global: { plugins: [i18n()] } })
+    await wrapper.setProps({ provider: { ...provider, revision: 8, model_parameters: { 'test-model': { reasoning_effort: 'low', max_output_tokens: 4096 } } } })
+    expect((wrapper.get('#model-reasoning').element as HTMLInputElement).value).toBe(String(stop('low')))
+    expect((wrapper.get('#model-parameter-maxTokens').element as HTMLInputElement).value).toBe('4096')
+    expect(wrapper.text()).not.toContain(en.settings.modelParametersDraftKept)
+    wrapper.unmount()
+  })
+  it('loads latest only on request, discarding the stale draft', async () => {
+    mocks.save.mockRejectedValue(Object.assign(new Error('stale'), { status: 412 }))
+    const wrapper = mount(ModelParametersEditor, { props: { provider, model: 'test-model' }, global: { plugins: [i18n()] } })
+    await wrapper.get('#model-reasoning').setValue(String(stop('low')))
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const loadLatest = wrapper.findAll('button').find(button => button.text().includes(en.settings.modelParametersLoadLatest))
+    expect(loadLatest, 'load-latest action').toBeDefined()
+    await loadLatest!.trigger('click')
+    expect(wrapper.emitted('reload')).toHaveLength(1)
+    expect((wrapper.get('#model-reasoning').element as HTMLInputElement).value).toBe(String(stop('high')))
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
   it('omits sampling for OpenAI reasoning models and hides unsupported reasoning on Anthropic', async () => {
     const wrapper = mount(ModelParametersEditor, { props: { provider, model: 'gpt-5.4' }, global: { plugins: [i18n()] } })
     await wrapper.get('#model-reasoning').setValue(String(stop('high')))

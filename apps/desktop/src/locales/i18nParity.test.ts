@@ -73,6 +73,7 @@ const panelSources = import.meta.glob(
     './../settings/sections/PromptEngineeringMerged.vue',
     './../settings/sections/RuntimeInstancesPanel.vue',
     './../settings/sections/AgentPacksPanel.vue',
+    './../settings/sections/ModelCenterSection.vue',
     './../settings/sections/ModelParametersEditor.vue',
     './../settings/sections/ToolCenterSection.vue',
     './../settings/sections/ToolResourcesPanel.vue',

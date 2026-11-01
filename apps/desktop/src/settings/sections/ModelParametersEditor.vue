@@ -46,7 +46,19 @@ const imageInvalid = computed(() => {
     || !Number.isSafeInteger(images) || images <= 0 || images > 8
 })
 
-watch(() => [props.provider.id, props.provider.revision, props.model], () => {
+/**
+ * The revision the open draft was built on. A refresh may replace the saved projection while this
+ * editor is open; sending the new revision with the old draft would silently overwrite a change the
+ * user never saw, so the draft keeps its own revision and a concurrent write surfaces as 412.
+ */
+const openedRevision = ref<number | null>(props.provider.revision ?? null)
+const openedProtocol = ref(props.provider.protocol ?? '')
+const baseline = ref('')
+const draftKept = ref(false)
+const snapshot = () => JSON.stringify(form)
+const dirty = computed(() => snapshot() !== baseline.value)
+
+function applyFromProps() {
   const settings = props.provider.model_parameters?.[props.model] ?? {}
   Object.assign(form, { effort: settings.reasoning_effort ?? '', temperature: String(settings.temperature ?? ''), topP: String(settings.top_p ?? ''), maxTokens: String(settings.max_output_tokens ?? '') })
   const image = props.provider.image_input
@@ -56,12 +68,40 @@ watch(() => [props.provider.id, props.provider.revision, props.model], () => {
     imageMaxBytes: String(override?.max_image_bytes ?? image?.base_max_image_bytes ?? image?.max_image_bytes ?? ''),
     imageMaxImages: String(override?.max_images_per_turn ?? image?.base_max_images_per_turn ?? image?.max_images_per_turn ?? ''),
   })
+  baseline.value = snapshot()
+  openedRevision.value = props.provider.revision ?? null
+  openedProtocol.value = props.provider.protocol ?? ''
   error.value = ''
   stale.value = false
+  draftKept.value = false
+}
+
+// A string key, not an array: an array getter returns a fresh reference on every provider replace,
+// which would re-apply the saved projection (and wipe the draft) when only the revision changed.
+const draftKey = computed(() => `${props.provider.id}\u0000${props.model}`)
+watch(draftKey, () => {
+  applyFromProps()
 }, { immediate: true })
 
+// A refresh only updates the saved projection. Unsaved choices stay as typed — unless the protocol
+// changed underneath, because then the draft describes a different provider and cannot be applied.
+watch(() => props.provider.revision, () => {
+  if (dirty.value && (props.provider.protocol ?? '') === openedProtocol.value) {
+    draftKept.value = true
+    return
+  }
+  applyFromProps()
+})
+
+/** Explicit "load latest": discarding the draft is the point of this action, not a side effect. */
+function loadLatest() {
+  applyFromProps()
+  emit('reload')
+}
+
 async function save() {
-  if (busy.value || invalidFields.value.size > 0 || imageInvalid.value || props.provider.revision == null) return
+  const expectedRevision = openedRevision.value ?? props.provider.revision
+  if (busy.value || invalidFields.value.size > 0 || imageInvalid.value || expectedRevision == null) return
   busy.value = true
   error.value = ''
   const settings: ModelParametersDto = {}
@@ -93,7 +133,7 @@ async function save() {
     await api.saveModelProvider(props.provider.id, {
       driver: props.provider.driver, display_name: props.provider.display_name, connection_kind: props.provider.connection_kind,
       enabled: props.provider.enabled, model_parameters: parameters, ...(imageInput ? { image_input: imageInput } : {}),
-    }, { expected_revision: props.provider.revision })
+    }, { expected_revision: expectedRevision })
     emit('saved')
   } catch (err) {
     stale.value = [412, 428].includes((err as { status?: number }).status ?? 0)
@@ -143,10 +183,11 @@ async function save() {
         <p v-if="imageInvalid" class="model-parameter-error" role="alert">{{ t('settings.modelImageBudgetInvalid') }}</p>
       </section>
       <p v-if="omitsSampling" class="quiet" role="note">{{ t('settings.modelSamplingUnavailable') }}</p>
+      <p v-if="draftKept" class="quiet" role="note">{{ t('settings.modelParametersDraftKept') }}</p>
       <p v-if="error" class="model-parameter-error" role="alert">{{ error }}</p>
       <div class="model-parameters-actions">
         <UiButton type="button" variant="ghost" size="sm" @click="Object.assign(form, { effort: '', temperature: '', topP: '', maxTokens: '' })">{{ t('settings.modelResetParameters') }}</UiButton>
-        <UiButton v-if="stale" type="button" variant="outline" size="sm" @click="emit('reload')">{{ t('settings.refresh') }}</UiButton>
+        <UiButton v-if="stale" type="button" variant="outline" size="sm" @click="loadLatest">{{ t('settings.modelParametersLoadLatest') }}</UiButton>
         <UiButton type="button" variant="ghost" size="sm" @click="emit('cancel')">{{ t('settings.cancel') }}</UiButton>
         <UiButton type="submit" size="sm" :disabled="busy || stale || invalidFields.size > 0 || imageInvalid || provider.revision == null">{{ t(busy ? 'settings.modelParametersSaving' : 'settings.save') }}</UiButton>
       </div>

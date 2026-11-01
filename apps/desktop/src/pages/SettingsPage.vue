@@ -2,26 +2,16 @@
 import {
   Archive,
   ArrowLeft,
-  ExternalLink,
   Bot,
   Check,
-  ChevronRight,
-  Circle,
   Cpu,
   Database,
-  Download,
-  Dna,
-  Edit3,
   FileText,
-  FolderOpen,
-  GitBranch,
   Info,
   KeyRound,
   LayoutGrid,
   List,
   Minus,
-  Monitor,
-  Moon,
   MessagesSquare,
   MoreHorizontal,
   Palette,
@@ -32,19 +22,16 @@ import {
   Route,
   Save,
   Search,
-  Server,
   Settings2,
   ShieldCheck,
   Shuffle,
   Square,
-  Sun,
   Terminal,
-  Trash2,
   UserRound,
   Workflow,
   X
 } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useStatusLabels } from '@/lib/statusLabels'
@@ -53,7 +40,7 @@ import AboutSection from '@/settings/sections/AboutSection.vue'
 import ArchiveTrashSection from '@/settings/sections/ArchiveTrashSection.vue'
 import GeneralSection from '@/settings/sections/GeneralSection.vue'
 import StorageSection from '@/settings/sections/StorageSection.vue'
-import ModelScopeNotice from '@/settings/sections/ModelScopeNotice.vue'
+import ModelCenterSection from '@/settings/sections/ModelCenterSection.vue'
 import ApiDocsSection from '@/settings/sections/ApiDocsSection.vue'
 import AppearanceSection from '@/settings/sections/AppearanceSection.vue'
 import PersonalSection from '@/settings/sections/PersonalSection.vue'
@@ -73,23 +60,6 @@ import {
   type AgentVersionDto,
   type PermissionRequestDto,
   type CenterDiagnosticDto,
-  type CliDiscoveryCandidateDto,
-  type HarnessChannelDto,
-  type AcpAdapterDto,
-  type ModelCatalogReadinessReceiptDto,
-  type ModelCenterAcpRuntimeDto,
-  type ModelCenterOverviewDto,
-  type ModelProviderReadinessDto,
-  type ModelProviderInstanceDto,
-  type ModelProviderTemplateDto,
-  type ModelCenterSnapshotDto,
-  type ModelCenterSnapshotPartDto,
-  type ModelReadinessReceiptDto,
-  type RuntimeReadinessReceiptDto,
-  type ModelReferenceDto,
-  type ModelRouteDto,
-  type ModelCenterApiConnectionDto,
-  type SaveModelProviderInstanceInput,
   type HarnessManifestDto,
   type ToolLayerReadinessReceiptDto,
   type ToolDescriptorDto,
@@ -99,30 +69,10 @@ import {
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import {
-  PROVIDER_CATEGORIES,
-  PROVIDER_TEMPLATES,
-  findTemplate,
-  templateProtocol,
-  templateProtocols,
-  type ChatProtocol,
-  type ProviderCategory,
-  type ProviderTemplate
-} from '../providerTemplates'
-import {
-  buildModelCenterRows,
-  filterModelCenterRows,
-  type ModelCenterFilter
-} from '../modelCenterView'
-import {
-  aggregateModelCenterOverview,
   bindingFromModelStrategy,
-  discoveryAffordanceLabelKey,
   legacyRouteWarning,
   modelOptionKey,
-  protocolLabelKey,
-  providersFromOverview,
-  runtimeSourceSummary,
-  type ModelCenterSection
+  runtimeSourceSummary
 } from '../runtimeCenterView'
 import {
   codeSuiteTools,
@@ -138,24 +88,22 @@ import {
 import PetPreview from '@/components/PetPreview.vue'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
-import { UiButton, UiInput, UiCard, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiDropdownMenu, UiSelectField } from '@/components/ui'
+import { UiButton, UiInput, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiSelectField } from '@/components/ui'
 import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
 import AgentModesPanel from '@/settings/sections/AgentModesPanel.vue'
 import PromptEngineeringMerged from '@/settings/sections/PromptEngineeringMerged.vue'
 import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue'
 import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'
-import ModelParametersEditor from '@/settings/sections/ModelParametersEditor.vue'
 import { consumeRequest, pendingAgentId, pendingModeId, pendingPromptId, pendingToolId, pendingToolAgentId, requestToolAgent, pendingModelProviderId, pendingSettingsSection, pendingCompanionId, type CompanionSettingsTab } from '@/lib/pageRequests'
-import { routesAfterModelRemoval } from '@/lib/modelRouteEdits'
-import { readinessReason } from '@/lib/readinessText'
-import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { createSettingsLeaveGuard } from './settingsNavigation'
 import { useNotifications } from '@/composables/useNotifications'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
 import { useHostAccess } from '@/lib/hostAccess'
 import { useRecoverableRead, type ReadContext } from '@/composables/useRecoverableRead'
+import { useModelCenter } from '@/composables/useModelCenter'
+import { centerDiagnosticLabel as centerDiagnosticText, providerStatusLabel } from '@/settings/modelCenterLabels'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { isAbortError } from '@/lib/isAbortError'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
@@ -185,27 +133,12 @@ function refreshAgentCenterTab(tab: AgentCenterTab = agentCenterTab.value) {
   else void loadAgentCenter()
 }
 
-interface ProviderForm {
-  id: string
-  driver: string
-  display_name: string
-  connection_kind: string
-  protocol: string
-  base_url: string
-  model: string
-  models: string[]
-  api_key: string
-  clear_api_key: boolean
-  binary_path: string
-  home_path: string
-  server_url: string
-  launch_args: string
-  enabled: boolean
-}
-
 const { t, te, locale } = useI18n()
 const { riskLabel } = useStatusLabels()
 const definitionStatusLabel = (status: string) => (te(`agentCenter.filter.${status}`) ? t(`agentCenter.filter.${status}`) : status)
+// Shared with the Model Center section so the Agent Center words the same catalog rows identically.
+const statusLabel = (status: string) => providerStatusLabel(t, status)
+const centerDiagnosticLabel = (diagnostic: CenterDiagnosticDto) => centerDiagnosticText(t, diagnostic)
 const { canAccessBackend, reason: hostReason } = useHostAccess()
 const router = useRouter()
 const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
@@ -251,6 +184,7 @@ function maximizeWindow() {
 async function closeWindow() {
   if (activeSection.value === 'storage' && storageRef.value && !await storageRef.value.canLeave()) return
   if (activeSection.value === 'tools' && toolCenterRef.value && !await toolCenterRef.value.canLeave()) return
+  if (activeSection.value === 'model' && modelCenterRef.value && !await modelCenterRef.value.canLeave()) return
   window.tinadec?.closeWindow?.()
 }
 
@@ -286,6 +220,7 @@ const isCenteredSection = computed(() => CENTERED_SECTIONS.has(activeSection.val
 async function selectSettingsSection(section: SettingsSection) {
   if (section !== 'storage' && activeSection.value === 'storage' && storageRef.value && !await storageRef.value.canLeave()) return false
   if (section !== 'tools' && activeSection.value === 'tools' && toolCenterRef.value && !await toolCenterRef.value.canLeave()) return false
+  if (section !== 'model' && activeSection.value === 'model' && modelCenterRef.value && !await modelCenterRef.value.canLeave()) return false
   // Mounting is the first read; `v-show` afterwards keeps the already-read section alive.
   if (section === 'companions') companionsMounted.value = true
   activeSection.value = section
@@ -297,25 +232,36 @@ const settingsExiting = ref(false)
 const SETTINGS_EXIT_DURATION_MS = 530
 
 onBeforeRouteLeave(createSettingsLeaveGuard({
-  isTools: () => activeSection.value === 'tools' || activeSection.value === 'storage',
-  canLeave: () => (activeSection.value === 'storage' ? storageRef.value : toolCenterRef.value)?.canLeave() ?? Promise.resolve(true),
+  isTools: () => activeSection.value === 'tools' || activeSection.value === 'storage' || activeSection.value === 'model',
+  canLeave: () => (activeSection.value === 'storage'
+    ? storageRef.value
+    : activeSection.value === 'model' ? modelCenterRef.value : toolCenterRef.value)?.canLeave() ?? Promise.resolve(true),
   isExiting: () => settingsExiting.value,
   markExiting: () => { settingsExiting.value = true },
   durationMs: SETTINGS_EXIT_DURATION_MS,
 }))
 
 // ---- About section moved to settings/sections/AboutSection.vue (D7.2) ----
-const modelCenterOverview = ref<ModelCenterOverviewDto | null>(null)
+// One read/write seam for the model catalog. The agent center consumes the same refs, and the
+// composer keeps its own scope-aware default-model reader — this center must not read it again.
+const modelCenter = useModelCenter({
+  // The agent directory and previews are derived from this catalog, but its own reads are lazy:
+  // a model write only wakes it when the user already entered that center.
+  onModelsChanged: async () => {
+    if (agentCenterRead.loaded.value) await loadAgentCenter()
+  },
+})
+const {
+  modelCenterOverview,
+  providers,
+  routes,
+  modelCenterLoaded,
+  loadModelCenter,
+} = modelCenter
+const modelCenterRef = ref<{ canLeave(): Promise<boolean>; focusProvider(providerId: string): Promise<void> } | null>(null)
+/** A deep link that arrived before the lazily mounted section existed. */
+const pendingProviderFocus = ref<string | null>(null)
 const agentCenterOverview = ref<AgentCenterOverviewDto | null>(null)
-const providers = ref<ModelProviderInstanceDto[]>([])
-const modelReadiness = ref<ModelReadinessReceiptDto | null>(null)
-const modelCatalogReadiness = ref<ModelCatalogReadinessReceiptDto | null>(null)
-const readinessReceipt = ref<RuntimeReadinessReceiptDto | null>(null)
-const routes = ref<ModelRouteDto[]>([])
-/** Last raw provider rows; the section degrades to these, not to the derived rows. */
-const modelCenterRawProviders = ref<ModelProviderInstanceDto[]>([])
-/** Sections whose last read failed; each one degrades alone instead of failing the center. */
-const modelCenterPartialFailures = ref<Record<string, ErrorState>>({})
 const agentModes = ref<AgentModeDto[]>([])
 const agentDirectory = ref<AgentDirectoryItemDto[]>([])
 const agents = ref<AgentViewDto[]>([])
@@ -325,15 +271,12 @@ const harnessManifest = ref<HarnessManifestDto | null>(null)
 const toolLayerReadiness = ref<ToolLayerReadinessReceiptDto | null>(null)
 const toolSearchResults = ref<ToolSearchResultDto[]>([])
 const projectTemplates = ref<ProjectTemplateSummary[]>([])
-const selectedProviderId = ref('')
 const selectedAgentId = ref('')
 const configuringAgentId = ref('')
 const requestedAgentId = ref<string | null>(null)
-const requestedProviderId = ref<string | null>(null)
 let agentNavigationGeneration = 0
 let providerNavigationGeneration = 0
-onBeforeUnmount(() => { agentNavigationGeneration++; providerNavigationGeneration++ })
-const modelCenterSection = ref<ModelCenterSection>('api')
+onBeforeUnmount(() => { agentNavigationGeneration++; providerNavigationGeneration++; pendingProviderFocus.value = null })
 const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
 const agentRuntimeModelKey = ref('')
 const agentRuntimeRoutePurpose = ref('')
@@ -356,18 +299,12 @@ const runtimePanelRef = ref<InstanceType<typeof RuntimeInstancesPanel> | null>(n
 const pendingGovernanceCount = computed(() =>
   agentPermissionRequests.value.filter((request) => ['pending', 'awaiting_delegate', 'awaiting_user', 'awaiting_approval'].includes(request.status)).length
 )
-const selectedProviderDetailId = ref('')
-const modelProviderFilter = ref<ModelCenterFilter>('all')
-const modelProviderQuery = ref('')
-const modelProviderListRef = ref<HTMLElement | null>(null)
-const modelDiagnosticsRef = ref<HTMLDetailsElement | null>(null)
 const busy = ref(false)
 const agentDefinitionFailures = ref<Record<string, ErrorState>>({})
 /** Definitions already read for this render; anything else is fetched when its agent is opened. */
 const agentDefinitionLoadedIds = ref<Set<string>>(new Set())
 const agentDefinitionLoadingId = ref('')
 const agentReadDiagnostics = ref<Array<{ source: string; error: ErrorState }>>([])
-const modelCenterBusy = ref(false)
 const agentRuntimeBusy = ref(false)
 
 /**
@@ -417,34 +354,11 @@ async function chooseAgentAvatar(mode: 'random' | 'fixed', petSlug?: string) {
   }
 }
 
-const showModal = ref(false)
-const showTemplatePicker = ref(false)
-const templatePickerQuery = ref('')
 const agentViewMode = ref<'topology' | 'list'>('list')
 const toolDiscoveryQuery = ref('')
 const toolDiscoverySource = ref('all')
 const toolDiscoveryRisk = ref('all')
 const toolDiscoveryLoading = ref(false)
-
-// Set after a confirmed provider_in_use guard so the retry send bypasses the guard once.
-const forceProviderWrite = ref(false)
-
-const providerForm = reactive<ProviderForm>({  id: '',
-  driver: 'openai-compatible',
-  display_name: t('settings.providerDefaultName'),
-  connection_kind: 'api-key',
-  protocol: 'openai-chat',
-  base_url: 'https://api.openai.com/v1',
-  model: 'gpt-5.4-mini',
-  models: [],
-  api_key: '',
-  clear_api_key: false,
-  binary_path: '',
-  home_path: '',
-  server_url: '',
-  launch_args: '',
-  enabled: true
-})
 
 const navItems = computed(() => [
   { key: 'personal' as const, icon: UserRound, label: t('settings.personal') },
@@ -463,92 +377,6 @@ const navItems = computed(() => [
 ])
 
 // Gateway/dispatch config moved to settings/sections/GeneralSection.vue (D7.2)
-// One section per channel Core can drive a harness over, plus the HTTP serve shape which lives in
-// the CLI section because that is how it is reached. Labels are locale keys: 'CLI'/'ACP' as literals
-// shipped untranslated, and a channel name is exactly the thing a reader must understand.
-const modelCenterSections = computed(() => [
-  { key: 'api' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
-  { key: 'models' as const, label: t('settings.centerModels'), count: modelCenterOverview.value?.models.length ?? 0 },
-  { key: 'routes' as const, label: t('settings.centerRoutes'), count: routes.value.length },
-  { key: 'cli' as const, label: t('settings.centerCli'), count: modelCenterOverview.value?.cli_runtimes.length ?? 0 },
-  { key: 'tui' as const, label: t('settings.centerTui'), count: modelCenterOverview.value?.tui_runtimes.length ?? 0 },
-  { key: 'acp' as const, label: t('settings.centerAcp'), count: modelCenterOverview.value?.acp_runtimes.length ?? 0 }
-])
-const currentTemplate = computed(() => findTemplate(providerForm.driver))
-
-const pickerTemplates = computed(() => PROVIDER_TEMPLATES)
-const filteredPickerTemplates = computed(() => {
-  const query = templatePickerQuery.value.trim().toLocaleLowerCase()
-  return pickerTemplates.value.filter((template) => !query || [
-    t(template.display_name_key),
-    template.driver,
-    template.connection_kind,
-    template.default_model ?? ''
-  ].some((value) => value.toLocaleLowerCase().includes(query)))
-})
-const pickerTemplateGroups = computed(() => {
-  const groups: { category: ProviderCategory; labelKey: string; templates: ProviderTemplate[] }[] = []
-  for (const category of PROVIDER_CATEGORIES) {
-    const templates = filteredPickerTemplates.value.filter((template) => template.category === category.key)
-    if (templates.length > 0) groups.push({ category: category.key, labelKey: category.labelKey, templates })
-  }
-  return groups
-})
-
-const providerReadinessById = computed(() => {
-  const map = new Map<string, ModelProviderReadinessDto>()
-  for (const provider of modelReadiness.value?.providers ?? []) {
-    map.set(provider.provider_instance_id, provider)
-  }
-  return map
-})
-const blockedModelRoutes = computed(() =>
-  (modelReadiness.value?.routes ?? []).filter((route) => route.status === 'blocked')
-)
-const warningCatalogTemplates = computed(() =>
-  (modelCatalogReadiness.value?.templates ?? []).filter((template) => template.status !== 'ready')
-)
-/** Why the model layer is not ready, worded from the unified receipt's reason codes. The deprecated
- *  receipt's notes are Core's English diagnostics, shown only when the unified receipt could not be read. */
-const modelReadinessNotes = computed(() => readinessReceipt.value
-  ? [...new Set((readinessReceipt.value.items ?? [])
-      .filter((item) => item.id.startsWith('model_') && item.status !== 'ready')
-      .flatMap((item) => readinessReason(item, { t, te }) ?? []))]
-  : modelReadiness.value?.design_notes ?? [])
-
-const formFields = computed(() => {
-  const fields = currentTemplate.value?.fields ?? {
-    base_url: true, model: true, api_key: true,
-    binary_path: false, home_path: false, server_url: false, launch_args: false
-  }
-  return { ...fields, model: false }
-})
-const formPlaceholders = computed(() => currentTemplate.value?.placeholders ?? {})
-const formProtocolOptions = computed<ChatProtocol[]>(() =>
-  currentTemplate.value ? templateProtocols(currentTemplate.value) : []
-)
-const protocolOptionLabel = (protocol: ChatProtocol) => t(protocolLabelKey(protocol))
-
-const modelCenterRows = computed(() => buildModelCenterRows(
-  providersFromOverview(modelCenterOverview.value).filter((provider) => provider.connection_kind !== 'cli'),
-  PROVIDER_TEMPLATES,
-  modelReadiness.value,
-  (key) => t(key)
-).filter((row) => row.kind === 'instance'))
-const filteredModelCenterRows = computed(() => filterModelCenterRows(
-  modelCenterRows.value,
-  modelProviderFilter.value,
-  modelProviderQuery.value
-))
-const modelCenterIssueCount = computed(() => filterModelCenterRows(
-  modelCenterRows.value,
-  'issues',
-  ''
-).length)
-const firstNeedsKeyProvider = computed(() =>
-  providers.value.find((provider) => provider.status === 'needs_key') ?? null
-)
-
 const agentRuntimeBindings = computed(() =>
   Object.fromEntries(agents.value.map((agent) => [agent.id, bindingFromModelStrategy(agent, agent.model_binding)]))
 )
@@ -616,7 +444,6 @@ function agentInvocationLine(invocation: { provider_instance_id: string; model?:
 const runtimeModels = computed(() => agentCenterOverview.value?.runtime_sources.models ?? modelCenterOverview.value?.models ?? [])
 const runtimeCliOptions = computed(() => agentCenterOverview.value?.runtime_sources.cli_runtimes ?? modelCenterOverview.value?.cli_runtimes ?? [])
 const runtimeAcpOptions = computed(() => agentCenterOverview.value?.runtime_sources.acp_runtimes ?? modelCenterOverview.value?.acp_runtimes ?? [])
-const modelCenterDiagnostics = computed(() => modelCenterOverview.value?.diagnostics ?? [])
 const agentCenterDiagnostics = computed(() => agentCenterOverview.value?.diagnostics ?? [])
 const filteredRuntimeModels = computed(() => runtimeModels.value.filter((model) => runtimeQueryMatches(
   agentRuntimeModelQuery.value,
@@ -647,12 +474,6 @@ const filteredRuntimeAcpOptions = computed(() => runtimeAcpOptions.value.filter(
   runtime.command
 )))
 
-const selectedProvider = computed(() =>
-  providers.value.find((provider) => provider.id === selectedProviderId.value) ?? null
-)
-const selectedProviderDetail = computed(() =>
-  providers.value.find((provider) => provider.id === selectedProviderDetailId.value) ?? providers.value[0] ?? null
-)
 const selectedAgent = computed(() =>
   agents.value.find((agent) => agent.id === selectedAgentId.value) ?? null
 )
@@ -720,626 +541,6 @@ function runtimeQueryMatches(query: string, ...values: Array<string | null | und
   return values.some((value) => value?.toLocaleLowerCase().includes(normalized))
 }
 
-function centerDiagnosticLabel(diagnostic: CenterDiagnosticDto) {
-  if (diagnostic.code === 'CORE_CAPABILITY_UNAVAILABLE') {
-    return t('settings.optionalCapabilityUnavailable', {
-      source: diagnostic.source ?? 'Core',
-      status: diagnostic.status ?? '—'
-    })
-  }
-  if (diagnostic.code === 'LEGACY_SHARED_ROUTE') {
-    return t('settings.sharedRouteDiagnostic', {
-      purpose: diagnostic.route_purpose ?? '—',
-      count: diagnostic.agent_ids?.length ?? 0
-    })
-  }
-  return diagnostic.message
-}
-
-function configuredModelSourceLabel(source: string) {
-  if (source === 'provider_default') return t('settings.modelSourceProviderDefault')
-  if (source === 'provider_models') return t('settings.modelSourceProviderModels')
-  if (source === 'route_override') return t('settings.modelSourceRouteOverride')
-  return source
-}
-
-function acpRuntimeSourceLabel(source: string) {
-  if (source === 'provider_instance') return t('settings.harnessProviderInstance')
-  if (source === 'legacy_provider') return t('settings.legacyProvider')
-  return t('settings.acpAdapter')
-}
-
-function modelCatalogModeLabel(mode?: string) {
-  return mode === 'configured_only' ? t('settings.configuredOnly') : mode ?? t('settings.configuredOnly')
-}
-
-
-function fillForm(provider: ModelProviderInstanceDto) {
-  providerForm.id = provider.id
-  providerForm.driver = provider.driver
-  providerForm.display_name = provider.display_name
-  providerForm.connection_kind = provider.connection_kind
-  providerForm.protocol = provider.protocol ?? templateProtocol(findTemplate(provider.driver) ?? PROVIDER_TEMPLATES[0]) ?? 'openai-chat'
-  providerForm.base_url = provider.base_url ?? ''
-  providerForm.model = provider.model ?? ''
-  providerForm.models = provider.models ?? []
-  providerForm.api_key = ''
-  providerForm.clear_api_key = false
-  providerForm.binary_path = provider.binary_path ?? ''
-  providerForm.home_path = provider.home_path ?? ''
-  providerForm.server_url = provider.server_url ?? ''
-  providerForm.launch_args = provider.launch_args ?? ''
-  providerForm.enabled = provider.enabled
-}
-
-function applyTemplateDefaults(template: ProviderTemplate) {
-  providerForm.driver = template.driver
-  providerForm.display_name = t(template.display_name_key)
-  providerForm.connection_kind = template.connection_kind
-  providerForm.protocol = templateProtocol(template) ?? ''
-  providerForm.base_url = template.default_base_url ?? ''
-  providerForm.model = ''
-  providerForm.models = []
-  providerForm.binary_path = ''
-  providerForm.home_path = ''
-  providerForm.server_url = template.fields.server_url ? template.default_base_url ?? '' : ''
-  providerForm.launch_args = ''
-}
-
-function openAddModal(template?: ProviderTemplate) {
-  selectedProviderId.value = ''
-  providerForm.id = ''
-  if (template) {
-    applyTemplateDefaults(template)
-  } else {
-    applyTemplateDefaults(PROVIDER_TEMPLATES[0])
-  }
-  providerForm.api_key = ''
-  providerForm.clear_api_key = false
-  providerForm.enabled = true
-  forceProviderWrite.value = false
-  showModal.value = true
-}
-
-function openEditModal(provider: ModelProviderInstanceDto) {
-  selectedProviderId.value = provider.id
-  fillForm(provider)
-  forceProviderWrite.value = false
-  showModal.value = true
-}
-
-function toggleProviderDetail(providerId: string) {
-  selectedProviderDetailId.value = selectedProviderDetailId.value === providerId ? '' : providerId
-  if (selectedProviderDetailId.value) {
-    selectedProviderId.value = providerId
-  }
-}
-
-function focusModelProviderList(filter: ModelCenterFilter) {
-  modelCenterSection.value = 'api'
-  modelProviderFilter.value = filter
-  nextTick(() => {
-    modelProviderListRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    modelProviderListRef.value?.querySelector<HTMLInputElement>('input')?.focus()
-  })
-}
-
-function handleAddProviderClick() {
-  showTemplatePicker.value = true
-}
-
-function pickTemplate(template: ProviderTemplate) {
-  showTemplatePicker.value = false
-  openAddModal(template)
-}
-
-function openModelDiagnostics() {
-  if (!modelDiagnosticsRef.value) return
-  modelDiagnosticsRef.value.open = true
-  modelDiagnosticsRef.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
-async function toggleProviderEnabled(provider: ModelProviderInstanceDto) {
-  modelCenterBusy.value = true
-  try {
-    const payload: SaveModelProviderInstanceInput = {
-      id: provider.id,
-      driver: provider.driver,
-      display_name: provider.display_name,
-      connection_kind: provider.connection_kind,
-      base_url: provider.base_url,
-      model: provider.model,
-      clear_api_key: false,
-      binary_path: provider.binary_path,
-      home_path: provider.home_path,
-      server_url: provider.server_url,
-      launch_args: provider.launch_args,
-      capabilities: provider.capabilities,
-      enabled: !provider.enabled
-    }
-    try {
-      await api.saveModelProvider(provider.id, payload, { expected_revision: provider.revision })
-    } catch (error) {
-      const err = error as { code?: string | null; message?: string }
-      if (err.code === 'provider_in_use') {
-        const message = err.message ?? t('settings.providerInUse')
-        if (!await confirm({
-          title: provider.display_name,
-          message,
-          confirmLabel: t('settings.forceAnyway'),
-          cancelLabel: t('settings.cancel'),
-          destructive: true
-        })) return
-        await api.saveModelProvider(provider.id, payload, { expected_revision: provider.revision, force: true })
-      } else {
-        throw error
-      }
-    }
-    await Promise.all([loadModelCenter(), loadAgentCenter()])
-    notify.success(`${provider.display_name}: ${provider.enabled ? t('settings.disable') : t('settings.enable')}`)
-  } catch (error) {
-    if (isWriteConflict(error)) {
-      notify.warning({ message: t('settings.configStaleReloading') })
-      await loadModelCenter()
-    } else {
-      notify.error(error, { title: provider.display_name })
-    }
-  } finally {
-    modelCenterBusy.value = false
-  }
-}
-
-/** 412/428 mean another window changed the config between load and save; reload instead of failing. */
-function isWriteConflict(error: unknown): boolean {
-  const err = error as { code?: string | null; status?: number }
-  return err?.code === 'precondition_required' || err?.code === 'invalid_if_match' || err?.status === 412
-}
-
-async function deleteProvider(providerId: string) {
-  const provider = providers.value.find((item) => item.id === providerId)
-  if (!await confirm({
-    title: t('settings.delete'),
-    message: `${t('settings.confirmDeleteProvider')}\n${provider?.display_name ?? providerId} (${providerId})`,
-    confirmLabel: t('settings.confirmDelete'),
-    cancelLabel: t('settings.cancel'),
-    destructive: true
-  })) return
-  modelCenterBusy.value = true
-  try {
-    try {
-      await api.deleteModelProvider(providerId, { expected_revision: provider?.revision })
-    } catch (error) {
-      const err = error as { code?: string | null; message?: string }
-      if (err.code === 'provider_in_use') {
-        const message = err.message ?? t('settings.providerInUse')
-        if (!await confirm({
-          title: provider?.display_name ?? providerId,
-          message,
-          confirmLabel: t('settings.forceAnyway'),
-          cancelLabel: t('settings.cancel'),
-          destructive: true
-        })) return
-        await api.deleteModelProvider(providerId, { expected_revision: provider?.revision, force: true })
-      } else {
-        throw error
-      }
-    }
-    if (selectedProviderDetailId.value === providerId) {
-      selectedProviderDetailId.value = ''
-    }
-    await Promise.all([loadModelCenter(), loadAgentCenter()])
-    notify.success(`${provider?.display_name ?? providerId}: ${t('settings.delete')}`)
-  } catch (error) {
-    if (isWriteConflict(error)) {
-      notify.warning({ message: t('settings.configStaleReloading') })
-      await loadModelCenter()
-    } else {
-      notify.error(error, { title: provider?.display_name ?? providerId })
-    }
-  } finally {
-    modelCenterBusy.value = false
-  }
-}
-
-function closeModal() {
-  showModal.value = false
-}
-
-// Opening settings lands on the personal section, so neither center is read until its own
-// section is entered. Mounting the page used to fire sixteen reads for two sections the user
-// had not asked for; `lazy` moves the first read to the section that needs it (see the
-// section watcher below).
-const modelCenterRead = useRecoverableRead(loadModelCenterData, {
-  lazy: true,
-  onSuccess: () => dismissByKey('model-center'),
-  onFailure: error => status.error(error, { key: 'model-center', source: 'models', action: { label: t('settings.retry'), run: loadModelCenter } }),
-})
-const modelCenterLoading = modelCenterRead.loading
-const modelCenterFailure = modelCenterRead.failure.error
-function loadModelCenter(): Promise<void> {
-  return modelCenterRead.refresh()
-}
-async function loadModelCenterData({ signal, isCurrent }: ReadContext) {
-    // model-center/overview BFF was deleted; derive the same projection from versioned APIs.
-    // One round trip first; the per-endpoint reads below stay the fallback for a gateway that
-    // predates the snapshot, and for the case where the snapshot itself is unusable.
-    modelCenterPartialFailures.value = {}
-    const snapshot = await api.getModelCenterSnapshot({ signal }).catch(() => null)
-    if (!isCurrent()) return
-    // A snapshot that cannot be read as a snapshot is not a degraded section — it is no
-    // snapshot at all, so the per-endpoint path below answers instead of a broken shape.
-    if (isModelCenterSnapshot(snapshot)) {
-      applyModelCenterSnapshot(snapshot)
-      reportModelCenterPartialFailures()
-      return
-    }
-    // No read here may reject the whole exchange: before this, a failing providers or routes
-    // read rejected the Promise.all and the page reported "failed to load" while six other
-    // sections had in fact answered. Each section keeps its own data and names itself.
-    const [providerRows, providerTemplates, routeRows, acpAdapters, modelReadinessReceipt, catalogReadinessReceipt, unifiedReceipt] = await Promise.all([
-      api.listModelProviders({ signal }).catch(preserveSection('model-providers', modelCenterRawProviders.value)),
-      api.listModelProviderTemplates({ signal }).catch(preserveSection('model-provider-templates', [] as ModelProviderTemplateDto[])),
-      api.listModelRoutes({ signal }).catch(preserveSection('model-routes', routes.value)),
-      api.listAcpAdapters({ signal }).catch(preserveSection('acp-adapters', [] as AcpAdapterDto[])),
-      api.getModelReadiness({ signal }).catch(preserveSection('model-readiness', modelReadiness.value)),
-      api.getModelCatalogReadiness({ signal }).catch(preserveSection('model-catalog-readiness', modelCatalogReadiness.value)),
-      api.readiness({ signal }).catch(preserveSection('readiness', readinessReceipt.value))
-    ])
-    if (!isCurrent()) return
-    applyModelCenterRead(
-      providerRows, providerTemplates, routeRows, acpAdapters,
-      modelReadinessReceipt, catalogReadinessReceipt, unifiedReceipt,
-    )
-    reportModelCenterPartialFailures()
-}
-
-/**
- * One failed section keeps the value it already had, so the rest of the center keeps working.
- */
-function preserveSection<T>(source: string, fallback: T) {
-  return (error: unknown): T => {
-    modelCenterPartialFailures.value = { ...modelCenterPartialFailures.value, [source]: toErrorState(error) }
-    return fallback
-  }
-}
-
-/**
- * A degraded section is still a failure the user must be able to see and retry — otherwise
- * the read looks successful while one source silently kept stale data. Throwing here runs the
- * read's normal failure path (the banner and the status notice) after the data was applied.
- */
-function reportModelCenterPartialFailures() {
-  const sources = Object.keys(modelCenterPartialFailures.value)
-  if (sources.length === 0) return
-  throw new Error(`model center sections failed: ${sources.join(', ')}`)
-}
-
-function isModelCenterSnapshot(value: unknown): value is ModelCenterSnapshotDto {
-  const parts = (value as ModelCenterSnapshotDto | null)?.parts
-  return !!parts
-    && typeof parts.providers?.ok === 'boolean'
-    && typeof parts.templates?.ok === 'boolean'
-    && typeof parts.routes?.ok === 'boolean'
-    && typeof parts.acp_adapters?.ok === 'boolean'
-    && typeof parts.model_readiness?.ok === 'boolean'
-    && typeof parts.catalog_readiness?.ok === 'boolean'
-    && typeof parts.readiness?.ok === 'boolean'
-}
-
-/** A part that failed keeps the value the section already had, exactly like the fallback path. */
-function applyModelCenterSnapshot(snapshot: ModelCenterSnapshotDto) {
-  const failed: Record<string, ErrorState> = {}
-  const part = <T>(name: string, current: T, read: ModelCenterSnapshotPartDto<T>): T => {
-    if (read.ok && read.data !== undefined) return read.data
-    failed[name] = toErrorState(read.error ?? new Error(`model-center snapshot part ${name} failed`))
-    return current
-  }
-  const parts = snapshot.parts
-  const providerRows = part('model-providers', modelCenterRawProviders.value, parts.providers)
-  const providerTemplates = part('model-provider-templates', [] as ModelProviderTemplateDto[], parts.templates)
-  const routeRows = part('model-routes', routes.value, parts.routes)
-  const acpAdapters = part('acp-adapters', [] as AcpAdapterDto[], parts.acp_adapters)
-  const modelReadinessReceipt = part('model-readiness', modelReadiness.value, parts.model_readiness)
-  const catalogReadinessReceipt = part('model-catalog-readiness', modelCatalogReadiness.value, parts.catalog_readiness)
-  const unifiedReceipt = part('readiness', readinessReceipt.value, parts.readiness)
-  modelCenterPartialFailures.value = failed
-  applyModelCenterRead(
-    providerRows, providerTemplates, routeRows, acpAdapters,
-    modelReadinessReceipt, catalogReadinessReceipt, unifiedReceipt,
-  )
-}
-
-function applyModelCenterRead(
-  providerRows: ModelProviderInstanceDto[],
-  providerTemplates: ModelProviderTemplateDto[],
-  routeRows: ModelRouteDto[],
-  acpAdapters: AcpAdapterDto[],
-  modelReadinessReceipt: ModelReadinessReceiptDto | null,
-  catalogReadinessReceipt: ModelCatalogReadinessReceiptDto | null,
-  unifiedReceipt: RuntimeReadinessReceiptDto | null,
-) {
-    const overview = aggregateModelCenterOverview({
-      providers: providerRows,
-      templates: providerTemplates,
-      routes: routeRows,
-      acp_adapters: acpAdapters,
-      model_readiness: modelReadinessReceipt,
-      catalog_readiness: catalogReadinessReceipt
-    })
-    modelCenterOverview.value = overview
-    modelCenterRawProviders.value = providerRows
-    // The routes ref feeds the Routes tab, the route editor, and the
-    // "set default model" If-Match token; leaving it unassigned made every
-    // route write send no precondition (Core 428).
-    routes.value = routeRows
-    const instances = providersFromOverview(overview)
-    providers.value = instances
-    modelReadiness.value = overview.readiness.model ?? null
-    modelCatalogReadiness.value = overview.readiness.catalog ?? null
-    readinessReceipt.value = unifiedReceipt
-
-    const selected = instances.find((provider) => provider.id === selectedProviderId.value) ?? instances[0]
-    if (selected) {
-      selectedProviderId.value = selected.id
-    }
-}
-
-const showModelModal = ref(false)
-const editingModelParameters = ref<{ providerId: string; model: string } | null>(null)
-
-async function modelParametersSaved() {
-  editingModelParameters.value = null
-  await loadModelCenter()
-  notify.success(t('settings.modelParametersSaved'))
-}
-const modelModalProviderId = ref('')
-const modelModalManual = ref('')
-const modelModalPending = ref<string[]>([])
-const modelModalDiscovered = ref<Array<{ id: string; display_name: string }>>([])
-const modelModalBusy = ref(false)
-const modelModalError = ref('')
-const modelModalFetched = ref(false)
-
-function modelApiProvider(providerId: string) {
-  return modelCenterOverview.value?.api_connections.find((item) => item.id === providerId) ?? null
-}
-
-function modelsForProvider(providerId: string) {
-  return (modelCenterOverview.value?.models ?? []).filter((model) => model.provider_instance_id === providerId)
-}
-
-async function setDefaultChatModel(providerInstanceId: string, modelId: string) {
-  modelCenterBusy.value = true
-  try {
-    // “设为默认模型”= 把 chat 路由指向该模型；路由/候选链等工程概念对用户隐藏。
-    const chatRoute = routes.value.find((route: { purpose: string }) => route.purpose === 'chat')
-    await api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerInstanceId, model: modelId }] },
-      undefined,
-      chatRoute?.revision != null ? { expected_revision: chatRoute.revision } : undefined)
-    notify.success(t('settings.defaultModelSet', { model: modelId }))
-    await loadModelCenter()
-  } catch (error) {
-    notify.error(error instanceof Error ? error : new Error(String(error)))
-  } finally {
-    modelCenterBusy.value = false
-  }
-}
-
-function openAddModelModal(providerId: string) {
-  modelModalProviderId.value = providerId
-  modelModalManual.value = ''
-  modelModalPending.value = []
-  modelModalDiscovered.value = []
-  modelModalError.value = ''
-  modelModalFetched.value = false
-  showModelModal.value = true
-}
-
-async function fetchDiscoveredModels() {
-  modelModalBusy.value = true
-  modelModalError.value = ''
-  try {
-    const result = await api.refreshProviderModels(modelModalProviderId.value)
-    modelModalDiscovered.value = result.models
-    modelModalFetched.value = true
-    // Auto-pend models the provider does not persist yet; the user confirms via 保存.
-    const existing = new Set(modelApiProvider(modelModalProviderId.value)?.models ?? [])
-    const fresh = result.models.map((model) => model.id).filter((id) => id && !existing.has(id))
-    for (const id of fresh) addPendingModel(id)
-    if (fresh.length > 0) notify.success(t('settings.discoveredNewModels', { count: fresh.length }))
-  } catch (error) {
-    modelModalError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    modelModalBusy.value = false
-  }
-}
-
-function addPendingModel(id: string) {
-  if (!modelModalPending.value.includes(id)) modelModalPending.value.push(id)
-}
-
-function addManualModel() {
-  const id = modelModalManual.value.trim()
-  if (!id) return
-  addPendingModel(id)
-  modelModalManual.value = ''
-}
-
-async function saveModelModal() {
-  const provider = modelApiProvider(modelModalProviderId.value)
-  if (!provider) return
-  const merged = [...new Set([...(provider.models ?? []), ...modelModalPending.value])]
-  modelModalBusy.value = true
-  try {
-    if (await putProviderModels(provider, merged, provider.model ?? merged[0] ?? null)) showModelModal.value = false
-  } finally { modelModalBusy.value = false }
-}
-
-async function removeModel(providerId: string, modelId: string) {
-  const provider = modelApiProvider(providerId)
-  if (!provider) return
-  if (!await confirm({
-    title: t('settings.removeModel'),
-    message: `${t('settings.confirmRemoveModel')}\n${modelId} (${provider.display_name})`,
-    confirmLabel: t('settings.confirmDelete'),
-    cancelLabel: t('settings.cancel'),
-    destructive: true
-  })) return
-  modelCenterBusy.value = true
-  try {
-    // Clear every source that contributes the model so it stays gone after reload.
-    const updates = routesAfterModelRemoval(await api.listModelRoutes(), providerId, modelId)
-    for (const route of updates) {
-      await api.saveModelRoute(route.purpose, { candidates: route.candidates }, undefined, { expected_revision: route.revision })
-    }
-    const merged = (provider.models ?? []).filter((id) => id !== modelId)
-    const nextDefault = provider.model === modelId ? merged[0] ?? null : (provider.model ?? null)
-    await putProviderModels(provider, merged, nextDefault)
-    await loadAgentCenter()
-  } catch (error) {
-    notify.error(error instanceof Error && error.message === 'model_route_requires_replacement'
-      ? new Error(t('settings.modelRouteRequiresReplacement')) : error, { title: modelId })
-    await loadModelCenter()
-  } finally {
-    modelCenterBusy.value = false
-  }
-}
-
-async function putProviderModels(
-  provider: ModelCenterApiConnectionDto,
-  models: string[],
-  model: string | null
-) {
-  modelCenterBusy.value = true
-  try {
-    const payload: SaveModelProviderInstanceInput = {
-      id: provider.id,
-      driver: provider.driver,
-      display_name: provider.display_name,
-      connection_kind: provider.connection_kind,
-      base_url: provider.base_url ?? null,
-      model,
-      models,
-      server_url: provider.server_url ?? null,
-      capabilities: provider.capabilities,
-      enabled: provider.enabled
-    }
-    await api.saveModelProvider(provider.id, payload, {
-      expected_revision: provider.revision ?? undefined,
-    })
-    await loadModelCenter()
-    notify.success(t('settings.refreshModels'))
-    return true
-  } catch (error) {
-    if (isWriteConflict(error)) {
-      notify.warning({ message: t('settings.configStaleReloading') })
-      await loadModelCenter()
-    } else {
-      notify.error(error, { title: provider.display_name })
-    }
-    return false
-  } finally {
-    modelCenterBusy.value = false
-  }
-}
-
-async function refreshProviderModels(providerInstanceId: string) {
-  modelCenterBusy.value = true
-  try {
-    const result = await api.refreshProviderModels(providerInstanceId)
-    const provider = modelApiProvider(providerInstanceId)
-    const existing = new Set(provider?.models ?? [])
-    const fresh = result.models.map((model) => model.id).filter((id) => id && !existing.has(id))
-    if (!provider || fresh.length === 0) {
-      notify.info(t('settings.noNewModels'))
-      return
-    }
-    const confirmed = await confirm({
-      title: t('settings.mergeDiscoveredTitle'),
-      message: `${t('settings.confirmMergeDiscovered', { count: fresh.length })}\n${fresh.join('\n')}`,
-      confirmLabel: t('settings.confirmSave'),
-      cancelLabel: t('settings.cancel')
-    })
-    if (!confirmed) return
-    const merged = [...new Set([...(provider.models ?? []), ...fresh])]
-    await putProviderModels(provider, merged, provider.model ?? merged[0] ?? null)
-  } catch (error) {
-    notify.error(error, { title: t('settings.modelDiscoveryUnsupported') })
-  } finally {
-    modelCenterBusy.value = false
-  }
-}
-
-const cliDiscoveryCandidates = ref<CliDiscoveryCandidateDto[]>([])
-const cliDiscoveryLoading = ref(false)
-const cliDiscoveryLoaded = ref(false)
-
-async function discoverHarnesses() {
-  cliDiscoveryLoading.value = true
-  try {
-    const res = await api.discoverHarnesses()
-    cliDiscoveryCandidates.value = res.cli_runtimes ?? []
-    cliDiscoveryLoaded.value = true
-  } catch (error) {
-    notify.error(error, { title: t('settings.cliDiscoveryError') })
-  } finally {
-    cliDiscoveryLoading.value = false
-  }
-}
-
-/**
- * Connects one channel of a discovered harness. The channel is not a cosmetic choice: it decides the
- * protocol Core stores and the argv it starts the process with, so the same binary connected over
- * `acp` and over `tui` are two different providers, not two labels for one thing.
- */
-async function connectDiscoveredCli(candidate: CliDiscoveryCandidateDto, channel?: HarnessChannelDto) {
-  if (!candidate.binary_path || !channel) return
-  cliDiscoveryLoading.value = true
-  try {
-    const created = await api.connectHarness({
-      driver: candidate.driver,
-      binary_path: candidate.binary_path,
-      channel: channel.channel ?? null,
-      protocol: channel.protocol,
-      display_name: candidate.display_name || undefined
-      // No home_path, server_url or launch_args: discovery reports those as "what this harness would
-      // be started with", and a quick connect that writes them would store a HOME, an endpoint and an
-      // argv Core never measured. The process host picks the port it can actually bind.
-    })
-    await loadModelCenter()
-    notify.success(created.display_name)
-  } catch (error) {
-    notify.error(error, { title: `${candidate.display_name} · ${channelLabel(channel)}` })
-  } finally {
-    cliDiscoveryLoading.value = false
-  }
-}
-
-/** Channels Core can start this binary on, split by whether this build can actually drive them. */
-function drivableChannels(candidate: CliDiscoveryCandidateDto): HarnessChannelDto[] {
-  return (candidate.channels ?? []).filter((channel) => channel.drivable)
-}
-
-function blockedChannels(candidate: CliDiscoveryCandidateDto): HarnessChannelDto[] {
-  return (candidate.channels ?? []).filter((channel) => !channel.drivable)
-}
-
-function channelLabel(fact: HarnessChannelDto): string {
-  return t(discoveryAffordanceLabelKey(fact))
-}
-
-/** Why this build cannot drive a channel, from its code; Core's text, then a general sentence, otherwise. */
-function channelReason(channel: HarnessChannelDto, candidate: CliDiscoveryCandidateDto): string {
-  const key = `settings.channelReason.${channel.reason_code}`
-  return channel.reason_code && te(key) ? t(key, { harness: candidate.display_name }) : channel.reason ?? t('settings.channelNotDrivableDefault')
-}
-
-/** Why a probe could not confirm the binary, from its code and facts; Core's text when there are no words for it. */
-function probeNote(candidate: CliDiscoveryCandidateDto): string | null {
-  const key = `settings.probeNote.${candidate.probe_note_code}`
-  return candidate.probe_note_code && te(key) ? t(key, candidate.probe_note_data ?? {}) : candidate.probe_note ?? null
-}
-
 const agentCenterRead = useRecoverableRead(loadAgentCenterData, {
   lazy: true,
   onSuccess: () => dismissByKey('agent-center'),
@@ -1355,11 +556,9 @@ function loadAgentCenter(): Promise<void> {
 // asks for its data the first time. `loaded` keeps this to once per mount — later section
 // switches must not re-fetch, and explicit refresh paths still go through load*/refresh.
 watch(activeSection, section => {
-  if (section === 'model' && !modelCenterRead.loaded.value) void loadModelCenter()
+  if (section === 'model' && !modelCenterLoaded.value) void loadModelCenter()
   else if (section === 'agentCenter' && !agentCenterRead.loaded.value) void loadAgentCenter()
 }, { flush: 'post' })
-/** Sources that failed on the last read; each one kept its section's previous data. */
-const modelCenterPartialFailureSources = computed(() => Object.keys(modelCenterPartialFailures.value))
 async function loadAgentCenterData(context: ReadContext) {
   const { signal, isCurrent } = context
   // getAgentCenterOverview is a deleted 404 route (docs/app-core-ui.md §4.8).
@@ -1494,16 +693,6 @@ async function loadToolDiscovery(context?: ReadContext) {
   } finally {
     if (!context || context.isCurrent()) toolDiscoveryLoading.value = false
   }
-}
-
-
-// A classified failure is recognized by its status; the text checks remain for unclassified errors.
-/**
- * The server's status note for a provider, when it says more than the status badge: a configured or
- * disabled provider carries only a fixed diagnostic line there, not something to show a person.
- */
-function providerNote(provider: { status?: string | null; status_message?: string | null }): string | null {
-  return provider.status_message && !['configured', 'disabled'].includes(provider.status ?? '') ? provider.status_message : null
 }
 
 function errorStatus(error: unknown): unknown {
@@ -1879,217 +1068,6 @@ async function saveAgentModelStrategy(agent: AgentViewDto) {
   }
 }
 
-// ── Model Center route fallback editor ──────────────────────────────
-// Ordered candidate chains: one write publishes an immutable route version.
-const routeEditorPurpose = ref('')
-const routeEditorCandidates = ref<Array<{ provider_instance_id: string; model: string | null }>>([])
-const routeEditorBusy = ref(false)
-const routeEditorAdding = ref(false)
-const routeEditorNewProviderId = ref('')
-const routeEditorNewModelId = ref('')
-const modelReferenceRows = ref<Record<string, ModelReferenceDto[]>>({})
-const modelReferenceBusy = ref<Record<string, boolean>>({})
-
-const routeEditorRoute = computed(() =>
-  routes.value.find((route) => route.purpose === routeEditorPurpose.value) ?? null
-)
-const routeEditorDirty = computed(() => {
-  const route = routeEditorRoute.value
-  if (!route) return false
-  const current = route.candidates?.map((candidate) => ({ provider_instance_id: candidate.provider_instance_id, model: candidate.model ?? null })) ?? []
-  const editing = routeEditorCandidates.value
-  return current.length !== editing.length
-    || current.some((candidate, index) =>
-      candidate.provider_instance_id !== editing[index]?.provider_instance_id
-      || (candidate.model ?? null) !== (editing[index]?.model ?? null))
-})
-
-function openRouteEditor(purpose: string) {
-  const route = routes.value.find((item) => item.purpose === purpose)
-  routeEditorPurpose.value = purpose
-  routeEditorCandidates.value = (route?.candidates ?? []).map((candidate) => ({
-    provider_instance_id: candidate.provider_instance_id,
-    model: candidate.model ?? null,
-  }))
-  routeEditorAdding.value = false
-  routeEditorNewProviderId.value = ''
-  routeEditorNewModelId.value = ''
-}
-
-function routeCandidateProviderLabel(providerInstanceId: string): string {
-  const provider = providers.value.find((item) => item.id === providerInstanceId)
-  if (provider) return provider.display_name
-  const cli = runtimeCliOptions.value.find((item) => item.provider_instance_id === providerInstanceId)
-  if (cli) return `${cli.display_name} (CLI)`
-  const acp = runtimeAcpOptions.value.find((item) => item.provider_instance_id === providerInstanceId)
-  if (acp) return `${acp.display_name} (ACP)`
-  return providerInstanceId
-}
-
-function moveRouteCandidate(index: number, delta: -1 | 1) {
-  const target = index + delta
-  if (target < 0 || target >= routeEditorCandidates.value.length) return
-  const candidates = [...routeEditorCandidates.value]
-  const [moved] = candidates.splice(index, 1)
-  candidates.splice(target, 0, moved)
-  routeEditorCandidates.value = candidates
-}
-
-function removeRouteCandidate(index: number) {
-  routeEditorCandidates.value = routeEditorCandidates.value.filter((_, i) => i !== index)
-}
-
-function addRouteCandidate() {
-  const providerInstanceId = routeEditorNewProviderId.value
-  if (!providerInstanceId) return
-  routeEditorCandidates.value = [
-    ...routeEditorCandidates.value,
-    { provider_instance_id: providerInstanceId, model: routeEditorNewModelId.value || null },
-  ]
-  routeEditorAdding.value = false
-  routeEditorNewProviderId.value = ''
-  routeEditorNewModelId.value = ''
-}
-
-async function saveRouteCandidates() {
-  if (!routeEditorPurpose.value) return
-  routeEditorBusy.value = true
-  try {
-    const route = routes.value.find((item) => item.purpose === routeEditorPurpose.value)
-    await api.saveModelRoute(routeEditorPurpose.value, {
-      candidates: routeEditorCandidates.value.map((candidate) => ({
-        provider_instance_id: candidate.provider_instance_id,
-        model: candidate.model ?? null,
-      })),
-    }, undefined, { expected_revision: route?.revision })
-    await loadModelCenter()
-    openRouteEditor(routeEditorPurpose.value)
-    notify.success(routeEditorPurpose.value)
-  } catch (error) {
-    if (isWriteConflict(error)) {
-      notify.warning({ message: t('settings.configStaleReloading') })
-      await loadModelCenter()
-    } else {
-      notify.error(error, { title: routeEditorPurpose.value })
-    }
-  } finally {
-    routeEditorBusy.value = false
-  }
-}
-
-/** Reverse references (agents / modes / routes / recent invocations) for one configured model. */
-async function toggleModelReferences(providerInstanceId: string, modelId: string) {
-  const key = `${providerInstanceId}:${modelId}`
-  if (modelReferenceRows.value[key]) {
-    delete modelReferenceRows.value[key]
-    modelReferenceRows.value = { ...modelReferenceRows.value }
-    return
-  }
-  modelReferenceBusy.value = { ...modelReferenceBusy.value, [key]: true }
-  try {
-    const references = await api.listModelReferences({ provider_instance_id: providerInstanceId, model: modelId })
-    modelReferenceRows.value = { ...modelReferenceRows.value, [key]: references }
-  } catch {
-    modelReferenceRows.value = { ...modelReferenceRows.value, [key]: [] }
-  } finally {
-    modelReferenceBusy.value = { ...modelReferenceBusy.value, [key]: false }
-  }
-}
-
-function referenceKindLabel(kind: string): string {
-  const map: Record<string, string> = {
-    route: t('settings.centerRoutes'),
-    agent_default: t('settings.referenceAgentDefault'),
-    mode_override: t('settings.referenceModeOverride'),
-    session_override: t('settings.referenceMeetingOverride'),
-    recent_invocation: t('settings.referenceRecentInvocation'),
-  }
-  return map[kind] ?? kind
-}
-
-/** A reference's detail in words: a route's candidate position, or the referencing record's status (a recent invocation's detail is an id). */
-function referenceDetailLabel(reference: ModelReferenceDto): string | null {
-  const detail = reference.detail
-  if (!detail || reference.reference_kind === 'recent_invocation') return detail ?? null
-  const candidate = /^candidate:(\d+)$/.exec(detail)
-  if (candidate) return t('settings.referenceCandidate', { position: candidate[1] })
-  return te(`agentCenter.filter.${detail}`) ? t(`agentCenter.filter.${detail}`) : detail
-}
-
-async function saveProvider() {
-  modelCenterBusy.value = true
-  try {
-    const isNewProvider = !providerForm.id
-    const tmpl = currentTemplate.value
-    const payload: SaveModelProviderInstanceInput = {
-      id: providerForm.id || undefined,
-      driver: providerForm.driver,
-      display_name: providerForm.display_name,
-      connection_kind: providerForm.connection_kind,
-      protocol: providerForm.protocol || null,
-      base_url: formFields.value.base_url ? (providerForm.base_url || null) : null,
-      model: providerForm.id ? (providerForm.model || null) : null,
-      models: providerForm.models,
-      api_key: formFields.value.api_key ? (providerForm.api_key || null) : null,
-      clear_api_key: providerForm.clear_api_key,
-      binary_path: formFields.value.binary_path ? (providerForm.binary_path || null) : null,
-      home_path: formFields.value.home_path ? (providerForm.home_path || null) : null,
-      server_url: formFields.value.server_url ? (providerForm.server_url || null) : null,
-      launch_args: formFields.value.launch_args ? (providerForm.launch_args || null) : null,
-      capabilities: providerForm.id
-        ? selectedProvider.value?.capabilities ?? tmpl?.capabilities ?? []
-        : tmpl?.capabilities ?? [],
-      enabled: providerForm.enabled
-    }
-
-    const saved = providerForm.id
-      ? await api.saveModelProvider(providerForm.id, payload, {
-        expected_revision: selectedProvider.value?.revision,
-        ...(forceProviderWrite.value ? { force: true } : {})
-      })
-      : await api.createModelProvider(payload)
-
-    selectedProviderId.value = saved.id
-    showModal.value = false
-    await Promise.all([loadModelCenter(), loadAgentCenter()])
-    if (isNewProvider) {
-      modelProviderFilter.value = 'configured'
-    }
-    notify.success(saved.display_name)
-  } catch (error) {
-    const err = error as { code?: string | null; message?: string }
-    if (err.code === 'provider_in_use') {
-      // The form's enabled toggle triggered the guard; ask once and retry with force.
-      const message = err.message ?? t('settings.providerInUse')
-      if (!await confirm({
-        title: providerForm.display_name,
-        message,
-        confirmLabel: t('settings.forceAnyway'),
-        cancelLabel: t('settings.cancel'),
-        destructive: true
-      })) return
-      forceProviderWrite.value = true
-      await saveProvider()
-      return
-    }
-    if (isWriteConflict(error)) {
-      notify.warning({ message: t('settings.configStaleReloading') })
-      await loadModelCenter()
-    } else {
-      notify.error(error, { title: providerForm.display_name })
-    }
-  } finally {
-    modelCenterBusy.value = false
-  }
-}
-
-function connectionKindLabel(kind: string) {
-  if (kind === 'cli') return t('settings.connectionKindCli')
-  if (kind === 'local-server') return t('settings.connectionKindLocal')
-  if (kind === 'public-api') return t('settings.connectionKindPublicApi')
-  return t('settings.connectionKindApiKey')
-}
-
 function agentTypeLabel(type: string) {
   const map: Record<string, string> = {
     // Layer 1 · Planning 主动智能体
@@ -2164,48 +1142,8 @@ function agentPolicyLabel(policy: string) {
   return map[policy] ?? policy
 }
 
-function providerPresentation(driver: string) {
-  return findTemplate(driver)
-}
-
 function candidateStatusLabel(status: string) {
   return status === 'proposed' ? t('settings.candidateProposed') : status
-}
-
-function statusLabel(status: string) {
-  if (status === 'ready') return t('settings.statusReady')
-  if (status === 'needs_key') return t('settings.statusNeedsKey')
-  if (status === 'disabled') return t('settings.statusDisabled')
-  if (status === 'cooldown') return t('settings.statusCooldown')
-  if (status === 'not_configured' || !status) return t('settings.statusNotConfigured')
-  if (status === 'configured') return t('settings.statusConfigured')
-  if (status === 'found') return t('settings.statusFound')
-  if (status === 'missing') return t('settings.statusMissing')
-  if (status === 'missing_provider') return t('settings.statusMissingProvider')
-  if (status === 'unknown') return t('settings.statusUnknown')
-  return status
-}
-
-function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (status === 'ready') return 'default'
-  if (status === 'needs_key' || status === 'not_configured') return 'destructive'
-  if (status === 'disabled') return 'secondary'
-  if (status === 'cooldown') return 'outline'
-  return 'outline'
-}
-
-function readinessVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (status === 'ready') return 'default'
-  if (status === 'blocked') return 'destructive'
-  if (status === 'warning') return 'outline'
-  return 'secondary'
-}
-
-function readinessStatusLabel(status: string) {
-  if (status === 'ready') return t('settings.readinessReady')
-  if (status === 'blocked') return t('settings.readinessBlocked')
-  if (status === 'warning') return t('settings.readinessWarning')
-  return status
 }
 
 // The spotlight hands deep-links over through the request channel: a section
@@ -2227,22 +1165,22 @@ consumeRequest(pendingCompanionId, async (request) => {
 })
 consumeRequest(pendingModelProviderId, async (providerId) => {
   const generation = ++providerNavigationGeneration
-  requestedProviderId.value = providerId
   if (!await selectSettingsSection('model')) return
-  modelCenterSection.value = 'api'
-  modelProviderQuery.value = ''
-  modelProviderFilter.value = 'all'
   if (!providers.value.some((provider) => provider.id === providerId)) await loadModelCenter()
   if (generation !== providerNavigationGeneration) return
-  requestedProviderId.value = null
-  if (providers.value.some((provider) => provider.id === providerId)) {
-    selectedProviderDetailId.value = providerId
-    const overview = modelCenterOverview.value
-    modelCenterSection.value = overview?.cli_runtimes.some(row => row.provider_instance_id === providerId) ? 'cli'
-      : overview?.tui_runtimes.some(row => row.provider_instance_id === providerId) ? 'tui'
-        : overview?.acp_runtimes.some(row => row.provider_instance_id === providerId) ? 'acp' : 'api'
+  if (!providers.value.some((provider) => provider.id === providerId)) {
+    notify.error(t('app.loadFailedMessage'), { title: t('app.loadFailed'), key: 'search-navigation' })
+    return
   }
-  else notify.error(t('app.loadFailedMessage'), { title: t('app.loadFailed'), key: 'search-navigation' })
+  // The section mounts behind a leaving-sibling transition, so the ref may not exist yet.
+  if (modelCenterRef.value) void modelCenterRef.value.focusProvider(providerId)
+  else pendingProviderFocus.value = providerId
+})
+watch(modelCenterRef, (section) => {
+  if (!section || !pendingProviderFocus.value) return
+  const providerId = pendingProviderFocus.value
+  pendingProviderFocus.value = null
+  void section.focusProvider(providerId)
 })
 consumeRequest(pendingAgentId, async (agentId) => {
   const generation = ++agentNavigationGeneration
@@ -2328,7 +1266,6 @@ import '../settings/settings.css'
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
         <p v-if="activeSection === 'model' || activeSection === 'agentCenter'" class="quiet" role="status">{{ t('settings.userConfigurationSource') }}</p>
-        <ModelScopeNotice v-if="activeSection === 'model' && canAccessBackend" />
         <p v-if="(activeSection === 'model' || activeSection === 'agentCenter') && !canAccessBackend" class="quiet" role="status">{{ hostReason }}</p>
         <Transition name="section-fade" mode="out-in">
         <div
@@ -2349,882 +1286,14 @@ import '../settings/settings.css'
         </template>
 
         <template v-if="activeSection === 'model'">
-          <div class="center-page model-center-page">
-          <div class="center-command-bar">
-            <div>
-              <h2>{{ t('settings.modelCenter') }}</h2>
-              <p>{{ t('settings.modelCenterSubtitle') }}</p>
-            </div>
-            <div class="center-command-actions">
-              <UiButton variant="outline" size="sm" @click="handleAddProviderClick">
-                <Plus :size="14" />
-                <span>{{ t('settings.addProvider') }}</span>
-              </UiButton>
-              <UiButton variant="outline" size="sm" :disabled="modelCenterLoading || modelCenterBusy || !canAccessBackend" @click="loadModelCenter">
-                <RefreshCw :size="14" />
-                <span>{{ t('settings.refresh') }}</span>
-              </UiButton>
-            </div>
-          </div>
-
-          <!-- A partial failure keeps the data it could read and reports itself further down;
-               this banner is only for a read that produced nothing at all. Saying "the center
-               failed to load" beside readable rows would be false. -->
-          <div v-if="modelCenterFailure && !modelCenterOverview" class="center-message" role="alert" data-testid="model-center-read-failure">
-            <Info :size="16" aria-hidden="true" />
-            <div class="center-message-content">
-              <strong>{{ t('settings.centerLoadFailed') }}</strong>
-              <span>{{ modelCenterFailure.message }}</span>
-              <span v-if="modelCenterFailure.code">{{ modelCenterFailure.code }}</span>
-              <pre v-if="modelCenterFailure.details">{{ modelCenterFailure.details }}</pre>
-            </div>
-            <UiButton variant="outline" size="sm" :disabled="modelCenterLoading || !canAccessBackend" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
-
-          <section class="center-overview-receipt" :aria-label="t('settings.centerOverview')">
-            <div class="center-receipt-item" :class="{ ready: modelCenterOverview?.capabilities.provider_crud }">
-              <Database :size="17" />
-              <div>
-                <span>{{ t('settings.modelProviderManagement') }}</span>
-                <strong>{{ t('settings.modelProviderManagementHint') }}</strong>
-              </div>
-              <UiBadge :variant="modelCenterOverview?.capabilities.provider_crud ? 'default' : 'secondary'">
-                {{ modelCenterOverview?.capabilities.provider_crud ? t('settings.writable') : t('settings.readOnly') }}
-              </UiBadge>
-            </div>
-            <div class="center-receipt-item configured">
-              <Cpu :size="17" />
-              <div>
-                <span>{{ t('settings.modelCatalogScope') }}</span>
-                <strong>{{ t('settings.configuredModelsOnly') }}</strong>
-              </div>
-              <UiBadge variant="outline">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
-            </div>
-            <div class="center-receipt-item" :class="{ ready: modelCenterOverview?.capabilities.live_model_discovery, unavailable: !modelCenterOverview?.capabilities.live_model_discovery }">
-              <Search :size="17" />
-              <div>
-                <span>{{ t('settings.liveDiscovery') }}</span>
-                <strong>{{ modelCenterOverview?.capabilities.live_model_discovery ? t('settings.available') : t('settings.pendingCore') }}</strong>
-              </div>
-              <UiBadge :variant="modelCenterOverview?.capabilities.live_model_discovery ? 'default' : 'secondary'">
-                {{ modelCenterOverview?.capabilities.live_model_discovery ? t('settings.available') : t('settings.unavailable') }}
-              </UiBadge>
-            </div>
-          </section>
-
-        <div v-if="modelCenterLoading && !modelCenterOverview" class="center-loading-state" aria-live="polite">
-            <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
-          </div>
-
-          <!-- Same data already on screen and a refresh in flight: the skeleton above would
-               throw away readable rows, so the progress is a line that says so. -->
-          <p v-if="modelCenterLoading && modelCenterOverview" class="center-stale-status" role="status">
-            <RefreshCw :size="13" class="center-stale-spinner" aria-hidden="true" />
-            {{ t('settings.refreshing') }}
-          </p>
-
-          <div v-if="modelCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
-            <Info :size="16" />
-            <div class="center-message-content">
-              <strong>{{ t('settings.centerDiagnostics') }}</strong>
-              <ul>
-                <li v-for="diagnostic in modelCenterDiagnostics" :key="`${diagnostic.code}:${diagnostic.source ?? ''}:${diagnostic.status ?? ''}`">
-                  {{ centerDiagnosticLabel(diagnostic) }}
-                </li>
-              </ul>
-            </div>
-            <UiButton variant="outline" size="sm" :disabled="modelCenterLoading" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
-
-          <!-- A single read that failed keeps its section's previous data. Saying so is the
-               difference between "still loading" and "this one source is stale". -->
-          <div v-if="modelCenterPartialFailureSources.length > 0" class="center-message warning">
-            <Info :size="16" />
-            <div class="center-message-content">
-              <strong>{{ t('settings.centerPartialLoadFailed') }}</strong>
-              <ul>
-                <li v-for="source in modelCenterPartialFailureSources" :key="source">{{ source }}</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="center-workbench model-workbench">
-          <aside class="center-inspector" :aria-label="t('settings.centerInspector')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerInspector') }}</span>
-                <strong>{{ t('settings.modelHealth') }}</strong>
-              </div>
-              <PanelRight :size="16" />
-            </div>
-
-          <section v-if="modelReadiness || modelCatalogReadiness" class="model-health-overview">
-            <div class="model-health-head">
-              <div>
-                <h3>{{ t('settings.modelHealth') }}</h3>
-                <span>{{ t('settings.modelHealthHint') }}</span>
-              </div>
-              <UiBadge v-if="modelReadiness" :variant="readinessVariant(modelReadiness.status)">
-                <Circle :size="8" />
-                {{ readinessStatusLabel(modelReadiness.status) }}
-              </UiBadge>
-            </div>
-            <div class="model-health-metrics">
-              <div>
-                <span>{{ t('settings.readyProvidersMetric') }}</span>
-                <strong>{{ modelReadiness ? `${modelReadiness.ready_provider_count}/${modelReadiness.provider_count}` : '—' }}</strong>
-              </div>
-              <div :class="{ attention: (modelReadiness?.blocked_route_count ?? 0) > 0 }">
-                <span>{{ t('settings.blockedRoutesMetric') }}</span>
-                <strong>{{ modelReadiness?.blocked_route_count ?? '—' }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.readyTemplatesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '—' }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.runtimeModulesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '—' }}</strong>
-              </div>
-            </div>
-            <div v-if="modelReadiness && modelReadiness.status !== 'ready'" class="model-health-alert">
-              <Info :size="16" />
-              <div>
-                <strong>
-                  {{ firstNeedsKeyProvider
-                    ? t('settings.missingKeySummary', { name: firstNeedsKeyProvider.display_name })
-                    : t('settings.modelIssuesSummary') }}
-                </strong>
-                <span>{{ t('settings.modelIssueHint') }}</span>
-              </div>
-              <UiButton v-if="firstNeedsKeyProvider" variant="outline" size="sm" @click="openEditModal(firstNeedsKeyProvider)">
-                {{ t('settings.configureNow') }}
-              </UiButton>
-              <UiButton v-else-if="modelCenterIssueCount > 0" variant="outline" size="sm" @click="focusModelProviderList('issues')">
-                {{ t('settings.viewIssues') }}
-              </UiButton>
-              <UiButton v-else variant="outline" size="sm" @click="openModelDiagnostics">
-                {{ t('settings.advancedDiagnostics') }}
-              </UiButton>
-            </div>
-          </section>
-
-          <details v-if="modelReadiness || modelCatalogReadiness" ref="modelDiagnosticsRef" class="model-diagnostics">
-            <summary>
-              <span>{{ t('settings.advancedDiagnostics') }}</span>
-              <ChevronRight :size="14" />
-            </summary>
-            <div class="model-diagnostics-grid">
-              <section v-if="modelReadiness" class="model-diagnostic-section">
-                <div class="model-diagnostic-head">
-                  <div>
-                    <strong>{{ t('settings.providerReceipt') }}</strong>
-                    <span>{{ modelReadiness.receipt_id }}</span>
-                  </div>
-                  <UiBadge :variant="readinessVariant(modelReadiness.status)">{{ readinessStatusLabel(modelReadiness.status) }}</UiBadge>
-                </div>
-                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} · {{ modelReadiness.generated_at }}</p>
-                <div class="model-diagnostic-list">
-                  <strong>{{ t('settings.blockedRoutes') }}</strong>
-                  <div v-if="blockedModelRoutes.length > 0" class="model-readiness-routes">
-                    <span v-for="route in blockedModelRoutes" :key="route.purpose">
-                      {{ route.purpose }} · {{ route.provider_display_name ?? route.provider_instance_id }}
-                    </span>
-                  </div>
-                  <span v-else class="quiet">{{ t('settings.noBlockedRoutes') }}</span>
-                </div>
-                <ul v-if="modelReadinessNotes.length > 0" class="model-diagnostic-notes">
-                  <li v-for="note in modelReadinessNotes" :key="note">{{ note }}</li>
-                </ul>
-              </section>
-              <section v-if="modelCatalogReadiness" class="model-diagnostic-section">
-                <div class="model-diagnostic-head">
-                  <div>
-                    <strong>{{ t('settings.catalogReceipt') }}</strong>
-                    <span>{{ modelCatalogReadiness.receipt_id }}</span>
-                  </div>
-                  <UiBadge :variant="readinessVariant(modelCatalogReadiness.status)">{{ readinessStatusLabel(modelCatalogReadiness.status) }}</UiBadge>
-                </div>
-                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} · {{ modelCatalogReadiness.generated_at }}</p>
-                <div class="model-diagnostic-list">
-                  <strong>{{ t('settings.catalogWarnings') }}</strong>
-                  <div v-if="warningCatalogTemplates.length > 0" class="catalog-readiness-rows">
-                    <div v-for="template in warningCatalogTemplates" :key="template.driver" class="catalog-readiness-row">
-                      <div>
-                        <strong>{{ template.display_name }}</strong>
-                        <span>{{ template.runtime_module_family }} · {{ template.live_discovery_policy }}</span>
-                      </div>
-                      <UiBadge :variant="readinessVariant(template.status)">{{ template.runtime_module_status }}</UiBadge>
-                    </div>
-                  </div>
-                  <span v-else class="quiet">{{ t('settings.noCatalogWarnings') }}</span>
-                </div>
-                <!-- The deprecated receipt's design_notes are developer sentences pointing at the unified
-                     receipt; say what they mean instead, from the receipt itself. -->
-                <ul v-if="readinessReceipt?.status === 'blocked'" class="model-diagnostic-notes">
-                  <li>{{ t('settings.readinessBlockedHint') }}</li>
-                </ul>
-              </section>
-            </div>
-          </details>
-
-            <section v-if="selectedProviderDetail" class="inspector-provider-detail">
-              <div class="provider-detail-head compact">
-                <span
-                  class="provider-brand-icon"
-                  :style="{ color: providerPresentation(selectedProviderDetail.driver)?.brand_color, backgroundColor: providerPresentation(selectedProviderDetail.driver)?.brand_bg }"
-                >
-                  <span v-if="providerPresentation(selectedProviderDetail.driver)?.icon" class="provider-brand-mark" v-html="providerPresentation(selectedProviderDetail.driver)?.icon"></span>
-                  <Database v-else :size="16" />
-                </span>
-                <div class="provider-detail-info">
-                  <strong>{{ selectedProviderDetail.display_name }}</strong>
-                  <span class="provider-detail-driver">{{ selectedProviderDetail.driver }} · {{ connectionKindLabel(selectedProviderDetail.connection_kind) }}</span>
-                </div>
-                <UiBadge :variant="statusVariant(selectedProviderDetail.status)">
-                  <Circle :size="8" />
-                  {{ statusLabel(selectedProviderDetail.status) }}
-                </UiBadge>
-              </div>
-              <div class="provider-detail-grid compact">
-                <div v-if="selectedProviderDetail.base_url" class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.baseUrl') }}</span>
-                  <span class="provider-detail-value provider-detail-mono">{{ selectedProviderDetail.base_url }}</span>
-                </div>
-                <div v-if="selectedProviderDetail.model" class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.modelLabel') }}</span>
-                  <span class="provider-detail-value provider-detail-mono">{{ selectedProviderDetail.model }}</span>
-                </div>
-                <div class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.apiKey') }}</span>
-                  <span class="provider-detail-value">
-                    <span :class="['provider-key-indicator', selectedProviderDetail.has_api_key ? 'has-key' : 'no-key']"></span>
-                    {{ selectedProviderDetail.has_api_key ? t('settings.apiKeyStored') : t('settings.apiKeyNotSet') }}
-                  </span>
-                </div>
-                <div class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.connectionKind') }}</span>
-                  <span class="provider-detail-value">{{ connectionKindLabel(selectedProviderDetail.connection_kind) }}</span>
-                </div>
-              </div>
-              <div v-if="providerNote(selectedProviderDetail)" class="provider-status-note compact">
-                <Terminal :size="14" />
-                <span>{{ selectedProviderDetail.status_message }}</span>
-              </div>
-              <div class="provider-detail-actions compact">
-                <UiButton variant="outline" size="sm" @click="openEditModal(selectedProviderDetail)">
-                  <Edit3 :size="14" />
-                  <span>{{ t('settings.editConfig') }}</span>
-                </UiButton>
-                <UiButton variant="outline" size="sm" :disabled="modelCenterBusy" @click="toggleProviderEnabled(selectedProviderDetail)">
-                  <component :is="selectedProviderDetail.enabled ? X : Check" :size="14" />
-                  <span>{{ selectedProviderDetail.enabled ? t('settings.disable') : t('settings.enable') }}</span>
-                </UiButton>
-                <UiButton variant="ghost" size="sm" class="provider-delete-btn" :disabled="modelCenterBusy" @click="deleteProvider(selectedProviderDetail.id)">
-                  <Trash2 :size="14" />
-                  <span>{{ t('settings.delete') }}</span>
-                </UiButton>
-              </div>
-            </section>
-          </aside>
-
-          <aside class="center-resource-rail model-resource-navigation" :aria-label="t('settings.centerResources')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerResources') }}</span>
-                <strong>{{ t('settings.modelCenterResources') }}</strong>
-              </div>
-            </div>
-          <div class="model-center-tabs" role="tablist" :aria-label="t('settings.modelCenterResources')">
-            <button
-              v-for="section in modelCenterSections"
-              :key="section.key"
-              role="tab"
-              :aria-selected="modelCenterSection === section.key"
-              :class="{ active: modelCenterSection === section.key }"
-              @click="modelCenterSection = section.key"
-            >
-              <span>{{ section.label }}</span>
-              <UiBadge variant="secondary">{{ section.count }}</UiBadge>
-            </button>
-          </div>
-          </aside>
-
-          <main class="center-resource-stage">
-          <section v-if="modelCenterSection === 'models'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerModels') }}</h3>
-                <p>{{ t('settings.configuredModelsHint') }}</p>
-              </div>
-              <UiBadge variant="outline">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
-            </div>
-            <div v-for="provider in modelCenterOverview?.api_connections ?? []" :key="provider.id" class="model-provider-group">
-              <div class="center-resource-list-row model-provider-group-head">
-                <div class="center-resource-primary">
-                  <span
-                    class="provider-brand-icon"
-                    :style="{ color: providerPresentation(provider.driver)?.brand_color, backgroundColor: providerPresentation(provider.driver)?.brand_bg }"
-                  >
-                    <span v-if="providerPresentation(provider.driver)?.icon" class="provider-brand-mark" v-html="providerPresentation(provider.driver)?.icon"></span>
-                    <Server v-else :size="16" />
-                  </span>
-                  <div>
-                    <strong>{{ provider.display_name }}</strong>
-                    <span>{{ provider.driver }}</span>
-                  </div>
-                </div>
-                <UiBadge :variant="statusVariant(provider.status)">{{ statusLabel(provider.status) }}</UiBadge>
-                <UiButton
-                  variant="outline"
-                  size="sm"
-                  :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
-                  :title="modelCenterOverview?.capabilities.model_discovery_refresh ? t('settings.addModel') : t('settings.modelDiscoveryUnsupported')"
-                  @click="openAddModelModal(provider.id)"
-                >
-                  <Plus :size="14" />
-                  {{ t('settings.addModel') }}
-                </UiButton>
-              </div>
-              <div class="model-group-models">
-                <template v-for="model in modelsForProvider(provider.id)" :key="model.id">
-                <div class="center-resource-list-row model-group-model">
-                  <div class="center-resource-primary">
-                    <Cpu :size="15" />
-                    <div>
-                      <strong>{{ model.model_id }}</strong>
-                      <div class="center-resource-meta">
-                        <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
-                        <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
-                      </div>
-                      <div v-if="modelReferenceRows[`${provider.id}:${model.model_id}`]" class="model-reference-rows">
-                        <span v-for="(reference, index) in modelReferenceRows[`${provider.id}:${model.model_id}`]" :key="index">
-                          {{ referenceKindLabel(reference.reference_kind) }}<template v-if="reference.detail"> · {{ referenceDetailLabel(reference) }}</template>
-                        </span>
-                        <span v-if="modelReferenceRows[`${provider.id}:${model.model_id}`].length === 0" class="quiet">{{ t('settings.noModelReferences') }}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
-                  <div class="center-resource-actions">
-                  <UiButton
-                    variant="outline"
-                    size="sm"
-                    :disabled="modelCenterBusy"
-                    :title="t('settings.setDefaultModel')"
-                    @click="setDefaultChatModel(provider.id, model.model_id)"
-                  >
-                    {{ t('settings.setDefaultModel') }}
-                  </UiButton>
-                  <UiButton variant="outline" size="sm" :disabled="modelCenterBusy" :aria-expanded="editingModelParameters?.providerId === provider.id && editingModelParameters?.model === model.model_id"
-                    @click="editingModelParameters = editingModelParameters?.providerId === provider.id && editingModelParameters?.model === model.model_id ? null : { providerId: provider.id, model: model.model_id }">
-                    <Settings2 data-icon="inline-start" />
-                    {{ t('settings.modelParameters') }}
-                  </UiButton>
-                  <UiButton
-                    variant="ghost"
-                    size="sm"
-                    :disabled="modelReferenceBusy[`${provider.id}:${model.model_id}`]"
-                    :title="t('settings.toggleModelReferences')"
-                    @click="toggleModelReferences(provider.id, model.model_id)"
-                  >
-                    <Info :size="14" />
-                  </UiButton>
-                  <UiButton
-                    variant="ghost"
-                    size="sm"
-                    :disabled="modelCenterBusy"
-                    :title="t('settings.removeModel')"
-                    @click="removeModel(provider.id, model.model_id)"
-                  >
-                    <Trash2 :size="14" />
-                  </UiButton>
-                  </div>
-                </div>
-                <ModelParametersEditor v-if="editingModelParameters?.providerId === provider.id && editingModelParameters?.model === model.model_id && providers.find(item => item.id === provider.id)"
-                  :provider="providers.find(item => item.id === provider.id)!" :model="model.model_id"
-                  @saved="modelParametersSaved" @cancel="editingModelParameters = null" @reload="loadModelCenter" />
-                </template>
-                <div v-if="modelsForProvider(provider.id).length === 0" class="center-empty-state">
-                  <Cpu :size="20" />
-                  <span>{{ t('settings.noProviderModels') }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-if="(modelCenterOverview?.api_connections.length ?? 0) === 0" class="center-empty-state">
-              <Cpu :size="20" />
-              <span>{{ t('settings.noConfiguredModels') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'routes'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerRoutes') }}</h3>
-                <p>{{ t('settings.centerRoutesHint') }}</p>
-              </div>
-              <UiBadge variant="outline">{{ routes.length }}</UiBadge>
-            </div>
-            <div class="center-resource-list-row" :class="{ active: routeEditorPurpose === route.purpose }" v-for="route in routes" :key="route.id ?? route.purpose">
-              <button class="agent-card-select" @click="openRouteEditor(route.purpose)">
-                <Route :size="15" />
-                <div class="center-resource-primary">
-                  <strong>{{ route.purpose }}</strong>
-                  <span>
-                    {{ (route.candidates ?? []).map((candidate) => `${routeCandidateProviderLabel(candidate.provider_instance_id)}${candidate.model ? ` · ${candidate.model}` : ''}`).join(' → ') || t('settings.routeNoCandidates') }}
-                  </span>
-                </div>
-              </button>
-            </div>
-            <div v-if="routes.length === 0" class="center-empty-state">
-              <Route :size="20" />
-              <span>{{ t('settings.routeNoCandidates') }}</span>
-            </div>
-
-            <div v-if="routeEditorPurpose" class="route-candidate-editor">
-              <div class="route-candidate-head">
-                <strong>{{ routeEditorPurpose }}</strong>
-                <span>{{ t('settings.routeEditorHint') }}</span>
-              </div>
-              <div v-for="(candidate, index) in routeEditorCandidates" :key="`${candidate.provider_instance_id}:${index}`" class="route-candidate-row">
-                <UiBadge variant="secondary">{{ index + 1 }}</UiBadge>
-                <div class="route-candidate-main">
-                  <strong>{{ routeCandidateProviderLabel(candidate.provider_instance_id) }}</strong>
-                  <span>{{ candidate.model ?? t('settings.fixedModelNoModel') }}</span>
-                </div>
-                <UiButton variant="ghost" size="icon" :disabled="routeEditorBusy || index === 0" :title="t('settings.routeCandidateUp')" @click="moveRouteCandidate(index, -1)">
-                  <ChevronRight :size="14" class="rotate-[-90deg]" />
-                </UiButton>
-                <UiButton variant="ghost" size="icon" :disabled="routeEditorBusy || index === routeEditorCandidates.length - 1" :title="t('settings.routeCandidateDown')" @click="moveRouteCandidate(index, 1)">
-                  <ChevronRight :size="14" class="rotate-90" />
-                </UiButton>
-                <UiButton variant="ghost" size="icon" :disabled="routeEditorBusy" :title="t('settings.delete')" @click="removeRouteCandidate(index)">
-                  <Trash2 :size="14" />
-                </UiButton>
-              </div>
-              <div v-if="routeEditorCandidates.length === 0" class="center-empty-state">
-                <Route :size="20" />
-                <span>{{ t('settings.routeNoCandidates') }}</span>
-              </div>
-
-              <div v-if="routeEditorAdding" class="route-candidate-add">
-                <UiSelectField
-                  v-model="routeEditorNewProviderId"
-                  :aria-label="t('settings.selectProvider')"
-                  :options="[
-                    { value: '', label: t('settings.selectProvider'), disabled: true },
-                    ...providers.map((provider) => ({ value: provider.id, label: provider.display_name })),
-                    ...runtimeCliOptions.map((runtime) => ({ value: runtime.provider_instance_id, label: `${runtime.display_name} (CLI)` })),
-                    ...runtimeAcpOptions.map((runtime) => ({ value: runtime.provider_instance_id ?? runtime.runtime_id, label: `${runtime.display_name} (ACP)` })),
-                  ]"
-                />
-                <UiSelectField
-                  v-if="modelsForProvider(routeEditorNewProviderId).length > 0"
-                  v-model="routeEditorNewModelId"
-                  :aria-label="t('settings.model')"
-                  :options="[
-                    { value: '', label: t('settings.fixedModelNoModel') },
-                    ...modelsForProvider(routeEditorNewProviderId).map((model) => ({ value: model.model_id, label: model.model_id })),
-                  ]"
-                />
-                <UiButton variant="outline" size="sm" :disabled="!routeEditorNewProviderId" @click="addRouteCandidate">
-                  <Check :size="14" />
-                </UiButton>
-                <UiButton variant="ghost" size="sm" @click="routeEditorAdding = false">{{ t('settings.cancel') }}</UiButton>
-              </div>
-              <div v-else class="route-candidate-actions">
-                <UiButton variant="outline" size="sm" :disabled="routeEditorBusy" @click="routeEditorAdding = true">
-                  <Plus :size="14" />
-                  <span>{{ t('settings.routeAddCandidate') }}</span>
-                </UiButton>
-                <UiButton
-                  variant="outline"
-                  size="sm"
-                  :disabled="routeEditorBusy || !routeEditorDirty"
-                  @click="saveRouteCandidates"
-                >
-                  <Save :size="14" />
-                  <span>{{ t('settings.saveRoute') }}</span>
-                </UiButton>
-              </div>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'cli'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerCli') }}</h3>
-                <p>{{ t('settings.cliRuntimeHint') }}</p>
-              </div>
-              <UiButton
-                variant="outline"
-                size="sm"
-                :disabled="cliDiscoveryLoading"
-                @click="discoverHarnesses"
-              >
-                <RefreshCw :size="14" :class="{ 'animate-spin': cliDiscoveryLoading }" />
-                {{ cliDiscoveryLoading ? t('settings.discoveringCli') : t('settings.discoverCli') }}
-              </UiButton>
-            </div>
-
-            <!-- Discovery Candidates Panel -->
-            <div v-if="cliDiscoveryLoaded" class="cli-discovery-panel">
-              <div class="cli-discovery-header">
-                <strong>{{ t('settings.cliDiscoveryTitle') }}</strong>
-                <p>{{ t('settings.cliDiscoveryHint') }}</p>
-              </div>
-              <div v-if="cliDiscoveryCandidates.length === 0" class="cli-discovery-empty">
-                {{ t('settings.cliDiscoveryEmpty') }}
-              </div>
-              <div v-else class="cli-discovery-grid">
-                <div
-                  v-for="candidate in cliDiscoveryCandidates"
-                  :key="candidate.driver"
-                  class="cli-discovery-card"
-                  :class="{ 'is-found': candidate.status === 'found', 'is-configured': candidate.status === 'configured', 'is-missing': candidate.status === 'missing' }"
-                >
-                  <div class="cli-discovery-info">
-                    <div class="cli-discovery-name-row">
-                      <Terminal :size="15" />
-                      <strong>{{ candidate.display_name }}</strong>
-                      <span class="cli-discovery-driver">{{ candidate.driver }}</span>
-                    </div>
-                    <code v-if="candidate.binary_path" class="cli-discovery-path" :title="candidate.binary_path">
-                      {{ candidate.binary_path }}
-                    </code>
-                    <span v-else-if="candidate.status === 'missing'" class="cli-discovery-status-text muted" :title="probeNote(candidate) === candidate.probe_note ? undefined : candidate.probe_note ?? undefined">
-                      {{ probeNote(candidate) || t('settings.notDetected') }}
-                    </span>
-                  </div>
-                  <div class="cli-discovery-action">
-                    <UiBadge v-if="candidate.status === 'configured'" variant="secondary">
-                      {{ t('settings.alreadyConnected') }}
-                    </UiBadge>
-                    <template v-if="candidate.status === 'found' || candidate.status === 'configured'">
-                      <!-- One button per channel this build can drive, and a named reason for the ones
-                           it cannot. A single "Quick connect" would pick a channel silently, which is
-                           the confusion the channel axis exists to end. A configured harness still shows
-                           the other channel buttons so ACP and CLI can coexist for one vendor binary. -->
-                      <UiButton
-                        v-for="channel in drivableChannels(candidate)"
-                        :key="channel.channel ?? channel.protocol"
-                        variant="default"
-                        size="sm"
-                        :disabled="cliDiscoveryLoading"
-                        @click="connectDiscoveredCli(candidate, channel)"
-                      >
-                        <Plus :size="13" />
-                        {{ t('settings.quickConnectChannel', { channel: channelLabel(channel) }) }}
-                      </UiButton>
-                      <UiBadge
-                        v-for="channel in blockedChannels(candidate)"
-                        :key="`blocked-${channel.channel ?? channel.protocol}`"
-                        variant="outline"
-                        class="muted-badge"
-                        :title="channelReason(channel, candidate)"
-                      >
-                        {{ t('settings.channelNotDrivable', { channel: channelLabel(channel) }) }}
-                      </UiBadge>
-                      <UiButton
-                        v-if="drivableChannels(candidate).length === 0 && blockedChannels(candidate).length === 0"
-                        variant="default"
-                        size="sm"
-                        :disabled="cliDiscoveryLoading"
-                        @click="connectDiscoveredCli(candidate)"
-                      >
-                        <Plus :size="13" />
-                        {{ t('settings.quickConnect') }}
-                      </UiButton>
-                    </template>
-                    <UiBadge v-else variant="outline" class="muted-badge">
-                      {{ t('settings.notDetected') }}
-                    </UiBadge>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="center-resource-list">
-              <article v-for="runtime in modelCenterOverview?.cli_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
-                <div class="center-resource-primary">
-                  <Terminal :size="17" />
-                  <div>
-                    <strong>{{ runtime.display_name }}</strong>
-                    <span>{{ runtime.driver }} · {{ runtime.runtime_id }}</span>
-                  </div>
-                </div>
-                <div class="center-resource-paths">
-                  <code>{{ runtime.binary_path || t('settings.pathNotConfigured') }}</code>
-                  <code>{{ runtime.home_path || t('settings.workspaceNotConfigured') }}</code>
-                </div>
-                <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
-                <div class="center-resource-actions">
-                  <UiButton
-                    v-if="providers.find(provider => provider.id === runtime.provider_instance_id)"
-                    variant="outline"
-                    size="sm"
-                    @click="openEditModal(providers.find(provider => provider.id === runtime.provider_instance_id)!)"
-                  >
-                    <Settings2 :size="14" />
-                    {{ t('settings.editConfig') }}
-                  </UiButton>
-                  <UiButton
-                    v-if="runtime.provider_instance_id"
-                    variant="ghost"
-                    size="icon"
-                    class="provider-delete-btn"
-                    :disabled="modelCenterBusy"
-                    :title="t('settings.delete')"
-                    @click="deleteProvider(runtime.provider_instance_id)"
-                  >
-                    <Trash2 :size="14" />
-                  </UiButton>
-                </div>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.cli_runtimes.length ?? 0) === 0" class="center-empty-state">
-              <Terminal :size="20" />
-              <span>{{ t('settings.noCliRuntimes') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'acp'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerAcp') }}</h3>
-                <p>{{ t('settings.acpRuntimeHint') }}</p>
-              </div>
-              <UiButton variant="outline" size="sm" @click="router.push('/market')">
-                <Plus :size="14" />
-                {{ t('settings.manageInMarketplace') }}
-              </UiButton>
-            </div>
-            <!-- Permanent, not dismissible: declaring fs/terminal capabilities as false does not stop
-                 the harness writing inside its own working directory, and Round 1 refuses every
-                 permission request on the agent's behalf. Both are facts about what a connected
-                 harness can do, and neither is discoverable from the row itself. -->
-            <p class="acp-permission-notice" role="note">
-              {{ t('settings.acpPermissionWarning') }}
-            </p>
-            <div class="center-resource-list">
-              <article v-for="runtime in modelCenterOverview?.acp_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
-                <div class="center-resource-primary">
-                  <Workflow :size="17" />
-                  <div>
-                    <strong>{{ runtime.display_name }}</strong>
-                    <span>{{ acpRuntimeSourceLabel(runtime.source) }} · {{ runtime.runtime_id }}</span>
-                  </div>
-                </div>
-                <div class="center-resource-paths">
-                  <code>{{ runtime.binary_path || t('settings.pathNotConfigured') }}</code>
-                </div>
-                <div class="center-resource-meta">
-                  <span v-for="capability in runtime.capabilities.slice(0, 4)" :key="capability">{{ capability }}</span>
-                </div>
-                <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
-                <div class="center-resource-actions">
-                  <UiButton
-                    v-if="providers.find(provider => provider.id === runtime.provider_instance_id)"
-                    variant="outline"
-                    size="sm"
-                    @click="openEditModal(providers.find(provider => provider.id === runtime.provider_instance_id)!)"
-                  >
-                    <Settings2 :size="14" />
-                    {{ t('settings.editConfig') }}
-                  </UiButton>
-                  <UiButton
-                    v-if="runtime.provider_instance_id"
-                    variant="ghost"
-                    size="icon"
-                    class="provider-delete-btn"
-                    :disabled="modelCenterBusy"
-                    :title="t('settings.delete')"
-                    @click="deleteProvider(runtime.provider_instance_id)"
-                  >
-                    <Trash2 :size="14" />
-                  </UiButton>
-                  <!-- No probe affordance here: Core answers 501 for adapter probes, so a button
-                       would be a control that cannot work, which is the failure class the read-only
-                       notices on these panes exist to prevent. -->
-                </div>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.acp_runtimes.length ?? 0) === 0" class="center-empty-state">
-              <Workflow :size="20" />
-              <span>{{ t('settings.noAcpRuntimes') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'tui'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerTui') }}</h3>
-                <p>{{ t('settings.tuiRuntimeHint') }}</p>
-              </div>
-            </div>
-            <!-- TUI is a one-shot model channel backed by Core's PTY host. This pane remains an
-                 inventory; connecting a row happens through discovery so the selected channel is
-                 explicit and can coexist with ACP/CLI for the same binary. -->
-            <p class="acp-permission-notice" role="note">
-              {{ t('settings.tuiBackendUnavailable') }}
-            </p>
-            <div class="center-resource-list">
-              <article v-for="runtime in modelCenterOverview?.tui_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
-                <div class="center-resource-primary">
-                  <Terminal :size="17" />
-                  <div>
-                    <strong>{{ runtime.display_name }}</strong>
-                    <span>{{ runtime.driver }} · {{ runtime.protocol || t('settings.protocolUnknown') }}</span>
-                  </div>
-                </div>
-                <div class="center-resource-paths">
-                  <code>{{ runtime.binary_path || t('settings.pathNotConfigured') }}</code>
-                </div>
-                <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
-                <div class="center-resource-actions">
-                  <UiButton
-                    v-if="providers.find(provider => provider.id === runtime.provider_instance_id)"
-                    variant="outline"
-                    size="sm"
-                    @click="openEditModal(providers.find(provider => provider.id === runtime.provider_instance_id)!)"
-                  >
-                    <Settings2 :size="14" />
-                    {{ t('settings.editConfig') }}
-                  </UiButton>
-                  <UiButton
-                    variant="ghost"
-                    size="icon"
-                    class="provider-delete-btn"
-                    :disabled="modelCenterBusy"
-                    :title="t('settings.delete')"
-                    @click="deleteProvider(runtime.provider_instance_id)"
-                  >
-                    <Trash2 :size="14" />
-                  </UiButton>
-                </div>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.tui_runtimes.length ?? 0) === 0" class="center-empty-state">
-              <Terminal :size="20" />
-              <span>{{ t('settings.noTuiRuntimes') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'api'" ref="modelProviderListRef" class="model-provider-section">
-            <div class="model-provider-toolbar">
-              <div class="model-provider-search">
-                <Search :size="15" />
-                <UiInput v-model="modelProviderQuery" :placeholder="t('settings.providerSearchPlaceholder')" />
-              </div>
-              <div class="model-provider-filters" role="group" :aria-label="t('settings.providerFilters')">
-                <button :class="{ active: modelProviderFilter === 'all' }" :aria-pressed="modelProviderFilter === 'all'" @click="modelProviderFilter = 'all'">
-                  {{ t('settings.filterAll') }}
-                </button>
-                <button :class="{ active: modelProviderFilter === 'issues' }" :aria-pressed="modelProviderFilter === 'issues'" @click="modelProviderFilter = 'issues'">
-                  {{ t('settings.filterIssues') }}
-                  <span v-if="modelCenterIssueCount > 0">{{ modelCenterIssueCount }}</span>
-                </button>
-                <button :class="{ active: modelProviderFilter === 'configured' }" :aria-pressed="modelProviderFilter === 'configured'" @click="modelProviderFilter = 'configured'">
-                  {{ t('settings.filterConfigured') }}
-                </button>
-              </div>
-              <span class="model-provider-count">{{ t('settings.providerResultCount', { visible: filteredModelCenterRows.length, total: modelCenterRows.length }) }}</span>
-            </div>
-
-            <div class="model-provider-table">
-              <div class="model-provider-table-head" aria-hidden="true">
-                <span>{{ t('settings.providerName') }}</span>
-                <span>{{ t('settings.connectionKind') }}</span>
-                <span>{{ t('settings.modelLabel') }}</span>
-                <span>{{ t('settings.status') }}</span>
-                <span>{{ t('settings.actions') }}</span>
-              </div>
-              <template v-for="row in filteredModelCenterRows" :key="row.key">
-                <div class="model-provider-row" :class="{ issue: row.kind === 'instance' && ['blocked', 'warning'].includes(row.readiness?.status ?? '') }">
-                  <button
-                    class="model-provider-identity"
-                    :aria-expanded="row.kind === 'instance' ? selectedProviderDetailId === row.provider.id : undefined"
-                    @click="row.kind === 'instance' ? toggleProviderDetail(row.provider.id) : openAddModal(row.template)"
-                  >
-                    <span
-                      class="provider-brand-icon"
-                      :style="{ color: row.template?.brand_color, backgroundColor: row.template?.brand_bg }"
-                    >
-                      <span v-if="row.template?.icon" class="provider-brand-mark" v-html="row.template?.icon"></span>
-                      <Database v-else :size="16" />
-                    </span>
-                    <span>
-                      <strong :title="row.display_name">{{ row.display_name }}</strong>
-                      <small :title="row.driver">{{ row.driver }}</small>
-                    </span>
-                  </button>
-                  <span class="model-provider-cell model-provider-connection">{{ connectionKindLabel(row.connection_kind) }}</span>
-                  <span class="model-provider-cell model-provider-model" :title="row.model || t('settings.noModel')">{{ row.model || t('settings.noModel') }}</span>
-                  <div class="model-provider-status">
-                    <UiBadge v-if="row.kind === 'instance'" :variant="statusVariant(row.provider.status)">
-                      <Circle :size="8" />
-                      {{ statusLabel(row.provider.status) }}
-                    </UiBadge>
-                    <UiBadge v-else variant="outline">{{ t('settings.notAdded') }}</UiBadge>
-                  </div>
-                  <div class="model-provider-actions">
-                    <template v-if="row.kind === 'instance'">
-                      <UiButton
-                        v-if="row.template"
-                        variant="ghost"
-                        size="icon"
-                        :title="t('settings.addSameProvider')"
-                        @click="openAddModal(row.template)"
-                      >
-                        <Plus :size="14" />
-                      </UiButton>
-                      <UiButton variant="ghost" size="icon" :title="t('settings.editConfig')" @click="openEditModal(row.provider)">
-                        <Settings2 :size="14" />
-                      </UiButton>
-                      <UiButton
-                        variant="ghost"
-                        size="icon"
-                        class="provider-delete-btn"
-                        :disabled="modelCenterBusy"
-                        :title="t('settings.delete')"
-                        @click="deleteProvider(row.provider.id)"
-                      >
-                        <Trash2 :size="14" />
-                      </UiButton>
-                      <UiButton
-                        variant="ghost"
-                        size="icon"
-                        :title="selectedProviderDetailId === row.provider.id ? t('settings.collapseDetails') : t('settings.expandDetails')"
-                        :aria-expanded="selectedProviderDetailId === row.provider.id"
-                        @click="toggleProviderDetail(row.provider.id)"
-                      >
-                        <ChevronRight :size="14" class="provider-chevron" :class="{ open: selectedProviderDetailId === row.provider.id }" />
-                      </UiButton>
-                    </template>
-                    <UiButton v-else variant="outline" size="sm" @click="openAddModal(row.template)">
-                      <Plus :size="14" />
-                      {{ t('settings.addProvider') }}
-                    </UiButton>
-                  </div>
-                  <span class="model-provider-mobile-meta">
-                    {{ connectionKindLabel(row.connection_kind) }} · {{ row.model || row.driver }}
-                  </span>
-                </div>
-
-              </template>
-              <div v-if="filteredModelCenterRows.length === 0" class="model-provider-empty">
-                <Search :size="18" />
-                <span>{{ t('settings.noProviderResults') }}</span>
-                <UiButton variant="outline" size="sm" @click="handleAddProviderClick">
-                  <Plus :size="14" />
-                  {{ t('settings.addProvider') }}
-                </UiButton>
-              </div>
-            </div>
-          </section>
-          </main>
-          </div>
-          </div>
+          <ModelCenterSection
+            ref="modelCenterRef"
+            :center="modelCenter"
+            :runtime-models="runtimeModels"
+            :runtime-cli-options="runtimeCliOptions"
+            :runtime-acp-options="runtimeAcpOptions"
+            :can-access-backend="canAccessBackend"
+          />
         </template>
 
         <template v-if="activeSection === 'agentCenter'">
@@ -3919,292 +1988,12 @@ import '../settings/settings.css'
       <CompanionSection :companion-request="companionRequest" />
     </div>
 
-    <div v-if="showModelModal" class="model-provider-modal" @click.self="showModelModal = false">
-      <UiCard class="model-provider-modal-content">
-        <template #header>
-          <div class="modal-header-row">
-            <div class="modal-header-left">
-              <span
-                class="modal-provider-logo"
-                :style="{ color: providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.brand_color, backgroundColor: providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.brand_bg }"
-              >
-                <span v-if="providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.icon" class="provider-brand-mark" v-html="providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.icon"></span>
-                <Cpu v-else :size="18" />
-              </span>
-              <div class="modal-header-info">
-                <h3>{{ t('settings.addModelTitle') }}</h3>
-                <span class="modal-header-sub">{{ modelApiProvider(modelModalProviderId)?.display_name ?? modelModalProviderId }}</span>
-              </div>
-            </div>
-            <UiButton variant="ghost" size="icon" @click="showModelModal = false">
-              <X :size="16" />
-            </UiButton>
-          </div>
-        </template>
-
-        <template #content>
-          <div class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.fetchModelsFromProvider') }}</div>
-            <div class="model-modal-fetch-row">
-              <UiButton
-                variant="outline"
-                size="sm"
-                :disabled="modelModalBusy"
-                @click="fetchDiscoveredModels"
-              >
-                <Server :size="14" />
-                {{ modelModalBusy ? t('settings.fetchingModels') : (modelModalFetched ? t('settings.refreshModels') : t('settings.fetchModels')) }}
-              </UiButton>
-            </div>
-            <div v-if="modelModalError" class="model-provider-note">
-              <Terminal :size="14" />
-              <span>{{ modelModalError }}</span>
-            </div>
-            <div v-if="modelModalFetched && modelModalDiscovered.length" class="model-discovered-list">
-              <div v-for="item in modelModalDiscovered" :key="item.id" class="model-discovered-row">
-                <strong>{{ item.id }}</strong>
-                <UiButton
-                  variant="outline"
-                  size="sm"
-                  :disabled="modelModalPending.includes(item.id)"
-                  @click="addPendingModel(item.id)"
-                >
-                  {{ modelModalPending.includes(item.id) ? t('settings.modelAdded') : t('settings.addModel') }}
-                </UiButton>
-              </div>
-            </div>
-            <div v-else-if="modelModalFetched" class="center-empty-state">
-              <Cpu :size="20" />
-              <span>{{ t('settings.fetchModelsEmpty') }}</span>
-            </div>
-          </div>
-
-          <div class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.manualModel') }}</div>
-            <div class="model-manual-row">
-              <UiInput v-model="modelModalManual" :placeholder="t('settings.modelNamePlaceholder')" @keydown.enter="addManualModel" />
-              <UiButton variant="outline" :disabled="!modelModalManual.trim()" @click="addManualModel">
-                <Plus :size="14" />
-                {{ t('settings.addModel') }}
-              </UiButton>
-            </div>
-            <div v-if="modelModalPending.length" class="model-pending-list">
-              <span v-for="id in modelModalPending" :key="id" class="provider-cap-tag">{{ id }}</span>
-            </div>
-          </div>
-        </template>
-
-        <template #footer>
-          <div class="modal-actions">
-            <UiButton variant="outline" @click="showModelModal = false">
-              {{ t('settings.cancel') }}
-            </UiButton>
-            <UiButton :disabled="modelModalBusy || !modelModalPending.length" @click="saveModelModal()">
-              <Save :size="14" />
-              <span>{{ t('settings.save') }}</span>
-            </UiButton>
-          </div>
-        </template>
-      </UiCard>
-    </div>
+    
       </div>
     </div>
 
-    <Transition name="modal-fade">
-    <div v-if="showTemplatePicker" class="model-provider-modal" @click.self="showTemplatePicker = false">
-      <UiCard class="model-provider-modal-content template-picker-content">
-        <template #header>
-          <div class="modal-header-row">
-            <div class="modal-header-left">
-              <span class="modal-provider-logo" :style="{ color: '#8b949e', backgroundColor: 'rgba(139,148,158,0.10)' }">
-                <Plus :size="18" />
-              </span>
-              <div class="modal-header-info">
-                <h3>{{ t('settings.addProviderTemplate') }}</h3>
-                <span class="modal-header-sub">{{ t('settings.templatePickerHint') }}</span>
-              </div>
-            </div>
-            <UiButton variant="ghost" size="icon" @click="showTemplatePicker = false">
-              <X :size="16" />
-            </UiButton>
-          </div>
-        </template>
+    
 
-        <template #content>
-          <div class="template-picker-search">
-            <Search :size="15" />
-            <UiInput v-model="templatePickerQuery" :placeholder="t('settings.templateSearchPlaceholder')" />
-          </div>
-
-          <div v-if="pickerTemplateGroups.length === 0" class="template-picker-empty">
-            <Server :size="20" />
-            <span>{{ t('settings.templatePickerEmpty') }}</span>
-          </div>
-
-          <div v-for="group in pickerTemplateGroups" :key="group.category" class="template-picker-group">
-            <div class="template-picker-group-title">{{ t(group.labelKey) }}</div>
-            <div class="template-picker-grid">
-              <button
-                v-for="template in group.templates"
-                :key="template.driver"
-                class="template-picker-card"
-                :style="{ '--template-accent': template.brand_color }"
-                @click="pickTemplate(template)"
-              >
-                <span class="provider-brand-icon" :style="{ color: template.brand_color, backgroundColor: template.brand_bg }">
-                  <span v-if="template.icon" class="provider-brand-mark" v-html="template.icon"></span>
-                  <Database v-else :size="16" />
-                </span>
-                <span class="template-picker-card-body">
-                  <strong :title="t(template.display_name_key)">{{ t(template.display_name_key) }}</strong>
-                  <small :title="template.driver">{{ template.driver }}</small>
-                </span>
-                <span class="template-picker-card-meta">
-                  <span>{{ connectionKindLabel(template.connection_kind) }}</span>
-                  <span v-if="template.default_model" :title="template.default_model">{{ template.default_model }}</span>
-                </span>
-              </button>
-            </div>
-          </div>
-        </template>
-      </UiCard>
-    </div>
-    </Transition>
-
-    <Transition name="modal-fade">
-    <div v-if="showModal" class="model-provider-modal" @click.self="closeModal">
-      <UiCard class="model-provider-modal-content">
-        <template #header>
-          <div class="modal-header-row">
-            <div class="modal-header-left">
-              <span
-                class="modal-provider-logo"
-                :style="{ color: currentTemplate?.brand_color, backgroundColor: currentTemplate?.brand_bg }"
-              >
-                <span v-if="currentTemplate?.icon" class="provider-brand-mark" v-html="currentTemplate?.icon"></span>
-                <Database v-else :size="18" />
-              </span>
-              <div class="modal-header-info">
-                <h3>{{ providerForm.id ? t('settings.editProviderTitle') : t('settings.newProvider') }}</h3>
-                <span class="modal-header-sub">{{ currentTemplate ? t(currentTemplate.display_name_key) : providerForm.driver }}</span>
-              </div>
-            </div>
-            <UiButton variant="ghost" size="icon" @click="closeModal">
-              <X :size="16" />
-            </UiButton>
-          </div>
-        </template>
-
-        <template #content>
-          <p v-if="currentTemplate" class="template-summary">{{ t(currentTemplate.summary_key) }}</p>
-
-          <div class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.basicInfo') }}</div>
-            <div class="settings-field">
-              <UiLabel>{{ t('settings.displayName') }}</UiLabel>
-              <UiInput v-model="providerForm.display_name" />
-            </div>
-          </div>
-
-          <div v-if="formFields.base_url || formFields.model || formProtocolOptions.length > 0" class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.connectionParams') }}</div>
-            <div class="model-form-grid">
-              <div v-if="formFields.base_url" class="settings-field">
-                <UiLabel>{{ t('settings.baseUrl') }}</UiLabel>
-                <UiInput v-model="providerForm.base_url" :placeholder="formPlaceholders.base_url" />
-              </div>
-              <div v-if="formFields.model" class="settings-field">
-                <UiLabel>{{ t('settings.modelLabel') }}</UiLabel>
-                <UiInput v-model="providerForm.model" :placeholder="formPlaceholders.model" />
-              </div>
-              <div v-if="formProtocolOptions.length > 0" class="settings-field">
-                <UiLabel>{{ t('settings.protocol') }}</UiLabel>
-                <UiSelectField
-                  v-model="providerForm.protocol"
-                  :aria-label="t('settings.protocol')"
-                  :options="formProtocolOptions.map((option) => ({ value: option, label: protocolOptionLabel(option) }))"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div v-if="formFields.api_key" class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.authentication') }}</div>
-            <div class="settings-field">
-              <UiLabel>{{ t('settings.apiKey') }}</UiLabel>
-              <UiInput
-                v-model="providerForm.api_key"
-                type="password"
-                :placeholder="selectedProvider?.has_api_key ? t('settings.apiKeyStored') : formPlaceholders.api_key ?? t('settings.apiKeyNotSet')"
-              />
-            </div>
-          </div>
-
-          <div v-if="formFields.binary_path || formFields.home_path" class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.localPaths') }}</div>
-            <div class="model-form-grid">
-              <div v-if="formFields.binary_path" class="settings-field">
-                <UiLabel>{{ t('settings.binaryPath') }}</UiLabel>
-                <UiInput v-model="providerForm.binary_path" :placeholder="formPlaceholders.binary_path" />
-              </div>
-              <div v-if="formFields.home_path" class="settings-field">
-                <UiLabel>{{ t('settings.homePath') }}</UiLabel>
-                <UiInput v-model="providerForm.home_path" :placeholder="formPlaceholders.home_path" />
-              </div>
-            </div>
-          </div>
-
-          <div v-if="formFields.server_url || formFields.launch_args" class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.serviceConfig') }}</div>
-            <div class="model-form-grid">
-              <div v-if="formFields.server_url" class="settings-field">
-                <UiLabel>{{ t('settings.serverUrl') }}</UiLabel>
-                <UiInput v-model="providerForm.server_url" :placeholder="formPlaceholders.server_url" />
-              </div>
-              <div v-if="formFields.launch_args" class="settings-field">
-                <UiLabel>{{ t('settings.launchArgs') }}</UiLabel>
-                <UiInput v-model="providerForm.launch_args" :placeholder="formPlaceholders.launch_args" />
-              </div>
-            </div>
-          </div>
-
-          <div class="modal-form-section">
-            <div class="modal-form-section-title">{{ t('settings.status') }}</div>
-            <div class="modal-enabled-row">
-              <div>
-                <strong>{{ t('settings.enabled') }}</strong>
-                <span class="modal-enabled-hint">{{ providerForm.enabled ? t('settings.enabledHint') : t('settings.disabledHint') }}</span>
-              </div>
-              <UiSwitch v-model="providerForm.enabled" />
-            </div>
-          </div>
-
-          <div v-if="currentTemplate" class="modal-capability-section">
-            <div class="modal-form-section-title">{{ t('settings.supportedCapabilities') }}</div>
-            <div class="model-capability-row">
-              <span v-for="capability in currentTemplate.capabilities" :key="capability" class="provider-cap-tag">{{ capability }}</span>
-            </div>
-          </div>
-
-          <div v-if="selectedProvider && providerNote(selectedProvider)" class="model-provider-note">
-            <Terminal :size="14" />
-            <span>{{ selectedProvider.status_message }}</span>
-          </div>
-        </template>
-
-        <template #footer>
-          <div class="modal-actions">
-            <UiButton variant="outline" @click="closeModal">
-              {{ t('settings.cancel') }}
-            </UiButton>
-            <UiButton :disabled="modelCenterBusy" @click="saveProvider()">
-              <Save :size="14" />
-              <span>{{ t('settings.save') }}</span>
-            </UiButton>
-          </div>
-        </template>
-      </UiCard>
-    </div>
-    </Transition>
+    
   </div>
 </template>

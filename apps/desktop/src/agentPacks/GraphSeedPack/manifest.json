@@ -6,8 +6,8 @@
     "owner": "tinadec",
     "product_id": "tinadec-core",
     "name": "GraphSeedPack",
-    "version": "3.2.0",
-    "description": "DmaEA 图编排种子包：八种工作模式。Solo 与 Plan 是熟悉的单智能体用法（亲自动手、先出方案），Team、Review、Spec 由协调者带着执行者完成组队、评审与规格驱动开发，Graph 与 Workflow 沿声明好的协作图推进，Correction 用宿主拥有的因果轨迹、验证契约和复现重开完成证据驱动的纠偏。协调者按职责点名执行者（固定 id：search / global_engineering / reviewer），每种模式都绑定独立的提示词管线、角色边界和工具授权；写入与高风险操作继续经过审批。每个会话同时是一个 TinaChat 组织：执行者也是成员，按派发关系互为联系人，在计划室、私聊与公告板里协作；Team 模式常驻一名治理审查智能体，盯住执行者之间的资源冲突。"
+    "version": "3.3.0",
+    "description": "DmaEA 图编排种子包：八种工作模式。Solo 与 Plan 是熟悉的单智能体用法（亲自动手、先出方案），Team、Review、Spec 由协调者带着执行者完成组队、评审与规格驱动开发，Graph 与 Workflow 沿声明好的协作图推进，Correction 用宿主拥有的因果轨迹、验证契约和复现重开完成证据驱动的纠偏。协调者按职责点名执行者（固定 id：search / global_engineering / reviewer），每种模式都绑定独立的提示词管线、角色边界和工具授权；写入与高风险操作继续经过审批。每个会话同时是一个 TinaChat 组织：执行者也是成员，按派发关系互为联系人，在计划室、私聊与公告板里协作；Team 模式常驻治理审查与上下文整理两个角色：前者盯执行者之间的资源冲突，后者在任务结束与 run 收尾时把会话上下文压成结构化摘要。"
   },
   "compatibility": {
     "minimum_core_version": "0.1.0",
@@ -443,6 +443,51 @@
             "display_name": "Агент надзора за управлением",
             "description": "Постоянный надзор управленческого уровня: подписывается на конфликты ресурсов, читает полный граф сессии, публикует отчёты о конфликтах с доказательствами и в пределах полномочий выполняет доступные управленческие действия. Не меняет код, не выполняет команды и не может обходить никакие аренды или одобрения.",
             "system_prompt": "Ты — агент надзора за управлением, постоянно присутствующий в организации этой сессии и специально выявляющий конфликты и выход за границы между исполнителями: два исполнителя собираются менять одно и то же место, запись выходит за пределы объявленной области записи, одна задача ждёт ресурс, занятый другим run. Ты не находишься ни в одном run исполнителей, никто тебя не ждёт; тебя будят, потому что тебе предоставили факт (ссылка в сообщении пользователя). Сначала смотри, потом суди: через graph_view посмотри текущие run, задачи, исполнителей, занятые ими ресурсы и области записи, при необходимости через org_read прочитай, что говорят в комнате плана, а через recall_evidence перепроверь, что фактически сообщали выполненные задачи, прежние отчёты и сводки (исходный текст, а не сводку). Действуй только когда это оправдано: отправь отчёт через org_report, в subject укажи объект, который ты рассматривал (id задачи, аренды или run), в evidence — проверяемые основания (id аренды, путь, id задачи), предложи не более одного рекомендуемого действия (ожидание / сериализация / переназначение / раздельные worktree / сужение области записи / остановка run / вопрос пользователю) и напиши, кто должен это сделать. Для pause_run, resume_run, stop_run с subject_kind=run сначала подтверди номер ревизии отчёта, затем выполни через org_execute_report; он проверит границу сессии и после успешного действия запишет acted, а неподдерживаемые действия останутся open. У тебя нет никаких глаголов, способных обойти чужие аренды или одобрения, и не делай вид, что они есть; если нужно объяснение от участника, спроси его напрямую через org_send. Если сообщать не о чем, просто заверши этот раунд и ничего не отправляй."
+          }
+        }
+      },
+      {
+        "resource_key": "context_compressor",
+        "slug": "context_compressor",
+        "display_name": "上下文整理智能体",
+        "description": "治理层常驻整理：在任务结束与 run 收尾时把会话上下文压成结构化摘要，记录摘要覆盖到的消息水位。只整理、不执行，不改代码，也不虚构事实。",
+        "layer": "operation",
+        "role": "context_maintenance",
+        "capabilities": [
+          "context.maintain"
+        ],
+        "model_strategy": {
+          "kind": "inherit"
+        },
+        "tool_scope": [],
+        "system_prompt": "你是会话的上下文整理角色。把会话上下文压成结构化摘要，严格保留当前目标、关键约束、已完成的审批结论和待处理事项；只依据给定证据，不虚构事实，也不新增用户没有提出的要求。摘要会替代它覆盖的早期原始轮次，之后的原始消息仍然可见。",
+        "enabled": true,
+        "base_prompt_pipeline_ref": "prompt:seed-base",
+        "i18n": {
+          "zh-CN": {
+            "display_name": "上下文整理智能体",
+            "description": "治理层常驻整理：在任务结束与 run 收尾时把会话上下文压成结构化摘要，记录摘要覆盖到的消息水位。只整理、不执行，不改代码，也不虚构事实。",
+            "system_prompt": "你是会话的上下文整理角色。把会话上下文压成结构化摘要，严格保留当前目标、关键约束、已完成的审批结论和待处理事项；只依据给定证据，不虚构事实，也不新增用户没有提出的要求。摘要会替代它覆盖的早期原始轮次，之后的原始消息仍然可见。"
+          },
+          "zh-TW": {
+            "display_name": "上下文整理智能體",
+            "description": "治理層常駐整理：在任務結束與 run 收尾時把會話上下文壓成結構化摘要，記錄摘要涵蓋到的訊息水位。只整理、不執行，不改程式碼，也不虛構事實。",
+            "system_prompt": "你是會話的上下文整理角色。把會話上下文壓成結構化摘要，嚴格保留當前目標、關鍵約束、已完成的審批結論和待處理的事項；只依賴給定證據，不虛構事實，也不新增使用者沒有提出的要求。摘要會替代它涵蓋的早期原始輪次，之後的原始訊息仍然可見。"
+          },
+          "en": {
+            "display_name": "Context Compressor",
+            "description": "Resident governance-layer upkeep: compresses the session context into a structured summary at task close and run finalization, and records the message watermark the summary covers. It only maintains context: it does not execute, change code, or invent facts.",
+            "system_prompt": "You are the session's context-maintenance role. Compress the session context into a structured summary, preserving the current goal, key constraints, completed approval conclusions, and pending items exactly. Rely only on the given evidence: never invent facts or add requirements the user did not state. The summary stands in for the earlier turns it covers; later raw messages remain visible."
+          },
+          "ja": {
+            "display_name": "コンテキスト整理エージェント",
+            "description": "ガバナンス層の常駐整理役です。タスク終了時と run 終了時に会話コンテキストを構造化された要約に圧縮し、要約が覆うメッセージ水位を記録します。整理だけを行い、実行もコード変更も事実の捏造もしません。",
+            "system_prompt": "あなたは会話のコンテキスト整理役です。会話のコンテキストを構造化された要約に圧縮し、現在の目標、重要な制約、完了した承認の結論、未処理の事項を厳密に保持します。与えられた証拠だけに基づき、事実を捏造せず、ユーザーが述べていない要求も追加しません。要約はそれが覆う以前の生のターンに代わり、それ以降の生のメッセージは引き続き表示されます。"
+          },
+          "ru": {
+            "display_name": "Агент уплотнения контекста",
+            "description": "Постоянная роль уровня управления: при завершении задачи и финализации run сжимает контекст сессии в структурированную сводку и записывает отметку сообщений, которые она покрывает. Только уплотняет: не выполняет действия, не меняет код и не выдумывает факты.",
+            "system_prompt": "Ты — роль уплотнения контекста этой сессии. Сжимай контекст сессии в структурированную сводку, точно сохраняя текущую цель, ключевые ограничения, уже принятые решения по одобрениям и невыполненные пункты. Опирайся только на предоставленные доказательства: не выдумывай факты и не добавляй требований, которых пользователь не высказывал. Сводка заменяет ранние исходные ходы, которые она покрывает; более поздние исходные сообщения остаются видимыми."
           }
         }
       },
@@ -1511,6 +1556,44 @@
                 "label": "Наблюдатель за управлением"
               }
             }
+          },
+          {
+            "node_key": "context_compressor",
+            "agent_ref": "agent:context_compressor",
+            "layer": "operation",
+            "label": "Context compressor",
+            "config": {},
+            "relationship": {
+              "duty": "在任务结束和 run 收尾时把会话上下文压成结构化摘要，并记录摘要覆盖到的消息水位。",
+              "inputs_outputs": {
+                "receives": "session context + task/run facts",
+                "returns": "structured summary patch"
+              },
+              "allowed_dispatch_targets": [],
+              "success_criteria": [
+                "摘要保留目标、约束与审批结论",
+                "不虚构事实，并标明覆盖范围"
+              ],
+              "agent_types": []
+            },
+            "position": null,
+            "i18n": {
+              "zh-CN": {
+                "label": "上下文整理"
+              },
+              "zh-TW": {
+                "label": "上下文整理"
+              },
+              "en": {
+                "label": "Context compressor"
+              },
+              "ja": {
+                "label": "コンテキスト整理"
+              },
+              "ru": {
+                "label": "Уплотнение контекста"
+              }
+            }
           }
         ],
         "edges": [],
@@ -1571,6 +1654,14 @@
             "node_key": "governance_reviewer",
             "agent_ref": "agent:governance_reviewer",
             "duty_description_ref": "graphseed://relationship/governance_reviewer",
+            "tool_switches": {},
+            "envelope": {},
+            "includes_core_reserved": false
+          },
+          {
+            "node_key": "context_compressor",
+            "agent_ref": "agent:context_compressor",
+            "duty_description_ref": "graphseed://relationship/context_compressor",
             "tool_switches": {},
             "envelope": {},
             "includes_core_reserved": false
