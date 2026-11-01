@@ -1,13 +1,47 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-10-31 模型中心 UI/UX 重构：四页签 + 供应商主从 + 窄栏单页
+
+- **任务页签**：供应商 / 模型 / 路由 / 运行时（CLI、TUI、ACP 子页签），定义在 `modelCenterSections`，`centerTab` 把 `api` 映射为 suppliers。切页签先过 `confirmDiscardProviderDraft()`，脏表单不会被页签切走。
+- **供应商主从**：左 rail（搜索、状态、计数、上下/Home/End 键）与右侧详情（连接、该供应商的模型、默认模型、引用、动作）同排。模型不再需要离开供应商去看：详情内的模型清单就是旧"模型"页对单个供应商的切片；路由编辑仍在路由页。
+- **表单内联**：供应商新建/编辑在详情内（`showModal` 控制），从目录/模板创建也进同一处。删除/停用前读引用并列出受影响的 agent/mode/route；读失败如实说"无法读取"，不当作"无引用"。
+- **窄内容宽度 = 列表→详情单页**：容器查询 `@container supplier-pane (max-width: 700px)`，容器是 `.model-provider-section`。`show-detail` 由 `providerDetailOpen || showModal` 驱动；返回按钮 `.model-center-provider-back` 只在容器 ≤700 显示。rail 不卸载（`v-if` 会丢搜索/滚动），`closeProviderDetail()` 恢复 `providerRailScroll` 与 `[data-provider-id]` 焦点；`providerWorkspaceNarrow()` 读 workspace 的 `clientWidth`，与容器阈值一致。**别再按窗口宽度给模型中心写断点**：1100px 窗口下设置内容区可能只有 ~600px，视口 media 会慢一拍。
+- **≤520px**：`.model-form-grid` 变单列；`.model-provider-form-actions` 允许换行，未保存提示 + 取消/保存不许被裁。
+- **长值**：provider `base_url` 用 `word-break: break-all` 全量换行；模型 ID、路由候选 model、CLI discovery path 截断时带 `title`。API Key 始终只写不读（已存密钥不回填，留空=保留，`clear_api_key` 显式清除）。
+- **测试**：`SettingsPage.models.test.ts` 新增"返回供应商列表保留搜索与焦点"（断言 `show-detail` 类、搜索值、`document.activeElement`）。reka 弹层在 VTU 下要自定义内联 Teleport stub（渲染 Fragment）才能断言 portal 内容；`wrapper.html()` 看不到真实 Teleport。
+- **清理**：删除无消费者的旧模型样式（供应商卡片/表格/chevron/旧诊断 details/旧 `.center-resource-card`/route-panel/readiness-panel 等），每类先 grep 消费者再删；settings.css 花括号平衡 942/942。
+- **AGENTS 更正**：上面 D7 条的"picker 与供应商表单 Teleport"、"配置模型 → `model-provider-group--target` 高亮"已按本轮现状改写。
+- **门禁**：`vue-tsc --noEmit` exit 0；生产 `npm run build` → `FINAL_BUILD_EXIT:0`（`✓ built in 5m 25s`，6823 modules）；全量 `npm run test`：vitest 208 文件 → **1 failed / 206 passed / 1 skipped**，1781 例 → **1 failed / 1768 passed / 12 skipped**，唯一红是既有的 `message-scroller` 抖动（"anchors a new turn near the top…"，`expected 300 to be less than or equal to 65`；该目录 `git status` 无改动，单独复跑先红后绿、失败断言每次会移动，与前几次记录同类）；`&&` 后未执行的 `node --test` 单独补跑 **exit 0**（273 例：272 pass / 1 skip / 0 fail）。
+- **未验证**：真实 Electron 应用里的观感与交互（本机无运行中的 Gateway 48730 / Core 48731，未擅自启动共享宿主）；明暗/材质、200% 缩放、五语真实字体换行均未实机看。容器查询用真实 Chromium + 实际 `settings.css` 的静态夹具验过计算样式：900px 双栏、650/360px 单栏、`show-detail` 时 rail 隐藏/返回出现、≤520px 表单单列。
+
+## 2026-10-31 模型中心拆缝（D7）：数据在 composable，界面在 section
+
+模型中心的界面重构分两步先**只搬家不改观感**，给后面的 IA 重排留一个可回归的底：
+
+- **数据/传输** → `composables/useModelCenter.ts`：snapshot 一次读 + 7 端点回退、`preserveSection` 的陈旧保留、`modelCenterPartialFailures`、If-Match revision、409 `provider_in_use` 单次 force、`isModelWriteConflict`、CLI 发现与 `connectDiscoveredCli` 全在这里。**读写缝只此一处**：snapshot 的 route 行必须 `routes.value = routeRows`（局部同名绑定会让 route PUT 丢掉 If-Match、Core 回 428），`SettingsPage.smoke.test.ts` 读这个文件钉住它。
+- **界面** → `settings/sections/ModelCenterSection.vue`：4 个渠道 tab、供应商列表/详情、表单与模板选择、模型弹层、路由编辑器、反向引用、诊断面板。props 是 `center`（上面那个 composable 的返回值）+ 三份运行时清单 + `canAccessBackend`；`defineExpose({ canLeave, focusProvider })` 是页面唯一要摸的两件事。
+- **文案** → `settings/modelCenterLabels.ts`：`providerStatusLabel` / `centerDiagnosticLabel` 被模型中心与 Agent Center 共用，别在两处各写一份——同一个 catalog 行在两边措辞必须一致。
+- **弹层定位**：诊断、加模型、模板选择三个弹层都是 reka-ui `DialogRoot + DialogPortal`（挂 body）；供应商表单自本轮起是详情内联表单，不再有 Teleport。**不要改回自绘 fixed 遮罩**：`.settings-content` 的 `animation` + `will-change: transform` 建立了包含块，`position: fixed` 会相对内容区而不是视口。
+- **深链**：section 挂在 `out-in` 过渡后面，`selectSettingsSection('model')` 返回时 ref 还不存在；页面用 `pendingProviderFocus` + `watch(modelCenterRef)` 补一次 `focusProvider()`。**不要改成 mount 时读 query**，那会在过渡期丢请求。
+- **脏表单的离开闸**：`canLeave()` 同时接在切 tab（`selectSettingsSection` 返回 false 即不切）、窗口关闭、路由离开三处；少了任何一处，带 API Key 的表单就有一条路白丢。
+- 顺手修掉一个既有缺口：供应商弹层的 `<UiCheckbox>` 从未被 import（模板静默渲染为空，vue-tsc 不会报未解析组件）。`SettingsPage.smoke.test.ts` 的 section 导入清单、`modelCenterSections`/pane 断言与 `i18nParity` 的 `panelSources` 都跟着改指 section 文件。
+- 门禁：`vue-tsc --noEmit` exit 0；全量 vitest **208 文件 → 1 failed / 206 passed / 1 skipped，1765 例 → 1 failed / 1752 passed / 12 skipped**，唯一红是 `message-scroller` 的 follows-new-rows，**既有抖动**（该目录未改，单独复跑仍红且失败断言会移动，见下方 2026-10-22/10-30 记录）；生产 `npm run build` exit 0（`✓ built in 20m 5s`）。**未验证**：真实 Electron/浏览器里的观感和交互（本轮观感与旧界面一致，视觉重排在后续切片）。
+
+## 2026-10-31 模型中心：配置不丢 + 启用→配置有下一步
+
+- **供应商弹层不再因点空白处丢改动**：`SettingsPage.vue` 记录打开时的表单快照（`providerFormBaseline`），`requestCloseProviderModal()` 在脏状态下先 `confirm`（放弃 / 继续编辑），干净状态直接关。背景点击、X、取消三个入口都走同一个函数——**不要改回 `@click.self="..."` 直接关**，那是"API Key 白输"的成因。
+- **「配置模型」不再跳区高亮**：模型已并入供应商详情，保存了但没模型的供应商会在详情里显示「下一步：添加模型」（`providerNextStep` + 打开加模型弹层）。旧的 `model-provider-group--target` 高亮和 `focusProviderModels()` 已删除；深链 `focusProvider()` 只负责定位并打开该供应商。
+- 测试：`SettingsPage.models.test.ts` 两条（脏状态先问、干净状态不问），`confirm` 桩改成 hoisted 才能断言；`SettingsPage.smoke.test.ts` 的 routes 断言改读 `useModelCenter.ts?raw`（读写缝已迁到 composable）。
+
 ## 2026-10-30 伙伴中心改为共用外壳（侧栏回归岛式）
 
 伙伴中心（`/companion-center`）原先自己拼了一个 `.center-sidebar` + 裸 `AppSidebar`，紧贴窗口边缘、没有 UIE 卡片材质，和首页/空间的悬浮岛完全不是一套。现在：
 
 - `CompanionCenterPage.vue` 只剩 `<UieShell />`（等同 `HomePage`），不再挂任何侧栏；页面只负责 `useUiePage('companionCenter')` 和 ready 事件。
-- **左列只有一张 `nav` 卡**：UIE 的 `showTabBar` 在单标签时不渲染标签条，所以左侧是一个干净的岛，不会出现"新标签页"那种条。`PRESET_REVISIONS.companionCenter` 升到 3 让旧快照被替换。
-- **侧栏顶部是「项目 / 伙伴」两段开关**（`.sidebar-domain-switch`）：伙伴域点「项目」发出 `change-view: flat`，项目域点「伙伴」发出 `go-companion-center`。这是**域切换**（整个窗口讲什么），不是同一张卡上的标签页——所以既不是 UIE 的 tab strip，也没有 "+"。
-- **右列是功能面板**：`[companionList, companionGroups, companionConnections]`，`topInset = HOME_GEOMETRY.rightTopInset (48)`，和平面模式一样避让窗口控制键。名单因此不再和侧栏抢位置。
+- **左列只有一张 `nav` 卡**（宽 260、topInset 8）。UIE 的 `showTabBar = isMainPane || isSplitPane || instances.length > 1`，单卡列不会渲染标签条——所以左侧是干净的岛，品牌上方没有标签。**不要再往左列加第二张卡**，否则标签条立刻回来。
+- **模式切换只有一处**：侧栏右下角那个视图菜单（平面 / 空间 / 伙伴中心）。**不要在侧栏顶部再造「项目/伙伴」之类的分组开关**——那是重复入口，已明确否决。
+- **右列是功能面板**：`[companionList, companionGroups, companionConnections]`，`topInset = HOME_GEOMETRY.rightTopInset (48)`，和平面模式一样避让窗口控制键。名单放这里，不和侧栏抢位。
+- `PRESET_REVISIONS.companionCenter` 现在是 **4**：每次改这套预设的内容都必须再 +1，否则本地已存的快照会原样保留，改动看不到（第 3 版的"左列两标签"就是这么留在用户机器上的）。
 - `NavCard.vue` 按页面 id 切域（`navDomain.ts` 的 `isCompanionDomainPage`，纯函数、有单测）：伙伴中心传 `companion-domain`，项目/会话置空，`companion-nav` 转成 `setFeedFilter` / 设置页。因此侧栏是**同一个组件、同一套材质**，只是中间内容不同。
 
 ## 2026-10-30 胶囊两种样式：探头 / 拉手（`[companion] capsule_style`）

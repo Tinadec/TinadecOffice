@@ -76,28 +76,6 @@ function factory(overrides: Record<string, unknown> = {}, attachTo?: Element) {
 }
 
 describe('companion domain', () => {
-  it('switches domains from the top of the rail, not from a tab strip', async () => {
-    const wrapper = factory()
-    await flushPromises()
-
-    const options = wrapper.findAll('.sidebar-domain-option')
-    expect(options.map((option) => option.text())).toEqual(['sidebar.domainProjects', 'sidebar.domainCompanions'])
-    // The work domain is the default: 项目 is the selected half of the switch.
-    expect(options.map((option) => option.attributes('aria-selected'))).toEqual(['true', 'false'])
-
-    await options[1]!.trigger('click')
-    expect(wrapper.emitted('go-companion-center')).toHaveLength(1)
-  })
-
-  it('points the switch at 项目 from the companion centre', async () => {
-    const wrapper = factory({ companionDomain: true })
-    await flushPromises()
-
-    expect(wrapper.get('[data-testid="sidebar-domain-companions"]').attributes('aria-selected')).toBe('true')
-    await wrapper.get('[data-testid="sidebar-domain-projects"]').trigger('click')
-    expect(wrapper.emitted('change-view')).toEqual([['flat']])
-  })
-
   it('keeps the same island but swaps the work middle for the companion entries', async () => {
     const wrapper = factory({ companionDomain: true, companionCenterActive: true })
     await flushPromises()

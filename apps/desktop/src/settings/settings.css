@@ -1313,52 +1313,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   font-size: 13px;
   color: var(--text-secondary);
 }
-.model-route-panel {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-  margin-bottom: 24px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--surface-raised);
-}
-
-.model-route-icon {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  color: var(--accent-primary);
-  border-radius: 8px;
-  background: var(--surface-raised);
-}
-
-.model-route-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.model-route-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.model-route-main strong {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.model-route-main small {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
 .model-section-header {
   display: flex;
   align-items: center;
@@ -1373,114 +1327,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   font-size: 13px;
   color: var(--text-primary);
 }
-.model-provider-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 24px;
-}
-
-.model-provider-card {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  padding: 14px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--surface-raised);
-  cursor: pointer;
-  text-align: left;
-  box-shadow: none;
-  transition: background 0.15s;
-}
-
-.model-provider-card:hover {
-  background: var(--surface-hover);
-}
-
-.model-provider-card-main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.model-provider-name {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.model-provider-meta {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.model-status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  width: fit-content;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: var(--bg-status-neutral);
-}
-
-.model-status-chip.ready {
-  color: var(--accent-success);
-  background: var(--bg-status-ok);
-}
-
-.model-status-chip.warn {
-  color: var(--accent-warning);
-  background: var(--bg-status-warn);
-}
-
-.model-status-chip.muted {
-  color: var(--text-muted);
-  background: var(--bg-status-neutral);
-}
-
-.model-provider-card.add {
-  position: relative;
-  border: 0;
-  border-radius: 10px;
-  background: var(--surface-button);
-  align-items: center;
-  justify-content: center;
-  min-height: 100px;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.model-provider-card.add:hover {
-  background: var(--surface-button-hover);
-  color: var(--accent-primary);
-}
-
-.model-provider-card.add .add-label {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.model-provider-card.add .add-label small {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-muted);
-  text-align: center;
-  line-height: 1.3;
-}
-
-.model-provider-card.add.already-added {
-  opacity: 0.5;
-}
-
 .provider-brand-icon {
   display: flex;
   align-items: center;
@@ -1508,54 +1354,11 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   width: 32px;
   height: 32px;
 }
-.model-provider-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-}
-
-.provider-chevron {
-  color: var(--text-muted);
-  transition: transform 0.2s;
-}
-
-.provider-chevron.open {
-  transform: rotate(90deg);
-}
-.model-provider-card-wrapper {
-  display: flex;
-  flex-direction: column;
-  grid-column: 1 / -1;
-}
-
-.provider-detail-panel {
-  padding: 16px 18px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--surface-raised);
-}
 .provider-detail-head {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
-}
-
-.provider-detail-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  border-radius: 10px;
-  border: 1px solid;
-}
-
-.provider-detail-logo svg {
-  width: 24px;
-  height: 24px;
 }
 
 .provider-detail-info {
@@ -1573,19 +1376,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 .provider-detail-driver {
   font-size: 12px;
   color: var(--text-secondary);
-}
-
-.provider-detail-section {
-  margin-bottom: 14px;
-}
-
-.provider-detail-section-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: 8px;
 }
 
 .provider-detail-grid {
@@ -1874,11 +1664,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   font-size: 11px;
   line-height: 1.35;
 }
-.model-heading-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .model-health-overview {
   display: grid;
   gap: 10px;
@@ -1990,48 +1775,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-diagnostics,
-.provider-diagnostics {
-  border: 0;
-  border-radius: 8px;
-  background: var(--surface-raised);
-}
-
-.model-diagnostics {
-  margin-bottom: 14px;
-}
-
-.model-diagnostics > summary,
-.provider-diagnostics > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 36px;
-  padding: 7px 11px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-}
-
-.model-diagnostics > summary::-webkit-details-marker,
-.provider-diagnostics > summary::-webkit-details-marker {
-  display: none;
-}
-
-.model-diagnostics > summary svg,
-.provider-diagnostics > summary svg {
-  flex-shrink: 0;
-  transition: transform 0.16s ease;
-}
-
-.model-diagnostics[open] > summary svg,
-.provider-diagnostics[open] > summary svg {
-  transform: rotate(90deg);
-}
 
 .model-diagnostics-grid {
   display: grid;
@@ -2082,6 +1825,8 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 .model-provider-section {
   min-width: 0;
   scroll-margin-top: 12px;
+  container-type: inline-size;
+  container-name: supplier-pane;
 }
 
 .model-provider-toolbar {
@@ -2164,38 +1909,12 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   font-size: 10px;
   white-space: nowrap;
 }
-.model-provider-table {
-  overflow: hidden;
-  border: 0;
-  border-radius: 10px;
-  background: var(--surface-raised);
-}
-
-.model-provider-table-head,
 .model-provider-row {
   display: grid;
-  grid-template-columns: minmax(220px, 2fr) 132px minmax(160px, 1.2fr) 118px minmax(126px, auto);
+  position: relative;
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-
-.model-provider-table-head {
-  min-height: 32px;
-  padding: 0 12px;
-  color: var(--text-muted);
-  background: var(--surface-chrome);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-}
-
-.model-provider-table-head span:last-child {
-  text-align: right;
-}
-
-.model-provider-row {
-  position: relative;
   min-height: 56px;
   padding: 6px 12px;
   border: 0;
@@ -2231,8 +1950,7 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 }
 
 .model-provider-identity strong,
-.model-provider-identity small,
-.model-provider-cell {
+.model-provider-identity small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2260,55 +1978,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   height: 18px;
 }
 
-.model-provider-cell {
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.model-provider-status {
-  min-width: 0;
-}
-
-.model-provider-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-}
-
-.model-provider-mobile-meta {
-  display: none;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-provider-table > .provider-detail-panel {
-  margin: 0;
-  padding: 14px 16px;
-  border: 0;
-  border-radius: 0;
-  background: var(--surface-section);
-}
-
-.provider-diagnostics {
-  margin: 4px 0 14px;
-}
-
-.provider-diagnostics-content {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 8px 8px;
-}
-
-.provider-diagnostics-content .provider-readiness-detail {
-  margin-top: 0;
-}
-
 .model-provider-empty {
   display: grid;
   place-items: center;
@@ -2319,17 +1988,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   font-size: 12px;
 }
 
-@media (min-width: 901px) and (max-width: 1100px) {
-  .model-provider-table-head,
-  .model-provider-row {
-    grid-template-columns: minmax(200px, 1fr) 120px 110px minmax(126px, auto);
-  }
-
-  .model-provider-table-head span:nth-child(3),
-  .model-provider-model {
-    display: none;
-  }
-}
 @media (max-width: 900px) {
   body {
     min-width: 0;
@@ -2386,10 +2044,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
     align-items: stretch;
   }
 
-  .model-heading-actions {
-    justify-content: flex-end;
-  }
-
   .model-health-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2403,8 +2057,7 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
     min-width: calc(100% - 30px);
   }
 
-  .model-diagnostics-grid,
-  .provider-diagnostics-content {
+  .model-diagnostics-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2423,42 +2076,6 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 
   .model-provider-count {
     margin-left: 0;
-  }
-
-  .model-provider-table-head {
-    display: none;
-  }
-
-  .model-provider-row {
-    grid-template-areas:
-      "identity status"
-      "meta actions";
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 5px 10px;
-    min-height: 74px;
-    padding: 9px 10px;
-  }
-
-  .model-provider-identity {
-    grid-area: identity;
-  }
-
-  .model-provider-status {
-    grid-area: status;
-  }
-
-  .model-provider-connection,
-  .model-provider-model {
-    display: none;
-  }
-
-  .model-provider-actions {
-    grid-area: actions;
-  }
-
-  .model-provider-mobile-meta {
-    display: block;
-    grid-area: meta;
   }
 
   .harness-registry-metrics {
@@ -2568,20 +2185,33 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   padding-top: 14px;
 }
 
-.provider-action-spacer {
-  flex: 1;
-}
-
 .provider-delete-btn {
   color: var(--accent-danger) !important;
 }
 
-.add-connection-kind {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
+/* "It is on, but it has no models": the next step sits with the provider, not in a toast. */
+.provider-next-step {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-default);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
   background: var(--surface-raised);
-  color: var(--text-muted);
+}
+
+.provider-next-step > span {
+  flex: 1;
+  min-width: 12ch;
+}
+
+.provider-next-step > svg {
+  flex: none;
+  color: var(--accent-primary);
 }
 
 .template-summary {
@@ -2591,23 +2221,40 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   line-height: 1.4;
 }
 
-.modal-brand-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  vertical-align: -1px;
-  margin-right: 4px;
-}
-.model-provider-modal {
+/* reka-ui separates the backdrop from the panel: the overlay dims the page, and the
+   panel is what gets centred. Keeping them as one fixed flex layer would place the
+   dialog content at the top-left of a full-screen box. */
+.model-provider-modal-overlay {
   position: fixed;
   inset: 0;
   z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
+}
+
+.model-provider-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 101;
+  width: min(560px, calc(100vw - 32px));
+  max-height: 85vh;
+  transform: translate(-50%, -50%);
+  outline: none;
+}
+
+.model-provider-modal .model-provider-modal-content {
+  width: 100%;
+  max-width: 100%;
+  max-height: 85vh;
+}
+
+.template-picker-dialog {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.template-picker-dialog .template-picker-content {
+  width: 100%;
 }
 
 .model-provider-modal-content {
@@ -2913,9 +2560,74 @@ select:focus {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   margin-top: 20px;
   padding-top: 16px;
+}
+
+/* Why the close paths ask a question: it sits in the footer, next to the buttons they would use. */
+.modal-unsaved {
+  margin-right: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--accent-primary) 78%, var(--surface-fg));
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+}
+
+/* Authentication: "clear the stored key" is a decision next to the field, not a link buried
+   somewhere else — the field is empty on purpose, so blank must mean "keep". */
+.modal-clear-key {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.modal-clear-key > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.modal-clear-key strong {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--surface-fg);
+}
+
+.modal-clear-key em {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* The reveal control belongs to its field: same row, so "show" points at the input it reveals.
+   It only ever toggles the typed value — a stored key is never read back into the field. */
+.model-key-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-key-row > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-key-row > button {
+  flex: none;
+}
+
+/* Field-level validation: lives under its input, where the fix is. */
+.model-field-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--accent-danger);
 }
 
 .modal-actions .secondary-button {
@@ -3385,7 +3097,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .model-center-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: 14px 0;
 }
@@ -3431,28 +3143,15 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .center-resource-heading h3 { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .center-resource-heading p { margin-top: 4px; color: var(--text-muted); font-size: 12px; }
 
-.center-resource-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.center-resource-card,
 .center-resource-list-row {
   border: 0;
   border-radius: 10px;
   background: var(--surface-raised);
 }
 
-.center-resource-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
-.center-resource-card > p { min-height: 34px; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-.center-resource-card-head,
 .center-resource-primary { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.center-resource-card-head > div,
 .center-resource-primary > div { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
-.center-resource-card-head strong,
 .center-resource-primary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.center-resource-card-head span,
 .center-resource-primary span { color: var(--text-muted); font-size: 11px; }
 
 .center-resource-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -3596,7 +3295,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 @media (max-width: 980px) {
   .model-center-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .center-resource-grid { grid-template-columns: 1fr; }
   .center-resource-list-row { grid-template-columns: 1fr; }
 }
 .center-command-bar {
@@ -3727,24 +3425,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   -webkit-backdrop-filter: var(--material-filter-section, none);
 }
 
-.model-workbench {
-  grid-template-columns: minmax(0, 1fr) 320px;
-  grid-template-areas: "rail rail" "stage inspector";
-}
-
-.model-resource-navigation {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.model-resource-navigation .center-pane-heading {
-  margin-bottom: 4px;
-  padding: 0;
-  border: 0;
-}
-
 .agent-workbench.view-list {
   grid-template-columns: minmax(300px, 0.85fr) minmax(360px, 1.15fr);
   grid-template-areas: "rail inspector";
@@ -3815,9 +3495,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .agent-workbench .center-resource-rail,
 .agent-workbench .center-resource-stage,
-.agent-workbench .center-inspector,
-.model-workbench .center-resource-stage,
-.model-workbench .center-inspector {
+.agent-workbench .center-inspector {
   max-height: clamp(420px, calc(100dvh - 400px), 680px);
   overflow-y: auto;
 }
@@ -3848,12 +3526,9 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   color: var(--text-muted);
 }
 
-.model-workbench .center-inspector {
-  order: 3;
-}
 .model-center-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   margin: 0;
   padding: 0;
@@ -3887,92 +3562,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   align-items: center;
   margin-bottom: 12px;
 }
-.center-resource-grid {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 8px;
-}
-.supplier-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 8px;
-}
-
-.supplier-list .center-resource-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "head action"
-    "summary summary"
-    "meta meta";
-  align-content: start;
-  gap: 8px;
-  min-height: 0;
-  padding: 10px;
-}
-
-.supplier-list .center-resource-card-head { grid-area: head; }
-.supplier-list .center-resource-card > p { grid-area: summary; }
-.supplier-list .center-resource-meta { grid-area: meta; }
-.supplier-list .center-resource-actions { grid-area: action; }
-
-.supplier-list .center-resource-card > p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.supplier-list .center-resource-actions {
-  margin: 0;
-}
-
-.supplier-grid .center-resource-card {
-  min-width: 0;
-}
-
-.supplier-grid .center-resource-card-head {
-  align-items: flex-start;
-}
-
-.supplier-grid .center-resource-card-head strong {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.supplier-grid .center-resource-card > p {
-  min-height: auto;
-}
-.model-workbench .model-health-metrics {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.model-workbench .model-health-alert span {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-}
-
-.model-workbench .model-health-head span {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.model-workbench .model-diagnostics-grid {
-  grid-template-columns: 1fr;
-}
-
-.model-workbench .model-diagnostic-head span,
-.model-workbench .model-diagnostic-meta,
-.model-workbench .model-readiness-routes span,
-.model-workbench .catalog-readiness-row span {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 .center-page [data-slot="badge"] {
   box-shadow: none;
 }
@@ -3990,7 +3579,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   gap: 6px;
 }
 
-.inspector-provider-detail,
 .center-diagnostics-panel,
 .agent-list-summary {
   border: 0;
@@ -3998,15 +3586,9 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   background: var(--surface-section);
 }
 
-.inspector-provider-detail,
 .center-diagnostics-panel {
   margin-top: 8px;
   padding: 8px;
-}
-
-.inspector-provider-detail {
-  min-width: 0;
-  overflow: hidden;
 }
 
 .provider-detail-head.compact,
@@ -4119,11 +3701,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
       "inspector inspector";
   }
 
-  .model-workbench {
-    grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-areas: "rail rail" "stage inspector";
-  }
-
   .agent-workbench.view-list {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
     grid-template-areas: "rail inspector";
@@ -4162,7 +3739,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
       "inspector";
   }
 
-  .model-workbench,
   .agent-workbench.view-list,
   .agent-workbench.view-topology {
     grid-template-columns: 1fr;
@@ -4218,20 +3794,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
     grid-template-columns: 1fr;
   }
 
-  .supplier-list .center-resource-card {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "head"
-      "summary"
-      "meta"
-      "action";
-    gap: 8px;
-  }
-
-  .supplier-list .center-resource-meta {
-    display: flex;
-  }
-
   .center-overview-receipt {
     grid-template-columns: 1fr;
   }
@@ -4256,7 +3818,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .settings-page .agent-topology-layer,
 .settings-page .agent-topology-node,
 .settings-page .model-readiness-metrics > div,
-.settings-page .provider-readiness-detail,
 .settings-page .catalog-readiness-row,
 .settings-page .git-manager-panel,
 .settings-page .git-manager-metric {
@@ -4276,7 +3837,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .settings-page .agent-card { border: 1px solid var(--border-default); }
 .settings-page .agent-topology-node,
 .settings-page .model-readiness-metrics > div,
-.settings-page .provider-readiness-detail,
 .settings-page .catalog-readiness-row,
 .settings-page .git-manager-metric {
   background: var(--surface-raised);
@@ -4284,14 +3844,12 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .settings-page .agent-card,
 .settings-page .agent-topology-node,
-.settings-page .center-resource-card,
 .settings-page .center-resource-list-row {
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .settings-page .agent-card:hover,
 .settings-page button.agent-topology-node:hover,
-.settings-page .center-resource-card:hover,
 .settings-page .center-resource-list-row:hover {
   background: var(--surface-hover);
 }
@@ -4330,7 +3888,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .settings-page .agent-card-select:focus-visible,
 .settings-page .model-center-tabs > button:focus-visible,
 .settings-page .runtime-source-grid > button:focus-visible,
-.settings-page .model-provider-card:focus-visible,
 .settings-page .model-provider-identity:focus-visible,
 .settings-page .model-provider-filters button:focus-visible,
 .settings-page .tool-discovery-card:focus-visible,
@@ -4365,13 +3922,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .settings-page .agent-topology-node.candidate {
   background: color-mix(in srgb, var(--accent-warning) 7%, var(--surface-raised));
-}
-
-.settings-page .model-readiness-panel {
-  background: var(--surface-section);
-  box-shadow: none;
-  backdrop-filter: var(--material-filter-section, none);
-  -webkit-backdrop-filter: var(--material-filter-section, none);
 }
 
 .settings-page .settings-content .agent-detail-panel {
@@ -4582,6 +4132,20 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   margin-bottom: 10px;
 }
 
+/* The one list the dialog is about: narrow it down, then tick what to save. */
+.model-modal-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+}
+
+.model-modal-search > input {
+  flex: 1;
+  min-width: 0;
+}
+
 .model-discovered-list {
   display: flex;
   flex-direction: column;
@@ -4593,24 +4157,38 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .model-discovered-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
   border-radius: 8px;
   background: var(--surface-section);
   font-size: 13px;
+  cursor: pointer;
+}
+
+.model-discovered-row.saved {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+.model-discovered-row strong {
+  overflow-wrap: anywhere;
+}
+
+.model-discovered-alias {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-discovered-row .provider-cap-tag {
+  margin-left: auto;
 }
 
 .model-manual-row {
   display: flex;
   gap: 8px;
   margin-bottom: 10px;
-}
-
-.model-pending-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 /* ---- Agent config: full tool panel (Phase2) ---- */
 .agent-tool-toolbar {
@@ -5566,3 +5144,462 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   .tools-diff > div { grid-template-columns: 1fr; gap: 6px; }
   .tools-monaco-host { height: 340px; }
 }
+
+/* ---- Model center: task shell (four work pages + provider workspace) ----
+   The center is organised by the job the reader came to do — suppliers, models,
+   routes, runtime — rather than by the seven sections Core happens to expose.
+   Everything below is scoped under `.model-center-*` so the shared center-*
+   materials keep their own contract. */
+.model-center-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.model-center-health-alert {
+  margin-bottom: 12px;
+}
+
+.model-center-page .model-center-tabs > button {
+  min-height: 38px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.model-center-page .model-center-tabs > button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.model-center-page .model-center-tabs > button.active {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+
+.model-center-tabs > button:focus-visible,
+.model-center-subtabs > button:focus-visible,
+.model-center-provider-row .model-provider-identity:focus-visible,
+.model-center-route-row > .agent-card-select:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* The one route that decides what a new chat runs on: visible on every page,
+   editable in place, with the full candidate chain one click away in Routes. */
+.model-center-default-chat {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.model-center-default-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.model-center-default-chat > svg {
+  flex: none;
+  color: var(--accent-primary);
+}
+
+.model-center-default-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-center-default-chat .quiet {
+  color: var(--text-muted);
+}
+
+.model-center-default-select {
+  min-width: 200px;
+  max-width: 280px;
+  margin-left: auto;
+}
+
+.model-center-stage {
+  min-width: 0;
+  padding: 0;
+}
+
+.model-center-subtabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 0 10px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--surface-section);
+}
+
+.model-center-subtabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.model-center-subtabs > button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.model-center-subtabs > button.active {
+  background: var(--surface-selected);
+  color: var(--accent-primary);
+}
+
+.model-center-catalog-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.model-center-route-row {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+}
+
+.model-center-route-row.default {
+  box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-primary) 72%, transparent);
+}
+
+.model-center-route-row > .agent-card-select {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-center-route-row > .agent-card-select:hover {
+  background: var(--surface-hover);
+}
+
+.model-center-route-row .center-resource-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.model-center-route-row .center-resource-primary strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.model-center-route-row .center-resource-primary span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Master–detail: the rail answers "which provider", the panel answers everything
+   the supplier owns, including its models, without leaving the page. */
+.model-center-provider-workspace {
+  display: grid;
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.model-center-provider-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  max-height: clamp(320px, calc(100dvh - 380px), 680px);
+  padding-right: 2px;
+  overflow-y: auto;
+}
+
+.model-center-provider-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 44px;
+  padding: 5px 6px 5px 4px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+}
+
+.model-center-provider-row .model-provider-identity {
+  padding: 2px 4px;
+  border-radius: 8px;
+}
+
+.model-center-provider-row .provider-brand-icon {
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  border-radius: 7px;
+}
+
+.model-center-provider-row .provider-brand-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.model-center-provider-row.active {
+  background: var(--surface-selected);
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--accent-primary) 74%, transparent);
+}
+
+.model-center-provider-row.active.issue {
+  box-shadow:
+    inset 2px 0 color-mix(in srgb, var(--accent-primary) 74%, transparent),
+    inset 3px 0 color-mix(in srgb, var(--accent-danger) 74%, transparent);
+}
+
+.model-center-provider-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.model-center-provider-back {
+  display: none;
+  align-self: flex-start;
+}
+
+.model-center-provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-section);
+}
+
+.model-center-provider-card .provider-detail-head {
+  margin-bottom: 0;
+}
+
+.model-center-provider-card .provider-detail-actions {
+  padding-top: 0;
+}
+
+.model-provider-form {
+  max-width: 760px;
+}
+
+.model-center-provider-models {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.model-center-provider-models-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.model-center-provider-models-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.model-center-provider-models-head strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.model-center-provider-models-head span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.model-center-provider-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-center-provider-model-list .model-group-model {
+  padding-left: 10px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.model-center-provider-model-list .model-group-model + .model-group-model {
+  border-top: 0;
+}
+
+/* Diagnostics stay a developer surface: readable, but visually outside the work pages. */
+.model-diagnostics-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.model-diagnostics-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(85vh, 860px);
+  padding: 18px 20px 20px;
+  overflow-y: auto;
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  backdrop-filter: var(--material-filter-raised, none);
+  -webkit-backdrop-filter: var(--material-filter-raised, none);
+  transform: translate(-50%, -50%);
+  outline: none;
+}
+
+.model-diagnostics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-diagnostics-header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.model-diagnostics-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.model-diagnostics-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1100px) {
+  .model-center-provider-workspace {
+    grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .model-center-default-select {
+    min-width: 170px;
+  }
+}
+
+@media (max-width: 700px) {
+  .model-center-default-chat {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .model-center-default-select {
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+
+  .model-center-provider-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .model-center-provider-rail {
+    max-height: 260px;
+  }
+
+  .model-center-catalog-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .model-diagnostics-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    padding: 14px;
+  }
+}
+
+/* Narrow content width: the rail and the provider panel cannot share a row, so they
+   become two pages of one flow. Width is the supplier pane's own, not the window's;
+   the rail stays mounted, so search and scroll survive the trip. */
+@container supplier-pane (max-width: 700px) {
+  .model-center-provider-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .model-center-provider-workspace.show-detail .model-center-provider-rail {
+    display: none;
+  }
+
+  .model-center-provider-workspace:not(.show-detail) .model-center-provider-detail {
+    display: none;
+  }
+
+  .model-center-provider-back {
+    display: inline-flex;
+  }
+}
+
+/* Below this the two-column field grid gives each input too little room to read a URL. */
+@container supplier-pane (max-width: 520px) {
+  .model-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* The unsaved hint and both buttons need a second line before anything is clipped. */
+  .model-provider-form-actions {
+    flex-wrap: wrap;
+  }
+}
+
