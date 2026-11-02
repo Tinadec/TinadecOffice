@@ -84,4 +84,4 @@
 
 - 消化 backlog scheduling 501 的单机半边（需回写 backlog 措辞）。
 - 与 §11 既有登记项（AgentEditorDrawer 组件化、工具覆盖 UI、模型服务页 CLI/ACP、roster 单测）无依赖冲突，不抢占。
-- 依赖顺序建议：真实模型冒烟（既有报告 §4.1）→ Q1 的真 provider 验收。
+- 依赖顺序建议：Q1 以 live 真链路验收为准（用户验收标准既有口径）；§4.1 的 egress 冒烟用例作为顺手卫生项，不构成前置。
