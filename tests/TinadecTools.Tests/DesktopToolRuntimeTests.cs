@@ -228,6 +228,31 @@ public sealed class DesktopToolRuntimeTests : IDisposable
         Assert.Equal(new FileInfo(shot.Image.Path!).Length, shot.Image.Bytes);
         // the downscaled file is a real PNG, not an empty shell
         Assert.True(shot.Image.Bytes > 100);
+        // every image we produce must pass the independent chunk-CRC check, downscaled copies
+        // included — the CRC bug was invisible to GDI+ for exactly the files nobody re-checked
+        Assert.True(PngChunksAreValid(File.ReadAllBytes(shot.Image.Path!)), "context copy has an invalid PNG structure");
+    }
+
+    /// <summary>Independent PNG structure check: signature, chunk walk, per-chunk CRC32, IEND spec constant.</summary>
+    private static bool PngChunksAreValid(byte[] bytes)
+    {
+        if (bytes.Length < 8 || bytes[0] != 0x89 || bytes[1] != 0x50) return false;
+        var pos = 8;
+        var sawIend = false;
+        while (pos + 12 <= bytes.Length && !sawIend)
+        {
+            var length = (int)((uint)bytes[pos] << 24 | (uint)bytes[pos + 1] << 16 | (uint)bytes[pos + 2] << 8 | bytes[pos + 3]);
+            var type = Encoding.ASCII.GetString(bytes, pos + 4, 4);
+            var stored = (uint)(bytes[pos + 8 + length] << 24 | bytes[pos + 9 + length] << 16 | (uint)bytes[pos + 10 + length] << 8 | bytes[pos + 11 + length]);
+            if (stored != Crc32Over(bytes, pos + 4, 4 + length)) return false;
+            if (type == "IEND")
+            {
+                if (stored != 0xAE426082u) return false;
+                sawIend = true;
+            }
+            pos += 12 + length;
+        }
+        return sawIend && pos == bytes.Length;
     }
 
     [Fact]
