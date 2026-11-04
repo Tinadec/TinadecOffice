@@ -273,6 +273,50 @@ public sealed class DesktopToolRuntimeTests : IDisposable
     }
 
     [Fact]
+    public async Task Screenshot_PngCarriesValidChunkChecksums()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new TestWindow();
+        var shot = runtime.Screenshot(new DesktopScreenshotArgs { WindowId = window.Hwnd });
+        Assert.True(shot.Ok, shot.Message);
+
+        // A model-provider pipeline rejected our PNGs over this: every chunk CRC was computed
+        // over the type bytes twice, which GDI+ tolerates and strict decoders do not. The
+        // IEND CRC is a spec constant, so this doubles as a regression pin.
+        var bytes = File.ReadAllBytes(shot.Path!);
+        Assert.Equal(0x89, bytes[0]); // PNG signature
+        var pos = 8;
+        while (pos + 12 <= bytes.Length)
+        {
+            var length = (int)((uint)bytes[pos] << 24 | (uint)bytes[pos + 1] << 16 | (uint)bytes[pos + 2] << 8 | bytes[pos + 3]);
+            var type = Encoding.ASCII.GetString(bytes, pos + 4, 4);
+            var stored = (uint)(bytes[pos + 8 + length] << 24 | bytes[pos + 9 + length] << 16 | (uint)bytes[pos + 10 + length] << 8 | bytes[pos + 11 + length]);
+            var computed = Crc32Over(bytes, pos + 4, 4 + length);
+            Assert.Equal($"{type}:{stored:X8}", $"{type}:{computed:X8}");
+            if (type == "IEND")
+            {
+                Assert.Equal(0xAE426082u, stored); // spec constant for the empty IEND chunk
+                Assert.Equal(pos + 12, bytes.Length);
+            }
+            pos += 12 + length;
+        }
+        Assert.Equal(bytes.Length, pos);
+    }
+
+    /// <summary>CRC-32 (reflected, poly 0xEDB88320) over a slice — an independent check of what PngEncoder writes.</summary>
+    private static uint Crc32Over(byte[] data, int offset, int count)
+    {
+        uint crc = 0xFFFFFFFF;
+        for (var i = 0; i < count; i++)
+        {
+            crc ^= data[offset + i];
+            for (var bit = 0; bit < 8; bit++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320 : crc >> 1;
+        }
+        return ~crc;
+    }
+
+    [Fact]
     public async Task Screenshot_MinimizedWindowIsRefused()
     {
         var runtime = new DesktopToolRuntime(() => TempHome());
