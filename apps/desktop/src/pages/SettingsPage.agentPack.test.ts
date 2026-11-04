@@ -52,6 +52,7 @@ vi.mock('@/components/ui', () => ({
   UiTextarea: { inheritAttrs: false, template: '<textarea v-bind="$attrs" />' },
   UiBadge: { template: '<span><slot /></span>' },
   UiLabel: { template: '<label><slot /></label>' },
+  UiSheet: { props: ['open', 'side'], emits: ['update:open'], template: '<div><slot /></div>' },
   UiSkeleton: { template: '<span />' },
   UiSwitch: { inheritAttrs: false, template: '<button v-bind="$attrs" />' },
   UiDropdownMenu: { template: '<div><slot /></div>' },
@@ -181,6 +182,9 @@ const managedAgentDefinition = {
 }
 
 beforeEach(() => {
+  // The center persists its tab/selection; a previous test must not decide
+  // whether this one opens on Teams or Agents.
+  localStorage.clear()
   setActivePinia(createPinia())
   mocks.createAgentDraft.mockReset().mockResolvedValue({ id: 'clone-id' })
   mocks.listAgents.mockReset().mockResolvedValue([customAgent, managedAgent])
@@ -254,6 +258,9 @@ describe('SettingsPage GraphSeedPack clone flow', () => {
     expect(agentCenterNav).toBeDefined()
     await agentCenterNav!.trigger('click')
     await flushPromises()
+    // Agent Center opens on Agent Teams; this scenario needs the agent list.
+    await wrapper.findAll('.ac-subtab').find(tab => tab.text().includes('settings.agents'))!.trigger('click')
+    await flushPromises()
 
     if (!wrapper.find('.agent-detail-panel').exists()) {
       throw new Error(`Agent Center did not render: ${wrapper.find('.settings-content').text().slice(0, 500)}`)
@@ -296,6 +303,9 @@ describe('SettingsPage Agent Center read recovery', () => {
     const wrapper = mount(SettingsPage, { global: { stubs: { Transition: transition, transition, GeneralSection: true } } })
     await flushPromises()
     await wrapper.findAll('.settings-nav-item').find(item => item.text().includes('settings.agentCenter'))!.trigger('click')
+    await flushPromises()
+    // The center now opens on Agent Teams; this suite exercises the agent list/detail.
+    await wrapper.findAll('.ac-subtab').find(tab => tab.text().includes('settings.agents'))!.trigger('click')
     await flushPromises()
     return wrapper
   }

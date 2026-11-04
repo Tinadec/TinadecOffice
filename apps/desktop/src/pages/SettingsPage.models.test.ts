@@ -295,7 +295,7 @@ describe('settings model configuration through the shipping page', () => {
     expect((wrapper.get('.model-provider-form input').element as HTMLInputElement).value).toBe('Renamed provider')
 
     mocks.confirm.mockResolvedValueOnce(false)
-    await wrapper.findAll('.model-center-tabs button').find(button => button.text().includes(en.settings.centerRoutes))!.trigger('click')
+    await wrapper.findAll('.model-center-tabs button').find(button => button.text().includes(en.settings.centerAdvanced))!.trigger('click')
     await flushPromises()
     // Still on the supplier page: the tab switch was refused, so the draft survived.
     expect(wrapper.find('.model-provider-form').exists()).toBe(true)

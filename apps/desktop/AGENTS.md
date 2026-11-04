@@ -1,5 +1,28 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-11-04 模式拓扑图编辑器重建 + 团队协作指令
+
+- **连线此前是死的，两个原因叠加**：自定义节点没有任何 `<Handle>`；`useVueFlow()` 与 `<VueFlow>` 都没传 id，各自建了一个 store（`@vue-flow/core` 的 `useVueFlow(id)` 才复用同一实例）。现在 `AgentModeCanvas.vue` 用 `FLOW_ID = 'agent-mode-editor'` 同时传给两者，节点左 target / 右 source，边为 smooth-step + `ArrowClosed` + `interactionWidth:32`。`PromptPipelineCanvas.vue` 的同类缺陷一并修复。
+- **默认布局重叠**：旧代码两条泳道的 null 坐标都写 `y:30`。新增纯模块 `components/canvas/modeLayout.ts`（最长路径分层、同层父行均值排序、确定性 id 排序、回边记录、`findFreeSlot`），operation `y=40`、execution `y=260+row*120`、列距 240；`selectMode` 只为缺坐标的节点取建议，不覆盖手工位置。
+- **校验面**：新增 `components/canvas/modeValidation.ts`（自环/重复/悬空/环/回流/无会话身份/多会话/未绑定/空图），画布常驻问题条可点击定位；发布按钮用 `requireConversation:true` 的错误集合禁用。
+- **面板正确性**：保存后用响应 `revision` 刷新 `If-Match`（此前第二次保存必 412）；发布带 If-Match；保存/克隆/恢复保留 `canvas_layout`；切换模式、新建、克隆、恢复前用 `notify.confirm` 守卫未保存修改；新增节点走智能体选择器（按层过滤，不再兜底 `'meeting'`）；节点删除连带边与 binding（会话身份节点禁止删除）；节点检查器可切 lane、勾选会话身份、清空标签；边检查器改为 Sheet，标签与 `condition.label` 同源；模式设置可改名称/描述/协作指令。
+- **PlanWeave 式交互**：工具栏（缩放/适配/自动布局/添加）、空态、snap grid 20、节点拖动只在 `node-drag-stop` 提交、`fitView` 在切模式/布局后执行、本地撤销重做（50 步，所有变更经 `applyGraph` 入栈）、键盘 Del/Backspace/Ctrl+Z/Ctrl+Shift+Z/Esc。
+- **团队语义（Qoder）**：新增模式级「协作指令」（Core `agent_modes.instructions`），团队页可写、发布冻结、运行时拼进会话身份 SystemPrompt；成员池改为「除 Leader 外、已启用、已发布」，team 形态任意层、pipeline 只能执行层，上限 4；名称重复/Leader/至少一成员/不可用成员就地报错并阻止发布；模板无可用成员时拒绝建队；已发布团队可「设为默认」（workspace defaults）。团队形态在图编辑器下方显示「可派遣成员」带（读写范围写回 node-less bindings 与 leader `agent_types`），不把成员画成拖拽节点。
+- **门禁**：`vue-tsc --noEmit` 0；定向 vitest 65/65（含 `AgentModeCanvas.test.ts` 的 Handle/store-id/模板接线断言、25 个布局/校验用例、2 个团队指令与 node_key 范围用例）；全量 vitest 215 文件中 213 通过、1 跳过，1826 例通过/12 跳过，唯一红是既有的 `message-scroller` 时序抖动（该目录本轮无改动，单跑同红；与 2026-10-31 记录同类）；生产 `npm run build` exit 0（`✓ built in 4m 22s`）。布局/校验/会话身份测试做过「删掉关键分支必红」的变异验证。**未验证**：真实 Electron 里的连线手感、拖拽/缩放观感、发布后的完整运行一轮。
+- **仍待办**：包清单仍在智能体中心顶部；`PromptPipelineCanvas` 的编辑链路未做端到端走查。
+
+## 2026-11-03 设置页智能体/模型中心重构（P1–P6 第一批）
+
+- **智能体中心外壳**：新增 `settings/agentCenter/AgentCenterSection.vue`，独占命令栏、包状态条、次导航、团队与高级页；旧 `agents/modes/prompts/evolution/runtime` 内容通过命名 slot 挂入，选择器与行为保持不变。`SettingsPage.vue` 不再内联这段外壳。
+- **智能体团队**：`TeamsTab.vue` 把团队做成 Mode 的浅层视图（Leader + 成员 + 协作方式），内置/已发布只读可克隆；复杂拓扑提示去图编排。纯函数在 `teamShape.ts`（识别/构建/无损克隆），模板在 `teamTemplates.ts`。
+- **图编排**：`AgentModesPanel.vue` 保存不再丢 `config/relationship/bindings/edge condition`；节点关系 JSON、边条件 JSON、高级 bindings JSON 可编辑；版本历史可「恢复为草稿」（只读模式会克隆成新 draft）。
+- **智能体列表**：增加搜索、来源/层/状态筛选、新建、归档（If-Match）；读取失败不再伪装成空态；pack 只读智能体的描述/能力/System Prompt 输入已禁用。
+- **模型中心**：页签改为 连接/模型/高级/运行时；默认模型写入改为「新模型置顶 + 保留既有候选」；CLI/ACP 行打开编辑而非空详情；tab 补 `aria-controls` / `role=tabpanel`。
+- **配置存储**：`settings/drafts/{draftStore,uiState}.ts`；草稿按 scope/entity/id 隔离、412 标 stale、密钥脱敏、256 KiB 上限；页签/视图持久化。智能体编辑器自动保存/恢复草稿。
+- **高级页**：`TomlDocumentPanel.vue` 复用配置文档 API（列表/读取/校验/If-Match 保存/导入导出）；`WorkspaceDefaultsPanel.vue` 可保存并发布工作区默认模式。
+- **成员协作范围**：团队编辑器可为每个成员切换「读 / 写」工作区（写入 binding `envelope.resources`）；团队默认模式由「高级 → 工作区默认」保存并发布。
+- **门禁**：定向 vitest 通过、`vue-tsc --noEmit` 0、生产 `vite build` exit 0。**未验证**：真实 Electron 的观感与建团队→发布→跑一轮；包清单仍留在顶部状态条、未下沉到高级页。
+
 ## 2026-11-02 Agent 浏览器：Electron 主进程桥 + 独立窗口（P1/P5 完成，P6 卡片挂载未做）
 
 内置浏览器从「预览 iframe」变成 Agent 可驱动的真实浏览器。**没有第二套 Chromium**：复用 Electron 的 `WebContentsView`，主进程只对已登记目标做 CDP。
