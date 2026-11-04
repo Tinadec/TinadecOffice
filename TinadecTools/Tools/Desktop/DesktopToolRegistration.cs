@@ -80,9 +80,14 @@ public static class DesktopToolRegistration
         + "as the coordinates you report against the last desktop_screenshot image you were shown and the tool maps them "
         + "onto the target itself; the result then carries a `compensation` object and a `verification` object (verified / "
         + "failed / unverified, with before/after screenshot paths). In that mode an unmeasured model or image shape "
-        + "refuses the click (desktop_coordinate_profile_missing) rather than guessing, and a click without a prior "
-        + "desktop_screenshot in the same run is refused too. Approval-gated. " + ModeParameterDoc
-        + " Write actions are never retried automatically. Windows only.";
+        + "refuses the click (desktop_coordinate_profile_missing) rather than guessing, a click without a prior "
+        + "desktop_screenshot in the same run is refused too, and 3 consecutive clicks that fail text verification suspend "
+        + "coordinate clicking for the rest of the run (desktop_coordinate_compensation_suspended) - after that, locate "
+        + "controls with desktop_read_text and semantic tools instead of clicking by coordinates. Measured boundary: on "
+        + "targets smaller than ~24px the hit rate drops to roughly 2 of 3 (the model's own localization wobbles tens of "
+        + "pixels on tiny targets; the mapping chain itself stays within ~9px), so expect `failed` verifications on tiny "
+        + "controls and prefer semantic tools for them. Approval-gated. "
+        + ModeParameterDoc + " Write actions are never retried automatically. Windows only.";
 
     private const string TypeDescription =
         "Type literal text (up to 4096 characters; Unicode is sent as-is, no IME composition). In fast mode the target "

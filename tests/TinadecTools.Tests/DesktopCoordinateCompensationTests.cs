@@ -310,6 +310,156 @@ public sealed class DesktopCoordinateCompensationTests
         Assert.Contains("unverified", click.Verification.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>An unstable text source (per-read churning text) must not be mistaken for a
+    /// click effect: the verdict is `unverified`, never a false `verified` - and churn does
+    /// not count toward the circuit breaker either (it is not a failed verification).</summary>
+    [Fact]
+    public async Task Compensation_ChurningTextIsUnverifiedNotVerified()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ChurnWindow();
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+
+        var (modelX, modelY) = window.ModelCoordsForClientPoint(150, 90, scale: 2.0, shot);
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = modelX, Y = modelY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+
+        Assert.True(click.Ok, click.Message);
+        Assert.Equal(DesktopToolRuntime.VerificationUnverified, click.Verification!.Status);
+        Assert.Contains("kept changing", click.Verification.Message, StringComparison.Ordinal);
+
+        // churn is `unverified`, not `failed`: a follow-up compensated click still executes
+        var again = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = modelX, Y = modelY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.True(again.Ok, again.Message);
+        Assert.Equal(DesktopToolRuntime.VerificationUnverified, again.Verification!.Status);
+    }
+
+    // ── circuit breaker: consecutive failed verifications stop coordinate clicking ──
+
+    /// <summary>Three consecutive failed verifications trip the breaker: the third announces
+    /// the suspension, and a fourth compensated click - even one aimed correctly at the
+    /// button - is refused before any input is delivered.</summary>
+    [Fact]
+    public async Task Compensation_ConsecutiveFailuresSuspendCoordinateClicking()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow(width: 320, height: 500);
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+        var (deadX, deadY) = window.ModelCoordsForClientPoint(160, 300, scale: 2.0, shot);
+        var (goodX, goodY) = window.ModelCoordsForClientPoint(120, 50, scale: 2.0, shot);
+
+        for (var failure = 1; failure <= 3; failure++)
+        {
+            var click = await runtime.ClickAsync(new DesktopClickArgs
+            {
+                X = deadX, Y = deadY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+            });
+            Assert.True(click.Ok, click.Message);
+            Assert.Equal(DesktopToolRuntime.VerificationFailed, click.Verification!.Status);
+            if (failure < 3)
+                Assert.DoesNotContain("SUSPENDED", click.Message, StringComparison.Ordinal);
+            else
+                Assert.Contains("SUSPENDED", click.Message, StringComparison.Ordinal);
+        }
+        window.AssertClicks(0);
+
+        // even a correctly-aimed compensated click is now refused before delivery
+        var refused = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = goodX, Y = goodY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(refused.Ok);
+        Assert.Equal(DesktopToolRuntime.CompensationSuspendedCode, refused.Code);
+        Assert.Contains("desktop_read_text", refused.Message, StringComparison.Ordinal);
+        Assert.Null(refused.Compensation);
+        window.AssertClicks(0);
+    }
+
+    [Fact]
+    public async Task Compensation_VerifiedClickResetsTheFailureStreak()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow(width: 320, height: 500);
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+        var (deadX, deadY) = window.ModelCoordsForClientPoint(160, 300, scale: 2.0, shot);
+        var (goodX, goodY) = window.ModelCoordsForClientPoint(120, 50, scale: 2.0, shot);
+
+        async Task<DesktopToolResult> ClickAt(int x, int y) => await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = x, Y = y, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+
+        // two failures, then a verified click resets the streak
+        Assert.Equal(DesktopToolRuntime.VerificationFailed, (await ClickAt(deadX, deadY)).Verification!.Status);
+        Assert.Equal(DesktopToolRuntime.VerificationFailed, (await ClickAt(deadX, deadY)).Verification!.Status);
+        var verified = await ClickAt(goodX, goodY);
+        Assert.Equal(DesktopToolRuntime.VerificationVerified, verified.Verification!.Status);
+        window.AssertClicks(1);
+
+        // two more failures after the reset: still below the limit, the click still executes
+        Assert.Equal(DesktopToolRuntime.VerificationFailed, (await ClickAt(deadX, deadY)).Verification!.Status);
+        var fifth = await ClickAt(deadX, deadY);
+        Assert.Equal(DesktopToolRuntime.VerificationFailed, fifth.Verification!.Status);
+        Assert.DoesNotContain("SUSPENDED", fifth.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>`unverified` means the target had no readable text - that is not evidence the
+    /// scale is wrong, so it must not count toward the breaker.</summary>
+    [Fact]
+    public async Task Compensation_UnverifiedClicksDoNotTripTheBreaker()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var plain = new PlainWindow();
+        // separate screen areas: overlapping test windows would steal each other's hit-tests
+        using var window = new ButtonWindow(width: 320, height: 500, x: 500);
+
+        // three unverified clicks on a textless window
+        var plainShot = plain.Screenshot(runtime);
+        Assert.True(plainShot.Ok, plainShot.Message);
+        var (plainX, plainY) = plain.ModelCoordsForClientPoint(150, 90, scale: 2.0, plainShot);
+        for (var i = 0; i < 3; i++)
+        {
+            var click = await runtime.ClickAsync(new DesktopClickArgs
+            {
+                X = plainX, Y = plainY, WindowId = plain.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+            });
+            Assert.Equal(DesktopToolRuntime.VerificationUnverified, click.Verification!.Status);
+        }
+
+        // a subsequent compensated click on a text-bearing window still executes
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+        var (deadX, deadY) = window.ModelCoordsForClientPoint(160, 300, scale: 2.0, shot);
+        var clickAfter = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = deadX, Y = deadY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.True(clickAfter.Ok, clickAfter.Message);
+        Assert.Equal(DesktopToolRuntime.VerificationFailed, clickAfter.Verification!.Status);
+        Assert.DoesNotContain("SUSPENDED", clickAfter.Message, StringComparison.Ordinal);
+        window.AssertClicks(0);
+    }
+
     // ── profile store unit behavior ────────────────────────────────────────────
 
     [Fact]
@@ -429,6 +579,47 @@ public sealed class DesktopCoordinateCompensationTests
 
         protected override void DisposeWindow(nint hwnd)
         {
+        }
+    }
+
+    /// <summary>
+    /// A window whose WM_GETTEXT answer differs on every read (an unstable text source, the
+    /// measured failure mode behind false `verified` verdicts: the round-8 harness window's
+    /// title marshalled into uninitialized memory read back as different garbage each time,
+    /// so four real misses came back "verified"). The verification must not treat per-read
+    /// churn as a click effect.
+    /// </summary>
+    private sealed class ChurnWindow : IsolatedWindow
+    {
+        private static int _reads;
+
+        public ChurnWindow()
+            : base(320, 200, 500, "")
+        {
+        }
+
+        protected override nint CreateChildren(nint hwnd) => 0;
+
+        protected override void DisposeWindow(nint hwnd)
+        {
+        }
+
+        protected override nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam)
+        {
+            const uint WM_GETTEXT = 0x000D;
+            const uint WM_GETTEXTLENGTH = 0x000E;
+            if (hWnd == Hwnd && msg == WM_GETTEXTLENGTH)
+                return 16;
+            if (hWnd == Hwnd && msg == WM_GETTEXT)
+            {
+                var text = $"churn-{Interlocked.Increment(ref _reads)}";
+                var capacity = Math.Min(text.Length, (int)wParam - 1);
+                for (var i = 0; i < capacity; i++)
+                    Marshal.WriteInt16(lParam, i * 2, text[i]);
+                Marshal.WriteInt16(lParam, capacity * 2, 0);
+                return capacity;
+            }
+            return base.WndProc(hWnd, msg, wParam, lParam);
         }
     }
 
