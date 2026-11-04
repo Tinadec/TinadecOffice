@@ -31,6 +31,9 @@ namespace TinadecTools.Tools.Desktop;
 /// TINADEC_HOME/config/coordinate-profiles.json (missing rows refuse: fail-closed), and every
 /// compensated click is followed by a semantic verification that reads the window's text
 /// before and after, reporting verified / failed / unverified with before/after screenshots.
+/// Three consecutive failed verifications in one run trip a circuit breaker that suspends
+/// coordinate clicking for the rest of that run (desktop_coordinate_compensation_suspended)
+/// instead of letting the model keep clicking blind.
 /// </summary>
 internal sealed class DesktopToolRuntime
 {
@@ -93,6 +96,47 @@ internal sealed class DesktopToolRuntime
             while (_captureOrder.Count > RememberedCaptures)
                 _lastCapture.Remove(_captureOrder.Dequeue());
         }
+    }
+
+    // ── compensation circuit breaker ───────────────────────────────────────────
+    // Semantic verification judges one click; the breaker judges the run. A model that
+    // keeps clicking dead space (wrong scale, drifted answers, misread scene) must be
+    // stopped after a few consecutive failures instead of hammering the desktop while the
+    // model "retries" with the same broken coordinates. Counted per run; a verified click
+    // resets the streak; `unverified` (no readable text) is not evidence of a bad scale and
+    // does not count. The breaker lives only in memory: a new run starts clean.
+
+    private const int CompensationFailureLimit = 3;
+    private readonly Dictionary<string, int> _consecutiveCompensationFailures = new();
+    private readonly HashSet<string> _compensationSuspended = new();
+
+    internal const string CompensationSuspendedCode = "desktop_coordinate_compensation_suspended";
+
+    private bool IsCompensationSuspended()
+    {
+        lock (_captureLock) return _compensationSuspended.Contains(ToolExecutionContext.Current?.RunId ?? "");
+    }
+
+    /// <summary>Records one failed verification; returns true when THIS failure trips the breaker.</summary>
+    private bool NoteCompensationFailure()
+    {
+        var key = ToolExecutionContext.Current?.RunId ?? "";
+        lock (_captureLock)
+        {
+            var count = _consecutiveCompensationFailures.GetValueOrDefault(key) + 1;
+            _consecutiveCompensationFailures[key] = count;
+            if (count >= CompensationFailureLimit)
+            {
+                _compensationSuspended.Add(key);
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private void ResetCompensationFailures()
+    {
+        lock (_captureLock) _consecutiveCompensationFailures.Remove(ToolExecutionContext.Current?.RunId ?? "");
     }
 
     public static DesktopToolRuntime Default { get; } = new();
@@ -254,6 +298,12 @@ internal sealed class DesktopToolRuntime
         DesktopTextInfo[]? beforeTexts = null;
         if (compensation is { } config)
         {
+            // the circuit breaker gates the whole layer for this run: after consecutive
+            // failed verifications, more coordinate clicks are noise, not progress
+            if (IsCompensationSuspended())
+                return Fail(CompensationSuspendedCode,
+                    $"coordinate compensation is suspended for this run: {CompensationFailureLimit} consecutive compensated clicks failed text verification. This model/image-shape combination is not reliable for coordinate clicking — stop retrying by coordinates; re-verify with desktop_read_text and semantic tools, or ask the user. A new run starts with compensation re-enabled.",
+                    permanent: true);
             var (error, plan) = PlanCoordinateCompensation(config, args);
             if (error is not null) return error;
             args = plan!.Args;
@@ -270,6 +320,15 @@ internal sealed class DesktopToolRuntime
         if (!result.Ok) return result;
         result.Verification = VerifyAfterClick(hWnd, mode, beforeTexts, servedCapture!);
         result.Message = result.Verification.Message;
+        if (result.Verification.Status == VerificationFailed)
+        {
+            if (NoteCompensationFailure())
+                result.Message += $" Coordinate compensation is now SUSPENDED for this run ({CompensationFailureLimit} consecutive unverified clicks): do not keep clicking by coordinates.";
+        }
+        else if (result.Verification.Status == VerificationVerified)
+        {
+            ResetCompensationFailures();
+        }
         return result;
     }
 
@@ -523,14 +582,28 @@ internal sealed class DesktopToolRuntime
         // posted input settles asynchronously: poll for a text change instead of reading
         // once and racing the message pump. 24 x 50ms bounds a no-op click at ~1.2s while
         // giving a loaded message pump room to process the click before the verdict.
+        // A detected change must also CONFIRM: re-read once and require the new texts to be
+        // stable. A text source that differs on every read (measured: our own harness window's
+        // title marshalled into uninitialized memory; production analog: a ticking clock title)
+        // would otherwise turn every click - hit or miss - into a false `verified`. Real
+        // click effects persist; per-read noise keeps churning and is reported as unverified.
+        var sawChurningText = false;
         for (var attempt = 0; attempt < 24; attempt++)
         {
             var after = ReadTextsForVerification(hWnd, mode);
             if (after is not null && TextsChanged(beforeTexts, after))
-                return Verdict(VerificationVerified,
-                    "click delivered and verified: the target window's text changed, so the application responded.");
+            {
+                var confirm = ReadTextsForVerification(hWnd, mode);
+                if (confirm is not null && SameTexts(after, confirm))
+                    return Verdict(VerificationVerified,
+                        "click delivered and verified: the target window's text changed, so the application responded.");
+                sawChurningText = true;
+            }
             Thread.Sleep(50);
         }
+        if (sawChurningText)
+            return Verdict(VerificationUnverified,
+                "click delivered, but unverified: the window's text kept changing between reads (an unstable text source, e.g. a live-updating title), so the click cannot be judged from text. Inspect the after screenshot before assuming the click landed.");
         return Verdict(VerificationFailed,
             "click delivered but NOT verified: the window's readable text did not change. Either the click missed, or it hit something that produces no text change. Compare the before/after screenshots before retrying with adjusted coordinates.");
     }
@@ -543,6 +616,16 @@ internal sealed class DesktopToolRuntime
             if (!beforeTexts.TryGetValue(item.WindowId, out var text) || !string.Equals(text, item.Text ?? "", StringComparison.Ordinal))
                 return true;
         return false;
+    }
+
+    private static bool SameTexts(DesktopTextInfo[] left, DesktopTextInfo[] right)
+    {
+        if (left.Length != right.Length) return false;
+        var leftTexts = left.ToDictionary(t => t.WindowId, t => t.Text ?? "");
+        foreach (var item in right)
+            if (!leftTexts.TryGetValue(item.WindowId, out var text) || !string.Equals(text, item.Text ?? "", StringComparison.Ordinal))
+                return false;
+        return true;
     }
 
     /// <summary>
