@@ -335,8 +335,10 @@ internal static class DesktopWin32
     /// Captures one window with PrintWindow(PW_RENDERFULLCONTENT): the compositor renders
     /// the window even when it is fully occluded, which is what makes silent-mode operation
     /// possible without stealing focus. A minimized window has no surface and is rejected.
+    /// Returns the raw 32bpp BGRA bitmap so the caller can encode both the full PNG and a
+    /// downscaled context copy from one capture.
     /// </summary>
-    internal static byte[] CaptureWindowPng(nint hWnd)
+    internal static (byte[] Bgra, int Width, int Height) CaptureWindowBits(nint hWnd)
     {
         GetWindowRect(hWnd, out var rect);
         var width = rect.Right - rect.Left;
@@ -365,11 +367,19 @@ internal static class DesktopWin32
             if (hdcMemory != 0) DeleteDC(hdcMemory);
             if (hdcWindow != 0) ReleaseDC(hWnd, hdcWindow);
         }
+        return (bits, width, height);
+    }
+
+    internal static byte[] CaptureWindowPng(nint hWnd)
+    {
+        var (bits, width, height) = CaptureWindowBits(hWnd);
         return PngEncoder.Encode(bits, width, height);
     }
 
-    /// <summary>Captures the whole virtual desktop (all monitors) with BitBlt.</summary>
-    internal static byte[] CaptureScreenPng()
+    /// <summary>
+    /// Captures the whole virtual desktop (all monitors) with BitBlt, as raw 32bpp BGRA.
+    /// </summary>
+    internal static (byte[] Bgra, int Width, int Height) CaptureScreenBits()
     {
         var (x, y, width, height) = VirtualScreen();
         if (width <= 0 || height <= 0) throw new InvalidOperationException("no virtual screen");
@@ -392,7 +402,60 @@ internal static class DesktopWin32
             if (hdcMemory != 0) DeleteDC(hdcMemory);
             if (hdcScreen != 0) ReleaseDC(0, hdcScreen);
         }
+        return (bits, width, height);
+    }
+
+    internal static byte[] CaptureScreenPng()
+    {
+        var (bits, width, height) = CaptureScreenBits();
         return PngEncoder.Encode(bits, width, height);
+    }
+
+    /// <summary>
+    /// Box-average downscale of a 32bpp BGRA top-down bitmap so the long edge stays within
+    /// <paramref name="maxDimension"/>. Pure managed arithmetic (AOT-safe, no System.Drawing):
+    /// every destination pixel averages the source box it covers, which keeps UI text legible
+    /// far better than point sampling. Returns the input unchanged when no shrink is needed.
+    /// </summary>
+    internal static (byte[] Bgra, int Width, int Height) Downscale(byte[] bgra, int width, int height, int maxDimension)
+    {
+        if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
+        var longEdge = Math.Max(width, height);
+        if (longEdge <= maxDimension) return (bgra, width, height);
+        var scale = (double)maxDimension / longEdge;
+        var newWidth = Math.Max(1, (int)Math.Round(width * scale));
+        var newHeight = Math.Max(1, (int)Math.Round(height * scale));
+        var result = new byte[newWidth * newHeight * 4];
+        for (var y = 0; y < newHeight; y++)
+        {
+            // the source rows this destination row covers
+            var rowStart = (int)((long)y * height / newHeight);
+            var rowEnd = Math.Max(rowStart + 1, (int)((long)(y + 1) * height / newHeight));
+            for (var x = 0; x < newWidth; x++)
+            {
+                var columnStart = (int)((long)x * width / newWidth);
+                var columnEnd = Math.Max(columnStart + 1, (int)((long)(x + 1) * width / newWidth));
+                long blue = 0, green = 0, red = 0, samples = 0;
+                for (var sy = rowStart; sy < rowEnd && sy < height; sy++)
+                {
+                    var row = sy * width * 4;
+                    for (var sx = columnStart; sx < columnEnd && sx < width; sx++)
+                    {
+                        var pixel = row + sx * 4;
+                        blue += bgra[pixel];
+                        green += bgra[pixel + 1];
+                        red += bgra[pixel + 2];
+                        samples++;
+                    }
+                }
+                var target = (y * newWidth + x) * 4;
+                result[target] = (byte)(blue / samples);
+                result[target + 1] = (byte)(green / samples);
+                result[target + 2] = (byte)(red / samples);
+                result[target + 3] = 255;
+            }
+        }
+        return (result, newWidth, newHeight);
     }
 
     private static void ReadBitmapBits(nint dc, nint bitmap, int width, int height, byte[] bits)
@@ -642,11 +705,20 @@ internal static class DesktopWin32
     /// <summary>
     /// Launches a process onto the isolated desktop (STARTUPINFO.lpDesktop). The desktop must
     /// be named explicitly: a null lpDesktop inherits the parent PROCESS's desktop, not the
-    /// calling thread's (probe-measured, E8).
+    /// calling thread's (probe-measured, E8) — which is the user-visible Default desktop, so a
+    /// launch without a desktop name is refused outright instead of ever putting a window in
+    /// front of the user.
     /// </summary>
     internal static uint LaunchOnIsolatedDesktop(string command, string? arguments, string? workingDirectory, out string? error)
     {
         error = null;
+        if (string.IsNullOrEmpty(IsolatedDesktopName))
+        {
+            // Defensive: the name is a constant today, but a launch that somehow reaches this
+            // path without one would land on the Default desktop — in the user's face.
+            error = "isolated desktop name is empty; refusing to launch (a null lpDesktop inherits the parent process's desktop, which is the user's)";
+            return 0;
+        }
         var desk = OpenOrCreateIsolatedDesktop();
         if (desk == 0)
         {

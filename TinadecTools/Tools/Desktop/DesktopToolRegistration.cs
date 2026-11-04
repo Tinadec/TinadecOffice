@@ -62,9 +62,11 @@ public static class DesktopToolRegistration
     private const string ScreenshotDescription =
         "Save a PNG screenshot for the user. With window_id the capture is that window only (works even when the window is "
         + "occluded; a minimized window fails with desktop_window_minimized); without it the whole virtual screen is "
-        + "captured. Returns the absolute path, byte count and dimensions. The picture is for the user: unless visual input "
-        + "is explicitly available to you, you cannot see it - use desktop_read_text and window titles to understand "
-        + "content, and say so instead of guessing. Windows only.";
+        + "captured. Returns the absolute path, byte count and dimensions, plus an `image` object pointing at a "
+        + "downscaled copy (long edge ≤1568) sized for model context. Whether you actually see that image depends on the "
+        + "model route: when it supports image input the screenshot is attached to your conversation automatically (and "
+        + "the tool result says so); when it does not, the result tells you explicitly - then use desktop_read_text and "
+        + "window titles instead, and say so instead of guessing. Windows only.";
 
     private const string ReadTextDescription =
         "Read the text of a window and its child controls (WM_GETTEXT, so edit fields and static texts come back as "
@@ -90,8 +92,10 @@ public static class DesktopToolRegistration
 
     private const string LaunchAppDescription =
         "Launch a process onto the hidden TinadecIsolated desktop and return its pid. This is the only way windows get "
-        + "there: apps cannot move onto the isolated desktop after starting. The user never sees these windows; inspect "
-        + "them with desktop_list_windows/desktop_screenshot/desktop_read_text (mode 'isolated') and drive them with "
+        + "there: apps cannot move onto the isolated desktop after starting. The desktop is always named explicitly in "
+        + "the launch - a launch that could not name it is refused rather than letting the app fall back to the user's "
+        + "desktop - so an app started here never appears in front of the user. Inspect these windows with "
+        + "desktop_list_windows/desktop_screenshot/desktop_read_text (mode 'isolated') and drive them with "
         + "desktop_click/desktop_type (mode 'isolated'). Measured boundaries: the isolated desktop renders and captures "
         + "fine (DWM composes it), the clipboard is shared with the user's desktop, but real keyboard/mouse input cannot "
         + "reach it and GPU swapchains report occluded Presents. Approval-gated. Windows only.";

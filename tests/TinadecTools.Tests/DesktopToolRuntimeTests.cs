@@ -123,7 +123,8 @@ public sealed class DesktopToolRuntimeTests : IDisposable
         Assert.StartsWith("TinadecDeskTest_", row.ClassName, StringComparison.Ordinal);
         Assert.False(row.IsMinimized);
 
-        // 2. window screenshot: PNG lands on disk with the window's physical size
+        // 2. window screenshot: PNG lands on disk with the window's physical size, and the small
+        //    window doubles as its own context copy (no *-ctx.png duplicate for ≤1568 captures)
         var shot1 = runtime.Screenshot(new DesktopScreenshotArgs { WindowId = window.Hwnd });
         Assert.True(shot1.Ok);
         Assert.True(File.Exists(shot1.Path), $"screenshot file missing: {shot1.Path}");
@@ -135,6 +136,12 @@ public sealed class DesktopToolRuntimeTests : IDisposable
             Assert.Equal(width, shot1.Width);
             Assert.Equal(height, shot1.Height);
         }
+        Assert.NotNull(shot1.Image);
+        Assert.Equal(shot1.Path, shot1.Image!.Path);
+        Assert.Equal("image/png", shot1.Image.MediaType);
+        Assert.Equal(shot1.Width, shot1.Image.Width);
+        Assert.Equal(shot1.Height, shot1.Image.Height);
+        Assert.Equal(shot1.Bytes, shot1.Image.Bytes);
 
         // 3. silent click into the middle of the edit field (client coordinates)
         var click = await runtime.ClickAsync(new DesktopClickArgs
@@ -198,6 +205,71 @@ public sealed class DesktopToolRuntimeTests : IDisposable
         });
         Assert.False(chord.Ok);
         Assert.Equal("desktop_silent_modifier_unsupported", chord.Code);
+    }
+
+    [Fact]
+    public async Task Screenshot_WideWindowGetsADownscaledContextCopy()
+    {
+        var home = TempHome();
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new TestWindow(width: 1700, height: 300);
+
+        var shot = runtime.Screenshot(new DesktopScreenshotArgs { WindowId = window.Hwnd });
+        Assert.True(shot.Ok, shot.Message);
+        Assert.True(shot.Width > DesktopToolRuntime.MaxContextImageEdge, $"expected a wide window, got {shot.Width}x{shot.Height}");
+
+        // the full capture stays untouched at path; the model-facing copy is a separate *-ctx.png
+        Assert.NotNull(shot.Image);
+        Assert.NotEqual(shot.Path, shot.Image!.Path);
+        Assert.EndsWith("-ctx.png", shot.Image.Path, StringComparison.Ordinal);
+        Assert.True(File.Exists(shot.Image.Path), $"context copy missing: {shot.Image.Path}");
+        Assert.True(Math.Max(shot.Image.Width!.Value, shot.Image.Height!.Value) <= DesktopToolRuntime.MaxContextImageEdge);
+        Assert.Equal("image/png", shot.Image.MediaType);
+        Assert.Equal(new FileInfo(shot.Image.Path!).Length, shot.Image.Bytes);
+        // the downscaled file is a real PNG, not an empty shell
+        Assert.True(shot.Image.Bytes > 100);
+    }
+
+    [Fact]
+    public void Downscale_AveragesTheSourceBox()
+    {
+        // 4x2 image: left half solid blue (BGR: B=255), right half solid red (R=255)
+        var bgra = new byte[4 * 2 * 4];
+        for (var y = 0; y < 2; y++)
+        {
+            for (var x = 0; x < 4; x++)
+            {
+                var pixel = (y * 4 + x) * 4;
+                if (x < 2) bgra[pixel] = 255; else bgra[pixel + 2] = 255;
+            }
+        }
+
+        var (small, width, height) = DesktopWin32.Downscale(bgra, 4, 2, 2);
+        Assert.Equal(2, width);
+        Assert.Equal(1, height);
+        // destination pixel 0 averages the solid-blue source half, pixel 1 the solid-red half
+        Assert.Equal(255, small[0]);
+        Assert.Equal(0, small[1]);
+        Assert.Equal(0, small[2]);
+        Assert.Equal(255, small[3]);
+        Assert.Equal(0, small[4]);
+        Assert.Equal(0, small[5]);
+        Assert.Equal(255, small[6]);
+
+        // collapsing to 1x1 averages everything: half blue, half red → B=127, R=127
+        var (tiny, tinyWidth, tinyHeight) = DesktopWin32.Downscale(bgra, 4, 2, 1);
+        Assert.Equal(1, tinyWidth);
+        Assert.Equal(1, tinyHeight);
+        Assert.Equal(127, tiny[0]);
+        Assert.Equal(0, tiny[1]);
+        Assert.Equal(127, tiny[2]);
+        Assert.Equal(255, tiny[3]);
+
+        // already within budget: returned unchanged
+        var (same, sameWidth, sameHeight) = DesktopWin32.Downscale(bgra, 4, 2, 64);
+        Assert.True(ReferenceEquals(same, bgra));
+        Assert.Equal(4, sameWidth);
+        Assert.Equal(2, sameHeight);
     }
 
     [Fact]
@@ -320,6 +392,11 @@ public sealed class DesktopToolRuntimeTests : IDisposable
             Assert.NotNull(row!.Bounds);
             Assert.True(row.Bounds!.Width > 0);
 
+            // E8 follow-up: the launched window must never leak onto the user's (default) desktop
+            var defaultList = runtime.ListWindows(new DesktopListWindowsArgs { Limit = 200 });
+            Assert.True(defaultList.Ok, defaultList.Message);
+            Assert.DoesNotContain(defaultList.Windows!, w => w.Pid == launch.Pid);
+
             var shot = runtime.Screenshot(new DesktopScreenshotArgs { WindowId = row.WindowId, Mode = DesktopToolRuntime.IsolatedMode });
             Assert.True(shot.Ok, shot.Message);
             Assert.True(File.Exists(shot.Path));
@@ -398,9 +475,13 @@ public sealed class DesktopToolRuntimeTests : IDisposable
 
         private readonly Thread _thread;
         private readonly ManualResetEvent _ready = new(false);
+        private readonly int _width;
+        private readonly int _height;
 
-        public TestWindow()
+        public TestWindow(int width = 320, int height = 200)
         {
+            _width = width;
+            _height = height;
             _thread = new Thread(Run) { IsBackground = true };
             _thread.Start();
             Assert.True(_ready.WaitOne(TimeSpan.FromSeconds(5)), "test window thread did not start");
@@ -417,10 +498,10 @@ public sealed class DesktopToolRuntimeTests : IDisposable
 
             Hwnd = CreateWindowEx(
                 WS_EX_TOPMOST, className, "Tinadec desktop tool test window", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                60, 60, 320, 200, 0, 0, GetModuleHandle(null), 0);
+                60, 60, _width, _height, 0, 0, GetModuleHandle(null), 0);
             Edit = CreateWindowEx(
                 WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                10, 10, 280, 40, Hwnd, 0, GetModuleHandle(null), 0);
+                10, 10, Math.Max(50, _width - 40), 40, Hwnd, 0, GetModuleHandle(null), 0);
 
             ShowWindow(Hwnd, SW_SHOW);
             UpdateWindow(Hwnd);
