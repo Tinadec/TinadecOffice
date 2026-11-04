@@ -573,6 +573,26 @@ internal static class DesktopWin32
         return (receiver, client);
     }
 
+    /// <summary>
+    /// The top-level window that actually occupies a screen point, with its class and title.
+    /// The pre-click occlusion guard compares this against the intended target: a full-screen
+    /// topmost overlay (measured: an orphaned Shell_SystemDim dimming layer) silently steals
+    /// the click, and clicking "OK/Allow" on whatever is on top is an accident, not a miss.
+    /// </summary>
+    internal static (nint Root, string ClassName, string Title) WindowRootAtPoint(int screenX, int screenY)
+    {
+        var hit = WindowFromPoint(new POINT { X = screenX, Y = screenY });
+        var root = hit == 0 ? 0 : GetAncestor(hit, GA_ROOT);
+        return (root, root == 0 ? "" : WindowClass(root), root == 0 ? "" : WindowTitle(root));
+    }
+
+    /// <summary>The client-area size of a window, in that window's own units.</summary>
+    internal static (int Width, int Height) ClientSize(nint hWnd)
+    {
+        GetClientRect(hWnd, out var rect);
+        return (rect.Right - rect.Left, rect.Bottom - rect.Top);
+    }
+
     /// <summary>Posts a mouse press/release pair to a window with client coordinates.</summary>
     internal static void PostClick(nint hWnd, POINT client, string button)
     {

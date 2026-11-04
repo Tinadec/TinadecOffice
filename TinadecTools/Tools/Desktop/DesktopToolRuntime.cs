@@ -81,6 +81,12 @@ internal sealed class DesktopToolRuntime
     private readonly Queue<string> _captureOrder = new();
     private const int RememberedCaptures = 64;
 
+    /// <summary>The most recent desktop_find_element page for one run: the index /
+    /// automation_id namespace desktop_click's element path resolves against. Each entry
+    /// keeps its live UIA element so the click paths (native PostClick / Invoke) act on
+    /// exactly what was found.</summary>
+    private readonly Dictionary<string, (long WindowId, List<(DesktopAutomation.ElementInfo Info, DesktopAutomation.IUIAutomationElement Raw)> Page)> _lastElements = new();
+
     internal ServedCapture? LastServedCapture(string? runId = null)
     {
         lock (_captureLock) return _lastCapture.TryGetValue(runId ?? ToolExecutionContext.Current?.RunId ?? "", out var capture) ? capture : null;
@@ -277,7 +283,6 @@ internal sealed class DesktopToolRuntime
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
         var mode = ResolveMode(args.Mode);
         if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
-        if (args.X is null || args.Y is null) return Fail("desktop_input_failed", "desktop_click needs integer x and y.", permanent: true);
         var button = args.Button ?? "left";
         if (button is not ("left" or "right" or "middle"))
             return Fail("desktop_input_failed", "button must be left, right or middle.", permanent: true);
@@ -285,6 +290,97 @@ internal sealed class DesktopToolRuntime
         var hWnd = args.WindowId is { } value ? (nint)value : 0;
         if (hWnd != 0 && !IsAliveWindow(hWnd))
             return Fail("desktop_window_not_found", $"No window with window_id {args.WindowId}.", permanent: true);
+        if (args.X is null || args.Y is null)
+        {
+            if (args.ElementIndex is null && args.ElementAutomationId is null)
+                return Fail("desktop_input_failed", "desktop_click needs x and y, or element_index / element_automation_id from desktop_find_element.", permanent: true);
+        }
+        else if (args.ElementIndex is not null || args.ElementAutomationId is not null)
+        {
+            return Fail("desktop_input_failed", "pass either x/y or an element reference, not both.", permanent: true);
+        }
+
+        // ── element click: UIA semantics, no model coordinates anywhere ────────────
+        // The precise path for small targets. When the element has its own Win32 window
+        // (classic controls), the click is posted straight to THAT window at its client
+        // center - no screen-coordinate translation exists in that chain, so no DPI space
+        // can mix (round 9 measured how screen-space translation shifts small targets).
+        // Virtual elements (WPF/UWP, no native handle) fall back to their UIA rectangle
+        // through the client-coordinate delivery chain.
+        if (args.ElementIndex is not null || args.ElementAutomationId is not null)
+        {
+            var (elementError, element, raw, elementIndex, elementWindow) = ResolveClickElement(args);
+            if (elementError is not null) return elementError;
+            hWnd = (nint)elementWindow;
+            var before = ReadTextsForVerification(hWnd, mode);
+            DesktopToolResult elementResult;
+            if (element!.NativeWindowHandle != 0)
+            {
+                // exact path: post to the element's own window; every coordinate is
+                // window-relative, so no DPI space can shift it
+                await InputGate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (mode == IsolatedMode)
+                    {
+                        var isolated = DesktopWin32.RunOnIsolatedDesktop(() => PostClickToNativeElement(element.NativeWindowHandle, button, count), out var runError);
+                        elementResult = runError is not null ? Fail("desktop_isolated_failed", runError, permanent: false) : isolated;
+                    }
+                    else
+                    {
+                        elementResult = PostClickToNativeElement(element.NativeWindowHandle, button, count);
+                    }
+                }
+                finally
+                {
+                    InputGate.Release();
+                }
+            }
+            else
+            {
+                // virtual element (WPF/UWP/WinUI): the Invoke pattern is the semantic
+                // click, coordinate-free; the rect-ratio path is the last resort for
+                // elements that support neither a window nor Invoke
+                var invoke = DesktopAutomation.TryInvoke(raw!);
+                if (invoke == DesktopAutomation.InvokeOutcome.Invoked)
+                {
+                    elementResult = new DesktopToolResult { Ok = true, Applied = true, Mode = mode, WindowId = hWnd };
+                }
+                else if (invoke == DesktopAutomation.InvokeOutcome.ElementGone)
+                {
+                    return Fail("desktop_element_not_found",
+                        "the element is gone (the UI changed since desktop_find_element); re-run desktop_find_element and click a fresh index.",
+                        permanent: false);
+                }
+                else if (invoke == DesktopAutomation.InvokeOutcome.Failed)
+                {
+                    return Fail("desktop_element_invoke_failed",
+                        "the element supports the Invoke pattern but invoking it failed (it may be disabled or blocked by the app). Read the element's state with desktop_find_element before retrying.",
+                        permanent: false);
+                }
+                else
+                {
+                    if (element.Right <= element.Left || element.Bottom <= element.Top)
+                        return Fail("desktop_element_not_clickable",
+                            "the element is not invokable and reports an empty rectangle; it cannot be clicked. Use desktop_type / desktop_press_key or another control.",
+                            permanent: true);
+                    var client = UiaRectToPhysicalClient(hWnd, element);
+                    elementResult = await DeliverClickAsync(
+                        new DesktopClickArgs { X = client.X, Y = client.Y, WindowId = elementWindow, Button = args.Button, Count = args.Count, Mode = args.Mode },
+                        mode, hWnd, button, count).ConfigureAwait(false);
+                }
+            }
+            elementResult.Element = ToElementInfo(element, elementIndex);
+            if (elementResult.Ok)
+            {
+                elementResult.Verification = VerifyAfterClick(hWnd, mode, before, new ServedCapture(hWnd, 0, 0, 0, 0, ""));
+                elementResult.Message = elementResult.Verification.Message;
+            }
+            return elementResult;
+        }
+
+        if (args.X is null || args.Y is null)
+            return Fail("desktop_input_failed", "desktop_click needs x and y, or element_index / element_automation_id from desktop_find_element.", permanent: true);
 
         // ── coordinate compensation (host-opt-in, fail-closed) ────────────────────
         // Some vision models report clicks in a rescaled version of the image they were
@@ -309,9 +405,38 @@ internal sealed class DesktopToolRuntime
             args = plan!.Args;
             compensationInfo = plan.Info;
             servedCapture = plan.Capture;
-            // pre-click text baseline: the verdict after the click compares against this
-            if (hWnd != 0) beforeTexts = ReadTextsForVerification(hWnd, mode);
         }
+
+        // ── occlusion guard: refuse to click through whatever covers the target ───
+        // Measured on this machine: an orphaned Shell_SystemDim full-screen topmost layer
+        // silently swallowed clicks (the click "succeeded" and hit nothing). A silent
+        // miss is bad; a silent hit on the WRONG window's OK/Allow button is an accident.
+        // The hit-test must run in the same coordinate space as the delivery itself, so
+        // for isolated windows both ClientToScreen and WindowFromPoint run on the
+        // isolated desktop's thread, exactly like the delivery chain does.
+        if (hWnd != 0)
+        {
+            if (mode == IsolatedMode)
+            {
+                var isolated = DesktopWin32.RunOnIsolatedDesktop(() =>
+                {
+                    var screen = DesktopWin32.ClientToScreen(hWnd, args.X!.Value, args.Y!.Value);
+                    return GuardPoint(hWnd, screen.X, screen.Y);
+                }, out var runError);
+                if (runError is not null) return Fail("desktop_isolated_failed", runError, permanent: false);
+                if (isolated is not null) return isolated;
+            }
+            else
+            {
+                using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+                var screen = DesktopWin32.ClientToScreen(hWnd, args.X!.Value, args.Y!.Value);
+                if (GuardPoint(hWnd, screen.X, screen.Y) is { } guard) return guard;
+            }
+        }
+
+        // pre-click text baseline for the semantic verdict after the click
+        if (compensationInfo is not null && hWnd != 0)
+            beforeTexts = ReadTextsForVerification(hWnd, mode);
 
         var result = await DeliverClickAsync(args, mode, hWnd, button, count).ConfigureAwait(false);
         if (compensationInfo is null) return result;
@@ -330,6 +455,152 @@ internal sealed class DesktopToolRuntime
             ResetCompensationFailures();
         }
         return result;
+    }
+
+    /// <summary>
+    /// Posts the click to the element's own Win32 window at its client-area center. Every
+    /// coordinate in this chain is window-relative, so DPI virtualization cannot shift it
+    /// (round 9 measured screen-space translation moving small-target clicks; this path
+    /// has no screen space). Only valid for elements that expose a native window handle.
+    /// </summary>
+    private static DesktopToolResult PostClickToNativeElement(nint elementHwnd, string button, int count)
+    {
+        var (width, height) = DesktopWin32.ClientSize(elementHwnd);
+        if (width <= 0 || height <= 0)
+            return Fail("desktop_element_not_clickable", "the element's client area is empty; it cannot receive a posted click.", permanent: true);
+        var center = new DesktopWin32.POINT { X = width / 2, Y = height / 2 };
+        for (var i = 0; i < count; i++) DesktopWin32.PostClick(elementHwnd, center, button);
+        return new DesktopToolResult { Ok = true, Applied = true, WindowId = elementHwnd };
+    }
+
+    /// <summary>Refuses the click when the screen point is occupied by anything other than
+    /// the target window's tree. Runs in the desktop the click will land on.</summary>
+    private static DesktopToolResult? GuardPoint(nint hWnd, int screenX, int screenY)
+    {
+        var (root, className, title) = DesktopWin32.WindowRootAtPoint(screenX, screenY);
+        if (root == hWnd) return null;
+        var coveredBy = root == 0
+            ? "no window (bare desktop region)"
+            : $"window class '{className}' titled '{title}'";
+        return Fail("desktop_point_occluded",
+            $"the point ({screenX},{screenY}) is occupied by {coveredBy}, not by the target window; refusing to click through it. Bring the target window to the front (or dismiss the overlay) and retry.",
+            permanent: false);
+    }
+
+    // ── element finding and element clicking ───────────────────────────────────
+
+    /// <summary>
+    /// Enumerates the target window's UI Automation tree, filtered by the given fragments,
+    /// and caches the returned page for this run so desktop_click can reference elements by
+    /// index or automation id. Works across desktops of this session, TinadecIsolated
+    /// included (probe-measured) - UIA reaches windows the input desktop cannot.
+    /// </summary>
+    public DesktopToolResult FindElement(DesktopFindElementArgs args)
+    {
+        if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
+        var mode = ResolveMode(args.Mode);
+        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
+        var hWnd = (nint)args.WindowId;
+        if (!IsAliveWindow(hWnd)) return Fail("desktop_window_not_found", $"No window with window_id {args.WindowId}.", permanent: true);
+        var limit = Math.Clamp(args.Limit ?? 20, 1, 50);
+
+        var (error, page, total) = DesktopAutomation.FindElements(hWnd, args.Name, args.AutomationId, args.ControlType, args.ClassName, limit);
+        if (error is not null) return Fail("desktop_uia_failed", error, permanent: false);
+
+        lock (_captureLock)
+        {
+            _lastElements[ToolExecutionContext.Current?.RunId ?? ""] = (args.WindowId, page.ToList());
+        }
+        Logger.Info("desktop_find_element: window {WindowId} filter name='{Name}' type='{Type}' -> {Total} matches, returning {Count}", args.WindowId, args.Name, args.ControlType, total, page.Length);
+
+        return new DesktopToolResult
+        {
+            Ok = true,
+            WindowId = hWnd,
+            Count = page.Length,
+            Total = total,
+            Elements = page.Select((entry, index) => ToElementInfo(entry.Info, index)).ToArray(),
+            Message = total > page.Length
+                ? $"{total} elements match the filter; showing the first {page.Length}. Narrow the filter (name/automation_id/control_type) to see the rest."
+                : null,
+        };
+    }
+
+    private static DesktopElementInfo ToElementInfo(DesktopAutomation.ElementInfo element, int index) => new()
+    {
+        Index = index,
+        Name = element.Name,
+        AutomationId = element.AutomationId,
+        ControlType = DesktopAutomation.ControlTypeName(element.ControlType),
+        ClassName = element.ClassName,
+        Bounds = new DesktopBounds { X = element.Left, Y = element.Top, Width = element.Width, Height = element.Height },
+        IsEnabled = element.IsEnabled,
+        IsOffscreen = element.IsOffscreen,
+    };
+
+    private (DesktopToolResult? Error, DesktopAutomation.ElementInfo? Element, DesktopAutomation.IUIAutomationElement? Raw, int Index, long WindowId) ResolveClickElement(DesktopClickArgs args)
+    {
+        (long WindowId, List<(DesktopAutomation.ElementInfo Info, DesktopAutomation.IUIAutomationElement Raw)> Page) page = (0, []);
+        lock (_captureLock) _lastElements.TryGetValue(ToolExecutionContext.Current?.RunId ?? "", out page);
+        if (page.Page is null || page.Page.Count == 0)
+            return (Fail("desktop_element_context_missing",
+                "desktop_click by element needs a desktop_find_element in this run first: its result is the index/automation_id namespace. Run desktop_find_element on the target window, then click the returned element.",
+                permanent: true), null, null, 0, 0);
+        var cached = page;
+
+        if (args.WindowId is { } requested && requested != cached.WindowId)
+            return (Fail("desktop_element_context_missing",
+                $"the cached element list belongs to window_id {cached.WindowId}, but the click targets window_id {requested}. Run desktop_find_element on the target window first.",
+                permanent: true), null, null, 0, 0);
+
+        DesktopAutomation.ElementInfo element;
+        DesktopAutomation.IUIAutomationElement raw;
+        int elementIndex;
+        if (args.ElementIndex is { } index)
+        {
+            if (index < 0 || index >= cached.Page.Count)
+                return (Fail("desktop_element_not_found",
+                    $"element_index {index} is outside the cached desktop_find_element result (0..{cached.Page.Count - 1}). Re-run desktop_find_element and use a returned index.",
+                    permanent: true), null, null, 0, 0);
+            (element, raw) = cached.Page[index];
+            elementIndex = index;
+        }
+        else
+        {
+            elementIndex = cached.Page.FindIndex(candidate => string.Equals(candidate.Info.AutomationId, args.ElementAutomationId, StringComparison.OrdinalIgnoreCase));
+            if (elementIndex < 0)
+                return (Fail("desktop_element_not_found",
+                    $"no element with automation_id '{args.ElementAutomationId}' in the cached desktop_find_element result. Re-run desktop_find_element with automation_id filter to see what exists.",
+                    permanent: true), null, null, 0, 0);
+            (element, raw) = cached.Page[elementIndex];
+        }
+
+        if (element.IsOffscreen)
+            return (Fail("desktop_element_not_clickable",
+                "the element is offscreen (its window is scrolled or minimized); scrolling it into view first is required.",
+                permanent: false), null, null, 0, 0);
+
+        return (null, element, raw, elementIndex, cached.WindowId);
+    }
+
+    /// <summary>
+    /// Converts a UIA element rectangle (which lives in the CALLING process's DPI space) into
+    /// client coordinates in the delivery chain's physical space, using the target window's
+    /// rect measured in BOTH spaces: the ratio between them maps one space onto the other
+    /// deterministically. Last-resort path for virtual elements that neither own a native
+    /// window nor support the Invoke pattern.
+    /// </summary>
+    private static (int X, int Y) UiaRectToPhysicalClient(nint hWnd, DesktopAutomation.ElementInfo element)
+    {
+        var (callerX, callerY, callerWidth, callerHeight) = DesktopWin32.WindowBounds(hWnd);
+        using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+        var (physicalX, physicalY, physicalWidth, physicalHeight) = DesktopWin32.WindowBounds(hWnd);
+        var ratioX = callerWidth > 0 ? physicalWidth / (double)callerWidth : 1;
+        var ratioY = callerHeight > 0 ? physicalHeight / (double)callerHeight : 1;
+        var screenX = (int)Math.Round(physicalX + (element.CenterX - callerX) * ratioX);
+        var screenY = (int)Math.Round(physicalY + (element.CenterY - callerY) * ratioY);
+        var client = DesktopWin32.ScreenToClient(hWnd, screenX, screenY);
+        return (client.X, client.Y);
     }
 
     /// <summary>The delivery half of a click, unchanged from the pre-compensation era so the
@@ -549,12 +820,14 @@ internal sealed class DesktopToolRuntime
     }
 
     /// <summary>
-    /// Judges a compensated click by the application's own words: the window's texts were
-    /// read before the click, and are polled after it (posted input is asynchronous).
-    /// Text change = verified; readable but unchanged = failed (a miss, or a click with no
-    /// text-level effect - the screenshots say which); nothing readable = unverified, which
-    /// is reported as exactly that. A fresh after-capture is saved either way so the caller
-    /// can see what actually happened.
+    /// Judges a compensated or element click by the application's own words: the window's
+    /// texts were read before the click, and are polled after it (posted input is
+    /// asynchronous). STABLE-CONTROL RULE: only CHILD CONTROL text counts as click evidence.
+    /// A window title is not a stable verification source - measured twice, once as garbage
+    /// from uninitialized memory (round 8) and once as per-read churn (round 9) - so a
+    /// title-only change reports unverified, never verified. Child change = verified;
+    /// children readable but unchanged = failed (a miss, or a click with no text-level
+    /// effect - the screenshots say which); nothing readable / unstable source = unverified.
     /// </summary>
     private DesktopVerificationInfo VerifyAfterClick(nint hWnd, string mode, DesktopTextInfo[]? beforeTexts, ServedCapture capture)
     {
@@ -566,7 +839,7 @@ internal sealed class DesktopToolRuntime
             return new DesktopVerificationInfo
             {
                 Status = status,
-                BeforePath = capture.ContextPath,
+                BeforePath = string.IsNullOrEmpty(capture.ContextPath) ? null : capture.ContextPath,
                 AfterPath = afterShot is { Ok: true } ? afterShot.Path : null,
                 Message = message,
             };
@@ -579,33 +852,46 @@ internal sealed class DesktopToolRuntime
             return Verdict(VerificationUnverified,
                 "click delivered, but unverified: the target window has no readable text, so the click cannot be judged semantically. Inspect the after screenshot before assuming the click landed.");
 
-        // posted input settles asynchronously: poll for a text change instead of reading
-        // once and racing the message pump. 24 x 50ms bounds a no-op click at ~1.2s while
-        // giving a loaded message pump room to process the click before the verdict.
-        // A detected change must also CONFIRM: re-read once and require the new texts to be
-        // stable. A text source that differs on every read (measured: our own harness window's
-        // title marshalled into uninitialized memory; production analog: a ticking clock title)
-        // would otherwise turn every click - hit or miss - into a false `verified`. Real
-        // click effects persist; per-read noise keeps churning and is reported as unverified.
+        var beforeChildren = beforeTexts.Where(t => t.WindowId != hWnd).ToArray();
+        var beforeRoot = beforeTexts.FirstOrDefault(t => t.WindowId == hWnd)?.Text;
+        if (beforeChildren.Length == 0)
+            return Verdict(VerificationUnverified,
+                "click delivered, but unverified: only the window title is readable, and a title is not a stable verification source. Use desktop_find_element / desktop_read_text on the target's controls, or inspect the after screenshot.");
+
+        // posted input settles asynchronously: poll for a child-text change instead of
+        // reading once and racing the message pump. 24 x 50ms bounds a no-op click at
+        // ~1.2s while giving a loaded message pump room to process the click. A detected
+        // change must also CONFIRM: re-read once and require the new texts to be stable -
+        // per-read churn (a live-updating control) is not click evidence either.
         var sawChurningText = false;
+        string? lastRoot = beforeRoot;
         for (var attempt = 0; attempt < 24; attempt++)
         {
             var after = ReadTextsForVerification(hWnd, mode);
-            if (after is not null && TextsChanged(beforeTexts, after))
+            if (after is not null)
             {
-                var confirm = ReadTextsForVerification(hWnd, mode);
-                if (confirm is not null && SameTexts(after, confirm))
-                    return Verdict(VerificationVerified,
-                        "click delivered and verified: the target window's text changed, so the application responded.");
-                sawChurningText = true;
+                lastRoot = after.FirstOrDefault(t => t.WindowId == hWnd)?.Text ?? lastRoot;
+                var afterChildren = after.Where(t => t.WindowId != hWnd).ToArray();
+                if (TextsChanged(beforeChildren, afterChildren))
+                {
+                    var confirm = ReadTextsForVerification(hWnd, mode);
+                    var confirmChildren = confirm?.Where(t => t.WindowId != hWnd).ToArray();
+                    if (confirmChildren is not null && SameTexts(afterChildren, confirmChildren))
+                        return Verdict(VerificationVerified,
+                            "click delivered and verified: the target window's controls changed their text, so the application responded.");
+                    sawChurningText = true;
+                }
             }
             Thread.Sleep(50);
         }
         if (sawChurningText)
             return Verdict(VerificationUnverified,
-                "click delivered, but unverified: the window's text kept changing between reads (an unstable text source, e.g. a live-updating title), so the click cannot be judged from text. Inspect the after screenshot before assuming the click landed.");
+                "click delivered, but unverified: the window's text kept changing between reads (an unstable text source, e.g. a live-updating control), so the click cannot be judged from text. Inspect the after screenshot before assuming the click landed.");
+        if (!string.Equals(beforeRoot, lastRoot, StringComparison.Ordinal))
+            return Verdict(VerificationUnverified,
+                "click delivered, but unverified: only the window title changed, and a title is not a stable verification source (it changes for unrelated reasons - clocks, unsaved-state markers). Inspect the after screenshot or verify a control's text instead.");
         return Verdict(VerificationFailed,
-            "click delivered but NOT verified: the window's readable text did not change. Either the click missed, or it hit something that produces no text change. Compare the before/after screenshots before retrying with adjusted coordinates.");
+            "click delivered but NOT verified: the window's readable control text did not change. Either the click missed, or it hit something that produces no text change. Compare the before/after screenshots before retrying with adjusted coordinates.");
     }
 
     private static bool TextsChanged(DesktopTextInfo[] before, DesktopTextInfo[] after)
