@@ -116,7 +116,8 @@ public sealed class ExecutionAgent
             maxHistoryMessages,
             ct,
             imageInput.Parts,
-            fullResults).ConfigureAwait(false);
+            fullResults,
+            resolved).ConfigureAwait(false);
         var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
             .GetResponseAsync(conversation, options, ct)
             .ConfigureAwait(false);
@@ -184,9 +185,19 @@ public sealed class ExecutionAgent
         int maxHistoryMessages,
         CancellationToken cancellationToken,
         IReadOnlyList<AIContent>? goalParts = null,
-        IReadOnlyDictionary<string, string>? fullResults = null)
+        IReadOnlyDictionary<string, string>? fullResults = null,
+        ChatResolution? resolution = null)
     {
         var messages = new List<ChatMessage>();
+        // Tool-result images are budgeted before the loop: the newest image turns keep theirs,
+        // older ones degrade to an in-result note (ToolResultImages explains the carrier choice).
+        var imageRefs = new ToolResultImageRef?[history.Count];
+        for (var i = 0; i < history.Count; i++)
+        {
+            var stored = history[i].ResultOnExecution && fullResults?.GetValueOrDefault(history[i].CallId) is { } full ? full : history[i].ResultJson;
+            imageRefs[i] = stored is null ? null : ToolResultImages.Find(stored);
+        }
+        var imageBudget = ToolResultImages.PlanBudget(imageRefs);
         // A round the user cut off sits in the transcript where it happened: what the worker had
         // said so far, then what the user sent. Only ever between whole tool rounds, never between a
         // call and its result.
@@ -212,10 +223,25 @@ public sealed class ExecutionAgent
             if (!string.IsNullOrWhiteSpace(turn.ResultJson))
             {
                 var result = turn.ResultOnExecution && fullResults?.GetValueOrDefault(turn.CallId) is { } full ? full : turn.ResultJson;
+                var modelFacing = ModelFacingResult(result);
+                ChatMessage? imageCarrier = null;
+                if (imageRefs[index] is { } image)
+                {
+                    var reason = ToolResultImages.NotDeliveredReason(resolution, imageBudget.Contains(index), image);
+                    if (reason is null)
+                        imageCarrier = await ToolResultImages.BuildCarrierAsync(turn.CallId, turn.ToolId, image, cancellationToken).ConfigureAwait(false);
+                    if (reason is null && imageCarrier is null)
+                        reason = "截图文件读取失败。";
+                    if (reason is not null)
+                        modelFacing += "\n" + ToolResultImages.UndeliveredNote(reason);
+                }
                 messages.Add(new ChatMessage(ChatRole.Tool,
                 [
-                    new FunctionResultContent(turn.CallId, ModelFacingResult(result))
+                    new FunctionResultContent(turn.CallId, modelFacing)
                 ]));
+                // The screenshot rides a user-role message right after its tool result: inside the
+                // Tool message itself both OpenAI adapters drop the image part on the floor.
+                if (imageCarrier is not null) messages.Add(imageCarrier);
             }
             AddInterruptions(++index);
         }
