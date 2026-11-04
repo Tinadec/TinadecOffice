@@ -183,14 +183,14 @@ public sealed class DesktopToolRuntimeTests : IDisposable
         var runtime = new DesktopToolRuntime(() => TempHome());
         using var window = new TestWindow();
 
-        // A client point far outside the window: client (5000, 5000) maps to a screen
-        // point that is not on the window, so nothing must be sent.
+        // A client point far outside the window: the occlusion guard sees the point land
+        // on something else (another window or bare desktop) and refuses before delivery.
         var result = await runtime.ClickAsync(new DesktopClickArgs
         {
             X = 5000, Y = 5000, WindowId = window.Hwnd, Mode = DesktopToolRuntime.SilentMode,
         });
         Assert.False(result.Ok);
-        Assert.Equal("desktop_post_failed", result.Code);
+        Assert.Equal("desktop_point_occluded", result.Code);
     }
 
     [Fact]

@@ -17,6 +17,7 @@ public static class DesktopToolRegistration
     public const string ListWindowsToolId = "desktop_list_windows";
     public const string ScreenshotToolId = "desktop_screenshot";
     public const string ReadTextToolId = "desktop_read_text";
+    public const string FindElementToolId = "desktop_find_element";
     public const string ClickToolId = "desktop_click";
     public const string TypeToolId = "desktop_type";
     public const string PressKeyToolId = "desktop_press_key";
@@ -31,8 +32,11 @@ public static class DesktopToolRegistration
     private const string ReadTextSchema =
         """{"type":"object","properties":{"window_id":{"type":"integer"},"max_chars":{"type":"integer","minimum":1,"maximum":16384},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
 
+    private const string FindElementSchema =
+        """{"type":"object","properties":{"window_id":{"type":"integer"},"name":{"type":"string","maxLength":256},"automation_id":{"type":"string","maxLength":256},"control_type":{"type":"string","maxLength":32},"class_name":{"type":"string","maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":50},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
+
     private const string ClickSchema =
-        """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"window_id":{"type":"integer"},"button":{"type":"string","enum":["left","right","middle"]},"count":{"type":"integer","minimum":1,"maximum":3},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["x","y"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"window_id":{"type":"integer"},"button":{"type":"string","enum":["left","right","middle"]},"count":{"type":"integer","minimum":1,"maximum":3},"mode":{"type":"string","enum":["fast","silent","isolated"]},"element_index":{"type":"integer","minimum":0,"maximum":49},"element_automation_id":{"type":"string","maxLength":256}},"additionalProperties":false}""";
 
     private const string TypeSchema =
         """{"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":4096},"window_id":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["text"],"additionalProperties":false}""";
@@ -73,20 +77,30 @@ public static class DesktopToolRegistration
         + "strings, bounded by max_chars). Use it to verify what desktop_type wrote or to read a dialog's content. "
         + "Read-only and focus-free. Windows only.";
 
+    private const string FindElementDescription =
+        "Find clickable controls in a window through UI Automation (the same tree screen readers and "
+        + "test frameworks use): name, automation_id, control_type, class_name, physical bounds, enabled and "
+        + "offscreen flags. Filter with name / automation_id / control_type / class_name fragments (case-insensitive "
+        + "contains); returns the first `limit` (default 20) matches plus the total. THE PRECISE PATH for small "
+        + "targets: pair it with desktop_click's element_index / element_automation_id to click a control's UIA "
+        + "rectangle without any model-estimated coordinates. Covers standard Win32 / WPF / UWP controls; "
+        + "self-drawn and game surfaces expose few or no elements - use desktop_screenshot coordinates there. "
+        + "Windows only.";
+
     private const string ClickDescription =
-        "Click at a position. With window_id, x/y are client-relative coordinates of that window (origin at its top-left "
-        + "client corner); without it they are virtual-screen absolute coordinates (negative is valid for monitors left of "
-        + "the primary). When the host has enabled the coordinate-compensation layer (off by default), x/y are instead read "
-        + "as the coordinates you report against the last desktop_screenshot image you were shown and the tool maps them "
-        + "onto the target itself; the result then carries a `compensation` object and a `verification` object (verified / "
-        + "failed / unverified, with before/after screenshot paths). In that mode an unmeasured model or image shape "
-        + "refuses the click (desktop_coordinate_profile_missing) rather than guessing, a click without a prior "
-        + "desktop_screenshot in the same run is refused too, and 3 consecutive clicks that fail text verification suspend "
-        + "coordinate clicking for the rest of the run (desktop_coordinate_compensation_suspended) - after that, locate "
-        + "controls with desktop_read_text and semantic tools instead of clicking by coordinates. Measured boundary: on "
-        + "targets smaller than ~24px the hit rate drops to roughly 2 of 3 (the model's own localization wobbles tens of "
-        + "pixels on tiny targets; the mapping chain itself stays within ~9px), so expect `failed` verifications on tiny "
-        + "controls and prefer semantic tools for them. Approval-gated. "
+        "Click a control - by element, or by position. PREFERRED: pass element_index or element_automation_id from this "
+        + "run's desktop_find_element to click the control's UI Automation rectangle (precision comes from UIA, not from "
+        + "estimating coordinates from a screenshot; this is the reliable path for small controls). The result carries the "
+        + "clicked `element` and a `verification` object (verified / failed / unverified from control-text changes, with "
+        + "before/after screenshot paths). Alternative: x/y coordinates (with window_id: client-relative; without: "
+        + "virtual-screen absolute). When the host has enabled the coordinate-compensation layer (off by default), x/y are "
+        + "read as the coordinates you report against the last desktop_screenshot and mapped through a measured per-model "
+        + "profile - unmeasured models or image shapes refuse (desktop_coordinate_profile_missing), and 3 consecutive "
+        + "failed verifications suspend coordinate clicking for the run (desktop_coordinate_compensation_suspended). "
+        + "Measured boundary: on targets smaller than ~24px, coordinate-path hit rate is roughly 2 of 3 (model "
+        + "localization wobble; the mapping chain itself stays within ~9px) - use element clicks there. Every click is "
+        + "guarded: if another window covers the point (overlays, dim layers, unexpected dialogs), the click is refused "
+        + "with desktop_point_occluded instead of clicking through it. Approval-gated. "
         + ModeParameterDoc + " Write actions are never retried automatically. Windows only.";
 
     private const string TypeDescription =
@@ -144,6 +158,16 @@ public static class DesktopToolRegistration
             requiresApproval: false,
             description: ReadTextDescription,
             inputSchemaJson: ReadTextSchema,
+            risk: "low",
+            mutatesWorkspace: false,
+            retrySafety: "safe");
+
+        ToolRegistry.Register(
+            FindElementToolId,
+            HandleFindElementAsync,
+            requiresApproval: false,
+            description: FindElementDescription,
+            inputSchemaJson: FindElementSchema,
             risk: "low",
             mutatesWorkspace: false,
             retrySafety: "safe");
@@ -215,6 +239,14 @@ public static class DesktopToolRegistration
     {
         var args = Deserialize(request.Params, DesktopJsonContext.Default.DesktopReadTextArgs);
         return await RunAsync(request, () => Task.FromResult(Runtime().ReadText(args)), cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<ToolCallResponse<JsonElement>> HandleFindElementAsync(
+        ToolCallRequest<JsonElement> request,
+        CancellationToken cancellationToken)
+    {
+        var args = Deserialize(request.Params, DesktopJsonContext.Default.DesktopFindElementArgs);
+        return await RunAsync(request, () => Task.FromResult(Runtime().FindElement(args)), cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<ToolCallResponse<JsonElement>> HandleClickAsync(

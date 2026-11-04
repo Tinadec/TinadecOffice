@@ -332,7 +332,7 @@ public sealed class DesktopCoordinateCompensationTests
 
         Assert.True(click.Ok, click.Message);
         Assert.Equal(DesktopToolRuntime.VerificationUnverified, click.Verification!.Status);
-        Assert.Contains("kept changing", click.Verification.Message, StringComparison.Ordinal);
+        Assert.Contains("title", click.Verification.Message, StringComparison.Ordinal);
 
         // churn is `unverified`, not `failed`: a follow-up compensated click still executes
         var again = await runtime.ClickAsync(new DesktopClickArgs
@@ -341,6 +341,206 @@ public sealed class DesktopCoordinateCompensationTests
         });
         Assert.True(again.Ok, again.Message);
         Assert.Equal(DesktopToolRuntime.VerificationUnverified, again.Verification!.Status);
+    }
+
+    // ── element finding and element clicking (the precise path) ────────────────
+
+    [Fact]
+    public async Task FindElement_ReturnsFilteredElementsWithPhysicalBounds()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var byName = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Name = "save", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(byName.Ok, byName.Message);
+        Assert.Equal(1, byName.Total);
+        var save = Assert.Single(byName.Elements!);
+        Assert.Equal("Save", save.Name);
+        Assert.Equal("Button", save.ControlType);
+        Assert.NotNull(save.Bounds);
+        Assert.True(save.Bounds!.Width > 0 && save.Bounds.Height > 0);
+        // the bounds are in the caller's DPI space, so compare against the window rect in
+        // that same space (NO PMv2 scope here - mixing the two spaces moves everything)
+        {
+            var (wx, wy, ww, wh) = DesktopWin32.WindowBounds(window.Hwnd);
+            Assert.True(save.Bounds.X >= wx && save.Bounds.X + save.Bounds.Width <= wx + ww, $"save bounds {save.Bounds.X}..{save.Bounds.X + save.Bounds.Width} outside window {wx}..{wx + ww}");
+            Assert.True(save.Bounds.Y >= wy && save.Bounds.Y + save.Bounds.Height <= wy + wh);
+        }
+
+        var buttons = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "button", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(buttons.Ok, buttons.Message);
+        // 3 app buttons + the caption's Minimize/Maximize/Close, which UIA also types as Button
+        Assert.Equal(6, buttons.Total);
+
+        var unknownType = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "rocket", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.False(unknownType.Ok);
+        Assert.Equal("desktop_uia_failed", unknownType.Code);
+    }
+
+    /// <summary>The money test of this round: a 16x16 target, clicked through its UIA
+    /// rectangle with no coordinates anywhere - the small-target problem solved.</summary>
+    [Fact]
+    public async Task ClickByElement_LandsOnASixteenPixelTargetAndVerifies()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var found = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Name = "Tiny", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(found.Ok, found.Message);
+        var tiny = Assert.Single(found.Elements!);
+        var tinyIndex = tiny.Index;
+        Assert.True(tiny.Bounds!.Width <= 24 && tiny.Bounds.Height <= 24, $"expected a tiny target, got {tiny.Bounds.Width}x{tiny.Bounds.Height}");
+
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            ElementIndex = tinyIndex, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.True(click.Ok, click.Message);
+        window.AssertClicks("Tiny", 1);
+        Assert.NotNull(click.Element);
+        Assert.Equal("Tiny", click.Element!.Name);
+        Assert.Equal(DesktopToolRuntime.VerificationVerified, click.Verification!.Status);
+    }
+
+    [Fact]
+    public async Task ClickByElement_AutomationIdResolvesAndClicks()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var found = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "button", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(found.Ok, found.Message);
+        var save = found.Elements!.First(element => element.Name == "Save");
+        Assert.NotEmpty(save.AutomationId); // classic buttons expose their control id as the automation id
+
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            ElementAutomationId = save.AutomationId, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.True(click.Ok, click.Message);
+        window.AssertClicks("Save", 1);
+        Assert.Equal("Save", click.Element!.Name);
+    }
+
+    [Fact]
+    public async Task ClickByElement_WithoutFindElementIsRefused()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            ElementIndex = 0, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(click.Ok);
+        Assert.Equal("desktop_element_context_missing", click.Code);
+        window.AssertClicks("Save", 0);
+
+        // out of range against a real cached page
+        Assert.True(runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "button", Mode = DesktopToolRuntime.IsolatedMode }).Ok);
+        var outOfRange = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            ElementIndex = 99, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(outOfRange.Ok);
+        Assert.Equal("desktop_element_not_found", outOfRange.Code);
+        window.AssertClicks("Save", 0);
+    }
+
+    /// <summary>The occlusion guard: a topmost overlay over the target's button must refuse
+    /// the click with desktop_point_occluded, and the target must receive NOTHING (the
+    /// round-9 lesson: a full-screen dim layer silently swallowed clicks).</summary>
+    [Fact]
+    public async Task Click_IsRefusedWhenAnOverlayCoversTheTarget()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+        using var overlay = new OverlayWindow(window);
+
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = 80, Y = 40, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(click.Ok);
+        Assert.Equal("desktop_point_occluded", click.Code);
+        Assert.Contains("refusing to click through", click.Message, StringComparison.Ordinal);
+        window.AssertClicks("Save", 0);
+    }
+
+    /// <summary>
+    /// An isolated window with three BUTTON children (Save/Cancel + a 16x16 Tiny) whose
+    /// click counts are rendered into their labels, plus an edit field.
+    /// </summary>
+    private sealed class ElementsWindow : IsolatedWindow
+    {
+        private static readonly ConcurrentDictionary<string, int> Clicks = new();
+        private static readonly ConcurrentDictionary<nint, string> Names = new();
+
+        public ElementsWindow()
+            : base(400, 420, 60, "")
+        {
+        }
+
+        protected override nint CreateChildren(nint hwnd)
+        {
+            Create(hwnd, "Save", 101, 20, 20, 120, 40);
+            Create(hwnd, "Cancel", 102, 160, 20, 120, 40);
+            Create(hwnd, "Tiny", 103, 20, 80, 16, 16);
+            return 0;
+
+            void Create(nint parent, string name, int id, int x, int y, int w, int h)
+            {
+                var button = CreateWindowEx(0, "BUTTON", name, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, x, y, w, h, parent, (nint)id, GetModuleHandle(null), 0);
+                Clicks[name] = 0;
+                Names[button] = name;
+            }
+        }
+
+        public void AssertClicks(string name, int expected)
+        {
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                if (Clicks.GetValueOrDefault(name) == expected) return;
+                Thread.Sleep(50);
+            }
+            Assert.Equal(expected, Clicks.GetValueOrDefault(name));
+        }
+
+        protected override void DisposeWindow(nint hwnd)
+        {
+            Clicks.Clear();
+            Names.Clear();
+        }
+
+        protected override nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam)
+        {
+            if (msg == WM_COMMAND && ((wParam >> 16) & 0xFFFF) == 0)
+            {
+                if (Names.TryGetValue(lParam, out var name))
+                {
+                    var count = Clicks.AddOrUpdate(name, 1, (_, value) => value + 1);
+                    SetWindowText(lParam, $"{name} ({count})");
+                }
+                return 0;
+            }
+            return base.WndProc(hWnd, msg, wParam, lParam);
+        }
+    }
+
+    /// <summary>A topmost window placed exactly over the target's Save button area.</summary>
+    private sealed class OverlayWindow : IsolatedWindow
+    {
+        public OverlayWindow(ElementsWindow target)
+            : base(400, 420, 60, "", topmost: true)
+        {
+            // same position as the target: created later + topmost, so it sits on top
+        }
+
+        protected override nint CreateChildren(nint hwnd) => 0;
+
+        protected override void DisposeWindow(nint hwnd)
+        {
+        }
     }
 
     // ── circuit breaker: consecutive failed verifications stop coordinate clicking ──
@@ -639,6 +839,7 @@ public sealed class DesktopCoordinateCompensationTests
         protected const uint WM_DESTROY = 0x0002u;
         protected const uint WM_COMMAND = 0x0111u;
         private const uint WS_EX_TOOLWINDOW = 0x00000080u;
+        private const uint WS_EX_TOPMOST = 0x00000008u;
         private const uint ActionMessage = 0x8000;
 
         private static readonly List<WndProcDelegate> KeepAlive = [];
@@ -649,16 +850,18 @@ public sealed class DesktopCoordinateCompensationTests
         private readonly int _height;
         private readonly int _x;
         private readonly string _title;
+        private readonly bool _topmost;
         private uint _threadId;
 
         public nint Hwnd { get; private set; }
 
-        protected IsolatedWindow(int width, int height, int x, string title)
+        protected IsolatedWindow(int width, int height, int x, string title, bool topmost = false)
         {
             _width = width;
             _height = height;
             _x = x;
             _title = title;
+            _topmost = topmost;
             _thread = new Thread(Run) { IsBackground = true };
             _thread.SetApartmentState(ApartmentState.MTA);
             _thread.Start();
@@ -696,7 +899,7 @@ public sealed class DesktopCoordinateCompensationTests
             var wc = new WNDCLASS { lpfnWndProc = proc, LpszClassName = className, HInstance = GetModuleHandle(null) };
             RegisterClass(ref wc);
             Hwnd = CreateWindowEx(
-                WS_EX_TOOLWINDOW, className, _title, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                (_topmost ? WS_EX_TOOLWINDOW | WS_EX_TOPMOST : WS_EX_TOOLWINDOW), className, _title, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 _x, 60, _width, _height, 0, 0, GetModuleHandle(null), 0);
             CreateChildren(Hwnd);
             _threadId = GetCurrentThreadId();

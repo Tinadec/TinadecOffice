@@ -30,6 +30,17 @@ public sealed class DesktopLaunchArgs
     [JsonPropertyName("working_directory")] public string? WorkingDirectory { get; set; }
 }
 
+public sealed class DesktopFindElementArgs
+{
+    [JsonPropertyName("window_id")] public long WindowId { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("automation_id")] public string? AutomationId { get; set; }
+    [JsonPropertyName("control_type")] public string? ControlType { get; set; }
+    [JsonPropertyName("class_name")] public string? ClassName { get; set; }
+    [JsonPropertyName("limit")] public int? Limit { get; set; }
+    [JsonPropertyName("mode")] public string? Mode { get; set; }
+}
+
 public sealed class DesktopClickArgs
 {
     [JsonPropertyName("x")] public int? X { get; set; }
@@ -38,6 +49,10 @@ public sealed class DesktopClickArgs
     [JsonPropertyName("button")] public string? Button { get; set; }
     [JsonPropertyName("count")] public int? Count { get; set; }
     [JsonPropertyName("mode")] public string? Mode { get; set; }
+    /// <summary>Click by element: the index from this run's most recent desktop_find_element.</summary>
+    [JsonPropertyName("element_index")] public int? ElementIndex { get; set; }
+    /// <summary>Click by element: AutomationId match within this run's most recent desktop_find_element.</summary>
+    [JsonPropertyName("element_automation_id")] public string? ElementAutomationId { get; set; }
 }
 
 public sealed class DesktopTypeArgs
@@ -106,6 +121,22 @@ public sealed class DesktopPointInfo
 }
 
 /// <summary>
+/// One UI Automation element as returned by desktop_find_element: the semantic anchor for
+/// clicking without model coordinates. bounds are physical screen pixels straight from UIA.
+/// </summary>
+public sealed class DesktopElementInfo
+{
+    [JsonPropertyName("index")] public int Index { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("automation_id")] public string? AutomationId { get; set; }
+    [JsonPropertyName("control_type")] public string? ControlType { get; set; }
+    [JsonPropertyName("class_name")] public string? ClassName { get; set; }
+    [JsonPropertyName("bounds")] public DesktopBounds? Bounds { get; set; }
+    [JsonPropertyName("is_enabled")] public bool? IsEnabled { get; set; }
+    [JsonPropertyName("is_offscreen")] public bool? IsOffscreen { get; set; }
+}
+
+/// <summary>
 /// Present only when the coordinate-compensation layer was enabled for a desktop_click: which
 /// measured profile row mapped the reported coordinates onto the window, and where they landed.
 /// The layer is host-configured and off by default; this object is its audit trail.
@@ -165,12 +196,16 @@ public sealed class DesktopToolResult
     [JsonPropertyName("pid")] public int? Pid { get; set; }
     [JsonPropertyName("compensation")] public DesktopCompensationInfo? Compensation { get; set; }
     [JsonPropertyName("verification")] public DesktopVerificationInfo? Verification { get; set; }
+    [JsonPropertyName("elements")] public DesktopElementInfo[]? Elements { get; set; }
+    [JsonPropertyName("total")] public int? Total { get; set; }
+    [JsonPropertyName("element")] public DesktopElementInfo? Element { get; set; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(DesktopListWindowsArgs))]
 [JsonSerializable(typeof(DesktopScreenshotArgs))]
 [JsonSerializable(typeof(DesktopReadTextArgs))]
+[JsonSerializable(typeof(DesktopFindElementArgs))]
 [JsonSerializable(typeof(DesktopClickArgs))]
 [JsonSerializable(typeof(DesktopTypeArgs))]
 [JsonSerializable(typeof(DesktopPressKeyArgs))]
@@ -178,6 +213,7 @@ public sealed class DesktopToolResult
 [JsonSerializable(typeof(DesktopToolResult))]
 [JsonSerializable(typeof(DesktopImageInfo))]
 [JsonSerializable(typeof(DesktopPointInfo))]
+[JsonSerializable(typeof(DesktopElementInfo))]
 [JsonSerializable(typeof(DesktopCompensationInfo))]
 [JsonSerializable(typeof(DesktopVerificationInfo))]
 internal sealed partial class DesktopJsonContext : JsonSerializerContext;
