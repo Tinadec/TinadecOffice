@@ -101,6 +101,7 @@ public sealed class TinaChatMemberTurnRunner : ITinaChatMemberTurnRunner
                 break;
             }
             var results = new List<AIContent>();
+            var imageCarriers = new List<ChatMessage>();
             foreach (var call in calls)
             {
                 var callId = string.IsNullOrWhiteSpace(call.CallId) ? $"call-{rounds}-{results.Count}" : call.CallId;
@@ -119,9 +120,27 @@ public sealed class TinaChatMemberTurnRunner : ITinaChatMemberTurnRunner
                             ? await RecallAsync(archive, turn, arguments, visibility, cancellationToken).ConfigureAwait(false)
                             : Outcome(await toolbox.ExecuteAsync(call.Name, arguments, $"{turn.TurnKey}:{rounds}:{callId}", cancellationToken).ConfigureAwait(false));
                 }
-                results.Add(new FunctionResultContent(callId, ExecutionAgent.ModelFacingResult(result)));
+                var modelFacing = ExecutionAgent.ModelFacingResult(result);
+                // A tool result carrying an image object gets it delivered as the adjacent user-role
+                // carrier (ToolResultImages documents why not inside the Tool message itself); this
+                // loop accumulates messages across rounds, so older carriers are demoted each round.
+                if (ToolResultImages.Find(result) is { } image)
+                {
+                    var reason = ToolResultImages.NotDeliveredReason(resolution, withinBudget: true, image);
+                    if (reason is null)
+                    {
+                        var carrier = await ToolResultImages.BuildCarrierAsync(callId, call.Name, image, cancellationToken).ConfigureAwait(false);
+                        if (carrier is not null) imageCarriers.Add(carrier);
+                        else reason = "截图文件读取失败。";
+                    }
+                    if (reason is not null)
+                        modelFacing += "\n" + ToolResultImages.UndeliveredNote(reason);
+                }
+                results.Add(new FunctionResultContent(callId, modelFacing));
             }
             messages.Add(new ChatMessage(ChatRole.Tool, results));
+            foreach (var carrier in imageCarriers) messages.Add(carrier);
+            ToolResultImages.DemoteBeyondBudget(messages);
         }
 
         var outcome = new TinaChatMemberTurnOutcome(rounds + (finalText is null ? 0 : 1), called.Count, finalText, called);
