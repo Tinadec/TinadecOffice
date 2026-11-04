@@ -28,6 +28,7 @@ internal sealed class DesktopToolRuntime
 {
     public const string FastMode = "fast";
     public const string SilentMode = "silent";
+    public const string IsolatedMode = "isolated";
 
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private static readonly SemaphoreSlim InputGate = new(1, 1);
@@ -64,32 +65,67 @@ internal sealed class DesktopToolRuntime
     {
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
         var limit = Math.Clamp(args.Limit ?? 50, 1, 200);
+        if (args.Mode == IsolatedMode)
+        {
+            var rows = DesktopWin32.RunOnIsolatedDesktop(() => DesktopWin32.ListTopLevelWindows(args.IncludeAll == true, limit), out var error);
+            if (error is not null) return Fail("desktop_isolated_failed", error, permanent: false);
+            return new DesktopToolResult
+            {
+                Ok = true,
+                Mode = IsolatedMode,
+                Count = rows.Count,
+                Windows = rows.Select(ToWindowInfo).ToArray(),
+            };
+        }
         using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
-        var rows = DesktopWin32.ListTopLevelWindows(args.IncludeAll == true, limit);
+        var rowsDefault = DesktopWin32.ListTopLevelWindows(args.IncludeAll == true, limit);
         return new DesktopToolResult
         {
             Ok = true,
-            Count = rows.Count,
-            Windows = rows.Select(ToWindowInfo).ToArray(),
+            Count = rowsDefault.Count,
+            Windows = rowsDefault.Select(ToWindowInfo).ToArray(),
         };
     }
 
     public DesktopToolResult Screenshot(DesktopScreenshotArgs args)
     {
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
+        if (args.Mode == IsolatedMode)
+        {
+            if (args.WindowId is null)
+                return Fail("desktop_window_required", "isolated-mode capture targets one window on the isolated desktop; window_id is required.", permanent: true);
+            var isolated = DesktopWin32.RunOnIsolatedDesktop(() => ScreenshotCore(args.WindowId.Value), out var error);
+            if (error is not null) return Fail("desktop_isolated_failed", error, permanent: false);
+            return isolated;
+        }
+        if (args.WindowId is { } windowId) return ScreenshotCore(windowId);
+        return ScreenshotScreen();
+    }
+
+    private DesktopToolResult ScreenshotCore(long windowId)
+    {
         using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
         try
         {
-            if (args.WindowId is { } windowValue)
-            {
-                var hWnd = (nint)windowValue;
-                if (!IsAliveWindow(hWnd)) return Fail("desktop_window_not_found", $"No window with window_id {windowValue}.", permanent: true);
-                if (DesktopWin32.IsMinimized(hWnd)) return Fail("desktop_window_minimized", "A minimized window has no surface to capture; restore it first.", permanent: false);
-                var png = DesktopWin32.CaptureWindowPng(hWnd);
-                var (x, y, width, height) = DesktopWin32.WindowBounds(hWnd);
-                return SaveScreenshot(png, width, height, "window", ToWindowInfo(hWnd));
-            }
+            var hWnd = (nint)windowId;
+            if (!IsAliveWindow(hWnd)) return Fail("desktop_window_not_found", $"No window with window_id {windowId}.", permanent: true);
+            if (DesktopWin32.IsMinimized(hWnd)) return Fail("desktop_window_minimized", "A minimized window has no surface to capture; restore it first.", permanent: false);
+            var png = DesktopWin32.CaptureWindowPng(hWnd);
+            var (x, y, width, height) = DesktopWin32.WindowBounds(hWnd);
+            return SaveScreenshot(png, width, height, "window", ToWindowInfo(hWnd));
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn(exception, "desktop_screenshot failed");
+            return Fail("desktop_capture_failed", exception.Message, permanent: false);
+        }
+    }
 
+    private DesktopToolResult ScreenshotScreen()
+    {
+        using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+        try
+        {
             var screenPng = DesktopWin32.CaptureScreenPng();
             var (sx, sy, sw, sh) = DesktopWin32.VirtualScreen();
             return SaveScreenshot(screenPng, sw, sh, "screen", null);
@@ -104,6 +140,17 @@ internal sealed class DesktopToolRuntime
     public DesktopToolResult ReadText(DesktopReadTextArgs args)
     {
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
+        if (args.Mode == IsolatedMode)
+        {
+            var isolated = DesktopWin32.RunOnIsolatedDesktop(() => ReadTextCore(args), out var error);
+            if (error is not null) return Fail("desktop_isolated_failed", error, permanent: false);
+            return isolated;
+        }
+        return ReadTextCore(args);
+    }
+
+    private DesktopToolResult ReadTextCore(DesktopReadTextArgs args)
+    {
         var maxChars = Math.Clamp(args.MaxChars ?? 4096, 1, 16384);
         using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
         var hWnd = (nint)args.WindowId;
@@ -140,7 +187,7 @@ internal sealed class DesktopToolRuntime
     {
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
         var mode = ResolveMode(args.Mode);
-        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast' or 'silent'.", permanent: true);
+        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
         if (args.X is null || args.Y is null) return Fail("desktop_input_failed", "desktop_click needs integer x and y.", permanent: true);
         var button = args.Button ?? "left";
         if (button is not ("left" or "right" or "middle"))
@@ -149,6 +196,23 @@ internal sealed class DesktopToolRuntime
         var hWnd = args.WindowId is { } value ? (nint)value : 0;
         if (hWnd != 0 && !IsAliveWindow(hWnd))
             return Fail("desktop_window_not_found", $"No window with window_id {args.WindowId}.", permanent: true);
+
+        if (mode == IsolatedMode)
+        {
+            if (hWnd == 0)
+                return Fail("desktop_window_required", "isolated mode delivers input as window messages: window_id is required.", permanent: true);
+            await InputGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var isolated = DesktopWin32.RunOnIsolatedDesktop(() => ClickPosted(hWnd, args.X.Value, args.Y.Value, button, count), out var error);
+                if (error is not null) return Fail("desktop_isolated_failed", error, permanent: false);
+                return isolated;
+            }
+            finally
+            {
+                InputGate.Release();
+            }
+        }
 
         await InputGate.WaitAsync().ConfigureAwait(false);
         try
@@ -191,16 +255,53 @@ internal sealed class DesktopToolRuntime
         }
     }
 
+    /// <summary>
+    /// Message-direct click on a window that may live on any desktop; the caller must already
+    /// be attached to that desktop (silent runs it inline, isolated runs it on the attached
+    /// thread). Real input cannot reach the isolated desktop: probe-measured, SendInput from
+    /// a non-input desktop is rejected with ERROR_ACCESS_DENIED.
+    /// </summary>
+    private DesktopToolResult ClickPosted(nint hWnd, int x, int y, string button, int count)
+    {
+        using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+        if (DesktopWin32.IsMinimized(hWnd))
+            return Fail("desktop_window_minimized", "A minimized window cannot receive messages; restore it first.", permanent: false);
+        var (screenX, screenY) = ResolveScreenPoint(hWnd, x, y);
+        var resolved = DesktopWin32.ResolveClickTarget(hWnd, screenX, screenY);
+        if (resolved is null)
+            return Fail("desktop_post_failed", $"The point ({screenX},{screenY}) is not on window {hWnd}; nothing was sent.", permanent: false);
+        var (receiver, client) = resolved.Value;
+        for (var i = 0; i < count; i++) DesktopWin32.PostClick(receiver, client, button);
+        return new DesktopToolResult { Ok = true, Applied = true, Mode = IsolatedMode, WindowId = hWnd };
+    }
+
     public async Task<DesktopToolResult> TypeAsync(DesktopTypeArgs args)
     {
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
         var mode = ResolveMode(args.Mode);
-        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast' or 'silent'.", permanent: true);
+        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
         if (string.IsNullOrEmpty(args.Text)) return Fail("desktop_input_failed", "desktop_type needs a non-empty text.", permanent: true);
         if (args.Text.Length > 4096) return Fail("desktop_input_failed", "text is limited to 4096 characters.", permanent: true);
         var hWnd = args.WindowId is { } value ? (nint)value : 0;
         if (hWnd != 0 && !IsAliveWindow(hWnd))
             return Fail("desktop_window_not_found", $"No window with window_id {args.WindowId}.", permanent: true);
+
+        if (mode == IsolatedMode)
+        {
+            if (hWnd == 0)
+                return Fail("desktop_window_required", "isolated mode delivers text as WM_CHAR messages: window_id is required.", permanent: true);
+            await InputGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var isolated = DesktopWin32.RunOnIsolatedDesktop(() => TypePosted(hWnd, args.Text!, args.X, args.Y), out var error);
+                if (error is not null) return Fail("desktop_isolated_failed", error, permanent: false);
+                return isolated;
+            }
+            finally
+            {
+                InputGate.Release();
+            }
+        }
 
         await InputGate.WaitAsync().ConfigureAwait(false);
         try
@@ -237,11 +338,21 @@ internal sealed class DesktopToolRuntime
         }
     }
 
+    private DesktopToolResult TypePosted(nint hWnd, string text, int? x, int? y)
+    {
+        using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+        if (DesktopWin32.IsMinimized(hWnd))
+            return Fail("desktop_window_minimized", "A minimized window cannot receive messages; restore it first.", permanent: false);
+        var receiver = ResolveTextTarget(hWnd, x, y);
+        DesktopWin32.PostChars(receiver, text);
+        return new DesktopToolResult { Ok = true, Applied = true, Mode = IsolatedMode, Chars = text.Length, WindowId = receiver };
+    }
+
     public async Task<DesktopToolResult> PressKeyAsync(DesktopPressKeyArgs args)
     {
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
         var mode = ResolveMode(args.Mode);
-        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast' or 'silent'.", permanent: true);
+        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
         if (string.IsNullOrWhiteSpace(args.Keys)) return Fail("desktop_input_failed", "desktop_press_key needs a keys value such as 'Enter' or 'ctrl+a'.", permanent: true);
         var hWnd = args.WindowId is { } value ? (nint)value : 0;
         if (hWnd != 0 && !IsAliveWindow(hWnd))
@@ -250,6 +361,33 @@ internal sealed class DesktopToolRuntime
         var keys = ParseKeyChord(args.Keys);
         if (keys is null)
             return Fail("desktop_input_failed", $"Unsupported key spec '{args.Keys}'.", permanent: true);
+
+        if (mode == IsolatedMode)
+        {
+            if (hWnd == 0)
+                return Fail("desktop_window_required", "isolated mode delivers keys as window messages: window_id is required.", permanent: true);
+            if (keys.Length > 1)
+                return Fail("desktop_silent_modifier_unsupported",
+                    "isolated mode cannot send key chords: posted messages do not maintain keyboard state.",
+                    permanent: true);
+            await InputGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var isolated = DesktopWin32.RunOnIsolatedDesktop(() =>
+                {
+                    using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+                    var receiver = ResolveTextTarget(hWnd, null, null);
+                    DesktopWin32.PostKey(receiver, keys[0]);
+                    return new DesktopToolResult { Ok = true, Applied = true, Mode = IsolatedMode, WindowId = receiver };
+                }, out var error);
+                if (error is not null) return Fail("desktop_isolated_failed", error, permanent: false);
+                return isolated;
+            }
+            finally
+            {
+                InputGate.Release();
+            }
+        }
 
         await InputGate.WaitAsync().ConfigureAwait(false);
         try
@@ -289,6 +427,24 @@ internal sealed class DesktopToolRuntime
         }
     }
 
+    /// <summary>
+    /// Launches a process onto the isolated desktop. This is how windows get there: a null
+    /// lpDesktop inherits the parent process's desktop, not the calling thread's, so apps
+    /// cannot "move" onto the isolated desktop after the fact (probe-measured, E8).
+    /// </summary>
+    public DesktopToolResult LaunchApp(DesktopLaunchArgs args)
+    {
+        if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
+        if (string.IsNullOrWhiteSpace(args.Command))
+            return Fail("desktop_input_failed", "desktop_launch_app needs a command (an executable path).", permanent: true);
+        if (args.Command.Length > 1024 || (args.Arguments?.Length ?? 0) > 4096)
+            return Fail("desktop_input_failed", "command/arguments are too long.", permanent: true);
+        var pid = DesktopWin32.LaunchOnIsolatedDesktop(args.Command, args.Arguments, args.WorkingDirectory, out var error);
+        if (pid == 0)
+            return Fail("desktop_isolated_failed", error ?? "CreateProcessW failed.", permanent: false);
+        return new DesktopToolResult { Ok = true, Applied = true, Mode = IsolatedMode, Pid = (int)pid };
+    }
+
     // ── mode resolution ────────────────────────────────────────────────────────
 
     /// <summary>
@@ -301,7 +457,7 @@ internal sealed class DesktopToolRuntime
     {
         if (requested is not null)
         {
-            if (requested is not (FastMode or SilentMode)) return null;
+            if (requested is not (FastMode or SilentMode or IsolatedMode)) return null;
             return requested;
         }
 
@@ -309,7 +465,7 @@ internal sealed class DesktopToolRuntime
         if (context is { ValueKind: JsonValueKind.String } value)
         {
             var setting = value.GetString();
-            if (setting is not (FastMode or SilentMode))
+            if (setting is not (FastMode or SilentMode or IsolatedMode))
                 throw new DesktopConfigurationException("desktop_config_invalid: execution-context setting desktop.mode must be 'fast' or 'silent'.");
             return setting;
         }
@@ -317,7 +473,7 @@ internal sealed class DesktopToolRuntime
         var environment = Environment.GetEnvironmentVariable("TINADEC_COMPUTER_USE_MODE");
         if (!string.IsNullOrEmpty(environment))
         {
-            if (environment is not (FastMode or SilentMode))
+            if (environment is not (FastMode or SilentMode or IsolatedMode))
                 throw new DesktopConfigurationException("desktop_config_invalid: TINADEC_COMPUTER_USE_MODE must be 'fast' or 'silent'.");
             return environment;
         }
@@ -351,7 +507,7 @@ internal sealed class DesktopToolRuntime
         {
             throw new DesktopConfigurationException($"desktop_config_invalid: {file} is not valid JSON ({exception.Message}).");
         }
-        if (value is not (FastMode or SilentMode))
+        if (value is not (FastMode or SilentMode or IsolatedMode))
             throw new DesktopConfigurationException($"desktop_config_invalid: default_mode in {file} must be 'fast' or 'silent', got '{value}'.");
         return value;
     }

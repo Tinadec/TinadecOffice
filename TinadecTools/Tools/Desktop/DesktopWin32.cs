@@ -558,6 +558,126 @@ internal static class DesktopWin32
         return builder.ToString();
     }
 
+    // ── isolated desktop (hidden desktop in the same session) ─────────────────
+
+    private const uint DesktopAllAccess = 0x01FF;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint OpenDesktop(string desktop, uint flags, bool inherit, uint access);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint CreateDesktop(string desktop, string? device, nint devmode, uint flags, uint access, nint sa);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseDesktop(nint desktop);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetThreadDesktop(nint desktop);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct STARTUPINFOW
+    {
+        public uint cb;
+        public string? lpReserved;
+        public nint lpDesktop;
+        public string? lpTitle;
+        public uint dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public ushort wShowWindow, cbReserved2;
+        public nint lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION { public nint hProcess, hThread; public uint dwProcessId, dwThreadId; }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcessW(nint appName, nint commandLine, nint processSa, nint threadSa, bool inheritHandles, uint creationFlags, nint environment, string? currentDirectory, ref STARTUPINFOW startup, out PROCESS_INFORMATION processInfo);
+
+    /// <summary>
+    /// The named hidden desktop used by isolated mode. Created on first use, reopened after.
+    /// Probe-measured (evidence/probe-*.log E1/E5): DWM composes its windows,
+    /// PrintWindow(PW_RENDERFULLCONTENT) captures them, PostMessage reaches them, and the
+    /// clipboard is shared with the default desktop through the common window station.
+    /// </summary>
+    internal const string IsolatedDesktopName = "TinadecIsolated";
+
+    internal static nint OpenOrCreateIsolatedDesktop()
+    {
+        var desk = OpenDesktop(IsolatedDesktopName, 0, false, DesktopAllAccess);
+        if (desk == 0) desk = CreateDesktop(IsolatedDesktopName, null, nint.Zero, 0, DesktopAllAccess, nint.Zero);
+        return desk;
+    }
+
+    /// <summary>
+    /// Runs an action on a fresh MTA thread attached to the isolated desktop. HWNDs are
+    /// desktop-scoped, so every window operation against the isolated desktop must run inside
+    /// this. MTA is required: the CLR initializes COM on STA threads at start-up and the STA
+    /// OLE window pins the thread to its current desktop — SetThreadDesktop then fails with
+    /// ERROR_BUSY (probe-measured).
+    /// </summary>
+    internal static T RunOnIsolatedDesktop<T>(Func<T> action, out string? error)
+    {
+        T result = default!;
+        string? failure = null;
+        var thread = new Thread(() =>
+        {
+            var desk = OpenOrCreateIsolatedDesktop();
+            if (desk == 0)
+            {
+                failure = $"OpenDesktop/CreateDesktop('{IsolatedDesktopName}') failed err={Marshal.GetLastWin32Error()}";
+                return;
+            }
+            try
+            {
+                if (!SetThreadDesktop(desk))
+                {
+                    failure = $"SetThreadDesktop failed err={Marshal.GetLastWin32Error()}";
+                    return;
+                }
+                result = action();
+            }
+            catch (Exception exception)
+            {
+                failure = exception.Message;
+            }
+        });
+        thread.IsBackground = true;
+        thread.Start();
+        thread.Join();
+        error = failure;
+        return result;
+    }
+
+    /// <summary>
+    /// Launches a process onto the isolated desktop (STARTUPINFO.lpDesktop). The desktop must
+    /// be named explicitly: a null lpDesktop inherits the parent PROCESS's desktop, not the
+    /// calling thread's (probe-measured, E8).
+    /// </summary>
+    internal static uint LaunchOnIsolatedDesktop(string command, string? arguments, string? workingDirectory, out string? error)
+    {
+        error = null;
+        var desk = OpenOrCreateIsolatedDesktop();
+        if (desk == 0)
+        {
+            error = $"OpenDesktop/CreateDesktop('{IsolatedDesktopName}') failed err={Marshal.GetLastWin32Error()}";
+            return 0;
+        }
+
+        var commandLine = Marshal.StringToHGlobalUni(arguments is { Length: > 0 } ? $"\"{command}\" {arguments}" : $"\"{command}\"");
+        var desktop = Marshal.StringToHGlobalUni(IsolatedDesktopName);
+        try
+        {
+            var startup = default(STARTUPINFOW);
+            startup.cb = (uint)Marshal.SizeOf<STARTUPINFOW>();
+            startup.lpDesktop = desktop;
+            if (!CreateProcessW(nint.Zero, commandLine, nint.Zero, nint.Zero, false, 0x08000000 /* CREATE_NO_WINDOW */, nint.Zero,
+                    workingDirectory, ref startup, out var info))
+            {
+                error = $"CreateProcessW failed err={Marshal.GetLastWin32Error()}";
+                return 0;
+            }
+            CloseHandle(info.hThread);
+            CloseHandle(info.hProcess);
+            return info.dwProcessId;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(commandLine);
+            Marshal.FreeHGlobal(desktop);
+        }
+    }
+
     // ── PNG encoder ────────────────────────────────────────────────────────────
 
     /// <summary>
