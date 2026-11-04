@@ -251,6 +251,108 @@ public sealed class DesktopToolRuntimeTests : IDisposable
         Assert.True(found, "SendInput text never appeared in the edit control");
     }
 
+    // ── isolated mode (hidden desktop in the same session) ─────────────────────
+
+    [Fact]
+    public void ResolveMode_IsolatedComesFromConfigFile()
+    {
+        var home = TempHome();
+        File.WriteAllText(Path.Combine(home, "config", "computer-use.json"), """{"default_mode": "isolated"}""");
+        var runtime = new DesktopToolRuntime(() => home);
+        Assert.Equal(DesktopToolRuntime.IsolatedMode, runtime.ResolveMode(null));
+    }
+
+    [Fact]
+    public async Task Click_IsolatedModeRequiresWindowId()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        var result = await runtime.ClickAsync(new DesktopClickArgs { X = 10, Y = 10, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_window_required", result.Code);
+    }
+
+    [Fact]
+    public async Task Screenshot_IsolatedModeRequiresWindowId()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        var result = runtime.Screenshot(new DesktopScreenshotArgs { Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_window_required", result.Code);
+    }
+
+    [Fact]
+    public async Task PressKey_IsolatedChordIsRejected()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new TestWindow();
+        var result = await runtime.PressKeyAsync(new DesktopPressKeyArgs { Keys = "ctrl+a", WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_silent_modifier_unsupported", result.Code);
+    }
+
+    /// <summary>
+    /// End-to-end isolated chain on a real app: launch winver onto the hidden desktop,
+    /// find its window there, capture it, read its text, then kill the process. Nothing
+    /// ever appears on the user's screen.
+    /// </summary>
+    [Fact]
+    public async Task IsolatedChain_LaunchListScreenshotRead()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+
+        var launch = runtime.LaunchApp(new DesktopLaunchArgs { Command = "winver.exe" });
+        Assert.True(launch.Ok, launch.Message);
+        Assert.NotNull(launch.Pid);
+        Assert.True(launch.Pid!.Value > 0);
+
+        try
+        {
+            // the dialog needs a moment to appear on the isolated desktop
+            DesktopWindowInfo? row = null;
+            for (var attempt = 0; attempt < 40 && row is null; attempt++)
+            {
+                var list = runtime.ListWindows(new DesktopListWindowsArgs { Mode = DesktopToolRuntime.IsolatedMode, Limit = 200 });
+                Assert.True(list.Ok, list.Message);
+                row = list.Windows?.FirstOrDefault(w => w.Pid == launch.Pid);
+                if (row is null) Thread.Sleep(150);
+            }
+            Assert.NotNull(row);
+            Assert.NotNull(row!.Bounds);
+            Assert.True(row.Bounds!.Width > 0);
+
+            var shot = runtime.Screenshot(new DesktopScreenshotArgs { WindowId = row.WindowId, Mode = DesktopToolRuntime.IsolatedMode });
+            Assert.True(shot.Ok, shot.Message);
+            Assert.True(File.Exists(shot.Path));
+            Assert.True(shot.Width > 0 && shot.Height > 0);
+
+            var text = runtime.ReadText(new DesktopReadTextArgs { WindowId = row.WindowId, Mode = DesktopToolRuntime.IsolatedMode });
+            Assert.True(text.Ok, text.Message);
+            Assert.NotNull(text.Texts);
+            Assert.Contains(text.Texts!, t => !string.IsNullOrEmpty(t.Text));
+        }
+        finally
+        {
+            try
+            {
+                using var process = System.Diagnostics.Process.GetProcessById(launch.Pid!.Value);
+                process.Kill();
+            }
+            catch (ArgumentException)
+            {
+                // already gone
+            }
+        }
+    }
+
+    [Fact]
+    public void LaunchApp_RejectsEmptyCommand()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        var result = runtime.LaunchApp(new DesktopLaunchArgs { Command = " " });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_input_failed", result.Code);
+    }
+
     // ── manifest ───────────────────────────────────────────────────────────────
 
     [Fact]
@@ -276,7 +378,7 @@ public sealed class DesktopToolRuntimeTests : IDisposable
         Assert.Equal("low", screenshot.GetProperty("risk").GetString());
         Assert.Equal("safe", screenshot.GetProperty("retry_safety").GetString());
 
-        foreach (var actionTool in new[] { DesktopToolRegistration.ClickToolId, DesktopToolRegistration.TypeToolId, DesktopToolRegistration.PressKeyToolId })
+        foreach (var actionTool in new[] { DesktopToolRegistration.ClickToolId, DesktopToolRegistration.TypeToolId, DesktopToolRegistration.PressKeyToolId, DesktopToolRegistration.LaunchAppToolId })
         {
             var tool = tools[actionTool];
             Assert.True(tool.GetProperty("requires_approval").GetBoolean(), actionTool);
