@@ -20,32 +20,39 @@ public static class DesktopToolRegistration
     public const string ClickToolId = "desktop_click";
     public const string TypeToolId = "desktop_type";
     public const string PressKeyToolId = "desktop_press_key";
+    public const string LaunchAppToolId = "desktop_launch_app";
 
     private const string ListWindowsSchema =
-        """{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200},"include_all":{"type":"boolean"}},"additionalProperties":false}""";
+        """{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200},"include_all":{"type":"boolean"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"additionalProperties":false}""";
 
     private const string ScreenshotSchema =
-        """{"type":"object","properties":{"window_id":{"type":"integer"}},"additionalProperties":false}""";
+        """{"type":"object","properties":{"window_id":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"additionalProperties":false}""";
 
     private const string ReadTextSchema =
-        """{"type":"object","properties":{"window_id":{"type":"integer"},"max_chars":{"type":"integer","minimum":1,"maximum":16384}},"required":["window_id"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"window_id":{"type":"integer"},"max_chars":{"type":"integer","minimum":1,"maximum":16384},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
 
     private const string ClickSchema =
-        """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"window_id":{"type":"integer"},"button":{"type":"string","enum":["left","right","middle"]},"count":{"type":"integer","minimum":1,"maximum":3},"mode":{"type":"string","enum":["fast","silent"]}},"required":["x","y"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"window_id":{"type":"integer"},"button":{"type":"string","enum":["left","right","middle"]},"count":{"type":"integer","minimum":1,"maximum":3},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["x","y"],"additionalProperties":false}""";
 
     private const string TypeSchema =
-        """{"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":4096},"window_id":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent"]}},"required":["text"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":4096},"window_id":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["text"],"additionalProperties":false}""";
 
     private const string PressKeySchema =
-        """{"type":"object","properties":{"keys":{"type":"string","minLength":1,"maxLength":64},"window_id":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent"]}},"required":["keys"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"keys":{"type":"string","minLength":1,"maxLength":64},"window_id":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["keys"],"additionalProperties":false}""";
+
+    private const string LaunchAppSchema =
+        """{"type":"object","properties":{"command":{"type":"string","minLength":1,"maxLength":1024},"arguments":{"type":"string","maxLength":4096},"working_directory":{"type":"string","maxLength":1024}},"required":["command"],"additionalProperties":false}""";
 
     private const string ModeParameterDoc =
         "mode selects how the input is delivered: 'fast' (default) focuses the target window and sends real keyboard/mouse "
-        + "input - it will interrupt the user but every application responds; 'silent' writes messages directly to the target "
-        + "window without changing focus or moving the cursor, but only windows that process posted messages (standard Win32 "
-        + "controls do; many games and custom-drawn apps do not) respond. The effective default comes from "
+        + "input - it will interrupt the user but every application responds; 'silent' writes messages directly to a target "
+        + "window on the user's desktop without changing focus or moving the cursor, but only windows that process posted "
+        + "messages (standard Win32 controls do; many games and custom-drawn apps do not) respond; 'isolated' targets a "
+        + "window on the hidden TinadecIsolated desktop (see desktop_launch_app) with the same message-direct mechanics, so "
+        + "the user never sees the window at all. Real keyboard/mouse input cannot reach the isolated desktop - measured: "
+        + "SendInput is rejected from a non-input desktop. The effective default comes from "
         + "TINADEC_HOME/config/computer-use.json (default_mode) when the argument is omitted. Never downgrade fast to silent "
-        + "on your own: ask the user when a silent action fails.";
+        + "or isolated on your own: ask the user when a silent action fails.";
 
     private const string ListWindowsDescription =
         "List the top-level windows on the user's desktop, newest Z order first: window_id, pid, process name, title, class "
@@ -77,9 +84,17 @@ public static class DesktopToolRegistration
 
     private const string PressKeyDescription =
         "Press a key or chord such as 'Enter', 'ctrl+a' or 'alt+f4'. Named keys: Enter, Tab, Escape, Backspace, Delete, "
-        + "Space, Up, Down, Left, Right, Home, End, PageUp, PageDown, F1-F12; modifiers ctrl/shift/alt/win. In silent mode "
-        + "only single keys (no chords) can be delivered, and window_id is required. Approval-gated. " + ModeParameterDoc
-        + " Windows only.";
+        + "Space, Up, Down, Left, Right, Home, End, PageUp, PageDown, F1-F12; modifiers ctrl/shift/alt/win. In silent and "
+        + "isolated modes only single keys (no chords) can be delivered, and window_id is required. Approval-gated. "
+        + ModeParameterDoc + " Windows only.";
+
+    private const string LaunchAppDescription =
+        "Launch a process onto the hidden TinadecIsolated desktop and return its pid. This is the only way windows get "
+        + "there: apps cannot move onto the isolated desktop after starting. The user never sees these windows; inspect "
+        + "them with desktop_list_windows/desktop_screenshot/desktop_read_text (mode 'isolated') and drive them with "
+        + "desktop_click/desktop_type (mode 'isolated'). Measured boundaries: the isolated desktop renders and captures "
+        + "fine (DWM composes it), the clipboard is shared with the user's desktop, but real keyboard/mouse input cannot "
+        + "reach it and GPU swapchains report occluded Presents. Approval-gated. Windows only.";
 
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private static int _registered;
@@ -150,6 +165,17 @@ public static class DesktopToolRegistration
             mutatesWorkspace: false,
             retrySafety: "unsafe",
             confirmationFields: ["window_id", "keys", "mode"]);
+
+        ToolRegistry.Register(
+            LaunchAppToolId,
+            HandleLaunchAppAsync,
+            requiresApproval: true,
+            description: LaunchAppDescription,
+            inputSchemaJson: LaunchAppSchema,
+            risk: "high",
+            mutatesWorkspace: false,
+            retrySafety: "unsafe",
+            confirmationFields: ["command", "arguments"]);
     }
 
     private static async ValueTask<ToolCallResponse<JsonElement>> HandleListWindowsAsync(
@@ -201,6 +227,15 @@ public static class DesktopToolRegistration
         if (!request.Approved) return NotApproved(request.ToolCallId);
         var args = Deserialize(request.Params, DesktopJsonContext.Default.DesktopPressKeyArgs);
         return await RunAsync(request, () => Runtime().PressKeyAsync(args), cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<ToolCallResponse<JsonElement>> HandleLaunchAppAsync(
+        ToolCallRequest<JsonElement> request,
+        CancellationToken cancellationToken)
+    {
+        if (!request.Approved) return NotApproved(request.ToolCallId);
+        var args = Deserialize(request.Params, DesktopJsonContext.Default.DesktopLaunchArgs);
+        return await RunAsync(request, () => Task.FromResult(Runtime().LaunchApp(args)), cancellationToken).ConfigureAwait(false);
     }
 
     private static DesktopToolRuntime Runtime() => DesktopToolRuntime.Default;
