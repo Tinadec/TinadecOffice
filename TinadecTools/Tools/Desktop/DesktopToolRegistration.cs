@@ -76,7 +76,13 @@ public static class DesktopToolRegistration
     private const string ClickDescription =
         "Click at a position. With window_id, x/y are client-relative coordinates of that window (origin at its top-left "
         + "client corner); without it they are virtual-screen absolute coordinates (negative is valid for monitors left of "
-        + "the primary). Approval-gated. " + ModeParameterDoc + " Write actions are never retried automatically. Windows only.";
+        + "the primary). When the host has enabled the coordinate-compensation layer (off by default), x/y are instead read "
+        + "as the coordinates you report against the last desktop_screenshot image you were shown and the tool maps them "
+        + "onto the target itself; the result then carries a `compensation` object and a `verification` object (verified / "
+        + "failed / unverified, with before/after screenshot paths). In that mode an unmeasured model or image shape "
+        + "refuses the click (desktop_coordinate_profile_missing) rather than guessing, and a click without a prior "
+        + "desktop_screenshot in the same run is refused too. Approval-gated. " + ModeParameterDoc
+        + " Write actions are never retried automatically. Windows only.";
 
     private const string TypeDescription =
         "Type literal text (up to 4096 characters; Unicode is sent as-is, no IME composition). In fast mode the target "

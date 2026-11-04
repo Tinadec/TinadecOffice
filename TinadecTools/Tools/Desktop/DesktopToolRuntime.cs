@@ -23,6 +23,14 @@ namespace TinadecTools.Tools.Desktop;
 /// TINADEC_HOME/config/computer-use.json `default_mode` key, and finally `fast`.
 /// A broken config fails closed (desktop_config_invalid) rather than silently
 /// upgrading silent to fast.
+///
+/// On top of that, desktop_click carries an opt-in coordinate-compensation layer for vision
+/// models that report clicks in a rescaled version of the image they were shown. It is off
+/// unless the host enables it (execution-context setting or computer-use.json
+/// `coordinate_compensation`), it maps coordinates only through MEASURED per-model rows in
+/// TINADEC_HOME/config/coordinate-profiles.json (missing rows refuse: fail-closed), and every
+/// compensated click is followed by a semantic verification that reads the window's text
+/// before and after, reporting verified / failed / unverified with before/after screenshots.
 /// </summary>
 internal sealed class DesktopToolRuntime
 {
@@ -54,6 +62,38 @@ internal sealed class DesktopToolRuntime
 
     private readonly Func<string?> _homeProvider;
     private long _screenshotCounter;
+
+    // ── served-capture tracking (input for coordinate compensation) ────────────
+    // The compensation layer needs the shape of the image the model actually saw — the
+    // downscaled ctx copy, not the full capture. The runtime itself served that image, so
+    // it remembers the most recent one per run; a click without a served capture refuses
+    // instead of compensating against a shape it cannot know. Key "" covers callers with
+    // no execution context (tests, harnesses).
+
+    /// <summary>The most recent capture handed to the model for one run.</summary>
+    internal sealed record ServedCapture(long? WindowId, int FullWidth, int FullHeight, int ContextWidth, int ContextHeight, string ContextPath);
+
+    private readonly object _captureLock = new();
+    private readonly Dictionary<string, ServedCapture> _lastCapture = new();
+    private readonly Queue<string> _captureOrder = new();
+    private const int RememberedCaptures = 64;
+
+    internal ServedCapture? LastServedCapture(string? runId = null)
+    {
+        lock (_captureLock) return _lastCapture.TryGetValue(runId ?? ToolExecutionContext.Current?.RunId ?? "", out var capture) ? capture : null;
+    }
+
+    private void RememberCapture(ServedCapture capture)
+    {
+        var key = ToolExecutionContext.Current?.RunId ?? "";
+        lock (_captureLock)
+        {
+            if (_lastCapture.TryAdd(key, capture)) _captureOrder.Enqueue(key);
+            else _lastCapture[key] = capture;
+            while (_captureOrder.Count > RememberedCaptures)
+                _lastCapture.Remove(_captureOrder.Dequeue());
+        }
+    }
 
     public static DesktopToolRuntime Default { get; } = new();
 
@@ -202,6 +242,42 @@ internal sealed class DesktopToolRuntime
         if (hWnd != 0 && !IsAliveWindow(hWnd))
             return Fail("desktop_window_not_found", $"No window with window_id {args.WindowId}.", permanent: true);
 
+        // ── coordinate compensation (host-opt-in, fail-closed) ────────────────────
+        // Some vision models report clicks in a rescaled version of the image they were
+        // shown (deepseek-v4.1-flash answers ≈ shown-image × 0.57, measured). When the
+        // host enables this layer, the reported coordinates are mapped onto the window
+        // through a MEASURED per-model profile; anything unmeasured refuses the click,
+        // because a guessed scale moves clicks by a quarter screen without any error.
+        var compensation = ResolveCoordinateCompensation();
+        DesktopCompensationInfo? compensationInfo = null;
+        ServedCapture? servedCapture = null;
+        DesktopTextInfo[]? beforeTexts = null;
+        if (compensation is { } config)
+        {
+            var (error, plan) = PlanCoordinateCompensation(config, args);
+            if (error is not null) return error;
+            args = plan!.Args;
+            compensationInfo = plan.Info;
+            servedCapture = plan.Capture;
+            // pre-click text baseline: the verdict after the click compares against this
+            if (hWnd != 0) beforeTexts = ReadTextsForVerification(hWnd, mode);
+        }
+
+        var result = await DeliverClickAsync(args, mode, hWnd, button, count).ConfigureAwait(false);
+        if (compensationInfo is null) return result;
+
+        result.Compensation = compensationInfo;
+        if (!result.Ok) return result;
+        result.Verification = VerifyAfterClick(hWnd, mode, beforeTexts, servedCapture!);
+        result.Message = result.Verification.Message;
+        return result;
+    }
+
+    /// <summary>The delivery half of a click, unchanged from the pre-compensation era so the
+    /// default path behaves exactly as before: isolated posts on the isolated desktop, fast
+    /// sends real input after focusing, silent posts to the resolved receiver.</summary>
+    private async Task<DesktopToolResult> DeliverClickAsync(DesktopClickArgs args, string mode, nint hWnd, string button, int count)
+    {
         if (mode == IsolatedMode)
         {
             if (hWnd == 0)
@@ -209,7 +285,7 @@ internal sealed class DesktopToolRuntime
             await InputGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                var isolated = DesktopWin32.RunOnIsolatedDesktop(() => ClickPosted(hWnd, args.X.Value, args.Y.Value, button, count), out var error);
+                var isolated = DesktopWin32.RunOnIsolatedDesktop(() => ClickPosted(hWnd, args.X!.Value, args.Y!.Value, button, count), out var error);
                 if (error is not null) return Fail("desktop_isolated_failed", error, permanent: false);
                 return isolated;
             }
@@ -223,7 +299,7 @@ internal sealed class DesktopToolRuntime
         try
         {
             using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
-            var (screenX, screenY) = ResolveScreenPoint(hWnd, args.X.Value, args.Y.Value);
+            var (screenX, screenY) = ResolveScreenPoint(hWnd, args.X!.Value, args.Y!.Value);
             if (mode == FastMode)
             {
                 if (hWnd != 0)
@@ -258,6 +334,215 @@ internal sealed class DesktopToolRuntime
         {
             InputGate.Release();
         }
+    }
+
+    // ── coordinate compensation ────────────────────────────────────────────────
+
+    /// <summary>The model/protocol identity the host declared for compensation. The host owns
+    /// this because only it knows which chat model is producing coordinates; a wrong
+    /// declaration is bounded by the post-click semantic verification, which is the backstop
+    /// every compensated click runs.</summary>
+    internal sealed record CoordinateCompensationConfig(string Model, string Protocol);
+
+    /// <summary>
+    /// Resolves whether the compensation layer is on. Precedence mirrors mode resolution:
+    /// the frozen execution-context setting desktop.coordinate_compensation
+    /// {enabled, model, protocol}, then TINADEC_HOME/config/computer-use.json's
+    /// coordinate_compensation object. Absent or enabled=false means off; anything malformed
+    /// throws, because an enabled-but-unreadable compensation must never fall back to raw
+    /// coordinates that silently click the wrong place.
+    /// </summary>
+    internal CoordinateCompensationConfig? ResolveCoordinateCompensation()
+    {
+        var setting = ToolExecutionContext.Current?.Setting("desktop", "coordinate_compensation");
+        if (setting is { ValueKind: JsonValueKind.Object } node)
+            return ParseCompensationSection(node, "execution-context setting desktop.coordinate_compensation");
+        if (setting is not null && setting.Value.ValueKind is not JsonValueKind.Null)
+            throw new DesktopConfigurationException("desktop_config_invalid: execution-context setting desktop.coordinate_compensation must be an object {enabled, model, protocol}.");
+
+        var home = _homeProvider();
+        if (string.IsNullOrWhiteSpace(home)) return null;
+        var file = Path.Combine(home, "config", "computer-use.json");
+        if (!File.Exists(file)) return null;
+        JsonElement root;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(file));
+            root = document.RootElement.Clone();
+        }
+        catch (JsonException exception)
+        {
+            throw new DesktopConfigurationException($"desktop_config_invalid: {file} is not valid JSON ({exception.Message}).");
+        }
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("coordinate_compensation", out var section) || section.ValueKind is JsonValueKind.Null)
+            return null;
+        if (section.ValueKind != JsonValueKind.Object)
+            throw new DesktopConfigurationException($"desktop_config_invalid: coordinate_compensation in {file} must be an object {{enabled, model, protocol}}.");
+        return ParseCompensationSection(section, $"coordinate_compensation in {file}");
+    }
+
+    private static CoordinateCompensationConfig? ParseCompensationSection(JsonElement node, string source)
+    {
+        if (!node.TryGetProperty("enabled", out var enabled) || enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new DesktopConfigurationException($"desktop_config_invalid: {source}.enabled must be a boolean.");
+        if (enabled.ValueKind == JsonValueKind.False) return null;
+        var model = node.TryGetProperty("model", out var modelNode) && modelNode.ValueKind == JsonValueKind.String ? modelNode.GetString()!.Trim() : null;
+        var protocol = node.TryGetProperty("protocol", out var protocolNode) && protocolNode.ValueKind == JsonValueKind.String ? protocolNode.GetString()!.Trim() : null;
+        if (string.IsNullOrEmpty(model) || string.IsNullOrEmpty(protocol))
+            throw new DesktopConfigurationException($"desktop_config_invalid: {source} is enabled and needs non-empty model and protocol (the model whose coordinates are being compensated, and the wire protocol it speaks).");
+        return new CoordinateCompensationConfig(model!, protocol!);
+    }
+
+    /// <summary>
+    /// Maps the reported coordinates onto the click target. The chain is:
+    /// reported → shown image (the ctx copy the model actually saw, × the measured profile
+    /// scale) → full capture (× full/context, 1 when no downscale happened) → client area
+    /// (minus the non-client frame the capture includes). Every failure is a refusal, never
+    /// a guess: no screenshot on record, a click on a window other than the captured one, or
+    /// no measured profile row for this model and image shape.
+    /// </summary>
+    private (DesktopToolResult? Error, CompensationPlan? Plan) PlanCoordinateCompensation(CoordinateCompensationConfig config, DesktopClickArgs args)
+    {
+        ServedCapture? capture;
+        lock (_captureLock) _lastCapture.TryGetValue(ToolExecutionContext.Current?.RunId ?? "", out capture);
+        if (capture is null)
+            return (Fail("desktop_capture_context_missing",
+                "coordinate compensation is enabled, but this run has no desktop_screenshot on record. Take a desktop_screenshot of the target first: its image is the coordinate space your x/y are read against.",
+                permanent: true), null);
+
+        var clickedWindow = args.WindowId;
+        if ((clickedWindow ?? 0) != (capture.WindowId ?? 0))
+            return (Fail("desktop_compensation_target_mismatch",
+                $"coordinate compensation is bound to the last captured target (window_id {capture.WindowId ?? 0}), but the click targets window_id {clickedWindow ?? 0}. Click the window you captured, or take a fresh desktop_screenshot of the new target.",
+                permanent: true), null);
+
+        var store = CoordinateProfileStore.Load(_homeProvider());
+        var aspect = capture.ContextWidth / (double)capture.ContextHeight;
+        var shortEdge = Math.Min(capture.ContextWidth, capture.ContextHeight);
+        var row = store.Find(config.Model, config.Protocol, aspect, shortEdge);
+        if (row is null)
+            return (Fail("desktop_coordinate_profile_missing",
+                $"no measured coordinate profile for model '{config.Model}' protocol '{config.Protocol}' covering aspect {aspect:0.##} (short edge {shortEdge}). "
+                + $"{store.DescribeCoverage(config.Model, config.Protocol)} Measure the missing shape with the clickloop harness (--size=WxH) and add the row to {store.Path}; unmeasured shapes refuse to click rather than guess a scale.",
+                permanent: true), null);
+
+        var imageX = (int)Math.Round(args.X!.Value * row.ScaleX * (capture.FullWidth / (double)capture.ContextWidth));
+        var imageY = (int)Math.Round(args.Y!.Value * row.ScaleY * (capture.FullHeight / (double)capture.ContextHeight));
+        int clientX, clientY;
+        if (clickedWindow is { } id)
+        {
+            var (offsetX, offsetY) = ClientOriginInImage((nint)id);
+            clientX = imageX - offsetX;
+            clientY = imageY - offsetY;
+        }
+        else
+        {
+            // a screen capture has no frame: image space is the virtual screen itself
+            clientX = imageX;
+            clientY = imageY;
+        }
+
+        Logger.Info(
+            "desktop_click compensation: {Model}/{Protocol} aspect {Aspect:0.##} short edge {Short} scaled ({FromX},{FromY}) -> ({ToX},{ToY}) via {Profile}",
+            config.Model, config.Protocol, aspect, shortEdge, args.X.Value, args.Y.Value, clientX, clientY, store.Path);
+
+        var compensated = new DesktopClickArgs
+        {
+            X = clientX, Y = clientY, WindowId = args.WindowId, Button = args.Button, Count = args.Count, Mode = args.Mode,
+        };
+        var info = new DesktopCompensationInfo
+        {
+            Model = row.Model,
+            Protocol = row.Protocol,
+            ScaleX = row.ScaleX,
+            ScaleY = row.ScaleY,
+            From = new DesktopPointInfo { X = args.X.Value, Y = args.Y.Value },
+            To = new DesktopPointInfo { X = clientX, Y = clientY },
+        };
+        return (null, new CompensationPlan(compensated, info, capture));
+    }
+
+    private sealed record CompensationPlan(DesktopClickArgs Args, DesktopCompensationInfo Info, ServedCapture Capture);
+
+    /// <summary>
+    /// Where the client area starts inside a window capture: the capture includes the
+    /// non-client frame, so a point computed in image space must shift by this to become a
+    /// client point. Measured under the same PMv2 scope the capture used, so both are physical.
+    /// </summary>
+    private static (int X, int Y) ClientOriginInImage(nint hWnd)
+    {
+        using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+        var (x, y, _, _) = DesktopWin32.WindowBounds(hWnd);
+        var client = DesktopWin32.ClientToScreen(hWnd, 0, 0);
+        return (client.X - x, client.Y - y);
+    }
+
+    // ── semantic verification of compensated clicks ─────────────────────────────
+
+    internal const string VerificationVerified = "verified";
+    internal const string VerificationFailed = "failed";
+    internal const string VerificationUnverified = "unverified";
+
+    private DesktopTextInfo[]? ReadTextsForVerification(nint hWnd, string mode)
+    {
+        var read = ReadText(new DesktopReadTextArgs { WindowId = hWnd, Mode = mode, MaxChars = 4096 });
+        return read.Ok ? read.Texts : null;
+    }
+
+    /// <summary>
+    /// Judges a compensated click by the application's own words: the window's texts were
+    /// read before the click, and are polled after it (posted input is asynchronous).
+    /// Text change = verified; readable but unchanged = failed (a miss, or a click with no
+    /// text-level effect - the screenshots say which); nothing readable = unverified, which
+    /// is reported as exactly that. A fresh after-capture is saved either way so the caller
+    /// can see what actually happened.
+    /// </summary>
+    private DesktopVerificationInfo VerifyAfterClick(nint hWnd, string mode, DesktopTextInfo[]? beforeTexts, ServedCapture capture)
+    {
+        DesktopVerificationInfo Verdict(string status, string message)
+        {
+            var afterShot = hWnd != 0
+                ? Screenshot(new DesktopScreenshotArgs { WindowId = hWnd, Mode = mode })
+                : null;
+            return new DesktopVerificationInfo
+            {
+                Status = status,
+                BeforePath = capture.ContextPath,
+                AfterPath = afterShot is { Ok: true } ? afterShot.Path : null,
+                Message = message,
+            };
+        }
+
+        if (hWnd == 0)
+            return Verdict(VerificationUnverified,
+                "click delivered at screen coordinates; there is no single window to read text from, so the click is unverified. Take a desktop_screenshot to check what changed.");
+        if (beforeTexts is null || beforeTexts.Length == 0)
+            return Verdict(VerificationUnverified,
+                "click delivered, but unverified: the target window has no readable text, so the click cannot be judged semantically. Inspect the after screenshot before assuming the click landed.");
+
+        // posted input settles asynchronously: poll for a text change instead of reading
+        // once and racing the message pump. 24 x 50ms bounds a no-op click at ~1.2s while
+        // giving a loaded message pump room to process the click before the verdict.
+        for (var attempt = 0; attempt < 24; attempt++)
+        {
+            var after = ReadTextsForVerification(hWnd, mode);
+            if (after is not null && TextsChanged(beforeTexts, after))
+                return Verdict(VerificationVerified,
+                    "click delivered and verified: the target window's text changed, so the application responded.");
+            Thread.Sleep(50);
+        }
+        return Verdict(VerificationFailed,
+            "click delivered but NOT verified: the window's readable text did not change. Either the click missed, or it hit something that produces no text change. Compare the before/after screenshots before retrying with adjusted coordinates.");
+    }
+
+    private static bool TextsChanged(DesktopTextInfo[] before, DesktopTextInfo[] after)
+    {
+        if (before.Length != after.Length) return true;
+        var beforeTexts = before.ToDictionary(t => t.WindowId, t => t.Text ?? "");
+        foreach (var item in after)
+            if (!beforeTexts.TryGetValue(item.WindowId, out var text) || !string.Equals(text, item.Text ?? "", StringComparison.Ordinal))
+                return true;
+        return false;
     }
 
     /// <summary>
@@ -625,6 +910,10 @@ internal sealed class DesktopToolRuntime
             contextPath = Path.Combine(directory, $"desktop-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{counter}-ctx.png");
             File.WriteAllBytes(contextPath, DesktopWin32.PngEncoder.Encode(context, contextWidth, contextHeight));
         }
+
+        // the shape of THIS image is what coordinate compensation must map onto, so it is
+        // remembered per run at the moment it is served
+        RememberCapture(new ServedCapture(window?.WindowId, width, height, contextWidth, contextHeight, contextPath));
 
         return new DesktopToolResult
         {
