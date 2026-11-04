@@ -1,0 +1,610 @@
+using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
+using TinadecTools.Tools.Desktop;
+
+namespace TinadecTools.Tests;
+
+/// <summary>
+/// Coordinate-compensation tests. The profile rows here are synthetic (clean numbers like a
+/// scale of exactly 2) so the math is asserted exactly; the real measured rows for production
+/// models live in the design doc and in TINADEC_HOME/config/coordinate-profiles.json on the
+/// machines that enable the layer. Every fail-closed path must refuse the click BEFORE any
+/// input is delivered - the button windows count their own clicks, so a refused click is
+/// provable: the count stays zero.
+///
+/// The windows live on the TinadecIsolated desktop (the clickloop harness pattern): the
+/// user's desktop is full of foreign windows that steal WindowFromPoint hit-tests, while the
+/// isolated desktop holds only what the test put there. The whole chain - isolated capture,
+/// compensation, isolated message-direct click, isolated read-back - is the same one the
+/// real-machine measurements exercised.
+/// </summary>
+public sealed class DesktopCoordinateCompensationTests
+{
+    private static string TempHome()
+    {
+        var home = Path.Combine(Path.GetTempPath(), "tinadec-desktop-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(home, "config"));
+        return home;
+    }
+
+    private static void EnableCompensation(string home, string model = "test-model", string protocol = "test-protocol") =>
+        File.WriteAllText(Path.Combine(home, "config", "computer-use.json"),
+            "{\"default_mode\": \"isolated\", \"coordinate_compensation\": {\"enabled\": true, \"model\": \"" + model
+            + "\", \"protocol\": \"" + protocol + "\"}}");
+
+    private static void WriteProfiles(string home, string json) =>
+        File.WriteAllText(Path.Combine(home, "config", "coordinate-profiles.json"), json);
+
+    private const string CoveringProfile =
+        """{"schema_version": 1, "profiles": [{"model": "test-model", "protocol": "test-protocol", "aspect_min": 0.5, "aspect_max": 3.6, "short_edge_min": 100, "short_edge_max": 1600, "scale_x": 2.0, "scale_y": 2.0, "samples": 30, "hit_rate": 1.0, "tested": "2026-11-05"}]}""";
+
+    // ── off by default: nothing about the result shape changes ─────────────────
+
+    [Fact]
+    public async Task Compensation_OffByDefault_ClickIsUnchanged()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ButtonWindow();
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = 120, Y = 50, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.True(click.Ok, click.Message);
+        Assert.Null(click.Compensation);
+        Assert.Null(click.Verification);
+        window.AssertClicks(1);
+    }
+
+    // ── fail-closed: every unmeasured or malformed path refuses before clicking ─
+
+    [Fact]
+    public async Task Compensation_EnabledWithoutProfileStoreFailsClosed()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow();
+        Assert.True(window.Screenshot(runtime).Ok);
+
+        await Assert.ThrowsAsync<DesktopToolRuntime.DesktopConfigurationException>(() =>
+            runtime.ClickAsync(new DesktopClickArgs { X = 120, Y = 50, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode }));
+        window.AssertClicks(0);
+    }
+
+    [Fact]
+    public async Task Compensation_MalformedProfileStoreFailsClosed()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, "{ not json");
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow();
+        Assert.True(window.Screenshot(runtime).Ok);
+
+        await Assert.ThrowsAsync<DesktopToolRuntime.DesktopConfigurationException>(() =>
+            runtime.ClickAsync(new DesktopClickArgs { X = 120, Y = 50, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode }));
+        window.AssertClicks(0);
+    }
+
+    /// <summary>The profile-required assertion: a model that was never measured must refuse
+    /// the click with an error that says what is missing and how to measure it.</summary>
+    [Fact]
+    public async Task Compensation_UnmeasuredModelIsRefusedWithGuidance()
+    {
+        var home = TempHome();
+        EnableCompensation(home, model: "never-measured-model");
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow();
+        Assert.True(window.Screenshot(runtime).Ok);
+
+        var result = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = 120, Y = 50, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_coordinate_profile_missing", result.Code);
+        Assert.Contains("never-measured-model", result.Message, StringComparison.Ordinal);
+        Assert.Contains("clickloop", result.Message, StringComparison.Ordinal);
+        Assert.Null(result.Compensation);
+        window.AssertClicks(0);
+    }
+
+    [Fact]
+    public async Task Compensation_UnmeasuredImageShapeIsRefused()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        // the row covers aspect 0.5–1.6 only; a wide window's capture is ~2.1
+        WriteProfiles(home,
+            """{"schema_version": 1, "profiles": [{"model": "test-model", "protocol": "test-protocol", "aspect_min": 0.5, "aspect_max": 1.6, "short_edge_min": 100, "short_edge_max": 1600, "scale_x": 2.0, "scale_y": 2.0, "samples": 30, "hit_rate": 1.0, "tested": "2026-11-05"}]}""");
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow(width: 900, height: 400);
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+        Assert.True(shot.Width!.Value / (double)shot.Height!.Value > 1.6, $"expected a wide capture, got {shot.Width}x{shot.Height}");
+
+        var result = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = 120, Y = 50, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_coordinate_profile_missing", result.Code);
+        Assert.Contains("aspect", result.Message, StringComparison.Ordinal);
+        window.AssertClicks(0);
+    }
+
+    [Fact]
+    public async Task Compensation_ClickWithoutScreenshotIsRefused()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow();
+
+        var result = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = 120, Y = 50, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_capture_context_missing", result.Code);
+        window.AssertClicks(0);
+    }
+
+    [Fact]
+    public async Task Compensation_ClickOnUncapturedWindowIsRefused()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var captured = new ButtonWindow();
+        using var other = new ButtonWindow(x: 500);
+        Assert.True(captured.Screenshot(runtime).Ok);
+
+        // a different window than the captured one
+        var result = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = 120, Y = 50, WindowId = other.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(result.Ok);
+        Assert.Equal("desktop_compensation_target_mismatch", result.Code);
+        other.AssertClicks(0);
+
+        // and a window-less click while a window capture is on record
+        var screen = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = 120, Y = 50, Mode = DesktopToolRuntime.SilentMode,
+        });
+        Assert.False(screen.Ok);
+        Assert.Equal("desktop_compensation_target_mismatch", screen.Code);
+        other.AssertClicks(0);
+    }
+
+    // ── the mapping itself: reported coords land where the profile says ─────────
+
+    /// <summary>
+    /// The button's center, expressed in the model's reported space (half the image, scale 2),
+    /// must land back on the button after compensation - and the click must come back
+    /// `verified` because the button's label carries the click count.
+    /// </summary>
+    [Fact]
+    public async Task Compensation_MapsReportedCoordsOntoTheButtonAndVerifies()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow();
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+
+        // served-capture bookkeeping: the record is the ctx copy the model saw
+        var record = runtime.LastServedCapture();
+        Assert.NotNull(record);
+        Assert.Equal(window.Hwnd, record!.WindowId);
+        Assert.Equal(shot.Image!.Width, record.ContextWidth);
+        Assert.Equal(shot.Image!.Height, record.ContextHeight);
+        Assert.Equal(shot.Image.Path, record.ContextPath);
+
+        var (modelX, modelY) = window.ModelCoordsForClientPoint(120, 50, scale: 2.0, shot);
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = modelX, Y = modelY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+
+        Assert.True(click.Ok, click.Message);
+        window.AssertClicks(1);
+        Assert.NotNull(click.Compensation);
+        Assert.Equal(2.0, click.Compensation!.ScaleX);
+        Assert.Equal(modelX, click.Compensation.From!.X);
+        Assert.Equal(modelY, click.Compensation.From!.Y);
+        // the compensated point is inside the button's client rect
+        var (toX, toY) = (click.Compensation.To!.X, click.Compensation.To!.Y);
+        Assert.True(toX >= 20 && toX <= 220 && toY >= 20 && toY <= 80, $"compensated point ({toX},{toY}) is not on the button");
+        Assert.NotNull(click.Verification);
+        Assert.Equal(DesktopToolRuntime.VerificationVerified, click.Verification!.Status);
+        Assert.Equal(shot.Image.Path, click.Verification.BeforePath);
+        Assert.True(File.Exists(click.Verification.AfterPath!), "after screenshot missing");
+        Assert.Contains("verified", click.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A capture above the context cap is downscaled; the profile applies in the
+    /// ctx space the model saw, so the mapping must scale through full/ctx and still land.</summary>
+    [Fact]
+    public async Task Compensation_DownscaledCaptureScalesThroughTheContextCopy()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new ButtonWindow(width: 1700, height: 600);
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+        Assert.True(shot.Width > DesktopToolRuntime.MaxContextImageEdge, "expected a capture above the context cap");
+        Assert.True(shot.Image!.Width <= DesktopToolRuntime.MaxContextImageEdge);
+
+        var (modelX, modelY) = window.ModelCoordsForClientPoint(120, 50, scale: 2.0, shot);
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = modelX, Y = modelY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+
+        Assert.True(click.Ok, click.Message);
+        window.AssertClicks(1);
+        Assert.Equal(DesktopToolRuntime.VerificationVerified, click.Verification!.Status);
+    }
+
+    [Fact]
+    public async Task Compensation_DeadSpaceClickReportsFailedVerification()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        // taller window so the dead space is unambiguous: probe-measured, a click at client
+        // (160,300) resolves to the window background, never the button at the top-left
+        using var window = new ButtonWindow(width: 320, height: 500);
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+
+        // client dead space far below the button: delivered, but nothing changes any text
+        var (modelX, modelY) = window.ModelCoordsForClientPoint(160, 300, scale: 2.0, shot);
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = modelX, Y = modelY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+
+        Assert.True(click.Ok, click.Message);
+        window.AssertClicks(0);
+        Assert.Equal(DesktopToolRuntime.VerificationFailed, click.Verification!.Status);
+        Assert.NotNull(click.Verification.BeforePath);
+        Assert.True(File.Exists(click.Verification.AfterPath!));
+        Assert.Contains("NOT verified", click.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Compensation_TextlessWindowReportsUnverified()
+    {
+        var home = TempHome();
+        EnableCompensation(home);
+        WriteProfiles(home, CoveringProfile);
+        var runtime = new DesktopToolRuntime(() => home);
+        using var window = new PlainWindow();
+        var shot = window.Screenshot(runtime);
+        Assert.True(shot.Ok, shot.Message);
+
+        var (modelX, modelY) = window.ModelCoordsForClientPoint(150, 90, scale: 2.0, shot);
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            X = modelX, Y = modelY, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+
+        Assert.True(click.Ok, click.Message);
+        Assert.Equal(DesktopToolRuntime.VerificationUnverified, click.Verification!.Status);
+        Assert.True(File.Exists(click.Verification.AfterPath!));
+        Assert.Contains("unverified", click.Verification.Message, StringComparison.Ordinal);
+    }
+
+    // ── profile store unit behavior ────────────────────────────────────────────
+
+    [Fact]
+    public void ProfileStore_BoundsAreInclusiveAndFirstRowWins()
+    {
+        var home = TempHome();
+        WriteProfiles(home,
+            """{"schema_version": 1, "profiles": [{"model": "m", "protocol": "p", "aspect_min": 1.0, "aspect_max": 2.0, "short_edge_min": 400, "short_edge_max": 800, "scale_x": 1.5, "scale_y": 1.5, "samples": 5, "hit_rate": 0.9, "tested": "2026-11-05"}, {"model": "m", "protocol": "p", "aspect_min": 0.5, "aspect_max": 3.0, "short_edge_min": 100, "short_edge_max": 1600, "scale_x": 1.754, "scale_y": 1.754, "samples": 30, "hit_rate": 1.0, "tested": "2026-11-05"}]}""");
+        var store = CoordinateProfileStore.Load(home);
+
+        // exact upper bound matches, and the first matching row in file order wins
+        var hit = store.Find("M", "P", 2.0, 400);
+        Assert.NotNull(hit);
+        Assert.Equal(1.5, hit!.ScaleX);
+
+        // the first row does not cover aspect 2.5, but the second (broader) row does
+        var broad = store.Find("m", "p", 2.5, 400);
+        Assert.NotNull(broad);
+        Assert.Equal(1.754, broad!.ScaleX);
+
+        // outside every row
+        Assert.Null(store.Find("m", "p", 3.5, 400));
+    }
+
+    [Fact]
+    public void ProfileStore_DescribeCoverageNamesWhatIsMeasured()
+    {
+        var home = TempHome();
+        WriteProfiles(home, CoveringProfile);
+        var store = CoordinateProfileStore.Load(home);
+
+        var unknown = store.DescribeCoverage("other-model", "test-protocol");
+        Assert.Contains("No profile row exists", unknown, StringComparison.Ordinal);
+        Assert.Contains("test-model/test-protocol", unknown, StringComparison.Ordinal);
+
+        var known = store.DescribeCoverage("test-model", "test-protocol");
+        Assert.Contains("aspect 0.5–3.6", known, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProfileStore_OutOfRangeRowFailsClosed()
+    {
+        var home = TempHome();
+        WriteProfiles(home,
+            """{"schema_version": 1, "profiles": [{"model": "m", "protocol": "p", "aspect_min": 2.0, "aspect_max": 1.0, "short_edge_min": 100, "short_edge_max": 1600, "scale_x": 2.0, "scale_y": 2.0, "samples": 5, "hit_rate": 1.0}]}""");
+        Assert.Throws<DesktopToolRuntime.DesktopConfigurationException>(() => CoordinateProfileStore.Load(home));
+    }
+
+    // ── real windows on the isolated desktop, the clickloop harness pattern ────
+
+    /// <summary>
+    /// A window with a BUTTON child (client rect 20,20–220,80) whose click count is rendered
+    /// into its label ("Push (n)") - the same shape the clickloop harness uses, so `verified`
+    /// verdicts here mean the same thing they mean in the real-machine measurements.
+    /// </summary>
+    private sealed class ButtonWindow : IsolatedWindow
+    {
+        private static readonly ConcurrentDictionary<nint, int> Clicks = new();
+        private static readonly ConcurrentDictionary<nint, nint> Buttons = new();
+
+        public ButtonWindow(int width = 320, int height = 200, int x = 60)
+            : base(width, height, x, "")
+        {
+            // empty title on purpose: this window pattern's lpWindowName marshals to
+            // uninitialized memory (probe-measured: the title reads back as different garbage
+            // on every WM_GETTEXT), and a garbage root text would make the semantic
+            // verification compare noise. The button label is the only text that matters.
+        }
+
+        protected override nint CreateChildren(nint hwnd)
+        {
+            var button = CreateWindowEx(0, "BUTTON", "Push", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                20, 20, 200, 60, hwnd, 0, GetModuleHandle(null), 0);
+            Clicks[hwnd] = 0;
+            Buttons[hwnd] = button;
+            return button;
+        }
+
+        public void AssertClicks(int expected)
+        {
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                if (Clicks.GetValueOrDefault(Hwnd) == expected) return;
+                Thread.Sleep(50);
+            }
+            Assert.Equal(expected, Clicks.GetValueOrDefault(Hwnd));
+        }
+
+        protected override void DisposeWindow(nint hwnd)
+        {
+            Clicks.TryRemove(hwnd, out _);
+            Buttons.TryRemove(hwnd, out _);
+        }
+
+        protected override nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam)
+        {
+            if (msg == WM_COMMAND && ((wParam >> 16) & 0xFFFF) == 0 /* BN_CLICKED */)
+            {
+                var count = Clicks.AddOrUpdate(hWnd, 1, (_, value) => value + 1);
+                if (Buttons.TryGetValue(hWnd, out var button))
+                    SetWindowText(button, $"Push ({count})");
+                return 0;
+            }
+            return base.WndProc(hWnd, msg, wParam, lParam);
+        }
+    }
+
+    /// <summary>A window with no readable text at all: empty title, no children.</summary>
+    private sealed class PlainWindow : IsolatedWindow
+    {
+        public PlainWindow()
+            : base(320, 200, 60, "")
+        {
+        }
+
+        protected override nint CreateChildren(nint hwnd) => 0;
+
+        protected override void DisposeWindow(nint hwnd)
+        {
+        }
+    }
+
+    /// <summary>
+    /// A pumping top-level window on the TinadecIsolated desktop (WS_EX_TOOLWINDOW, like the
+    /// clickloop harness): the user's desktop stays untouched, and WindowFromPoint during a
+    /// silent/isolated click can only ever resolve inside this window tree. Cross-thread work
+    /// (close, label reset) goes through the harness's action-queue pattern.
+    /// </summary>
+    private abstract class IsolatedWindow : IDisposable
+    {
+        protected const uint WS_OVERLAPPEDWINDOW = 0x00CF0000u;
+        protected const uint WS_VISIBLE = 0x10000000u;
+        protected const uint WS_CHILD = 0x40000000u;
+        protected const uint BS_PUSHBUTTON = 0x1u;
+        protected const uint WM_CLOSE = 0x0010u;
+        protected const uint WM_DESTROY = 0x0002u;
+        protected const uint WM_COMMAND = 0x0111u;
+        private const uint WS_EX_TOOLWINDOW = 0x00000080u;
+        private const uint ActionMessage = 0x8000;
+
+        private static readonly List<WndProcDelegate> KeepAlive = [];
+        private readonly ConcurrentQueue<(Func<object?> Action, TaskCompletionSource<object?> Tcs)> _actions = new();
+        private readonly Thread _thread;
+        private readonly ManualResetEvent _ready = new(false);
+        private readonly int _width;
+        private readonly int _height;
+        private readonly int _x;
+        private readonly string _title;
+        private uint _threadId;
+
+        public nint Hwnd { get; private set; }
+
+        protected IsolatedWindow(int width, int height, int x, string title)
+        {
+            _width = width;
+            _height = height;
+            _x = x;
+            _title = title;
+            _thread = new Thread(Run) { IsBackground = true };
+            _thread.SetApartmentState(ApartmentState.MTA);
+            _thread.Start();
+            Assert.True(_ready.WaitOne(TimeSpan.FromSeconds(5)), "isolated test window thread did not start");
+        }
+
+        public DesktopToolResult Screenshot(DesktopToolRuntime runtime) =>
+            runtime.Screenshot(new DesktopScreenshotArgs { WindowId = Hwnd, Mode = DesktopToolRuntime.IsolatedMode });
+
+        /// <summary>
+        /// Maps a client point of this window into the model's reported space: client →
+        /// image (the capture includes the non-client frame) → ctx copy (÷ full/ctx) →
+        /// reported (÷ profile scale). The forward direction of exactly the math the
+        /// compensation runs backwards, computed with the same Win32 calls it uses.
+        /// </summary>
+        public (int X, int Y) ModelCoordsForClientPoint(int clientX, int clientY, double scale, DesktopToolResult shot)
+        {
+            using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
+            var (windowX, windowY, _, _) = DesktopWin32.WindowBounds(Hwnd);
+            var screen = DesktopWin32.ClientToScreen(Hwnd, clientX, clientY);
+            var imageX = screen.X - windowX;
+            var imageY = screen.Y - windowY;
+            var ctxX = imageX * (shot.Image!.Width!.Value / (double)shot.Width!.Value);
+            var ctxY = imageY * (shot.Image!.Height!.Value / (double)shot.Height!.Value);
+            return ((int)Math.Round(ctxX / scale), (int)Math.Round(ctxY / scale));
+        }
+
+        private void Run()
+        {
+            var desk = DesktopWin32.OpenOrCreateIsolatedDesktop();
+            if (desk == 0 || !SetThreadDesktop(desk)) throw new InvalidOperationException($"SetThreadDesktop failed err={Marshal.GetLastWin32Error()}");
+            var className = "TinadecCompTest_" + Guid.NewGuid().ToString("N")[..8];
+            var proc = new WndProcDelegate(WndProc);
+            lock (KeepAlive) KeepAlive.Add(proc);
+            var wc = new WNDCLASS { lpfnWndProc = proc, LpszClassName = className, HInstance = GetModuleHandle(null) };
+            RegisterClass(ref wc);
+            Hwnd = CreateWindowEx(
+                WS_EX_TOOLWINDOW, className, _title, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                _x, 60, _width, _height, 0, 0, GetModuleHandle(null), 0);
+            CreateChildren(Hwnd);
+            _threadId = GetCurrentThreadId();
+            _ready.Set();
+            while (GetMessage(out var msg, 0, 0, 0) > 0)
+            {
+                if (msg.Hwnd == 0 && msg.Message == ActionMessage)
+                {
+                    while (_actions.TryDequeue(out var item))
+                    {
+                        try { item.Tcs.SetResult(item.Action()); }
+                        catch (Exception ex) { item.Tcs.SetException(ex); }
+                    }
+                    continue;
+                }
+                TranslateMessage(ref msg);
+                DispatchMessage(ref msg);
+            }
+        }
+
+        public void Dispose()
+        {
+            _ = RunOnWindowThread(() => (object?)PostMessage(Hwnd, WM_CLOSE, 0, 0));
+            if (!_thread.Join(TimeSpan.FromSeconds(4))) throw new InvalidOperationException("isolated test window thread did not exit");
+            DisposeWindow(Hwnd);
+            _ready.Dispose();
+        }
+
+        protected virtual nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam)
+        {
+            if (msg == WM_DESTROY)
+            {
+                PostQuitMessage(0);
+                return 0;
+            }
+            return DefWindowProc(hWnd, msg, wParam, lParam);
+        }
+
+        protected abstract nint CreateChildren(nint hwnd);
+        protected virtual void DisposeWindow(nint hwnd)
+        {
+        }
+
+        private object? RunOnWindowThread(Func<object?> action)
+        {
+            var tcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _actions.Enqueue((action, tcs));
+            PostThreadMessage(_threadId, ActionMessage, 0, 0);
+            return tcs.Task.GetAwaiter().GetResult();
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        protected delegate nint WndProcDelegate(nint hWnd, uint msg, nint wParam, nint lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MSG
+        {
+            public nint Hwnd;
+            public uint Message;
+            public nint WParam;
+            public nint LParam;
+            public uint Time;
+            public POINT Point;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WNDCLASS
+        {
+            public uint Style;
+            public WndProcDelegate lpfnWndProc;
+            public int CbClsExtra;
+            public int CbWndExtra;
+            public nint HInstance;
+            public nint HIcon;
+            public nint HCursor;
+            public nint HbrBackground;
+            public string? LpszMenuName;
+            public string LpszClassName;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern ushort RegisterClass(ref WNDCLASS wc);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] protected static extern nint CreateWindowEx(uint exStyle, string className, string windowName, uint style, int x, int y, int width, int height, nint parent, nint menu, nint instance, nint param);
+        [DllImport("user32.dll")] private static extern int GetMessage(out MSG msg, nint hWnd, uint min, uint max);
+        [DllImport("user32.dll")] private static extern bool TranslateMessage(ref MSG msg);
+        [DllImport("user32.dll")] private static extern nint DispatchMessage(ref MSG msg);
+        [DllImport("user32.dll")] private static extern nint DefWindowProc(nint hWnd, uint msg, nint wParam, nint lParam);
+        [DllImport("user32.dll")] private static extern bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] protected static extern bool SetWindowText(nint hWnd, string text);
+        [DllImport("user32.dll")] private static extern void PostQuitMessage(int exitCode);
+        [DllImport("user32.dll", SetLastError = true)] private static extern bool SetThreadDesktop(nint desktop);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] private static extern bool PostThreadMessage(uint threadId, uint msg, nint wParam, nint lParam);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] protected static extern nint GetModuleHandle(string? name);
+    }
+}

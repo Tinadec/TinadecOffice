@@ -98,6 +98,45 @@ public sealed class DesktopImageInfo
     [JsonPropertyName("bytes")] public long? Bytes { get; set; }
 }
 
+/// <summary>A plain {x, y} pair, in the space the surrounding object names.</summary>
+public sealed class DesktopPointInfo
+{
+    [JsonPropertyName("x")] public int X { get; set; }
+    [JsonPropertyName("y")] public int Y { get; set; }
+}
+
+/// <summary>
+/// Present only when the coordinate-compensation layer was enabled for a desktop_click: which
+/// measured profile row mapped the reported coordinates onto the window, and where they landed.
+/// The layer is host-configured and off by default; this object is its audit trail.
+/// </summary>
+public sealed class DesktopCompensationInfo
+{
+    [JsonPropertyName("model")] public string? Model { get; set; }
+    [JsonPropertyName("protocol")] public string? Protocol { get; set; }
+    [JsonPropertyName("scale_x")] public double? ScaleX { get; set; }
+    [JsonPropertyName("scale_y")] public double? ScaleY { get; set; }
+    [JsonPropertyName("from")] public DesktopPointInfo? From { get; set; }
+    [JsonPropertyName("to")] public DesktopPointInfo? To { get; set; }
+    [JsonPropertyName("image")] public DesktopImageInfo? Image { get; set; }
+}
+
+/// <summary>
+/// The semantic verification of a compensated click: read the target window's text before and
+/// after, judge the click by whether the application's own words changed - never by pixel
+/// diffs (focus rectangles and repaints made those lie) and never by the caller's self-report.
+/// `verified` means text changed; `failed` means text was readable but unchanged (a miss, or
+/// a click with no text-level effect - inspect the screenshots); `unverified` means no text
+/// was readable, which is reported as what it is instead of pretending success.
+/// </summary>
+public sealed class DesktopVerificationInfo
+{
+    [JsonPropertyName("status")] public string? Status { get; set; }
+    [JsonPropertyName("before_path")] public string? BeforePath { get; set; }
+    [JsonPropertyName("after_path")] public string? AfterPath { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+}
+
 /// <summary>
 /// The single result shape every desktop tool returns, mirroring the browser tool contract:
 /// expected failures are `ok = false` with a stable `code`; the model stops and reports
@@ -124,6 +163,8 @@ public sealed class DesktopToolResult
     [JsonPropertyName("chars")] public int? Chars { get; set; }
     [JsonPropertyName("texts")] public DesktopTextInfo[]? Texts { get; set; }
     [JsonPropertyName("pid")] public int? Pid { get; set; }
+    [JsonPropertyName("compensation")] public DesktopCompensationInfo? Compensation { get; set; }
+    [JsonPropertyName("verification")] public DesktopVerificationInfo? Verification { get; set; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -136,4 +177,7 @@ public sealed class DesktopToolResult
 [JsonSerializable(typeof(DesktopLaunchArgs))]
 [JsonSerializable(typeof(DesktopToolResult))]
 [JsonSerializable(typeof(DesktopImageInfo))]
+[JsonSerializable(typeof(DesktopPointInfo))]
+[JsonSerializable(typeof(DesktopCompensationInfo))]
+[JsonSerializable(typeof(DesktopVerificationInfo))]
 internal sealed partial class DesktopJsonContext : JsonSerializerContext;
