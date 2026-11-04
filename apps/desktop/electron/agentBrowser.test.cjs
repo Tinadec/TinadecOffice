@@ -156,7 +156,19 @@ class FakeBrowserWindow {
   destroy() { this.close(); }
 }
 
-function createManager(t) {
+function fakeNativeImage(size) {
+  return {
+    createFromBuffer: () => ({
+      getSize: () => ({ width: size.width, height: size.height }),
+      resize: ({ width, height }) => ({
+        getSize: () => ({ width, height }),
+        toPNG: () => Buffer.from(`ctx-${width}x${height}`),
+      }),
+    }),
+  };
+}
+
+function createManager(t, { imageSize = { width: 800, height: 600 } } = {}) {
   FakeWebContentsView.created = [];
   FakeBrowserWindow.created = [];
   FakeWebContentsView.failNextAttach = false;
@@ -172,6 +184,7 @@ function createManager(t) {
     stringsForLocale: () => ({ title: 'Agent Browser', back: 'Back' }),
     logger: { info() {}, warn() {}, error() {} },
     randomUUID: () => 'fixed',
+    nativeImage: fakeNativeImage(imageSize),
   });
   t.after(() => {
     manager.closeAll();
@@ -283,6 +296,26 @@ test('writes a screenshot to the state directory and returns its path', async (t
   const shot = await manager.screenshot('s1', opened.tab.id, false, path.join(stateDir, 'shots'));
   assert.equal(fs.existsSync(shot.path), true);
   assert.equal(fs.statSync(shot.path).size, Buffer.from('png-bytes').length);
+  // a small capture is its own context copy: dimensions reported, no duplicate file
+  assert.equal(shot.width, 800);
+  assert.equal(shot.height, 600);
+  assert.equal(shot.context_path, shot.path);
+  assert.equal(shot.context_bytes, shot.bytes);
+});
+
+test('downscales an oversized screenshot into a separate context file', async (t) => {
+  const { manager, stateDir } = createManager(t, { imageSize: { width: 2560, height: 1600 } });
+  const opened = await manager.openTab('s1', 'https://example.com/a');
+  const shot = await manager.screenshot('s1', opened.tab.id, false, path.join(stateDir, 'shots'));
+  assert.equal(shot.width, 2560);
+  assert.equal(shot.height, 1600);
+  // the full capture stays at path; the context copy is a separate -ctx.png capped at 1568
+  assert.notEqual(shot.context_path, shot.path);
+  assert.ok(shot.context_path.endsWith('-ctx.png'));
+  assert.equal(fs.existsSync(shot.context_path), true);
+  assert.equal(shot.context_width, 1568);
+  assert.equal(shot.context_height, Math.round(1600 * (1568 / 2560)));
+  assert.equal(fs.statSync(shot.context_path).size, Buffer.from('ctx-1568x980').length);
 });
 
 test('validates shell senders and drives takeover/handback', async (t) => {

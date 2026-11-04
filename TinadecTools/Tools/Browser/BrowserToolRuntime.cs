@@ -363,15 +363,30 @@ internal sealed partial class BrowserToolRuntime
             if (!response.Ok) return FromBridge(response);
 
             var data = response.Data ?? EmptyObject;
+            var path = GetString(data, "path");
             var result = new BrowserToolResult
             {
                 Ok = true,
                 TabId = tab.Id,
                 Url = tab.Url,
                 Title = tab.Title,
-                Path = GetString(data, "path"),
+                Path = path,
                 Bytes = GetInt64(data, "bytes"),
             };
+            // The context copy the bridge downscaled for model context (or the full file when the
+            // page was already small / the bridge predates the field). Core loads image.path into
+            // the conversation; a missing bridge field degrades to the full capture.
+            if (path is not null)
+            {
+                result.Image = new BrowserImageInfo
+                {
+                    Path = GetString(data, "context_path") ?? path,
+                    MediaType = "image/png",
+                    Width = (int?)GetInt64(data, "context_width"),
+                    Height = (int?)GetInt64(data, "context_height"),
+                    Bytes = GetInt64(data, "context_bytes") ?? result.Bytes,
+                };
+            }
             var notices = MergeNotices(refresh.Notices, CollectNewNotices(session, data));
             return WithNotices(result, notices);
         }
