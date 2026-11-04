@@ -13,20 +13,50 @@ namespace TinadecCore.DmaEA;
 internal sealed record ToolResultImageRef(string Path, string MediaType, int? Width, int? Height, long Bytes);
 
 /// <summary>
-/// Delivers tool-result images into the model conversation. The carrier is a user-role message
-/// right after the tool result, not a part inside the Tool message: wire-probed against the
-/// adapters this build ships (evidence in the computer-use design doc), both the openai-chat and
-/// openai-responses adapters silently drop a DataContent placed in a Tool-role message — the tool
-/// result goes out as a plain string and the image never reaches the provider. A user-role
-/// DataContent is the one channel every protocol maps (it is how message attachments already
-/// travel), so the screenshot rides that, captioned with the call id it belongs to.
+/// How a tool-result image reaches the provider for one route.
+/// <para><see cref="NativeInToolResult"/>: the image rides the tool result itself in the
+/// protocol's native form. Wire-probed (evidence in the computer-use design doc): the
+/// function_call_output of the Responses API accepts a content-part array (input_text +
+/// input_image) and the model demonstrably reads the image there — but every M.E.AI.OpenAI
+/// adapter up to 10.11 drops a DataContent placed in a Tool-role message, so the native form is
+/// produced by an HTTP-layer rewrite (<c>ToolImageRewriteHandler</c>) instead of the SDK.</para>
+/// <para><see cref="UserCarrier"/>: a user-role message right after the tool result. Used for
+/// every protocol without a (reachable) native tool-result image form.</para>
+/// </summary>
+internal enum ToolImageDeliveryMode
+{
+    NativeInToolResult,
+    UserCarrier,
+}
+
+/// <summary>
+/// Thrown when a Tool-role message carries image data but the resolved route cannot represent it
+/// (no native form, carrier disabled) — the hard stop that replaces the adapters' old silent drop.
+/// </summary>
+internal sealed class ToolImageUnrepresentableException(string protocol, string callId)
+    : InvalidOperationException(
+        $"Route protocol '{protocol}' cannot carry the image of tool call '{callId}' in its tool result, and the user-carrier fallback is disabled for this route. The request was not sent: fix the delivery mode for this protocol instead of letting the adapter silently drop the image.")
+{
+    public string Protocol { get; } = protocol;
+    public string CallId { get; } = callId;
+}
+
+/// <summary>
+/// Delivers tool-result images into the model conversation. Two modes, mutually exclusive per
+/// route (see <see cref="ToolImageDeliveryMode"/>): on the Responses API the image is rewritten
+/// into the function_call_output as a native content-part array at the HTTP layer; everywhere
+/// else it rides a user-role message right after the tool result — wire-probed, both the
+/// openai-chat and openai-responses M.E.AI adapters silently drop a DataContent placed in a
+/// Tool-role message, and a user-role DataContent is the one channel every protocol maps (it is
+/// how message attachments already travel).
 /// <para>
 /// Budget: only the most recent tool turns keep their images (see <see cref="KeepLastCarriers"/>),
 /// at most <see cref="MaxImagesPerRequest"/> per request, each under <see cref="MaxToolImageBytes"/>
 /// (whichever of that and the route's own limit is smaller). Every image that is not delivered —
 /// unsupported route, out of budget, oversized, unreadable file — leaves a note inside the tool
 /// result string telling the model what happened and what to do instead, so an undelivered
-/// screenshot is never silently missing.
+/// screenshot is never silently missing. In native mode an out-of-budget image is additionally
+/// stripped from the result JSON so the HTTP rewrite cannot pick it up.
 /// </para>
 /// </summary>
 internal static class ToolResultImages
@@ -45,6 +75,74 @@ internal static class ToolResultImages
 
     /// <summary>Total images delivered in one request, budget turns included.</summary>
     internal const int MaxImagesPerRequest = 3;
+
+    /// <summary>
+    /// The delivery mode for one resolved route. Only the Responses API has a native (and
+    /// backend-verified) tool-result image form; note the Anthropic Messages protocol has one on
+    /// paper (image blocks inside tool_result) but that route is unreachable in this build — see
+    /// the design doc's dependency note — so it stays on the carrier until that changes.
+    /// </summary>
+    internal static ToolImageDeliveryMode DeliveryModeFor(ChatResolution? resolution) =>
+        resolution is { SupportsImageInput: true }
+        && TinadecCore.Abstractions.Ports.ChatProtocols.Normalize(resolution.Protocol) == ChatProtocols.OpenAiResponses
+            ? ToolImageDeliveryMode.NativeInToolResult
+            : ToolImageDeliveryMode.UserCarrier;
+
+    /// <summary>
+    /// The hard stop that replaces the adapters' silent drop: a Tool-role message that still
+    /// carries a DataContent is a bug — either it should be a native-mode result (the HTTP rewrite
+    /// reads the image from the result JSON, never from the message) or the route has no native
+    /// form and the carrier message is the only representation.
+    /// </summary>
+    internal static void AssertNoToolMessageImages(IReadOnlyList<ChatMessage> messages, ChatResolution? resolution)
+    {
+        foreach (var message in messages)
+        {
+            if (message.Role != ChatRole.Tool) continue;
+            foreach (var content in message.Contents)
+            {
+                if (content is not DataContent) continue;
+                var callId = message.Contents.OfType<FunctionResultContent>().FirstOrDefault()?.CallId ?? "(unknown)";
+                throw new ToolImageUnrepresentableException(
+                    ChatProtocols.Normalize(resolution?.Protocol ?? "chat"),
+                    callId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Native mode only: removes the <c>image</c> object from a tool-result JSON so the HTTP
+    /// rewrite cannot turn an out-of-budget image into a native part. Everything else in the
+    /// result survives byte-for-byte semantics (re-serialized compactly, like ModelFacingResult).
+    /// Returns the input unchanged when there is nothing to strip.
+    /// </summary>
+    internal static string StripImageFromResult(string resultJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(resultJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("image", out var image)
+                || image.ValueKind != JsonValueKind.Object)
+                return resultJson;
+            var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                writer.WriteStartObject();
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    if (property.NameEquals("image")) continue;
+                    property.WriteTo(writer);
+                }
+                writer.WriteEndObject();
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
+        }
+        catch (JsonException)
+        {
+            return resultJson;
+        }
+    }
 
     internal static ToolResultImageRef? Find(string resultJson)
     {

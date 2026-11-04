@@ -190,7 +190,10 @@ public sealed class ExecutionAgent
     {
         var messages = new List<ChatMessage>();
         // Tool-result images are budgeted before the loop: the newest image turns keep theirs,
-        // older ones degrade to an in-result note (ToolResultImages explains the carrier choice).
+        // older ones degrade to an in-result note. On Responses routes the kept images stay in
+        // the result JSON and the HTTP rewrite turns them into native function_call_output parts
+        // (NativeInToolResult); everywhere else they ride the user-role carrier message.
+        var imageMode = ToolResultImages.DeliveryModeFor(resolution);
         var imageRefs = new ToolResultImageRef?[history.Count];
         for (var i = 0; i < history.Count; i++)
         {
@@ -228,19 +231,34 @@ public sealed class ExecutionAgent
                 if (imageRefs[index] is { } image)
                 {
                     var reason = ToolResultImages.NotDeliveredReason(resolution, imageBudget.Contains(index), image);
-                    if (reason is null)
+                    if (reason is null && imageMode == ToolImageDeliveryMode.UserCarrier)
+                    {
                         imageCarrier = await ToolResultImages.BuildCarrierAsync(turn.CallId, turn.ToolId, image, cancellationToken).ConfigureAwait(false);
-                    if (reason is null && imageCarrier is null)
-                        reason = "截图文件读取失败。";
+                        if (imageCarrier is null) reason = "截图文件读取失败。";
+                    }
+                    else if (reason is null)
+                    {
+                        // Native mode: the image object stays in the result JSON; the HTTP rewrite
+                        // layer turns it into a native function_call_output part. A missing file
+                        // fails the request at rewrite time instead of silently losing the image.
+                    }
                     if (reason is not null)
+                    {
+                        // Out of budget / oversized / unreadable: strip the image object in native
+                        // mode (the rewrite must not pick it up) and tell the model why.
+                        if (imageMode == ToolImageDeliveryMode.NativeInToolResult)
+                            modelFacing = ToolResultImages.StripImageFromResult(modelFacing);
                         modelFacing += "\n" + ToolResultImages.UndeliveredNote(reason);
+                    }
                 }
                 messages.Add(new ChatMessage(ChatRole.Tool,
                 [
                     new FunctionResultContent(turn.CallId, modelFacing)
                 ]));
-                // The screenshot rides a user-role message right after its tool result: inside the
-                // Tool message itself both OpenAI adapters drop the image part on the floor.
+                // Carrier mode: the screenshot rides a user-role message right after its tool
+                // result — inside the Tool message itself both OpenAI adapters drop the image
+                // part on the floor (wire-probed). Native mode adds no message: the image rides
+                // the tool result itself via the HTTP rewrite.
                 if (imageCarrier is not null) messages.Add(imageCarrier);
             }
             AddInterruptions(++index);

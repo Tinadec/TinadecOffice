@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using Anthropic.SDK;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -89,13 +90,24 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
     public static IChatClient CreateOpenAiChatClient(ChatResolution resolution)
         => CreateBrandedOpenAiClient(resolution).GetChatClient(resolution.Model!).AsIChatClient();
 
-    /// <summary>OpenAI Responses API client.</summary>
+    /// <summary>
+    /// OpenAI Responses API client. The HTTP transport is wrapped with <see cref="ToolImageRewriteHandler"/>:
+    /// tool results that carry an <c>image</c> object are rewritten into the protocol's native
+    /// content-part form (the SDK adapters drop tool-message images on the floor — wire-probed),
+    /// and requests without tool images pass through byte-for-byte unchanged.
+    /// </summary>
     public static IChatClient CreateResponsesClient(ChatResolution resolution)
     {
         // OPENAI001: the Responses IChatClient adapter is marked experimental by the
         // OpenAI SDK; we accept the surface deliberately and pin the SDK version centrally.
 #pragma warning disable OPENAI001
-        return CreateBrandedOpenAiClient(resolution).GetResponsesClient().AsIChatClient(resolution.Model!);
+        var options = new OpenAIClientOptions
+        {
+            Endpoint = new Uri(resolution.BaseUrl!),
+            UserAgentApplicationId = TinadecBranding.Name,
+            Transport = new HttpClientPipelineTransport(new HttpClient(new ToolImageRewriteHandler())),
+        };
+        return new OpenAIClient(new ApiKeyCredential(resolution.ApiKey!), options).GetResponsesClient().AsIChatClient(resolution.Model!);
 #pragma warning restore OPENAI001
     }
 
