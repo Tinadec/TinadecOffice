@@ -30,6 +30,13 @@ internal sealed class DesktopToolRuntime
     public const string SilentMode = "silent";
     public const string IsolatedMode = "isolated";
 
+    /// <summary>
+    /// Long-edge cap for the model-facing context copy of a capture. Beyond keeping the payload
+    /// small (a 2560×1600 full-screen PNG is ~1.4 MB raw), 1568 matches the resolution vision
+    /// models keep after their own downscaling, so detail is not lost by fitting the budget.
+    /// </summary>
+    internal const int MaxContextImageEdge = 1568;
+
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private static readonly SemaphoreSlim InputGate = new(1, 1);
 
@@ -110,9 +117,8 @@ internal sealed class DesktopToolRuntime
             var hWnd = (nint)windowId;
             if (!IsAliveWindow(hWnd)) return Fail("desktop_window_not_found", $"No window with window_id {windowId}.", permanent: true);
             if (DesktopWin32.IsMinimized(hWnd)) return Fail("desktop_window_minimized", "A minimized window has no surface to capture; restore it first.", permanent: false);
-            var png = DesktopWin32.CaptureWindowPng(hWnd);
-            var (x, y, width, height) = DesktopWin32.WindowBounds(hWnd);
-            return SaveScreenshot(png, width, height, "window", ToWindowInfo(hWnd));
+            var (bgra, width, height) = DesktopWin32.CaptureWindowBits(hWnd);
+            return SaveScreenshot(bgra, width, height, "window", ToWindowInfo(hWnd));
         }
         catch (Exception exception)
         {
@@ -126,9 +132,8 @@ internal sealed class DesktopToolRuntime
         using var dpi = DesktopWin32.PerMonitorDpiScope.Enter();
         try
         {
-            var screenPng = DesktopWin32.CaptureScreenPng();
-            var (sx, sy, sw, sh) = DesktopWin32.VirtualScreen();
-            return SaveScreenshot(screenPng, sw, sh, "screen", null);
+            var (bgra, sw, sh) = DesktopWin32.CaptureScreenBits();
+            return SaveScreenshot(bgra, sw, sh, "screen", null);
         }
         catch (Exception exception)
         {
@@ -590,7 +595,13 @@ internal sealed class DesktopToolRuntime
         };
     }
 
-    private DesktopToolResult SaveScreenshot(byte[] png, int width, int height, string target, DesktopWindowInfo? window)
+    /// <summary>
+    /// Encodes and saves one capture: the full-resolution PNG at <c>path</c>, plus — when the
+    /// long edge exceeds <see cref="MaxContextImageEdge"/> — a downscaled <c>*-ctx.png</c> copy
+    /// referenced by the <c>image</c> object. Core loads <c>image.path</c> into the model
+    /// conversation; the full original never leaves disk.
+    /// </summary>
+    private DesktopToolResult SaveScreenshot(byte[] bgra, int width, int height, string target, DesktopWindowInfo? window)
     {
         var home = _homeProvider();
         var directory = string.IsNullOrWhiteSpace(home)
@@ -599,7 +610,22 @@ internal sealed class DesktopToolRuntime
         Directory.CreateDirectory(directory);
         var counter = Interlocked.Increment(ref _screenshotCounter);
         var path = Path.Combine(directory, $"desktop-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{counter}.png");
+        var png = DesktopWin32.PngEncoder.Encode(bgra, width, height);
         File.WriteAllBytes(path, png);
+
+        var (context, contextWidth, contextHeight) = DesktopWin32.Downscale(bgra, width, height, MaxContextImageEdge);
+        string contextPath;
+        if (ReferenceEquals(context, bgra))
+        {
+            // small enough: the full capture is its own context copy, no duplicate file
+            contextPath = path;
+        }
+        else
+        {
+            contextPath = Path.Combine(directory, $"desktop-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{counter}-ctx.png");
+            File.WriteAllBytes(contextPath, DesktopWin32.PngEncoder.Encode(context, contextWidth, contextHeight));
+        }
+
         return new DesktopToolResult
         {
             Ok = true,
@@ -609,6 +635,14 @@ internal sealed class DesktopToolRuntime
             Height = height,
             Target = target,
             Window = window,
+            Image = new DesktopImageInfo
+            {
+                Path = contextPath,
+                MediaType = "image/png",
+                Width = contextWidth,
+                Height = contextHeight,
+                Bytes = new FileInfo(contextPath).Length,
+            },
         };
     }
 

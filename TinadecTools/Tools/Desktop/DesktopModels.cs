@@ -84,6 +84,21 @@ public sealed class DesktopTextInfo
 }
 
 /// <summary>
+/// The model-facing copy of a capture: a PNG already downscaled so its long edge stays within
+/// <see cref="DesktopToolRuntime.MaxContextImageEdge"/>. Core reads this object (path is what it
+/// loads), so every field must survive AOT serialization; the full-resolution original stays in
+/// the result's own path/bytes fields.
+/// </summary>
+public sealed class DesktopImageInfo
+{
+    [JsonPropertyName("path")] public string? Path { get; set; }
+    [JsonPropertyName("media_type")] public string? MediaType { get; set; }
+    [JsonPropertyName("width")] public int? Width { get; set; }
+    [JsonPropertyName("height")] public int? Height { get; set; }
+    [JsonPropertyName("bytes")] public long? Bytes { get; set; }
+}
+
+/// <summary>
 /// The single result shape every desktop tool returns, mirroring the browser tool contract:
 /// expected failures are `ok = false` with a stable `code`; the model stops and reports
 /// them instead of retrying (write actions are never safe to retry blind).
@@ -104,6 +119,7 @@ public sealed class DesktopToolResult
     [JsonPropertyName("width")] public int? Width { get; set; }
     [JsonPropertyName("height")] public int? Height { get; set; }
     [JsonPropertyName("target")] public string? Target { get; set; }
+    [JsonPropertyName("image")] public DesktopImageInfo? Image { get; set; }
     [JsonPropertyName("applied")] public bool? Applied { get; set; }
     [JsonPropertyName("chars")] public int? Chars { get; set; }
     [JsonPropertyName("texts")] public DesktopTextInfo[]? Texts { get; set; }
@@ -119,4 +135,5 @@ public sealed class DesktopToolResult
 [JsonSerializable(typeof(DesktopPressKeyArgs))]
 [JsonSerializable(typeof(DesktopLaunchArgs))]
 [JsonSerializable(typeof(DesktopToolResult))]
+[JsonSerializable(typeof(DesktopImageInfo))]
 internal sealed partial class DesktopJsonContext : JsonSerializerContext;
