@@ -816,7 +816,12 @@ internal static class DesktopWin32
             stream.Write(header);
             stream.Write(data);
             var crc = new byte[4];
-            var value = Crc32(header, 4, typeBytes);
+            // The chunk CRC covers the type bytes exactly once, then the data. The previous
+            // helper concatenated the type twice (it copied header[4..8] — which already is the
+            // type — and then appended typeBytes again), so every chunk carried the CRC of
+            // "IENDIEND"-style doubled input: GDI+ tolerates a bad chunk CRC, but strict
+            // decoders on model-provider pipelines reject the whole image.
+            var value = Crc32Continue(0, typeBytes);
             value = Crc32Continue(value, data);
             WriteUInt32BigEndian(crc, 0, value);
             stream.Write(crc);
@@ -828,14 +833,6 @@ internal static class DesktopWin32
             target[offset + 1] = (byte)(value >> 16);
             target[offset + 2] = (byte)(value >> 8);
             target[offset + 3] = (byte)value;
-        }
-
-        private static uint Crc32(byte[] header, int headerOffset, byte[] typeBytes)
-        {
-            var combined = new byte[4 + typeBytes.Length];
-            Array.Copy(header, headerOffset, combined, 0, 4);
-            typeBytes.CopyTo(combined, 4);
-            return Crc32Continue(0, combined);
         }
 
         private static uint Crc32Continue(uint crc, byte[] data)
