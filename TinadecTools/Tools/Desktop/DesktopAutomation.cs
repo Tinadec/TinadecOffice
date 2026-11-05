@@ -70,10 +70,60 @@ internal static class DesktopAutomation
     /// Enumerates the descendant elements of a window through UI Automation and returns the
     /// bounded, filtered page (each entry keeps its live COM element for the click paths)
     /// plus the total match count. Paging via offset; offscreen=false hides elements
-    /// outside the visible area. Works for windows on any desktop of this session
-    /// (probe-measured, including TinadecIsolated). A UIA failure is reported as a stable
-    /// error code by the caller, never as a half-empty list.
+    /// outside the visible area. scroll=true pages VIRTUALIZED lists (explorer's file
+    /// view realizes only the visible items): when nothing matches, the vertically
+    /// scrollable container is scrolled a page at a time and the enumeration retried,
+    /// until the target is realized or the bottom is reached (the return then says how
+    /// many scroll steps ran, so "not found" can be told apart from "not realized yet").
+    /// Works for windows on any desktop of this session (probe-measured, including
+    /// TinadecIsolated). A UIA failure is reported as a stable error code by the caller,
+    /// never as a half-empty list.
     /// </summary>
+    internal static (string? Error, (ElementInfo Info, IUIAutomationElement Raw)[] Page, int Total, int ScrollSteps) FindElements(
+        nint windowHandle,
+        string? nameContains,
+        string? automationIdContains,
+        string? controlType,
+        string? classNameContains,
+        int limit,
+        int offset = 0,
+        bool includeOffscreen = true,
+        bool scroll = false)
+    {
+        var (error, page, total) = FindOnce(windowHandle, nameContains, automationIdContains, controlType, classNameContains, limit, offset, includeOffscreen);
+        if (!scroll || error is not null || total > 0) return (error, page, total, 0);
+
+        // the deep scroll: page EVERY vertically scrollable container (explorer has the
+        // navigation tree AND the file list - the first one alone is not the target) until
+        // the filter matches something or all of them stop moving at their bottoms
+        // (virtualized lists realize their items only around the viewport)
+        for (var step = 1; step <= 40; step++)
+        {
+            var containers = FindScrollContainers(windowHandle);
+            if (containers.Count == 0) return (null, [], 0, step - 1);
+            var moved = false;
+            foreach (var container in containers)
+            {
+                try
+                {
+                    var before = container.CurrentVerticalScrollPercent();
+                    container.Scroll(2 /* NoAmount horizontal */, 3 /* LargeIncrement vertical */);
+                    moved |= Math.Abs(container.CurrentVerticalScrollPercent() - before) >= 0.01;
+                }
+                catch (COMException)
+                {
+                    // a disconnected marshaler - this container is done
+                }
+            }
+            Thread.Sleep(200); // let the virtualization realize the new viewport
+            (error, page, total) = FindOnce(windowHandle, nameContains, automationIdContains, controlType, classNameContains, limit, offset, includeOffscreen);
+            if (error is not null || total > 0) return (error, page, total, step);
+            if (!moved) return (null, [], 0, step); // every container hit its bottom
+        }
+        return (null, [], 0, 40);
+    }
+
+    /// <summary>Legacy tuple shape for callers that do not care about scroll steps.</summary>
     internal static (string? Error, (ElementInfo Info, IUIAutomationElement Raw)[] Page, int Total) FindElements(
         nint windowHandle,
         string? nameContains,
@@ -83,6 +133,13 @@ internal static class DesktopAutomation
         int limit,
         int offset = 0,
         bool includeOffscreen = true)
+    {
+        var (error, page, total, _) = FindElements(windowHandle, nameContains, automationIdContains, controlType, classNameContains, limit, offset, includeOffscreen, scroll: false);
+        return (error, page, total);
+    }
+
+    private static (string? Error, (ElementInfo Info, IUIAutomationElement Raw)[] Page, int Total) FindOnce(
+        nint windowHandle, string? nameContains, string? automationIdContains, string? controlType, string? classNameContains, int limit, int offset, bool includeOffscreen)
     {
         try
         {
@@ -123,6 +180,37 @@ internal static class DesktopAutomation
         }
     }
 
+    /// <summary>Every vertically scrollable descendant (explorer: the navigation tree AND
+    /// the file list) - the deep scroll pages all of them, since which one holds the
+    /// target is not knowable up front.</summary>
+    private static List<IUIAutomationScrollPattern> FindScrollContainers(nint windowHandle)
+    {
+        var containers = new List<IUIAutomationScrollPattern>();
+        try
+        {
+            var root = Automation.ElementFromHandle(windowHandle);
+            var raw = root.FindAll(TreeScope.Descendants, Automation.CreateTrueCondition());
+            for (var i = 0; i < raw.Length; i++)
+            {
+                var element = raw.GetElement(i);
+                if (!TryPattern(element, ScrollPatternId, ScrollPatternIid, out IUIAutomationScrollPattern scroll)) continue;
+                try
+                {
+                    if (scroll.CurrentVerticallyScrollable()) containers.Add(scroll);
+                }
+                catch (COMException)
+                {
+                    // a disconnected marshaler - skip this candidate
+                }
+            }
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            // enumeration failed - return what was collected so far
+        }
+        return containers;
+    }
+
     /// <summary>Outcome of trying the Invoke pattern on an element.</summary>
     internal enum InvokeOutcome
     {
@@ -161,6 +249,7 @@ internal static class DesktopAutomation
     private const int InvokePatternId = 10000;
     private const int ValuePatternId = 10002;
     private const int RangeValuePatternId = 10003;
+    private const int ScrollPatternId = 10004;
     private const int ExpandCollapsePatternId = 10005;
     private const int SelectionItemPatternId = 10010;
     private const int ScrollItemPatternId = 10015;
@@ -173,6 +262,7 @@ internal static class DesktopAutomation
     private static readonly Guid ScrollItemPatternIid = new("b488300f-d015-4f19-9c29-bb595e3645ef");
     private static readonly Guid TogglePatternIid = new("94cf8058-9b8d-4ab9-8bfd-4cd0a33c8c70");
     private static readonly Guid RangeValuePatternIid = new("59213f4f-7346-49e5-b120-80555987a148");
+    private static readonly Guid ScrollPatternIid = new("88f4d42a-e881-459d-a77c-73bbbb7e02dc");
 
     /// <summary>
     /// Sets a range-capable element's value (sliders, progress, zoom) through the
@@ -508,6 +598,28 @@ internal static class DesktopAutomation
         void Collapse();
         int CurrentExpandCollapseState();
         void _cachedState();
+    }
+
+    /// <summary>Scroll pattern for list containers (vtable per CsWin32 metadata export,
+    /// probe/uiainterop round 13). ScrollAmount: LargeDecrement=0, SmallDecrement=1,
+    /// NoAmount=2, LargeIncrement=3, SmallIncrement=4.</summary>
+    [ComImport, Guid("88f4d42a-e881-459d-a77c-73bbbb7e02dc"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IUIAutomationScrollPattern
+    {
+        void Scroll(int horizontalAmount, int verticalAmount);
+        void SetScrollPercent(double horizontalPercent, double verticalPercent);
+        double CurrentHorizontalScrollPercent();
+        double CurrentVerticalScrollPercent();
+        double CurrentHorizontalViewSize();
+        double CurrentVerticalViewSize();
+        bool CurrentHorizontallyScrollable();
+        bool CurrentVerticallyScrollable();
+        void _cachedHorizontalPercent();
+        void _cachedVerticalPercent();
+        void _cachedHorizontalViewSize();
+        void _cachedVerticalViewSize();
+        void _cachedHorizontallyScrollable();
+        void _cachedVerticallyScrollable();
     }
 
     [ComImport, Guid("b488300f-d015-4f19-9c29-bb595e3645ef"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

@@ -34,7 +34,7 @@ public static class DesktopToolRegistration
         """{"type":"object","properties":{"window_id":{"type":"integer"},"max_chars":{"type":"integer","minimum":1,"maximum":16384},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
 
     private const string FindElementSchema =
-        """{"type":"object","properties":{"window_id":{"type":"integer"},"name":{"type":"string","maxLength":256},"automation_id":{"type":"string","maxLength":256},"control_type":{"type":"string","maxLength":32},"class_name":{"type":"string","maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":50},"offset":{"type":"integer","minimum":0,"maximum":10000},"offscreen":{"type":"boolean"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"window_id":{"type":"integer"},"name":{"type":"string","maxLength":256},"automation_id":{"type":"string","maxLength":256},"control_type":{"type":"string","maxLength":32},"class_name":{"type":"string","maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":50},"offset":{"type":"integer","minimum":0,"maximum":10000},"offscreen":{"type":"boolean"},"scroll":{"type":"boolean"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
 
     private const string SetValueSchema =
         """{"type":"object","properties":{"window_id":{"type":"integer"},"element_index":{"type":"integer","minimum":0,"maximum":49},"element_automation_id":{"type":"string","maxLength":256},"value":{"type":"number"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["value"],"additionalProperties":false}""";
@@ -86,7 +86,9 @@ public static class DesktopToolRegistration
         + "name, automation_id, control_type, class_name, bounds, enabled and offscreen flags. Filter with name / "
         + "automation_id / control_type / class_name fragments (case-insensitive contains); returns `limit` matches "
         + "(default 20) from `offset` plus the total - for big trees PREFER a control_type or name filter (one call) "
-        + "over paging; offscreen=false hides elements outside the visible area. THE PRECISE PATH for small targets: "
+        + "over paging; offscreen=false hides elements outside the visible area; scroll=true pages the scrollable "
+        + "container to the bottom when nothing matches (virtualized lists like explorer's file view realize items "
+        + "only around the viewport) and a still-empty result then means definitely absent. THE PRECISE PATH for small targets: "
         + "pair it with desktop_click / desktop_type / desktop_set_value's element_index / element_automation_id to "
         + "act on the control semantically without model-estimated coordinates. Offscreen elements are scrolled into "
         + "view automatically when their container allows it. ELEVATED (admin) windows return "
@@ -121,7 +123,9 @@ public static class DesktopToolRegistration
         + "element_automation_id from desktop_find_element - the text is set through the field's Value pattern (or "
         + "posted to its native edit window), no keyboard input involved. Alternative: plain window_id (fast mode "
         + "focuses the window and sends real input; silent mode posts WM_CHAR). Unicode is sent as-is, no IME "
-        + "composition. Approval-gated. " + ModeParameterDoc + " Windows only.";
+        + "composition: Chinese/CJK, full-width punctuation and emoji all work; emoji into a classic Edit control "
+        + "is inserted directly through EM_REPLACESEL (delivery=replace-sel), no clipboard involved. "
+        + "Approval-gated. " + ModeParameterDoc + " Windows only.";
 
     private const string PressKeyDescription =
         "Press a key or chord such as 'Enter', 'ctrl+a' or 'alt+f4'. Named keys: Enter, Tab, Escape, Backspace, Delete, "
