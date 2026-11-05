@@ -39,7 +39,7 @@ public static class DesktopToolRegistration
         """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"window_id":{"type":"integer"},"button":{"type":"string","enum":["left","right","middle"]},"count":{"type":"integer","minimum":1,"maximum":3},"mode":{"type":"string","enum":["fast","silent","isolated"]},"element_index":{"type":"integer","minimum":0,"maximum":49},"element_automation_id":{"type":"string","maxLength":256}},"additionalProperties":false}""";
 
     private const string TypeSchema =
-        """{"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":4096},"window_id":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["text"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":4096},"window_id":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent","isolated"]},"element_index":{"type":"integer","minimum":0,"maximum":49},"element_automation_id":{"type":"string","maxLength":256}},"required":["text"],"additionalProperties":false}""";
 
     private const string PressKeySchema =
         """{"type":"object","properties":{"keys":{"type":"string","minLength":1,"maxLength":64},"window_id":{"type":"integer"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["keys"],"additionalProperties":false}""";
@@ -78,36 +78,38 @@ public static class DesktopToolRegistration
         + "Read-only and focus-free. Windows only.";
 
     private const string FindElementDescription =
-        "Find clickable controls in a window through UI Automation (the same tree screen readers and "
-        + "test frameworks use): name, automation_id, control_type, class_name, physical bounds, enabled and "
-        + "offscreen flags. Filter with name / automation_id / control_type / class_name fragments (case-insensitive "
-        + "contains); returns the first `limit` (default 20) matches plus the total. THE PRECISE PATH for small "
-        + "targets: pair it with desktop_click's element_index / element_automation_id to click a control's UIA "
-        + "rectangle without any model-estimated coordinates. Covers standard Win32 / WPF / UWP controls; "
-        + "self-drawn and game surfaces expose few or no elements - use desktop_screenshot coordinates there. "
-        + "Windows only.";
+        "Find controls in a window through UI Automation (the same tree screen readers and test frameworks use): "
+        + "name, automation_id, control_type, class_name, bounds, enabled and offscreen flags. Filter with name / "
+        + "automation_id / control_type / class_name fragments (case-insensitive contains); returns the first `limit` "
+        + "(default 20) matches plus the total. THE PRECISE PATH for small targets: pair it with desktop_click / "
+        + "desktop_type's element_index / element_automation_id to act on the control semantically (click by "
+        + "Invoke/Toggle/SelectionItem pattern, type by Value pattern) without any model-estimated coordinates. "
+        + "Offscreen elements are scrolled into view automatically when their container allows it. Covers standard "
+        + "Win32 / WPF / UWP controls; self-drawn and game surfaces expose few or no elements - use desktop_screenshot "
+        + "coordinates there. Windows only.";
 
     private const string ClickDescription =
         "Click a control - by element, or by position. PREFERRED: pass element_index or element_automation_id from this "
-        + "run's desktop_find_element to click the control's UI Automation rectangle (precision comes from UIA, not from "
-        + "estimating coordinates from a screenshot; this is the reliable path for small controls). The result carries the "
-        + "clicked `element` and a `verification` object (verified / failed / unverified from control-text changes, with "
-        + "before/after screenshot paths). Alternative: x/y coordinates (with window_id: client-relative; without: "
-        + "virtual-screen absolute). When the host has enabled the coordinate-compensation layer (off by default), x/y are "
-        + "read as the coordinates you report against the last desktop_screenshot and mapped through a measured per-model "
-        + "profile - unmeasured models or image shapes refuse (desktop_coordinate_profile_missing), and 3 consecutive "
-        + "failed verifications suspend coordinate clicking for the run (desktop_coordinate_compensation_suspended). "
-        + "Measured boundary: on targets smaller than ~24px, coordinate-path hit rate is roughly 2 of 3 (model "
-        + "localization wobble; the mapping chain itself stays within ~9px) - use element clicks there. Every click is "
-        + "guarded: if another window covers the point (overlays, dim layers, unexpected dialogs), the click is refused "
-        + "with desktop_point_occluded instead of clicking through it. Approval-gated. "
+        + "run's desktop_find_element. Element clicks are delivered by the control's own semantics in stability order "
+        + "(its native window, then UIA Invoke / Toggle / SelectionItem / ExpandCollapse patterns) and the result reports "
+        + "which `delivery` was used plus a `verification` object (verified / failed / unverified from control-text "
+        + "changes, with before/after screenshot paths). Alternative: x/y coordinates (with window_id: client-relative; "
+        + "without: virtual-screen absolute). When the host has enabled the coordinate-compensation layer (off by "
+        + "default), x/y are read as the coordinates you report against the last desktop_screenshot and mapped through a "
+        + "measured per-model profile - unmeasured models or image shapes refuse (desktop_coordinate_profile_missing), "
+        + "and 3 consecutive failed verifications suspend coordinate clicking for the run "
+        + "(desktop_coordinate_compensation_suspended). Measured boundary: on targets smaller than ~24px, coordinate-path "
+        + "hit rate is roughly 2 of 3 - use element clicks there. Every coordinate click is guarded: if another window "
+        + "covers the point (overlays, dim layers, unexpected dialogs), the click is refused with desktop_point_occluded "
+        + "instead of clicking through it. Approval-gated. "
         + ModeParameterDoc + " Write actions are never retried automatically. Windows only.";
 
     private const string TypeDescription =
-        "Type literal text (up to 4096 characters; Unicode is sent as-is, no IME composition). In fast mode the target "
-        + "window is focused first, so the user sees the typing; in silent mode the characters are posted as WM_CHAR to "
-        + "the control at x/y when given, else to the first edit-class child. Approval-gated. " + ModeParameterDoc
-        + " Windows only.";
+        "Type literal text (up to 4096 characters). PREFERRED for text fields: pass element_index / "
+        + "element_automation_id from desktop_find_element - the text is set through the field's Value pattern (or "
+        + "posted to its native edit window), no keyboard input involved. Alternative: plain window_id (fast mode "
+        + "focuses the window and sends real input; silent mode posts WM_CHAR). Unicode is sent as-is, no IME "
+        + "composition. Approval-gated. " + ModeParameterDoc + " Windows only.";
 
     private const string PressKeyDescription =
         "Press a key or chord such as 'Enter', 'ctrl+a' or 'alt+f4'. Named keys: Enter, Tab, Escape, Backspace, Delete, "
@@ -353,3 +355,4 @@ public static class DesktopToolRegistration
         }
     }
 }
+

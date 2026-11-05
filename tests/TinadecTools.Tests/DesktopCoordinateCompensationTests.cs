@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text;
 using TinadecTools.Tools.Desktop;
 
 namespace TinadecTools.Tests;
@@ -369,8 +370,9 @@ public sealed class DesktopCoordinateCompensationTests
 
         var buttons = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "button", Mode = DesktopToolRuntime.IsolatedMode });
         Assert.True(buttons.Ok, buttons.Message);
-        // 3 app buttons + the caption's Minimize/Maximize/Close, which UIA also types as Button
-        Assert.Equal(6, buttons.Total);
+        // 4 app buttons (Save/Cancel/Tiny/Clipped) + the caption's Minimize/Maximize/Close,
+        // which UIA also types as Button
+        Assert.Equal(7, buttons.Total);
 
         var unknownType = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "rocket", Mode = DesktopToolRuntime.IsolatedMode });
         Assert.False(unknownType.Ok);
@@ -467,14 +469,71 @@ public sealed class DesktopCoordinateCompensationTests
         window.AssertClicks("Save", 0);
     }
 
+    /// <summary>Typing by element goes through the Value pattern and is audited as
+    /// uia-value; a native edit falls back to posting WM_CHAR into its own window.</summary>
+    [Fact]
+    public async Task TypeByElement_SetsTheValueAndReportsTheDelivery()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+        Assert.True(runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode }).Ok);
+        var edit = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ClassName = "Edit", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(edit.Ok, edit.Message);
+        Assert.NotEmpty(edit.Elements!);
+
+        var typed = await runtime.TypeAsync(new DesktopTypeArgs
+        {
+            Text = "element-typed", ElementIndex = edit.Elements![0].Index, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.True(typed.Ok, typed.Message);
+        Assert.NotNull(typed.Delivery);
+        Assert.Equal("element-typed".Length, typed.Chars);
+        // the text really landed in the edit control (app state, not the tool's word)
+        var landed = false;
+        for (var attempt = 0; attempt < 20 && !landed; attempt++)
+        {
+            landed = DesktopWin32.WindowTitle(window.Edit) == "element-typed";
+            if (!landed) Thread.Sleep(50);
+        }
+        Assert.True(landed, $"edit content was '{DesktopWin32.WindowTitle(window.Edit)}'");
+    }
+
+    /// <summary>An element outside the visible area whose container cannot scroll it in is
+    /// refused with desktop_element_offscreen - an explicit refusal, never a silent click
+    /// into whatever happens to be at the stale coordinates. Probe-measured: a Win32
+    /// BUTTON clipped by its parent does NOT report IsOffscreen (still clickable by
+    /// native-post), but a LISTBOX item below the fold DOES - classic listbox items
+    /// expose no ScrollItem, so the refusal fires.</summary>
+    [Fact]
+    public async Task ClickByElement_OffscreenWithoutScrollIsRefusedExplicitly()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+        var found = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Name = "Item30", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(found.Ok, found.Message);
+        var item30 = found.Elements!.Single();
+        Assert.True(item30.IsOffscreen, "Item30 sits below the listbox fold - if it is not offscreen this test's premise broke");
+
+        var click = await runtime.ClickAsync(new DesktopClickArgs
+        {
+            ElementIndex = item30.Index, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode,
+        });
+        Assert.False(click.Ok);
+        Assert.Equal("desktop_element_offscreen", click.Code);
+        Assert.Contains("visible area", click.Message, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// An isolated window with three BUTTON children (Save/Cancel + a 16x16 Tiny) whose
-    /// click counts are rendered into their labels, plus an edit field.
+    /// click counts are rendered into their labels, an edit field, and a button placed far
+    /// below the visible client area (the offscreen-refusal probe).
     /// </summary>
     private sealed class ElementsWindow : IsolatedWindow
     {
         private static readonly ConcurrentDictionary<string, int> Clicks = new();
         private static readonly ConcurrentDictionary<nint, string> Names = new();
+
+        public nint Edit { get; private set; }
 
         public ElementsWindow()
             : base(400, 420, 60, "")
@@ -486,6 +545,13 @@ public sealed class DesktopCoordinateCompensationTests
             Create(hwnd, "Save", 101, 20, 20, 120, 40);
             Create(hwnd, "Cancel", 102, 160, 20, 120, 40);
             Create(hwnd, "Tiny", 103, 20, 80, 16, 16);
+            Create(hwnd, "Clipped", 106, 20, 460, 120, 32);
+            Edit = CreateWindowEx(0x00000200u, "EDIT", "", WS_CHILD | WS_VISIBLE | 0x80u /* ES_AUTOHSCROLL */, 160, 80, 150, 24, hwnd, (nint)105, GetModuleHandle(null), 0);
+            // 30 items in a 70px box: items below the fold report IsOffscreen (the probe
+            // measured that clipped BUTTONS do not, but listbox ITEMS do)
+            var list = CreateWindowEx(0x00000200u, "LISTBOX", "", WS_CHILD | WS_VISIBLE | 0x1u /* LBS_NOTIFY */, 160, 115, 150, 70, hwnd, (nint)107, GetModuleHandle(null), 0);
+            foreach (var name in new[] { "First", "Second", "Third" }.Concat(Enumerable.Range(4, 27).Select(n => $"Item{n:00}")))
+                SendMessageString(list, 0x0180 /* LB_ADDSTRING */, 0, new StringBuilder(name));
             return 0;
 
             void Create(nint parent, string name, int id, int x, int y, int w, int h)
@@ -525,6 +591,9 @@ public sealed class DesktopCoordinateCompensationTests
             }
             return base.WndProc(hWnd, msg, wParam, lParam);
         }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
+        private static extern nint SendMessageString(nint hWnd, uint msg, nint wParam, StringBuilder lParam);
     }
 
     /// <summary>A topmost window placed exactly over the target's Save button area.</summary>

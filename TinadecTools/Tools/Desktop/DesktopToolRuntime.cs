@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using NLog;
 using TinadecTools.Runtime;
@@ -314,10 +315,12 @@ internal sealed class DesktopToolRuntime
             hWnd = (nint)elementWindow;
             var before = ReadTextsForVerification(hWnd, mode);
             DesktopToolResult elementResult;
+            string delivery;
             if (element!.NativeWindowHandle != 0)
             {
                 // exact path: post to the element's own window; every coordinate is
                 // window-relative, so no DPI space can shift it
+                delivery = "native-post";
                 await InputGate.WaitAsync().ConfigureAwait(false);
                 try
                 {
@@ -338,32 +341,32 @@ internal sealed class DesktopToolRuntime
             }
             else
             {
-                // virtual element (WPF/UWP/WinUI): the Invoke pattern is the semantic
-                // click, coordinate-free; the rect-ratio path is the last resort for
-                // elements that support neither a window nor Invoke
-                var invoke = DesktopAutomation.TryInvoke(raw!);
-                if (invoke == DesktopAutomation.InvokeOutcome.Invoked)
+                // virtual element (WPF/UWP/WinUI): pattern-aware semantic click in
+                // stability order (Invoke > Toggle > SelectionItem > ExpandCollapse),
+                // coordinate-free; the rect-ratio path is the last resort
+                string? via = null;
+                try
                 {
-                    elementResult = new DesktopToolResult { Ok = true, Applied = true, Mode = mode, WindowId = hWnd };
+                    via = DesktopAutomation.ClickByPattern(raw!);
                 }
-                else if (invoke == DesktopAutomation.InvokeOutcome.ElementGone)
-                {
-                    return Fail("desktop_element_not_found",
-                        "the element is gone (the UI changed since desktop_find_element); re-run desktop_find_element and click a fresh index.",
-                        permanent: false);
-                }
-                else if (invoke == DesktopAutomation.InvokeOutcome.Failed)
+                catch (COMException exception)
                 {
                     return Fail("desktop_element_invoke_failed",
-                        "the element supports the Invoke pattern but invoking it failed (it may be disabled or blocked by the app). Read the element's state with desktop_find_element before retrying.",
+                        $"the element supports a click pattern but invoking it failed ({exception.Message}). Read the element's state with desktop_find_element before retrying.",
                         permanent: false);
+                }
+                if (via is not null)
+                {
+                    delivery = via;
+                    elementResult = new DesktopToolResult { Ok = true, Applied = true, Mode = mode, WindowId = hWnd };
                 }
                 else
                 {
                     if (element.Right <= element.Left || element.Bottom <= element.Top)
                         return Fail("desktop_element_not_clickable",
-                            "the element is not invokable and reports an empty rectangle; it cannot be clicked. Use desktop_type / desktop_press_key or another control.",
+                            "the element supports no click pattern (Invoke/Toggle/SelectionItem/ExpandCollapse) and reports an empty rectangle; it cannot be clicked. Use desktop_type / desktop_press_key or another control.",
                             permanent: true);
+                    delivery = "rect-center";
                     var client = UiaRectToPhysicalClient(hWnd, element);
                     elementResult = await DeliverClickAsync(
                         new DesktopClickArgs { X = client.X, Y = client.Y, WindowId = elementWindow, Button = args.Button, Count = args.Count, Mode = args.Mode },
@@ -371,6 +374,7 @@ internal sealed class DesktopToolRuntime
                 }
             }
             elementResult.Element = ToElementInfo(element, elementIndex);
+            elementResult.Delivery = delivery;
             if (elementResult.Ok)
             {
                 elementResult.Verification = VerifyAfterClick(hWnd, mode, before, new ServedCapture(hWnd, 0, 0, 0, 0, ""));
@@ -471,6 +475,13 @@ internal sealed class DesktopToolRuntime
         var center = new DesktopWin32.POINT { X = width / 2, Y = height / 2 };
         for (var i = 0; i < count; i++) DesktopWin32.PostClick(elementHwnd, center, button);
         return new DesktopToolResult { Ok = true, Applied = true, WindowId = elementHwnd };
+    }
+
+    /// <summary>Posts text as WM_CHAR straight into the element's own edit window.</summary>
+    private static DesktopToolResult PostCharsToNativeElement(nint elementHwnd, string text)
+    {
+        DesktopWin32.PostChars(elementHwnd, text);
+        return new DesktopToolResult { Ok = true, Applied = true, WindowId = elementHwnd, Chars = text.Length };
     }
 
     /// <summary>Refuses the click when the screen point is occupied by anything other than
@@ -576,9 +587,24 @@ internal sealed class DesktopToolRuntime
         }
 
         if (element.IsOffscreen)
-            return (Fail("desktop_element_not_clickable",
-                "the element is offscreen (its window is scrolled or minimized); scrolling it into view first is required.",
-                permanent: false), null, null, 0, 0);
+        {
+            // bring the element into the visible area through its scroll container; if the
+            // container cannot scroll (or the window is minimized), fail explicitly instead
+            // of clicking a point that cannot be on the element
+            var scrolled = false;
+            try
+            {
+                scrolled = DesktopAutomation.TryScrollIntoView(raw);
+            }
+            catch (COMException)
+            {
+                scrolled = false;
+            }
+            if (!scrolled)
+                return (Fail("desktop_element_offscreen",
+                    "the element is outside the visible area and its container cannot scroll it into view (or the window is minimized). Scroll or restore the window first, then re-run desktop_find_element.",
+                    permanent: false), null, null, 0, 0);
+        }
 
         return (null, element, raw, elementIndex, cached.WindowId);
     }
@@ -941,6 +967,62 @@ internal sealed class DesktopToolRuntime
         if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
         if (string.IsNullOrEmpty(args.Text)) return Fail("desktop_input_failed", "desktop_type needs a non-empty text.", permanent: true);
         if (args.Text.Length > 4096) return Fail("desktop_input_failed", "text is limited to 4096 characters.", permanent: true);
+
+        // ── element typing: the Value pattern sets the text semantically (no keyboard
+        // input, no focus steal, works for WPF/UWP documents); a native edit window falls
+        // back to WM_CHAR straight into the element's own window ─────────────────────
+        if (args.ElementIndex is not null || args.ElementAutomationId is not null)
+        {
+            var (elementError, element, raw, elementIndex, elementWindow) = ResolveClickElement(new DesktopClickArgs { ElementIndex = args.ElementIndex, ElementAutomationId = args.ElementAutomationId, WindowId = args.WindowId });
+            if (elementError is not null) return elementError;
+            DesktopToolResult elementResult;
+            string delivery;
+            var valueSet = false;
+            try
+            {
+                valueSet = DesktopAutomation.TrySetValue(raw!, args.Text);
+            }
+            catch (COMException)
+            {
+                valueSet = false;
+            }
+            if (valueSet)
+            {
+                delivery = "uia-value";
+                elementResult = new DesktopToolResult { Ok = true, Applied = true, Mode = mode, WindowId = elementWindow, Chars = args.Text.Length };
+            }
+            else if (element!.NativeWindowHandle != 0)
+            {
+                delivery = "native-post";
+                await InputGate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (mode == IsolatedMode)
+                    {
+                        var isolated = DesktopWin32.RunOnIsolatedDesktop(() => PostCharsToNativeElement(element.NativeWindowHandle, args.Text), out var runError);
+                        elementResult = runError is not null ? Fail("desktop_isolated_failed", runError, permanent: false) : isolated;
+                    }
+                    else
+                    {
+                        elementResult = PostCharsToNativeElement(element.NativeWindowHandle, args.Text);
+                    }
+                }
+                finally
+                {
+                    InputGate.Release();
+                }
+            }
+            else
+            {
+                return Fail("desktop_element_not_typeable",
+                    "the element supports neither the Value pattern (it is not a text element, or is read-only) nor a native edit window to type into. Use desktop_press_key on a focused element, or pick the actual text field with desktop_find_element.",
+                    permanent: false);
+            }
+            elementResult.Element = ToElementInfo(element, elementIndex);
+            elementResult.Delivery = delivery;
+            return elementResult;
+        }
+
         var hWnd = args.WindowId is { } value ? (nint)value : 0;
         if (hWnd != 0 && !IsAliveWindow(hWnd))
             return Fail("desktop_window_not_found", $"No window with window_id {args.WindowId}.", permanent: true);
