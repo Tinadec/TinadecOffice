@@ -551,6 +551,51 @@ public sealed class DesktopCoordinateCompensationTests
         Assert.Equal("desktop_element_context_missing", set.Code);
     }
 
+    /// <summary>Round 13: emoji (surrogate pairs) into a classic Edit control must route
+    /// through EM_REPLACESEL (WM_CHAR mangles lone surrogates into '?') and land
+    /// EXACTLY - every UTF-16 code unit.</summary>
+    [Fact]
+    public async Task Type_EmojiIntoEditGoesThroughReplaceSelAndLandsExactly()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+        const string text = "中文①：你好！🎂 café，对吗？";
+
+        var typed = await runtime.TypeAsync(new DesktopTypeArgs { Text = text, WindowId = window.Edit, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(typed.Ok, typed.Message);
+        Assert.Equal("replace-sel", typed.Delivery);
+
+        var landed = false;
+        for (var attempt = 0; attempt < 30 && !landed; attempt++)
+        {
+            landed = DesktopWin32.WindowTitle(window.Edit) == text;
+            if (!landed) Thread.Sleep(50);
+        }
+        Assert.Equal(text, DesktopWin32.WindowTitle(window.Edit));
+    }
+
+    /// <summary>Text without surrogate pairs keeps the plain WM_CHAR delivery (round 13:
+    /// CJK + full-width punctuation + circled digits all survive WM_CHAR into an Edit).</summary>
+    [Fact]
+    public async Task Type_PlainChineseIntoEditStaysOnWmChar()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+        const string text = "你好，世界。测试①：全角标点";
+
+        var typed = await runtime.TypeAsync(new DesktopTypeArgs { Text = text, WindowId = window.Edit, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(typed.Ok, typed.Message);
+        Assert.Equal("wm-char", typed.Delivery);
+
+        var landed = false;
+        for (var attempt = 0; attempt < 30 && !landed; attempt++)
+        {
+            landed = DesktopWin32.WindowTitle(window.Edit) == text;
+            if (!landed) Thread.Sleep(50);
+        }
+        Assert.Equal(text, DesktopWin32.WindowTitle(window.Edit));
+    }
+
     /// <summary>The occlusion guard: a topmost overlay over the target's button must refuse
     /// the click with desktop_point_occluded, and the target must receive NOTHING (the
     /// round-9 lesson: a full-screen dim layer silently swallowed clicks).</summary>

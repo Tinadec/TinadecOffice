@@ -41,6 +41,9 @@ public sealed class DesktopFindElementArgs
     [JsonPropertyName("offset")] public int? Offset { get; set; }
     /// <summary>false = only elements currently in the visible area; true = also offscreen ones.</summary>
     [JsonPropertyName("offscreen")] public bool? Offscreen { get; set; }
+    /// <summary>true = when nothing matches, page the scrollable container to the bottom
+    /// looking for the target in a virtualized list (realizing items as it goes).</summary>
+    [JsonPropertyName("scroll")] public bool? Scroll { get; set; }
     [JsonPropertyName("mode")] public string? Mode { get; set; }
 }
 

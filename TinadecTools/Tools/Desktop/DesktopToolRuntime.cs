@@ -486,11 +486,13 @@ internal sealed class DesktopToolRuntime
         return new DesktopToolResult { Ok = true, Applied = true, WindowId = elementHwnd };
     }
 
-    /// <summary>Posts text as WM_CHAR straight into the element's own edit window.</summary>
+    /// <summary>Delivers text to the element's own edit window: WM_CHAR code units, or a
+    /// clipboard paste when the text carries surrogate pairs into a classic Edit control
+    /// (which mangles lone surrogates into '?'). The delivery is reported in the result.</summary>
     private static DesktopToolResult PostCharsToNativeElement(nint elementHwnd, string text)
     {
-        DesktopWin32.PostChars(elementHwnd, text);
-        return new DesktopToolResult { Ok = true, Applied = true, WindowId = elementHwnd, Chars = text.Length };
+        var delivery = DesktopWin32.PostText(elementHwnd, text);
+        return new DesktopToolResult { Ok = true, Applied = true, WindowId = elementHwnd, Chars = text.Length, Delivery = delivery };
     }
 
     /// <summary>Refuses the click when the screen point is occupied by anything other than
@@ -531,15 +533,24 @@ internal sealed class DesktopToolRuntime
         var limit = Math.Clamp(args.Limit ?? 20, 1, 50);
         var offset = Math.Max(0, args.Offset ?? 0);
         var includeOffscreen = args.Offscreen ?? true;
+        var scroll = args.Scroll ?? false;
 
-        var (error, page, total) = DesktopAutomation.FindElements(hWnd, args.Name, args.AutomationId, args.ControlType, args.ClassName, limit, offset, includeOffscreen);
+        var (error, page, total, scrollSteps) = DesktopAutomation.FindElements(hWnd, args.Name, args.AutomationId, args.ControlType, args.ClassName, limit, offset, includeOffscreen, scroll);
         if (error is not null) return Fail("desktop_uia_failed", error, permanent: false);
+
+        // scroll=true and still nothing: the whole virtualized list was paged through -
+        // a DEFINITE not-found, not the ambiguous empty page (probe round 12: '视频' could
+        // not be told apart from "not realized yet"; now the scroll says which it was)
+        if (scroll && total == 0 && scrollSteps > 0)
+            return Fail("desktop_element_not_found",
+                $"no element matches the filter after scrolling the entire virtualized list ({scrollSteps} page steps to the bottom). The target is genuinely absent from this window, not merely offscreen.",
+                permanent: true);
 
         lock (_captureLock)
         {
             _lastElements[ToolExecutionContext.Current?.RunId ?? ""] = (args.WindowId, page.ToList());
         }
-        Logger.Info("desktop_find_element: window {WindowId} filter name='{Name}' type='{Type}' offset={Offset} -> {Total} matches, returning {Count}", args.WindowId, args.Name, args.ControlType, offset, total, page.Length);
+        Logger.Info("desktop_find_element: window {WindowId} filter name='{Name}' type='{Type}' offset={Offset} scroll={Scroll} -> {Total} matches, returning {Count}", args.WindowId, args.Name, args.ControlType, offset, scroll, total, page.Length);
 
         var result = new DesktopToolResult
         {
@@ -1073,7 +1084,10 @@ internal sealed class DesktopToolRuntime
                     permanent: false);
             }
             elementResult.Element = ToElementInfo(element, elementIndex);
-            elementResult.Delivery = delivery;
+            // the native-post path may itself have substituted a clipboard paste (emoji
+            // into a classic Edit control) - keep the more specific delivery it reports
+            if (delivery != "native-post" || elementResult.Delivery is not { } inner || inner == "wm-char")
+                elementResult.Delivery = delivery;
             return elementResult;
         }
 
@@ -1119,8 +1133,8 @@ internal sealed class DesktopToolRuntime
             if (DesktopWin32.IsMinimized(hWnd))
                 return Fail("desktop_window_minimized", "A minimized window cannot receive messages; restore it first.", permanent: false);
             var receiver = ResolveTextTarget(hWnd, args.X, args.Y);
-            DesktopWin32.PostChars(receiver, args.Text);
-            return new DesktopToolResult { Ok = true, Applied = true, Mode = mode, Chars = args.Text.Length, WindowId = receiver };
+            var delivery = DesktopWin32.PostText(receiver, args.Text);
+            return new DesktopToolResult { Ok = true, Applied = true, Mode = mode, Chars = args.Text.Length, WindowId = receiver, Delivery = delivery };
         }
         catch (Exception exception)
         {
@@ -1139,8 +1153,8 @@ internal sealed class DesktopToolRuntime
         if (DesktopWin32.IsMinimized(hWnd))
             return Fail("desktop_window_minimized", "A minimized window cannot receive messages; restore it first.", permanent: false);
         var receiver = ResolveTextTarget(hWnd, x, y);
-        DesktopWin32.PostChars(receiver, text);
-        return new DesktopToolResult { Ok = true, Applied = true, Mode = IsolatedMode, Chars = text.Length, WindowId = receiver };
+        var delivery = DesktopWin32.PostText(receiver, text);
+        return new DesktopToolResult { Ok = true, Applied = true, Mode = IsolatedMode, Chars = text.Length, WindowId = receiver, Delivery = delivery };
     }
 
     public async Task<DesktopToolResult> PressKeyAsync(DesktopPressKeyArgs args)

@@ -161,6 +161,8 @@ internal static class DesktopWin32
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint SendMessageTimeout(nint hWnd, uint msg, nint wParam, StringBuilder lParam, uint flags, uint timeout, out nint result);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint SendMessageTimeout(nint hWnd, uint msg, nint wParam, nint lParam, uint flags, uint timeout, out nint result);
+    [DllImport("user32.dll")] private static extern nint SendMessage(nint hWnd, uint msg, nint wParam, nint lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")] private static extern nint SendMessageString(nint hWnd, uint msg, nint wParam, string lParam);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, int attribute, out int value, int size);
@@ -688,6 +690,102 @@ internal static class DesktopWin32
                 throw new InvalidOperationException("PostMessage(WM_CHAR) failed");
         }
     }
+
+    /// <summary>
+    /// Delivers text to a window by message: plain WM_CHAR code units, except when the
+    /// text contains surrogate pairs (emoji, U+10000+) AND the receiver is a classic
+    /// EDIT control - the Edit control mangles each lone surrogate into '?', while
+    /// EM_REPLACESEL inserts the full Unicode string at the caret (probe round 13: the
+    /// EDIT wm-char path mangled the emoji, direct-set delivery read it back exactly,
+    /// and a cross-thread WM_PASTE to an isolated-desktop Edit returned 1 and pasted
+    /// nothing). RichEdit and Chromium documents handle surrogate pairs over WM_CHAR
+    /// fine, so the branch is Edit-only. Returns the delivery actually used, so
+    /// results can report it honestly.
+    /// </summary>
+    internal static string PostText(nint hWnd, string text)
+    {
+        var hasSurrogatePair = false;
+        for (var i = 0; i + 1 < text.Length; i++)
+        {
+            if (char.IsSurrogatePair(text[i], text[i + 1])) { hasSurrogatePair = true; break; }
+        }
+        if (!hasSurrogatePair || !IsEditClass(hWnd))
+        {
+            PostChars(hWnd, text);
+            return "wm-char";
+        }
+
+        SendMessageString(hWnd, 0x00C2 /* EM_REPLACESEL */, 1 /* allow undo */, text);
+        return "replace-sel";
+    }
+
+    private static bool IsEditClass(nint hWnd)
+    {
+        var buffer = new System.Text.StringBuilder(64);
+        GetClassName(hWnd, buffer, 64);
+        return buffer.ToString() == "Edit";
+    }
+
+    /// <summary>OpenClipboard with retries: the system clipboard history service (and any
+    /// clipboard viewer) briefly holds the clipboard after content changes, and a
+    /// zero-retry open fails right after our own write (probe round 13 measured it).</summary>
+    private static bool TryOpenClipboard()
+    {
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            if (OpenClipboard(0)) return true;
+            Thread.Sleep(10);
+        }
+        return false;
+    }
+
+    /// <summary>Reads CF_UNICODETEXT, or null when the clipboard holds no text.</summary>
+    internal static string? GetClipboardText()
+    {
+        if (!TryOpenClipboard()) return null;
+        try
+        {
+            if (!IsClipboardFormatAvailable(13 /* CF_UNICODETEXT */)) return null;
+            var handle = GetClipboardData(13);
+            if (handle == 0) return null;
+            var pointer = GlobalLock(handle);
+            if (pointer == 0) return null;
+            try { return Marshal.PtrToStringUni(pointer); }
+            finally { GlobalUnlock(handle); }
+        }
+        finally { CloseClipboard(); }
+    }
+
+    internal static void SetClipboardText(string text)
+    {
+        if (!TryOpenClipboard()) throw new InvalidOperationException("OpenClipboard failed (held by another process for 300ms)");
+        try
+        {
+            EmptyClipboard();
+            var bytes = (nuint)(text.Length + 1) * 2;
+            var handle = GlobalAlloc(0x0002 /* GMEM_MOVEABLE */, bytes);
+            if (handle == 0) throw new InvalidOperationException("GlobalAlloc failed");
+            var pointer = GlobalLock(handle);
+            try
+            {
+                Marshal.Copy(text.ToCharArray(), 0, pointer, text.Length);
+                Marshal.WriteInt16(pointer, text.Length * 2, 0);
+            }
+            finally { GlobalUnlock(handle); }
+            if (SetClipboardData(13, handle) == 0) throw new InvalidOperationException("SetClipboardData failed");
+        }
+        finally { CloseClipboard(); }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool OpenClipboard(nint owner);
+    [DllImport("user32.dll")] private static extern bool CloseClipboard();
+    [DllImport("user32.dll")] private static extern bool EmptyClipboard();
+    [DllImport("user32.dll")] private static extern bool IsClipboardFormatAvailable(int format);
+    [DllImport("user32.dll")] private static extern nint GetClipboardData(int format);
+    [DllImport("user32.dll", SetLastError = true)] private static extern nint SetClipboardData(int format, nint handle);
+    [DllImport("kernel32.dll")] private static extern nint GlobalAlloc(uint flags, nuint bytes);
+    [DllImport("kernel32.dll")] private static extern nint GlobalLock(nint handle);
+    [DllImport("kernel32.dll")] private static extern bool GlobalUnlock(nint handle);
 
     /// <summary>Posts a key-down/key-up pair for a single virtual key.</summary>
     internal static void PostKey(nint hWnd, ushort virtualKey)
