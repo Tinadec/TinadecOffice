@@ -69,7 +69,8 @@ internal static class DesktopAutomation
     /// <summary>
     /// Enumerates the descendant elements of a window through UI Automation and returns the
     /// bounded, filtered page (each entry keeps its live COM element for the click paths)
-    /// plus the total match count. Works for windows on any desktop of this session
+    /// plus the total match count. Paging via offset; offscreen=false hides elements
+    /// outside the visible area. Works for windows on any desktop of this session
     /// (probe-measured, including TinadecIsolated). A UIA failure is reported as a stable
     /// error code by the caller, never as a half-empty list.
     /// </summary>
@@ -79,7 +80,9 @@ internal static class DesktopAutomation
         string? automationIdContains,
         string? controlType,
         string? classNameContains,
-        int limit)
+        int limit,
+        int offset = 0,
+        bool includeOffscreen = true)
     {
         try
         {
@@ -101,15 +104,17 @@ internal static class DesktopAutomation
                 if (classNameContains is not null && !Contains(elementClassName, classNameContains)) continue;
                 if (typeId is { } expected && element.CurrentControlType() != expected) continue;
                 var rect = element.CurrentBoundingRectangle();
-                matches.Add((new ElementInfo(
+                var info = new ElementInfo(
                     elementName, elementAutomationId, element.CurrentControlType(), elementClassName,
                     rect.Left, rect.Top, rect.Right, rect.Bottom,
                     element.CurrentNativeWindowHandle(),
                     element.CurrentIsEnabled(),
-                    element.CurrentIsOffscreen()), element));
+                    element.CurrentIsOffscreen());
+                if (!includeOffscreen && info.IsOffscreen) continue;
+                matches.Add((info, element));
             }
 
-            var page = matches.Take(limit).ToArray();
+            var page = matches.Skip(Math.Max(0, offset)).Take(limit).ToArray();
             return (null, page, matches.Count);
         }
         catch (Exception exception) when (exception is COMException or InvalidOperationException)
@@ -167,6 +172,31 @@ internal static class DesktopAutomation
     private static readonly Guid SelectionItemPatternIid = new("a8efa66a-0fda-421a-9194-38021f3578ea");
     private static readonly Guid ScrollItemPatternIid = new("b488300f-d015-4f19-9c29-bb595e3645ef");
     private static readonly Guid TogglePatternIid = new("94cf8058-9b8d-4ab9-8bfd-4cd0a33c8c70");
+    private static readonly Guid RangeValuePatternIid = new("59213f4f-7346-49e5-b120-80555987a148");
+
+    /// <summary>
+    /// Sets a range-capable element's value (sliders, progress, zoom) through the
+    /// RangeValue pattern, returning the value the element reports afterwards - the
+    /// read-back is the evidence, never the setter's silent success.
+    /// </summary>
+    internal static (bool Set, double? ReadBack, string? Error) TrySetRangeValue(IUIAutomationElement element, double value)
+    {
+        if (!TryPattern(element, RangeValuePatternId, RangeValuePatternIid, out IUIAutomationRangeValuePattern range))
+            return (false, null, "the element does not support the RangeValue pattern (not a slider/progress control)");
+        try
+        {
+            range.SetValue(value);
+            return (true, range.CurrentValue(), null);
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            return (false, null, $"setting the value failed ({exception.Message}) - the control may be read-only or out of range");
+        }
+    }
+
+    /// <summary>Reads a range-capable element's current value, or null when it has no RangeValue pattern.</summary>
+    internal static double? CurrentRangeValue(IUIAutomationElement element) =>
+        TryPattern(element, RangeValuePatternId, RangeValuePatternIid, out IUIAutomationRangeValuePattern range) ? range.CurrentValue() : null;
 
     /// <summary>
     /// The pattern-aware click for virtual elements, in stability order: Invoke (the
@@ -386,7 +416,10 @@ internal static class DesktopAutomation
         void _4();  // FindFirstBuildCache
         void _5();  // FindAllBuildCache
         void _6();  // BuildUpdatedCache
-        void _7();  // GetCurrentPropertyValue
+        /// <summary>Property read path (slot 7). VARIANT out marshals to bool/int/string
+        /// or null for VT_EMPTY. Used by the IsPatternAvailable property ids (30100+) -
+        /// the cross-check against GetCurrentPatternAs when a pattern looks absent.</summary>
+        void GetCurrentPropertyValue(int propertyId, [MarshalAs(UnmanagedType.Struct)] out object? value);
         void _8();  // GetCurrentPropertyValueEx
         void _9();  // GetCachedPropertyValue
         void _10(); // GetCachedPropertyValueEx
@@ -481,6 +514,16 @@ internal static class DesktopAutomation
     internal interface IUIAutomationScrollItemPattern
     {
         void ScrollIntoView();
+    }
+
+    [ComImport, Guid("59213f4f-7346-49e5-b120-80555987a148"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IUIAutomationRangeValuePattern
+    {
+        void SetValue(double value);
+        double CurrentValue();
+        bool CurrentIsReadOnly();
+        void _cachedValue();
+        void _cachedReadOnly();
     }
 
     internal enum TreeScope

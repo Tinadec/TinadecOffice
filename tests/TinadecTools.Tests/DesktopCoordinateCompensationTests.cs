@@ -370,9 +370,11 @@ public sealed class DesktopCoordinateCompensationTests
 
         var buttons = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "button", Mode = DesktopToolRuntime.IsolatedMode });
         Assert.True(buttons.Ok, buttons.Message);
-        // 4 app buttons (Save/Cancel/Tiny/Clipped) + the caption's Minimize/Maximize/Close,
-        // which UIA also types as Button
-        Assert.Equal(7, buttons.Total);
+        // the 4 app buttons (Save/Cancel/Tiny/Clipped) plus whatever caption buttons the
+        // OS exposes - the caption count is NOT stable (Win11 adds an overflow button
+        // depending on layout), so assert the app buttons, not a total
+        var appButtons = buttons.Elements!.Where(element => element.Name is "Save" or "Cancel" or "Tiny" or "Clipped").ToList();
+        Assert.Equal(4, appButtons.Count);
 
         var unknownType = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "rocket", Mode = DesktopToolRuntime.IsolatedMode });
         Assert.False(unknownType.Ok);
@@ -447,6 +449,106 @@ public sealed class DesktopCoordinateCompensationTests
         Assert.False(outOfRange.Ok);
         Assert.Equal("desktop_element_not_found", outOfRange.Code);
         window.AssertClicks("Save", 0);
+    }
+
+    /// <summary>Big trees page by offset: consecutive pages are disjoint, the total is
+    /// stable across pages, and an offset past the end is an EMPTY page, not an error
+    /// (the model must learn "no more elements", not "something broke").</summary>
+    [Fact]
+    public async Task FindElement_OffsetPagesTheMatchList()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var first = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Limit = 10, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(first.Ok, first.Message);
+        Assert.Equal(10, first.Count);
+        Assert.True(first.Total > 20, $"expected a tree big enough to page, got {first.Total}");
+        Assert.Equal(0, first.Offset);
+        Assert.Contains("offset=10", first.Message, StringComparison.OrdinalIgnoreCase);
+
+        var second = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Limit = 10, Offset = 10, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(second.Ok, second.Message);
+        Assert.Equal(10, second.Count);
+        Assert.Equal(10, second.Offset);
+        Assert.Equal(first.Total, second.Total);
+        var firstKeys = first.Elements!.Select(e => (e.Name, e.Bounds!.X, e.Bounds!.Y)).ToHashSet();
+        var secondKeys = second.Elements!.Select(e => (e.Name, e.Bounds!.X, e.Bounds!.Y)).ToHashSet();
+        Assert.Empty(firstKeys.Intersect(secondKeys));
+
+        var beyond = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Limit = 10, Offset = 100000, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(beyond.Ok, beyond.Message);
+        Assert.Equal(0, beyond.Count);
+        Assert.Empty(beyond.Elements!);
+    }
+
+    /// <summary>offscreen=false hides the listbox items below the fold: fewer matches,
+    /// and none of the returned ones reports IsOffscreen.</summary>
+    [Fact]
+    public async Task FindElement_OffscreenFalseHidesListItemsBelowTheFold()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var all = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "listitem", Limit = 50, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(all.Ok, all.Message);
+        Assert.Equal(30, all.Total); // the harness listbox holds exactly 30 items
+
+        var visible = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "listitem", Limit = 50, Offscreen = false, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(visible.Ok, visible.Message);
+        Assert.True(visible.Total < 30, $"expected the fold to hide items, but all {visible.Total} are visible");
+        Assert.All(visible.Elements!, element => Assert.False(element.IsOffscreen));
+    }
+
+    /// <summary>The RangeValue positive: set a slider through the element path and read
+    /// the value back from the control itself - read-back AND host state must both land
+    /// on 75 (probe round 12 also verified this cross-process on a WPF slider).</summary>
+    [Fact]
+    public async Task SetValue_OnSliderSetsTheValueAndReadsItBack()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var found = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "slider", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(found.Ok, found.Message);
+        var slider = Assert.Single(found.Elements!);
+        Assert.Equal(30, window.SliderPosition()); // TBM_SETPOS initial value
+
+        var set = runtime.SetValue(new DesktopSetValueArgs { WindowId = window.Hwnd, ElementIndex = slider.Index, Value = 75, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(set.Ok, set.Message);
+        Assert.NotNull(set.Value);
+        Assert.Equal(75, set.Value!.Value, 1);
+        Assert.Equal("Slider", set.Element!.ControlType);
+        window.AssertSliderPosition(75); // the control's own state, read directly
+    }
+
+    /// <summary>Not range-capable is a STRUCTURED refusal: a button must never be
+    /// 'clicked' by a set_value, and the error says where value setting belongs.</summary>
+    [Fact]
+    public async Task SetValue_OnButtonIsRefusedAsNotRangeCapable()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var found = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Name = "Save", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(found.Ok, found.Message);
+        var save = Assert.Single(found.Elements!);
+
+        var set = runtime.SetValue(new DesktopSetValueArgs { WindowId = window.Hwnd, ElementIndex = save.Index, Value = 50, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.False(set.Ok);
+        Assert.Equal("desktop_element_not_range_capable", set.Code);
+        window.AssertClicks("Save", 0); // the button was NOT clicked
+    }
+
+    [Fact]
+    public async Task SetValue_WithoutFindElementContextIsRefused()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var set = runtime.SetValue(new DesktopSetValueArgs { WindowId = window.Hwnd, ElementIndex = 0, Value = 50, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.False(set.Ok);
+        Assert.Equal("desktop_element_context_missing", set.Code);
     }
 
     /// <summary>The occlusion guard: a topmost overlay over the target's button must refuse
@@ -534,10 +636,27 @@ public sealed class DesktopCoordinateCompensationTests
         private static readonly ConcurrentDictionary<nint, string> Names = new();
 
         public nint Edit { get; private set; }
+        public nint Slider { get; private set; }
 
         public ElementsWindow()
             : base(400, 420, 60, "")
         {
+        }
+
+        /// <summary>The slider's position read straight from the control (TBM_GETPOS) -
+        /// the host-state evidence for desktop_set_value tests.</summary>
+        public int SliderPosition() => (int)SendMessage(Slider, 0x0400 /* TBM_GETPOS */, 0, 0);
+
+        /// <summary>Waits until the slider reports the expected position (the UIA
+        /// SetValue settles asynchronously through the provider).</summary>
+        public void AssertSliderPosition(int expected)
+        {
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                if (SliderPosition() == expected) return;
+                Thread.Sleep(50);
+            }
+            Assert.Equal(expected, SliderPosition());
         }
 
         protected override nint CreateChildren(nint hwnd)
@@ -552,6 +671,10 @@ public sealed class DesktopCoordinateCompensationTests
             var list = CreateWindowEx(0x00000200u, "LISTBOX", "", WS_CHILD | WS_VISIBLE | 0x1u /* LBS_NOTIFY */, 160, 115, 150, 70, hwnd, (nint)107, GetModuleHandle(null), 0);
             foreach (var name in new[] { "First", "Second", "Third" }.Concat(Enumerable.Range(4, 27).Select(n => $"Item{n:00}")))
                 SendMessageString(list, 0x0180 /* LB_ADDSTRING */, 0, new StringBuilder(name));
+            // a trackbar (0..100, position 30): the RangeValue positive for desktop_set_value
+            Slider = CreateWindowEx(0, "msctls_trackbar32", "", WS_CHILD | WS_VISIBLE, 160, 195, 150, 28, hwnd, (nint)108, GetModuleHandle(null), 0);
+            SendMessage(Slider, 0x0401 /* TBM_SETRANGE */, 0, (nint)((100 << 16) | 0));
+            SendMessage(Slider, 0x0405 /* TBM_SETPOS */, 0, 30);
             return 0;
 
             void Create(nint parent, string name, int id, int x, int y, int w, int h)
@@ -594,6 +717,7 @@ public sealed class DesktopCoordinateCompensationTests
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
         private static extern nint SendMessageString(nint hWnd, uint msg, nint wParam, StringBuilder lParam);
+        [DllImport("user32.dll")] private static extern nint SendMessage(nint hWnd, int msg, nint wParam, nint lParam);
     }
 
     /// <summary>A topmost window placed exactly over the target's Save button area.</summary>
