@@ -1177,7 +1177,7 @@ internal sealed class DesktopToolRuntime
                 return Fail("desktop_window_required", "isolated mode delivers keys as window messages: window_id is required.", permanent: true);
             if (keys.Length > 1)
                 return Fail("desktop_silent_modifier_unsupported",
-                    "isolated mode cannot send key chords: posted messages do not maintain keyboard state.",
+                    "isolated mode cannot deliver key chords (ctrl+s, alt+v, shift+tab...): posted messages do not maintain keyboard state, so applications ignore them. Do NOT retry the same chord in this mode. Instead: (1) use the menu path - desktop_find_element the menu item, then desktop_click it by element; (2) use the element path - e.g. in Save As / Open dialogs, find the file-name edit box and desktop_type into it by element_index, then click the Save button by element; (3) if - and only if - taking the foreground is acceptable (it interrupts the user), mode='fast' sends real keystrokes through SendInput.",
                     permanent: true);
             await InputGate.WaitAsync().ConfigureAwait(false);
             try
@@ -1219,7 +1219,7 @@ internal sealed class DesktopToolRuntime
                 return Fail("desktop_window_required", "silent mode needs window_id: keys are delivered as window messages.", permanent: true);
             if (keys.Length > 1)
                 return Fail("desktop_silent_modifier_unsupported",
-                    "silent mode cannot send key chords: posted messages do not maintain keyboard state. Use fast mode, or drive the control semantically.",
+                    "silent mode cannot deliver key chords (ctrl+s, alt+v, shift+tab...): posted messages do not maintain keyboard state, so applications ignore them. Do NOT retry the same chord in this mode. Instead: (1) use the menu path - desktop_find_element the menu item, then desktop_click it by element; (2) use the element path - e.g. in Save As / Open dialogs, find the file-name edit box and desktop_type into it by element_index, then click the Save button by element; (3) if - and only if - taking the foreground is acceptable (it interrupts the user), mode='fast' sends real keystrokes through SendInput.",
                     permanent: true);
             var receiver = ResolveTextTarget(hWnd, null, null);
             DesktopWin32.PostKey(receiver, keys[0]);

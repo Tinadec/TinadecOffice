@@ -121,7 +121,9 @@ public static class DesktopToolRegistration
     private const string TypeDescription =
         "Type literal text (up to 4096 characters). PREFERRED for text fields: pass element_index / "
         + "element_automation_id from desktop_find_element - the text is set through the field's Value pattern (or "
-        + "posted to its native edit window), no keyboard input involved. Alternative: plain window_id (fast mode "
+        + "posted to its native edit window), no keyboard input involved. This is the way to fill Save As / Open "
+        + "dialogs: find the file-name edit box in the dialog, type the full path by element, then click the Save "
+        + "button by element - no ctrl+s chord, no menu detour. Alternative: plain window_id (fast mode "
         + "focuses the window and sends real input; silent mode posts WM_CHAR). Unicode is sent as-is, no IME "
         + "composition: Chinese/CJK, full-width punctuation and emoji all work; emoji into a classic Edit control "
         + "is inserted directly through EM_REPLACESEL (delivery=replace-sel), no clipboard involved. "
@@ -129,9 +131,13 @@ public static class DesktopToolRegistration
 
     private const string PressKeyDescription =
         "Press a key or chord such as 'Enter', 'ctrl+a' or 'alt+f4'. Named keys: Enter, Tab, Escape, Backspace, Delete, "
-        + "Space, Up, Down, Left, Right, Home, End, PageUp, PageDown, F1-F12; modifiers ctrl/shift/alt/win. In silent and "
-        + "isolated modes only single keys (no chords) can be delivered, and window_id is required. Approval-gated. "
-        + ModeParameterDoc + " Windows only.";
+        + "Space, Up, Down, Left, Right, Home, End, PageUp, PageDown, F1-F12; modifiers ctrl/shift/alt/win. CHORDS "
+        + "(ctrl+x, alt+v, shift+tab...) ONLY work in fast mode (real SendInput keystrokes, takes the foreground - "
+        + "interrupts the user); silent and isolated modes CANNOT deliver chords (posted messages do not maintain "
+        + "keyboard state and applications ignore them) - the refusal tells you the alternatives: menu items via "
+        + "desktop_find_element + desktop_click, or element paths (a Save As dialog's file-name box is typed into via "
+        + "desktop_type's element path, its Save button clicked by element). Single keys work in every mode. "
+        + "Approval-gated. " + ModeParameterDoc + " Windows only.";
 
     private const string LaunchAppDescription =
         "Launch a process onto the hidden TinadecIsolated desktop and return its pid. This is the only way windows get "
