@@ -154,7 +154,192 @@ internal static class DesktopAutomation
     }
 
     private const int InvokePatternId = 10000;
+    private const int ValuePatternId = 10002;
+    private const int RangeValuePatternId = 10003;
+    private const int ExpandCollapsePatternId = 10005;
+    private const int SelectionItemPatternId = 10010;
+    private const int ScrollItemPatternId = 10015;
+    private const int TogglePatternId = 10016;
+
     private static readonly Guid InvokePatternIid = new("fb377fbe-8ea6-46d5-9c73-6499642d3059");
+    private static readonly Guid ValuePatternIid = new("a94cd8b1-0844-4cd6-9d2d-640537ab39e9");
+    private static readonly Guid ExpandCollapsePatternIid = new("619be086-1f4e-4ee4-bafa-210128738730");
+    private static readonly Guid SelectionItemPatternIid = new("a8efa66a-0fda-421a-9194-38021f3578ea");
+    private static readonly Guid ScrollItemPatternIid = new("b488300f-d015-4f19-9c29-bb595e3645ef");
+    private static readonly Guid TogglePatternIid = new("94cf8058-9b8d-4ab9-8bfd-4cd0a33c8c70");
+
+    /// <summary>
+    /// The pattern-aware click for virtual elements, in stability order: Invoke (the
+    /// control's own default action) > Toggle (checkbox/radio semantics) > SelectionItem
+    /// (list/tab/tree items) > ExpandCollapse (dropdowns open). A pattern that exists but
+    /// fails to act (marshaler disconnection, disabled control) degrades to the next one
+    /// instead of failing the whole click. Returns which pattern did the job so the result
+    /// is auditable; null means none worked - the caller falls back to the rect path.
+    /// </summary>
+    internal static string? ClickByPattern(IUIAutomationElement element)
+    {
+        if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke) && Act(() => invoke.Invoke()))
+            return "uia-invoke";
+        if (TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle) && Act(() => toggle.Toggle()))
+            return "uia-toggle";
+        if (TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select) && Act(() => select.Select()))
+            return "uia-select";
+        if (TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand) && Act(() => expand.Expand()))
+            return "uia-expand";
+        return null;
+    }
+
+    /// <summary>Debug form: also reports why each pattern was skipped (probe tooling).</summary>
+    internal static string? ClickByPattern(IUIAutomationElement element, out string trace)
+    {
+        var steps = new List<string>();
+        string? result = null;
+        if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke))
+        {
+            var acted = Act(() => invoke.Invoke(), out var error);
+            steps.Add($"invoke:{(acted ? "ok" : error)}");
+            if (acted) result = "uia-invoke";
+        }
+        else steps.Add("invoke:absent");
+        if (result is null && TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle))
+        {
+            var acted = Act(() => toggle.Toggle(), out var error);
+            steps.Add($"toggle:{(acted ? "ok" : error)}");
+            if (acted) result = "uia-toggle";
+        }
+        else if (result is null) steps.Add("toggle:absent");
+        if (result is null && TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select))
+        {
+            var acted = Act(() => select.Select(), out var error);
+            steps.Add($"select:{(acted ? "ok" : error)}");
+            if (acted) result = "uia-select";
+        }
+        else if (result is null) steps.Add("select:absent");
+        if (result is null && TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand))
+        {
+            var acted = Act(() => expand.Expand(), out var error);
+            steps.Add($"expand:{(acted ? "ok" : error)}");
+            if (acted) result = "uia-expand";
+        }
+        else if (result is null) steps.Add("expand:absent");
+        trace = string.Join(" | ", steps);
+        return result;
+    }
+
+    private static bool Act(Action action, out string? error)
+    {
+        try
+        {
+            action();
+            error = null;
+            return true;
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            error = exception.GetType().Name;
+            return false;
+        }
+    }
+
+    /// <summary>A pattern action that throws (disconnected RCW, busy provider) counts as
+    /// that pattern not working; the next pattern gets its chance.</summary>
+    private static bool Act(Action action)
+    {
+        try
+        {
+            action();
+            return true;
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Sets an element's text through the Value pattern (edit fields and documents);
+    /// returns false when the element is not value-capable or is read-only.</summary>
+    internal static bool TrySetValue(IUIAutomationElement element, string text)
+    {
+        if (!TryPattern(element, ValuePatternId, ValuePatternIid, out IUIAutomationValuePattern value))
+            return false;
+        if (value.CurrentIsReadOnly())
+            return false;
+        value.SetValue(text);
+        return true;
+    }
+
+    /// <summary>Reads an element's current value through the Value pattern, or null.</summary>
+    internal static string? CurrentValue(IUIAutomationElement element) =>
+        TryPattern(element, ValuePatternId, ValuePatternIid, out IUIAutomationValuePattern value) ? value.CurrentValue() : null;
+
+    /// <summary>The element's toggle state (0 off, 1 on, 2 indeterminate), or null when it has no Toggle pattern.</summary>
+    internal static int? CurrentToggleState(IUIAutomationElement element) =>
+        TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle) ? toggle.CurrentToggleState() : null;
+
+    /// <summary>Whether the element is currently selected, or null when it has no SelectionItem pattern.</summary>
+    internal static bool? CurrentIsSelected(IUIAutomationElement element) =>
+        TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select) ? select.CurrentIsSelected() : null;
+
+    /// <summary>
+    /// Scrolls an element into view through the ScrollItem pattern (its scroll container
+    /// brings it into the visible area). Returns false when the element does not support it.
+    /// </summary>
+    internal static bool TryScrollIntoView(IUIAutomationElement element)
+    {
+        if (!TryPattern(element, ScrollItemPatternId, ScrollItemPatternIid, out IUIAutomationScrollItemPattern scroll))
+            return false;
+        scroll.ScrollIntoView();
+        return true;
+    }
+
+    /// <summary>Debug (probe tooling): which of the six known pattern IDs the element
+    /// answers with a non-null interface (each with its OWN iid - QI with a mismatched
+    /// iid crashes some in-proc providers hard).</summary>
+    internal static List<string> SupportedPatternIds(IUIAutomationElement element)
+    {
+        var checks = new (string Name, int Id, Guid Iid)[]
+        {
+            ("invoke", InvokePatternId, InvokePatternIid),
+            ("value", ValuePatternId, ValuePatternIid),
+            ("expand", ExpandCollapsePatternId, ExpandCollapsePatternIid),
+            ("select", SelectionItemPatternId, SelectionItemPatternIid),
+            ("toggle", TogglePatternId, TogglePatternIid),
+        };
+        var supported = new List<string>();
+        foreach (var (name, id, iid) in checks)
+        {
+            try
+            {
+                element.GetCurrentPatternAs(id, in iid, out var pointer);
+                if (pointer != 0) supported.Add($"{name}({id})");
+            }
+            catch (COMException)
+            {
+                // not an answer for this element
+            }
+        }
+        return supported;
+    }
+
+    private static bool TryPattern<T>(IUIAutomationElement element, int patternId, in Guid iid, out T pattern) where T : class
+    {
+        try
+        {
+            element.GetCurrentPatternAs(patternId, in iid, out var pointer);
+            if (pointer == 0)
+            {
+                pattern = null!;
+                return false;
+            }
+            pattern = (T)Marshal.GetObjectForIUnknown(pointer);
+            return true;
+        }
+        catch (COMException)
+        {
+            pattern = null!;
+            return false;
+        }
+    }
 
     private static bool Contains(string? text, string fragment) =>
         text is not null && text.Contains(fragment, StringComparison.OrdinalIgnoreCase);
@@ -247,7 +432,55 @@ internal static class DesktopAutomation
     [ComImport, Guid("fb377fbe-8ea6-46d5-9c73-6499642d3059"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IUIAutomationInvokePattern
     {
-        void Invoke(); // the pattern's only method, right after IUnknown
+        void Invoke();
+    }
+
+    // The pattern interfaces below follow the method order CsWin32 dumped from official
+    // metadata (probe/uiainterop, round 11); unused members keep their slot as placeholders.
+
+    [ComImport, Guid("94cf8058-9b8d-4ab9-8bfd-4cd0a33c8c70"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IUIAutomationTogglePattern
+    {
+        void Toggle();
+        int CurrentToggleState();
+        void _cachedState();
+    }
+
+    [ComImport, Guid("a94cd8b1-0844-4cd6-9d2d-640537ab39e9"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IUIAutomationValuePattern
+    {
+        void SetValue(string value);
+        string CurrentValue();
+        bool CurrentIsReadOnly();
+        void _cachedValue();
+        void _cachedReadOnly();
+    }
+
+    [ComImport, Guid("a8efa66a-0fda-421a-9194-38021f3578ea"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IUIAutomationSelectionItemPattern
+    {
+        void Select();
+        void _addToSelection();
+        void _removeFromSelection();
+        bool CurrentIsSelected();
+        void _currentContainer();
+        void _cachedIsSelected();
+        void _cachedContainer();
+    }
+
+    [ComImport, Guid("619be086-1f4e-4ee4-bafa-210128738730"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IUIAutomationExpandCollapsePattern
+    {
+        void Expand();
+        void Collapse();
+        int CurrentExpandCollapseState();
+        void _cachedState();
+    }
+
+    [ComImport, Guid("b488300f-d015-4f19-9c29-bb595e3645ef"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IUIAutomationScrollItemPattern
+    {
+        void ScrollIntoView();
     }
 
     internal enum TreeScope

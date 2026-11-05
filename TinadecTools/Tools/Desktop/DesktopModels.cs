@@ -62,6 +62,10 @@ public sealed class DesktopTypeArgs
     [JsonPropertyName("x")] public int? X { get; set; }
     [JsonPropertyName("y")] public int? Y { get; set; }
     [JsonPropertyName("mode")] public string? Mode { get; set; }
+    /// <summary>Type into an element by index from this run's most recent desktop_find_element.</summary>
+    [JsonPropertyName("element_index")] public int? ElementIndex { get; set; }
+    /// <summary>Type into an element by AutomationId from this run's most recent desktop_find_element.</summary>
+    [JsonPropertyName("element_automation_id")] public string? ElementAutomationId { get; set; }
 }
 
 public sealed class DesktopPressKeyArgs
@@ -199,6 +203,9 @@ public sealed class DesktopToolResult
     [JsonPropertyName("elements")] public DesktopElementInfo[]? Elements { get; set; }
     [JsonPropertyName("total")] public int? Total { get; set; }
     [JsonPropertyName("element")] public DesktopElementInfo? Element { get; set; }
+    /// <summary>How an element click/type was actually delivered (auditable): native-post,
+    /// uia-invoke, uia-toggle, uia-select, uia-expand, uia-value, or rect-center.</summary>
+    [JsonPropertyName("delivery")] public string? Delivery { get; set; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
