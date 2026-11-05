@@ -593,6 +593,78 @@ internal static class DesktopWin32
         return (rect.Right - rect.Left, rect.Bottom - rect.Top);
     }
 
+    // ── integrity level (the UIPI boundary, round 11 measured: a lower-integrity client
+    // cannot enumerate the UIA tree of, or post input to, a higher-integrity window) ──
+
+    /// <summary>
+    /// The process's mandatory integrity level (0x1000 low, 0x2000 medium, 0x4000 high),
+    /// or -1 when it cannot be queried. Reading a window's owner process level lets the
+    /// tools refuse with a STRUCTURED explanation instead of the misleading "no elements"
+    /// that UIA returns for a higher-integrity target.
+    /// </summary>
+    internal static int ProcessIntegrityLevel(int processId)
+    {
+        var process = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, (uint)processId);
+        if (process == 0) return -1;
+        try
+        {
+            if (!OpenProcessToken(process, 0x0008 /* TOKEN_QUERY */, out var token)) return -1;
+            try
+            {
+                var needed = 0;
+                GetTokenInformation(token, 25 /* TokenIntegrityLevel - NOT 21, which is
+                    TokenHasRestrictions and returns a bare DWORD that reads as a garbage
+                    SID pointer (probe round 12: AccessViolation in Marshal.ReadByte) */,
+                    nint.Zero, 0, out needed);
+                if (needed < 8 /* must hold at least PSID + attributes */) return -1;
+                var buffer = Marshal.AllocHGlobal(needed);
+                try
+                {
+                    if (!GetTokenInformation(token, 25, buffer, needed, out var _)) return -1;
+                    var sid = Marshal.ReadIntPtr(buffer);
+                    // SID layout: revision (1), sub-authority count, 6-byte authority, sub-authorities.
+                    // The integrity level is the LAST sub-authority (a TOKEN_MANDATORY_LABEL SID has one).
+                    if (Marshal.ReadByte(sid) != 1 /* SID_REVISION */) return -1;
+                    var count = Marshal.ReadByte(sid, 1);
+                    if (count == 0 || count > 15) return -1;
+                    return Marshal.ReadInt32(sid, 8 + (count - 1) * 4);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            finally
+            {
+                CloseHandle(token);
+            }
+        }
+        finally
+        {
+            CloseHandle(process);
+        }
+    }
+
+    internal static int OwnIntegrityLevel => _ownIntegrity ??= ProcessIntegrityLevel(Environment.ProcessId);
+    private static int? _ownIntegrity;
+
+    /// <summary>
+    /// Whether the window's owner process runs at a HIGHER integrity than this process -
+    /// the UIPI boundary where element enumeration comes back empty and input is refused.
+    /// Unknown levels (protected processes) never claim elevation.
+    /// </summary>
+    internal static bool IsHigherIntegrityWindow(nint hWnd)
+    {
+        GetWindowThreadProcessId(hWnd, out var processId);
+        if (processId == 0 || processId == (uint)Environment.ProcessId) return false;
+        var target = ProcessIntegrityLevel((int)processId);
+        var own = OwnIntegrityLevel;
+        return target > 0 && own > 0 && target > own;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(nint process, int access, out nint token);
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool GetTokenInformation(nint token, int informationClass, nint information, int length, out int returnLength);
+
     /// <summary>Posts a mouse press/release pair to a window with client coordinates.</summary>
     internal static void PostClick(nint hWnd, POINT client, string button)
     {

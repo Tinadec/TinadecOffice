@@ -20,6 +20,7 @@ public static class DesktopToolRegistration
     public const string FindElementToolId = "desktop_find_element";
     public const string ClickToolId = "desktop_click";
     public const string TypeToolId = "desktop_type";
+    public const string SetValueToolId = "desktop_set_value";
     public const string PressKeyToolId = "desktop_press_key";
     public const string LaunchAppToolId = "desktop_launch_app";
 
@@ -33,7 +34,10 @@ public static class DesktopToolRegistration
         """{"type":"object","properties":{"window_id":{"type":"integer"},"max_chars":{"type":"integer","minimum":1,"maximum":16384},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
 
     private const string FindElementSchema =
-        """{"type":"object","properties":{"window_id":{"type":"integer"},"name":{"type":"string","maxLength":256},"automation_id":{"type":"string","maxLength":256},"control_type":{"type":"string","maxLength":32},"class_name":{"type":"string","maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":50},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
+        """{"type":"object","properties":{"window_id":{"type":"integer"},"name":{"type":"string","maxLength":256},"automation_id":{"type":"string","maxLength":256},"control_type":{"type":"string","maxLength":32},"class_name":{"type":"string","maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":50},"offset":{"type":"integer","minimum":0,"maximum":10000},"offscreen":{"type":"boolean"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["window_id"],"additionalProperties":false}""";
+
+    private const string SetValueSchema =
+        """{"type":"object","properties":{"window_id":{"type":"integer"},"element_index":{"type":"integer","minimum":0,"maximum":49},"element_automation_id":{"type":"string","maxLength":256},"value":{"type":"number"},"mode":{"type":"string","enum":["fast","silent","isolated"]}},"required":["value"],"additionalProperties":false}""";
 
     private const string ClickSchema =
         """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"window_id":{"type":"integer"},"button":{"type":"string","enum":["left","right","middle"]},"count":{"type":"integer","minimum":1,"maximum":3},"mode":{"type":"string","enum":["fast","silent","isolated"]},"element_index":{"type":"integer","minimum":0,"maximum":49},"element_automation_id":{"type":"string","maxLength":256}},"additionalProperties":false}""";
@@ -80,13 +84,21 @@ public static class DesktopToolRegistration
     private const string FindElementDescription =
         "Find controls in a window through UI Automation (the same tree screen readers and test frameworks use): "
         + "name, automation_id, control_type, class_name, bounds, enabled and offscreen flags. Filter with name / "
-        + "automation_id / control_type / class_name fragments (case-insensitive contains); returns the first `limit` "
-        + "(default 20) matches plus the total. THE PRECISE PATH for small targets: pair it with desktop_click / "
-        + "desktop_type's element_index / element_automation_id to act on the control semantically (click by "
-        + "Invoke/Toggle/SelectionItem pattern, type by Value pattern) without any model-estimated coordinates. "
-        + "Offscreen elements are scrolled into view automatically when their container allows it. Covers standard "
-        + "Win32 / WPF / UWP controls; self-drawn and game surfaces expose few or no elements - use desktop_screenshot "
-        + "coordinates there. Windows only.";
+        + "automation_id / control_type / class_name fragments (case-insensitive contains); returns `limit` matches "
+        + "(default 20) from `offset` plus the total - for big trees PREFER a control_type or name filter (one call) "
+        + "over paging; offscreen=false hides elements outside the visible area. THE PRECISE PATH for small targets: "
+        + "pair it with desktop_click / desktop_type / desktop_set_value's element_index / element_automation_id to "
+        + "act on the control semantically without model-estimated coordinates. Offscreen elements are scrolled into "
+        + "view automatically when their container allows it. ELEVATED (admin) windows return "
+        + "desktop_target_elevated - they cannot be automated from a normal process, ask the user instead. "
+        + "Self-drawn and game surfaces expose few or no elements - use desktop_screenshot coordinates there. "
+        + "Windows only.";
+
+    private const string SetValueDescription =
+        "Set a slider/progress/zoom control's value by element reference (element_index / element_automation_id from "
+        + "desktop_find_element) through the RangeValue pattern - precise, no coordinate estimation. The result reads "
+        + "the value back from the control: trust `value`, not the absence of an error. Text fields are NOT set here - "
+        + "use desktop_type's element path. Approval-gated. Windows only.";
 
     private const string ClickDescription =
         "Click a control - by element, or by position. PREFERRED: pass element_index or element_automation_id from this "
@@ -217,6 +229,17 @@ public static class DesktopToolRegistration
             mutatesWorkspace: false,
             retrySafety: "unsafe",
             confirmationFields: ["command", "arguments"]);
+
+        ToolRegistry.Register(
+            SetValueToolId,
+            HandleSetValueAsync,
+            requiresApproval: true,
+            description: SetValueDescription,
+            inputSchemaJson: SetValueSchema,
+            risk: "medium",
+            mutatesWorkspace: false,
+            retrySafety: "unsafe",
+            confirmationFields: ["window_id", "value", "mode"]);
     }
 
     private static async ValueTask<ToolCallResponse<JsonElement>> HandleListWindowsAsync(
@@ -285,6 +308,15 @@ public static class DesktopToolRegistration
         if (!request.Approved) return NotApproved(request.ToolCallId);
         var args = Deserialize(request.Params, DesktopJsonContext.Default.DesktopLaunchArgs);
         return await RunAsync(request, () => Task.FromResult(Runtime().LaunchApp(args)), cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<ToolCallResponse<JsonElement>> HandleSetValueAsync(
+        ToolCallRequest<JsonElement> request,
+        CancellationToken cancellationToken)
+    {
+        if (!request.Approved) return NotApproved(request.ToolCallId);
+        var args = Deserialize(request.Params, DesktopJsonContext.Default.DesktopSetValueArgs);
+        return await RunAsync(request, () => Task.FromResult(Runtime().SetValue(args)), cancellationToken).ConfigureAwait(false);
     }
 
     private static DesktopToolRuntime Runtime() => DesktopToolRuntime.Default;

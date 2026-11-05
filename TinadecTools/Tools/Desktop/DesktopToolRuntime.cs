@@ -312,6 +312,10 @@ internal sealed class DesktopToolRuntime
         {
             var (elementError, element, raw, elementIndex, elementWindow) = ResolveClickElement(args);
             if (elementError is not null) return elementError;
+            if (DesktopWin32.IsHigherIntegrityWindow((nint)elementWindow))
+                return Fail(DesktopTargetElevatedCode,
+                    "the target window belongs to a higher-integrity (elevated) process; the OS refuses input to it from this process. Ask the user to operate that window, or run the agent's host elevated.",
+                    permanent: true);
             hWnd = (nint)elementWindow;
             var before = ReadTextsForVerification(hWnd, mode);
             DesktopToolResult elementResult;
@@ -385,6 +389,11 @@ internal sealed class DesktopToolRuntime
 
         if (args.X is null || args.Y is null)
             return Fail("desktop_input_failed", "desktop_click needs x and y, or element_index / element_automation_id from desktop_find_element.", permanent: true);
+
+        if (hWnd != 0 && DesktopWin32.IsHigherIntegrityWindow(hWnd))
+            return Fail(DesktopTargetElevatedCode,
+                "the target window belongs to a higher-integrity (elevated) process; the OS refuses input to it from this process. Ask the user to operate that window, or run the agent's host elevated.",
+                permanent: true);
 
         // ── coordinate compensation (host-opt-in, fail-closed) ────────────────────
         // Some vision models report clicks in a rescaled version of the image they were
@@ -504,7 +513,9 @@ internal sealed class DesktopToolRuntime
     /// Enumerates the target window's UI Automation tree, filtered by the given fragments,
     /// and caches the returned page for this run so desktop_click can reference elements by
     /// index or automation id. Works across desktops of this session, TinadecIsolated
-    /// included (probe-measured) - UIA reaches windows the input desktop cannot.
+    /// included (probe-measured) - UIA reaches windows the input desktop cannot. Large
+    /// trees: page with offset, hide offscreen elements with offscreen=false, and prefer
+    /// control_type filters - a tree of hundreds needs one filtered call, not ten pages.
     /// </summary>
     public DesktopToolResult FindElement(DesktopFindElementArgs args)
     {
@@ -513,27 +524,70 @@ internal sealed class DesktopToolRuntime
         if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
         var hWnd = (nint)args.WindowId;
         if (!IsAliveWindow(hWnd)) return Fail("desktop_window_not_found", $"No window with window_id {args.WindowId}.", permanent: true);
+        if (DesktopWin32.IsHigherIntegrityWindow(hWnd))
+            return Fail(DesktopTargetElevatedCode,
+                "the target window belongs to a process running at a HIGHER integrity level (elevated/admin). UI Automation returns no elements and input is refused by the OS for such windows - this is a policy boundary, not a missing control tree. Ask the user to operate that window, or run the agent's host elevated.",
+                permanent: true);
         var limit = Math.Clamp(args.Limit ?? 20, 1, 50);
+        var offset = Math.Max(0, args.Offset ?? 0);
+        var includeOffscreen = args.Offscreen ?? true;
 
-        var (error, page, total) = DesktopAutomation.FindElements(hWnd, args.Name, args.AutomationId, args.ControlType, args.ClassName, limit);
+        var (error, page, total) = DesktopAutomation.FindElements(hWnd, args.Name, args.AutomationId, args.ControlType, args.ClassName, limit, offset, includeOffscreen);
         if (error is not null) return Fail("desktop_uia_failed", error, permanent: false);
 
         lock (_captureLock)
         {
             _lastElements[ToolExecutionContext.Current?.RunId ?? ""] = (args.WindowId, page.ToList());
         }
-        Logger.Info("desktop_find_element: window {WindowId} filter name='{Name}' type='{Type}' -> {Total} matches, returning {Count}", args.WindowId, args.Name, args.ControlType, total, page.Length);
+        Logger.Info("desktop_find_element: window {WindowId} filter name='{Name}' type='{Type}' offset={Offset} -> {Total} matches, returning {Count}", args.WindowId, args.Name, args.ControlType, offset, total, page.Length);
 
-        return new DesktopToolResult
+        var result = new DesktopToolResult
         {
             Ok = true,
             WindowId = hWnd,
             Count = page.Length,
             Total = total,
+            Offset = offset,
             Elements = page.Select((entry, index) => ToElementInfo(entry.Info, index)).ToArray(),
-            Message = total > page.Length
-                ? $"{total} elements match the filter; showing the first {page.Length}. Narrow the filter (name/automation_id/control_type) to see the rest."
-                : null,
+        };
+        var shownTo = offset + page.Length;
+        if (total > shownTo)
+            result.Message = $"{total} elements match the filter; showing {offset}..{shownTo - 1}. Continue with offset={shownTo}, or narrow the filter (name / control_type / offscreen=false) to find things in one call.";
+        return result;
+    }
+
+    internal const string DesktopTargetElevatedCode = "desktop_target_elevated";
+
+    /// <summary>
+    /// Sets a range-capable element's value (slider, progress, zoom) by reference through
+    /// the RangeValue pattern, and reads the value back as the evidence. Text fields are
+    /// not set here - desktop_type's element path owns those (Value pattern).
+    /// </summary>
+    public DesktopToolResult SetValue(DesktopSetValueArgs args)
+    {
+        if (!OperatingSystem.IsWindows()) return UnsupportedPlatform();
+        var mode = ResolveMode(args.Mode);
+        if (mode is null) return Fail("desktop_mode_invalid", "mode must be 'fast', 'silent' or 'isolated'.", permanent: true);
+        var (error, element, raw, elementIndex, elementWindow) = ResolveClickElement(new DesktopClickArgs { ElementIndex = args.ElementIndex, ElementAutomationId = args.ElementAutomationId, WindowId = args.WindowId });
+        if (error is not null) return error;
+
+        var (set, readBack, setError) = DesktopAutomation.TrySetRangeValue(raw!, args.Value);
+        if (!set)
+            return Fail("desktop_element_not_range_capable",
+                $"{setError}. desktop_set_value is for slider/progress/zoom controls; text fields take desktop_type's element path.",
+                permanent: true);
+
+        Logger.Info("desktop_set_value: element '{Name}' set to {Value}, read back {ReadBack}", element!.Name, args.Value, readBack);
+        return new DesktopToolResult
+        {
+            Ok = true,
+            Applied = true,
+            WindowId = elementWindow,
+            Element = ToElementInfo(element, elementIndex),
+            Value = readBack,
+            Message = readBack is { } value
+                ? $"value set; the element reports {value} (requested {args.Value})."
+                : $"value set; the element reports no readable value (requested {args.Value}).",
         };
     }
 

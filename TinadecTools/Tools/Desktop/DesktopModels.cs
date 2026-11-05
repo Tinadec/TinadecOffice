@@ -38,6 +38,23 @@ public sealed class DesktopFindElementArgs
     [JsonPropertyName("control_type")] public string? ControlType { get; set; }
     [JsonPropertyName("class_name")] public string? ClassName { get; set; }
     [JsonPropertyName("limit")] public int? Limit { get; set; }
+    [JsonPropertyName("offset")] public int? Offset { get; set; }
+    /// <summary>false = only elements currently in the visible area; true = also offscreen ones.</summary>
+    [JsonPropertyName("offscreen")] public bool? Offscreen { get; set; }
+    [JsonPropertyName("mode")] public string? Mode { get; set; }
+}
+
+/// <summary>
+/// Sets a value-capable element's value by reference: RangeValue (sliders, progress, zoom)
+/// through desktop_find_element's index/automation_id. The result reads the value back -
+/// the read-back is the evidence.
+/// </summary>
+public sealed class DesktopSetValueArgs
+{
+    [JsonPropertyName("window_id")] public long? WindowId { get; set; }
+    [JsonPropertyName("element_index")] public int? ElementIndex { get; set; }
+    [JsonPropertyName("element_automation_id")] public string? ElementAutomationId { get; set; }
+    [JsonPropertyName("value")] public double Value { get; set; }
     [JsonPropertyName("mode")] public string? Mode { get; set; }
 }
 
@@ -206,6 +223,9 @@ public sealed class DesktopToolResult
     /// <summary>How an element click/type was actually delivered (auditable): native-post,
     /// uia-invoke, uia-toggle, uia-select, uia-expand, uia-value, or rect-center.</summary>
     [JsonPropertyName("delivery")] public string? Delivery { get; set; }
+    /// <summary>The element's reported value after a desktop_set_value call.</summary>
+    [JsonPropertyName("value")] public double? Value { get; set; }
+    [JsonPropertyName("offset")] public int? Offset { get; set; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -213,6 +233,7 @@ public sealed class DesktopToolResult
 [JsonSerializable(typeof(DesktopScreenshotArgs))]
 [JsonSerializable(typeof(DesktopReadTextArgs))]
 [JsonSerializable(typeof(DesktopFindElementArgs))]
+[JsonSerializable(typeof(DesktopSetValueArgs))]
 [JsonSerializable(typeof(DesktopClickArgs))]
 [JsonSerializable(typeof(DesktopTypeArgs))]
 [JsonSerializable(typeof(DesktopPressKeyArgs))]
