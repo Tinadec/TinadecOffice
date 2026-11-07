@@ -1,3 +1,4 @@
+import { reactive } from 'vue'
 import type { EventEnvelope } from '@/api'
 import { readCorrectionTrace, type CorrectionTrace } from './correction'
 import { readSupervisionReviewBrief, type SupervisionReviewBrief } from './supervision'
@@ -8,9 +9,11 @@ import { readSupervisionReviewBrief, type SupervisionReviewBrief } from './super
  * reads REST: the old activity composable re-fetched the whole tool timeline on every
  * tool event, which is what made a long session slow to open.
  *
- * Records are mutable and versioned. The caller applies a batch, then publishes the
- * touched runs (`shallowRef` + version bump) once per frame. Output is structured
- * data and status codes; every user-visible word is chosen by a component through i18n.
+ * Records are reactive and versioned. The caller applies a batch once per frame; because
+ * each record (and the entries it holds) is reactive, a leaf component reading an entry
+ * updates on the in-place mutation itself, while `version` lets a reader re-derive only
+ * the runs that changed. Output is structured data and status codes; every user-visible
+ * word is chosen by a component through i18n.
  *
  * Payload keys are Core's own (see `TinadecCore/DmaEA/FullDuplexRunEngine.cs` and
  * `Tools/ToolDispatcher.cs`); `normalizeEventEnvelope` already flattens the durable
@@ -220,7 +223,11 @@ export function createFeedState(): FeedState {
 function run(state: FeedState, runId: string): RunActivity {
   let record = state.runs.get(runId)
   if (!record) {
-    record = {
+    // Reactive so a leaf component (ReasoningBlock, ToolRow) that receives an entry as a
+    // prop tracks its in-place mutations: the reducer appends `entry.text`/flips `status`
+    // on the same object, and a plain prop of stable identity would otherwise leave the
+    // child's computeds cached and the row frozen until it remounts.
+    record = reactive({
       runId,
       version: 0,
       entries: [],
@@ -233,7 +240,7 @@ function run(state: FeedState, runId: string): RunActivity {
       byId: new Map(),
       seen: new Set(),
       executionByApproval: new Map(),
-    }
+    }) as RunActivity
     state.runs.set(runId, record)
   }
   return record

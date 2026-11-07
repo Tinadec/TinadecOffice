@@ -87,9 +87,11 @@ function gateReview(
 }
 
 const runs = computed<RunView[]>(() => {
-  void props.revision
   const shape = conversationFlowRules.value
   return props.turn.runs.map(({ run, activity, streamingText }) => {
+    // Track this run's own version (reactive) rather than the global feed revision: a
+    // historical run whose activity never changes keeps its cached grouping and leaves.
+    void activity?.version
     // Only the settled run is trimmed: while it works the newest rows are the point, and a
     // parked run is something the reader has to decide on.
     const grouped = activity ? groupRun(activity, isLiveRunStatus(run.status), { quiet: shape.quiet, budget: shape.budget }) : null
@@ -128,7 +130,6 @@ const answers = computed(() => props.turn.answers.filter((message) => message.ro
  * "Worked for" means one number in both places; message timestamps only when nothing ran.
  */
 const workedMs = computed(() => {
-  void props.revision
   if (!props.turn.endedAt) return null
   const starts = props.turn.runs.map(({ activity }) => activity?.firstAt).filter((at): at is string => !!at).sort()
   const ends = props.turn.runs.map(({ activity }) => activity?.lastAt).filter((at): at is string => !!at).sort()
@@ -149,7 +150,6 @@ function planningPhase(status: string): boolean {
   return status === 'planning' || status === 'understanding' || status === 'replanning'
 }
 const toolCount = computed(() => {
-  void props.revision
   return props.turn.runs.reduce((sum, { activity }) => sum + (activity?.entries.filter((entry) => entry.kind === 'tool').length ?? 0), 0)
 })
 </script>
