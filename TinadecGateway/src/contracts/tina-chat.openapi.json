@@ -971,6 +971,11 @@
           "can_interpret_intent": {
             "type": "boolean"
           },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "description": {
             "nullable": true,
             "type": "string"
@@ -1031,6 +1036,7 @@
           "job_title",
           "description",
           "agent_definition_id",
+          "companion_id",
           "receive_human_messages",
           "can_interpret_intent",
           "discoverable",
@@ -1104,6 +1110,11 @@
           "can_interpret_intent": {
             "default": false,
             "type": "boolean"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
           },
           "description": {
             "nullable": true,

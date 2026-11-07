@@ -17,6 +17,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
     private static readonly string[] SkillSourceKinds = ["manual", "pack"];
     private static readonly string[] ConnectionKinds = ["mcp", "server", "phone", "external_agent"];
     private static readonly string[] AuthorizationStates = ["configured", "authorized", "revoked"];
+    private static readonly string[] CompanionRoles = ["autonomous", "buddy"];
 
     private Guid TenantId => tenant.Current.TenantId;
 
@@ -50,6 +51,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             PersonaDocument = persona,
             ModelPurpose = NormalizePurpose(input.ModelPurpose, "chat"),
             Status = "active",
+            Role = NormalizeChoice(input.Role, "autonomous", CompanionRoles, "role"),
             Revision = 1,
             CreatedAt = now,
             UpdatedAt = now
@@ -95,6 +97,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             row.PersonaDocument = input.PersonaDocument;
         }
         if (input.ModelPurpose is not null) row.ModelPurpose = NormalizePurpose(input.ModelPurpose, row.ModelPurpose);
+        if (input.Role is not null) row.Role = NormalizeChoice(input.Role, row.Role, CompanionRoles, "role");
         if (input.Model is { } model)
         {
             // "Absent" and "clear" differ here: an empty string drops the pin and falls back to the
@@ -395,6 +398,8 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         long expectedRevision,
         bool mainSpecified,
         Guid? mainCompanionId,
+        bool buddySpecified,
+        Guid? buddyCompanionId,
         bool? autonomyPaused,
         CancellationToken cancellationToken = default)
     {
@@ -410,6 +415,13 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             if (target is null || target.Status != "active")
                 throw new CompanionException("companion_not_found", "The main companion must be an active companion of this tenant.", 400);
         }
+        if (buddySpecified && buddyCompanionId is { } buddyId)
+        {
+            var target = await db.Companions.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == buddyId && x.TenantId == tenantId, cancellationToken).ConfigureAwait(false);
+            if (target is null || target.Status != "active")
+                throw new CompanionException("companion_not_found", "The buddy companion must be an active companion of this tenant.", 400);
+        }
         var now = DateTimeOffset.UtcNow;
         if (row is null)
         {
@@ -417,6 +429,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             {
                 TenantId = tenantId,
                 MainCompanionId = mainSpecified ? mainCompanionId : null,
+                BuddyCompanionId = buddySpecified ? buddyCompanionId : null,
                 AutonomyPaused = autonomyPaused ?? false,
                 Revision = 1,
                 UpdatedAt = now
@@ -426,6 +439,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         else
         {
             if (mainSpecified) row.MainCompanionId = mainCompanionId;
+            if (buddySpecified) row.BuddyCompanionId = buddyCompanionId;
             if (autonomyPaused is { } paused) row.AutonomyPaused = paused;
             row.Revision++;
             row.UpdatedAt = now;

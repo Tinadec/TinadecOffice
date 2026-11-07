@@ -24,6 +24,7 @@ const companionIdentityProperties = {
   tagline: nullableString,
   avatar: nullableString,
   status: { type: 'string', enum: ['active', 'archived', 'paused'] },
+  role: { type: 'string', enum: ['autonomous', 'buddy'] },
   model_purpose: { type: 'string' },
   // The pinned provider model; null means "resolve the tenant's route purpose". `model` is the
   // model name on that provider instance (itself may be null for CLI runtimes that pick their own).
@@ -239,10 +240,11 @@ const companionSettings = {
   additionalProperties: true,
   properties: {
     main_companion_id: nullableUuid,
+    buddy_companion_id: nullableUuid,
     autonomy_paused: { type: 'boolean' },
     revision: { type: 'integer' },
   },
-  required: ['main_companion_id', 'autonomy_paused', 'revision'],
+  required: ['main_companion_id', 'buddy_companion_id', 'autonomy_paused', 'revision'],
 };
 
 const companionSendMessageResult = {

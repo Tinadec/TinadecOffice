@@ -38,6 +38,7 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             // set means the named provider instance with the named model overrides the route.
             e.Property(x => x.ModelName).HasMaxLength(256);
             e.Property(x => x.Status).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(16).IsRequired();
             e.Property(x => x.Revision).IsConcurrencyToken();
             e.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
         });
@@ -165,6 +166,9 @@ public sealed class CompanionAgentRecord
     public string? ModelName { get; set; }
     // active | paused | archived
     public string Status { get; set; } = "active";
+    // autonomous | buddy — a buddy is the sidebar work-buddy (second user, manages sessions);
+    // autonomous is the self-directed partner. Rows predating the column read as autonomous.
+    public string Role { get; set; } = "autonomous";
     public bool AutonomyEnabled { get; set; }
     public bool AutonomyPaused { get; set; }
     public int AutonomyIntervalMinutes { get; set; } = 60;
@@ -236,6 +240,8 @@ public sealed class CompanionSettingsRecord
 {
     public Guid TenantId { get; set; }
     public Guid? MainCompanionId { get; set; }
+    // The designated work-buddy shown in the sidebar below "new chat"; null = none designated.
+    public Guid? BuddyCompanionId { get; set; }
     public bool AutonomyPaused { get; set; }
     public long Revision { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

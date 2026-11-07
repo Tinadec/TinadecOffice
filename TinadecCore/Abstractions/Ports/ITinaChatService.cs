@@ -34,6 +34,7 @@ public interface ITinaChatIdentityBoundary
     Task<bool> IsWorkspaceMemberAsync(Guid tenantId, Guid workspaceId, Guid principalId, CancellationToken ct);
     Task<bool> IsWorkspaceAdministratorAsync(Guid tenantId, Guid workspaceId, Guid principalId, CancellationToken ct);
     Task<bool> IsAgentDefinitionAvailableAsync(Guid tenantId, Guid workspaceId, Guid definitionId, CancellationToken ct);
+    Task<bool> IsCompanionAvailableAsync(Guid tenantId, Guid workspaceId, Guid companionId, CancellationToken ct);
 }
 
 public interface ITinaChatIntentInterpreter

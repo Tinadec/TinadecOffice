@@ -29,9 +29,20 @@ public sealed partial class TinaChatService(
         var handle = Required(request.Handle, "handle", 80).ToLowerInvariant();
         if (handle.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.')))
             throw Invalid("Handle must use ASCII letters, digits, '.', '-' or '_'. Display names may use any language.");
-        if (request.Kind is not ("human" or "agent")) throw Invalid("Participant kind must be human or agent.");
-        if (request.Kind == "human" && (request.AgentDefinitionId.HasValue || request.CanInterpretIntent))
-            throw Invalid("Human participants cannot bind an agent definition or an agent interpretation capability.");
+        if (request.Kind is not ("human" or "agent" or "companion")) throw Invalid("Participant kind must be human, agent, or companion.");
+        if (request.Kind == "human" && (request.AgentDefinitionId.HasValue || request.CompanionId.HasValue || request.CanInterpretIntent))
+            throw Invalid("Human participants cannot bind an agent definition or companion, or hold the interpretation capability.");
+        if (request.Kind == "companion")
+        {
+            if (request.AgentDefinitionId.HasValue) throw Invalid("Companion participants bind a companion, not an agent definition.");
+            if (request.CompanionId is not { } companionId) throw Invalid("Companion participants must bind a companion_id.");
+            if (!await identity.IsCompanionAvailableAsync(scope.TenantId, scope.WorkspaceId, companionId, ct))
+                throw Invalid("Companion must be active in the current tenant.");
+        }
+        else if (request.CompanionId.HasValue)
+        {
+            throw Invalid("Only companion participants can bind a companion_id.");
+        }
         if (request.AgentDefinitionId is { } definitionId
             && !await identity.IsAgentDefinitionAvailableAsync(scope.TenantId, scope.WorkspaceId, definitionId, ct))
             throw Invalid("Agent definition must be active in the current workspace.");
@@ -44,6 +55,7 @@ public sealed partial class TinaChatService(
             DisplayName = Required(request.DisplayName, "display_name", 160), Kind = request.Kind,
             JobTitle = Optional(request.JobTitle, "job_title", 256), Description = Optional(request.Description, "description", 16384),
             AgentDefinitionId = request.AgentDefinitionId,
+            CompanionId = request.CompanionId,
             ReceiveHumanMessages = request.Kind == "human" || request.ReceiveHumanMessages,
             CanInterpretIntent = request.CanInterpretIntent, Discoverable = request.Discoverable
         };
@@ -384,7 +396,7 @@ public sealed partial class TinaChatService(
     private static TinaChatException Conflict(string code, string message) => new(409, code, message);
 
     private static TinaChatParticipantDto ToDto(ChatParticipant x) => new(x.Id, x.WorkspaceId, x.Handle, x.DisplayName, x.Kind, x.JobTitle, x.Description,
-        x.AgentDefinitionId, x.ReceiveHumanMessages, x.CanInterpretIntent, x.Discoverable, x.Status, x.Revision);
+        x.AgentDefinitionId, x.CompanionId, x.ReceiveHumanMessages, x.CanInterpretIntent, x.Discoverable, x.Status, x.Revision);
     private static TinaChatConversationDto ToDto(ChatConversation x, string status) => new(x.Id, x.WorkspaceId, x.Title, x.Kind, x.AllowCrossWorkspace, x.Revision, x.LastSequence, x.AcceptedIntentId, status);
     private static TinaChatWorkspacePolicyDto ToDto(ChatWorkspacePolicy x) => new(x.WorkspaceId, x.Revision, x.AllowCrossWorkspaceDiscovery, x.AllowCrossWorkspaceMessaging);
     private static void Audit(TinaChatDbContext db, TenantContext scope, Guid? actorId, string action, Guid targetId, Guid? conversationId = null) => db.Audit.Add(new ChatAudit

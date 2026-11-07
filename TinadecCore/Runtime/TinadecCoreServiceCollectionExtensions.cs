@@ -59,6 +59,7 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
         services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
+        services.AddSingleton<CompanionChatBridge>();
         services.AddSingleton<IExecutorMessageWakeSink, ExecutorMessageWakeSink>();
         // Governance reports use one runtime action port. The adapter checks the
         // target run's tenant/workspace/session before it reaches run control.

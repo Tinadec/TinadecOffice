@@ -16,6 +16,7 @@ public sealed record CompanionCreateRequest(
     string? PersonaDocument = null,
     string? ModelPurpose = null,
     string? Model = null,
+    string? Role = null,
     CompanionAutonomyRequest? Autonomy = null);
 
 public sealed record CompanionPatchRequest(
@@ -28,6 +29,7 @@ public sealed record CompanionPatchRequest(
     // otherwise "<providerInstanceId>|<model>" pins one model, exactly what the detail returns.
     // The separator is a pipe because model names themselves contain slashes.
     string? Model = null,
+    string? Role = null,
     CompanionAutonomyRequest? Autonomy = null);
 
 public sealed record CompanionMemoryCreateRequest(
@@ -93,6 +95,7 @@ internal static class CompanionContracts
         tagline = row.Tagline,
         avatar = row.AvatarKey,
         status = row.Status,
+        role = NormalizeRole(row.Role),
         model_purpose = row.ModelPurpose,
         model_provider_id = row.ModelProviderId,
         model = row.ModelName,
@@ -115,6 +118,7 @@ internal static class CompanionContracts
         tagline = row.Tagline,
         avatar = row.AvatarKey,
         status = row.Status,
+        role = NormalizeRole(row.Role),
         model_purpose = row.ModelPurpose,
         model_provider_id = row.ModelProviderId,
         model = row.ModelName,
@@ -144,6 +148,11 @@ internal static class CompanionContracts
         counts.HasRunningRun ? "thinking"
         : row.Status == "paused" || row.AutonomyPaused || counts.AutonomyPausedGlobally ? "paused"
         : "idle";
+
+    // Rows created before the role column carry the schema bootstrap's empty default; they are
+    // autonomous partners, never an unknown third role.
+    internal static string NormalizeRole(string? role) =>
+        string.IsNullOrEmpty(role) ? "autonomous" : role;
 
     internal static object ToJson(CompanionMemoryRecord row) => new
     {
@@ -193,6 +202,7 @@ internal static class CompanionContracts
     internal static Dictionary<string, object?> ToJson(CompanionSettingsRecord? row) => new()
     {
         ["main_companion_id"] = row?.MainCompanionId,
+        ["buddy_companion_id"] = row?.BuddyCompanionId,
         ["autonomy_paused"] = row?.AutonomyPaused ?? false,
         ["revision"] = row?.Revision ?? 0
     };

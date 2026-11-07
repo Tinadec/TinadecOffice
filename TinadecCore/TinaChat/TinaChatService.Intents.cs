@@ -195,7 +195,7 @@ public sealed partial class TinaChatService
 
     private static void RequireInterpreter(ChatParticipant actor)
     {
-        if (actor.Kind != "agent" || !actor.CanInterpretIntent) throw Forbidden("The participant is not configured to interpret intentions.");
+        if (actor.Kind is not ("agent" or "companion") || !actor.CanInterpretIntent) throw Forbidden("The participant is not configured to interpret intentions.");
     }
 
     private static void RequireExecutable(ChatConversation conversation, ChatIntent intent, TinaChatIntentContent body)

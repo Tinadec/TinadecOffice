@@ -10,6 +10,7 @@ public sealed record TinaChatRegisterParticipantRequest(
     string? JobTitle = null,
     string? Description = null,
     Guid? AgentDefinitionId = null,
+    Guid? CompanionId = null,
     bool ReceiveHumanMessages = false,
     bool CanInterpretIntent = false,
     bool Discoverable = true);
@@ -27,7 +28,7 @@ public sealed record TinaChatUpdateParticipantRequest(
 
 public sealed record TinaChatParticipantDto(
     Guid Id, Guid WorkspaceId, string Handle, string DisplayName, string Kind,
-    string? JobTitle, string? Description, Guid? AgentDefinitionId,
+    string? JobTitle, string? Description, Guid? AgentDefinitionId, Guid? CompanionId,
     bool ReceiveHumanMessages, bool CanInterpretIntent, bool Discoverable,
     string Status, long Revision);
 

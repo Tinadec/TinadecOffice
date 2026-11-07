@@ -285,11 +285,20 @@ public static class CompanionEndpoints
                 mainCompanionId = parsed;
             }
 
+            var buddySpecified = input.TryGetProperty("buddy_companion_id", out var buddyElement);
+            Guid? buddyCompanionId = null;
+            if (buddySpecified && buddyElement.ValueKind != JsonValueKind.Null)
+            {
+                if (!buddyElement.TryGetGuid(out var parsedBuddy))
+                    throw new CompanionException("invalid_request", "buddy_companion_id must be a uuid.", 400);
+                buddyCompanionId = parsedBuddy;
+            }
+
             bool? autonomyPaused = null;
             if (input.TryGetProperty("autonomy_paused", out var pausedElement) && pausedElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 autonomyPaused = pausedElement.GetBoolean();
 
-            var body = await service.PatchSettingsAsync(IfMatch(request), mainSpecified, mainCompanionId, autonomyPaused, cancellationToken).ConfigureAwait(false);
+            var body = await service.PatchSettingsAsync(IfMatch(request), mainSpecified, mainCompanionId, buddySpecified, buddyCompanionId, autonomyPaused, cancellationToken).ConfigureAwait(false);
             return Ok(body);
         });
 }

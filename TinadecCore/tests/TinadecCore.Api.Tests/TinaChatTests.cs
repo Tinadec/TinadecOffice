@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Companion;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Memory;
@@ -88,6 +89,107 @@ public sealed class TinaChatTests : IAsyncLifetime
         var otherBrief = await Chat.ProposeIntentAsync(team.Conversation, new(second.Id, "other-brief", current.Revision,
             [later.Id], [team.Human, team.Worker, second.Id], Brief()));
         Assert.Equal(second.Id, otherBrief.AuthorId);
+    }
+
+    [Fact]
+    public async Task CompanionParticipants_BindCompanionIdentity_AndValidateKindRules()
+    {
+        var scope = _identity.Current;
+        var companionId = Guid.NewGuid();
+        var companions = _factory.Services.GetRequiredService<IDbContextFactory<CompanionDbContext>>();
+        await using (var db = await companions.CreateDbContextAsync())
+        {
+            db.Companions.Add(new CompanionAgentRecord { Id = companionId, TenantId = scope.TenantId, Name = "桥接伙伴", Status = "active" });
+            await db.SaveChangesAsync();
+        }
+
+        var participant = await Chat.RegisterAsync(new TinaChatRegisterParticipantRequest(
+            "buddy-bridge", "搭子", Kind: "companion", CompanionId: companionId, CanInterpretIntent: true));
+        Assert.Equal("companion", participant.Kind);
+        Assert.Equal(companionId, participant.CompanionId);
+        Assert.Null(participant.AgentDefinitionId);
+        Assert.True(participant.CanInterpretIntent);
+
+        // A companion participant must bind an existing companion; only companions bind companion_id.
+        await Assert.ThrowsAsync<TinaChatException>(() => Chat.RegisterAsync(new("comp-missing", "X", Kind: "companion")));
+        await Assert.ThrowsAsync<TinaChatException>(() => Chat.RegisterAsync(new("comp-ghost", "X", Kind: "companion", CompanionId: Guid.NewGuid())));
+        await Assert.ThrowsAsync<TinaChatException>(() => Chat.RegisterAsync(new("comp-agentdef", "X", Kind: "companion", CompanionId: companionId, AgentDefinitionId: Guid.NewGuid())));
+        await Assert.ThrowsAsync<TinaChatException>(() => Chat.RegisterAsync(new("human-comp", "X", Kind: "human", CompanionId: companionId)));
+        await Assert.ThrowsAsync<TinaChatException>(() => Chat.RegisterAsync(new("agent-comp", "X", Kind: "agent", CompanionId: companionId)));
+
+        // An archived companion is no longer available for registration.
+        await using (var db = await companions.CreateDbContextAsync())
+        {
+            var row = await db.Companions.SingleAsync(x => x.Id == companionId);
+            row.Status = "archived";
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<TinaChatException>(() => Chat.RegisterAsync(new("comp-archived", "X", Kind: "companion", CompanionId: companionId)));
+    }
+
+    [Fact]
+    public async Task CompanionBridge_RegistersIdempotentParticipant_AndWakesIt()
+    {
+        var scope = _identity.Current;
+        var companionId = Guid.NewGuid();
+        var companions = _factory.Services.GetRequiredService<IDbContextFactory<CompanionDbContext>>();
+        await using (var db = await companions.CreateDbContextAsync())
+        {
+            db.Companions.Add(new CompanionAgentRecord { Id = companionId, TenantId = scope.TenantId, Name = "搭子桥", Status = "active" });
+            await db.SaveChangesAsync();
+        }
+
+        var bridge = _factory.Services.GetRequiredService<CompanionChatBridge>();
+        var first = await bridge.EnsureParticipantAsync(companionId);
+        Assert.Equal("companion", first.Kind);
+        Assert.Equal(companionId, first.CompanionId);
+        Assert.True(first.CanInterpretIntent);
+
+        // Idempotent: a second call returns the same participant rather than registering a duplicate.
+        var second = await bridge.EnsureParticipantAsync(companionId);
+        Assert.Equal(first.Id, second.Id);
+
+        // An archived companion cannot be bridged.
+        await using (var db = await companions.CreateDbContextAsync())
+        {
+            var row = await db.Companions.SingleAsync(x => x.Id == companionId);
+            row.Status = "archived";
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<TinaChatException>(() => bridge.EnsureParticipantAsync(companionId));
+    }
+
+    [Fact]
+    public async Task CompanionParticipant_IsWokenByAMessage_AndFilesABrief()
+    {
+        var scope = _identity.Current;
+        var companionId = Guid.NewGuid();
+        var companions = _factory.Services.GetRequiredService<IDbContextFactory<CompanionDbContext>>();
+        await using (var db = await companions.CreateDbContextAsync())
+        {
+            db.Companions.Add(new CompanionAgentRecord { Id = companionId, TenantId = scope.TenantId, Name = "自主伙伴", Status = "active" });
+            await db.SaveChangesAsync();
+        }
+        var bridge = _factory.Services.GetRequiredService<CompanionChatBridge>();
+        var companion = await bridge.EnsureParticipantAsync(companionId);
+        var human = await Chat.RegisterAsync(new("human-caller", "Human", "human"));
+        var conversation = await Chat.CreateConversationAsync(new(human.Id, "自主协作", [companion.Id]));
+        await JoinAsync(conversation.Id, companion.Id);
+
+        var source = await Chat.SendAsync(conversation.Id, new(human.Id, "请安排一个数据统计任务。", "companion-wake", AllowDerivedSharing: true));
+
+        // A companion-kind participant must owe a turn just like an agent interpreter; before the
+        // wake filter admitted companion kind, this row never existed.
+        await using (var db = await DbAsync())
+        {
+            var queued = Assert.Single(await db.Wakes.Where(x => x.ConversationId == conversation.Id && x.ParticipantId == companion.Id).ToArrayAsync());
+            Assert.Equal("pending", queued.Status);
+        }
+
+        Assert.Equal(1, await WakesAsync().RunPassAsync(5));
+        var brief = Assert.Single(await Chat.ListIntentsAsync(conversation.Id, companion.Id));
+        Assert.Equal("proposed", brief.Status);
+        Assert.Contains(source.Id, brief.SourceMessageIds);
     }
 
     [Fact]

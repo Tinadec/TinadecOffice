@@ -1535,6 +1535,12 @@
               "string"
             ]
           },
+          "role": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "tagline": {
             "type": [
               "null",
@@ -1668,6 +1674,12 @@
             ]
           },
           "persona_document": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "role": {
             "type": [
               "null",
               "string"
@@ -6308,6 +6320,13 @@
           "can_interpret_intent": {
             "type": "boolean"
           },
+          "companion_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "description": {
             "type": [
               "null",
@@ -6364,6 +6383,7 @@
           "job_title",
           "description",
           "agent_definition_id",
+          "companion_id",
           "receive_human_messages",
           "can_interpret_intent",
           "discoverable",
@@ -6431,6 +6451,13 @@
           "can_interpret_intent": {
             "default": false,
             "type": "boolean"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "description": {
             "type": [

@@ -1406,6 +1406,13 @@
           "revision": {
             "type": "integer"
           },
+          "role": {
+            "enum": [
+              "autonomous",
+              "buddy"
+            ],
+            "type": "string"
+          },
           "skill_count": {
             "type": "integer"
           },
@@ -1432,6 +1439,7 @@
           "tagline",
           "avatar",
           "status",
+          "role",
           "model_purpose",
           "model_provider_id",
           "model",
@@ -1759,6 +1767,11 @@
           "autonomy_paused": {
             "type": "boolean"
           },
+          "buddy_companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "main_companion_id": {
             "format": "uuid",
             "nullable": true,
@@ -1770,6 +1783,7 @@
         },
         "required": [
           "main_companion_id",
+          "buddy_companion_id",
           "autonomy_paused",
           "revision"
         ],
@@ -1896,6 +1910,13 @@
           "revision": {
             "type": "integer"
           },
+          "role": {
+            "enum": [
+              "autonomous",
+              "buddy"
+            ],
+            "type": "string"
+          },
           "skill_count": {
             "type": "integer"
           },
@@ -1922,6 +1943,7 @@
           "tagline",
           "avatar",
           "status",
+          "role",
           "model_purpose",
           "model_provider_id",
           "model",
@@ -6474,6 +6496,11 @@
           "can_interpret_intent": {
             "type": "boolean"
           },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "description": {
             "nullable": true,
             "type": "string"
@@ -6534,6 +6561,7 @@
           "job_title",
           "description",
           "agent_definition_id",
+          "companion_id",
           "receive_human_messages",
           "can_interpret_intent",
           "discoverable",
@@ -6607,6 +6635,11 @@
           "can_interpret_intent": {
             "default": false,
             "type": "boolean"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
           },
           "description": {
             "nullable": true,
