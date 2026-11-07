@@ -205,7 +205,7 @@ internal static class DesktopAutomation
     {
         try
         {
-            return RunOnUiaWorker("element tree enumeration", () =>
+            return RunOnUiaWorker<(string? Error, (ElementInfo Info, IUIAutomationElement Raw)[] Page, int Total)>("element tree enumeration", () =>
             {
                 var root = Automation.ElementFromHandle(windowHandle);
                 var raw = root.FindAll(TreeScope.Descendants, Automation.CreateTrueCondition());
