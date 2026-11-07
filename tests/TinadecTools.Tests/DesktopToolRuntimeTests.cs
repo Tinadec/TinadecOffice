@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -530,6 +531,61 @@ public sealed class DesktopToolRuntimeTests : IDisposable
             Assert.True(tool.GetProperty("requires_approval").GetBoolean(), actionTool);
             Assert.Equal("high", tool.GetProperty("risk").GetString(), ignoreCase: true);
             Assert.Equal("unsafe", tool.GetProperty("retry_safety").GetString());
+        }
+    }
+
+    // ── UIA cross-process call guard ─────────────────────────────────────────────
+
+    /// <summary>
+    /// The guard exists because a cross-process Value call stuck for 4.5 minutes against an
+    /// unresponsive element (probe-measured): UIA itself has no timeout, so a hung target
+    /// must cost this host a bounded timeout instead of the thread. Pins: a batch slower
+    /// than the cap throws UiaCallTimeoutException promptly and the calling thread is
+    /// released, not parked inside the batch.
+    /// </summary>
+    [Fact]
+    public void UiaWorker_ABatchOverTheCapThrowsInsteadOfHanging()
+    {
+        var saved = DesktopAutomation.UiaCallTimeout;
+        DesktopAutomation.UiaCallTimeout = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var watch = Stopwatch.StartNew();
+            var exception = Assert.Throws<DesktopAutomation.UiaCallTimeoutException>(() =>
+                DesktopAutomation.RunOnUiaWorker<int>("test hang", () =>
+                {
+                    Thread.Sleep(TimeSpan.FromSeconds(30));
+                    return 0;
+                }));
+            watch.Stop();
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5),
+                $"the guard returned after {watch.Elapsed} - it must abandon the worker, not wait for it");
+            Assert.Contains("test hang", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("ABANDONED", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DesktopAutomation.UiaCallTimeout = saved;
+        }
+    }
+
+    /// <summary>A batch that finishes in time returns its value, and a batch that throws
+    /// rethrows the ORIGINAL exception on the calling thread (not a wrapped one).</summary>
+    [Fact]
+    public void UiaWorker_ReturnsValuesAndRethrowsBatchFailures()
+    {
+        var saved = DesktopAutomation.UiaCallTimeout;
+        DesktopAutomation.UiaCallTimeout = TimeSpan.FromSeconds(30);
+        try
+        {
+            Assert.Equal(42, DesktopAutomation.RunOnUiaWorker("test value", () => 42));
+            var failure = Assert.Throws<InvalidOperationException>(() =>
+                DesktopAutomation.RunOnUiaWorker<int>("test throw", () => throw new InvalidOperationException("boom")));
+            Assert.Equal("boom", failure.Message);
+        }
+        finally
+        {
+            DesktopAutomation.UiaCallTimeout = saved;
         }
     }
 

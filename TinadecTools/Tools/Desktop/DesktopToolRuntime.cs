@@ -359,6 +359,10 @@ internal sealed class DesktopToolRuntime
                         $"the element supports a click pattern but invoking it failed ({exception.Message}). Read the element's state with desktop_find_element before retrying.",
                         permanent: false);
                 }
+                catch (DesktopAutomation.UiaCallTimeoutException exception)
+                {
+                    return UiaTimeout(exception);
+                }
                 if (via is not null)
                 {
                     delivery = via;
@@ -535,7 +539,16 @@ internal sealed class DesktopToolRuntime
         var includeOffscreen = args.Offscreen ?? true;
         var scroll = args.Scroll ?? false;
 
-        var (error, page, total, scrollSteps) = DesktopAutomation.FindElements(hWnd, args.Name, args.AutomationId, args.ControlType, args.ClassName, limit, offset, includeOffscreen, scroll);
+        (string? Error, (DesktopAutomation.ElementInfo Info, DesktopAutomation.IUIAutomationElement Raw)[] Page, int Total, int ScrollSteps) found;
+        try
+        {
+            found = DesktopAutomation.FindElements(hWnd, args.Name, args.AutomationId, args.ControlType, args.ClassName, limit, offset, includeOffscreen, scroll);
+        }
+        catch (DesktopAutomation.UiaCallTimeoutException exception)
+        {
+            return UiaTimeout(exception);
+        }
+        var (error, page, total, scrollSteps) = found;
         if (error is not null) return Fail("desktop_uia_failed", error, permanent: false);
 
         // scroll=true and still nothing: the whole virtualized list was paged through -
@@ -570,6 +583,17 @@ internal sealed class DesktopToolRuntime
     internal const string DesktopTargetElevatedCode = "desktop_target_elevated";
 
     /// <summary>
+    /// A cross-process UIA call exceeded DesktopAutomation.UiaCallTimeout: the target
+    /// window's process is busy or hung and the call was abandoned. Non-permanent - the
+    /// target may recover - but the model must re-read state instead of assuming the action
+    /// landed (a late provider answer may still deliver the abandoned action).
+    /// </summary>
+    internal const string UiaTimeoutCode = "desktop_uia_timeout";
+
+    private static DesktopToolResult UiaTimeout(DesktopAutomation.UiaCallTimeoutException exception) =>
+        Fail(UiaTimeoutCode, exception.Message, permanent: false);
+
+    /// <summary>
     /// Sets a range-capable element's value (slider, progress, zoom) by reference through
     /// the RangeValue pattern, and reads the value back as the evidence. Text fields are
     /// not set here - desktop_type's element path owns those (Value pattern).
@@ -582,7 +606,16 @@ internal sealed class DesktopToolRuntime
         var (error, element, raw, elementIndex, elementWindow) = ResolveClickElement(new DesktopClickArgs { ElementIndex = args.ElementIndex, ElementAutomationId = args.ElementAutomationId, WindowId = args.WindowId });
         if (error is not null) return error;
 
-        var (set, readBack, setError) = DesktopAutomation.TrySetRangeValue(raw!, args.Value);
+        (bool Set, double? ReadBack, string? SetError) range;
+        try
+        {
+            range = DesktopAutomation.TrySetRangeValue(raw!, args.Value);
+        }
+        catch (DesktopAutomation.UiaCallTimeoutException exception)
+        {
+            return UiaTimeout(exception);
+        }
+        var (set, readBack, setError) = range;
         if (!set)
             return Fail("desktop_element_not_range_capable",
                 $"{setError}. desktop_set_value is for slider/progress/zoom controls; text fields take desktop_type's element path.",
@@ -664,6 +697,10 @@ internal sealed class DesktopToolRuntime
             catch (COMException)
             {
                 scrolled = false;
+            }
+            catch (DesktopAutomation.UiaCallTimeoutException exception)
+            {
+                return (UiaTimeout(exception), null, null, 0, 0);
             }
             if (!scrolled)
                 return (Fail("desktop_element_offscreen",
@@ -1050,6 +1087,10 @@ internal sealed class DesktopToolRuntime
             catch (COMException)
             {
                 valueSet = false;
+            }
+            catch (DesktopAutomation.UiaCallTimeoutException exception)
+            {
+                return UiaTimeout(exception);
             }
             if (valueSet)
             {

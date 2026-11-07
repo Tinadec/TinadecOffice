@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 
 namespace TinadecTools.Tools.Desktop;
@@ -49,6 +50,60 @@ internal static class DesktopAutomation
         50016 => "Spinner", 50017 => "StatusBar", 50027 => "Thumb",
         _ => $"Type{typeId}",
     };
+
+    // ── cross-process call guard ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Hard cap for one cross-process UIA call batch. Cross-process UIA is synchronous COM
+    /// into the target's process: a busy or hung provider blocks the call FOREVER
+    /// (probe-measured: a Value call against an unresponsive element stuck for 4.5 minutes,
+    /// with no timeout of any kind in UIA itself). Every entry point of this class runs its
+    /// COM batch under this cap so the tool host can never lose a thread to a frozen
+    /// application. Mutable so tests can pin the guard behavior quickly.
+    /// </summary>
+    internal static TimeSpan UiaCallTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Thrown when a cross-process UIA batch exceeded <see cref="UiaCallTimeout"/>. The
+    /// batch is ABANDONED, never assumed to have landed - callers surface it as the stable
+    /// desktop_uia_timeout error so the model re-reads the target's state instead of
+    /// trusting that the action happened.
+    /// </summary>
+    internal sealed class UiaCallTimeoutException : TimeoutException
+    {
+        public UiaCallTimeoutException(string operation)
+            : base($"a cross-process UI Automation call ({operation}) did not return within {UiaCallTimeout.TotalSeconds:0}s; the target window's process is busy or hung. The call was ABANDONED - do not assume the action landed; once the target responds, check its state (desktop_read_text / desktop_find_element) before retrying.")
+        {
+        }
+    }
+
+    /// <summary>
+    /// Runs one UIA call batch on a fresh MTA worker bounded by <see cref="UiaCallTimeout"/>.
+    /// On expiry the worker is abandoned - a blocked COM call cannot be cancelled, so that
+    /// thread stays parked inside the provider until the target process answers or dies -
+    /// and the caller gets <see cref="UiaCallTimeoutException"/> instead of losing its own
+    /// thread (the TinadecTools host serves every tool; one frozen app must not freeze the
+    /// agent). MTA is deliberate: the multithreaded apartment is process-wide, so element
+    /// proxies created by one worker stay usable by every later worker.
+    /// </summary>
+    internal static T RunOnUiaWorker<T>(string operation, Func<T> batch)
+    {
+        var value = default(T);
+        Exception? failure = null;
+        var worker = new Thread(() =>
+        {
+            try { value = batch(); }
+            catch (Exception exception) { failure = exception; }
+        });
+        worker.IsBackground = true;
+        worker.SetApartmentState(ApartmentState.MTA);
+        worker.Start();
+        if (!worker.Join(UiaCallTimeout))
+            throw new UiaCallTimeoutException(operation);
+        if (failure is not null)
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        return value!;
+    }
 
     /// <summary>Maps a friendly control type name (as returned to the model) back to its id, or null.</summary>
     internal static int? ControlTypeId(string name) => name.ToLowerInvariant() switch
@@ -106,9 +161,16 @@ internal static class DesktopAutomation
             {
                 try
                 {
-                    var before = container.CurrentVerticalScrollPercent();
-                    container.Scroll(2 /* NoAmount horizontal */, 3 /* LargeIncrement vertical */);
-                    moved |= Math.Abs(container.CurrentVerticalScrollPercent() - before) >= 0.01;
+                    // one batch per container: percent read + scroll + percent read; a
+                    // UiaCallTimeoutException propagates and aborts the whole deep scroll
+                    // (a target hung here will hang the retry enumeration just the same)
+                    var (before, after) = RunOnUiaWorker("list scroll", () =>
+                    {
+                        var beforePercent = container.CurrentVerticalScrollPercent();
+                        container.Scroll(2 /* NoAmount horizontal */, 3 /* LargeIncrement vertical */);
+                        return (beforePercent, container.CurrentVerticalScrollPercent());
+                    });
+                    moved |= Math.Abs(after - before) >= 0.01;
                 }
                 catch (COMException)
                 {
@@ -143,36 +205,39 @@ internal static class DesktopAutomation
     {
         try
         {
-            var root = Automation.ElementFromHandle(windowHandle);
-            var raw = root.FindAll(TreeScope.Descendants, Automation.CreateTrueCondition());
-            var typeId = controlType is null ? null : ControlTypeId(controlType);
-            if (controlType is not null && typeId is null)
-                return ($"unknown control_type '{controlType}' (use names like Button, MenuItem, Edit)", [], 0);
-
-            var matches = new List<(ElementInfo, IUIAutomationElement)>();
-            for (var i = 0; i < raw.Length; i++)
+            return RunOnUiaWorker("element tree enumeration", () =>
             {
-                var element = raw.GetElement(i);
-                var elementName = element.CurrentName();
-                var elementAutomationId = element.CurrentAutomationId();
-                var elementClassName = element.CurrentClassName();
-                if (nameContains is not null && !Contains(elementName, nameContains)) continue;
-                if (automationIdContains is not null && !Contains(elementAutomationId, automationIdContains)) continue;
-                if (classNameContains is not null && !Contains(elementClassName, classNameContains)) continue;
-                if (typeId is { } expected && element.CurrentControlType() != expected) continue;
-                var rect = element.CurrentBoundingRectangle();
-                var info = new ElementInfo(
-                    elementName, elementAutomationId, element.CurrentControlType(), elementClassName,
-                    rect.Left, rect.Top, rect.Right, rect.Bottom,
-                    element.CurrentNativeWindowHandle(),
-                    element.CurrentIsEnabled(),
-                    element.CurrentIsOffscreen());
-                if (!includeOffscreen && info.IsOffscreen) continue;
-                matches.Add((info, element));
-            }
+                var root = Automation.ElementFromHandle(windowHandle);
+                var raw = root.FindAll(TreeScope.Descendants, Automation.CreateTrueCondition());
+                var typeId = controlType is null ? null : ControlTypeId(controlType);
+                if (controlType is not null && typeId is null)
+                    return ($"unknown control_type '{controlType}' (use names like Button, MenuItem, Edit)", Array.Empty<(ElementInfo, IUIAutomationElement)>(), 0);
 
-            var page = matches.Skip(Math.Max(0, offset)).Take(limit).ToArray();
-            return (null, page, matches.Count);
+                var matches = new List<(ElementInfo, IUIAutomationElement)>();
+                for (var i = 0; i < raw.Length; i++)
+                {
+                    var element = raw.GetElement(i);
+                    var elementName = element.CurrentName();
+                    var elementAutomationId = element.CurrentAutomationId();
+                    var elementClassName = element.CurrentClassName();
+                    if (nameContains is not null && !Contains(elementName, nameContains)) continue;
+                    if (automationIdContains is not null && !Contains(elementAutomationId, automationIdContains)) continue;
+                    if (classNameContains is not null && !Contains(elementClassName, classNameContains)) continue;
+                    if (typeId is { } expected && element.CurrentControlType() != expected) continue;
+                    var rect = element.CurrentBoundingRectangle();
+                    var info = new ElementInfo(
+                        elementName, elementAutomationId, element.CurrentControlType(), elementClassName,
+                        rect.Left, rect.Top, rect.Right, rect.Bottom,
+                        element.CurrentNativeWindowHandle(),
+                        element.CurrentIsEnabled(),
+                        element.CurrentIsOffscreen());
+                    if (!includeOffscreen && info.IsOffscreen) continue;
+                    matches.Add((info, element));
+                }
+
+                var page = matches.Skip(Math.Max(0, offset)).Take(limit).ToArray();
+                return (null, page, matches.Count);
+            });
         }
         catch (Exception exception) when (exception is COMException or InvalidOperationException)
         {
@@ -185,30 +250,34 @@ internal static class DesktopAutomation
     /// target is not knowable up front.</summary>
     private static List<IUIAutomationScrollPattern> FindScrollContainers(nint windowHandle)
     {
-        var containers = new List<IUIAutomationScrollPattern>();
         try
         {
-            var root = Automation.ElementFromHandle(windowHandle);
-            var raw = root.FindAll(TreeScope.Descendants, Automation.CreateTrueCondition());
-            for (var i = 0; i < raw.Length; i++)
+            return RunOnUiaWorker("scroll container discovery", () =>
             {
-                var element = raw.GetElement(i);
-                if (!TryPattern(element, ScrollPatternId, ScrollPatternIid, out IUIAutomationScrollPattern scroll)) continue;
-                try
+                var containers = new List<IUIAutomationScrollPattern>();
+                var root = Automation.ElementFromHandle(windowHandle);
+                var raw = root.FindAll(TreeScope.Descendants, Automation.CreateTrueCondition());
+                for (var i = 0; i < raw.Length; i++)
                 {
-                    if (scroll.CurrentVerticallyScrollable()) containers.Add(scroll);
+                    var element = raw.GetElement(i);
+                    if (!TryPattern(element, ScrollPatternId, ScrollPatternIid, out IUIAutomationScrollPattern scroll)) continue;
+                    try
+                    {
+                        if (scroll.CurrentVerticallyScrollable()) containers.Add(scroll);
+                    }
+                    catch (COMException)
+                    {
+                        // a disconnected marshaler - skip this candidate
+                    }
                 }
-                catch (COMException)
-                {
-                    // a disconnected marshaler - skip this candidate
-                }
-            }
+                return containers;
+            });
         }
         catch (Exception exception) when (exception is COMException or InvalidOperationException)
         {
-            // enumeration failed - return what was collected so far
+            // enumeration failed - nothing scrollable was collected
+            return [];
         }
-        return containers;
     }
 
     /// <summary>Outcome of trying the Invoke pattern on an element.</summary>
@@ -226,25 +295,26 @@ internal static class DesktopAutomation
     /// involved at all, so no DPI space can shift it. Measured need: notepad's and
     /// explorer's virtual buttons all report class names but no hwnds.
     /// </summary>
-    internal static InvokeOutcome TryInvoke(IUIAutomationElement element)
-    {
-        try
+    internal static InvokeOutcome TryInvoke(IUIAutomationElement element) =>
+        RunOnUiaWorker("Invoke pattern", () =>
         {
-            element.GetCurrentPatternAs(InvokePatternId, in InvokePatternIid, out var pattern);
-            if (pattern == 0) return InvokeOutcome.NotInvokable;
-            var invoke = (IUIAutomationInvokePattern)Marshal.GetObjectForIUnknown(pattern);
-            invoke.Invoke();
-            return InvokeOutcome.Invoked;
-        }
-        catch (COMException exception) when (exception.HResult == unchecked((int)0x80131505) || exception.Message.Contains("not available", StringComparison.OrdinalIgnoreCase))
-        {
-            return InvokeOutcome.ElementGone;
-        }
-        catch (COMException)
-        {
-            return InvokeOutcome.Failed;
-        }
-    }
+            try
+            {
+                element.GetCurrentPatternAs(InvokePatternId, in InvokePatternIid, out var pattern);
+                if (pattern == 0) return InvokeOutcome.NotInvokable;
+                var invoke = (IUIAutomationInvokePattern)Marshal.GetObjectForIUnknown(pattern);
+                invoke.Invoke();
+                return InvokeOutcome.Invoked;
+            }
+            catch (COMException exception) when (exception.HResult == unchecked((int)0x80131505) || exception.Message.Contains("not available", StringComparison.OrdinalIgnoreCase))
+            {
+                return InvokeOutcome.ElementGone;
+            }
+            catch (COMException)
+            {
+                return InvokeOutcome.Failed;
+            }
+        });
 
     private const int InvokePatternId = 10000;
     private const int ValuePatternId = 10002;
@@ -269,24 +339,26 @@ internal static class DesktopAutomation
     /// RangeValue pattern, returning the value the element reports afterwards - the
     /// read-back is the evidence, never the setter's silent success.
     /// </summary>
-    internal static (bool Set, double? ReadBack, string? Error) TrySetRangeValue(IUIAutomationElement element, double value)
-    {
-        if (!TryPattern(element, RangeValuePatternId, RangeValuePatternIid, out IUIAutomationRangeValuePattern range))
-            return (false, null, "the element does not support the RangeValue pattern (not a slider/progress control)");
-        try
+    internal static (bool Set, double? ReadBack, string? Error) TrySetRangeValue(IUIAutomationElement element, double value) =>
+        RunOnUiaWorker<(bool Set, double? ReadBack, string? Error)>("RangeValue set", () =>
         {
-            range.SetValue(value);
-            return (true, range.CurrentValue(), null);
-        }
-        catch (Exception exception) when (exception is COMException or InvalidOperationException)
-        {
-            return (false, null, $"setting the value failed ({exception.Message}) - the control may be read-only or out of range");
-        }
-    }
+            if (!TryPattern(element, RangeValuePatternId, RangeValuePatternIid, out IUIAutomationRangeValuePattern range))
+                return (false, null, "the element does not support the RangeValue pattern (not a slider/progress control)");
+            try
+            {
+                range.SetValue(value);
+                return (true, range.CurrentValue(), null);
+            }
+            catch (Exception exception) when (exception is COMException or InvalidOperationException)
+            {
+                return (false, null, $"setting the value failed ({exception.Message}) - the control may be read-only or out of range");
+            }
+        });
 
     /// <summary>Reads a range-capable element's current value, or null when it has no RangeValue pattern.</summary>
     internal static double? CurrentRangeValue(IUIAutomationElement element) =>
-        TryPattern(element, RangeValuePatternId, RangeValuePatternIid, out IUIAutomationRangeValuePattern range) ? range.CurrentValue() : null;
+        RunOnUiaWorker<double?>("RangeValue read", () =>
+            TryPattern(element, RangeValuePatternId, RangeValuePatternIid, out IUIAutomationRangeValuePattern range) ? range.CurrentValue() : null);
 
     /// <summary>
     /// The pattern-aware click for virtual elements, in stability order: Invoke (the
@@ -296,52 +368,59 @@ internal static class DesktopAutomation
     /// instead of failing the whole click. Returns which pattern did the job so the result
     /// is auditable; null means none worked - the caller falls back to the rect path.
     /// </summary>
-    internal static string? ClickByPattern(IUIAutomationElement element)
-    {
-        if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke) && Act(() => invoke.Invoke()))
-            return "uia-invoke";
-        if (TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle) && Act(() => toggle.Toggle()))
-            return "uia-toggle";
-        if (TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select) && Act(() => select.Select()))
-            return "uia-select";
-        if (TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand) && Act(() => expand.Expand()))
-            return "uia-expand";
-        return null;
-    }
+    internal static string? ClickByPattern(IUIAutomationElement element) =>
+        RunOnUiaWorker("pattern click", () =>
+        {
+            if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke) && Act(() => invoke.Invoke()))
+                return "uia-invoke";
+            if (TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle) && Act(() => toggle.Toggle()))
+                return "uia-toggle";
+            if (TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select) && Act(() => select.Select()))
+                return "uia-select";
+            if (TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand) && Act(() => expand.Expand()))
+                return "uia-expand";
+            return null;
+        });
 
     /// <summary>Debug form: also reports why each pattern was skipped (probe tooling).</summary>
     internal static string? ClickByPattern(IUIAutomationElement element, out string trace)
     {
         var steps = new List<string>();
         string? result = null;
-        if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke))
+        (result, steps) = RunOnUiaWorker("pattern click (traced)", () =>
         {
-            var acted = Act(() => invoke.Invoke(), out var error);
-            steps.Add($"invoke:{(acted ? "ok" : error)}");
-            if (acted) result = "uia-invoke";
-        }
-        else steps.Add("invoke:absent");
-        if (result is null && TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle))
-        {
-            var acted = Act(() => toggle.Toggle(), out var error);
-            steps.Add($"toggle:{(acted ? "ok" : error)}");
-            if (acted) result = "uia-toggle";
-        }
-        else if (result is null) steps.Add("toggle:absent");
-        if (result is null && TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select))
-        {
-            var acted = Act(() => select.Select(), out var error);
-            steps.Add($"select:{(acted ? "ok" : error)}");
-            if (acted) result = "uia-select";
-        }
-        else if (result is null) steps.Add("select:absent");
-        if (result is null && TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand))
-        {
-            var acted = Act(() => expand.Expand(), out var error);
-            steps.Add($"expand:{(acted ? "ok" : error)}");
-            if (acted) result = "uia-expand";
-        }
-        else if (result is null) steps.Add("expand:absent");
+            var traceSteps = new List<string>();
+            string? acted = null;
+            if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke))
+            {
+                var ok = Act(() => invoke.Invoke(), out var error);
+                traceSteps.Add($"invoke:{(ok ? "ok" : error)}");
+                if (ok) acted = "uia-invoke";
+            }
+            else traceSteps.Add("invoke:absent");
+            if (acted is null && TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle))
+            {
+                var ok = Act(() => toggle.Toggle(), out var error);
+                traceSteps.Add($"toggle:{(ok ? "ok" : error)}");
+                if (ok) acted = "uia-toggle";
+            }
+            else if (acted is null) traceSteps.Add("toggle:absent");
+            if (acted is null && TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select))
+            {
+                var ok = Act(() => select.Select(), out var error);
+                traceSteps.Add($"select:{(ok ? "ok" : error)}");
+                if (ok) acted = "uia-select";
+            }
+            else if (acted is null) traceSteps.Add("select:absent");
+            if (acted is null && TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand))
+            {
+                var ok = Act(() => expand.Expand(), out var error);
+                traceSteps.Add($"expand:{(ok ? "ok" : error)}");
+                if (ok) acted = "uia-expand";
+            }
+            else if (acted is null) traceSteps.Add("expand:absent");
+            return (acted, traceSteps);
+        });
         trace = string.Join(" | ", steps);
         return result;
     }
@@ -377,69 +456,77 @@ internal static class DesktopAutomation
     }
 
     /// <summary>Sets an element's text through the Value pattern (edit fields and documents);
-    /// returns false when the element is not value-capable or is read-only.</summary>
-    internal static bool TrySetValue(IUIAutomationElement element, string text)
-    {
-        if (!TryPattern(element, ValuePatternId, ValuePatternIid, out IUIAutomationValuePattern value))
-            return false;
-        if (value.CurrentIsReadOnly())
-            return false;
-        value.SetValue(text);
-        return true;
-    }
+    /// returns false when the element is not value-capable or is read-only. This is the exact
+    /// call shape the probe measured hanging for 4.5 minutes against an unresponsive element,
+    /// so the whole batch runs under the cross-process guard.</summary>
+    internal static bool TrySetValue(IUIAutomationElement element, string text) =>
+        RunOnUiaWorker("Value set", () =>
+        {
+            if (!TryPattern(element, ValuePatternId, ValuePatternIid, out IUIAutomationValuePattern value))
+                return false;
+            if (value.CurrentIsReadOnly())
+                return false;
+            value.SetValue(text);
+            return true;
+        });
 
     /// <summary>Reads an element's current value through the Value pattern, or null.</summary>
     internal static string? CurrentValue(IUIAutomationElement element) =>
-        TryPattern(element, ValuePatternId, ValuePatternIid, out IUIAutomationValuePattern value) ? value.CurrentValue() : null;
+        RunOnUiaWorker<string?>("Value read", () =>
+            TryPattern(element, ValuePatternId, ValuePatternIid, out IUIAutomationValuePattern value) ? value.CurrentValue() : null);
 
     /// <summary>The element's toggle state (0 off, 1 on, 2 indeterminate), or null when it has no Toggle pattern.</summary>
     internal static int? CurrentToggleState(IUIAutomationElement element) =>
-        TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle) ? toggle.CurrentToggleState() : null;
+        RunOnUiaWorker<int?>("ToggleState read", () =>
+            TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle) ? toggle.CurrentToggleState() : null);
 
     /// <summary>Whether the element is currently selected, or null when it has no SelectionItem pattern.</summary>
     internal static bool? CurrentIsSelected(IUIAutomationElement element) =>
-        TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select) ? select.CurrentIsSelected() : null;
+        RunOnUiaWorker<bool?>("SelectionItem read", () =>
+            TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select) ? select.CurrentIsSelected() : null);
 
     /// <summary>
     /// Scrolls an element into view through the ScrollItem pattern (its scroll container
     /// brings it into the visible area). Returns false when the element does not support it.
     /// </summary>
-    internal static bool TryScrollIntoView(IUIAutomationElement element)
-    {
-        if (!TryPattern(element, ScrollItemPatternId, ScrollItemPatternIid, out IUIAutomationScrollItemPattern scroll))
-            return false;
-        scroll.ScrollIntoView();
-        return true;
-    }
+    internal static bool TryScrollIntoView(IUIAutomationElement element) =>
+        RunOnUiaWorker("ScrollIntoView", () =>
+        {
+            if (!TryPattern(element, ScrollItemPatternId, ScrollItemPatternIid, out IUIAutomationScrollItemPattern scroll))
+                return false;
+            scroll.ScrollIntoView();
+            return true;
+        });
 
     /// <summary>Debug (probe tooling): which of the six known pattern IDs the element
     /// answers with a non-null interface (each with its OWN iid - QI with a mismatched
     /// iid crashes some in-proc providers hard).</summary>
-    internal static List<string> SupportedPatternIds(IUIAutomationElement element)
-    {
-        var checks = new (string Name, int Id, Guid Iid)[]
+    internal static List<string> SupportedPatternIds(IUIAutomationElement element) =>
+        RunOnUiaWorker("pattern availability probe", () =>
         {
-            ("invoke", InvokePatternId, InvokePatternIid),
-            ("value", ValuePatternId, ValuePatternIid),
-            ("expand", ExpandCollapsePatternId, ExpandCollapsePatternIid),
-            ("select", SelectionItemPatternId, SelectionItemPatternIid),
-            ("toggle", TogglePatternId, TogglePatternIid),
-        };
-        var supported = new List<string>();
-        foreach (var (name, id, iid) in checks)
-        {
-            try
+            var checks = new (string Name, int Id, Guid Iid)[]
             {
-                element.GetCurrentPatternAs(id, in iid, out var pointer);
-                if (pointer != 0) supported.Add($"{name}({id})");
-            }
-            catch (COMException)
+                ("invoke", InvokePatternId, InvokePatternIid),
+                ("value", ValuePatternId, ValuePatternIid),
+                ("expand", ExpandCollapsePatternId, ExpandCollapsePatternIid),
+                ("select", SelectionItemPatternId, SelectionItemPatternIid),
+                ("toggle", TogglePatternId, TogglePatternIid),
+            };
+            var supported = new List<string>();
+            foreach (var (name, id, iid) in checks)
             {
-                // not an answer for this element
+                try
+                {
+                    element.GetCurrentPatternAs(id, in iid, out var pointer);
+                    if (pointer != 0) supported.Add($"{name}({id})");
+                }
+                catch (COMException)
+                {
+                    // not an answer for this element
+                }
             }
-        }
-        return supported;
-    }
+            return supported;
+        });
 
     private static bool TryPattern<T>(IUIAutomationElement element, int patternId, in Guid iid, out T pattern) where T : class
     {
