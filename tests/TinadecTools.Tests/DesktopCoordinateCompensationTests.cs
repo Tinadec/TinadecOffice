@@ -583,6 +583,29 @@ public sealed class DesktopCoordinateCompensationTests
         window.AssertListSelection(1); // 'Second' is the 0-based index 1 - the control's own state
     }
 
+    /// <summary>
+    /// Typing into a checkbox through the element path is a MEASURED silent no-op (probe
+    /// round 15: delivery=uia-value, ok=true, the box stayed unchecked and the form
+    /// submitted without the field) - it must be refused with the actionable path instead.
+    /// </summary>
+    [Fact]
+    public async Task TypeIntoCheckboxByElementIsRefusedNotSilentlyAccepted()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var found = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, ControlType = "CheckBox", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(found.Ok, found.Message);
+        Assert.True((found.Total ?? 0) >= 1, "the harness checkbox must be visible to UIA as a CheckBox");
+        Assert.Equal(0, window.CheckState());
+
+        var typed = await runtime.TypeAsync(new DesktopTypeArgs { Text = " ", ElementIndex = found.Elements![0].Index, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.False(typed.Ok);
+        Assert.Equal("desktop_element_not_typeable", typed.Code);
+        Assert.Contains("desktop_click", typed.Message, StringComparison.Ordinal);
+        Assert.Equal(0, window.CheckState()); // nothing toggled - the refusal happened before any input
+    }
+
     [Fact]
     public async Task SetValue_WithoutFindElementContextIsRefused()
     {
@@ -725,6 +748,7 @@ public sealed class DesktopCoordinateCompensationTests
 
         public nint Edit { get; private set; }
         public nint Slider { get; private set; }
+        public nint Check { get; private set; }
         public nint List { get; private set; }
 
         public ElementsWindow()
@@ -735,6 +759,10 @@ public sealed class DesktopCoordinateCompensationTests
         /// <summary>The slider's position read straight from the control (TBM_GETPOS) -
         /// the host-state evidence for desktop_set_value tests.</summary>
         public int SliderPosition() => (int)SendMessage(Slider, 0x0400 /* TBM_GETPOS */, 0, 0);
+
+        /// <summary>The checkbox's check state straight from the control (BM_GETCHECK) -
+        /// 0 unchecked, 1 checked. The host-state evidence for the typing-refusal test.</summary>
+        public int CheckState() => (int)SendMessage(Check, 0x00F0 /* BM_GETCHECK */, 0, 0);
 
         /// <summary>The listbox's selected index straight from the control (LB_GETCURSEL) -
         /// the host-state evidence that a pattern click really selected the item.</summary>
@@ -781,6 +809,8 @@ public sealed class DesktopCoordinateCompensationTests
             Slider = CreateWindowEx(0, "msctls_trackbar32", "", WS_CHILD | WS_VISIBLE, 160, 195, 150, 28, hwnd, (nint)108, GetModuleHandle(null), 0);
             SendMessage(Slider, 0x0401 /* TBM_SETRANGE */, 0, (nint)((100 << 16) | 0));
             SendMessage(Slider, 0x0405 /* TBM_SETPOS */, 0, 30);
+            // an auto-checkbox: the refusal target for desktop_type's element path
+            Check = CreateWindowEx(0, "BUTTON", "Agree to terms", WS_CHILD | WS_VISIBLE | 0x2u /* BS_AUTOCHECKBOX */, 20, 240, 150, 24, hwnd, (nint)109, GetModuleHandle(null), 0);
             return 0;
 
             void Create(nint parent, string name, int id, int x, int y, int w, int h)

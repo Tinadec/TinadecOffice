@@ -1077,6 +1077,15 @@ internal sealed class DesktopToolRuntime
         {
             var (elementError, element, raw, elementIndex, elementWindow) = ResolveClickElement(new DesktopClickArgs { ElementIndex = args.ElementIndex, ElementAutomationId = args.ElementAutomationId, WindowId = args.WindowId });
             if (elementError is not null) return elementError;
+            // a checkbox / radio button's UIA value is its form value, not text content:
+            // typing into it is a MEASURED silent no-op (probe round 15, a Chromium
+            // checkbox: delivery=uia-value with ok=true while the box stayed unchecked
+            // and the form then submitted without the field). Refuse with the actionable
+            // path instead of reporting success for a change that never happens.
+            if (element!.ControlType is 50002 or 50013)
+                return Fail("desktop_element_not_typeable",
+                    $"the element is a {DesktopAutomation.ControlTypeName(element.ControlType)} - text cannot be typed into it. Its UIA value is the form value, not text content, so typing changes nothing on screen. Click it with desktop_click instead (semantic pattern or rectangle), or in fast mode give it the focus and press Space.",
+                    permanent: true);
             DesktopToolResult elementResult;
             string delivery;
             var valueSet = false;
