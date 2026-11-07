@@ -1,0 +1,66 @@
+name: CLA Assistant
+
+# CLA Assistant v2 — requires contributors to sign the Contributor License
+# Agreement (CLA.md / CLA.zh-CN.md) before their pull request can be merged.
+#
+# Signatures are recorded as comments ("I have read the CLA Document and I hereby
+# sign the CLA") and stored in the repository at signatures/version1/cla.json on
+# the branch named below.
+#
+# GitHub App or PAT: the bot needs write access to this repository. The built-in
+# GITHUB_TOKEN is sufficient because signatures are stored in THIS repository
+# (no remote-organization-name / remote-repository-name). Grant the workflow the
+# "contents: write" + "pull-requests: write" permissions below; if a protected
+# branch blocks the bot's commit, either store signatures on an unprotected
+# branch or supply a PAT in secrets.PERSONAL_ACCESS_TOKEN with repo scope.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  contents: write   # bot commits signatures/version1/cla.json
+  pull-requests: write
+  issues: write
+
+jobs:
+  CLAAssistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "CLA Assistant"
+        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only needed if signatures are stored in a separate repository.
+          # PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        with:
+          path-to-signatures: 'signatures/version1/cla.json'
+          path-to-document: 'https://github.com/Tinadec/TinadecOffice/blob/main/CLA.md'
+          # branch should not be protected against the bot's commits
+          branch: 'main'
+          allowlist: lincube,Tinadec,dependabot[bot],github-actions[bot],greenkeeper[bot],renovate[bot],bot*
+          create-file-commit-message: 'docs(cla): create signature store for CLA'
+          signed-commit-message: 'docs(cla): $contributorName signed the CLA in $owner/$repo#$pullRequestNo'
+          custom-notsigned-prcomment: |
+            Thank you for your contribution! Before we can accept it, please read
+            and sign our Contributor License Agreement (CLA):
+
+            - [CLA (English)](https://github.com/Tinadec/TinadecOffice/blob/main/CLA.md)
+            - [CLA (中文)](https://github.com/Tinadec/TinadecOffice/blob/main/CLA.zh-CN.md)
+
+            The CLA grants the project owner the rights needed to accept, modify,
+            relicense and commercially use your contribution, and allows the
+            project to move between open-source and closed-source licensing.
+
+            To sign, please comment on this pull request with exactly:
+
+            > I have read the CLA Document and I hereby sign the CLA
+
+          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          custom-allsigned-prcomment: 'All contributors have signed the CLA. ✅'
+          lock-pullrequest-aftermerge: true
+          use-dco-flag: false
+          suggest-recheck: true

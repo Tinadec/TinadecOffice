@@ -152,6 +152,23 @@ TinadecOffice/
 - **Feishu Group** — [join via link](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=7a3k9813-07f8-4e13-b00c-d9d1c07d539b)
 - **X (Twitter)** — [@tinadecoffice](https://x.com/tinadecoffice)
 
+## Contributing & CLA
+
+We welcome contributions! Before opening a pull request, please read the
+[Contributing guide](CONTRIBUTING.md) and sign our
+[Contributor License Agreement (CLA)](CLA.md)
+([中文](CLA.zh-CN.md)).
+
+Signing the CLA grants the project owner a perpetual, irrevocable, worldwide
+right to use, modify, relicense and commercially exploit your contribution —
+including moving the project between open-source and closed-source licensing.
+Contributors sign by commenting on their pull request:
+
+> I have read the CLA Document and I hereby sign the CLA
+
+The [CLA Assistant workflow](.github/workflows/cla.yml) enforces this on every
+pull request.
+
 ## Team
 
 The Tinadec team — the people building TinadecOffice day to day.

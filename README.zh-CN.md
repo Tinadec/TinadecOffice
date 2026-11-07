@@ -152,6 +152,20 @@ TinadecOffice/
 - **Discord** —— [discord.gg/EcKYQfbG72](https://discord.gg/EcKYQfbG72)
 - **X (Twitter)** —— [@tinadecoffice](https://x.com/tinadecoffice)
 
+## 贡献与 CLA
+
+欢迎贡献！提交 Pull Request 之前，请先阅读[贡献指南](CONTRIBUTING.zh-CN.md)
+并签署我们的[贡献者许可协议（CLA）](CLA.zh-CN.md)（[English](CLA.md)）。
+
+签署 CLA 即向项目方授予**永久、不可撤销、全球范围内**的权利，可对您的贡献
+进行使用、修改、再许可与商业化开发——包括在本项目于开源与闭源之间切换时
+继续使用。贡献者在自己的 Pull Request 上评论以下语句即可签署：
+
+> I have read the CLA Document and I hereby sign the CLA
+
+[CLA Assistant 工作流](.github/workflows/cla.yml)会在每个 Pull Request 上
+强制执行此要求。
+
 ## 团队
 
 Tinadec 团队 —— 日常建设 TinadecOffice 的人。
