@@ -365,22 +365,50 @@ internal static class DesktopAutomation
     /// control's own default action) > Toggle (checkbox/radio semantics) > SelectionItem
     /// (list/tab/tree items) > ExpandCollapse (dropdowns open). A pattern that exists but
     /// fails to act (marshaler disconnection, disabled control) degrades to the next one
-    /// instead of failing the whole click. Returns which pattern did the job so the result
-    /// is auditable; null means none worked - the caller falls back to the rect path.
+    /// instead of failing the whole click.
+    /// STATE-VERIFIED: a lever that throws nothing only counts when the element's readable
+    /// state agrees. Probe-measured on a Chromium select popup: invoking the 上海 list item
+    /// while the popup was still realizing returned ok=true yet changed nothing, and the
+    /// form then submitted city=beijing - the no-exception "success" was a silent no-op.
+    /// So when the element exposes SelectionItem, a click only wins with IsSelected=true
+    /// after it; a Toggle element must have MOVED its state; an element with no readable
+    /// state keeps the no-exception evidence, since nothing better exists. Returns which
+    /// pattern verifiably did the job; null means none did - the caller falls back to the
+    /// rect path instead of pretending the element was clicked.
     /// </summary>
     internal static string? ClickByPattern(IUIAutomationElement element) =>
         RunOnUiaWorker("pattern click", () =>
         {
-            if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke) && Act(() => invoke.Invoke()))
+            var invoke = PatternOrNull<IUIAutomationInvokePattern>(element, InvokePatternId, InvokePatternIid);
+            var toggle = PatternOrNull<IUIAutomationTogglePattern>(element, TogglePatternId, TogglePatternIid);
+            var select = PatternOrNull<IUIAutomationSelectionItemPattern>(element, SelectionItemPatternId, SelectionItemPatternIid);
+            var expand = PatternOrNull<IUIAutomationExpandCollapsePattern>(element, ExpandCollapsePatternId, ExpandCollapsePatternIid);
+            var toggleBefore = toggle is not null ? SafeToggleState(toggle) : null;
+
+            if (invoke is not null && Act(() => invoke.Invoke()) && ClickTook(select is not null, SafeSelected(select), toggle is not null, toggleBefore, SafeToggleState(toggle)))
                 return "uia-invoke";
-            if (TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle) && Act(() => toggle.Toggle()))
+            if (toggle is not null && Act(() => toggle.Toggle()) && ClickTook(select is not null, SafeSelected(select), toggle is not null, toggleBefore, SafeToggleState(toggle)))
                 return "uia-toggle";
-            if (TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select) && Act(() => select.Select()))
+            if (select is not null && Act(() => select.Select()) && ClickTook(select is not null, SafeSelected(select), toggle is not null, toggleBefore, SafeToggleState(toggle)))
                 return "uia-select";
-            if (TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand) && Act(() => expand.Expand()))
+            if (expand is not null && Act(() => expand.Expand()))
                 return "uia-expand";
             return null;
         });
+
+    /// <summary>
+    /// The verdict "the pattern click actually took" for an element with readable state:
+    /// selection-capable elements must report themselves SELECTED after the click; a
+    /// toggle-capable element must have MOVED its state between the pre-click read and the
+    /// post-click read (an unchanged state is the silent no-op this exists to catch);
+    /// elements with neither expose no evidence better than "the call did not throw".
+    /// </summary>
+    internal static bool ClickTook(bool hasSelectionState, bool selectedAfter, bool hasToggleState, int? toggleBefore, int? toggleAfter)
+    {
+        if (hasSelectionState) return selectedAfter;
+        if (hasToggleState) return toggleBefore is not null && toggleAfter is not null && toggleBefore != toggleAfter;
+        return true;
+    }
 
     /// <summary>Debug form: also reports why each pattern was skipped (probe tooling).</summary>
     internal static string? ClickByPattern(IUIAutomationElement element, out string trace)
@@ -391,38 +419,64 @@ internal static class DesktopAutomation
         {
             var traceSteps = new List<string>();
             string? acted = null;
-            if (TryPattern(element, InvokePatternId, InvokePatternIid, out IUIAutomationInvokePattern invoke))
+            var invoke = PatternOrNull<IUIAutomationInvokePattern>(element, InvokePatternId, InvokePatternIid);
+            var toggle = PatternOrNull<IUIAutomationTogglePattern>(element, TogglePatternId, TogglePatternIid);
+            var select = PatternOrNull<IUIAutomationSelectionItemPattern>(element, SelectionItemPatternId, SelectionItemPatternIid);
+            var expand = PatternOrNull<IUIAutomationExpandCollapsePattern>(element, ExpandCollapsePatternId, ExpandCollapsePatternIid);
+            var toggleBefore = toggle is not null ? SafeToggleState(toggle) : null;
+
+            if (invoke is not null)
             {
-                var ok = Act(() => invoke.Invoke(), out var error);
-                traceSteps.Add($"invoke:{(ok ? "ok" : error)}");
-                if (ok) acted = "uia-invoke";
+                var actedOk = Act(() => invoke.Invoke());
+                var verified = actedOk && ClickTook(select is not null, SafeSelected(select), toggle is not null, toggleBefore, SafeToggleState(toggle));
+                traceSteps.Add($"invoke:{(actedOk ? (verified ? "ok" : "no-state-change") : "failed")}");
+                if (verified) acted = "uia-invoke";
             }
             else traceSteps.Add("invoke:absent");
-            if (acted is null && TryPattern(element, TogglePatternId, TogglePatternIid, out IUIAutomationTogglePattern toggle))
+            if (acted is null && toggle is not null)
             {
-                var ok = Act(() => toggle.Toggle(), out var error);
-                traceSteps.Add($"toggle:{(ok ? "ok" : error)}");
-                if (ok) acted = "uia-toggle";
+                var actedOk = Act(() => toggle.Toggle());
+                var verified = actedOk && ClickTook(select is not null, SafeSelected(select), toggle is not null, toggleBefore, SafeToggleState(toggle));
+                traceSteps.Add($"toggle:{(actedOk ? (verified ? "ok" : "no-state-change") : "failed")}");
+                if (verified) acted = "uia-toggle";
             }
             else if (acted is null) traceSteps.Add("toggle:absent");
-            if (acted is null && TryPattern(element, SelectionItemPatternId, SelectionItemPatternIid, out IUIAutomationSelectionItemPattern select))
+            if (acted is null && select is not null)
             {
-                var ok = Act(() => select.Select(), out var error);
-                traceSteps.Add($"select:{(ok ? "ok" : error)}");
-                if (ok) acted = "uia-select";
+                var actedOk = Act(() => select.Select());
+                var verified = actedOk && ClickTook(select is not null, SafeSelected(select), toggle is not null, toggleBefore, SafeToggleState(toggle));
+                traceSteps.Add($"select:{(actedOk ? (verified ? "ok" : "no-state-change") : "failed")}");
+                if (verified) acted = "uia-select";
             }
             else if (acted is null) traceSteps.Add("select:absent");
-            if (acted is null && TryPattern(element, ExpandCollapsePatternId, ExpandCollapsePatternIid, out IUIAutomationExpandCollapsePattern expand))
+            if (acted is null && expand is not null)
             {
-                var ok = Act(() => expand.Expand(), out var error);
-                traceSteps.Add($"expand:{(ok ? "ok" : error)}");
-                if (ok) acted = "uia-expand";
+                var actedOk = Act(() => expand.Expand());
+                traceSteps.Add($"expand:{(actedOk ? "ok" : "failed")}");
+                if (actedOk) acted = "uia-expand";
             }
             else if (acted is null) traceSteps.Add("expand:absent");
             return (acted, traceSteps);
         });
         trace = string.Join(" | ", steps);
         return result;
+    }
+
+    private static T? PatternOrNull<T>(IUIAutomationElement element, int patternId, in Guid iid) where T : class =>
+        TryPattern(element, patternId, iid, out T pattern) ? pattern : null;
+
+    private static bool SafeSelected(IUIAutomationSelectionItemPattern? select)
+    {
+        if (select is null) return false;
+        try { return select.CurrentIsSelected(); }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException) { return false; }
+    }
+
+    private static int? SafeToggleState(IUIAutomationTogglePattern? toggle)
+    {
+        if (toggle is null) return null;
+        try { return toggle.CurrentToggleState(); }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException) { return null; }
     }
 
     private static bool Act(Action action, out string? error)
