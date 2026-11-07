@@ -45,6 +45,8 @@ vi.mock('@/components/ui', () => ({
   UiSkeleton: { template: '<span />' },
   UiSwitch: { inheritAttrs: false, template: '<button v-bind="$attrs" />' },
   UiDropdownMenu: { template: '<div><slot /></div>' },
+  UiSheet: { props: ['open'], template: '<div v-if="open"><slot /></div>' },
+  UiCheckbox: { inheritAttrs: false, template: '<input type="checkbox" v-bind="$attrs" />' },
   UiSelectField: {
     props: ['value', 'modelValue', 'options', 'disabled'],
     emits: ['update:modelValue', 'update:value', 'change'],
@@ -152,6 +154,9 @@ async function openCenter() {
   const wrapper = mount(SettingsPage, { global: { stubs: { Transition: transition, transition, GeneralSection: true } } })
   await flushPromises()
   await wrapper.findAll('.settings-nav-item').find(item => item.text().includes('settings.agentCenter'))!.trigger('click')
+  await flushPromises()
+  // The agent center now opens on teams; this budget is about the agents directory.
+  await wrapper.findAll('.ac-subtab').find(item => item.text().includes('settings.agents'))!.trigger('click')
   await flushPromises()
   return wrapper
 }

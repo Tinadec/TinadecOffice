@@ -1279,23 +1279,23 @@ export function mockModelRoutes(): ModelRouteDto[] {
 
 export function mockAgents(): AgentViewDto[] {
   const planning: AgentViewDto[] = [
-    { id: 'agent-meeting', name: 'Meeting Agent', layer: 'planning', agent_type: 'meeting', mode: 'auto', description: '会议智能体：分析用户意图，拆解任务并调度其他智能体', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['intent.analysis', 'task.decomposition', 'agent.dispatch'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 10) },
-    { id: 'agent-task-planner', name: 'Task Planner', layer: 'planning', agent_type: 'task_planner', mode: 'auto', description: '任务规划智能体：构建任务图，分配执行智能体', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'file_search'], capabilities: ['task.graph', 'agent.assignment'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 9) },
-    { id: 'agent-context-compressor', name: 'Context Compressor', layer: 'planning', agent_type: 'context_compressor', mode: 'auto', description: '上下文压缩智能体：生成上下文包，控制 token 预算', model_route_purpose: 'planning.strong', allowed_tools: ['read_file'], capabilities: ['context.pack', 'token.budget'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 8) },
-    { id: 'agent-prompt-engineer', name: 'Prompt Context Engineer', layer: 'planning', agent_type: 'prompt_context_engineer', mode: 'auto', description: '提示词工程师：组装系统提示词，注入上下文片段', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['prompt.assembly', 'fragment.merge'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 7) },
-    { id: 'agent-supervisor', name: 'Supervisor', layer: 'planning', agent_type: 'supervisor', mode: 'auto', description: '监督智能体：检查执行结果，发现风险并给出建议', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'file_search'], capabilities: ['supervision.check', 'risk.detect'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 6) },
-    { id: 'agent-evolver', name: 'Evolver', layer: 'planning', agent_type: 'evolver', mode: 'auto', description: '进化智能体：根据运行反馈优化 agent 配置', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['agent.evolve', 'config.optimize'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 5) },
-    { id: 'agent-skill-learner', name: 'Skill Learner', layer: 'planning', agent_type: 'skill_learner', mode: 'auto', description: '技能学习智能体：从历史会话中归纳可复用技能', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['skill.extract', 'knowledge.persist'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 4) },
+    { id: 'agent-meeting', name: 'Meeting Agent', layer: 'planning', agent_type: 'meeting', mode: 'manual', description: '会议智能体：分析用户意图，拆解任务并调度其他智能体', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['intent.analysis', 'task.decomposition', 'agent.dispatch'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 10) },
+    { id: 'agent-task-planner', name: 'Task Planner', layer: 'planning', agent_type: 'task_planner', mode: 'manual', description: '任务规划智能体：构建任务图，分配执行智能体', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'file_search'], capabilities: ['task.graph', 'agent.assignment'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 9) },
+    { id: 'agent-context-compressor', name: 'Context Compressor', layer: 'planning', agent_type: 'context_compressor', mode: 'manual', description: '上下文压缩智能体：生成上下文包，控制 token 预算', model_route_purpose: 'planning.strong', allowed_tools: ['read_file'], capabilities: ['context.pack', 'token.budget'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 8) },
+    { id: 'agent-prompt-engineer', name: 'Prompt Context Engineer', layer: 'planning', agent_type: 'prompt_context_engineer', mode: 'manual', description: '提示词工程师：组装系统提示词，注入上下文片段', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['prompt.assembly', 'fragment.merge'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 7) },
+    { id: 'agent-supervisor', name: 'Supervisor', layer: 'planning', agent_type: 'supervisor', mode: 'manual', description: '监督智能体：检查执行结果，发现风险并给出建议', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'file_search'], capabilities: ['supervision.check', 'risk.detect'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 6) },
+    { id: 'agent-evolver', name: 'Evolver', layer: 'planning', agent_type: 'evolver', mode: 'manual', description: '进化智能体：根据运行反馈优化 agent 配置', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['agent.evolve', 'config.optimize'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 5) },
+    { id: 'agent-skill-learner', name: 'Skill Learner', layer: 'planning', agent_type: 'skill_learner', mode: 'manual', description: '技能学习智能体：从历史会话中归纳可复用技能', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['skill.extract', 'knowledge.persist'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 4) },
   ]
   const execution: AgentViewDto[] = [
-    { id: 'agent-code-explorer', name: 'Code Explorer', layer: 'execution', agent_type: 'code_explorer', mode: 'auto', description: '代码探查智能体：阅读代码、搜索符号、梳理调用路径', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'ls', 'file_search'], capabilities: ['code.read', 'code.search'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 3) },
-    { id: 'agent-code-writer', name: 'Code Writer', layer: 'execution', agent_type: 'code_writer', mode: 'auto', description: '代码编写智能体：应用补丁、编辑文件、生成测试', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'write_file', 'replace_lines', 'file_search'], capabilities: ['code.write', 'code.test'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
-    { id: 'agent-search-specialist', name: 'Search Specialist', layer: 'execution', agent_type: 'search_specialist', mode: 'auto', description: '搜索专家：执行复杂的代码与文档检索', model_route_purpose: 'execution.fast', allowed_tools: ['file_search', 'read_file'], capabilities: ['search.advanced'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
-    { id: 'agent-file-finder', name: 'File Finder', layer: 'execution', agent_type: 'file_finder', mode: 'auto', description: '文件查找智能体：根据名称模式定位文件', model_route_purpose: 'execution.fast', allowed_tools: ['file_search', 'ls'], capabilities: ['file.locate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24) },
-    { id: 'agent-git-manager', name: 'Git Manager', layer: 'execution', agent_type: 'git_manager', mode: 'auto', description: 'Git 管理智能体：处理变更、提交、推送等 Git 操作', model_route_purpose: 'execution.fast', allowed_tools: ['git_worktree_manager', 'read_file'], capabilities: ['git.ops', 'diff.parse'], enabled: true, is_built_in: true, updated_at: iso(-60 * 12) },
-    { id: 'agent-designer', name: 'Designer', layer: 'execution', agent_type: 'designer', mode: 'auto', description: '设计智能体：生成 UI 设计稿与样式规范', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'write_file', 'replace_lines'], capabilities: ['ui.design', 'style.generate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 6) },
-    { id: 'agent-test-runner', name: 'Test Runner', layer: 'execution', agent_type: 'test_runner', mode: 'auto', description: '测试运行智能体：执行测试套件并分析结果', model_route_purpose: 'execution.fast', allowed_tools: ['shell', 'read_file'], capabilities: ['test.run', 'result.analyze'], enabled: false, is_built_in: false, updated_at: iso(-60 * 3) },
-    { id: 'agent-doc-writer', name: 'Doc Writer', layer: 'execution', agent_type: 'doc_writer', mode: 'auto', description: '文档编写智能体：生成与更新技术文档', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'write_file', 'replace_lines'], capabilities: ['docs.write', 'docs.update'], enabled: false, is_built_in: false, updated_at: iso(-60 * 2) },
+    { id: 'agent-code-explorer', name: 'Code Explorer', layer: 'execution', agent_type: 'code_explorer', mode: 'manual', description: '代码探查智能体：阅读代码、搜索符号、梳理调用路径', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'ls', 'file_search'], capabilities: ['code.read', 'code.search'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 3) },
+    { id: 'agent-code-writer', name: 'Code Writer', layer: 'execution', agent_type: 'code_writer', mode: 'manual', description: '代码编写智能体：应用补丁、编辑文件、生成测试', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'write_file', 'replace_lines', 'file_search'], capabilities: ['code.write', 'code.test'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
+    { id: 'agent-search-specialist', name: 'Search Specialist', layer: 'execution', agent_type: 'search_specialist', mode: 'manual', description: '搜索专家：执行复杂的代码与文档检索', model_route_purpose: 'execution.fast', allowed_tools: ['file_search', 'read_file'], capabilities: ['search.advanced'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
+    { id: 'agent-file-finder', name: 'File Finder', layer: 'execution', agent_type: 'file_finder', mode: 'manual', description: '文件查找智能体：根据名称模式定位文件', model_route_purpose: 'execution.fast', allowed_tools: ['file_search', 'ls'], capabilities: ['file.locate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24) },
+    { id: 'agent-git-manager', name: 'Git Manager', layer: 'execution', agent_type: 'git_manager', mode: 'manual', description: 'Git 管理智能体：处理变更、提交、推送等 Git 操作', model_route_purpose: 'execution.fast', allowed_tools: ['git_worktree_manager', 'read_file'], capabilities: ['git.ops', 'diff.parse'], enabled: true, is_built_in: true, updated_at: iso(-60 * 12) },
+    { id: 'agent-designer', name: 'Designer', layer: 'execution', agent_type: 'designer', mode: 'manual', description: '设计智能体：生成 UI 设计稿与样式规范', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'write_file', 'replace_lines'], capabilities: ['ui.design', 'style.generate'], enabled: true, is_built_in: true, updated_at: iso(-60 * 6) },
+    { id: 'agent-test-runner', name: 'Test Runner', layer: 'execution', agent_type: 'test_runner', mode: 'manual', description: '测试运行智能体：执行测试套件并分析结果', model_route_purpose: 'execution.fast', allowed_tools: ['shell', 'read_file'], capabilities: ['test.run', 'result.analyze'], enabled: false, is_built_in: false, updated_at: iso(-60 * 3) },
+    { id: 'agent-doc-writer', name: 'Doc Writer', layer: 'execution', agent_type: 'doc_writer', mode: 'manual', description: '文档编写智能体：生成与更新技术文档', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'write_file', 'replace_lines'], capabilities: ['docs.write', 'docs.update'], enabled: false, is_built_in: false, updated_at: iso(-60 * 2) },
   ]
   return [...planning, ...execution]
 }
@@ -1332,11 +1332,10 @@ export function mockAgentDirectory(): AgentDirectoryItemDto[] {
     // The meeting agent participates in every mock mode and has real evidence.
     if (agent.agent_type === 'meeting') {
       directory.mode_usages = [
-        { mode_id: 'mode-auto', mode_version_id: 'mode-auto-v1', mode_slug: 'conversation.auto', node_key: 'meeting' },
         { mode_id: 'mode-plan', mode_version_id: 'mode-plan-v1', mode_slug: 'conversation.plan', node_key: 'meeting' },
       ]
       directory.effective_previews = {
-        'conversation.auto:meeting': {
+        'conversation.plan:meeting': {
           strategy_source: 'agent_default',
           chain: [{ source: 'agent_default', strategy: { kind: 'inherit' }, selected: true }],
           candidates: [{ position: 0, provider_instance_id: 'mp-anthropic-002', model: 'claude-3-5-sonnet-20241022', available: true }],
@@ -1353,7 +1352,7 @@ export function mockAgentDirectory(): AgentDirectoryItemDto[] {
         agent_instance_id: null,
         agent_definition_id: agent.id,
         agent_version_id: `${agent.id}-version-1`,
-        mode_version_id: 'mode-auto-v1',
+        mode_version_id: 'mode-plan-v1',
         strategy_source: 'agent_default',
         route_id: 'route-planning-strong',
         route_version_id: 'route-version-1',
@@ -1407,7 +1406,6 @@ export function mockAgentDefinitions(): AgentDefinitionDto[] {
 
 export function mockAgentModes(): AgentModeDto[] {
   return [
-    { id: 'mode-auto', display_name: '自动', summary: '智能体自主决策，仅在必要时请求审批', max_parallel_executors: 4, worktree_isolation: false, approval_required: false, budget_policy: 'balanced' },
     { id: 'mode-manual', display_name: '手动', summary: '每一步都需要人工确认', max_parallel_executors: 1, worktree_isolation: true, approval_required: true, budget_policy: 'conservative' },
     { id: 'mode-yolo', display_name: '极速', summary: '跳过所有审批，最大并行度', max_parallel_executors: 8, worktree_isolation: false, approval_required: false, budget_policy: 'aggressive' },
     { id: 'mode-review', display_name: '审阅', summary: '执行后自动生成审阅报告', max_parallel_executors: 2, worktree_isolation: true, approval_required: false, budget_policy: 'balanced' },

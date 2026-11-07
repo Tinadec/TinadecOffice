@@ -68,6 +68,11 @@ function resolveKey(bundle: Bundle, key: string): unknown {
 const panelSources = import.meta.glob(
   [
     './../settings/sections/AgentModesPanel.vue',
+    // The extracted Agent Center shell and its team/advanced panels.
+    './../settings/agentCenter/AgentCenterSection.vue',
+    './../settings/agentCenter/TeamsTab.vue',
+    './../settings/agentCenter/TomlDocumentPanel.vue',
+    './../settings/agentCenter/WorkspaceDefaultsPanel.vue',
     './../settings/sections/PersonalSection.vue',
     './../settings/sections/PersonalShareCard.vue',
     './../settings/sections/PromptEngineeringMerged.vue',

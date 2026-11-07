@@ -48,6 +48,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof
 
 import SettingsPage from './SettingsPage.vue'
 import settingsPageSource from './SettingsPage.vue?raw'
+import agentCenterSectionSource from '@/settings/agentCenter/AgentCenterSection.vue?raw'
 // The model centre's read/write seam moved into a composable: the route-ref regression it guards
 // lives there now, so the assertion has to read that file rather than the page.
 import modelCenterSource from '@/composables/useModelCenter.ts?raw'
@@ -120,7 +121,6 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       'AgentModesPanel',
       'PromptEngineeringMerged',
       'RuntimeInstancesPanel',
-      'AgentPacksPanel',
       'CompanionSection',
       'ModelCenterSection',
     ]
@@ -129,6 +129,11 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       // `<Name` rather than `<Name />`: a panel that declares props never closes its tag.
       expect(settingsPageSource).toContain(`<${name}`)
     }
+    // The pack strip lives in the extracted center shell now.
+    expect(settingsPageSource).toContain("import AgentCenterSection from '@/settings/agentCenter/AgentCenterSection.vue'")
+    expect(settingsPageSource).toContain('<AgentCenterSection')
+    expect(agentCenterSectionSource).toContain("import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'")
+    expect(agentCenterSectionSource).toContain('<AgentPacksPanel')
   })
 
   it('assigns the routes ref from loadModelCenter (regression: route writes sent no If-Match)', () => {

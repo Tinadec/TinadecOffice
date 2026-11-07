@@ -153,6 +153,7 @@ const agentBrowserManager = createAgentBrowserManager({
   WebContentsView,
   shell,
   app,
+  nativeImage,
   shellUrl: () => isDev
     ? `${(process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173').replace(/\/$/, '')}/agent-browser.html`
     : 'app://bundle/agent-browser.html',

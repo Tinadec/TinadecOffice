@@ -1364,6 +1364,7 @@ export interface AgentModeDto {
   display_name: string;
   summary?: string;
   description?: string | null;
+  latest_published_mode_version_id?: string | null;
   max_parallel_executors?: number;
   worktree_isolation?: boolean;
   approval_required?: boolean;
@@ -1536,14 +1537,29 @@ export interface AgentVersionDto {
   created_at: string;
 }
 
+export interface AgentModeBindingDto {
+  node_key?: string | null;
+  agent_ref?: string | null;
+  duty_description_ref?: string | null;
+  tool_switches?: Record<string, boolean | string> | null;
+  envelope?: Record<string, unknown> | null;
+  includes_core_reserved?: boolean;
+  instance_naming?: Record<string, unknown> | null;
+}
+
 export interface AgentModeNodeDto {
   id: string;
   agent_id: string;
+  /** Core's read projection names the agent id `agent_definition_id`. */
+  agent_definition_id?: string | null;
   lane: 'operation' | 'execution';
+  layer?: 'operation' | 'execution';
   position: { x: number; y: number };
   label?: string | null;
   /** Per-locale overlays; absent for nodes that ship none. */
   i18n?: PackI18n | null;
+  config?: Record<string, unknown> | null;
+  relationship?: Record<string, unknown> | null;
   model_strategy_override?: { kind: 'inherit' | 'route' | 'fixed'; route_purpose?: string; provider_instance_id?: string; model?: string | null } | null;
   /** Core node_key for published projections; write-back uses it before id. */
   node_key?: string;
@@ -1552,17 +1568,29 @@ export interface AgentModeNodeDto {
 
 export interface AgentModeEdgeDto {
   id: string;
+  edge_key?: string | null;
   source: string;
   target: string;
+  source_node_key?: string | null;
+  target_node_key?: string | null;
   label?: string | null;
+  condition?: Record<string, unknown> | null;
 }
 
 /** Core UpsertModeTopology write contract (node_key/agent_definition_id/layer). */
 export interface AgentModeTopologyWriteDto {
-  nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null; model_strategy_override?: Record<string, unknown> | null }>;
-  edges: Array<{ source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
+  instructions?: string | null;
+  nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null; config?: Record<string, unknown> | null; relationship?: Record<string, unknown> | null; model_strategy_override?: Record<string, unknown> | null }>;
+  edges: Array<{ edge_key?: string; source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
+  bindings?: AgentModeBindingDto[];
   canvas_layout?: Record<string, unknown> | null;
   runtime_policy?: AgentModeRuntimePolicy | null;
+}
+
+/** Draft writes may rename the mode as well as replace its topology. */
+export interface AgentModeDraftUpdate extends AgentModeTopologyWriteDto {
+  display_name?: string | null;
+  description?: string | null;
 }
 
 /**
@@ -1608,11 +1636,14 @@ export interface AgentModeTopologyDto {
   latest_published_mode_version_id?: string | null;
   /** User-facing one-liner: what the mode does and when to pick it. */
   description?: string | null;
+  /** Team-level collaboration instructions; injected into the conversation identity at run start. */
+  instructions?: string | null;
   /** Per-locale overlays; absent for modes that ship none. */
   i18n?: PackI18n | null;
   runtime_policy?: AgentModeRuntimePolicy | null;
   nodes: AgentModeNodeDto[];
   edges: AgentModeEdgeDto[];
+  bindings?: AgentModeBindingDto[] | null;
   canvas_layout?: Record<string, unknown> | null;
   status?: string;
   /** True when an installed Agent Pack owns this mode (read-only; clone to customize). */
@@ -1630,6 +1661,19 @@ export interface ModeVersionDto {
   nodes?: AgentModeNodeDto[] | null;
   edges?: AgentModeEdgeDto[] | null;
   canvas_layout?: Record<string, unknown> | null;
+  /** Frozen `tinadec.mode_version/v1` snapshot returned by Core. */
+  snapshot?: {
+    schema?: string;
+    mode?: Record<string, unknown>;
+    nodes?: Array<Record<string, unknown>>;
+    edges?: Array<Record<string, unknown>>;
+    bindings?: AgentModeBindingDto[];
+    canvas_layout?: Record<string, unknown> | null;
+    runtime_policy?: AgentModeRuntimePolicy | null;
+    instructions?: string | null;
+  } | null;
+  topology_hash?: string | null;
+  warning?: unknown;
   created_at: string;
   is_active?: boolean;
 }
@@ -3032,6 +3076,7 @@ export const api = {
     }
     return { blob: await response.blob(), filename: response.headers.get('content-disposition')?.match(/filename="?([^";]+)"?/)?.[1] ?? `tinadec-${storageId}.zip` }
   },
+  listConfigurationDocuments: (storageId: string) => request<string[]>('/api/v1/configuration/documents', { storageId }),
   getConfigurationDocument: (storageId: string, documentId: string) => request<ConfigurationDocumentDto>(`/api/v1/configuration/documents/${encodeURIComponent(documentId)}`, { storageId }),
   validateConfigurationDocument: (storageId: string, documentId: string, text: string) => request<{ valid: boolean; diagnostics: Array<Record<string, unknown>> }>(`/api/v1/configuration/documents/${encodeURIComponent(documentId)}/validate`, { method: 'POST', storageId, body: JSON.stringify({ text }) }),
   saveConfigurationDocument: (storageId: string, documentId: string, text: string, hash: string) => request<ConfigurationDocumentDto>(`/api/v1/configuration/documents/${encodeURIComponent(documentId)}`, { method: 'PUT', storageId, headers: { 'if-match': `"${hash}"` }, body: JSON.stringify({ text }) }),
@@ -3455,8 +3500,17 @@ export const api = {
   publishAgent: (id: string, etag?: string | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
   // 用户级运行时绑定（配置体验改造 A）：pack 管理的智能体也可写，绕开 draft/publish。
   putAgentRuntimeBinding: (id: string, body: { mode: 'inherit' | 'route' | 'fixed'; provider_instance_id?: string | null; model?: string | null; route_purpose?: string | null; tool_scope?: string[] | null }) => request<Record<string, unknown>>(`/api/v1/agents/${encodeURIComponent(id)}/runtime-binding`, { method: 'PUT', body: JSON.stringify(body) }),
-  archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  archiveAgent: (id: string, revision?: number | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST', headers: revision != null ? { 'if-match': String(revision) } : {} }),
   getWorkspaceDefaults: (signal?: AbortSignal) => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults', { signal }),
+  updateWorkspaceDefaultsDraft: (body: Partial<WorkspaceDefaultsDto>, revision?: number | null) => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults/draft', {
+    method: 'PUT',
+    headers: revision != null ? { 'if-match': String(revision) } : {},
+    body: JSON.stringify(body),
+  }),
+  publishWorkspaceDefaults: (revision?: number | null) => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults/publish', {
+    method: 'POST',
+    headers: revision != null ? { 'if-match': String(revision) } : {},
+  }),
   listAgentPacks: (signal?: AbortSignal) => request<AgentPackDto[]>('/api/v1/agent-packs', { signal }),
   getAgentPack: async (packId: string, options?: { signal?: AbortSignal }) => withResponseEtag(await requestResult<AgentPackDetailDto>(`/api/v1/agent-packs/${encodeURIComponent(packId)}`, options)),
   // 包管理：卸载（不可逆，带 revision 守卫）、启用/禁用、设为工作区默认。
@@ -3489,8 +3543,8 @@ export const api = {
   listAgentModeTopologies: (options?: { signal?: AbortSignal }) => cachedRead(catalogKey('agent-modes'), () => request<AgentModeTopologyDto[]>('/api/v1/agent-modes'), options?.signal),
   createAgentModeDraft: (body: Omit<Partial<AgentModeTopologyDto>, 'nodes' | 'edges'> & Partial<AgentModeTopologyWriteDto>) => request<AgentModeTopologyDto>('/api/v1/agent-modes', { method: 'POST', body: JSON.stringify(body) }),
   getAgentModeTopology: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}`),
-  updateAgentModeDraft: (id: string, body: AgentModeTopologyWriteDto, etag?: string | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
-  publishAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  updateAgentModeDraft: (id: string, body: AgentModeDraftUpdate, etag?: string | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  publishAgentMode: (id: string, etag?: string | null) => request<{ id?: string; version?: number; revision?: number; topology_hash?: string; warning?: unknown }>(`/api/v1/agent-modes/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
   archiveAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
   listAgentModeVersions: (id: string) => request<ModeVersionDto[]>(`/api/v1/agent-modes/${encodeURIComponent(id)}/versions`),
   // prompt pipelines
