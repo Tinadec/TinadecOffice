@@ -43,6 +43,8 @@ export interface CommandHost {
   navigate(routeName: string): void
   /** Route name the surface is on, so a navigation command can hide itself. */
   routeName(): string | null
+  /** Open/close the current session's desktop partner window; no-op when no session is selected. */
+  toggleSessionPartner?(): void
 }
 
 export interface AppCommand {
@@ -105,6 +107,14 @@ export const appCommands: readonly AppCommand[] = [
       host.setDraft('')
       host.newSession()
     },
+  },
+  {
+    id: 'session.togglePartner',
+    group: 'session',
+    labelKey: 'composer.cmdTogglePartner',
+    hintKey: 'composer.cmdTogglePartnerHint',
+    keywordKeys: ['palette.keywordPartner'],
+    run: (host) => host.toggleSessionPartner?.(),
   },
   {
     id: 'run.stop',

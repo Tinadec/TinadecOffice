@@ -8,6 +8,7 @@ import { selectionKey, selectionIdentity, selectedStorage } from '@/lib/storageS
 import {
   Archive,
   ArrowRightLeft,
+  Bot,
   Bug,
   ChevronRight,
   FolderOpen,
@@ -38,6 +39,7 @@ import BrandLogo from '@/components/BrandLogo.vue'
 import SidebarActivityCard from '@/components/SidebarActivityCard.vue'
 import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import PersonalAvatar from '@/components/personal/PersonalAvatar.vue'
+import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import InlineRenameInput from '@/components/InlineRenameInput.vue'
 import RowContextMenu, { type RowMenuItem } from '@/components/RowContextMenu.vue'
 import { UiButton, UiCheckbox, UiSelectField } from '@/components/ui'
@@ -47,11 +49,21 @@ import { errorCodeMessage } from '@/lib/apiError'
 import { userProfile } from '@/lib/userProfile'
 import { profileNameFits } from '@/lib/profileNameFit'
 import { auth } from '@/lib/auth'
+import { buddyCompanion, refreshCompanionCenter } from '@/lib/companionStore'
+import { useHostAccess } from '@/lib/hostAccess'
 
 const { t, te, locale } = useI18n()
 const { confirm } = useNotifications()
 const { enabled: debugStudioEnabled, load: loadDebugStudio } = useDebugStudio()
 onMounted(loadDebugStudio)
+
+// The sidebar shows the designated buddy (avatar + name). Read the shared store reactively and
+// refresh once when the host is ready — no resident timer here, so a work-domain sidebar costs one
+// round of reads, not a poll. Tests without a ready host never trigger the read.
+const { canAccessBackend } = useHostAccess()
+function refreshBuddy() { if (canAccessBackend.value) void refreshCompanionCenter() }
+onMounted(refreshBuddy)
+watch(canAccessBackend, (ready) => { if (ready) refreshBuddy() })
 
 const props = defineProps<{
   projects: ProjectDto[]
@@ -82,6 +94,7 @@ const emit = defineEmits<{
   'go-settings': []
   'go-personal': []
   'go-market': []
+  'go-buddy': []
   'go-companion-center': []
   /** Companion-domain shortcuts: which view the centre should show next. */
   'companion-nav': [target: 'all' | 'attention' | 'settings']
@@ -701,6 +714,18 @@ watch([displayName, () => props.collapsed], async () => {
       >
         <MessageSquare :size="16" class="sidebar-icon" />
         <span class="sidebar-label">{{ t('sidebar.newChat') }}</span>
+      </UiButton>
+      <UiButton
+        variant="ghost"
+        size="sm"
+        class="sidebar-nav-item w-full justify-start"
+        data-testid="sidebar-buddy"
+        :title="t('sidebar.buddy')"
+        @click="emit('go-buddy')"
+      >
+        <AgentPetAvatar v-if="buddyCompanion" :pet-slug="buddyCompanion.avatar ?? ''" :size="16" :alt="buddyCompanion.name" class="sidebar-icon" />
+        <Bot v-else :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ buddyCompanion?.name || t('sidebar.buddy') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"

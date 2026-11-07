@@ -4,6 +4,7 @@ import {
   type CompanionActivity,
   type CompanionConnectionOverview,
   type CompanionConversation,
+  type CompanionSettings,
   type CompanionSummary,
 } from './companionApi'
 import type { CompanionFeedFilter } from './companionView'
@@ -22,12 +23,14 @@ import type { CompanionFeedFilter } from './companionView'
 
 export const COMPANION_CENTER_POLL_MS = 10_000
 
-export type CompanionSource = 'companions' | 'activity' | 'conversations' | 'connections'
+export type CompanionSource = 'companions' | 'activity' | 'conversations' | 'connections' | 'settings'
 
 export const companions: Ref<CompanionSummary[]> = ref([])
 export const activity: Ref<CompanionActivity[]> = ref([])
 export const conversations: Ref<CompanionConversation[]> = ref([])
 export const connections: Ref<CompanionConnectionOverview[]> = ref([])
+/** User-wide companion settings (main companion, sidebar buddy, global pause). */
+export const settings: Ref<CompanionSettings | null> = ref(null)
 /** Selected companion id; the feed and the two right-hand cards narrow to it. */
 export const selectedCompanionId: Ref<string | null> = ref(null)
 export const loading = ref(true)
@@ -68,11 +71,12 @@ export async function refreshCompanionCenter(): Promise<void> {
   if (inflight) return inflight
   const token = ++generation
   inflight = (async () => {
-    const [companionPage, activityPage, conversationPage, connectionPage] = await Promise.allSettled([
+    const [companionPage, activityPage, conversationPage, connectionPage, settingsResult] = await Promise.allSettled([
       companionApi.listCompanions(),
       companionApi.listActivity(100),
       companionApi.listAllConversations({ limit: 100 }),
       companionApi.listConnectionsOverview(),
+      companionApi.getSettings(),
     ])
     if (token !== generation) return
     if (companionPage.status === 'fulfilled') apply('companions', companionPage.value, companions)
@@ -83,6 +87,12 @@ export async function refreshCompanionCenter(): Promise<void> {
     else fail('conversations', conversationPage.reason)
     if (connectionPage.status === 'fulfilled') apply('connections', connectionPage.value, connections)
     else fail('connections', connectionPage.reason)
+    if (settingsResult.status === 'fulfilled') {
+      settings.value = settingsResult.value
+      const next = { ...failures.value }
+      delete next.settings
+      failures.value = next
+    } else fail('settings', settingsResult.reason)
     if (token !== generation) return
     // A selected companion that no longer exists (archived elsewhere) must not stay selected:
     // the cards would filter to nothing and look broken.
@@ -91,7 +101,8 @@ export async function refreshCompanionCenter(): Promise<void> {
       selectedCompanionId.value = null
     }
     if (companionPage.status === 'fulfilled' || activityPage.status === 'fulfilled'
-      || conversationPage.status === 'fulfilled' || connectionPage.status === 'fulfilled') {
+      || conversationPage.status === 'fulfilled' || connectionPage.status === 'fulfilled'
+      || settingsResult.status === 'fulfilled') {
       loadedAt.value = new Date()
     }
     loading.value = false
@@ -129,6 +140,13 @@ export const selectedCompanion: ComputedRef<CompanionSummary | null> = computed(
 export const activeCompanions: ComputedRef<CompanionSummary[]> = computed(() =>
   companions.value.filter((item) => item.status !== 'archived'))
 
+/** The sidebar buddy: the companion designated by settings, if it still exists and is active. */
+export const buddyCompanion: ComputedRef<CompanionSummary | null> = computed(() => {
+  const id = settings.value?.buddy_companion_id
+  if (!id) return null
+  return companions.value.find((item) => item.id === id && item.status !== 'archived') ?? null
+})
+
 /** Groups only; private chats belong to the companion window, not to the centre's list. */
 export const groupConversations: ComputedRef<CompanionConversation[]> = computed(() =>
   conversations.value.filter((item) => item.kind === 'group'))
@@ -163,6 +181,8 @@ export function useCompanionCenter() {
     activity,
     conversations,
     connections,
+    settings,
+    buddyCompanion,
     selectedCompanionId,
     selectedCompanion,
     feedFilter,
@@ -179,6 +199,7 @@ export function resetCompanionStore(): void {
   activity.value = []
   conversations.value = []
   connections.value = []
+  settings.value = null
   selectedCompanionId.value = null
   loading.value = true
   failures.value = {}

@@ -1624,6 +1624,8 @@ export interface components {
       name: string;
       persona_document?: string | null;
       revision: number;
+      /** @enum {string} */
+      role: "autonomous" | "buddy";
       skill_count: number;
       /** @enum {string} */
       status: "active" | "archived" | "paused";
@@ -1729,6 +1731,8 @@ export interface components {
     CompanionSettings: {
       autonomy_paused: boolean;
       /** Format: uuid */
+      buddy_companion_id: string | null;
+      /** Format: uuid */
       main_companion_id: string | null;
       revision: number;
       [key: string]: unknown;
@@ -1773,6 +1777,8 @@ export interface components {
       model_purpose: string;
       name: string;
       revision: number;
+      /** @enum {string} */
+      role: "autonomous" | "buddy";
       skill_count: number;
       /** @enum {string} */
       status: "active" | "archived" | "paused";
@@ -2875,6 +2881,8 @@ export interface components {
       /** Format: uuid */
       agent_definition_id: string | null;
       can_interpret_intent: boolean;
+      /** Format: uuid */
+      companion_id: string | null;
       description: string | null;
       discoverable: boolean;
       display_name: string;
@@ -2905,6 +2913,8 @@ export interface components {
       agent_definition_id?: string | null;
       /** @default false */
       can_interpret_intent?: boolean;
+      /** Format: uuid */
+      companion_id?: string | null;
       description?: string | null;
       /** @default true */
       discoverable?: boolean;

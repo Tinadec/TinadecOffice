@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Grip, X } from '@lucide/vue'
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   PETDEX_BASE_FRAME_HEIGHT,
@@ -81,6 +81,8 @@ function setClickThrough(enabled: boolean) {
 
 function updateHitTest(event: MouseEvent) {
   if (dragging.value || resizeStart) return setClickThrough(false)
+  // An approval bubble must stay clickable; never click through while one is showing.
+  if (topApproval.value) return setClickThrough(false)
   const target = event.target as HTMLElement
   if (target.closest('button')) return setClickThrough(false)
   if (!hasRenderedFrame) return setClickThrough(false)
@@ -156,7 +158,68 @@ function closePet() {
   void window.tinadec.pets.closeCurrent()
 }
 
+// --- Session partner: approval bubbles + quick return ---
+// A session partner window carries its sessionId in the URL; a decorative pet does not. The
+// window is not a trusted host, so approvals are read/decided through the main-process proxy.
+const sessionId = (() => {
+  const query = window.location.hash.split('?')[1] ?? ''
+  return new URLSearchParams(query).get('sessionId')
+})()
+interface PartnerApproval { id: string; tool_id?: string; summary?: string; risk?: string }
+const approvals = ref<PartnerApproval[]>([])
+const deciding = ref(false)
+const topApproval = computed(() => approvals.value[0] ?? null)
+let approvalTimer: ReturnType<typeof setTimeout> | null = null
+let approvalDisposed = false
+
+async function refreshApprovals() {
+  if (!sessionId) return
+  try {
+    const result = await window.tinadec.sessionPartner.agentRequest({
+      method: 'GET',
+      path: `/api/v1/approvals?status=pending&session_id=${encodeURIComponent(sessionId)}`,
+    })
+    if (result.status >= 200 && result.status < 300 && Array.isArray(result.body)) {
+      approvals.value = result.body as PartnerApproval[]
+    }
+  } catch {
+    // Proxy unavailable: keep the last known set rather than flashing empty.
+  }
+}
+
+function scheduleApprovals() {
+  if (approvalDisposed || !sessionId) return
+  approvalTimer = setTimeout(async () => {
+    approvalTimer = null
+    if (approvalDisposed) return
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') await refreshApprovals()
+    scheduleApprovals()
+  }, 4000)
+}
+
+async function decideApproval(approval: PartnerApproval, decision: 'approved' | 'rejected') {
+  if (deciding.value) return
+  deciding.value = true
+  try {
+    await window.tinadec.sessionPartner.agentRequest({
+      method: 'POST',
+      path: `/api/v1/approvals/${approval.id}/decision`,
+      body: { decision, scope: 'once' },
+    })
+    approvals.value = approvals.value.filter((item) => item.id !== approval.id)
+    await refreshApprovals()
+  } finally {
+    deciding.value = false
+  }
+}
+
+function returnToSession() {
+  void window.tinadec.sessionPartner.focus()
+}
+
 onMounted(async () => {
+  void refreshApprovals()
+  scheduleApprovals()
   pet.value = await window.tinadec.pets.getCurrent()
   if (!pet.value?.imageDataUrl) return
   scale.value = pet.value.scale
@@ -177,6 +240,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  approvalDisposed = true
+  if (approvalTimer) clearTimeout(approvalTimer)
+  approvalTimer = null
   cancelAnimationFrame(animationFrame)
   setClickThrough(false)
 })
@@ -218,6 +284,19 @@ onBeforeUnmount(() => {
     >
       <Grip :size="14" />
     </button>
+    <div v-if="sessionId && topApproval" class="pet-bubble" role="alertdialog" :aria-label="t('desktopPet.approvalTitle')">
+      <p class="pet-bubble-title">{{ t('desktopPet.approvalTitle') }}</p>
+      <p class="pet-bubble-body">{{ topApproval.summary || topApproval.tool_id || '' }}</p>
+      <div class="pet-bubble-actions">
+        <button type="button" class="pet-bubble-approve" :disabled="deciding" @click="decideApproval(topApproval, 'approved')">
+          {{ t('desktopPet.approve') }}
+        </button>
+        <button type="button" class="pet-bubble-reject" :disabled="deciding" @click="decideApproval(topApproval, 'rejected')">
+          {{ t('desktopPet.reject') }}
+        </button>
+      </div>
+      <button type="button" class="pet-bubble-return" @click="returnToSession">{{ t('desktopPet.returnToSession') }}</button>
+    </div>
   </main>
 </template>
 
@@ -294,5 +373,72 @@ onBeforeUnmount(() => {
   right: 4px;
   bottom: 4px;
   cursor: nwse-resize;
+}
+
+.pet-bubble {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 10px;
+  color: white;
+  background: rgb(20 20 24 / 92%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+}
+
+.pet-bubble-title {
+  margin: 0;
+  font: 600 12px/1.3 system-ui, sans-serif;
+}
+
+.pet-bubble-body {
+  margin: 0;
+  max-height: 60px;
+  overflow: hidden;
+  font: 400 12px/1.4 system-ui, sans-serif;
+  color: rgb(255 255 255 / 80%);
+  word-break: break-word;
+}
+
+.pet-bubble-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.pet-bubble-actions button,
+.pet-bubble-return {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 6px;
+  font: 600 12px/1 system-ui, sans-serif;
+  color: white;
+  background: rgb(255 255 255 / 10%);
+  cursor: pointer;
+}
+
+.pet-bubble-approve {
+  background: rgb(52 199 89 / 28%);
+}
+
+.pet-bubble-reject {
+  background: rgb(255 69 58 / 28%);
+}
+
+.pet-bubble-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pet-bubble-return {
+  flex: none;
+  background: transparent;
+  font-weight: 400;
+  color: rgb(255 255 255 / 70%);
 }
 </style>

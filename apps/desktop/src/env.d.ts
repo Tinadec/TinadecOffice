@@ -305,6 +305,17 @@ declare global {
       updateProfile: (patch: { nickname?: string; avatarUrl?: string }) => Promise<LoginIdentity>;
       /** Local-only transparent pet windows. */
       pets: PetWindowApi;
+      /** Per-session desktop partner windows (the work session's main agent embodied). */
+      sessionPartner: {
+        toggle: (sessionId: string) => Promise<{ active: boolean; error?: string }>;
+        isActive: (sessionId: string) => Promise<boolean>;
+        /** Partner window only: read/decide approvals through the main-process whitelist proxy. */
+        agentRequest: (payload: { method: 'GET' | 'POST'; path: string; body?: unknown }) => Promise<{ status: number; body: unknown }>;
+        /** Partner window only: focus the main window and return to this session. */
+        focus: () => Promise<boolean>;
+        /** Main window only: a partner window asked to return to its session. */
+        onFocusSession: (callback: (sessionId: string) => void) => () => void;
+      };
       /** Terminal management API */
       terminal: TerminalApi;
       /** Detach a tab into a new floating BrowserWindow */

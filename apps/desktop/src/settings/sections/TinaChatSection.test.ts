@@ -20,7 +20,7 @@ vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => ({ st
 
 const person = (over: Partial<TinaChatParticipant> = {}): TinaChatParticipant => ({
   id: 'p1', workspace_id: 'w1', handle: 'me', display_name: '我', kind: 'human', job_title: null, description: null,
-  agent_definition_id: null, receive_human_messages: true, can_interpret_intent: false, discoverable: true, status: 'active', revision: 1, ...over,
+  agent_definition_id: null, companion_id: null, receive_human_messages: true, can_interpret_intent: false, discoverable: true, status: 'active', revision: 1, ...over,
 })
 const policy = (over: Partial<TinaChatWorkspacePolicy> = {}): TinaChatWorkspacePolicy => ({
   workspace_id: 'w1', revision: 4, allow_cross_workspace_discovery: false, allow_cross_workspace_messaging: false, ...over,

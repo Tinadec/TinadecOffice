@@ -16,6 +16,7 @@ import { selectionKey } from '@/lib/storageScope'
 import { closePalette, useCommandPalette } from '@/composables/useCommandPalette'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { availableCommands, implicitArgument, type AppCommand, type CommandHost } from '@/lib/appCommands'
+import { toggleSessionPartner as togglePartnerWindow } from '@/lib/sessionPartner'
 import {
   requestConversation, requestModelProvider, requestSettingsSection,
   requestProject, requestAgent, requestMode, requestPrompt, requestTool, requestWorkspaceFile,
@@ -72,6 +73,7 @@ const commandHost: CommandHost = {
   newSession: () => { void homeController.createSession(homeController.selectedProjectId.value ?? null) },
   navigate: (routeName) => { void router.push({ name: routeName }) },
   routeName: () => String(router.currentRoute.value.name ?? ''),
+  toggleSessionPartner: () => { void togglePartnerWindow(homeController.selectedSessionId.value) },
 }
 
 function runCommand(command: AppCommand) {

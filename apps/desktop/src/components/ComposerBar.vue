@@ -18,6 +18,7 @@ import { homeController } from '@/controllers/HomeController'
 import { selectionKey, selectedStorage } from '@/lib/storageScope'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 import { isCommandAvailable, parseSlashCommand, type AppCommand, type CommandHost } from '@/lib/appCommands'
+import { toggleSessionPartner as togglePartnerWindow } from '@/lib/sessionPartner'
 import { composerSlashQuery, composerSettings, permissionChoices, type ComposerPage } from '@/lib/composerCommands'
 import { defaultSpaceOptions } from '@/lib/composerSettings'
 import { completeMentionToken, filterMentionEntries, parseMentionToken, type MentionToken } from '@/lib/fileMentions'
@@ -168,6 +169,7 @@ const commandHost: CommandHost = {
     void router.push({ name: routeName })
   },
   routeName: () => String(router.currentRoute.value.name ?? ''),
+  toggleSessionPartner: () => { void togglePartnerWindow(homeController.selectedSessionId.value) },
 }
 
 const commandsDismissed = ref(false)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RouterView, useRoute } from 'vue-router'
+import { RouterView, useRoute, useRouter } from 'vue-router'
 import { watch, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useBackground } from '@/composables/useBackground'
@@ -18,6 +18,7 @@ import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
 import SelectionContextMenu from '@/components/SelectionContextMenu.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import { installPaletteKeybinding } from '@/composables/useCommandPalette'
+import { homeController } from '@/controllers/HomeController'
 
 // ---- Background layer (global, outside page transitions) ----
 // The background layer is ALWAYS rendered here — outside the <Transition> —
@@ -63,7 +64,9 @@ let graphSeedBootstrapped = false
 const { status, dismissByKey } = useNotifications()
 let unsubscribeStatusSync: (() => void) | undefined
 let uninstallPaletteKeys: (() => void) | undefined
+let unsubscribeFocusSession: (() => void) | undefined
 const route = useRoute()
+const router = useRouter()
 // Startup happens once. Retrying a lost backend must preserve the live page.
 const entryReady = ref(isChildWindow)
 
@@ -124,12 +127,18 @@ onMounted(() => {
     unsubscribeStatusSync = startStatusSync()
     // The palette is the window's command surface, and a pet has no commands to run.
     uninstallPaletteKeys = installPaletteKeybinding()
+    // A session partner window asked to return: select its session and show the work surface.
+    unsubscribeFocusSession = window.tinadec?.sessionPartner?.onFocusSession((sessionId) => {
+      void homeController.setSelectedSession(sessionId)
+      void router.push('/')
+    })
   }
 })
 
 onBeforeUnmount(() => {
   unsubscribeStatusSync?.()
   uninstallPaletteKeys?.()
+  unsubscribeFocusSession?.()
 })
 </script>
 

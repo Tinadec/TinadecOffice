@@ -95,9 +95,14 @@ const {
   listPetWindows,
   setCurrentPetWindowBounds,
   setCurrentPetWindowClickThrough,
+  isSessionPartnerActive,
+  toggleSessionPartnerWindow,
+  isSessionPartnerWindowSender,
+  getSessionPartnerSessionId,
 } = require('./petWindow.cjs');
 const companionWindow = require('./companionWindow.cjs');
 const { createCompanionApiBridge } = require('./companionApi.cjs');
+const { createPetAgentApiBridge } = require('./petAgentApi.cjs');
 const {
   downloadPet,
   ensureBuiltinPets,
@@ -577,6 +582,42 @@ function broadcastAvatarPetsChanged() {
 
 // --- Local pet window IPC ---
 ipcMain.handle('tinadec:pet-create', async (_event, petId) => createPetWindow(petId));
+ipcMain.handle('tinadec:session-partner-toggle', async (event, sessionId) => {
+  if (!isTrustedHostSender(event) || typeof sessionId !== 'string' || !sessionId) return { active: false };
+  if (isSessionPartnerActive(sessionId)) return toggleSessionPartnerWindow(sessionId, null);
+  const pets = await listDownloaded();
+  const slug = pets.find((pet) => pet.enabled)?.slug ?? pets[0]?.slug ?? null;
+  return toggleSessionPartnerWindow(sessionId, slug);
+});
+ipcMain.handle('tinadec:session-partner-active', async (event, sessionId) => {
+  if (!isTrustedHostSender(event)) return false;
+  return isSessionPartnerActive(sessionId);
+});
+ipcMain.handle('tinadec:pet-agent-api', async (event, payload) => {
+  if (!isSessionPartnerWindowSender(event.sender)) {
+    throw new Error('Pet agent API IPC is only available to a session partner window.');
+  }
+  if (!trustedHostReady) return { status: 503, body: { code: 'host_not_ready' } };
+  const baseUrl = canonicalLocalGatewayUrl(process.env.TINADEC_RESOLVED_GATEWAY_URL);
+  if (!baseUrl) return { status: 503, body: { code: 'host_not_ready' } };
+  const bridge = createPetAgentApiBridge({
+    baseUrl,
+    token: hostControl.serviceToken,
+    isSessionPartnerWindowSender,
+  });
+  return bridge(event, payload);
+});
+ipcMain.handle('tinadec:session-partner-focus', async (event) => {
+  const sessionId = getSessionPartnerSessionId(event.sender);
+  if (!sessionId) return false;
+  const main = getMainWindow();
+  if (!main || main.isDestroyed()) return false;
+  if (main.isMinimized()) main.restore();
+  main.show();
+  main.focus();
+  main.webContents.send('tinadec:focus-session', sessionId);
+  return true;
+});
 ipcMain.handle('tinadec:pet-close', async (_event, instanceId) => closePetWindow(instanceId));
 ipcMain.handle('tinadec:pet-list', async () => listPetWindows());
 ipcMain.handle('tinadec:pet-window-pet', async (_event, instanceId) => getPetWindowPet(instanceId));

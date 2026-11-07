@@ -63,6 +63,7 @@ let readGeneration = 0
 const activeCompanions = computed(() => companions.value.filter((item) => item.status !== 'archived'))
 const archivedCompanions = computed(() => companions.value.filter((item) => item.status === 'archived'))
 const mainCompanion = computed(() => settings.value?.main_companion_id ?? '')
+const buddyCompanion = computed(() => settings.value?.buddy_companion_id ?? '')
 
 function selectFromList() {
   const wanted = pendingSelectId.value ?? settings.value?.main_companion_id ?? null
@@ -130,7 +131,7 @@ function selectCompanion(id: string) {
   selectedId.value = id
 }
 
-async function patchGlobal(patch: { main_companion_id?: string | null; autonomy_paused?: boolean }) {
+async function patchGlobal(patch: { main_companion_id?: string | null; buddy_companion_id?: string | null; autonomy_paused?: boolean }) {
   const current = settings.value
   if (!current || savingGlobal.value) return
   savingGlobal.value = true
@@ -151,6 +152,11 @@ async function patchGlobal(patch: { main_companion_id?: string | null; autonomy_
 function onMainCompanionChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
   void patchGlobal({ main_companion_id: value || null })
+}
+
+function onBuddyCompanionChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  void patchGlobal({ buddy_companion_id: value || null })
 }
 
 function openCreate() {
@@ -270,6 +276,23 @@ async function archiveCompanion(companion: CompanionSummary) {
           </option>
         </select>
         <p class="companion-hint">{{ t('settings.companions.mainCompanionHint') }}</p>
+      </div>
+      <div class="companion-field">
+        <label for="companion-buddy-companion">{{ t('settings.companions.buddyCompanion') }}</label>
+        <select
+          id="companion-buddy-companion"
+          class="settings-select"
+          data-testid="companion-buddy-companion"
+          :value="buddyCompanion"
+          :disabled="!settings || savingGlobal"
+          @change="onBuddyCompanionChange"
+        >
+          <option value="">{{ t('settings.companions.buddyCompanionNone') }}</option>
+          <option v-for="companion in activeCompanions" :key="companion.id" :value="companion.id">
+            {{ companion.name }}
+          </option>
+        </select>
+        <p class="companion-hint">{{ t('settings.companions.buddyCompanionHint') }}</p>
       </div>
       <div class="companion-switch-row">
         <div class="companion-switch-copy">

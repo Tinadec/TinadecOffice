@@ -25,6 +25,7 @@ const api = vi.hoisted(() => ({
   listActivity: vi.fn(async (): Promise<unknown[]> => []),
   listAllConversations: vi.fn(async (): Promise<unknown[]> => []),
   listConnectionsOverview: vi.fn(async (): Promise<unknown[]> => []),
+  getSettings: vi.fn(async () => ({ main_companion_id: null, buddy_companion_id: null, autonomy_paused: false, revision: 0 })),
   listMessages: vi.fn(async (): Promise<unknown[]> => []),
   pauseConversation: vi.fn(async () => ({})),
   getCompanion: vi.fn(async () => ({})),
@@ -66,7 +67,7 @@ const COMPANION_A: CompanionSummary = {
   model: null, model_provider_id: null,
   current_activity: 'thinking', autonomy_enabled: true, autonomy_paused: false,
   memory_count: 3, skill_count: 2, connection_count: 1, revision: 1,
-  status: 'active', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
+  status: 'active', role: 'autonomous', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
   last_activity_at: '2026-10-27T10:00:00Z',
 }
 const COMPANION_B: CompanionSummary = {

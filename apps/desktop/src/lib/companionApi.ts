@@ -46,6 +46,7 @@ export interface CompanionCreateInput {
   model_purpose?: string
   /** "<providerInstanceId>|<model>"; empty clears the pin back to the route purpose. */
   model?: string | null
+  role?: 'autonomous' | 'buddy'
   autonomy?: CompanionAutonomyInput | null
 }
 
@@ -107,6 +108,7 @@ export interface CompanionMessagePostInput {
 
 export interface CompanionSettingsPatchInput {
   main_companion_id?: string | null
+  buddy_companion_id?: string | null
   autonomy_paused?: boolean
 }
 

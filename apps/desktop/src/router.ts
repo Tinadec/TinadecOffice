@@ -90,6 +90,11 @@ const router = createRouter({
       name: 'companion-center',
       component: () => import('./pages/CompanionCenterPage.vue'),
     },
+    {
+      path: '/buddy',
+      name: 'buddy',
+      component: () => import('./pages/BuddyPage.vue'),
+    },
   ],
 })
 
