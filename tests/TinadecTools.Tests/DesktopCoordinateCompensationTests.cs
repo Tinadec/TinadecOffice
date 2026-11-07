@@ -540,6 +540,49 @@ public sealed class DesktopCoordinateCompensationTests
         window.AssertClicks("Save", 0); // the button was NOT clicked
     }
 
+    // ── state-verified pattern clicks (round 15: the lying-Invoke lesson) ──────
+
+    /// <summary>
+    /// The verdict core of the state-verified click chain, pinned as a pure function.
+    /// Measured motivation: on a Chromium select popup, invoking the 上海 item while the
+    /// popup was still realizing threw nothing and changed nothing - the form submitted
+    /// city=beijing although the click had reported ok=true.
+    /// </summary>
+    [Fact]
+    public void ClickTook_RequiresTheReadableStateToAgree()
+    {
+        // selection-capable: the element must report itself SELECTED after the click
+        Assert.False(DesktopAutomation.ClickTook(hasSelectionState: true, selectedAfter: false, hasToggleState: false, toggleBefore: null, toggleAfter: null));
+        Assert.True(DesktopAutomation.ClickTook(hasSelectionState: true, selectedAfter: true, hasToggleState: false, toggleBefore: null, toggleAfter: null));
+        // toggle-capable: the state must have MOVED between the two reads; an unchanged
+        // or unreadable post-state is the silent no-op this exists to catch
+        Assert.False(DesktopAutomation.ClickTook(hasSelectionState: false, selectedAfter: false, hasToggleState: true, toggleBefore: 0, toggleAfter: 0));
+        Assert.True(DesktopAutomation.ClickTook(hasSelectionState: false, selectedAfter: false, hasToggleState: true, toggleBefore: 0, toggleAfter: 1));
+        Assert.False(DesktopAutomation.ClickTook(hasSelectionState: false, selectedAfter: false, hasToggleState: true, toggleBefore: 0, toggleAfter: null));
+        // no readable state: the no-exception call remains the best evidence there is
+        Assert.True(DesktopAutomation.ClickTook(hasSelectionState: false, selectedAfter: false, hasToggleState: false, toggleBefore: null, toggleAfter: null));
+    }
+
+    /// <summary>A listbox item click through the pattern chain must verifiably select the
+    /// item: delivery uia-select AND the control's own selection state (LB_GETCURSEL from
+    /// the host) moved. This is the same verification ClickByPattern now applies to every
+    /// selection-capable element, exercised on a real window.</summary>
+    [Fact]
+    public async Task ClickByElement_ListboxSelectionIsStateVerified()
+    {
+        var runtime = new DesktopToolRuntime(() => TempHome());
+        using var window = new ElementsWindow();
+
+        var found = runtime.FindElement(new DesktopFindElementArgs { WindowId = window.Hwnd, Name = "Second", ControlType = "ListItem", Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(found.Ok, found.Message);
+        var second = Assert.Single(found.Elements!);
+
+        var click = await runtime.ClickAsync(new DesktopClickArgs { ElementIndex = second.Index, WindowId = window.Hwnd, Mode = DesktopToolRuntime.IsolatedMode });
+        Assert.True(click.Ok, click.Message);
+        Assert.Equal("uia-select", click.Delivery);
+        window.AssertListSelection(1); // 'Second' is the 0-based index 1 - the control's own state
+    }
+
     [Fact]
     public async Task SetValue_WithoutFindElementContextIsRefused()
     {
@@ -682,6 +725,7 @@ public sealed class DesktopCoordinateCompensationTests
 
         public nint Edit { get; private set; }
         public nint Slider { get; private set; }
+        public nint List { get; private set; }
 
         public ElementsWindow()
             : base(400, 420, 60, "")
@@ -691,6 +735,22 @@ public sealed class DesktopCoordinateCompensationTests
         /// <summary>The slider's position read straight from the control (TBM_GETPOS) -
         /// the host-state evidence for desktop_set_value tests.</summary>
         public int SliderPosition() => (int)SendMessage(Slider, 0x0400 /* TBM_GETPOS */, 0, 0);
+
+        /// <summary>The listbox's selected index straight from the control (LB_GETCURSEL) -
+        /// the host-state evidence that a pattern click really selected the item.</summary>
+        public int ListSelection() => (int)SendMessage(List, 0x0188 /* LB_GETCURSEL */, 0, 0);
+
+        /// <summary>Waits until the listbox reports the expected selection (the UIA
+        /// Select settles asynchronously through the provider).</summary>
+        public void AssertListSelection(int expected)
+        {
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                if (ListSelection() == expected) return;
+                Thread.Sleep(50);
+            }
+            Assert.Equal(expected, ListSelection());
+        }
 
         /// <summary>Waits until the slider reports the expected position (the UIA
         /// SetValue settles asynchronously through the provider).</summary>
@@ -714,6 +774,7 @@ public sealed class DesktopCoordinateCompensationTests
             // 30 items in a 70px box: items below the fold report IsOffscreen (the probe
             // measured that clipped BUTTONS do not, but listbox ITEMS do)
             var list = CreateWindowEx(0x00000200u, "LISTBOX", "", WS_CHILD | WS_VISIBLE | 0x1u /* LBS_NOTIFY */, 160, 115, 150, 70, hwnd, (nint)107, GetModuleHandle(null), 0);
+            List = list;
             foreach (var name in new[] { "First", "Second", "Third" }.Concat(Enumerable.Range(4, 27).Select(n => $"Item{n:00}")))
                 SendMessageString(list, 0x0180 /* LB_ADDSTRING */, 0, new StringBuilder(name));
             // a trackbar (0..100, position 30): the RangeValue positive for desktop_set_value
