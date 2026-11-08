@@ -1466,6 +1466,71 @@
         },
         "type": "array"
       },
+      "CompanionMandate": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "proposal": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "denied"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "action",
+          "status",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CompanionMandateList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionMandate"
+        },
+        "type": "array"
+      },
       "CompanionMember": {
         "additionalProperties": true,
         "properties": {
@@ -9878,6 +9943,76 @@
           }
         },
         "summary": "Ensure a private chat or create a group",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdMandates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMandateList"
+                }
+              }
+            },
+            "description": "List standing autonomy authorizations"
+          }
+        },
+        "summary": "List standing autonomy authorizations",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates/{mandateId}/decision": {
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdMandatesByMandateIdDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mandateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMandate"
+                }
+              }
+            },
+            "description": "Approve or deny one standing authorization (If-Match revision)"
+          }
+        },
+        "summary": "Approve or deny one standing authorization (If-Match revision)",
         "tags": [
           "Companions"
         ]

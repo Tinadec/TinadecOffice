@@ -21,6 +21,11 @@ public static class CompanionEndpoints
         // The guid constraint keeps this distinct from GET/PATCH /companions/{companionId}.
         app.MapPost("/api/v1/companions/{companionId:guid}/autonomy/tick", TickAutonomy);
 
+        // Standing authorizations for autonomous actions: the tick records a proposal, the user
+        // approves or denies it here, and only an approved class of action may run unattended.
+        app.MapGet("/api/v1/companions/{companionId:guid}/mandates", ListMandates);
+        app.MapPost("/api/v1/companions/{companionId:guid}/mandates/{mandateId:guid}/decision", DecideMandate);
+
         app.MapGet("/api/v1/companions/{companionId:guid}/memories", ListMemories);
         app.MapPost("/api/v1/companions/{companionId:guid}/memories", CreateMemory);
         app.MapPatch("/api/v1/companions/{companionId:guid}/memories/{memoryId:guid}", PatchMemory);
@@ -130,6 +135,27 @@ public static class CompanionEndpoints
         CompanionAutonomyService service,
         CancellationToken cancellationToken = default) =>
         Run(async () => Ok(await service.TickAsync(companionId, cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> ListMandates(
+        Guid companionId,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () => Ok(await service.ListMandatesAsync(companionId, cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> DecideMandate(
+        Guid companionId,
+        Guid mandateId,
+        CompanionMandateDecisionRequest? input,
+        HttpRequest request,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null) throw new CompanionException("invalid_request", "A decision body is required.", 400);
+            var body = await service.DecideMandateAsync(
+                companionId, mandateId, IfMatch(request), input.Decision, cancellationToken).ConfigureAwait(false);
+            return body is null ? NotFound() : Ok(body);
+        });
 
     static Task<IResult> ListMemories(
         Guid companionId,

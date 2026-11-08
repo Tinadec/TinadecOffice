@@ -22,6 +22,7 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
     public DbSet<CompanionMessageRecord> Messages => Set<CompanionMessageRecord>();
     public DbSet<CompanionRunRecord> Runs => Set<CompanionRunRecord>();
     public DbSet<CompanionEffectRecord> Effects => Set<CompanionEffectRecord>();
+    public DbSet<CompanionMandateRecord> Mandates => Set<CompanionMandateRecord>();
     public DbSet<CompanionActivityRecord> Activities => Set<CompanionActivityRecord>();
 
     protected override void OnModelCreating(ModelBuilder model)
@@ -156,6 +157,24 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.HasIndex(x => new { x.TenantId, x.RunId, x.Kind }).IsUnique().HasFilter("run_id IS NOT NULL");
             // The claim scan is (status, due) ordered, which the unique run index cannot serve.
             e.HasIndex(x => new { x.Status, x.AvailableAtUnixMs });
+        });
+
+        // A standing authorization for one class of autonomous action. Without an approved row the
+        // autonomy tick only records what it WOULD do: an autonomous partner must not act on the
+        // user's sessions and conversations before the user has said it may.
+        model.Entity<CompanionMandateRecord>(e =>
+        {
+            e.ToTable("companion_mandates");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Action).HasMaxLength(32).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(16).IsRequired();
+            e.Property(x => x.ProposalJson).IsRequired();
+            e.Property(x => x.Summary).HasMaxLength(512);
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            // One standing answer per action class per companion: re-proposing updates the row
+            // instead of stacking a second question the user cannot tell apart from the first.
+            e.HasIndex(x => new { x.TenantId, x.CompanionId, x.Action }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
         });
 
         model.Entity<CompanionActivityRecord>(e =>
@@ -377,6 +396,25 @@ public sealed class CompanionEffectRecord
     public string? LastError { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public sealed class CompanionMandateRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid CompanionId { get; set; }
+    // create_group | invite | send_message — one standing answer per action class.
+    public string Action { get; set; } = string.Empty;
+    // proposed | approved | denied
+    public string Status { get; set; } = "proposed";
+    // The decision the tick wanted to take when it asked. Approving authorizes the CLASS of action,
+    // but this payload is what the user read before saying yes, so it stays on the row.
+    public string ProposalJson { get; set; } = "{}";
+    public string? Summary { get; set; }
+    public long Revision { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? DecidedAt { get; set; }
 }
 
 public sealed class CompanionActivityRecord

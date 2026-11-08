@@ -32,6 +32,8 @@ const routes: RouteCase[] = [
   { method: 'PATCH', template: '/api/v1/companions/{companionId}', body: { name: 'Nova II', autonomy: { enabled: true, interval_minutes: 30, daily_action_budget: 4 } }, status: 200 },
   { method: 'POST', template: '/api/v1/companions/{companionId}/archive', status: 200 },
   { method: 'POST', template: '/api/v1/companions/{companionId}/autonomy/tick', status: 200 },
+  { method: 'GET', template: '/api/v1/companions/{companionId}/mandates', status: 200 },
+  { method: 'POST', template: '/api/v1/companions/{companionId}/mandates/{mandateId}/decision', body: { decision: 'approved' }, status: 200 },
   { method: 'GET', template: '/api/v1/companions/{companionId}/memories', query: 'q=shared&limit=12', status: 200 },
   { method: 'POST', template: '/api/v1/companions/{companionId}/memories', body: { content: 'Prefers short answers.', source_kind: 'user' }, status: 200 },
   { method: 'PATCH', template: '/api/v1/companions/{companionId}/memories/{memoryId}', body: { content: 'Prefers terse answers.' }, status: 200 },
@@ -93,9 +95,9 @@ test('every companion operation forwards the exact path, query, JSON body and st
     assert.equal(call.body, body, `${route.method} ${url} rewrote the body`);
   }
   assert.equal(calls.length, routes.length);
-  // A contract-size pin: 22 paths / 33 operations. Shrinking the proxied surface fails here.
-  assert.equal(new Set(routes.map((route) => route.template)).size, 22);
-  assert.equal(routes.length, 33);
+  // A contract-size pin: 24 paths / 35 operations. Shrinking the proxied surface fails here.
+  assert.equal(new Set(routes.map((route) => route.template)).size, 24);
+  assert.equal(routes.length, 35);
 });
 
 test('If-Match and Idempotency-Key reach Core unchanged', { concurrency: false }, async () => {

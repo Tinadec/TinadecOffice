@@ -9,6 +9,9 @@ namespace TinadecCore.Companion;
 /// </summary>
 public sealed record CompanionAutonomyRequest(bool? Enabled = null, bool? Paused = null, int? IntervalMinutes = null, int? DailyActionBudget = null);
 
+/// <summary>One answer to one standing authorization: approved lets that action class run unattended.</summary>
+public sealed record CompanionMandateDecisionRequest(string? Decision = null);
+
 public sealed record CompanionCreateRequest(
     string? Name = null,
     string? Tagline = null,
@@ -287,6 +290,20 @@ internal static class CompanionContracts
         detail = row.Detail,
         payload = ParseJson(row.PayloadJson),
         created_at = row.CreatedAt
+    };
+
+    internal static object MandateJson(CompanionMandateRecord row) => new
+    {
+        id = row.Id,
+        companion_id = row.CompanionId,
+        action = row.Action,
+        status = row.Status,
+        summary = row.Summary,
+        proposal = ParseJson(row.ProposalJson),
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt,
+        decided_at = row.DecidedAt
     };
 
     internal static object ConnectionOverviewJson(CompanionConnectionBindingRecord row, string? companionName) => new

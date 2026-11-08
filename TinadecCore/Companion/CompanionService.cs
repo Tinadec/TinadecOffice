@@ -626,6 +626,69 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
 
     private static string? TrimToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    // ── mandates ──
+
+    /// <summary>
+    /// Standing authorizations for this companion's autonomous actions. A row exists only once the
+    /// autonomy tick wanted to act: the proposal it recorded is what the user decides on, so an
+    /// empty list means the companion has not asked for anything yet, not that it cannot.
+    /// </summary>
+    public async Task<object> ListMandatesAsync(Guid companionId, CancellationToken cancellationToken = default)
+    {
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+        var rows = (await db.Mandates.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.CompanionId == companionId)
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderBy(x => x.Action, StringComparer.Ordinal)
+            .ToList();
+        return rows.Select(CompanionContracts.MandateJson).ToList();
+    }
+
+    /// <summary>
+    /// Approves or denies one standing authorization. Approving lets the next tick of that action
+    /// class run; denying keeps it a proposal until the user changes their mind. The decision is
+    /// recorded as an activity so the feed shows who allowed what, and when.
+    /// </summary>
+    public async Task<object?> DecideMandateAsync(
+        Guid companionId, Guid mandateId, long expectedRevision, string? decision, CancellationToken cancellationToken = default)
+    {
+        var status = decision?.Trim().ToLowerInvariant() switch
+        {
+            "approved" => "approved",
+            "denied" => "denied",
+            _ => throw Invalid("decision must be approved or denied.")
+        };
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.Mandates.SingleOrDefaultAsync(
+            x => x.Id == mandateId && x.TenantId == tenantId && x.CompanionId == companionId, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null) return null;
+        EnsureRevision(row.Revision, expectedRevision);
+
+        var now = DateTimeOffset.UtcNow;
+        row.Status = status;
+        row.DecidedAt = now;
+        row.UpdatedAt = now;
+        row.Revision++;
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = status == "approved" ? "autonomy_mandate_approved" : "autonomy_mandate_denied",
+            CompanionId = companionId,
+            Summary = status == "approved"
+                ? $"已授权伙伴执行 {row.Action}"
+                : $"已拒绝伙伴执行 {row.Action}",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { action = row.Action, decided = status }),
+            CreatedAt = now
+        });
+        await SaveAsync(db, cancellationToken).ConfigureAwait(false);
+        return CompanionContracts.MandateJson(row);
+    }
+
     private static CompanionException Invalid(string message) => new("invalid_request", message, 400);
     private static CompanionException Conflict() => new("companion_revision_conflict", "Revision conflict.", 412);
     private static CompanionException NotFound(string message = "Companion not found.") => new("companion_not_found", message, 404);

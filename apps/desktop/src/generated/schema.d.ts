@@ -283,6 +283,14 @@ export interface paths {
     /** Ensure a private chat or create a group */
     post: operations["postApiV1CompanionsByCompanionIdConversations"];
   };
+  "/api/v1/companions/{companionId}/mandates": {
+    /** List standing autonomy authorizations */
+    get: operations["getApiV1CompanionsByCompanionIdMandates"];
+  };
+  "/api/v1/companions/{companionId}/mandates/{mandateId}/decision": {
+    /** Approve or deny one standing authorization (If-Match revision) */
+    post: operations["postApiV1CompanionsByCompanionIdMandatesByMandateIdDecision"];
+  };
   "/api/v1/companions/{companionId}/memories": {
     /** List or search private memories (q, limit) */
     get: operations["getApiV1CompanionsByCompanionIdMemories"];
@@ -1640,6 +1648,28 @@ export interface components {
       [key: string]: unknown;
     };
     CompanionList: components["schemas"]["CompanionSummary"][];
+    CompanionMandate: {
+      action: string;
+      /** Format: uuid */
+      companion_id: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      decided_at?: string | null;
+      /** Format: uuid */
+      id: string;
+      proposal?: {
+        [key: string]: unknown;
+      } | null;
+      revision: number;
+      /** @enum {string} */
+      status: "proposed" | "approved" | "denied";
+      summary?: string | null;
+      /** Format: date-time */
+      updated_at: string;
+      [key: string]: unknown;
+    };
+    CompanionMandateList: components["schemas"]["CompanionMandate"][];
     CompanionMember: {
       /** Format: uuid */
       companion_id?: string | null;
@@ -4426,6 +4456,39 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** List standing autonomy authorizations */
+  getApiV1CompanionsByCompanionIdMandates: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List standing autonomy authorizations */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMandateList"];
+        };
+      };
+    };
+  };
+  /** Approve or deny one standing authorization (If-Match revision) */
+  postApiV1CompanionsByCompanionIdMandatesByMandateIdDecision: {
+    parameters: {
+      path: {
+        companionId: string;
+        mandateId: string;
+      };
+    };
+    responses: {
+      /** @description Approve or deny one standing authorization (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMandate"];
         };
       };
     };

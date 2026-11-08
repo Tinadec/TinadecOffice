@@ -95,6 +95,16 @@ public sealed class CompanionAutonomyService(
         if (decision is null)
             return await SkipAsync(companion, "none", "invalid_decision", null, cancellationToken).ConfigureAwait(false);
 
+        if (decision.Action is not "none")
+        {
+            // Observe before auto: an autonomous partner does not touch the user's conversations
+            // until the user has approved that class of action. The first time it wants to do
+            // something it records the proposal and stops here; approving the mandate lets the
+            // next one run.
+            var gate = await MandateGateAsync(companion, decision, cancellationToken).ConfigureAwait(false);
+            if (gate is not null) return gate;
+        }
+
         return decision.Action switch
         {
             "none" => Refused(null),
@@ -104,6 +114,107 @@ public sealed class CompanionAutonomyService(
             _ => await SkipAsync(companion, "none", "invalid_decision", null, cancellationToken).ConfigureAwait(false)
         };
     }
+
+    /// <summary>
+    /// Returns a refusal when the action is not authorized, and null when the tick may proceed.
+    /// A missing mandate is recorded as a proposal: the decision is what the user reads before
+    /// saying yes, so it is kept on the row rather than left in an activity feed nobody approves
+    /// from. A denied mandate is final until the user changes their mind — re-proposing the same
+    /// class on every tick would turn a "no" into a nag.
+    /// </summary>
+    private async Task<object?> MandateGateAsync(
+        CompanionAgentRecord companion, Decision decision, CancellationToken cancellationToken)
+    {
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var mandate = await db.Mandates
+            .SingleOrDefaultAsync(x => x.TenantId == tenantId && x.CompanionId == companion.Id
+                && x.Action == decision.Action, cancellationToken).ConfigureAwait(false);
+
+        if (mandate?.Status == "approved") return null;
+        if (mandate?.Status == "denied")
+            return await SkipAsync(companion, decision.Action, "mandate_denied", decision.ConversationId, cancellationToken).ConfigureAwait(false);
+
+        var proposal = JsonSerializer.Serialize(new
+        {
+            action = decision.Action,
+            conversation_id = decision.ConversationId,
+            companion_id = decision.CompanionId,
+            companion_ids = decision.CompanionIds,
+            title = decision.Title,
+            body = decision.Body is { Length: > 200 } body ? body[..200] : decision.Body
+        }, SnakeCase);
+        var summary = Truncate(DescribeProposal(companion, decision), MaxActivitySummary);
+        var now = DateTimeOffset.UtcNow;
+        var mandateId = mandate?.Id ?? Guid.NewGuid();
+
+        if (mandate is null)
+        {
+            db.Mandates.Add(new CompanionMandateRecord
+            {
+                Id = mandateId,
+                TenantId = tenantId,
+                CompanionId = companion.Id,
+                Action = decision.Action,
+                Status = "proposed",
+                ProposalJson = proposal,
+                Summary = summary,
+                Revision = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+        else
+        {
+            // Still proposed: the newest intent is what the user should be asked about.
+            mandate.ProposalJson = proposal;
+            mandate.Summary = summary;
+            mandate.Revision++;
+            mandate.UpdatedAt = now;
+        }
+
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "autonomy_proposed",
+            CompanionId = companion.Id,
+            ConversationId = decision.ConversationId,
+            Summary = summary,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                autonomous = true,
+                action = decision.Action,
+                // So the centre can approve straight from the feed row instead of looking it up.
+                mandate_id = mandateId,
+                revision = mandate is null ? 1 : mandate.Revision,
+                conversation_id = decision.ConversationId,
+                proposal = ParseJsonElement(proposal)
+            }, SnakeCase),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+
+        return new
+        {
+            acted = false,
+            action = decision.Action,
+            reason = "awaiting_mandate",
+            activity = (object?)null,
+            conversation = (object?)null,
+            message = (object?)null
+        };
+    }
+
+    private static string DescribeProposal(CompanionAgentRecord companion, Decision decision) => decision.Action switch
+    {
+        "create_group" => $"伙伴 {companion.Name} 想建立一个群聊，需要你的授权",
+        "invite" => $"伙伴 {companion.Name} 想邀请其他伙伴加入会话，需要你的授权",
+        "send_message" => $"伙伴 {companion.Name} 想主动发言，需要你的授权",
+        _ => $"伙伴 {companion.Name} 想执行一次自主操作，需要你的授权"
+    };
+
+    private static JsonElement ParseJsonElement(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
     /// <summary>
     /// The worker's gate: active, enabled, neither paused, interval elapsed, budget remaining.
@@ -124,11 +235,14 @@ public sealed class CompanionAutonomyService(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (companions.Count == 0) return [];
 
-        // Skipped rows are not actions: they neither spend quota nor push the interval forward.
+        // Two different questions are asked of the activity log. "Did it spend a daily action?"
+        // counts only real actions, so asking the user for permission does not burn the quota it
+        // is asking about. "When did it last think?" counts proposals too, so a companion whose
+        // mandate is still pending waits out the interval instead of re-proposing on every pass.
         var actions = await db.Activities.AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.CompanionId != null
                 && x.Kind.StartsWith("autonomy_") && x.Kind != "autonomy_skipped")
-            .Select(x => new { CompanionId = x.CompanionId!.Value, x.CreatedAt })
+            .Select(x => new { CompanionId = x.CompanionId!.Value, x.Kind, x.CreatedAt })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var byCompanion = actions.GroupBy(x => x.CompanionId).ToDictionary(group => group.Key, group => group.ToList());
         var today = UtcToday();
@@ -137,10 +251,11 @@ public sealed class CompanionAutonomyService(
         var due = new List<Guid>();
         foreach (var companion in companions)
         {
-            var used = byCompanion.TryGetValue(companion.Id, out var rows) ? rows.Count(x => x.CreatedAt >= today) : 0;
+            var rows = byCompanion.GetValueOrDefault(companion.Id);
+            var used = rows is null ? 0 : rows.Count(x => x.CreatedAt >= today && SpendsActionBudget(x.Kind));
             if (companion.AutonomyDailyBudget <= 0 || used >= companion.AutonomyDailyBudget) continue;
 
-            // The later of the last real autonomous action and any configuration change starts the
+            // The later of the last real autonomous thought and any configuration change starts the
             // interval, so editing the companion's autonomy rules cannot be undone by an old action.
             var lastAction = rows is { Count: > 0 } ? rows.Max(x => x.CreatedAt) : (DateTimeOffset?)null;
             var basis = lastAction is { } value && value > companion.UpdatedAt ? value : companion.UpdatedAt;
@@ -150,6 +265,13 @@ public sealed class CompanionAutonomyService(
         }
         return due;
     }
+
+    /// <summary>
+    /// Only a performed action costs the daily quota. A proposal, a skip and a mandate decision are
+    /// all things that happened around an action, not actions.
+    /// </summary>
+    private static bool SpendsActionBudget(string kind) =>
+        kind is "autonomy_group_created" or "autonomy_member_invited" or "autonomy_message_sent";
 
     // ── preconditions ──
 
@@ -175,9 +297,9 @@ public sealed class CompanionAutonomyService(
         var usedToday = (await db.Activities.AsNoTracking()
                 .Where(x => x.TenantId == tenantId && x.CompanionId == companionId
                     && x.Kind.StartsWith("autonomy_") && x.Kind != "autonomy_skipped")
-                .Select(x => x.CreatedAt)
+                .Select(x => new { x.Kind, x.CreatedAt })
                 .ToListAsync(cancellationToken).ConfigureAwait(false))
-            .Count(x => x >= UtcToday());
+            .Count(x => x.CreatedAt >= UtcToday() && SpendsActionBudget(x.Kind));
         if (companion.AutonomyDailyBudget <= 0 || usedToday >= companion.AutonomyDailyBudget)
             return new TickState(companion, "daily_budget_exhausted", usedToday);
 

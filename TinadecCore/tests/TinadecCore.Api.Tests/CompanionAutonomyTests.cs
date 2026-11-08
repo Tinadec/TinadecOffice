@@ -19,6 +19,93 @@ namespace TinadecCore.Api.Tests;
 /// </summary>
 public sealed class CompanionAutonomyTests
 {
+    /// <summary>
+    /// The autonomy gate is observe-first: a class of action runs unattended only after the user
+    /// approves a standing authorization for it. Until then the tick records what it wanted to do
+    /// and writes nothing to the user's conversations.
+    /// </summary>
+    [Fact]
+    public async Task FirstTick_RecordsAProposal_WithoutActing_AndDenialSticks()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, daily_action_budget = 6 })).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+        factory.Chat.Reply = SendMessageDecision(conversationId, "这条消息在授权之前不应出现。");
+
+        var proposal = await TickAsync(client, companionId);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+
+        // Nothing reached the conversation, and the proposal is visible in the feed.
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companion-conversations/{conversationId}/messages"))!);
+        Assert.Contains(await ActivityAsync(client), row => row.GetProperty("kind").GetString() == "autonomy_proposed");
+
+        var mandates = (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!;
+        var mandate = Assert.Single(mandates);
+        Assert.Equal("send_message", mandate.GetProperty("action").GetString());
+        Assert.Equal("proposed", mandate.GetProperty("status").GetString());
+        Assert.Equal(conversationId, mandate.GetProperty("proposal").GetProperty("conversation_id").GetGuid());
+
+        // Denying is a decision, not a pause: later ticks skip instead of re-asking every interval.
+        using (var deny = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/v1/companions/{companionId}/mandates/{mandate.GetProperty("id").GetGuid()}/decision")
+               { Content = JsonContent.Create(new { decision = "denied" }) })
+        {
+            deny.Headers.TryAddWithoutValidation("If-Match", $"\"{mandate.GetProperty("revision").GetInt64()}\"");
+            using var denied = await client.SendAsync(deny);
+            Assert.Equal(HttpStatusCode.OK, denied.StatusCode);
+            Assert.Equal("denied", (await denied.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        }
+
+        var afterDenial = await TickAsync(client, companionId);
+        Assert.False(afterDenial.GetProperty("acted").GetBoolean());
+        Assert.Equal("mandate_denied", afterDenial.GetProperty("reason").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companion-conversations/{conversationId}/messages"))!);
+
+        // A proposal is not an action: asking twice must not have burned the daily budget.
+        var budgeted = Assert.Single((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!,
+            row => row.GetProperty("action").GetString() == "send_message");
+        Assert.Equal("denied", budgeted.GetProperty("status").GetString());
+    }
+
+    /// <summary>One standing answer per action class: a second proposal updates the row, never stacks.</summary>
+    [Fact]
+    public async Task RepeatedProposals_UpdateTheSameMandate()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, interval_minutes = 5 })).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+
+        factory.Chat.Reply = SendMessageDecision(conversationId, "第一版提案。");
+        await TickAsync(client, companionId);
+        factory.Chat.Reply = SendMessageDecision(conversationId, "第二版提案。");
+        await TickAsync(client, companionId);
+
+        var mandates = (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!;
+        var mandate = Assert.Single(mandates);
+        Assert.Equal("第二版提案。", mandate.GetProperty("proposal").GetProperty("body").GetString());
+        Assert.True(mandate.GetProperty("revision").GetInt64() > 1);
+    }
+
+    /// <summary>A companion with no autonomy switched on never asks for anything.</summary>
+    [Fact]
+    public async Task DisabledCompanion_WritesNoMandate()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(client, "A")).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+        factory.Chat.Reply = SendMessageDecision(conversationId, "不应出现。");
+
+        await TickAsync(client, companionId);
+
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!);
+    }
+
     private sealed class AutonomyFactory : IsolatedApiFactory
     {
         private readonly string _root = ApiTestStorage.CreateRoot("companion-autonomy");
@@ -126,12 +213,31 @@ public sealed class CompanionAutonomyTests
 
     private static string SendMessageDecision(Guid conversationId, string body) =>
         JsonSerializer.Serialize(new { action = "send_message", conversation_id = conversationId, body });
-
     private static string CreateGroupDecision(string title, params Guid[] companionIds) =>
         JsonSerializer.Serialize(new { action = "create_group", title, companion_ids = companionIds });
 
     private static string InviteDecision(Guid conversationId, Guid companionId) =>
         JsonSerializer.Serialize(new { action = "invite", conversation_id = conversationId, companion_id = companionId, share_history = false });
+
+    /// <summary>
+    /// Approves the standing authorization the first tick proposed. Autonomy is observe-first: the
+    /// action class runs unattended only after the user has said yes to it once.
+    /// </summary>
+    private static async Task ApproveMandateAsync(HttpClient client, Guid companionId, string action)
+    {
+        var mandates = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates");
+        Assert.NotNull(mandates);
+        var row = Assert.Single(mandates!, m => m.GetProperty("action").GetString() == action);
+        Assert.Equal("proposed", row.GetProperty("status").GetString());
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/companions/{companionId}/mandates/{row.GetProperty("id").GetGuid()}/decision")
+        { Content = JsonContent.Create(new { decision = "approved" }) };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{row.GetProperty("revision").GetInt64()}\"");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("approved",
+            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+    }
 
     private static List<Guid> CompanionMemberIds(JsonElement conversation) =>
         conversation.GetProperty("members").EnumerateArray()
@@ -175,6 +281,12 @@ public sealed class CompanionAutonomyTests
             client, "A", new { enabled = true, daily_action_budget = 1 })).GetProperty("id").GetGuid();
         var conversationId = await PrivateConversationAsync(client, companionId);
         factory.Chat.Reply = SendMessageDecision(conversationId, "我先整理一下今天的安排。");
+
+        // Observe first: the first tick records what it would send and stops.
+        var proposal = await TickAsync(client, companionId);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        await ApproveMandateAsync(client, companionId, "send_message");
 
         var first = await TickAsync(client, companionId);
 
@@ -268,6 +380,14 @@ public sealed class CompanionAutonomyTests
         var peer = (await CreateCompanionAsync(client, "B")).GetProperty("id").GetGuid();
         factory.Chat.Reply = CreateGroupDecision("自主讨论", peer);
 
+        // Observe first: a standing authorization for this class of action is asked for once.
+        var proposal = await TickAsync(client, acting);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-conversations"))!);
+        await ApproveMandateAsync(client, acting, "create_group");
+        factory.Chat.Calls.Clear();
+
         var first = await TickAsync(client, acting);
 
         Assert.True(first.GetProperty("acted").GetBoolean());
@@ -313,6 +433,12 @@ public sealed class CompanionAutonomyTests
         Assert.Equal(3, group.GetProperty("members").GetArrayLength());
         factory.Chat.Reply = InviteDecision(groupId, invitee);
 
+        // Observe first: inviting is its own action class and needs its own authorization.
+        var proposal = await TickAsync(client, acting);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        await ApproveMandateAsync(client, acting, "invite");
+
         var first = await TickAsync(client, acting);
 
         Assert.True(first.GetProperty("acted").GetBoolean());
@@ -346,6 +472,11 @@ public sealed class CompanionAutonomyTests
             client, "A", new { enabled = true, daily_action_budget = 6 })).GetProperty("id").GetGuid();
         var conversationId = await PrivateConversationAsync(client, companionId);
         factory.Chat.Reply = SendMessageDecision(conversationId, "同一句话只应出现一次。");
+
+        var proposal = await TickAsync(client, companionId);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        await ApproveMandateAsync(client, companionId, "send_message");
 
         var first = await TickAsync(client, companionId);
         Assert.True(first.GetProperty("acted").GetBoolean());

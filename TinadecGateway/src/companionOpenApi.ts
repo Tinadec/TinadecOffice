@@ -237,6 +237,26 @@ const companionActivity = {
   required: ['id', 'kind', 'created_at'],
 };
 
+const companionMandate = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    companion_id: uuid,
+    // create_group | invite | send_message
+    action: { type: 'string' },
+    // proposed | approved | denied — only approved lets that action run unattended.
+    status: { type: 'string', enum: ['proposed', 'approved', 'denied'] },
+    summary: nullableString,
+    proposal: { type: 'object', additionalProperties: true, nullable: true },
+    revision: { type: 'integer' },
+    created_at: timestamp,
+    updated_at: timestamp,
+    decided_at: { type: 'string', format: 'date-time', nullable: true },
+  },
+  required: ['id', 'companion_id', 'action', 'status', 'revision', 'created_at', 'updated_at'],
+};
+
 const companionSettings = {
   type: 'object',
   additionalProperties: true,
@@ -301,6 +321,8 @@ export const companionOpenApiSchemas = {
   CompanionSettings: companionSettings,
   CompanionSendMessageResult: companionSendMessageResult,
   CompanionAutonomyTickResult: companionAutonomyTickResult,
+  CompanionMandate: companionMandate,
+  CompanionMandateList: { type: 'array', items: ref('CompanionMandate') },
   CompanionList: { type: 'array', items: ref('CompanionSummary') },
   CompanionMemoryList: { type: 'array', items: ref('CompanionMemory') },
   CompanionSkillList: { type: 'array', items: ref('CompanionSkill') },

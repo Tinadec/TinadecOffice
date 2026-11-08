@@ -1568,6 +1568,17 @@
         },
         "type": "object"
       },
+      "CompanionMandateDecisionRequest": {
+        "properties": {
+          "decision": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CompanionMemoryCreateRequest": {
         "properties": {
           "content": {
@@ -10547,6 +10558,77 @@
         },
         "tags": [
           "CompanionConversationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates/{mandateId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mandateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionMandateDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
         ]
       }
     },
