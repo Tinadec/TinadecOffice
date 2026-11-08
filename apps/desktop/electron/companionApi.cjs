@@ -42,10 +42,15 @@ const routes = [
   { method: 'GET', pattern: `^/api/v1/companion-runs/${GUID}$` },
   { method: 'GET', pattern: `^/api/v1/companion-settings$` },
   { method: 'PATCH', pattern: `^/api/v1/companion-settings$` },
+  // Imported Live2D models. The satellite may read/import/remove them; rendering is not part of
+  // this build, and the settings page imports through the trusted main window anyway.
+  { method: 'GET', pattern: `^/api/v1/companion-avatars$` },
+  { method: 'POST', pattern: `^/api/v1/companion-avatars/import$` },
+  { method: 'DELETE', pattern: `^/api/v1/companion-avatars/${GUID}$` },
 ].map(route => ({ method: route.method, pattern: new RegExp(route.pattern, 'i') }));
 
 const allowedQueryKeys = new Set(['limit', 'after_seq', 'include_archived', 'q']);
-const allowedMethods = new Set(['GET', 'POST', 'PATCH']);
+const allowedMethods = new Set(['GET', 'POST', 'PATCH', 'DELETE']);
 const maxQueryLength = 1024;
 
 function isAllowedRoute(method, pathname) {

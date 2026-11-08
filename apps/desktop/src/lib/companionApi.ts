@@ -160,6 +160,28 @@ export interface CompanionSettingsPatchInput {
   autonomy_paused?: boolean
 }
 
+/**
+ * Capabilities parsed from a Live2D `model3.json`. Sections the file does not declare stay empty;
+ * nothing here is inferred or synthesized.
+ */
+export interface CompanionAvatarCapabilities {
+  motions: Record<string, string[]>
+  expressions: string[]
+  parameters: Record<string, { min: number; max: number; default: number }>
+  hit_areas: string[]
+  groups: Record<string, string[]>
+}
+
+/** One imported Live2D model, owned by Core's storage after import. */
+export interface CompanionAvatar {
+  id: string
+  name: string
+  kind: 'live2d'
+  source_path: string
+  capabilities: CompanionAvatarCapabilities
+  created_at: string
+}
+
 const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
 
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
@@ -213,6 +235,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const companionApi = {
   gatewayUrl,
+  /**
+   * Imported Live2D models. Import copies the directory into Core's own storage, so the returned
+   * `source_path` is the stored copy rather than the folder the user picked.
+   */
+  listCompanionAvatars: () => request<CompanionAvatar[]>('/api/v1/companion-avatars'),
+  importCompanionAvatar: (input: { path: string }) =>
+    request<CompanionAvatar>('/api/v1/companion-avatars/import', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  deleteCompanionAvatar: (id: string) =>
+    request<void>(`/api/v1/companion-avatars/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   listCompanions: (includeArchived?: boolean) =>
     request<CompanionSummary[]>(`/api/v1/companions${query({ include_archived: includeArchived })}`),
   getCompanion: (id: string) => request<CompanionDetail>(`/api/v1/companions/${encodeURIComponent(id)}`),

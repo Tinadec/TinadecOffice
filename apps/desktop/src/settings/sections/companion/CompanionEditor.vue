@@ -13,14 +13,24 @@ import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
 import { api } from '@/api'
-import { companionApi, type CompanionDetail } from '@/lib/companionApi'
+import { companionApi, type CompanionAvatar, type CompanionDetail } from '@/lib/companionApi'
+import { avatarKindOf } from '@/pets/avatarKind'
 import { isCompanionRevisionConflict } from '@/lib/companionConflict'
 import CompanionMemoryPanel from './CompanionMemoryPanel.vue'
 import CompanionSkillPanel from './CompanionSkillPanel.vue'
 import CompanionConnectionPanel from './CompanionConnectionPanel.vue'
 import CompanionAutonomyPanel from './CompanionAutonomyPanel.vue'
 
-const props = defineProps<{ companionId: string; initialTab?: EditorTab }>()
+const props = defineProps<{
+  companionId: string
+  initialTab?: EditorTab
+  /**
+   * Imported Live2D models, owned by the section. Passed in rather than fetched here: the section
+   * is the surface that imports and deletes them, and a second independent read would still show
+   * the old list right after an import.
+   */
+  live2dAvatars?: CompanionAvatar[]
+}>()
 
 const { t } = useI18n()
 const { notify } = useNotifications()
@@ -79,6 +89,15 @@ const statusLabel = computed(() => {
 
 // ── face (Petdex pool) ──
 const { pool: avatarPool } = useAgentAvatars()
+
+/**
+ * Imported Live2D models are avatar choices too, so a companion can be bound to one.
+ *
+ * The value stored in `avatar` is the model id; `avatarKindOf` decides later whether that value
+ * names a Live2D model or a sprite slug. Nothing here renders a model — the import section states
+ * plainly that no renderer ships with the app.
+ */
+const live2dAvatars = computed(() => props.live2dAvatars ?? [])
 
 // ── model choices ──
 interface ModelOption { value: string; label: string }
@@ -257,8 +276,24 @@ function applyUpdatedCompanion(updated: CompanionDetail) {
               <span class="companion-avatar-choice-face"><AgentPetAvatar :pet-slug="pet.slug" :size="30" :alt="pet.displayName" /></span>
               <span class="companion-avatar-choice-name">{{ pet.displayName }}</span>
             </label>
+            <label
+              v-for="model in live2dAvatars"
+              :key="model.id"
+              class="companion-avatar-choice"
+              :class="{ active: identity.avatar === model.id }"
+              :data-testid="`companion-avatar-live2d-${model.id}`"
+            >
+              <input v-model="identity.avatar" type="radio" :value="model.id" name="companion-avatar" />
+              <span class="companion-avatar-choice-face companion-avatar-choice-live2d">Live2D</span>
+              <span class="companion-avatar-choice-name">{{ model.name }}</span>
+            </label>
           </div>
           <p class="companion-hint">{{ t('settings.companions.avatarHint') }}</p>
+          <p
+            v-if="avatarKindOf(identity.avatar, live2dAvatars.map((model) => model.id)) === 'live2d'"
+            class="companion-hint"
+            data-testid="companion-avatar-live2d-note"
+          >{{ t('settings.companions.avatarLive2dNote') }}</p>
         </div>
         <div class="companion-field">
           <label for="companion-identity-model">{{ t('settings.companions.model') }}</label>

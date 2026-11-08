@@ -102,6 +102,37 @@ test('allows the documented query keys and forwards them verbatim', async () => 
   assert.equal(calls[1].url, `${BASE}/api/v1/companions?include_archived=true`);
 });
 
+test('allows the three companion-avatar routes and still refuses DELETE elsewhere', async () => {
+  const { bridge, calls } = makeBridge();
+  const list = await bridge({ sender: COMPANION }, { method: 'GET', path: '/api/v1/companion-avatars' });
+  assert.equal(list.status, 200);
+  const imported = await bridge({ sender: COMPANION }, {
+    method: 'POST',
+    path: '/api/v1/companion-avatars/import',
+    body: { path: 'C:/models/haru' },
+  });
+  assert.equal(imported.status, 200);
+  assert.equal(calls[1].init.body, '{"path":"C:/models/haru"}');
+  const removed = await bridge({ sender: COMPANION }, {
+    method: 'DELETE',
+    path: `/api/v1/companion-avatars/${COMPANION_ID}`,
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(calls.length, 3);
+
+  // DELETE became an allowed method only for the avatar route above; companions and malformed
+  // avatar ids must stay outside the whitelist.
+  for (const payload of [
+    { method: 'DELETE', path: `/api/v1/companions/${COMPANION_ID}` },
+    { method: 'DELETE', path: '/api/v1/companion-avatars/not-a-guid' },
+    { method: 'DELETE', path: '/api/v1/companion-avatars/import' },
+  ]) {
+    const result = await bridge({ sender: COMPANION }, payload);
+    assert.equal(result.status, 400, `${payload.method} ${payload.path} must be refused`);
+  }
+  assert.equal(calls.length, 3);
+});
+
 test('passes upstream status and JSON through, including refusals', async () => {
   const { bridge } = makeBridge({
     fetchImpl: async () => upstream(412, '{"code":"companion_revision_conflict","message":"stale"}'),

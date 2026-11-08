@@ -90,6 +90,7 @@ export function installPreviewShimIfNeeded(): void {
     resetGatewayUrl: () => rejectNotAvailable('preview'),
     restartApp: () => { window.location.reload(); return Promise.resolve() },
     selectWorkspaceFolders: () => rejectNotAvailable(hostStatus.error.message),
+    selectCompanionAvatarDirectory: () => rejectNotAvailable(hostStatus.error.message),
     // A browser tab cannot read a dropped file's real path and has no main process to copy with.
     // The shim mirrors the preload's declared surface so a preview never has to rely on every
     // consumer remembering optional chaining: an unresolved path is the empty string (the drop

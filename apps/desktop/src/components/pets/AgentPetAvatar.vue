@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { PawPrint } from '@lucide/vue'
+import { Layers, PawPrint } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
+import { planAvatar, type AvatarKind } from '@/pets/avatarKind'
 
 /**
  * One agent's face.
@@ -21,6 +23,8 @@ const props = withDefaults(defineProps<{
   instanceKey?: string
   agentId?: string | null
   petSlug?: string
+  /** Which renderer this avatar needs; sprite is the only one this build can draw. */
+  avatarKind?: AvatarKind
   /** Width in pixels; the height follows the 192:208 frame. */
   size?: number
   alt?: string
@@ -28,10 +32,12 @@ const props = withDefaults(defineProps<{
   instanceKey: '',
   agentId: null,
   petSlug: '',
+  avatarKind: 'sprite',
   size: 20,
   alt: '',
 })
 
+const { t } = useI18n()
 const { urlForSlug, resolveInstanceAvatar, revision } = useAgentAvatars()
 const resolvedSlug = ref(props.petSlug)
 
@@ -54,6 +60,7 @@ watch(
 )
 
 const url = computed(() => urlForSlug(resolvedSlug.value))
+const plan = computed(() => planAvatar(props.avatarKind, resolvedSlug.value))
 const glyphSize = computed(() => Math.max(10, Math.round(props.size * 0.58)))
 </script>
 
@@ -64,7 +71,15 @@ const glyphSize = computed(() => Math.max(10, Math.round(props.size * 0.58)))
     :data-pet-slug="resolvedSlug || undefined"
     aria-hidden="true"
   >
-    <img v-if="url" :src="url" :alt="alt" draggable="false" />
+    <img v-if="plan.kind === 'sprite' && url" :src="url" :alt="alt" draggable="false" />
+    <!-- Imported, but this build has no Live2D renderer. A distinct glyph (never a sprite) keeps
+         the row honest at 16-44px where the full sentence would not fit. -->
+    <Layers
+      v-else-if="plan.kind === 'live2d'"
+      :size="glyphSize"
+      class="agent-pet-avatar-live2d"
+      :title="t('settings.companions.live2d.unavailableShort')"
+    />
     <PawPrint v-else :size="glyphSize" class="agent-pet-avatar-fallback" />
   </span>
 </template>
@@ -103,5 +118,12 @@ const glyphSize = computed(() => Math.max(10, Math.round(props.size * 0.58)))
   inset: 0;
   margin: auto;
   color: var(--text-muted);
+}
+
+.agent-pet-avatar-live2d {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  color: var(--accent-primary, var(--text-secondary));
 }
 </style>

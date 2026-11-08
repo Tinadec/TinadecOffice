@@ -290,6 +290,8 @@ declare global {
       discoverServices: () => Promise<DiscoveredService[]>;
       restartApp: () => Promise<void>;
       selectWorkspaceFolders: (title?: string) => Promise<string[]>;
+      /** Pick one folder for a Live2D model import; null when the dialog was cancelled. */
+      selectCompanionAvatarDirectory: (title?: string) => Promise<string | null>;
       /** Copies dropped files into a workspace source folder; never overwrites an existing file. */
       importWorkspaceFiles: (input: { destDir: string; files: string[] }) => Promise<{ imported: ImportedWorkspaceFile[]; skipped: SkippedWorkspaceFile[] }>;
       /** The absolute path behind a dropped `File`; empty when the host cannot resolve one. */

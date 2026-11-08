@@ -9,16 +9,18 @@
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Bot, Plus, RefreshCw } from '@lucide/vue'
+import { Archive, Bot, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import { UiBadge, UiButton, UiSwitch } from '@/components/ui'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import { useNotifications } from '@/composables/useNotifications'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { useHostAccess } from '@/lib/hostAccess'
 import { isCompanionRevisionConflict } from '@/lib/companionConflict'
+import { avatarKindOf } from '@/pets/avatarKind'
 import type { CompanionSettingsTab } from '@/lib/pageRequests'
 import {
   companionApi,
+  type CompanionAvatar,
   type CompanionSettings,
   type CompanionSummary,
 } from '@/lib/companionApi'
@@ -49,6 +51,12 @@ const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref('')
 const createForm = reactive({ name: '', tagline: '' })
+/** Imported Live2D models; the list is Core's answer, so every mutation re-reads it. */
+const avatars = ref<CompanionAvatar[]>([])
+const avatarsLoading = ref(false)
+const avatarsFailure = ref<ErrorState | null>(null)
+const importingAvatar = ref(false)
+const avatarBusyId = ref<string | null>(null)
 /** The id a deep link or a fresh creation should land on once the list is known. */
 const pendingSelectId = ref<string | null>(props.companionRequest?.id ?? null)
 /** Which editor panel a deep link asked for; the editor opens on it and follows later requests. */
@@ -64,6 +72,7 @@ const activeCompanions = computed(() => companions.value.filter((item) => item.s
 const archivedCompanions = computed(() => companions.value.filter((item) => item.status === 'archived'))
 const mainCompanion = computed(() => settings.value?.main_companion_id ?? '')
 const buddyCompanion = computed(() => settings.value?.buddy_companion_id ?? '')
+const live2dIds = computed(() => avatars.value.map((model) => model.id))
 
 function selectFromList() {
   const wanted = pendingSelectId.value ?? settings.value?.main_companion_id ?? null
@@ -98,12 +107,32 @@ async function loadSettings() {
   }
 }
 
+/**
+ * The Live2D list is a separate read with its own failure: a Core without the avatar routes must
+ * not turn the whole companion section into an error page.
+ */
+async function loadAvatars() {
+  if (!canAccessBackend.value) return
+  const read = readGeneration
+  avatarsLoading.value = true
+  try {
+    avatars.value = await companionApi.listCompanionAvatars()
+    if (read !== readGeneration) return
+    avatarsFailure.value = null
+  } catch (error) {
+    if (read !== readGeneration) return
+    avatarsFailure.value = toErrorState(error, t('settings.companions.live2d.loadFailed'))
+  } finally {
+    if (read === readGeneration) avatarsLoading.value = false
+  }
+}
+
 async function load() {
   if (!canAccessBackend.value) return
   const read = ++readGeneration
   loading.value = true
   settingsConflict.value = false
-  await Promise.all([loadList(), loadSettings()])
+  await Promise.all([loadList(), loadSettings(), loadAvatars()])
   if (read !== readGeneration) return
   loading.value = false
 }
@@ -206,6 +235,60 @@ async function createCompanion() {
     createError.value = toErrorState(error, t('settings.companions.createFailed')).message
   } finally {
     creating.value = false
+  }
+}
+
+function motionCount(model: CompanionAvatar): number {
+  return Object.values(model.capabilities.motions ?? {}).reduce(
+    (total, names) => total + (Array.isArray(names) ? names.length : 0),
+    0,
+  )
+}
+
+/**
+ * Picking is a renderer concern (native dialog), importing is Core's: the absolute path is handed
+ * over and Core copies the directory, so this surface never touches the user's files again.
+ */
+async function importAvatar() {
+  if (importingAvatar.value) return
+  const pick = window.tinadec?.selectCompanionAvatarDirectory
+  if (typeof pick !== 'function') {
+    notify.error(new Error(t('settings.companions.live2d.hostUnavailable')), {
+      title: t('settings.companions.live2d.importFailed'),
+      key: 'companion-avatar-import',
+    })
+    return
+  }
+  importingAvatar.value = true
+  try {
+    const path = await pick(t('settings.companions.live2d.importPickTitle'))
+    if (!path) return
+    await companionApi.importCompanionAvatar({ path })
+    await loadAvatars()
+  } catch (error) {
+    notify.error(error, { title: t('settings.companions.live2d.importFailed'), key: 'companion-avatar-import' })
+  } finally {
+    importingAvatar.value = false
+  }
+}
+
+async function removeAvatar(model: CompanionAvatar) {
+  const confirmed = await confirm({
+    title: t('settings.companions.live2d.deleteTitle', { name: model.name }),
+    message: t('settings.companions.live2d.deleteMessage'),
+    confirmLabel: t('settings.companions.live2d.deleteConfirm'),
+    cancelLabel: t('common.cancel'),
+    destructive: true,
+  })
+  if (!confirmed) return
+  avatarBusyId.value = model.id
+  try {
+    await companionApi.deleteCompanionAvatar(model.id)
+    await loadAvatars()
+  } catch (error) {
+    notify.error(error, { title: t('settings.companions.live2d.deleteFailed'), key: `companion-avatar-delete-${model.id}` })
+  } finally {
+    avatarBusyId.value = null
   }
 }
 
@@ -332,6 +415,69 @@ async function archiveCompanion(companion: CompanionSummary) {
       </div>
     </section>
 
+    <section class="companion-global" data-testid="companion-avatars">
+      <div class="companion-list-head">
+        <h3>{{ t('settings.companions.live2d.title') }}</h3>
+        <UiButton
+          size="sm"
+          data-testid="companion-avatar-import"
+          :disabled="!canAccessBackend || importingAvatar"
+          @click="importAvatar"
+        >
+          <Plus :size="14" />
+          <span>{{ importingAvatar ? t('settings.companions.live2d.importing') : t('settings.companions.live2d.importAction') }}</span>
+        </UiButton>
+      </div>
+      <p class="companion-hint" data-testid="companion-live2d-renderer-note">
+        {{ t('settings.companions.live2d.rendererNote') }}
+      </p>
+      <div v-if="avatarsFailure" role="alert" class="companion-error" data-testid="companion-avatar-error">
+        <p>{{ avatarsFailure.message }}</p>
+        <UiButton variant="outline" size="sm" :disabled="avatarsLoading || !canAccessBackend" @click="loadAvatars">
+          {{ t('common.retry') }}
+        </UiButton>
+      </div>
+      <div
+        v-else-if="avatarsLoading && avatars.length === 0"
+        class="companion-skeleton"
+        role="status"
+        :aria-label="t('settings.companions.live2d.loading')"
+      >
+        <span />
+        <span />
+      </div>
+      <p v-else-if="avatars.length === 0" class="companion-empty" data-testid="companion-avatar-empty">
+        {{ t('settings.companions.live2d.empty') }}
+      </p>
+      <ul v-else class="companion-rows">
+        <li
+          v-for="model in avatars"
+          :key="model.id"
+          class="companion-row"
+          :data-testid="`companion-avatar-row-${model.id}`"
+        >
+          <span class="companion-row-copy">
+            <strong>{{ model.name }}</strong>
+            <span class="companion-row-meta" data-testid="companion-avatar-caps">
+              {{ t('settings.companions.live2d.motionCount', { count: motionCount(model) }) }}
+              ·
+              {{ t('settings.companions.live2d.expressionCount', { count: model.capabilities.expressions.length }) }}
+            </span>
+          </span>
+          <UiButton
+            variant="ghost"
+            size="sm"
+            :disabled="avatarBusyId !== null"
+            :data-testid="`companion-avatar-delete-${model.id}`"
+            @click="removeAvatar(model)"
+          >
+            <Trash2 :size="14" />
+            <span>{{ t('settings.companions.live2d.deleteAction') }}</span>
+          </UiButton>
+        </li>
+      </ul>
+    </section>
+
     <section class="companion-list-section">
       <div class="companion-list-head">
         <h3>{{ t('settings.companions.listTitle') }}</h3>
@@ -358,7 +504,13 @@ async function archiveCompanion(companion: CompanionSummary) {
           :data-testid="`companion-row-${companion.id}`"
         >
           <button type="button" class="companion-row-main" :aria-pressed="companion.id === selectedId" @click="selectCompanion(companion.id)">
-            <AgentPetAvatar class="companion-avatar" :pet-slug="companion.avatar ?? ''" :size="26" :alt="companion.name" />
+            <AgentPetAvatar
+              class="companion-avatar"
+              :pet-slug="companion.avatar ?? ''"
+              :avatar-kind="avatarKindOf(companion.avatar, live2dIds) ?? 'sprite'"
+              :size="26"
+              :alt="companion.name"
+            />
             <span class="companion-row-copy">
               <strong>{{ companion.name }}</strong>
               <span class="companion-row-meta">{{ companion.tagline || t('settings.companions.noTagline') }}</span>
@@ -413,6 +565,7 @@ async function archiveCompanion(companion: CompanionSummary) {
       :key="`${selectedId}:${editorRequestSeq}`"
       :companion-id="selectedId"
       :initial-tab="editorTab"
+      :live2d-avatars="avatars"
       class="companion-editor-host"
     />
     <p v-else-if="!loading" class="companion-empty">{{ t('settings.companions.selectCompanion') }}</p>

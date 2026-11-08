@@ -355,6 +355,9 @@ async function createWindow() {
 ipcMain.handle('tinadec:select-workspace-folders', async (event, title) => {
   return require('./workspaceFolders.cjs').selectWorkspaceFolders(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender, dialog }, title);
 });
+ipcMain.handle('tinadec:select-companion-avatar-directory', async (event, title) => {
+  return require('./companionAvatars.cjs').selectCompanionAvatarDirectory(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender, dialog }, title);
+});
 ipcMain.handle('tinadec:import-workspace-files', async (event, input) => {
   return require('./workspaceImport.cjs').importWorkspaceFiles(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender }, input);
 });

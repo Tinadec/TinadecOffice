@@ -7,6 +7,7 @@ import zh from '@/locales/zh-CN'
 import { ApiError } from '@/lib/apiError'
 import type {
   CompanionAutonomyTickResult,
+  CompanionAvatar,
   CompanionConnection,
   CompanionDetail,
   CompanionMemory,
@@ -25,6 +26,9 @@ const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
   patchSettings: vi.fn(),
   listCompanions: vi.fn(),
+  listCompanionAvatars: vi.fn(),
+  importCompanionAvatar: vi.fn(),
+  deleteCompanionAvatar: vi.fn(),
   getCompanion: vi.fn(),
   createCompanion: vi.fn(),
   patchCompanion: vi.fn(),
@@ -53,6 +57,9 @@ vi.mock('@/lib/companionApi', () => ({
     getSettings: mocks.getSettings,
     patchSettings: mocks.patchSettings,
     listCompanions: mocks.listCompanions,
+    listCompanionAvatars: mocks.listCompanionAvatars,
+    importCompanionAvatar: mocks.importCompanionAvatar,
+    deleteCompanionAvatar: mocks.deleteCompanionAvatar,
     getCompanion: mocks.getCompanion,
     createCompanion: mocks.createCompanion,
     patchCompanion: mocks.patchCompanion,
@@ -186,6 +193,24 @@ function connection(over: Partial<CompanionConnection> = {}): CompanionConnectio
   }
 }
 
+function avatar(over: Partial<CompanionAvatar> = {}): CompanionAvatar {
+  return {
+    id: 'model-1',
+    name: 'Haru',
+    kind: 'live2d',
+    source_path: 'C:/tinadec/companion-avatars/model-1',
+    capabilities: {
+      motions: { Idle: ['idle_a', 'idle_b'], Tap: ['tap'] },
+      expressions: ['smile', 'wink'],
+      parameters: { ParamAngleX: { min: -30, max: 30, default: 0 } },
+      hit_areas: ['Head'],
+      groups: {},
+    },
+    created_at: '2026-01-03T00:00:00Z',
+    ...over,
+  }
+}
+
 const mounted: Array<{ unmount(): void }> = []
 
 function mountSection(props: { companionRequest?: { id: string; seq: number; tab?: 'identity' | 'memory' | 'skills' | 'connections' | 'autonomy' } | null } = {}) {
@@ -219,6 +244,7 @@ beforeEach(() => {
   mocks.listMemories.mockResolvedValue([])
   mocks.listSkills.mockResolvedValue([])
   mocks.listConnections.mockResolvedValue([])
+  mocks.listCompanionAvatars.mockResolvedValue([])
   mocks.listAgentPacks.mockResolvedValue([])
   mocks.confirm.mockResolvedValue(true)
 })
@@ -382,5 +408,77 @@ describe('companion settings section', () => {
     expect(mocks.tickAutonomy).toHaveBeenCalledWith('c1')
     expect(wrapper.get('[data-testid="companion-autonomy-result"]').text())
       .toContain(zh.settings.companions.autonomy.reason.model_unavailable)
+  })
+
+  it('lists imported Live2D models with their motion and expression counts', async () => {
+    mocks.listCompanionAvatars.mockResolvedValue([avatar()])
+    const wrapper = mountSection()
+    await flushPromises()
+
+    expect(mocks.listCompanionAvatars).toHaveBeenCalledTimes(1)
+    const row = wrapper.get('[data-testid="companion-avatar-row-model-1"]')
+    expect(row.text()).toContain('Haru')
+    expect(row.text()).toContain(zh.settings.companions.live2d.motionCount.replace('{count}', '3'))
+    expect(row.text()).toContain(zh.settings.companions.live2d.expressionCount.replace('{count}', '2'))
+  })
+
+  it('says no model is imported yet and states the renderer is not bundled', async () => {
+    const wrapper = mountSection()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="companion-avatar-empty"]').text())
+      .toBe(zh.settings.companions.live2d.empty)
+    // The section must never imply a model can be displayed in this build.
+    expect(wrapper.get('[data-testid="companion-live2d-renderer-note"]').text()).toContain('Cubism Core')
+  })
+
+  it('imports the folder picked by the host and re-reads the list', async () => {
+    const pick = vi.fn(async () => 'C:/models/haru')
+    Object.defineProperty(window, 'tinadec', {
+      configurable: true,
+      value: { selectCompanionAvatarDirectory: pick },
+    })
+    mocks.importCompanionAvatar.mockResolvedValue(avatar())
+
+    const wrapper = mountSection()
+    await flushPromises()
+    mocks.listCompanionAvatars.mockResolvedValue([avatar()])
+    await wrapper.get('[data-testid="companion-avatar-import"]').trigger('click')
+    await flushPromises()
+
+    expect(pick).toHaveBeenCalledWith(zh.settings.companions.live2d.importPickTitle)
+    expect(mocks.importCompanionAvatar).toHaveBeenCalledWith({ path: 'C:/models/haru' })
+    expect(mocks.listCompanionAvatars).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="companion-avatar-row-model-1"]').exists()).toBe(true)
+  })
+
+  it('does not import anything when the folder picker is cancelled', async () => {
+    const pick = vi.fn(async () => null)
+    Object.defineProperty(window, 'tinadec', {
+      configurable: true,
+      value: { selectCompanionAvatarDirectory: pick },
+    })
+    const wrapper = mountSection()
+    await flushPromises()
+    await wrapper.get('[data-testid="companion-avatar-import"]').trigger('click')
+    await flushPromises()
+
+    expect(pick).toHaveBeenCalledTimes(1)
+    expect(mocks.importCompanionAvatar).not.toHaveBeenCalled()
+  })
+
+  it('deletes an imported model only after confirmation', async () => {
+    mocks.listCompanionAvatars.mockResolvedValue([avatar()])
+    const wrapper = mountSection()
+    await flushPromises()
+
+    mocks.deleteCompanionAvatar.mockResolvedValue(undefined)
+    mocks.listCompanionAvatars.mockResolvedValue([])
+    await wrapper.get('[data-testid="companion-avatar-delete-model-1"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.confirm).toHaveBeenCalled()
+    expect(mocks.deleteCompanionAvatar).toHaveBeenCalledWith('model-1')
+    expect(wrapper.find('[data-testid="companion-avatar-row-model-1"]').exists()).toBe(false)
   })
 })
