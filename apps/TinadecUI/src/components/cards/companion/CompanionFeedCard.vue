@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Activity,
@@ -52,6 +52,26 @@ const rows = computed(() => feedRows(activityRows.value, {
   conversationKinds: conversationKinds.value,
 }))
 const days = computed(() => groupByDay(rows.value))
+
+/**
+ * Whether the team is actually reachable, or only while the window is open.
+ *
+ * The autonomy worker lives in the Core process, and Core lives as long as this app does. With
+ * "keep running when the window closes" off, closing the window stops everything — saying
+ * nothing would let the user assume a 24/7 team they do not have.
+ */
+type Residency = 'stays' | 'sleeps' | 'unknown'
+const residency = ref<Residency>('unknown')
+onMounted(async () => {
+  const bridge = typeof window === 'undefined' ? undefined : window.tinadec
+  if (!bridge?.getAppConfig) return
+  try {
+    const config = await bridge.getAppConfig()
+    residency.value = config.close_to_tray === true ? 'stays' : 'sleeps'
+  } catch {
+    // The host is not answering; "unknown" is the honest answer, not a guess.
+  }
+})
 
 const thinkingCount = computed(() =>
   activeCompanions.value.filter((companion) => companion.current_activity === 'thinking').length)
@@ -300,6 +320,12 @@ function eventLine(row: CompanionActivity): EventLine {
         {{ t('companion.center.nowAttention', { count: attentionCount }) }}
       </span>
       <span class="companion-now-item">{{ t('companion.center.nowAutonomous', { count: autonomousToday }) }}</span>
+      <span
+        v-if="residency !== 'unknown'"
+        class="companion-now-item companion-now-residency"
+        :class="`companion-now-residency-${residency}`"
+        :data-testid="`companion-residency-${residency}`"
+      >{{ t(residency === 'stays' ? 'companion.center.residencyStays' : 'companion.center.residencySleeps') }}</span>
     </div>
 
     <div class="companion-filters" role="tablist">
@@ -555,6 +581,16 @@ function eventLine(row: CompanionActivity): EventLine {
   line-height: 1.45;
   color: var(--text-primary);
   overflow-wrap: anywhere;
+}
+
+/* The difference between "always on" and "on while the window is open" is a fact, not a mood. */
+.companion-now-residency {
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+.companion-now-residency-sleeps {
+  color: var(--text-muted);
 }
 
 .companion-feed-meta {
