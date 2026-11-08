@@ -222,6 +222,8 @@ const companionActivity = {
   additionalProperties: true,
   properties: {
     id: uuid,
+    // Tenant-monotonic position in the feed; the SSE `id:` and ?after_seq both use it.
+    seq: { type: 'integer' },
     kind: { type: 'string' },
     companion_id: nullableUuid,
     companion_name: nullableString,

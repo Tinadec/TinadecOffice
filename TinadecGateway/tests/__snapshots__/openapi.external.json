@@ -1020,6 +1020,9 @@
             "nullable": true,
             "type": "object"
           },
+          "seq": {
+            "type": "integer"
+          },
           "summary": {
             "nullable": true,
             "type": "string"
@@ -9411,6 +9414,27 @@
           }
         },
         "summary": "Pause or resume a conversation",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-events": {
+      "get": {
+        "operationId": "getApiV1Companion-events",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat)"
+          }
+        },
+        "summary": "Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat)",
         "tags": [
           "Companions"
         ]

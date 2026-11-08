@@ -54,6 +54,8 @@ const routes: RouteCase[] = [
   { method: 'POST', template: '/api/v1/companion-conversations/{conversationId}/messages', body: { body: 'Hello Nova', addressed_to: [id] }, status: 200 },
   { method: 'POST', template: '/api/v1/companion-conversations/{conversationId}/pause', body: { paused: true }, status: 200 },
   { method: 'GET', template: '/api/v1/companion-runs/{runId}', status: 200 },
+  // SSE: the route forwards the cursor and streams the body instead of buffering it.
+  { method: 'GET', template: '/api/v1/companion-events', query: 'after_seq=7', status: 200 },
 ];
 
 function materialize(route: RouteCase): string {
@@ -91,9 +93,9 @@ test('every companion operation forwards the exact path, query, JSON body and st
     assert.equal(call.body, body, `${route.method} ${url} rewrote the body`);
   }
   assert.equal(calls.length, routes.length);
-  // A contract-size pin: 21 paths / 32 operations. Shrinking the proxied surface fails here.
-  assert.equal(new Set(routes.map((route) => route.template)).size, 21);
-  assert.equal(routes.length, 32);
+  // A contract-size pin: 22 paths / 33 operations. Shrinking the proxied surface fails here.
+  assert.equal(new Set(routes.map((route) => route.template)).size, 22);
+  assert.equal(routes.length, 33);
 });
 
 test('If-Match and Idempotency-Key reach Core unchanged', { concurrency: false }, async () => {

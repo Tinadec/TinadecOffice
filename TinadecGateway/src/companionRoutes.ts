@@ -1,5 +1,5 @@
 import type { AnyElysia } from 'elysia';
-import { proxyRaw } from './coreClient.js';
+import { proxyRaw, proxySse } from './coreClient.js';
 import { externalJsonResponse } from './externalDtoOpenApi.js';
 
 /**
@@ -22,6 +22,8 @@ interface CompanionRoute {
   /** Response component for the success status; omitted for a bodyless 204. */
   response?: string;
   status?: 200 | 201 | 204;
+  /** Server-sent events: the body must stream through instead of being buffered as JSON. */
+  stream?: boolean;
 }
 
 // The complete surface Core actually serves (`AspNetCore/Endpoints/CompanionEndpoints.cs` and
@@ -61,6 +63,9 @@ const companionRoutes: CompanionRoute[] = [
   { method: 'POST', path: '/api/v1/companion-conversations/:conversationId/messages', summary: 'Post a user message and create the runs it owes (Idempotency-Key)', response: 'CompanionSendMessageResult' },
   { method: 'POST', path: '/api/v1/companion-conversations/:conversationId/pause', summary: 'Pause or resume a conversation', response: 'CompanionConversation' },
   { method: 'GET', path: '/api/v1/companion-runs/:runId', summary: 'Poll one companion run', response: 'CompanionRun' },
+  // The live feed is the one companion route that is not JSON. It is listed here so the contract
+  // pin covers it, and the handler below streams instead of buffering.
+  { method: 'GET', path: '/api/v1/companion-events', summary: 'Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat)', stream: true },
 ];
 
 /** Core owns companion identity, visibility, revisions, budgets and refusals. */
@@ -69,10 +74,29 @@ export function registerCompanionRoutes(app: AnyElysia, forwardHeaders: (request
     app.route(route.method, route.path, async context => {
       const request = context.request as Request;
       const url = new URL(request.url);
+      const headers = forwardHeaders(request);
+      if (route.stream) {
+        // A long-lived stream: no idle cut-off, no buffering, and client abort propagated so the
+        // upstream subscription ends with the downstream one.
+        keepStreamOpen(context.server, request);
+        const cursor = url.searchParams.get('after_seq') ?? request.headers.get('last-event-id') ?? request.headers.get('Last-Event-ID');
+        const search = new URLSearchParams(url.searchParams);
+        if (cursor) search.set('after_seq', cursor);
+        const suffix = search.toString() ? `?${search.toString()}` : '';
+        const response = await proxySse(`${url.pathname}${suffix}`, {
+          headers: { ...headers, ...(cursor ? { 'last-event-id': cursor } : {}) },
+          signal: request.signal,
+        });
+        const set = context.set as { headers: Record<string, string | number> };
+        set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
+        set.headers['cache-control'] = 'no-cache';
+        set.headers['x-accel-buffering'] = 'no';
+        return new Response(response.body, { status: response.status, headers: response.headers });
+      }
       const body: unknown = context.body;
       return proxyRaw(url.pathname + url.search, {
         method: route.method,
-        headers: forwardHeaders(request),
+        headers,
         // GET/DELETE never carry a body; every write forwards the parsed JSON verbatim.
         body: route.method === 'GET' || route.method === 'DELETE' || body === undefined
           ? undefined
@@ -82,9 +106,16 @@ export function registerCompanionRoutes(app: AnyElysia, forwardHeaders: (request
     }, { detail: {
       summary: route.summary,
       tags: ['Companions'],
-      responses: route.response
-        ? { [route.status ?? 200]: externalJsonResponse(route.response, route.summary) }
-        : { 204: { description: 'Deleted; Core returned no content.' } },
+      responses: route.stream
+        ? { 200: { description: route.summary, content: { 'text/event-stream': { schema: { type: 'string' } } } } }
+        : route.response
+          ? { [route.status ?? 200]: externalJsonResponse(route.response, route.summary) }
+          : { 204: { description: 'Deleted; Core returned no content.' } },
     } as never });
   }
+}
+
+/** Bun's idle timeout is shorter than Core's heartbeat; the stream must opt out per request. */
+function keepStreamOpen(server: { timeout(request: Request, seconds: number): void } | null | undefined, request: Request) {
+  try { server?.timeout(request, 0); } catch { /* app.handle() in tests has no server */ }
 }
