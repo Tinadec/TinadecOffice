@@ -25,7 +25,7 @@ const api = vi.hoisted(() => ({
   listActivity: vi.fn(async (): Promise<unknown[]> => []),
   listAllConversations: vi.fn(async (): Promise<unknown[]> => []),
   listConnectionsOverview: vi.fn(async (): Promise<unknown[]> => []),
-  getSettings: vi.fn(async () => ({ main_companion_id: null, buddy_companion_id: null, autonomy_paused: false, revision: 0 })),
+  getSettings: vi.fn(async () => ({ main_companion_id: null, buddy_companion_id: null, recruit_limit: 3, autonomy_paused: false, revision: 0 })),
   listMessages: vi.fn(async (): Promise<unknown[]> => []),
   pauseConversation: vi.fn(async () => ({})),
   getCompanion: vi.fn(async () => ({})),

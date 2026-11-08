@@ -53,6 +53,24 @@ export interface CompanionAutonomyInput {
  * A standing authorization for one class of autonomous action. `proposed` is a question the user
  * has not answered yet; only `approved` lets that action run unattended.
  */
+/**
+ * A companion asking for a long-lived helper. Approving is what creates it, and only within the
+ * tenant's recruit limit — the proposer can never create a companion itself.
+ */
+export interface CompanionRecruitment {
+  id: string
+  proposer_id: string
+  name: string
+  persona_document: string | null
+  rationale: string | null
+  status: 'proposed' | 'approved' | 'denied'
+  created_companion_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
 export interface CompanionMandate {
   id: string
   companion_id: string
@@ -137,6 +155,8 @@ export interface CompanionMessagePostInput {
 export interface CompanionSettingsPatchInput {
   main_companion_id?: string | null
   buddy_companion_id?: string | null
+  /** How many companions other companions may recruit; 0 turns recruiting off. */
+  recruit_limit?: number
   autonomy_paused?: boolean
 }
 
@@ -314,6 +334,11 @@ export const companionApi = {
     request<CompanionMandate[]>(`/api/v1/companions/${encodeURIComponent(id)}/mandates`),
   decideMandate: (id: string, mandateId: string, revision: number, decision: 'approved' | 'denied') =>
     request<CompanionMandate>(`/api/v1/companions/${encodeURIComponent(id)}/mandates/${encodeURIComponent(mandateId)}/decision`, {
+      method: 'POST', headers: ifMatch(revision), body: JSON.stringify({ decision }),
+    }),
+  listRecruitments: () => request<CompanionRecruitment[]>('/api/v1/companion-recruitments'),
+  decideRecruitment: (recruitmentId: string, revision: number, decision: 'approved' | 'denied') =>
+    request<CompanionRecruitment>(`/api/v1/companion-recruitments/${encodeURIComponent(recruitmentId)}/decision`, {
       method: 'POST', headers: ifMatch(revision), body: JSON.stringify({ decision }),
     }),
 }

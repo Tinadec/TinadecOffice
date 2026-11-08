@@ -131,7 +131,7 @@ function selectCompanion(id: string) {
   selectedId.value = id
 }
 
-async function patchGlobal(patch: { main_companion_id?: string | null; buddy_companion_id?: string | null; autonomy_paused?: boolean }) {
+async function patchGlobal(patch: { main_companion_id?: string | null; buddy_companion_id?: string | null; recruit_limit?: number; autonomy_paused?: boolean }) {
   const current = settings.value
   if (!current || savingGlobal.value) return
   savingGlobal.value = true
@@ -157,6 +157,13 @@ function onMainCompanionChange(event: Event) {
 function onBuddyCompanionChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
   void patchGlobal({ buddy_companion_id: value || null })
+}
+
+/** The recruit ceiling is the team's own growth budget; 0 turns recruiting off. */
+function onRecruitLimitChange(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (!Number.isInteger(value) || value < 0) return
+  void patchGlobal({ recruit_limit: Math.min(value, 20) })
 }
 
 function openCreate() {
@@ -304,6 +311,23 @@ async function archiveCompanion(companion: CompanionSummary) {
           :model-value="settings?.autonomy_paused === true"
           :disabled="!settings || savingGlobal"
           @update:model-value="(value: boolean) => patchGlobal({ autonomy_paused: value })"
+        />
+      </div>
+      <div class="companion-switch-row">
+        <div class="companion-switch-copy">
+          <strong>{{ t('settings.companions.recruitLimit') }}</strong>
+          <p class="companion-hint">{{ t('settings.companions.recruitLimitHint') }}</p>
+        </div>
+        <input
+          class="companion-recruit-limit"
+          type="number"
+          min="0"
+          max="20"
+          step="1"
+          data-testid="companion-recruit-limit"
+          :value="settings?.recruit_limit ?? 3"
+          :disabled="!settings || savingGlobal"
+          @change="onRecruitLimitChange"
         />
       </div>
     </section>

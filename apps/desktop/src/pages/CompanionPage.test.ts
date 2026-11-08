@@ -478,7 +478,7 @@ function createChatApi(options: ChatApiOptions = {}) {
   ]
   const settings: CompanionSettings = options.settings ?? {
     main_companion_id: companions[0]?.id ?? null,
-    buddy_companion_id: null,
+    buddy_companion_id: null, recruit_limit: 3,
     autonomy_paused: false,
     revision: 1,
   }
@@ -623,7 +623,7 @@ describe('companion chat', () => {
   it('shows the empty state when no active companion exists', async () => {
     const harness = createChatApi({
       companions: [],
-      settings: { main_companion_id: null, buddy_companion_id: null, autonomy_paused: false, revision: 1 },
+      settings: { main_companion_id: null, buddy_companion_id: null, recruit_limit: 3, autonomy_paused: false, revision: 1 },
     })
     const wrapper = mountChat(harness.api)
     await flushPromises()

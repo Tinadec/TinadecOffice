@@ -11,7 +11,7 @@ import type { CompanionActivity, CompanionConversation } from './companionApi'
  * action is: the companion is waiting for an answer before it may act, so leaving it in the feed
  * unanswered means the partner stays frozen rather than that it is idle.
  */
-const ATTENTION_KINDS = new Set(['run_failed', 'autonomy_proposed'])
+const ATTENTION_KINDS = new Set(['run_failed', 'autonomy_proposed', 'autonomy_recruit_proposed'])
 
 /** Kinds a companion produced on its own schedule rather than in reply to the user. */
 const AUTONOMOUS_KINDS = new Set([
@@ -22,6 +22,9 @@ const AUTONOMOUS_KINDS = new Set([
   'autonomy_proposed',
   'autonomy_mandate_approved',
   'autonomy_mandate_denied',
+  'autonomy_recruit_proposed',
+  'autonomy_recruit_approved',
+  'autonomy_recruit_denied',
 ])
 
 export type CompanionFeedFilter = 'all' | 'attention' | 'groups' | 'autonomous'

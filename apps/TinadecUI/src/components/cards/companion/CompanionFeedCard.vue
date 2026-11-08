@@ -109,6 +109,9 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   autonomy_proposed: ShieldCheck,
   autonomy_mandate_approved: ShieldCheck,
   autonomy_mandate_denied: XCircle,
+  autonomy_recruit_proposed: UserPlus,
+  autonomy_recruit_approved: UserPlus,
+  autonomy_recruit_denied: XCircle,
 }
 
 function kindIcon(row: CompanionActivity): LucideIcon {
@@ -125,6 +128,31 @@ function mandateOf(row: CompanionActivity): { id: string; revision: number } | n
   const revision = row.payload?.revision
   if (typeof id !== 'string' || typeof revision !== 'number') return null
   return { id, revision }
+}
+
+/** A recruit proposal carries its own id; approving it is what creates the companion. */
+function recruitmentOf(row: CompanionActivity): { id: string; revision: number } | null {
+  if (row.kind !== 'autonomy_recruit_proposed') return null
+  const id = row.payload?.recruitment_id
+  const revision = row.payload?.revision
+  if (typeof id !== 'string' || typeof revision !== 'number') return null
+  return { id, revision }
+}
+
+async function decideRecruit(row: CompanionActivity, decision: 'approved' | 'denied'): Promise<void> {
+  const recruitment = recruitmentOf(row)
+  if (!recruitment || deciding.value) return
+  deciding.value = recruitment.id
+  decideError.value = ''
+  try {
+    await companionApi.decideRecruitment(recruitment.id, recruitment.revision, decision)
+    await refreshCompanionCenter()
+  } catch {
+    decideError.value = t('companion.center.recruitDecideFailed')
+    await refreshCompanionCenter()
+  } finally {
+    deciding.value = null
+  }
 }
 
 async function decide(row: CompanionActivity, decision: 'approved' | 'denied'): Promise<void> {
@@ -219,6 +247,24 @@ function eventLine(row: CompanionActivity): EventLine {
         text: t('companion.center.eventMandateDenied', { action: text(row.payload, 'action') }),
         namesConversation: false,
       }
+    case 'autonomy_recruit_proposed':
+      return {
+        text: t('companion.center.eventRecruitProposed', {
+          who: speaker,
+          name: text(row.payload, 'name') || '',
+        }),
+        namesConversation: false,
+      }
+    case 'autonomy_recruit_approved':
+      return {
+        text: t('companion.center.eventRecruitApproved', { name: text(row.payload, 'name') || '' }),
+        namesConversation: false,
+      }
+    case 'autonomy_recruit_denied':
+      return {
+        text: t('companion.center.eventRecruitDenied', { name: text(row.payload, 'name') || '' }),
+        namesConversation: false,
+      }
     case 'run_completed':
       return { text: t('companion.center.eventRunCompleted', { who: speaker }), namesConversation: false }
     case 'run_failed':
@@ -300,6 +346,22 @@ function eventLine(row: CompanionActivity): EventLine {
                   · {{ row.conversation_title }}
                 </span>
               </p>
+              <div v-if="recruitmentOf(row)" class="companion-feed-decide">
+                <button
+                  type="button"
+                  class="companion-approve"
+                  :disabled="deciding === recruitmentOf(row)!.id"
+                  :data-testid="`recruit-approve-${recruitmentOf(row)!.id}`"
+                  @click="decideRecruit(row, 'approved')"
+                >{{ t('companion.center.recruitApprove') }}</button>
+                <button
+                  type="button"
+                  class="companion-deny"
+                  :disabled="deciding === recruitmentOf(row)!.id"
+                  :data-testid="`recruit-deny-${recruitmentOf(row)!.id}`"
+                  @click="decideRecruit(row, 'denied')"
+                >{{ t('companion.center.recruitDeny') }}</button>
+              </div>
               <div v-if="mandateOf(row)" class="companion-feed-decide">
                 <button
                   type="button"

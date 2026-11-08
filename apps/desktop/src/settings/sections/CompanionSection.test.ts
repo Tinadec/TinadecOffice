@@ -99,7 +99,7 @@ vi.mock('@/composables/useNotifications', () => ({
 /** UiBadge is mocked to a span above; no vapor component is rendered by this suite. */
 
 function settings(over: Partial<CompanionSettings> = {}): CompanionSettings {
-  return { main_companion_id: 'c1', buddy_companion_id: null, autonomy_paused: false, revision: 1, ...over }
+  return { main_companion_id: 'c1', buddy_companion_id: null, recruit_limit: 3, autonomy_paused: false, revision: 1, ...over }
 }
 
 function summary(id: string, name: string, over: Partial<CompanionSummary> = {}): CompanionSummary {
