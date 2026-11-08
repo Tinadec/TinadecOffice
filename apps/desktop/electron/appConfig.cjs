@@ -48,7 +48,8 @@ function loadAppConfig(configFile, env = process.env, options = {}) {
     launch_at_login: readLaunchAtLogin(stored),
     companion_mode_enabled: readCompanionModeEnabled(stored),
     companion_capsule_style: readCompanionCapsuleStyle(stored),
-    companion_capsule_reveal: readCompanionCapsuleReveal(stored) };
+    companion_capsule_reveal: readCompanionCapsuleReveal(stored),
+    companion_speak_replies: readCompanionSpeakReplies(stored) };
   const managedUrl = env.TINADEC_GATEWAY_URL?.trim();
   if (managedUrl) {
     return { gateway_url: normalizeGatewayUrl(managedUrl), source: 'environment', managed: true, path: configFile,
@@ -152,6 +153,18 @@ function readCompanionCapsuleStyle(document) {
  * than refusing to start the app. A non-integer is a type error and does throw, like every other
  * numeric key here.
  */
+/**
+ * Read companion replies aloud. Off by default: a companion that starts talking is a surprise,
+ * and the platform voices differ enough that the user should choose it.
+ */
+function readCompanionSpeakReplies(document) {
+  const value = readCompanionTable(document)?.speak_replies;
+  if (value !== undefined && typeof value !== 'boolean') {
+    throw new Error('desktop.toml companion.speak_replies must be a boolean.');
+  }
+  return value ?? false;
+}
+
 function readCompanionCapsuleReveal(document) {
   const value = readCompanionTable(document)?.capsule_reveal;
   if (value === undefined) return DEFAULT_CAPSULE_REVEAL;
@@ -281,6 +294,18 @@ function saveCompanionMode(configFile, enabled, env = process.env) {
  * Persist how much of the peeking pet stays on screen. Like the style, the value is validated
  * before anything is written, so desktop.toml can never hold a step the window cannot park at.
  */
+/** Turning this on reads new companion replies aloud with the platform voice. */
+function saveCompanionSpeakReplies(configFile, enabled, env = process.env) {
+  if (typeof enabled !== 'boolean') throw new Error('Companion speak replies must be a boolean.');
+  const source = readDocumentSource(configFile);
+  const document = parse(source);
+  readCompanionSpeakReplies(document);
+  document.companion ??= Object.create(null);
+  document.companion.speak_replies = enabled;
+  writeDocumentSource(configFile, tableScalarDocumentSource(source, document, 'companion', 'speak_replies'));
+  return loadAppConfig(configFile, env);
+}
+
 function saveCompanionCapsuleReveal(configFile, reveal, env = process.env) {
   if (typeof reveal !== 'number' || !Number.isInteger(reveal)) {
     throw new Error('Companion capsule reveal must be an integer.');
@@ -359,6 +384,7 @@ module.exports = {
   saveCloseToTray,
   saveLaunchAtLogin,
   saveCompanionCapsuleReveal,
+  saveCompanionSpeakReplies,
   saveCompanionCapsuleStyle,
   saveCompanionMode,
   saveDebugStudioEnabled,

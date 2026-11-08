@@ -68,6 +68,8 @@ const bridge = {
     loginListener = callback
     return () => { loginListener = undefined }
   }),
+  saveCompanionSpeakReplies: vi.fn(),
+  onCompanionSpeakRepliesChanged: vi.fn(() => () => {}),
 }
 
 function create() {
@@ -90,6 +92,7 @@ beforeEach(() => {
   bridge.getAppConfig.mockResolvedValue({ gateway_url: 'http://127.0.0.1:48730', source: 'default', managed: false, close_to_tray: false, launch_at_login: false, companion_mode_enabled: false })
   bridge.saveCloseToTray.mockImplementation(async (enabled: boolean) => ({ close_to_tray: enabled }))
   bridge.saveLaunchAtLogin.mockImplementation(async (enabled: boolean) => ({ launch_at_login: enabled }))
+  bridge.saveCompanionSpeakReplies.mockImplementation(async (enabled: boolean) => ({ companion_speak_replies: enabled }))
   bridge.saveCompanionMode.mockImplementation(async (enabled: boolean) => ({ companion_mode_enabled: enabled }))
   bridge.saveCompanionCapsuleStyle.mockImplementation(async (style: string) => ({ companion_capsule_style: style }))
   bridge.saveCompanionCapsuleReveal.mockImplementation(async (reveal: number) => ({ companion_capsule_reveal: reveal }))

@@ -501,11 +501,38 @@ function conversationLabel(conversation: CompanionConversation): string {
 function mergeMessages(incoming: CompanionMessage[]): void {
   if (incoming.length === 0) return
   const ordered = new Map(messages.value.map((message) => [message.id, message]))
+  const fresh: CompanionMessage[] = []
   for (const message of incoming) {
+    if (!ordered.has(message.id)) fresh.push(message)
     ordered.set(message.id, message)
     lastSeq = Math.max(lastSeq, message.seq)
   }
   messages.value = [...ordered.values()].sort((left, right) => left.seq - right.seq)
+  speakFresh(fresh)
+}
+
+/**
+ * Optional voice: read a new companion reply aloud with the platform voice.
+ *
+ * Only messages that arrived after the first load are spoken — reading the whole transcript back
+ * on open would be a wall of speech the user did not ask for. The switch lives in Settings and
+ * arrives through the main process; nothing here guesses at it.
+ */
+const speakReplies = ref(false)
+let disposeSpeakSetting: (() => void) | undefined
+
+function speakFresh(fresh: CompanionMessage[]): void {
+  if (!speakReplies.value) return
+  if (typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') return
+  const latest = fresh.filter((message) => message.author_kind === 'companion').at(-1)
+  const body = latest?.body?.trim()
+  if (!body) return
+  try {
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(body))
+  } catch {
+    // A host without a speech engine is not an error worth surfacing: the reply is still on screen.
+  }
 }
 
 function scrollToBottom(): void {
@@ -865,6 +892,13 @@ onMounted(async () => {
   // The main window holds the one companion stream and relays each row here; this window never
   // reaches the Gateway's SSE itself (it is not a trusted host). See companionApi's relay note.
   unsubscribeRelay = subscribeCompanionEventRelay(onCompanionNotice)
+  // The voice switch lives in Settings; read it once and follow later changes.
+  void window.tinadec.getAppConfig?.()
+    .then((config) => { speakReplies.value = config.companion_speak_replies === true })
+    .catch(() => {})
+  disposeSpeakSetting = window.tinadec.onCompanionSpeakRepliesChanged?.(({ speak_replies }) => {
+    speakReplies.value = speak_replies === true
+  })
   try {
     const initial = await window.tinadec.companion.getState()
     if (!state.value) applyState(initial)
@@ -883,6 +917,11 @@ onBeforeUnmount(() => {
   noticeTimer = undefined
   unsubscribeRelay?.()
   unsubscribeRelay = null
+  disposeSpeakSetting?.()
+  disposeSpeakSetting = undefined
+  if (typeof window !== 'undefined' && typeof window.speechSynthesis !== 'undefined') {
+    try { window.speechSynthesis.cancel() } catch { /* nothing was speaking */ }
+  }
   stopPolling()
   disposeState?.()
   disposeState = undefined

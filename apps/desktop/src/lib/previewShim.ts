@@ -66,6 +66,8 @@ export function installPreviewShimIfNeeded(): void {
     // A browser tab has no login item either; the preference is only remembered locally.
     saveLaunchAtLogin: (enabled: boolean) => Promise.resolve({ launch_at_login: enabled }),
     onLaunchAtLoginChanged: () => noop,
+    saveCompanionSpeakReplies: (enabled: boolean) => Promise.resolve({ companion_speak_replies: enabled }),
+    onCompanionSpeakRepliesChanged: () => noop,
     saveCompanionMode: (enabled: boolean) => {
       localStorage.setItem(previewCompanionModeKey, String(enabled))
       return Promise.resolve({ companion_mode_enabled: enabled })

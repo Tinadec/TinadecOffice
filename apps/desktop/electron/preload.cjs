@@ -54,6 +54,13 @@ contextBridge.exposeInMainWorld('tinadec', {
   },
   /** Start the app at sign-in; pairs with close-to-tray for running unattended. */
   saveLaunchAtLogin: (enabled) => ipcRenderer.invoke('tinadec:launch-at-login-save', enabled),
+  /** Read new companion replies aloud with the platform voice. */
+  saveCompanionSpeakReplies: (enabled) => ipcRenderer.invoke('tinadec:companion-speak-replies-save', enabled),
+  onCompanionSpeakRepliesChanged: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('tinadec:companion-speak-replies-changed', handler);
+    return () => ipcRenderer.removeListener('tinadec:companion-speak-replies-changed', handler);
+  },
   onLaunchAtLoginChanged: (callback) => {
     const handler = (_event, value) => callback(value);
     ipcRenderer.on('tinadec:launch-at-login-changed', handler);

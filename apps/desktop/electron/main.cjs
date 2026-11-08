@@ -41,7 +41,7 @@ for (const level of ['log', 'info', 'warn', 'error']) {
     try { hostLogSink.write('electron', `${new Date().toISOString()} ${level} ${require('node:util').format(...values)}\n`); } catch { /* stderr remains available if disk writes fail */ }
   };
 }
-const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCompanionCapsuleStyle, saveCompanionCapsuleReveal, saveCloseToTray, saveLaunchAtLogin } = require('./appConfig.cjs');
+const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCompanionCapsuleStyle, saveCompanionCapsuleReveal, saveCloseToTray, saveLaunchAtLogin, saveCompanionSpeakReplies } = require('./appConfig.cjs');
 const { discoverServices } = require('./serviceDiscovery.cjs');
 const { ensureLocalServices, stopLocalServices, canonicalLocalGatewayUrl } = require('./serviceManager.cjs');
 const { createHostControl } = require('./hostControl.cjs');
@@ -55,6 +55,8 @@ let shuttingDown = false;
 let mainWindow = null;
 let trayController = null;
 let closeToTrayPreference = false;
+/** Whether the companion window reads replies aloud; mirrored here so a save answers with it. */
+let companionSpeakReplies = false;
 const hostControl = createHostControl({ startupToken: process.env.TINADEC_HOST_CONTROL_TOKEN, isTrustedHost: () => trustedHostReady });
 // The development orchestrator can share a launch credential; keep it out of later renderer/terminal children.
 delete process.env.TINADEC_HOST_CONTROL_TOKEN;
@@ -243,6 +245,21 @@ function applyLaunchAtLogin(enabled) {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send('tinadec:launch-at-login-changed', { launch_at_login: config.launch_at_login });
+    }
+  }
+  return config;
+}
+
+/**
+ * Persist the voice switch and tell every window. The companion window is the one that speaks, but
+ * Settings is where the switch lives, so both need the new value.
+ */
+function applyCompanionSpeakReplies(enabled) {
+  const config = saveCompanionSpeakReplies(appConfigFile(), enabled);
+  companionSpeakReplies = config.companion_speak_replies;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('tinadec:companion-speak-replies-changed', { speak_replies: companionSpeakReplies });
     }
   }
   return config;
@@ -462,6 +479,14 @@ ipcMain.handle('tinadec:close-to-tray-save', (event, enabled) => {
   }
   applyCloseToTray(enabled);
   // Answer with the same shape `tinadec:app-config` returns, so one snapshot type covers both.
+  return appConfigSnapshot();
+});
+
+ipcMain.handle('tinadec:companion-speak-replies-save', (event, enabled) => {
+  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) {
+    throw new Error('Window preferences require the trusted main host page.');
+  }
+  applyCompanionSpeakReplies(enabled);
   return appConfigSnapshot();
 });
 
@@ -926,6 +951,7 @@ app.whenReady().then(async () => {
   let storedCompanionMode;
   let storedCapsuleStyle;
   let storedCapsuleReveal;
+  let storedSpeakReplies;
   try {
     const config = readDesktopConfig();
     gatewayUrl = config.gateway_url;
@@ -934,12 +960,14 @@ app.whenReady().then(async () => {
     storedCompanionMode = config.companion_mode_enabled;
     storedCapsuleStyle = config.companion_capsule_style;
     storedCapsuleReveal = config.companion_capsule_reveal;
+    storedSpeakReplies = config.companion_speak_replies;
   }
   catch (error) {
     dialog.showErrorBox('TinadecOffice', `无法读取 TOML 配置 / Cannot read the TOML configuration\n${appConfigFile()}\n${error.message}`);
     app.quit(); return;
   }
   closeToTrayPreference = storedCloseToTray;
+  companionSpeakReplies = Boolean(storedSpeakReplies);
   // The stored flag is the intent; the OS login item is what carries it across a reboot. Reconcile
   // on every start so a flag edited outside the app (or an OS that dropped the item) does not leave
   // the two disagreeing.
