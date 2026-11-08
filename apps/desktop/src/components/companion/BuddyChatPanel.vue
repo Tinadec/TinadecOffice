@@ -12,7 +12,8 @@ import { UiButton } from '@/components/ui'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import { useHostAccess } from '@/lib/hostAccess'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
-import { companionApi, type CompanionMessage, type CompanionSummary } from '@/lib/companionApi'
+import { companionApi, subscribeCompanionFeed, type CompanionMessage, type CompanionSummary } from '@/lib/companionApi'
+import type { CompanionEventNotice } from '@/events/companionEventTypes'
 
 const props = defineProps<{ companion: CompanionSummary }>()
 
@@ -27,8 +28,15 @@ const sending = ref(false)
 const failure = ref<ErrorState | null>(null)
 const thinking = ref(false)
 
+/** The journal drives the turn; this timer only covers a stream that stops reporting. */
+const FALLBACK_REFRESH_MS = 60_000
+/** One send can produce several journal rows (message, run start, reply). */
+const NOTICE_DEBOUNCE_MS = 150
+
 let lastSeq = 0
 let timer: ReturnType<typeof setTimeout> | null = null
+let noticeTimer: ReturnType<typeof setTimeout> | null = null
+let unsubscribeFeed: (() => void) | null = null
 let generation = 0
 let disposed = false
 
@@ -71,25 +79,51 @@ async function load() {
   }
 }
 
+async function refreshThinking() {
+  if (!conversationId.value) return
+  const conversation = await companionApi.getConversation(conversationId.value)
+  thinking.value = conversation.members.some((member) => member.member_kind === 'companion')
+    && messages.value.length > 0
+    && messages.value[messages.value.length - 1]?.author_kind === 'user'
+}
+
+async function catchUp() {
+  try {
+    await pullMessages()
+    await refreshThinking()
+  } catch {
+    // A background read failure is not a user-facing error; the next event or tick retries.
+  }
+}
+
+/**
+ * A journal row the shared companion feed delivered. Only rows for the open private chat matter,
+ * and the message text itself is still read from Core — a notice says *that* something happened.
+ */
+function onNotice(notice: CompanionEventNotice) {
+  // A settings row names no conversation, and before the private chat is known every row is
+  // unrelated to what this panel shows.
+  if (disposed || !notice.conversationId || notice.conversationId !== conversationId.value) return
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => {
+    noticeTimer = null
+    if (!disposed && visible()) void catchUp()
+  }, NOTICE_DEBOUNCE_MS)
+}
+
+/**
+ * The safety net, not the mechanism: if the stream dies silently, one slow read keeps the panel
+ * from showing a stale transcript indefinitely.
+ */
 function schedule() {
   if (disposed) return
   if (timer) clearTimeout(timer)
   timer = setTimeout(async () => {
     timer = null
     if (disposed || !visible()) { schedule(); return }
-    try {
-      await pullMessages()
-      if (conversationId.value) {
-        const conversation = await companionApi.getConversation(conversationId.value)
-        thinking.value = conversation.members.some((member) => member.member_kind === 'companion')
-          && messages.value.length > 0
-          && messages.value[messages.value.length - 1]?.author_kind === 'user'
-      }
-    } catch {
-      // A background poll failure is not a user-facing error; the next tick retries.
-    }
+    await catchUp()
     schedule()
-  }, 3000)
+  }, FALLBACK_REFRESH_MS)
 }
 
 async function send() {
@@ -124,10 +158,18 @@ watch(() => props.companion.id, () => {
   void load()
 })
 
-onMounted(() => { void load(); schedule() })
+onMounted(() => {
+  unsubscribeFeed = subscribeCompanionFeed(onNotice)
+  void load()
+  schedule()
+})
 onBeforeUnmount(() => {
   disposed = true
   generation++
+  unsubscribeFeed?.()
+  unsubscribeFeed = null
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = null
   if (timer) clearTimeout(timer)
   timer = null
 })

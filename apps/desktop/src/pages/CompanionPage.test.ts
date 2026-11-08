@@ -89,6 +89,32 @@ function pressEscape(): KeyboardEvent {
   return event
 }
 
+/**
+ * The relay the main window uses to hand journal rows to this satellite. Real BroadcastChannel
+ * only delivers to *other* instances, so the fake keeps one registry and the test posts from its
+ * own instance to prove the page heard it rather than echoing to itself.
+ */
+class FakeBroadcastChannel {
+  static all: FakeBroadcastChannel[] = []
+  private readonly listeners = new Set<(event: MessageEvent) => void>()
+  constructor(readonly name: string) { FakeBroadcastChannel.all.push(this) }
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    if (type === 'message') this.listeners.add(listener)
+  }
+  removeEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    this.listeners.delete(listener)
+  }
+  postMessage(data: unknown): void {
+    for (const channel of FakeBroadcastChannel.all) {
+      if (channel === this || channel.name !== this.name) continue
+      for (const listener of [...channel.listeners]) listener(new MessageEvent('message', { data }))
+    }
+  }
+  close(): void {
+    FakeBroadcastChannel.all = FakeBroadcastChannel.all.filter((entry) => entry !== this)
+  }
+}
+
 beforeEach(() => {
   state = { ...CAPSULE_RIGHT }
   listener = undefined
@@ -109,6 +135,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -782,6 +809,78 @@ describe('companion chat', () => {
     window.dispatchEvent(new Event('resize'))
     await flushPromises()
     expect((wrapper.get('.companion-input').element as HTMLInputElement).value).toBe('unfinished draft')
+  })
+
+  it('updates on a relayed journal row instead of waiting for the poll tick', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    // The app can only relay at all when some renderer can hold the stream, so the gate that
+    // decides "events or poll" must see a real transport here.
+    vi.stubGlobal('EventSource', class {})
+    FakeBroadcastChannel.all = []
+    vi.useFakeTimers()
+    const harness = createChatApi({
+      messages: { 'conv-companion-a': [] },
+      sendRuns: [runFixture('run-live', 'companion-a', 'conv-companion-a')],
+    })
+    const wrapper = mountChat(harness.api)
+    await vi.runOnlyPendingTimersAsync()
+    await flushPromises()
+
+    await wrapper.get('.companion-input').setValue('hello')
+    await wrapper.get('.companion-composer').trigger('submit')
+    await flushPromises()
+
+    // The companion's reply lands in Core and the journal names the conversation it belongs to.
+    harness.messages['conv-companion-a'] = [
+      ...(harness.messages['conv-companion-a'] ?? []),
+      messageFixture('m-reply', 'conv-companion-a', 2, 'companion', 'Aria', 'hello back', 'companion-a'),
+    ]
+    // The page listens on its own channel instance; a real BroadcastChannel never echoes back to
+    // the poster, so the "main window" posts from a separate instance of the same name.
+    expect(FakeBroadcastChannel.all.some((channel) => channel.name === 'tinadec.companion-events')).toBe(true)
+    const mainWindow = new BroadcastChannel('tinadec.companion-events')
+    mainWindow.postMessage({
+      type: 'notice',
+      notice: {
+        type: 'companion.activity', seq: 7, kind: 'message_sent',
+        companionId: 'companion-a', conversationId: 'conv-companion-a', runId: null,
+      },
+    })
+
+    // Far less than the eventless 800ms poll: the reply must be on screen because of the event.
+    await vi.advanceTimersByTimeAsync(150)
+    await flushPromises()
+
+    expect(wrapper.findAll('.companion-msg--companion').map((node) => node.text()).join(' '))
+      .toContain('hello back')
+  })
+
+  it('falls back to polling when the window cannot hear journal events', async () => {
+    // A renderer the relay cannot reach: nothing may depend on an event that never arrives.
+    vi.stubGlobal('BroadcastChannel', undefined)
+    vi.useFakeTimers()
+    const harness = createChatApi({
+      messages: { 'conv-companion-a': [] },
+      sendRuns: [runFixture('run-live', 'companion-a', 'conv-companion-a')],
+    })
+    const wrapper = mountChat(harness.api)
+    await vi.runOnlyPendingTimersAsync()
+    await flushPromises()
+
+    await wrapper.get('.companion-input').setValue('hello')
+    await wrapper.get('.companion-composer').trigger('submit')
+    await flushPromises()
+
+    harness.messages['conv-companion-a'] = [
+      ...(harness.messages['conv-companion-a'] ?? []),
+      messageFixture('m-reply', 'conv-companion-a', 2, 'companion', 'Aria', 'polled back', 'companion-a'),
+    ]
+    // No event exists here, so only the timer can bring the reply in.
+    await vi.advanceTimersByTimeAsync(900)
+    await flushPromises()
+
+    expect(wrapper.findAll('.companion-msg--companion').map((node) => node.text()).join(' '))
+      .toContain('polled back')
   })
 })
 

@@ -127,6 +127,17 @@ test('reports a non-JSON upstream body as an invalid_upstream_response', async (
   assert.deepEqual(result, { status: 200, body: { code: 'invalid_upstream_response' } });
 });
 
+test('never proxies the companion journal stream: the main window owns that subscription', async () => {
+  const { bridge, calls } = makeBridge();
+  // The satellite is not a trusted host, and this proxy is a request/response channel. Relaying a
+  // long-lived SSE body through it would be a second subscription to the same journal, so the
+  // route must stay refused even though the path is a real Core endpoint.
+  const result = await bridge({ sender: COMPANION }, { method: 'GET', path: '/api/v1/companion-events?after_seq=12' });
+  assert.equal(result.status, 400);
+  assert.equal(result.body.code, 'invalid_request');
+  assert.equal(calls.length, 0);
+});
+
 test('sends write bodies as JSON and rejects bodies over 64 KiB', async () => {
   const { bridge, calls } = makeBridge();
   const body = { companion_id: COMPANION_ID, share_history: false };

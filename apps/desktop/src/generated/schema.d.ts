@@ -227,6 +227,10 @@ export interface paths {
     /** Pause or resume a conversation */
     post: operations["postApiV1Companion-conversationsByConversationIdPause"];
   };
+  "/api/v1/companion-events": {
+    /** Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat) */
+    get: operations["getApiV1Companion-events"];
+  };
   "/api/v1/companion-runs/{runId}": {
     /** Poll one companion run */
     get: operations["getApiV1Companion-runsByRunId"];
@@ -1517,6 +1521,7 @@ export interface components {
       payload?: {
         [key: string]: unknown;
       } | null;
+      seq?: number;
       summary?: string | null;
       [key: string]: unknown;
     };
@@ -4179,6 +4184,17 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat) */
+  "getApiV1Companion-events": {
+    responses: {
+      /** @description Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat) */
+      200: {
+        content: {
+          "text/event-stream": string;
         };
       };
     };

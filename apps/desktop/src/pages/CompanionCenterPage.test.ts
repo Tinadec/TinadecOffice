@@ -40,7 +40,24 @@ vi.mock('@/lib/uiEngine', () => ({
     return { ready: lifecycle.ready, showPage: lifecycle.showPage }
   },
 }))
-vi.mock('@/lib/companionApi', () => ({ companionApi: api }))
+const feed = vi.hoisted(() => ({
+  /** happy-dom exposes no EventSource: the fallback is the real environment for these suites. */
+  available: false,
+  handlers: new Set<(notice: unknown) => void>(),
+}))
+
+vi.mock('@/lib/companionApi', () => ({
+  companionApi: api,
+  companionStreamSupported: () => feed.available,
+  subscribeCompanionFeed: (handler: (notice: unknown) => void) => {
+    feed.handlers.add(handler)
+    return () => { feed.handlers.delete(handler) }
+  },
+}))
+
+function emitNotice(notice: Record<string, unknown>): void {
+  for (const handler of [...feed.handlers]) handler(notice)
+}
 
 // The shell and its canvas are replaced by the four center cards directly: this suite is about what
 // the cards read and say, not about UIE geometry (covered by the UIE engine tests). The page owns no
@@ -150,6 +167,8 @@ function emptyAll(): void {
 beforeEach(() => {
   resetCompanionStore()
   lifecycle.showPage.mockClear()
+  feed.available = false
+  feed.handlers.clear()
   api.listCompanions.mockResolvedValue([COMPANION_A, COMPANION_B])
   api.listActivity.mockResolvedValue([ACTIVITY, USER_MESSAGE, FAILED])
   api.listAllConversations.mockResolvedValue([GROUP, AUTONOMOUS_GROUP])
@@ -158,8 +177,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.clearAllMocks()
   resetCompanionStore()
+  feed.handlers.clear()
 })
 
 describe('companion center route', () => {
@@ -329,5 +350,97 @@ describe('companion center route', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain(zh.companion.center.errorHostRequired)
+  })
+})
+
+describe('companion centre live feed', () => {
+  it('rereads only the sources a journal notice names', async () => {
+    vi.useFakeTimers()
+    feed.available = true
+    create()
+    await vi.runOnlyPendingTimersAsync()
+    await flushPromises()
+    api.listCompanions.mockClear()
+    api.listActivity.mockClear()
+    api.listAllConversations.mockClear()
+    api.listConnectionsOverview.mockClear()
+    api.getSettings.mockClear()
+
+    // A settings row can only move settings and the companion summaries (the pause flag lives on
+    // both). Rereading the activity feed, the conversations or the connections would be wasted.
+    emitNotice({
+      type: 'companion.settings', seq: 41, kind: 'settings_changed',
+      companionId: null, conversationId: null, runId: null,
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(api.getSettings).toHaveBeenCalledTimes(1)
+    expect(api.listCompanions).toHaveBeenCalledTimes(1)
+    expect(api.listActivity).not.toHaveBeenCalled()
+    expect(api.listAllConversations).not.toHaveBeenCalled()
+    expect(api.listConnectionsOverview).not.toHaveBeenCalled()
+  })
+
+  it('rereads the activity feed and that conversation when a message row arrives', async () => {
+    vi.useFakeTimers()
+    feed.available = true
+    create()
+    await vi.runOnlyPendingTimersAsync()
+    await flushPromises()
+    api.listCompanions.mockClear()
+    api.listActivity.mockClear()
+    api.listAllConversations.mockClear()
+    api.listConnectionsOverview.mockClear()
+    api.getSettings.mockClear()
+
+    emitNotice({
+      type: 'companion.activity', seq: 42, kind: 'message_sent',
+      companionId: null, conversationId: 'conv-group', runId: null,
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(api.listActivity).toHaveBeenCalledTimes(1)
+    expect(api.listAllConversations).toHaveBeenCalledTimes(1)
+    // A user message creates runs, which change the companion's current activity.
+    expect(api.listCompanions).toHaveBeenCalledTimes(1)
+    expect(api.getSettings).not.toHaveBeenCalled()
+    expect(api.listConnectionsOverview).not.toHaveBeenCalled()
+  })
+
+  it('coalesces a burst of rows into one reread', async () => {
+    vi.useFakeTimers()
+    feed.available = true
+    create()
+    await vi.runOnlyPendingTimersAsync()
+    await flushPromises()
+    api.listActivity.mockClear()
+
+    // A single run writes `run_started` and later `run_completed`; both name the same run.
+    for (const kind of ['run_started', 'run_completed']) {
+      emitNotice({
+        type: 'companion.run', seq: kind === 'run_started' ? 43 : 44, kind,
+        companionId: 'c-a', conversationId: 'conv-group', runId: 'run-1',
+      })
+    }
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(api.listActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the fallback refresh so a silently dead stream cannot freeze the centre', async () => {
+    vi.useFakeTimers()
+    create()
+    await vi.runOnlyPendingTimersAsync()
+    await flushPromises()
+    api.listActivity.mockClear()
+
+    // No notice at all: the stream is "open" but silent. The slow sweep must still run.
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushPromises()
+
+    expect(api.listActivity).toHaveBeenCalledTimes(1)
   })
 })

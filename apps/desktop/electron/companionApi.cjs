@@ -15,6 +15,15 @@ const { randomUUID } = require('node:crypto');
 
 const GUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
+/**
+ * `GET /api/v1/companion-events` is deliberately NOT on this list.
+ *
+ * The satellite window does not subscribe to the companion journal: it is not a trusted host, this
+ * proxy is a request/response channel with a 15s timeout, and holding a long-lived body open here
+ * would duplicate a stream the trusted main window already owns. The main window subscribes once
+ * and relays each parsed notice to the satellite over a BroadcastChannel, so adding the route here
+ * would buy a second subscription, a second credential path and no new fact.
+ */
 const routes = [
   { method: 'GET', pattern: `^/api/v1/companions$` },
   { method: 'GET', pattern: `^/api/v1/companions/activity$` },
