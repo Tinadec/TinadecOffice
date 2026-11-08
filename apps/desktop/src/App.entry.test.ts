@@ -20,6 +20,9 @@ vi.mock('@/composables/useConnection', () => ({
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => route,
+  // The shell reads the router to jump to a session when a desktop partner window asks to
+  // return; this test only cares that the app tree mounts, so the navigation is a no-op.
+  useRouter: () => ({ push: vi.fn() }),
   RouterView: defineComponent({ name: 'RouterView', render: () => null }),
 }))
 vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
@@ -32,10 +35,24 @@ vi.mock('@/composables/useNotifications', () => ({
 }))
 vi.mock('@/agentPacks/graphSeedPackBootstrap', () => ({ ensureGraphSeedPack: vi.fn(), setGraphSeedPackTranslator: vi.fn() }))
 vi.mock('@/composables/useCommandPalette', () => ({ installPaletteKeybinding: () => vi.fn() }))
-vi.mock('@/lib/hostAccess', () => ({
-  useHostAccess: () => ({ status: hostGate.status }),
-  setHostAccessStatus: hostGate.setHostAccessStatus,
-}))
+vi.mock('@/lib/hostAccess', async () => {
+  const { computed } = await import('vue')
+  return {
+    // The real composable returns refs, not bare values: callers read `.value` off them.
+    useHostAccess: () => ({
+      status: hostGate.status,
+      isPreview: computed(() => hostGate.status.value?.state === 'preview'),
+      canAccessBackend: computed(() => !hostGate.status.value || hostGate.status.value.state === 'ready'),
+      reason: computed(() => ''),
+    }),
+    setHostAccessStatus: hostGate.setHostAccessStatus,
+    // storageScope (reached through sessionPartner) registers an invalidator on import; the App
+    // shell does not depend on its behaviour, so the mock only has to exist.
+    onHostAccessChanged: () => {},
+    hostAccessState: () => null,
+    assertHostAccess: async () => {},
+  }
+})
 // A marker, so "the banner is in the tree while connecting" is assertable. Whether the real banner
 // draws for a given status is HostAvailabilityBanner.test.ts's subject.
 vi.mock('@/components/HostAvailabilityBanner.vue', () => ({ default: defineComponent({ render: () => h('div', { class: 'host-banner' }) }) }))
