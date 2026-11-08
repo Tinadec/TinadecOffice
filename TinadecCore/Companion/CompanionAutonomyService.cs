@@ -243,6 +243,15 @@ public sealed class CompanionAutonomyService(
         if (pending)
             return await SkipAsync(companion, "recruit", "duplicate_proposal", null, cancellationToken).ConfigureAwait(false);
 
+        // A denied proposal is final for that helper. The mandate gate treats a "no" the same way;
+        // without this check a denied recruit would be re-proposed on every interval, turning the
+        // user's decision into a nag. A different name is a different question and still allowed.
+        var denied = await db.Recruitments.AsNoTracking().AnyAsync(
+            x => x.TenantId == tenantId && x.ProposerId == companion.Id && x.Status == "denied"
+                && x.Name == name, cancellationToken).ConfigureAwait(false);
+        if (denied)
+            return await SkipAsync(companion, "recruit", "recruit_denied", null, cancellationToken).ConfigureAwait(false);
+
         var now = DateTimeOffset.UtcNow;
         var row = new CompanionRecruitmentRecord
         {
@@ -318,13 +327,19 @@ public sealed class CompanionAutonomyService(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (companions.Count == 0) return [];
 
-        // Two different questions are asked of the activity log. "Did it spend a daily action?"
-        // counts only real actions, so asking the user for permission does not burn the quota it
-        // is asking about. "When did it last think?" counts proposals too, so a companion whose
-        // mandate is still pending waits out the interval instead of re-proposing on every pass.
+        // Two different questions are asked of the activity log, and they must not share a filter.
+        //
+        // "Did it spend a daily action?" counts only real actions, so asking the user for
+        // permission does not burn the quota it is asking about.
+        //
+        // "When did it last think?" counts EVERY autonomy row, skips included. A skip means the
+        // tick ran and produced nothing to do; excluding it would leave the companion due on the
+        // very next pass, calling the model every worker interval forever. A denied recruit is the
+        // clearest case — the skip is permanent, so the exclusion made it a permanent model-call
+        // loop.
         var actions = await db.Activities.AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.CompanionId != null
-                && x.Kind.StartsWith("autonomy_") && x.Kind != "autonomy_skipped")
+                && x.Kind.StartsWith("autonomy_"))
             .Select(x => new { CompanionId = x.CompanionId!.Value, x.Kind, x.CreatedAt })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var byCompanion = actions.GroupBy(x => x.CompanionId).ToDictionary(group => group.Key, group => group.ToList());
@@ -338,8 +353,9 @@ public sealed class CompanionAutonomyService(
             var used = rows is null ? 0 : rows.Count(x => x.CreatedAt >= today && SpendsActionBudget(x.Kind));
             if (companion.AutonomyDailyBudget <= 0 || used >= companion.AutonomyDailyBudget) continue;
 
-            // The later of the last real autonomous thought and any configuration change starts the
-            // interval, so editing the companion's autonomy rules cannot be undone by an old action.
+            // The later of the last autonomous thought (including a skip) and any configuration
+            // change starts the interval, so editing the companion's autonomy rules cannot be
+            // undone by an old action.
             var lastAction = rows is { Count: > 0 } ? rows.Max(x => x.CreatedAt) : (DateTimeOffset?)null;
             var basis = lastAction is { } value && value > companion.UpdatedAt ? value : companion.UpdatedAt;
             var interval = TimeSpan.FromMinutes(Math.Max(companion.AutonomyIntervalMinutes, 1));

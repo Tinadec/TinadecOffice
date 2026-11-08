@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -38,8 +40,12 @@ public sealed class CompanionRunOptions
 /// Executes the runs a user message owes, one at a time, off the request thread. The run row carries
 /// its own tenant id, so nothing here reads a request-scoped tenant: the hosted instance runs in the
 /// host container while endpoints only enqueue. A run freezes the companion's configuration before
-/// the model is called, never executes a tool, and writes at most one reply message, so a companion
-/// reply can never cascade into another companion's turn.
+/// the model is called and writes at most one reply message, so a companion reply can never cascade
+/// into another companion's turn.
+///
+/// The companion's only tools are the four management verbs (list sessions, read a run, dispatch a
+/// task, create a workspace); it holds no code tool and never executes anything inside a work
+/// session. A dispatch starts an ordinary run there, under that session's own permission policy.
 ///
 /// The queue is a table, not a channel: <c>companion_effects</c> rows are claimed under a lease, so
 /// a host that dies mid-run leaves a row the next host can reclaim instead of a run that never
@@ -48,10 +54,16 @@ public sealed class CompanionRunOptions
 public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
 {
     internal const string RunReplyKind = "run_reply";
+    /// <summary>Feed kind the desktop supervisor board reads to show what a companion dispatched.</summary>
+    internal const string DispatchActivityKind = "companion_dispatched";
     private const int MaxMemories = 6;
     private const int MaxContextMessages = 30;
     private const int MaxErrorMessage = 2048;
     private const int MaxBatch = 4;
+    // Bounded like a standing member's turn: a companion manages sessions, it does not work in
+    // them, so a model that keeps calling tools is stopped rather than allowed to loop.
+    private const int MaxToolRounds = 6;
+    private const int TaskPreviewLength = 80;
     private static readonly TimeSpan SelfHealInterval = TimeSpan.FromSeconds(30);
     // One day: long enough to inspect a failed reply after the fact, short enough that the queue
     // table stays a queue and not a transcript.
@@ -69,6 +81,9 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
     private readonly IAgentChatClientFactory _chatClients;
     private readonly ILogger<CompanionRuntime> _logger;
     private readonly CompanionRunOptions _options;
+    // Optional so a module-only host (or a test of the queue itself) still runs a companion with
+    // no tools; the composition root supplies the real management gateway.
+    private readonly ICompanionWorkGateway? _workGateway;
     private DateTimeOffset _lastHealAt = DateTimeOffset.MinValue;
     private DateTimeOffset _lastPruneAt = DateTimeOffset.MinValue;
 
@@ -77,12 +92,14 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         IAgentChatClientFactory chatClients,
         ILogger<CompanionRuntime> logger,
         Microsoft.Extensions.Configuration.IConfiguration? configuration = null,
-        CompanionRunOptions? options = null)
+        CompanionRunOptions? options = null,
+        ICompanionWorkGateway? workGateway = null)
     {
         _dbFactory = dbFactory;
         _chatClients = chatClients;
         _logger = logger;
         _options = options ?? ReadOptions(configuration);
+        _workGateway = workGateway;
     }
 
     /// <summary>
@@ -545,14 +562,7 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             string reply;
             using (var client = await _chatClients.CreateAsync(resolution, cancellationToken).ConfigureAwait(false))
             {
-                var options = new ChatOptions
-                {
-                    Instructions = prompt.Instructions,
-                    ToolMode = ChatToolMode.None,
-                    AllowMultipleToolCalls = false
-                };
-                var response = await client.GetResponseAsync(prompt.Messages, options, cancellationToken).ConfigureAwait(false);
-                reply = response.Text?.Trim() ?? string.Empty;
+                reply = await RunTurnAsync(run, prompt, client, cancellationToken).ConfigureAwait(false);
             }
 
             if (reply.Length == 0)
@@ -664,7 +674,11 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         var persona = string.IsNullOrWhiteSpace(companion.PersonaDocument) ? DefaultPersona : companion.PersonaDocument.Trim();
         var text = new System.Text.StringBuilder(persona);
         text.AppendLine().AppendLine();
-        text.AppendLine($"你是伙伴域中的伙伴「{companion.Name}」。你只与本会话的成员交流，不调用任何工具、MCP 或外部设备；"
+        text.AppendLine($"你是伙伴域中的伙伴「{companion.Name}」。你只与本会话的成员交流。你有且只有四个管理工作会话的工具："
+            + "companion_list_sessions（列出本租户的工作会话及其最近一次运行）、companion_read_run（读取一次运行的状态）、"
+            + "companion_dispatch（把任务作为用户消息写入一个工作会话并启动运行）、companion_create_workspace（新建或复用项目工作区）。"
+            + "除此之外没有任何工具：不能读写文件、执行命令、使用 Git、MCP、浏览器或外部设备。派活是管理动作，不需要工具审批；"
+            + "真正写代码的是工作会话里的智能体，它们自己的审批门照旧。"
             + "不泄露其他成员的私有信息，群聊内容也不会自动成为任何成员的私有记忆。");
         if (memories.Count > 0)
         {
@@ -711,6 +725,205 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         }
         if (messages.Count == 0) messages.Add(new ChatMessage(ChatRole.User, "（本会话还没有消息）"));
         return messages;
+    }
+
+    // ── tools ──
+
+    /// <summary>
+    /// One companion turn with a bounded tool loop, the same shape as a standing member's turn:
+    /// declarations only (no invokable functions reach the model), every call answered in the
+    /// same round, and the loop stops at <see cref="MaxToolRounds"/>. The surface comes from
+    /// <see cref="CompanionToolCatalog"/> alone — a hallucinated code tool is answered with a
+    /// structured refusal, never executed.
+    /// </summary>
+    private async Task<string> RunTurnAsync(
+        CompanionRunRecord run,
+        FrozenPrompt prompt,
+        IChatClient client,
+        CancellationToken cancellationToken)
+    {
+        List<AITool> tools = _workGateway is null
+            ? []
+            : CompanionToolCatalog.Tools
+                .Select(tool => (AITool)AIFunctionFactory.CreateDeclaration(tool.Id, tool.Description, tool.InputSchema, null))
+                .ToList();
+        var options = new ChatOptions
+        {
+            Instructions = prompt.Instructions,
+            ToolMode = tools.Count == 0 ? ChatToolMode.None : ChatToolMode.Auto,
+            AllowMultipleToolCalls = tools.Count > 0,
+            Tools = tools.Count == 0 ? null : tools
+        };
+        var messages = prompt.Messages.ToList();
+        for (var round = 0; round < MaxToolRounds; round++)
+        {
+            var response = await client.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+            var replies = response.Messages.Count != 0
+                ? response.Messages.ToList()
+                : [new ChatMessage(ChatRole.Assistant, response.Text ?? string.Empty)];
+            messages.AddRange(replies);
+            var calls = replies.SelectMany(message => message.Contents).OfType<FunctionCallContent>()
+                .Where(call => !call.InformationalOnly && !string.IsNullOrWhiteSpace(call.Name)).ToList();
+            if (calls.Count == 0) return response.Text?.Trim() ?? string.Empty;
+
+            var results = new List<AIContent>();
+            foreach (var call in calls)
+            {
+                var callId = string.IsNullOrWhiteSpace(call.CallId) ? $"companion-{round}-{results.Count}" : call.CallId;
+                results.Add(new FunctionResultContent(
+                    callId,
+                    await ExecuteToolAsync(run, call.Name, call.Arguments, cancellationToken).ConfigureAwait(false)));
+            }
+            messages.Add(new ChatMessage(ChatRole.Tool, results));
+        }
+
+        // The cap was reached while the model kept calling tools. Ask once more with the tools
+        // taken away: an empty reply would make the effect retry, repeating side effects such as
+        // a dispatch that already happened.
+        var closing = new ChatOptions
+        {
+            Instructions = prompt.Instructions,
+            ToolMode = ChatToolMode.None,
+            AllowMultipleToolCalls = false
+        };
+        var last = await client.GetResponseAsync(messages, closing, cancellationToken).ConfigureAwait(false);
+        return last.Text?.Trim() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// The client message id a dispatch is stored under. Same run + same target + same text is the
+    /// same dispatch, so a retried turn hits the coordinator's own idempotency instead of appending
+    /// a duplicate.
+    /// </summary>
+    private static string DispatchKey(Guid runId, Guid sessionId, string task)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sessionId.ToString("N") + "\n" + task.Trim()));
+        return $"companion-dispatch-{runId:N}-{Convert.ToHexString(hash)[..16].ToLowerInvariant()}";
+    }
+
+    private async Task<string> ExecuteToolAsync(
+        CompanionRunRecord run,
+        string name,
+        IDictionary<string, object?>? arguments,
+        CancellationToken cancellationToken)
+    {
+        if (_workGateway is not { } gateway)
+            return Failure("tool_unavailable", "The companion work gateway is not registered in this host.");
+
+        var args = JsonSerializer.SerializeToElement(arguments ?? new Dictionary<string, object?>(), SnakeCase);
+        switch (name)
+        {
+            case CompanionToolCatalog.ListSessions:
+                return Serialize(await gateway.ListSessionsAsync(cancellationToken).ConfigureAwait(false));
+
+            case CompanionToolCatalog.ReadRun:
+            {
+                if (!TryGuidArg(args, "run_id", out var runId))
+                    return Failure("invalid_arguments", "run_id must be a non-empty GUID.");
+                return Serialize(await gateway.ReadRunAsync(runId, cancellationToken).ConfigureAwait(false));
+            }
+
+            case CompanionToolCatalog.Dispatch:
+            {
+                if (!TryGuidArg(args, "session_id", out var sessionId))
+                    return Failure("invalid_arguments", "session_id must be a non-empty GUID.");
+                var task = StringArg(args, "task");
+                if (string.IsNullOrWhiteSpace(task))
+                    return Failure("invalid_arguments", "task is required.");
+                // Derived from facts that survive an effect retry: the run row is the same row, and
+                // the dispatch text is the same text. A fresh GUID here would let a replayed turn
+                // append a second task message to the user's session.
+                var result = await gateway.DispatchAsync(
+                    sessionId, task, DispatchKey(run.Id, sessionId, task), cancellationToken).ConfigureAwait(false);
+                if (result is { IsSuccess: true, Value: { } dispatch })
+                    await RecordDispatchAsync(run, task.Trim(), dispatch, cancellationToken).ConfigureAwait(false);
+                return Serialize(result);
+            }
+
+            case CompanionToolCatalog.CreateWorkspace:
+            {
+                var workspaceName = StringArg(args, "name");
+                var path = StringArg(args, "path");
+                if (string.IsNullOrWhiteSpace(workspaceName))
+                    return Failure("invalid_arguments", "name is required.");
+                if (string.IsNullOrWhiteSpace(path))
+                    return Failure("invalid_arguments", "path is required.");
+                return Serialize(await gateway.CreateWorkspaceAsync(workspaceName, path, cancellationToken).ConfigureAwait(false));
+            }
+
+            default:
+                // The model may invent a tool it does not have (or reach for a code tool it was
+                // told it lacks). Answer in the same structured shape as any other refusal so the
+                // turn continues instead of failing.
+                return Failure("unknown_tool",
+                    $"'{name}' is not one of the companion's tools. You have exactly: "
+                    + string.Join(", ", CompanionToolCatalog.Tools.Select(tool => tool.Id)) + ".");
+        }
+    }
+
+    /// <summary>
+    /// The supervisor board's only way to learn that this companion dispatched work: a durable
+    /// activity row. Best-effort — the dispatch already happened, so failing to record its feed
+    /// row must not turn a successful management action into a failed turn.
+    /// </summary>
+    private async Task RecordDispatchAsync(
+        CompanionRunRecord run,
+        string task,
+        CompanionWorkDispatch dispatch,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            db.Activities.Add(new CompanionActivityRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = run.TenantId,
+                Kind = DispatchActivityKind,
+                CompanionId = run.CompanionId,
+                ConversationId = run.ConversationId,
+                Summary = $"伙伴派活到会话「{dispatch.SessionTitle}」",
+                Detail = Truncate(task, 500),
+                PayloadJson = JsonSerializer.Serialize(new
+                {
+                    session_id = dispatch.SessionId,
+                    run_id = dispatch.RunId,
+                    session_title = dispatch.SessionTitle,
+                    task_preview = Truncate(task, TaskPreviewLength)
+                }, SnakeCase),
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await CompanionActivities.SaveAsync(db, run.TenantId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Could not record the companion dispatch activity for run {RunId}.", run.Id);
+        }
+    }
+
+    private static string Serialize<T>(CompanionWorkResult<T> result) =>
+        result.IsSuccess
+            ? JsonSerializer.Serialize(result.Value, SnakeCase)
+            : Failure(result.Error ?? "tool_failed", result.Message ?? "The call was refused.");
+
+    private static string Failure(string error, string message) =>
+        JsonSerializer.Serialize(new { error, message }, SnakeCase);
+
+    private static string? StringArg(JsonElement args, string name) =>
+        args.ValueKind == JsonValueKind.Object
+        && args.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static bool TryGuidArg(JsonElement args, string name, out Guid value)
+    {
+        value = Guid.Empty;
+        return Guid.TryParse(StringArg(args, name), out value) && value != Guid.Empty;
     }
 
     /// <summary>

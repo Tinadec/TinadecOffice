@@ -60,6 +60,10 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
         services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
         services.AddSingleton<CompanionChatBridge>();
+        // The companion's management tools (list/read/dispatch/create workspace) are composed here
+        // because the Companion module may not reference Lifecycle, Memory or DmaEA; the module
+        // only declares the port and its four tool declarations.
+        services.AddSingleton<ICompanionWorkGateway, CompanionWorkGateway>();
         // Startup reconciliation: without this the bridge was a tested dead end and a companion
         // never became a TinaChat participant on a real host.
         services.AddSingleton<CompanionParticipantReconciler>();

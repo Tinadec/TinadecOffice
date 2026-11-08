@@ -18,6 +18,10 @@ public sealed class CompanionAvatarStore(
     StoragePaths paths)
 {
     private const string AvatarDirectory = "companion-avatars";
+    // A Live2D model is a model3.json, a .moc3 and a texture atlas — a few hundred files at most.
+    // The ceilings exist so a mistakenly selected folder fails loudly instead of filling the disk.
+    private const int MaxAvatarFiles = 2048;
+    private const long MaxAvatarBytes = 256L * 1024 * 1024;
 
     private Guid TenantId => tenant.Current.TenantId;
 
@@ -97,7 +101,7 @@ public sealed class CompanionAvatarStore(
 
         try
         {
-            CopyTree(source, source, destination, cancellationToken);
+            CopyTree(source, source, destination, new CopyBudget(), cancellationToken);
         }
         catch (CompanionException)
         {
@@ -174,7 +178,14 @@ public sealed class CompanionAvatarStore(
         created_at = row.CreatedAt
     };
 
-    private static void CopyTree(string sourceRoot, string current, string destinationRoot, CancellationToken cancellationToken)
+    private sealed class CopyBudget
+    {
+        public long Bytes;
+        public int Files;
+    }
+
+    private static void CopyTree(
+        string sourceRoot, string current, string destinationRoot, CopyBudget budget, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(destinationRoot);
         foreach (var entry in Directory.EnumerateFileSystemEntries(current))
@@ -193,10 +204,18 @@ public sealed class CompanionAvatarStore(
             if ((attributes & FileAttributes.Directory) != 0)
             {
                 Directory.CreateDirectory(target);
-                CopyTree(sourceRoot, entry, destinationRoot, cancellationToken);
+                CopyTree(sourceRoot, entry, destinationRoot, budget, cancellationToken);
             }
             else
             {
+                // Bounded before the copy, not after: a model is a few hundred files, and selecting
+                // a multi-gigabyte folder by mistake must fail loudly instead of filling the disk.
+                budget.Files++;
+                if (budget.Files > MaxAvatarFiles)
+                    throw new CompanionException("avatar_too_many_files", $"The model directory has more than {MaxAvatarFiles} files.", 400);
+                budget.Bytes += new FileInfo(entry).Length;
+                if (budget.Bytes > MaxAvatarBytes)
+                    throw new CompanionException("avatar_too_large", $"The model directory is larger than {MaxAvatarBytes / (1024 * 1024)} MiB.", 400);
                 File.Copy(entry, target, overwrite: false);
             }
         }

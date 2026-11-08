@@ -815,13 +815,13 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         // A click is cheap; a feed of forty identical waves is not. One row per gesture per minute
         // is the honest resolution: the interaction happened, the log just does not repeat it.
         //
-        // Ordered and compared in memory: SQLite cannot translate DateTimeOffset ordering, and the
-        // existing feed reads already sort this way for the same reason.
-        var recent = (await db.Activities.AsNoTracking()
-                .Where(x => x.TenantId == tenantId && x.CompanionId == companionId && x.Kind == "emote_received")
-                .ToListAsync(cancellationToken).ConfigureAwait(false))
-            .OrderByDescending(x => x.CreatedAt)
-            .FirstOrDefault();
+        // Seq is a tenant-monotonic long, so the newest row is one ordered read SQLite can actually
+        // translate. Ordering by CreatedAt would have to materialise the whole emote history, which
+        // grows with every click.
+        var recent = await db.Activities.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.CompanionId == companionId && x.Kind == "emote_received")
+            .OrderByDescending(x => x.Seq)
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (recent is not null && now - recent.CreatedAt < TimeSpan.FromMinutes(1)
             && recent.PayloadJson is { } payload && payload.Contains($"\"{gesture}\"", StringComparison.Ordinal))
         {
