@@ -52,6 +52,13 @@ contextBridge.exposeInMainWorld('tinadec', {
     ipcRenderer.on('tinadec:close-to-tray-changed', handler);
     return () => ipcRenderer.removeListener('tinadec:close-to-tray-changed', handler);
   },
+  /** Start the app at sign-in; pairs with close-to-tray for running unattended. */
+  saveLaunchAtLogin: (enabled) => ipcRenderer.invoke('tinadec:launch-at-login-save', enabled),
+  onLaunchAtLoginChanged: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('tinadec:launch-at-login-changed', handler);
+    return () => ipcRenderer.removeListener('tinadec:launch-at-login-changed', handler);
+  },
   /** Lets the main process draw the tray menu in the interface language this window is showing. */
   setInterfaceLocale: (locale) => ipcRenderer.send('tinadec:interface-locale', locale),
 

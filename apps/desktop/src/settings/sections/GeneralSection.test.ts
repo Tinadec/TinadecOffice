@@ -52,15 +52,21 @@ vi.mock('@/components/ui', () => ({
 }))
 
 let trayListener: ((value: { close_to_tray: boolean }) => void) | undefined
+let loginListener: ((value: { launch_at_login: boolean }) => void) | undefined
 const bridge = {
   getAppConfig: vi.fn(),
   saveCloseToTray: vi.fn(),
+  saveLaunchAtLogin: vi.fn(),
   saveCompanionMode: vi.fn(),
   saveCompanionCapsuleStyle: vi.fn(),
   saveCompanionCapsuleReveal: vi.fn(),
   onCloseToTrayChanged: vi.fn((callback: (value: { close_to_tray: boolean }) => void) => {
     trayListener = callback
     return () => { trayListener = undefined }
+  }),
+  onLaunchAtLoginChanged: vi.fn((callback: (value: { launch_at_login: boolean }) => void) => {
+    loginListener = callback
+    return () => { loginListener = undefined }
   }),
 }
 
@@ -81,8 +87,9 @@ beforeEach(() => {
   trayListener = undefined
   localStorage.clear()
   resetConversationFlowStyleForTests()
-  bridge.getAppConfig.mockResolvedValue({ gateway_url: 'http://127.0.0.1:48730', source: 'default', managed: false, close_to_tray: false, companion_mode_enabled: false })
+  bridge.getAppConfig.mockResolvedValue({ gateway_url: 'http://127.0.0.1:48730', source: 'default', managed: false, close_to_tray: false, launch_at_login: false, companion_mode_enabled: false })
   bridge.saveCloseToTray.mockImplementation(async (enabled: boolean) => ({ close_to_tray: enabled }))
+  bridge.saveLaunchAtLogin.mockImplementation(async (enabled: boolean) => ({ launch_at_login: enabled }))
   bridge.saveCompanionMode.mockImplementation(async (enabled: boolean) => ({ companion_mode_enabled: enabled }))
   bridge.saveCompanionCapsuleStyle.mockImplementation(async (style: string) => ({ companion_capsule_style: style }))
   bridge.saveCompanionCapsuleReveal.mockImplementation(async (reveal: number) => ({ companion_capsule_reveal: reveal }))
@@ -131,6 +138,26 @@ describe('window and tray settings', () => {
     // Unmounting must drop the IPC listener so a hidden window does not keep a stale closure alive.
     expect(bridge.onCloseToTrayChanged).toHaveBeenCalledTimes(1)
     expect(trayListener).toBeUndefined()
+  })
+
+  it('writes the start-at-sign-in switch and follows the broadcast', async () => {
+    const wrapper = create()
+    await flushPromises()
+    const toggle = wrapper.get('[data-testid="launch-at-login-switch"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(bridge.saveLaunchAtLogin).toHaveBeenCalledWith(true)
+    expect(toggle.attributes('aria-checked')).toBe('true')
+
+    // The main process is the writer; its broadcast is what the switch follows.
+    loginListener?.({ launch_at_login: false })
+    await flushPromises()
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    wrapper.unmount()
+    expect(loginListener).toBeUndefined()
   })
 })
 

@@ -63,6 +63,9 @@ export function installPreviewShimIfNeeded(): void {
       return Promise.resolve({ close_to_tray: enabled })
     },
     onCloseToTrayChanged: () => noop,
+    // A browser tab has no login item either; the preference is only remembered locally.
+    saveLaunchAtLogin: (enabled: boolean) => Promise.resolve({ launch_at_login: enabled }),
+    onLaunchAtLoginChanged: () => noop,
     saveCompanionMode: (enabled: boolean) => {
       localStorage.setItem(previewCompanionModeKey, String(enabled))
       return Promise.resolve({ companion_mode_enabled: enabled })

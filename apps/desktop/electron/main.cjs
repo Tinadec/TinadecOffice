@@ -41,7 +41,7 @@ for (const level of ['log', 'info', 'warn', 'error']) {
     try { hostLogSink.write('electron', `${new Date().toISOString()} ${level} ${require('node:util').format(...values)}\n`); } catch { /* stderr remains available if disk writes fail */ }
   };
 }
-const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCompanionCapsuleStyle, saveCompanionCapsuleReveal, saveCloseToTray } = require('./appConfig.cjs');
+const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCompanionCapsuleStyle, saveCompanionCapsuleReveal, saveCloseToTray, saveLaunchAtLogin } = require('./appConfig.cjs');
 const { discoverServices } = require('./serviceDiscovery.cjs');
 const { ensureLocalServices, stopLocalServices, canonicalLocalGatewayUrl } = require('./serviceManager.cjs');
 const { createHostControl } = require('./hostControl.cjs');
@@ -225,6 +225,24 @@ function applyCloseToTray(enabled) {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send('tinadec:close-to-tray-changed', { close_to_tray: closeToTrayPreference });
+    }
+  }
+  return config;
+}
+
+/**
+ * Persist the preference and tell the OS. The stored value and the login item are two records of
+ * the same intent; the OS call is what actually makes it happen after a reboot, and a dev run has
+ * no business registering a login item at all.
+ */
+function applyLaunchAtLogin(enabled) {
+  const config = saveLaunchAtLogin(appConfigFile(), enabled);
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: config.launch_at_login });
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('tinadec:launch-at-login-changed', { launch_at_login: config.launch_at_login });
     }
   }
   return config;
@@ -444,6 +462,14 @@ ipcMain.handle('tinadec:close-to-tray-save', (event, enabled) => {
   }
   applyCloseToTray(enabled);
   // Answer with the same shape `tinadec:app-config` returns, so one snapshot type covers both.
+  return appConfigSnapshot();
+});
+
+ipcMain.handle('tinadec:launch-at-login-save', (event, enabled) => {
+  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) {
+    throw new Error('Window preferences require the trusted main host page.');
+  }
+  applyLaunchAtLogin(enabled);
   return appConfigSnapshot();
 });
 
@@ -896,6 +922,7 @@ app.whenReady().then(async () => {
 
   let gatewayUrl;
   let storedCloseToTray;
+  let storedLaunchAtLogin;
   let storedCompanionMode;
   let storedCapsuleStyle;
   let storedCapsuleReveal;
@@ -903,6 +930,7 @@ app.whenReady().then(async () => {
     const config = readDesktopConfig();
     gatewayUrl = config.gateway_url;
     storedCloseToTray = config.close_to_tray;
+    storedLaunchAtLogin = config.launch_at_login;
     storedCompanionMode = config.companion_mode_enabled;
     storedCapsuleStyle = config.companion_capsule_style;
     storedCapsuleReveal = config.companion_capsule_reveal;
@@ -912,6 +940,10 @@ app.whenReady().then(async () => {
     app.quit(); return;
   }
   closeToTrayPreference = storedCloseToTray;
+  // The stored flag is the intent; the OS login item is what carries it across a reboot. Reconcile
+  // on every start so a flag edited outside the app (or an OS that dropped the item) does not leave
+  // the two disagreeing.
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: Boolean(storedLaunchAtLogin) });
   process.env.TINADEC_RESOLVED_GATEWAY_URL = gatewayUrl;
   const managed = Boolean(canonicalLocalGatewayUrl(gatewayUrl));
   let localServicesInitialized = false;

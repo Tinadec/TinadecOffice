@@ -49,6 +49,7 @@ interface DesktopAppConfig {
   source: string
   managed: boolean
   close_to_tray?: boolean
+  launch_at_login?: boolean
   companion_mode_enabled?: boolean
   companion_capsule_style?: 'peek' | 'grip'
   companion_capsule_reveal?: number
@@ -63,6 +64,9 @@ const enterPrefDraft = ref<DispatchPref>(getDispatchPref())
 /** desktop.toml `[window] close_to_tray`: closing the main window hides it to the tray. */
 const closeToTray = ref(false)
 const closeToTrayBusy = ref(false)
+/** desktop.toml `[window] launch_at_login`: start at sign-in, the other half of running unattended. */
+const launchAtLogin = ref(false)
+const launchAtLoginBusy = ref(false)
 
 /** desktop.toml `[companion] enabled`: the docked capsule that expands into a panel. */
 const companionMode = ref(false)
@@ -99,6 +103,7 @@ async function loadAppConfig(): Promise<void> {
   appConfig.value = await window.tinadec.getAppConfig()
   gatewayUrlDraft.value = appConfig.value.gateway_url
   closeToTray.value = appConfig.value.close_to_tray === true
+  launchAtLogin.value = appConfig.value.launch_at_login === true
   companionMode.value = appConfig.value.companion_mode_enabled === true
   capsuleStyle.value = appConfig.value.companion_capsule_style ?? 'peek'
   capsuleReveal.value = appConfig.value.companion_capsule_reveal ?? 50
@@ -120,6 +125,25 @@ async function setCloseToTray(enabled: boolean): Promise<void> {
     notify.error(error, { title: t('settings.closeToTraySaveFailed') })
   } finally {
     closeToTrayBusy.value = false
+  }
+}
+
+/**
+ * The stored flag and the OS login item are two records of one intent; the main process writes both
+ * and answers with the stored value, so this reads it back instead of trusting the toggle.
+ */
+async function setLaunchAtLogin(enabled: boolean): Promise<void> {
+  if (launchAtLoginBusy.value) return
+  const previous = launchAtLogin.value
+  launchAtLogin.value = enabled
+  launchAtLoginBusy.value = true
+  try {
+    launchAtLogin.value = (await window.tinadec.saveLaunchAtLogin(enabled)).launch_at_login === true
+  } catch (error) {
+    launchAtLogin.value = previous
+    notify.error(error, { title: t('settings.launchAtLoginSaveFailed') })
+  } finally {
+    launchAtLoginBusy.value = false
   }
 }
 
@@ -334,15 +358,21 @@ function onFlowStyleKeydown(event: KeyboardEvent, index: number): void {
 }
 
 let disposeCloseToTray: (() => void) | undefined
+let disposeLaunchAtLogin: (() => void) | undefined
 onMounted(() => {
   void loadAppConfig()
   disposeCloseToTray = window.tinadec.onCloseToTrayChanged(({ close_to_tray }) => {
     closeToTray.value = close_to_tray === true
   })
+  disposeLaunchAtLogin = window.tinadec.onLaunchAtLoginChanged(({ launch_at_login }) => {
+    launchAtLogin.value = launch_at_login === true
+  })
 })
 onUnmounted(() => {
   disposeCloseToTray?.()
   disposeCloseToTray = undefined
+  disposeLaunchAtLogin?.()
+  disposeLaunchAtLogin = undefined
 })
 
 // Re-exported for template type inference only.
@@ -550,6 +580,25 @@ void dismissConfirm
             :aria-label="t('settings.closeToTray')"
             data-testid="close-to-tray-switch"
             @update:model-value="setCloseToTray"
+          />
+        </div>
+      </div>
+
+      <div class="gateway-config-field">
+        <div class="setting-switch-row">
+          <div>
+            <UiLabel>{{ t('settings.launchAtLogin') }}</UiLabel>
+            <div class="gateway-config-meta">
+              <span>{{ t('settings.launchAtLoginHint') }}</span>
+            </div>
+          </div>
+          <UiSwitch
+            id="launch-at-login"
+            :model-value="launchAtLogin"
+            :disabled="launchAtLoginBusy"
+            :aria-label="t('settings.launchAtLogin')"
+            data-testid="launch-at-login-switch"
+            @update:model-value="setLaunchAtLogin"
           />
         </div>
       </div>

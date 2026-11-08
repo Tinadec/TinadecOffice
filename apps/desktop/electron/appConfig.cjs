@@ -45,6 +45,7 @@ function loadAppConfig(configFile, env = process.env, options = {}) {
   const debugStudioEnabled = readDebugStudioEnabled(stored);
   const preferences = { debug_studio_enabled: debugStudioEnabled,
     close_to_tray: readCloseToTray(stored) ?? options.defaultCloseToTray ?? false,
+    launch_at_login: readLaunchAtLogin(stored),
     companion_mode_enabled: readCompanionModeEnabled(stored),
     companion_capsule_style: readCompanionCapsuleStyle(stored),
     companion_capsule_reveal: readCompanionCapsuleReveal(stored) };
@@ -82,17 +83,30 @@ function readDebugStudioEnabled(document) {
 }
 
 /** The window preferences table; a missing table or key leaves the decision to the caller. */
-function readCloseToTray(document) {
+function readWindowBoolean(document, key) {
   const windowTable = document.window;
   if (windowTable !== undefined && (!windowTable || typeof windowTable !== 'object'
       || Array.isArray(windowTable) || windowTable instanceof Date)) {
     throw new Error('desktop.toml window must be a table.');
   }
-  const value = windowTable?.close_to_tray;
+  const value = windowTable?.[key];
   if (value !== undefined && typeof value !== 'boolean') {
-    throw new Error('desktop.toml window.close_to_tray must be a boolean.');
+    throw new Error(`desktop.toml window.${key} must be a boolean.`);
   }
   return value;
+}
+
+function readCloseToTray(document) {
+  return readWindowBoolean(document, 'close_to_tray');
+}
+
+/**
+ * Start the app when the user signs in. This is the other half of running unattended: closing the
+ * window keeps the process alive, and this brings it back after a reboot. It is a separate switch
+ * on purpose — a user may want one without the other.
+ */
+function readLaunchAtLogin(document) {
+  return readWindowBoolean(document, 'launch_at_login') ?? false;
 }
 
 /** The `[companion]` table, validated once for every key read out of it. */
@@ -239,6 +253,18 @@ function saveCloseToTray(configFile, enabled, env = process.env) {
   return loadAppConfig(configFile, env);
 }
 
+/** Starts the app when the user signs in; the other half of running unattended. */
+function saveLaunchAtLogin(configFile, enabled, env = process.env) {
+  if (typeof enabled !== 'boolean') throw new Error('Launch at login must be a boolean.');
+  const source = readDocumentSource(configFile);
+  const document = parse(source);
+  readLaunchAtLogin(document);
+  document.window ??= Object.create(null);
+  document.window.launch_at_login = enabled;
+  writeDocumentSource(configFile, tableScalarDocumentSource(source, document, 'window', 'launch_at_login'));
+  return loadAppConfig(configFile, env);
+}
+
 /** Turning this on shows the companion capsule docked to a screen edge. */
 function saveCompanionMode(configFile, enabled, env = process.env) {
   if (typeof enabled !== 'boolean') throw new Error('Companion mode enabled must be a boolean.');
@@ -331,6 +357,7 @@ module.exports = {
   resetGatewayUrl,
   saveGatewayUrl,
   saveCloseToTray,
+  saveLaunchAtLogin,
   saveCompanionCapsuleReveal,
   saveCompanionCapsuleStyle,
   saveCompanionMode,
