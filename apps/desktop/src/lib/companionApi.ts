@@ -49,6 +49,23 @@ export interface CompanionAutonomyInput {
   daily_action_budget?: number
 }
 
+/**
+ * A standing authorization for one class of autonomous action. `proposed` is a question the user
+ * has not answered yet; only `approved` lets that action run unattended.
+ */
+export interface CompanionMandate {
+  id: string
+  companion_id: string
+  action: string
+  status: 'proposed' | 'approved' | 'denied'
+  summary: string | null
+  proposal: Record<string, unknown> | null
+  revision: number
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
 export interface CompanionCreateInput {
   name?: string
   tagline?: string | null
@@ -293,6 +310,12 @@ export const companionApi = {
     }),
   tickAutonomy: (id: string) =>
     request<CompanionAutonomyTickResult>(`/api/v1/companions/${encodeURIComponent(id)}/autonomy/tick`, { method: 'POST' }),
+  listMandates: (id: string) =>
+    request<CompanionMandate[]>(`/api/v1/companions/${encodeURIComponent(id)}/mandates`),
+  decideMandate: (id: string, mandateId: string, revision: number, decision: 'approved' | 'denied') =>
+    request<CompanionMandate>(`/api/v1/companions/${encodeURIComponent(id)}/mandates/${encodeURIComponent(mandateId)}/decision`, {
+      method: 'POST', headers: ifMatch(revision), body: JSON.stringify({ decision }),
+    }),
 }
 
 // ── Live feed ────────────────────────────────────────────────────────

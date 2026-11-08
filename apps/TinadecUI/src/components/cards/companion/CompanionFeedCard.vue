@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Activity,
@@ -8,13 +8,14 @@ import {
   MessagesSquare,
   Pause,
   Play,
+  ShieldCheck,
   Sparkles,
   UserPlus,
   Users,
   XCircle,
   type LucideIcon,
 } from '@lucide/vue'
-import type { CompanionActivity } from '@/lib/companionApi'
+import { companionApi, type CompanionActivity } from '@/lib/companionApi'
 import {
   activity as activityRows,
   activeCompanions,
@@ -105,10 +106,43 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   autonomy_message_sent: Sparkles,
   run_completed: CheckCircle2,
   run_failed: XCircle,
+  autonomy_proposed: ShieldCheck,
+  autonomy_mandate_approved: ShieldCheck,
+  autonomy_mandate_denied: XCircle,
 }
 
 function kindIcon(row: CompanionActivity): LucideIcon {
   return KIND_ICONS[row.kind] ?? Activity
+}
+
+/** The proposal row carries the mandate it belongs to, so approving needs no extra lookup. */
+const deciding = ref<string | null>(null)
+const decideError = ref('')
+
+function mandateOf(row: CompanionActivity): { id: string; revision: number } | null {
+  if (row.kind !== 'autonomy_proposed' || !row.companion_id) return null
+  const id = row.payload?.mandate_id
+  const revision = row.payload?.revision
+  if (typeof id !== 'string' || typeof revision !== 'number') return null
+  return { id, revision }
+}
+
+async function decide(row: CompanionActivity, decision: 'approved' | 'denied'): Promise<void> {
+  const mandate = mandateOf(row)
+  if (!mandate || !row.companion_id || deciding.value) return
+  deciding.value = mandate.id
+  decideError.value = ''
+  try {
+    await companionApi.decideMandate(row.companion_id, mandate.id, mandate.revision, decision)
+    // The decision is a fact in the feed as well — re-read instead of patching the row locally.
+    await refreshCompanionCenter()
+  } catch {
+    // A stale revision means somebody decided it elsewhere; the refresh below shows the truth.
+    decideError.value = t('companion.center.mandateDecideFailed')
+    await refreshCompanionCenter()
+  } finally {
+    deciding.value = null
+  }
 }
 
 function text(payload: CompanionActivity['payload'], key: string): string {
@@ -168,6 +202,21 @@ function eventLine(row: CompanionActivity): EventLine {
           who: speaker,
           preview: text(row.payload, 'preview') || row.summary || '',
         }),
+        namesConversation: false,
+      }
+    case 'autonomy_proposed':
+      return {
+        text: t('companion.center.eventAutonomyProposed', { who: speaker }),
+        namesConversation: false,
+      }
+    case 'autonomy_mandate_approved':
+      return {
+        text: t('companion.center.eventMandateApproved', { action: text(row.payload, 'action') }),
+        namesConversation: false,
+      }
+    case 'autonomy_mandate_denied':
+      return {
+        text: t('companion.center.eventMandateDenied', { action: text(row.payload, 'action') }),
         namesConversation: false,
       }
     case 'run_completed':
@@ -230,6 +279,8 @@ function eventLine(row: CompanionActivity): EventLine {
 
     <p v-else-if="rows.length === 0" class="companion-card-note">{{ t('companion.center.feedEmpty') }}</p>
 
+    <p v-if="decideError" class="companion-card-error" role="alert">{{ decideError }}</p>
+
     <div v-else class="companion-feed">
       <section v-for="day in days" :key="day.key" class="companion-day">
         <h3 class="companion-day-label">{{ dayLabel(day.key) }}</h3>
@@ -249,6 +300,22 @@ function eventLine(row: CompanionActivity): EventLine {
                   · {{ row.conversation_title }}
                 </span>
               </p>
+              <div v-if="mandateOf(row)" class="companion-feed-decide">
+                <button
+                  type="button"
+                  class="companion-approve"
+                  :disabled="deciding === mandateOf(row)!.id"
+                  :data-testid="`mandate-approve-${mandateOf(row)!.id}`"
+                  @click="decide(row, 'approved')"
+                >{{ t('companion.center.mandateApprove') }}</button>
+                <button
+                  type="button"
+                  class="companion-deny"
+                  :disabled="deciding === mandateOf(row)!.id"
+                  :data-testid="`mandate-deny-${mandateOf(row)!.id}`"
+                  @click="decide(row, 'denied')"
+                >{{ t('companion.center.mandateDeny') }}</button>
+              </div>
             </div>
           </li>
         </ol>
@@ -434,5 +501,35 @@ function eventLine(row: CompanionActivity): EventLine {
   margin: 0;
   font-size: 10.5px;
   color: var(--text-muted);
+}
+
+/* The question the companion is waiting on. Only an answered proposal lets it act. */
+.companion-feed-decide {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.companion-feed-decide button {
+  padding: 3px 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.companion-feed-decide button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.companion-approve {
+  border-color: color-mix(in oklab, #3fb950 55%, var(--border-muted));
+}
+
+.companion-deny {
+  border-color: color-mix(in oklab, #f85149 45%, var(--border-muted));
 }
 </style>

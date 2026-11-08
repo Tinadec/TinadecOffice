@@ -6,8 +6,12 @@ import type { CompanionActivity, CompanionConversation } from './companionApi'
  * means.
  */
 
-/** Kinds the user is expected to act on. A chat message is never one of them. */
-const ATTENTION_KINDS = new Set(['run_failed'])
+/**
+ * Kinds the user is expected to act on. A chat message is never one of them. A proposed autonomous
+ * action is: the companion is waiting for an answer before it may act, so leaving it in the feed
+ * unanswered means the partner stays frozen rather than that it is idle.
+ */
+const ATTENTION_KINDS = new Set(['run_failed', 'autonomy_proposed'])
 
 /** Kinds a companion produced on its own schedule rather than in reply to the user. */
 const AUTONOMOUS_KINDS = new Set([
@@ -15,6 +19,9 @@ const AUTONOMOUS_KINDS = new Set([
   'autonomy_group_created',
   'autonomy_invited',
   'autonomy_skipped',
+  'autonomy_proposed',
+  'autonomy_mandate_approved',
+  'autonomy_mandate_denied',
 ])
 
 export type CompanionFeedFilter = 'all' | 'attention' | 'groups' | 'autonomous'
