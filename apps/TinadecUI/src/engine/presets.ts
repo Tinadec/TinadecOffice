@@ -225,28 +225,38 @@ function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.edgeInset = 8
 
   const nav = card(n(), 'nav')
+  const buddy = card(n(), 'companionBuddy')
   const list = card(n(), 'companionList')
+  const supervision = card(n(), 'companionSupervision')
   const feed = card(n(), 'companionFeed')
   const groups = card(n(), 'companionGroups')
   const connections = card(n(), 'companionConnections')
 
   snapshot.cards = {
     [nav.id]: nav,
+    [buddy.id]: buddy,
     [list.id]: list,
+    [supervision.id]: supervision,
     [feed.id]: feed,
     [groups.id]: groups,
     [connections.id]: connections,
   }
   // The left rail is the shared nav card and nothing else: one island, so it gets no tab strip.
-  // The centre is the immersive feed; the roster joins the feature panel on the right, which keeps
-  // the same top inset as every other page so it clears the window controls.
+  //
+  // The centre is the buddy timeline — the page is a chat app first, and the one conversation a
+  // user has with their buddy is what they come here for. Everything waiting on the user is pinned
+  // above it inside that card, so an empty queue costs no space.
+  //
+  // The right panel leads with the roster, then the supervision board: who is on the team, then
+  // what the ones with a window out are doing. Groups, the activity feed and the connections
+  // overview stay reachable as tabs.
   snapshot.columns = {
     left: column('left', 260, 8, 'float', [nav.id], nav.id),
-    center: column('center', 0, 8, 'immersive', [feed.id], feed.id),
+    center: column('center', 0, 8, 'immersive', [buddy.id], buddy.id),
     right: column('right', 380, HOME_GEOMETRY.rightTopInset, 'float',
-      [list.id, groups.id, connections.id], list.id),
+      [list.id, supervision.id, groups.id, feed.id, connections.id], list.id),
   }
-  snapshot.focusedCardId = feed.id
+  snapshot.focusedCardId = buddy.id
   return snapshot
 }
 
@@ -270,7 +280,10 @@ export const PRESET_REVISIONS: Partial<Record<UiePageId, number>> = {
   // 3 adds the shared nav card to the left rail, so the centre stops drawing its own sidebar.
   // 4 moves the roster into the right feature panel: the left rail must stay a single card, or the
   //   column grows a tab strip above the brand.
-  companionCenter: 4,
+  // 5 makes the centre a chat app: the buddy timeline takes the centre column, the supervision
+  //   board joins the roster, and the activity feed moves from the centre to a right-hand tab.
+  //   A stored snapshot would keep the feed where the conversation now belongs.
+  companionCenter: 5,
 }
 
 export function buildPreset(pageId: UiePageId, ctx: PresetContext): UieLayoutSnapshot {

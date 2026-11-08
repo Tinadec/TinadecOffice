@@ -256,7 +256,8 @@ describe('preset revisions for redesigned pages', () => {
       type: 'nav', component: {} as never, minWidth: 220, minHeight: 120,
       singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '',
     })
-    for (const type of ['companionList', 'companionFeed', 'companionGroups', 'companionConnections']) {
+    for (const type of ['companionList', 'companionFeed', 'companionGroups', 'companionConnections',
+      'companionBuddy', 'companionSupervision']) {
       reg.register({
         type, component: {} as never, minWidth: 200, minHeight: 160,
         singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '',
@@ -279,7 +280,7 @@ describe('preset revisions for redesigned pages', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     // Presets alone only reach fresh installs; the stored arrangement was replaced instead.
-    expect(uie.snapshot.value.presetRevision).toBe(4)
+    expect(uie.snapshot.value.presetRevision).toBe(5)
   })
 
   it('keeps a stored layout that already matches the page preset revision', async () => {

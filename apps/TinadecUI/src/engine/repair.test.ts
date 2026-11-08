@@ -176,16 +176,18 @@ describe('repairLayout', () => {
     expect(out.edgeInset).toBe(8)
     expect(out.gap).toBe(8)
     expect(Object.values(out.cards).map((card) => card.descriptorId).sort()).toEqual([
+      'companionBuddy',
       'companionConnections',
       'companionFeed',
       'companionGroups',
       'companionList',
+      'companionSupervision',
       'nav',
     ])
-    // The sidebar island stands alone on the left rail; the roster joins the feature panel.
+    // The sidebar island stands alone on the left rail; the buddy timeline owns the centre.
     expect(out.columns.left.primary.tabIds).toHaveLength(1)
     expect(out.columns.center.primary.tabIds).toHaveLength(1)
-    expect(out.columns.right.primary.tabIds).toHaveLength(3)
+    expect(out.columns.right.primary.tabIds).toHaveLength(5)
   })
 
   it('falls back to home for an unknown page id, without touching the companion page', () => {

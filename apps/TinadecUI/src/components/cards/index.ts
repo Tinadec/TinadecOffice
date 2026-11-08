@@ -23,6 +23,8 @@ import CompanionListCard from './companion/CompanionListCard.vue'
 import CompanionFeedCard from './companion/CompanionFeedCard.vue'
 import CompanionGroupsCard from './companion/CompanionGroupsCard.vue'
 import CompanionConnectionsCard from './companion/CompanionConnectionsCard.vue'
+import CompanionBuddyCard from './companion/CompanionBuddyCard.vue'
+import CompanionSupervisionCard from './companion/CompanionSupervisionCard.vue'
 import type { UieCardDescriptor } from '../../engine/types'
 
 /**
@@ -72,6 +74,12 @@ export function buildUieRegistry(): CardRegistry {
     { type: 'companionFeed', component: CompanionFeedCard, minWidth: 280, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
     { type: 'companionGroups', component: CompanionGroupsCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
     { type: 'companionConnections', component: CompanionConnectionsCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
+    // The buddy timeline is the centre of the companion page: one conversation, no new-chat
+    // affordance. It is not closable — closing it would leave the page with no main surface.
+    { type: 'companionBuddy', component: CompanionBuddyCard, minWidth: 320, minHeight: 240, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
+    // Supervision answers "does this session need me?" for the sessions with a desktop partner
+    // window out. It reads runs and approvals itself, so it works without the work page running.
+    { type: 'companionSupervision', component: CompanionSupervisionCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
   ]
 
   for (const c of cards) reg.register(c)

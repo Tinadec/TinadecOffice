@@ -48,11 +48,14 @@ describe('built-in presets', () => {
       preset.columns[slot].primary.tabIds.map((id) => preset.cards[id].descriptorId)
     // The left rail is one card — the shared nav island — so it gets no tab strip.
     expect(descriptors('left')).toEqual(['nav'])
-    expect(descriptors('center')).toEqual(['companionFeed'])
-    // The roster joins the feature panel on the right, ahead of groups and connections.
-    expect(descriptors('right')).toEqual(['companionList', 'companionGroups', 'companionConnections'])
-    // Five cards: the shared sidebar plus the four companion panels.
-    expect(Object.keys(preset.cards)).toHaveLength(5)
+    // The centre is the buddy conversation; the activity feed moved to a right-hand tab.
+    expect(descriptors('center')).toEqual(['companionBuddy'])
+    // Roster first, then what those partners are doing, then the reference surfaces.
+    expect(descriptors('right')).toEqual([
+      'companionList', 'companionSupervision', 'companionGroups', 'companionFeed', 'companionConnections',
+    ])
+    // Seven cards: the shared sidebar plus six companion panels.
+    expect(Object.keys(preset.cards)).toHaveLength(7)
     // The feature panel clears the window controls exactly like the work pages do.
     expect(preset.columns.right.topInset).toBe(48)
     expect(preset.columns.left.topInset).toBe(8)

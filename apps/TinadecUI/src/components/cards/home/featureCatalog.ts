@@ -8,6 +8,7 @@ import {
   Globe,
   Layers3,
   MessagesSquare,
+  MonitorSmartphone,
   PlugZap,
   ShieldCheck,
   Stethoscope,
@@ -74,6 +75,11 @@ export const FEATURE_CATALOG: FeatureCatalogEntry[] = [
   { descriptorId: 'companionFeed', titleKey: 'context.companionFeed', descKey: 'context.companionFeedDesc', icon: Activity, color: '#58a6ff', pages: ['companionCenter'] },
   { descriptorId: 'companionGroups', titleKey: 'context.companionGroups', descKey: 'context.companionGroupsDesc', icon: MessagesSquare, color: '#a371f7', pages: ['companionCenter'] },
   { descriptorId: 'companionConnections', titleKey: 'context.companionConnections', descKey: 'context.companionConnectionsDesc', icon: PlugZap, color: '#3fb950', pages: ['companionCenter'] },
+  // The buddy timeline and the supervision board are the two surfaces the centre exists for, so
+  // they are catalog entries too — a card with no entry has no icon anywhere, including the
+  // tab strip's new-tab menu.
+  { descriptorId: 'companionBuddy', titleKey: 'context.companionBuddy', descKey: 'context.companionBuddyDesc', icon: Bot, color: '#58a6ff', pages: ['companionCenter'] },
+  { descriptorId: 'companionSupervision', titleKey: 'context.companionSupervision', descKey: 'context.companionSupervisionDesc', icon: MonitorSmartphone, color: '#d29922', pages: ['companionCenter'] },
 ]
 
 /**
