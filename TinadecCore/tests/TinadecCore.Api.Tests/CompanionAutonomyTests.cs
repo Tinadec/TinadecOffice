@@ -232,7 +232,9 @@ public sealed class CompanionAutonomyTests
         var globallyPaused = await TickAsync(client, companionId);
         Assert.False(globallyPaused.GetProperty("acted").GetBoolean());
         Assert.Equal("autonomy_paused", globallyPaused.GetProperty("reason").GetString());
-        Assert.Empty(await ActivityAsync(client));
+        // The settings write itself is a feed event (companion.settings); the paused tick must still
+        // leave no autonomy trace of its own.
+        Assert.Empty((await ActivityAsync(client)).Where(row => row.GetProperty("kind").GetString() != "settings_changed"));
         Assert.Empty(factory.Chat.Calls);
     }
 
@@ -435,6 +437,27 @@ public sealed class CompanionAutonomyTests
             Assert.Equal(HttpStatusCode.OK, projectedResponse.StatusCode);
             Assert.Equal(companionId,
                 (await projectedResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid());
+
+            // The rest of the companion family is pinned too. These never matched
+            // StartsWithSegments("/api/v1/companions") and a value prefix is the only thing that
+            // covers them: companion-settings, companion-conversations, companion-runs,
+            // companion-connections and companion-events. A project header would otherwise split
+            // the companion domain across project stores.
+            //
+            // The write makes the assertion meaningful: a scope that is not pinned would answer
+            // from an empty project store and report its defaults, not the row that was just set.
+            using (var write = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
+                   { Content = JsonContent.Create(new { autonomy_paused = true }) })
+            {
+                write.Headers.Add("If-Match", "\"0\"");
+                (await client.SendAsync(write)).EnsureSuccessStatusCode();
+            }
+            using var settings = new HttpRequestMessage(HttpMethod.Get, "/api/v1/companion-settings");
+            settings.Headers.Add("X-Tinadec-Storage-Id", storageId);
+            using var settingsResponse = await client.SendAsync(settings);
+            Assert.Equal(HttpStatusCode.OK, settingsResponse.StatusCode);
+            Assert.True((await settingsResponse.Content.ReadFromJsonAsync<JsonElement>())
+                .GetProperty("autonomy_paused").GetBoolean());
 
             // Control: the middleware still honors the header for work-domain routes, so the
             // companion result above is the companion rule, not a globally ignored header.

@@ -444,7 +444,24 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             row.Revision++;
             row.UpdatedAt = now;
         }
-        await SaveAsync(db, cancellationToken).ConfigureAwait(false);
+        // The settings feed event is an activity row like any other; the live endpoint maps this
+        // kind to `companion.settings` so a client can tell a designation change from chat traffic.
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "settings_changed",
+            Summary = "伙伴设置已更新",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                main_companion_id = row.MainCompanionId,
+                buddy_companion_id = row.BuddyCompanionId,
+                autonomy_paused = row.AutonomyPaused,
+                revision = row.Revision
+            }),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, token => SaveAsync(db, token), cancellationToken).ConfigureAwait(false);
         return CompanionContracts.ToJson(row);
     }
 

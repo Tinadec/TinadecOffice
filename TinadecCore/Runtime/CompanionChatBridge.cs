@@ -43,12 +43,45 @@ public sealed class CompanionChatBridge(
         }
         catch (TinaChatException ex) when (ex.Code == "participant_handle_exists")
         {
-            // A concurrent registration won the race; the deterministic handle means it is ours.
+            // The deterministic handle belongs to this companion. The row may be archived (archiving
+            // keeps the handle reserved), in which case the companion was restored and its
+            // participant has to come back rather than stay silently unbridged.
             await using var db = await participants.CreateDbContextAsync(ct);
             var row = await db.Participants.AsNoTracking()
-                .SingleAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
-                    && x.CompanionId == companionId && x.Status == "active", ct);
+                .SingleOrDefaultAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                    && x.Handle == handle, ct);
+            if (row is null || row.CompanionId != companionId) throw;
+            if (row.Status != "active")
+            {
+                return await chat.UpdateParticipantAsync(row.Id, new TinaChatUpdateParticipantRequest(
+                    row.Revision, companion.Name, row.JobTitle, row.Description,
+                    ReceiveHumanMessages: true, CanInterpretIntent: true, row.Discoverable, "active"), ct);
+            }
             return await chat.GetParticipantAsync(row.Id, ct);
         }
+    }
+
+    /// <summary>
+    /// Retires the participants of an archived companion. It goes through the chat service rather
+    /// than the table so the change keeps its audit row and revision, and it is idempotent because
+    /// only active rows are selected.
+    /// </summary>
+    public async Task<int> ArchiveParticipantsAsync(Guid companionId, CancellationToken ct = default)
+    {
+        var scope = tenant.Current;
+        await using var participantDb = await participants.CreateDbContextAsync(ct);
+        var rows = await participantDb.Participants.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.CompanionId == companionId && x.Status == "active")
+            .ToListAsync(ct);
+        var archived = 0;
+        foreach (var row in rows)
+        {
+            await chat.UpdateParticipantAsync(row.Id, new TinaChatUpdateParticipantRequest(
+                row.Revision, row.DisplayName, row.JobTitle, row.Description,
+                row.ReceiveHumanMessages, row.CanInterpretIntent, row.Discoverable, "archived"), ct);
+            archived++;
+        }
+        return archived;
     }
 }

@@ -10073,6 +10073,44 @@
         ]
       }
     },
+    "/api/v1/companion-events": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "afterSeq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
     "/api/v1/companion-runs/{runId}": {
       "get": {
         "parameters": [
@@ -18183,6 +18221,9 @@
     },
     {
       "name": "CompanionConversationEndpoints"
+    },
+    {
+      "name": "Companions"
     },
     {
       "name": "ModelAgentControlEndpoints"

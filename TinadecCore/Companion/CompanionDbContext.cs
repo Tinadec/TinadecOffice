@@ -21,6 +21,7 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
     public DbSet<CompanionConversationMemberRecord> ConversationMembers => Set<CompanionConversationMemberRecord>();
     public DbSet<CompanionMessageRecord> Messages => Set<CompanionMessageRecord>();
     public DbSet<CompanionRunRecord> Runs => Set<CompanionRunRecord>();
+    public DbSet<CompanionEffectRecord> Effects => Set<CompanionEffectRecord>();
     public DbSet<CompanionActivityRecord> Activities => Set<CompanionActivityRecord>();
 
     protected override void OnModelCreating(ModelBuilder model)
@@ -138,6 +139,25 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.HasIndex(x => new { x.TenantId, x.ConversationId, x.CreatedAt });
         });
 
+        // The durable wake queue for companion runs. A run row says what the user sees; an effect
+        // row says what the host still owes, so a crash between "message stored" and "reply written"
+        // leaves a claimable row instead of a run that never moves.
+        model.Entity<CompanionEffectRecord>(e =>
+        {
+            e.ToTable("companion_effects");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Kind).HasMaxLength(32).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(16).IsRequired();
+            e.Property(x => x.PayloadJson).IsRequired();
+            e.Property(x => x.ClaimToken).HasMaxLength(64);
+            e.Property(x => x.LastError).HasMaxLength(2048);
+            // One live effect per run: the enqueue path and the startup self-heal both target the
+            // same run, and a second row would let two executors answer the same message.
+            e.HasIndex(x => new { x.TenantId, x.RunId, x.Kind }).IsUnique().HasFilter("run_id IS NOT NULL");
+            // The claim scan is (status, due) ordered, which the unique run index cannot serve.
+            e.HasIndex(x => new { x.Status, x.AvailableAtUnixMs });
+        });
+
         model.Entity<CompanionActivityRecord>(e =>
         {
             e.ToTable("companion_activities");
@@ -145,6 +165,10 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.Property(x => x.Kind).HasMaxLength(32).IsRequired();
             e.Property(x => x.Summary).HasMaxLength(512).IsRequired();
             e.Property(x => x.Detail).HasMaxLength(2048);
+            // The live feed resumes from a single tenant-monotonic cursor, so (tenant, seq) must be
+            // unique. The filter keeps rows written before this column existed (seq 0) from making
+            // the index impossible to create on an upgraded database.
+            e.HasIndex(x => new { x.TenantId, x.Seq }).IsUnique().HasFilter("seq > 0");
             e.HasIndex(x => new { x.TenantId, x.CompanionId, x.CreatedAt });
             e.HasIndex(x => new { x.TenantId, x.CreatedAt });
         });
@@ -322,10 +346,46 @@ public sealed class CompanionRunRecord
     public DateTimeOffset? FinishedAt { get; set; }
 }
 
+/// <summary>
+/// A unit of work the host still owes, independent of the run row it belongs to. Status is the
+/// lease state (pending/running/done/failed) and <see cref="ClaimToken"/> fences a slow executor
+/// out once another host has reclaimed an expired claim.
+/// </summary>
+public sealed class CompanionEffectRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid? CompanionId { get; set; }
+    public Guid? ConversationId { get; set; }
+    // Null for effects that are not tied to a run; the unique index filters those out.
+    public Guid? RunId { get; set; }
+    // run_reply — the only kind today; kept as a column so a second effect type does not need a
+    // second queue.
+    public string Kind { get; set; } = "run_reply";
+    public string PayloadJson { get; set; } = "{}";
+    // pending | running | done | failed
+    public string Status { get; set; } = "pending";
+    public int Attempts { get; set; }
+    public DateTimeOffset AvailableAt { get; set; }
+    // Same instant as AvailableAt, in a form SQLite can compare and order. Without it the claim
+    // scan would have to load every pending row and compare in memory.
+    public long AvailableAtUnixMs { get; set; }
+    public string? ClaimToken { get; set; }
+    public DateTimeOffset? ClaimedAt { get; set; }
+    // Claim expiry, likewise numeric for the reclaim scan.
+    public long? ClaimedAtUnixMs { get; set; }
+    public string? LastError { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
 public sealed class CompanionActivityRecord
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
+    // Tenant-monotonic order of the activity feed. Rows written before this column existed read 0
+    // and stay behind every new row, which is exactly their age.
+    public long Seq { get; set; }
     // run_started | run_completed | message_sent | group_created | autonomy_skipped | ...
     public string Kind { get; set; } = string.Empty;
     public Guid? CompanionId { get; set; }

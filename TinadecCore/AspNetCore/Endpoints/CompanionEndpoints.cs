@@ -40,6 +40,7 @@ public static class CompanionEndpoints
         app.MapPatch("/api/v1/companion-settings", PatchSettings);
 
         app.MapCompanionConversationEndpoints();
+        app.MapCompanionEventEndpoints();
 
         return app;
     }

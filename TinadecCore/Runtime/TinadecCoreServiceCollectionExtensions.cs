@@ -60,6 +60,10 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
         services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
         services.AddSingleton<CompanionChatBridge>();
+        // Startup reconciliation: without this the bridge was a tested dead end and a companion
+        // never became a TinaChat participant on a real host.
+        services.AddSingleton<CompanionParticipantReconciler>();
+        services.AddHostedService(sp => sp.GetRequiredService<CompanionParticipantReconciler>());
         services.AddSingleton<IExecutorMessageWakeSink, ExecutorMessageWakeSink>();
         // Governance reports use one runtime action port. The adapter checks the
         // target run's tenant/workspace/session before it reaches run control.

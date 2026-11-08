@@ -277,6 +277,7 @@ internal static class CompanionContracts
     internal static object ActivityJson(CompanionActivityRecord row, string? companionName, string? conversationTitle) => new
     {
         id = row.Id,
+        seq = row.Seq,
         kind = row.Kind,
         companion_id = row.CompanionId,
         companion_name = companionName,

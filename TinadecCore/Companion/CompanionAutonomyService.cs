@@ -332,7 +332,9 @@ public sealed class CompanionAutonomyService(
         db.Activities.Add(activityRow);
         try
         {
-            await CompanionMessages.SaveAsync(db, message, tenantId, conversationId, cancellationToken).ConfigureAwait(false);
+            await CompanionActivities.SaveAsync(db, tenantId,
+                token => CompanionMessages.SaveAsync(db, message, tenantId, conversationId, token), cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -613,7 +615,7 @@ public sealed class CompanionAutonomyService(
         };
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         db.Activities.Add(row);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await CompanionActivities.SaveAsync(db, companion.TenantId, cancellationToken).ConfigureAwait(false);
         return CompanionContracts.ActivityJson(row, companion.Name, conversationTitle);
     }
 
