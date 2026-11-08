@@ -30,6 +30,8 @@ public sealed class CompanionWorkGateway(
     ITenantContextAccessor tenant) : ICompanionWorkGateway
 {
     private const int MaxSessions = 50;
+    private const int DefaultSessionMessages = 20;
+    private const int MaxSessionMessages = 50;
 
     public async Task<CompanionWorkResult<IReadOnlyList<CompanionWorkSession>>> ListSessionsAsync(
         CancellationToken cancellationToken = default)
@@ -153,6 +155,59 @@ public sealed class CompanionWorkGateway(
         {
             return CompanionWorkResult<CompanionWorkDispatch>.Fail("session_not_found", ex.Message);
         }
+    }
+
+    public async Task<CompanionWorkResult<IReadOnlyList<CompanionWorkWorkspaceSummary>>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var projects = await sessionStore.ListProjectsAsync(LifecycleStatuses.Active, cancellationToken)
+            .ConfigureAwait(false);
+        var sessions = await sessionStore.ListSessionsAsync(null, LifecycleStatuses.Active, cancellationToken)
+            .ConfigureAwait(false);
+        var counts = sessions
+            .Where(session => session.ProjectId is not null)
+            .GroupBy(session => session.ProjectId!.Value)
+            .ToDictionary(group => group.Key, group => group.Count());
+        var result = projects
+            .Select(project => new CompanionWorkWorkspaceSummary(
+                project.Id,
+                project.Name,
+                project.RootPath,
+                counts.GetValueOrDefault(project.Id)))
+            .ToList();
+        return CompanionWorkResult<IReadOnlyList<CompanionWorkWorkspaceSummary>>.Ok(result);
+    }
+
+    public async Task<CompanionWorkResult<CompanionWorkSessionDetail>> ReadSessionAsync(
+        Guid sessionId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = tenant.Current;
+        var reference = await sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (reference is null || reference.TenantId != scope.TenantId || reference.WorkspaceId != scope.WorkspaceId)
+            return CompanionWorkResult<CompanionWorkSessionDetail>.Fail(
+                "session_not_found", "The session does not exist in this tenant/workspace.");
+        var session = await sessionStore.GetSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+            return CompanionWorkResult<CompanionWorkSessionDetail>.Fail(
+                "session_not_found", "The session does not exist in this tenant/workspace.");
+
+        // Capped by the caller, and capped again here: the model decides how much of the transcript
+        // it needs, but this port never hands back a whole long conversation.
+        var take = Math.Clamp(limit <= 0 ? DefaultSessionMessages : limit, 1, MaxSessionMessages);
+        var messages = await conversations.ListMessagesAsync(sessionId, take, cancellationToken)
+            .ConfigureAwait(false);
+        var activeRuns = await lifecycle.CountActiveRunsAsync(sessionId.ToString(), cancellationToken)
+            .ConfigureAwait(false);
+        return CompanionWorkResult<CompanionWorkSessionDetail>.Ok(new CompanionWorkSessionDetail(
+            sessionId,
+            session.Title,
+            session.ProjectId,
+            session.PermissionMode ?? "default",
+            activeRuns > 0,
+            messages.Select(message => new CompanionWorkMessage(
+                message.Role, message.Content, message.CreatedAt)).ToList()));
     }
 
     public async Task<CompanionWorkResult<CompanionWorkWorkspace>> CreateWorkspaceAsync(

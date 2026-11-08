@@ -103,6 +103,39 @@ public sealed class CompanionDispatchTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The environment probes answer from real state, and they are how a companion decides whether
+    /// the same work is already under way — so the transcript and the workspace list must be real
+    /// rows, not synthesized placeholders.
+    /// </summary>
+    [Fact]
+    public async Task SessionDetail_ReportsTheTranscript_AndWorkspacesListCountsSessions()
+    {
+        using var client = Factory.CreateClient();
+        var project = await CreateProjectAsync(client, "统计项目");
+        var targetSession = await CreateWorkSessionAsync(client, "数据整理", project.GetProperty("id").GetGuid());
+        var gateway = Factory.Services.GetRequiredService<ICompanionWorkGateway>();
+
+        await client.PostAsJsonAsync($"/api/v1/sessions/{targetSession}/messages", new { content = "先把上周的导出整理一下。" });
+
+        var detail = await gateway.ReadSessionAsync(targetSession, 5);
+        Assert.True(detail.IsSuccess);
+        var messages = detail.Value!.RecentMessages;
+        Assert.Contains(messages, message => message.Content.Contains("上周的导出", StringComparison.Ordinal));
+        // The slice is capped by what the caller asked for, never the whole conversation.
+        Assert.True(messages.Count <= 5);
+
+        var workspaces = await gateway.ListWorkspacesAsync();
+        Assert.True(workspaces.IsSuccess);
+        var listed = Assert.Single(workspaces.Value!, item => item.ProjectId == project.GetProperty("id").GetGuid());
+        Assert.Equal(1, listed.ActiveSessions);
+
+        // A session outside this tenant is refused exactly like a missing one.
+        var foreign = await gateway.ReadSessionAsync(Guid.NewGuid(), 5);
+        Assert.False(foreign.IsSuccess);
+        Assert.Equal("session_not_found", foreign.Error);
+    }
+
+    /// <summary>
     /// The companion effect queue is at-least-once, so a turn replayed after a failed model call
     /// must not append a second task message. The gateway honours the caller's key, and the
     /// coordinator's own append is idempotent on it.
@@ -163,11 +196,17 @@ public sealed class CompanionDispatchTests : IAsyncLifetime
     }
 
     [Fact]
-    public void CompanionToolSurface_IsExactlyTheFourManagementTools()
+    public void CompanionToolSurface_IsExactlyTheSixManagementTools()
     {
         var ids = CompanionToolCatalog.Tools.Select(tool => tool.Id).ToArray();
         Assert.Equal(
-            new[] { "companion_list_sessions", "companion_read_run", "companion_dispatch", "companion_create_workspace" },
+            new[]
+            {
+                "companion_list_sessions", "companion_read_run", "companion_dispatch",
+                // Read-only environment probes: the companion asks for them when it needs them.
+                "companion_list_workspaces", "companion_session_detail",
+                "companion_create_workspace"
+            },
             ids);
 
         // The hard boundary: no code tool can ever appear on this surface, however it is spelled.
@@ -377,23 +416,28 @@ public sealed class CompanionDispatchTests : IAsyncLifetime
         return Assert.Single(payload.GetProperty("runs").EnumerateArray()).GetProperty("id").GetGuid();
     }
 
-    private async Task<Guid> CreateWorkSessionAsync(HttpClient client, string title)
+    private async Task<Guid> CreateWorkSessionAsync(HttpClient client, string title, Guid? projectId = null)
     {
-        using var projectResponse = await client.PostAsJsonAsync("/api/v1/projects", new
-        {
-            name = title + " project",
-            path = Path.Combine(_root, "workspace-" + Guid.NewGuid().ToString("N"))
-        });
-        Assert.Equal(System.Net.HttpStatusCode.Created, projectResponse.StatusCode);
-        var project = await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var project = projectId ?? (await CreateProjectAsync(client, title + " project")).GetProperty("id").GetGuid();
         using var sessionResponse = await client.PostAsJsonAsync("/api/v1/sessions", new
         {
-            project_id = project.GetProperty("id").GetGuid(),
+            project_id = project,
             title
         });
         Assert.Equal(System.Net.HttpStatusCode.Created, sessionResponse.StatusCode);
         var session = await sessionResponse.Content.ReadFromJsonAsync<JsonElement>();
         return session.GetProperty("id").GetGuid();
+    }
+
+    private static async Task<JsonElement> CreateProjectAsync(HttpClient client, string name)
+    {
+        using var projectResponse = await client.PostAsJsonAsync("/api/v1/projects", new
+        {
+            name,
+            path = Path.Combine(Path.GetTempPath(), "tinadec-companion-dispatch-project-" + Guid.NewGuid().ToString("N"))
+        });
+        Assert.Equal(System.Net.HttpStatusCode.Created, projectResponse.StatusCode);
+        return await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
     }
 
     private sealed class DispatchFactory(string root) : IsolatedApiFactory

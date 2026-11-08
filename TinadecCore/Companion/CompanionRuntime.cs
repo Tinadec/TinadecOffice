@@ -674,12 +674,26 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         var persona = string.IsNullOrWhiteSpace(companion.PersonaDocument) ? DefaultPersona : companion.PersonaDocument.Trim();
         var text = new System.Text.StringBuilder(persona);
         text.AppendLine().AppendLine();
-        text.AppendLine($"你是伙伴域中的伙伴「{companion.Name}」。你只与本会话的成员交流。你有且只有四个管理工作会话的工具："
-            + "companion_list_sessions（列出本租户的工作会话及其最近一次运行）、companion_read_run（读取一次运行的状态）、"
-            + "companion_dispatch（把任务作为用户消息写入一个工作会话并启动运行）、companion_create_workspace（新建或复用项目工作区）。"
-            + "除此之外没有任何工具：不能读写文件、执行命令、使用 Git、MCP、浏览器或外部设备。派活是管理动作，不需要工具审批；"
-            + "真正写代码的是工作会话里的智能体，它们自己的审批门照旧。"
-            + "不泄露其他成员的私有信息，群聊内容也不会自动成为任何成员的私有记忆。");
+        text.AppendLine($"你是伙伴域中的伙伴「{companion.Name}」。你只与本会话的成员交流。");
+        text.AppendLine();
+        // The environment is exposed as verbs, not as a briefing. Everything the user's work looks
+        // like — which sessions exist, what each is doing, which projects are registered, what a
+        // session has already been asked — is one call away. Writing it into this prompt instead
+        // would spend tokens on facts the turn usually does not need, and would go stale between
+        // the freeze and the model call.
+        text.AppendLine("你可以随时查询这个工作环境，需要时自己决定查什么：");
+        text.AppendLine("- companion_list_sessions：本租户的工作会话及其最近一次运行");
+        text.AppendLine("- companion_session_detail：某个会话的权限模式、是否正在运行、最近的对话内容");
+        text.AppendLine("- companion_read_run：一次运行的状态、摘要与失败原因");
+        text.AppendLine("- companion_list_workspaces：已登记的项目工作区及其会话数量");
+        text.AppendLine("- companion_dispatch：把任务作为用户消息写入一个工作会话并启动运行");
+        text.AppendLine("- companion_create_workspace：新建或复用项目工作区");
+        text.AppendLine();
+        text.AppendLine("没有其他工具：不能读写文件、执行命令、使用 Git、MCP、浏览器或外部设备。"
+            + "派活是管理动作，不需要工具审批；真正写代码的是工作会话里的智能体，它们自己的审批门照旧。");
+        text.AppendLine("派活之前值得先看一眼：那个会话是不是已经在做同一件事（companion_session_detail 的最近对话会告诉你）。"
+            + "重复派活对用户是噪音，但也不必为了确认而每次都查——你自己判断。");
+        text.AppendLine("不泄露其他成员的私有信息，群聊内容也不会自动成为任何成员的私有记忆。");
         if (memories.Count > 0)
         {
             text.AppendLine().AppendLine("你记得的事实（只有你自己可见）：");
@@ -816,6 +830,18 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             case CompanionToolCatalog.ListSessions:
                 return Serialize(await gateway.ListSessionsAsync(cancellationToken).ConfigureAwait(false));
 
+            case CompanionToolCatalog.ListWorkspaces:
+                return Serialize(await gateway.ListWorkspacesAsync(cancellationToken).ConfigureAwait(false));
+
+            case CompanionToolCatalog.SessionDetail:
+            {
+                if (!TryGuidArg(args, "session_id", out var detailSessionId))
+                    return Failure("invalid_arguments", "session_id must be a non-empty GUID.");
+                var limit = IntArg(args, "limit") ?? 20;
+                return Serialize(await gateway.ReadSessionAsync(detailSessionId, limit, cancellationToken)
+                    .ConfigureAwait(false));
+            }
+
             case CompanionToolCatalog.ReadRun:
             {
                 if (!TryGuidArg(args, "run_id", out var runId))
@@ -925,6 +951,15 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         value = Guid.Empty;
         return Guid.TryParse(StringArg(args, name), out value) && value != Guid.Empty;
     }
+
+    /// <summary>A whole number argument, or null when absent or not a number.</summary>
+    private static int? IntArg(JsonElement args, string name) =>
+        args.ValueKind == JsonValueKind.Object
+        && args.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.Number
+        && value.TryGetInt32(out var number)
+            ? number
+            : null;
 
     /// <summary>
     /// Keyword/containment match against the trigger message, then the most recently updated rows

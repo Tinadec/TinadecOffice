@@ -178,7 +178,8 @@ public sealed class CompanionConversationTests
         var call = Assert.Single(factory.Chat.Calls, x => x.Instructions.Contains("你是 A"));
         // The companion's whole surface is the four management verbs — never a code tool.
         Assert.Equal(
-            "companion_list_sessions,companion_read_run,companion_dispatch,companion_create_workspace",
+            "companion_list_sessions,companion_read_run,companion_dispatch,companion_list_workspaces,"
+            + "companion_session_detail,companion_create_workspace",
             call.ToolNames);
         Assert.Equal(ChatToolMode.Auto, call.ToolMode);
         Assert.Contains("项目代号是 Aurora", call.Instructions);

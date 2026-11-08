@@ -44,6 +44,23 @@ public interface ICompanionWorkGateway
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Active project workspaces in this tenant/workspace with their root paths and active-session counts.
+    /// A companion checks this before registering a root, and to see which projects the user works in.
+    /// </summary>
+    Task<CompanionWorkResult<IReadOnlyList<CompanionWorkWorkspaceSummary>>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// One session in depth: its policy, whether a run is active, and a capped transcript of recent
+    /// turns. The transcript is what lets a companion notice the same work is already under way
+    /// before it dispatches a duplicate.
+    /// </summary>
+    Task<CompanionWorkResult<CompanionWorkSessionDetail>> ReadSessionAsync(
+        Guid sessionId,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Registers a project workspace. <paramref name="path"/> must be absolute; an existing
     /// directory is reused, and an existing project row for the same root is returned as-is.
     /// </summary>
@@ -84,3 +101,19 @@ public sealed record CompanionWorkRun(
 public sealed record CompanionWorkDispatch(Guid SessionId, Guid RunId, string SessionTitle);
 
 public sealed record CompanionWorkWorkspace(Guid ProjectId, string Name, string Path);
+
+public sealed record CompanionWorkWorkspaceSummary(Guid ProjectId, string Name, string RootPath, int ActiveSessions);
+
+/// <summary>
+/// One session's policy plus a capped slice of its transcript. Messages are the raw conversation rows
+/// the session already owns; this port never writes them.
+/// </summary>
+public sealed record CompanionWorkSessionDetail(
+    Guid SessionId,
+    string Title,
+    Guid? ProjectId,
+    string PermissionMode,
+    bool HasActiveRun,
+    IReadOnlyList<CompanionWorkMessage> RecentMessages);
+
+public sealed record CompanionWorkMessage(string Role, string Content, DateTimeOffset CreatedAt);

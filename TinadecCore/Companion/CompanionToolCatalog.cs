@@ -17,6 +17,8 @@ public static class CompanionToolCatalog
     public const string ReadRun = "companion_read_run";
     public const string Dispatch = "companion_dispatch";
     public const string CreateWorkspace = "companion_create_workspace";
+    public const string ListWorkspaces = "companion_list_workspaces";
+    public const string SessionDetail = "companion_session_detail";
 
     public static IReadOnlyList<CompanionToolDeclaration> Tools { get; } =
     [
@@ -46,6 +48,23 @@ public static class CompanionToolCatalog
             + "result — check companion_read_run later.",
             Parse("""
                 {"type":"object","properties":{"session_id":{"type":"string","description":"Session id from companion_list_sessions."},"task":{"type":"string","description":"The full task text to deliver to that session as a user message."}},"required":["session_id","task"],"additionalProperties":false}
+                """)),
+
+        new(ListWorkspaces,
+            "List the project workspaces registered here: id, name, root path, and how many active sessions each "
+            + "holds. Use it before companion_create_workspace so you do not register a root that already exists, and "
+            + "to answer which projects the user is working in.",
+            Parse("""
+                {"type":"object","properties":{},"additionalProperties":false}
+                """)),
+
+        new(SessionDetail,
+            "Read one session in depth: title, project, permission mode, whether it currently has an active run, and "
+            + "a capped transcript of recent turns (oldest first, at most 20 by default). Use it to check whether that "
+            + "session is already working on the same thing before dispatching, or when the user asks what a session "
+            + "has been doing. Refused for a session outside this tenant/workspace.",
+            Parse("""
+                {"type":"object","properties":{"session_id":{"type":"string","description":"Session id from companion_list_sessions."},"limit":{"type":"integer","description":"How many recent messages to include, 1-50; defaults to 20."}},"required":["session_id"],"additionalProperties":false}
                 """)),
 
         new(CreateWorkspace,
