@@ -10122,6 +10122,57 @@
         ]
       }
     },
+    "/api/v1/companion-recruitments": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companion-recruitments/{recruitmentId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recruitmentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionMandateDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
     "/api/v1/companion-runs/{runId}": {
       "get": {
         "parameters": [

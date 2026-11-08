@@ -26,6 +26,11 @@ public static class CompanionEndpoints
         app.MapGet("/api/v1/companions/{companionId:guid}/mandates", ListMandates);
         app.MapPost("/api/v1/companions/{companionId:guid}/mandates/{mandateId:guid}/decision", DecideMandate);
 
+        // Recruit proposals: a companion asking for a long-lived helper. Approval is what creates
+        // it, and the tenant's recruit limit is re-checked at that moment.
+        app.MapGet("/api/v1/companion-recruitments", ListRecruitments);
+        app.MapPost("/api/v1/companion-recruitments/{recruitmentId:guid}/decision", DecideRecruitment);
+
         app.MapGet("/api/v1/companions/{companionId:guid}/memories", ListMemories);
         app.MapPost("/api/v1/companions/{companionId:guid}/memories", CreateMemory);
         app.MapPatch("/api/v1/companions/{companionId:guid}/memories/{memoryId:guid}", PatchMemory);
@@ -135,6 +140,25 @@ public static class CompanionEndpoints
         CompanionAutonomyService service,
         CancellationToken cancellationToken = default) =>
         Run(async () => Ok(await service.TickAsync(companionId, cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> ListRecruitments(
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () => Ok(await service.ListRecruitmentsAsync(cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> DecideRecruitment(
+        Guid recruitmentId,
+        CompanionMandateDecisionRequest? input,
+        HttpRequest request,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null) throw new CompanionException("invalid_request", "A decision body is required.", 400);
+            var body = await service.DecideRecruitmentAsync(
+                recruitmentId, IfMatch(request), input.Decision, cancellationToken).ConfigureAwait(false);
+            return body is null ? NotFound() : Ok(body);
+        });
 
     static Task<IResult> ListMandates(
         Guid companionId,
@@ -321,11 +345,15 @@ public static class CompanionEndpoints
                 buddyCompanionId = parsedBuddy;
             }
 
+            int? recruitLimit = null;
+            if (input.TryGetProperty("recruit_limit", out var limitElement) && limitElement.TryGetInt32(out var parsedLimit))
+                recruitLimit = parsedLimit;
+
             bool? autonomyPaused = null;
             if (input.TryGetProperty("autonomy_paused", out var pausedElement) && pausedElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 autonomyPaused = pausedElement.GetBoolean();
 
-            var body = await service.PatchSettingsAsync(IfMatch(request), mainSpecified, mainCompanionId, buddySpecified, buddyCompanionId, autonomyPaused, cancellationToken).ConfigureAwait(false);
+            var body = await service.PatchSettingsAsync(IfMatch(request), mainSpecified, mainCompanionId, buddySpecified, buddyCompanionId, recruitLimit, autonomyPaused, cancellationToken).ConfigureAwait(false);
             return Ok(body);
         });
 }

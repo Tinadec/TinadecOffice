@@ -231,6 +231,14 @@ export interface paths {
     /** Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat) */
     get: operations["getApiV1Companion-events"];
   };
+  "/api/v1/companion-recruitments": {
+    /** Recruit proposals raised by companions */
+    get: operations["getApiV1Companion-recruitments"];
+  };
+  "/api/v1/companion-recruitments/{recruitmentId}/decision": {
+    /** Approve (creates the companion) or deny a recruit proposal (If-Match revision) */
+    post: operations["postApiV1Companion-recruitmentsByRecruitmentIdDecision"];
+  };
   "/api/v1/companion-runs/{runId}": {
     /** Poll one companion run */
     get: operations["getApiV1Companion-runsByRunId"];
@@ -1723,6 +1731,28 @@ export interface components {
       [key: string]: unknown;
     };
     CompanionMessageList: components["schemas"]["CompanionMessage"][];
+    CompanionRecruitment: {
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      created_companion_id?: string | null;
+      /** Format: date-time */
+      decided_at?: string | null;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      persona_document?: string | null;
+      /** Format: uuid */
+      proposer_id: string;
+      rationale?: string | null;
+      revision: number;
+      /** @enum {string} */
+      status: "proposed" | "approved" | "denied";
+      /** Format: date-time */
+      updated_at: string;
+      [key: string]: unknown;
+    };
+    CompanionRecruitmentList: components["schemas"]["CompanionRecruitment"][];
     CompanionRun: {
       /** Format: uuid */
       companion_id: string;
@@ -1769,6 +1799,7 @@ export interface components {
       buddy_companion_id: string | null;
       /** Format: uuid */
       main_companion_id: string | null;
+      recruit_limit: number;
       revision: number;
       [key: string]: unknown;
     };
@@ -4225,6 +4256,33 @@ export interface operations {
       200: {
         content: {
           "text/event-stream": string;
+        };
+      };
+    };
+  };
+  /** Recruit proposals raised by companions */
+  "getApiV1Companion-recruitments": {
+    responses: {
+      /** @description Recruit proposals raised by companions */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionRecruitmentList"];
+        };
+      };
+    };
+  };
+  /** Approve (creates the companion) or deny a recruit proposal (If-Match revision) */
+  "postApiV1Companion-recruitmentsByRecruitmentIdDecision": {
+    parameters: {
+      path: {
+        recruitmentId: string;
+      };
+    };
+    responses: {
+      /** @description Approve (creates the companion) or deny a recruit proposal (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionRecruitment"];
         };
       };
     };

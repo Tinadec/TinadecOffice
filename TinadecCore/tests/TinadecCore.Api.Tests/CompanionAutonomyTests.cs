@@ -106,6 +106,81 @@ public sealed class CompanionAutonomyTests
         Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!);
     }
 
+    /// <summary>
+    /// Recruiting grows the user's autonomous team, so it is double-gated: the proposal is recorded,
+    /// and only an approval (by a user, under the tenant's limit) creates a companion. The proposer
+    /// can never create one itself.
+    /// </summary>
+    [Fact]
+    public async Task Recruit_ProposesWithoutCreating_AndApprovalCreatesOneWithinTheLimit()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var proposerId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, daily_action_budget = 6 })).GetProperty("id").GetGuid();
+        await PrivateConversationAsync(client, proposerId);
+        factory.Chat.Reply = RecruitDecision("数据助手", "负责整理每周数据。", "每周都要做同样的整理。");
+
+        var tick = await TickAsync(client, proposerId);
+        Assert.False(tick.GetProperty("acted").GetBoolean());
+        Assert.Equal("recruit", tick.GetProperty("action").GetString());
+        Assert.Equal("awaiting_recruit_approval", tick.GetProperty("reason").GetString());
+
+        // Nothing was created; the proposal is the only trace.
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companions"))!);
+        var recruitment = Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-recruitments"))!);
+        Assert.Equal("proposed", recruitment.GetProperty("status").GetString());
+        Assert.Equal("数据助手", recruitment.GetProperty("name").GetString());
+
+        // A second proposal while one is pending is the same question, not a second option.
+        var again = await TickAsync(client, proposerId);
+        Assert.Equal("duplicate_proposal", again.GetProperty("reason").GetString());
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-recruitments"))!);
+
+        using (var approve = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/v1/companion-recruitments/{recruitment.GetProperty("id").GetGuid()}/decision")
+               { Content = JsonContent.Create(new { decision = "approved" }) })
+        {
+            approve.Headers.TryAddWithoutValidation("If-Match", $"\"{recruitment.GetProperty("revision").GetInt64()}\"");
+            using var response = await client.SendAsync(approve);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("approved", body.GetProperty("status").GetString());
+            Assert.NotEqual(Guid.Empty, body.GetProperty("created_companion_id").GetGuid());
+        }
+
+        var companions = (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companions"))!;
+        Assert.Equal(2, companions.Length);
+        var created = Assert.Single(companions, row => row.GetProperty("name").GetString() == "数据助手");
+        Assert.Equal("autonomous", created.GetProperty("role").GetString());
+    }
+
+    [Fact]
+    public async Task Recruit_IsRefusedAtTheTenantLimit_AndWhenDisabled()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var proposerId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, daily_action_budget = 6 })).GetProperty("id").GetGuid();
+        await PrivateConversationAsync(client, proposerId);
+
+        // Zero means recruiting is off: the tick reports it instead of recording a proposal nobody
+        // could ever approve.
+        using (var off = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
+               { Content = JsonContent.Create(new { recruit_limit = 0 }) })
+        {
+            off.Headers.TryAddWithoutValidation("If-Match", "\"0\"");
+            Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(off)).StatusCode);
+        }
+        factory.Chat.Reply = RecruitDecision("数据助手", null, "重复性工作。");
+        var disabled = await TickAsync(client, proposerId);
+        Assert.Equal("recruit_disabled", disabled.GetProperty("reason").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-recruitments"))!);
+    }
+
+    private static string RecruitDecision(string name, string? persona, string? rationale) =>
+        JsonSerializer.Serialize(new { action = "recruit", name, persona_document = persona, rationale });
+
     private sealed class AutonomyFactory : IsolatedApiFactory
     {
         private readonly string _root = ApiTestStorage.CreateRoot("companion-autonomy");

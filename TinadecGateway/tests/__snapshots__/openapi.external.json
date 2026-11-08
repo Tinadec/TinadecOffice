@@ -1692,6 +1692,75 @@
         },
         "type": "array"
       },
+      "CompanionRecruitment": {
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "persona_document": {
+            "nullable": true,
+            "type": "string"
+          },
+          "proposer_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "rationale": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "denied"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "proposer_id",
+          "name",
+          "status",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CompanionRecruitmentList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionRecruitment"
+        },
+        "type": "array"
+      },
       "CompanionRun": {
         "additionalProperties": true,
         "properties": {
@@ -1845,6 +1914,9 @@
             "nullable": true,
             "type": "string"
           },
+          "recruit_limit": {
+            "type": "integer"
+          },
           "revision": {
             "type": "integer"
           }
@@ -1852,6 +1924,7 @@
         "required": [
           "main_companion_id",
           "buddy_companion_id",
+          "recruit_limit",
           "autonomy_paused",
           "revision"
         ],
@@ -9500,6 +9573,58 @@
           }
         },
         "summary": "Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-recruitments": {
+      "get": {
+        "operationId": "getApiV1Companion-recruitments",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionRecruitmentList"
+                }
+              }
+            },
+            "description": "Recruit proposals raised by companions"
+          }
+        },
+        "summary": "Recruit proposals raised by companions",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-recruitments/{recruitmentId}/decision": {
+      "post": {
+        "operationId": "postApiV1Companion-recruitmentsByRecruitmentIdDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recruitmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionRecruitment"
+                }
+              }
+            },
+            "description": "Approve (creates the companion) or deny a recruit proposal (If-Match revision)"
+          }
+        },
+        "summary": "Approve (creates the companion) or deny a recruit proposal (If-Match revision)",
         "tags": [
           "Companions"
         ]

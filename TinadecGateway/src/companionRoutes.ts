@@ -43,6 +43,8 @@ const companionRoutes: CompanionRoute[] = [
   { method: 'POST', path: '/api/v1/companions/:companionId/autonomy/tick', summary: 'Run one bounded autonomy tick for a companion', response: 'CompanionAutonomyTickResult' },
   { method: 'GET', path: '/api/v1/companions/:companionId/mandates', summary: 'List standing autonomy authorizations', response: 'CompanionMandateList' },
   { method: 'POST', path: '/api/v1/companions/:companionId/mandates/:mandateId/decision', summary: 'Approve or deny one standing authorization (If-Match revision)', response: 'CompanionMandate' },
+  { method: 'GET', path: '/api/v1/companion-recruitments', summary: 'Recruit proposals raised by companions', response: 'CompanionRecruitmentList' },
+  { method: 'POST', path: '/api/v1/companion-recruitments/:recruitmentId/decision', summary: 'Approve (creates the companion) or deny a recruit proposal (If-Match revision)', response: 'CompanionRecruitment' },
   { method: 'GET', path: '/api/v1/companions/:companionId/memories', summary: 'List or search private memories (q, limit)', response: 'CompanionMemoryList' },
   { method: 'POST', path: '/api/v1/companions/:companionId/memories', summary: 'Write a private memory', response: 'CompanionMemory' },
   { method: 'PATCH', path: '/api/v1/companions/:companionId/memories/:memoryId', summary: 'Edit a private memory (If-Match revision)', response: 'CompanionMemory' },

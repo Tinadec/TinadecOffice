@@ -257,16 +257,37 @@ const companionMandate = {
   required: ['id', 'companion_id', 'action', 'status', 'revision', 'created_at', 'updated_at'],
 };
 
+const companionRecruitment = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    proposer_id: uuid,
+    name: { type: 'string' },
+    persona_document: { type: 'string', nullable: true },
+    rationale: { type: 'string', nullable: true },
+    // proposed | approved | denied — approving is what creates the companion.
+    status: { type: 'string', enum: ['proposed', 'approved', 'denied'] },
+    created_companion_id: nullableUuid,
+    revision: { type: 'integer' },
+    created_at: timestamp,
+    updated_at: timestamp,
+    decided_at: { type: 'string', format: 'date-time', nullable: true },
+  },
+  required: ['id', 'proposer_id', 'name', 'status', 'revision', 'created_at', 'updated_at'],
+};
+
 const companionSettings = {
   type: 'object',
   additionalProperties: true,
   properties: {
     main_companion_id: nullableUuid,
     buddy_companion_id: nullableUuid,
+    recruit_limit: { type: 'integer' },
     autonomy_paused: { type: 'boolean' },
     revision: { type: 'integer' },
   },
-  required: ['main_companion_id', 'buddy_companion_id', 'autonomy_paused', 'revision'],
+  required: ['main_companion_id', 'buddy_companion_id', 'recruit_limit', 'autonomy_paused', 'revision'],
 };
 
 const companionSendMessageResult = {
@@ -323,6 +344,8 @@ export const companionOpenApiSchemas = {
   CompanionAutonomyTickResult: companionAutonomyTickResult,
   CompanionMandate: companionMandate,
   CompanionMandateList: { type: 'array', items: ref('CompanionMandate') },
+  CompanionRecruitment: companionRecruitment,
+  CompanionRecruitmentList: { type: 'array', items: ref('CompanionRecruitment') },
   CompanionList: { type: 'array', items: ref('CompanionSummary') },
   CompanionMemoryList: { type: 'array', items: ref('CompanionMemory') },
   CompanionSkillList: { type: 'array', items: ref('CompanionSkill') },

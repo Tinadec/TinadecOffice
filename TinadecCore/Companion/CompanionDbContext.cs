@@ -23,6 +23,7 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
     public DbSet<CompanionRunRecord> Runs => Set<CompanionRunRecord>();
     public DbSet<CompanionEffectRecord> Effects => Set<CompanionEffectRecord>();
     public DbSet<CompanionMandateRecord> Mandates => Set<CompanionMandateRecord>();
+    public DbSet<CompanionRecruitmentRecord> Recruitments => Set<CompanionRecruitmentRecord>();
     public DbSet<CompanionActivityRecord> Activities => Set<CompanionActivityRecord>();
 
     protected override void OnModelCreating(ModelBuilder model)
@@ -177,6 +178,23 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
         });
 
+        // A companion may ask for a long-lived helper when the same kind of work keeps coming back.
+        // Asking is all it can do: recruiting is a growth of the user's autonomous team, so it is
+        // double-gated — a per-tenant limit and an explicit approval.
+        model.Entity<CompanionRecruitmentRecord>(e =>
+        {
+            e.ToTable("companion_recruitments");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(128).IsRequired();
+            e.Property(x => x.PersonaDocument).HasMaxLength(65536);
+            e.Property(x => x.Rationale).HasMaxLength(2048);
+            e.Property(x => x.Status).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            // One open question per proposer: a second pending proposal would be the same request
+            // wearing a different name, and the user cannot answer two of those coherently.
+            e.HasIndex(x => new { x.TenantId, x.ProposerId, x.Status });
+        });
+
         model.Entity<CompanionActivityRecord>(e =>
         {
             e.ToTable("companion_activities");
@@ -212,6 +230,11 @@ public sealed class CompanionAgentRecord
     // autonomous | buddy — a buddy is the sidebar work-buddy (second user, manages sessions);
     // autonomous is the self-directed partner. Rows predating the column read as autonomous.
     public string Role { get; set; } = "autonomous";
+    /// <summary>
+    /// Set when another companion recruited this one. The per-tenant recruit limit counts these
+    /// rows, so a user-created companion never consumes the team's own growth budget.
+    /// </summary>
+    public Guid? RecruitedByCompanionId { get; set; }
     public bool AutonomyEnabled { get; set; }
     public bool AutonomyPaused { get; set; }
     public int AutonomyIntervalMinutes { get; set; } = 60;
@@ -285,6 +308,12 @@ public sealed class CompanionSettingsRecord
     public Guid? MainCompanionId { get; set; }
     // The designated work-buddy shown in the sidebar below "new chat"; null = none designated.
     public Guid? BuddyCompanionId { get; set; }
+    /// <summary>
+    /// How many companions recruited by other companions this tenant may hold. Recruiting is the
+    /// autonomous team growing itself, so it is bounded by default and the bound is the user's to
+    /// change; 0 turns recruiting off entirely.
+    /// </summary>
+    public int RecruitLimit { get; set; } = 3;
     public bool AutonomyPaused { get; set; }
     public long Revision { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
@@ -411,6 +440,25 @@ public sealed class CompanionMandateRecord
     // but this payload is what the user read before saying yes, so it stays on the row.
     public string ProposalJson { get; set; } = "{}";
     public string? Summary { get; set; }
+    public long Revision { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? DecidedAt { get; set; }
+}
+
+public sealed class CompanionRecruitmentRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    /// <summary>The companion that asked for a helper; never the recruited one, which does not exist yet.</summary>
+    public Guid ProposerId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? PersonaDocument { get; set; }
+    public string? Rationale { get; set; }
+    // proposed | approved | denied
+    public string Status { get; set; } = "proposed";
+    /// <summary>Set once approved: the companion this proposal created.</summary>
+    public Guid? CreatedCompanionId { get; set; }
     public long Revision { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

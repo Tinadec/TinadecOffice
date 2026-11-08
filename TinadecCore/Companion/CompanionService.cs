@@ -400,6 +400,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         Guid? mainCompanionId,
         bool buddySpecified,
         Guid? buddyCompanionId,
+        int? recruitLimit,
         bool? autonomyPaused,
         CancellationToken cancellationToken = default)
     {
@@ -430,6 +431,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
                 TenantId = tenantId,
                 MainCompanionId = mainSpecified ? mainCompanionId : null,
                 BuddyCompanionId = buddySpecified ? buddyCompanionId : null,
+                RecruitLimit = recruitLimit ?? 3,
                 AutonomyPaused = autonomyPaused ?? false,
                 Revision = 1,
                 UpdatedAt = now
@@ -440,6 +442,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         {
             if (mainSpecified) row.MainCompanionId = mainCompanionId;
             if (buddySpecified) row.BuddyCompanionId = buddyCompanionId;
+            if (recruitLimit is { } limit) row.RecruitLimit = Math.Clamp(limit, 0, 20);
             if (autonomyPaused is { } paused) row.AutonomyPaused = paused;
             row.Revision++;
             row.UpdatedAt = now;
@@ -456,6 +459,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             {
                 main_companion_id = row.MainCompanionId,
                 buddy_companion_id = row.BuddyCompanionId,
+                recruit_limit = row.RecruitLimit,
                 autonomy_paused = row.AutonomyPaused,
                 revision = row.Revision
             }),
@@ -687,6 +691,104 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         });
         await SaveAsync(db, cancellationToken).ConfigureAwait(false);
         return CompanionContracts.MandateJson(row);
+    }
+
+    // ── recruitments ──
+
+    /// <summary>
+    /// Recruit proposals the team has raised. A proposal is only a request: no companion exists
+    /// until the user approves, and the per-tenant limit still has to have room.
+    /// </summary>
+    public async Task<object> ListRecruitmentsAsync(CancellationToken cancellationToken = default)
+    {
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = (await db.Recruitments.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderByDescending(x => x.CreatedAt)
+            .ThenByDescending(x => x.Id)
+            .ToList();
+        return rows.Select(CompanionContracts.RecruitmentJson).ToList();
+    }
+
+    /// <summary>
+    /// Approving creates the companion the proposal described. The limit is re-read inside the same
+    /// decision: a proposal recorded when there was room may have been overtaken by another one, and
+    /// creating past the ceiling would be the exact growth the limit exists to stop.
+    /// </summary>
+    public async Task<object?> DecideRecruitmentAsync(
+        Guid recruitmentId, long expectedRevision, string? decision, CancellationToken cancellationToken = default)
+    {
+        var status = decision?.Trim().ToLowerInvariant() switch
+        {
+            "approved" => "approved",
+            "denied" => "denied",
+            _ => throw Invalid("decision must be approved or denied.")
+        };
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.Recruitments.SingleOrDefaultAsync(
+            x => x.Id == recruitmentId && x.TenantId == tenantId, cancellationToken).ConfigureAwait(false);
+        if (row is null) return null;
+        EnsureRevision(row.Revision, expectedRevision);
+        if (row.Status != "proposed")
+            throw Conflict();
+
+        var now = DateTimeOffset.UtcNow;
+        Guid? createdId = null;
+        if (status == "approved")
+        {
+            var limit = await db.Settings.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .Select(x => (int?)x.RecruitLimit)
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? 3;
+            var recruited = await db.Companions.AsNoTracking()
+                .CountAsync(x => x.TenantId == tenantId && x.RecruitedByCompanionId != null && x.Status != "archived",
+                    cancellationToken).ConfigureAwait(false);
+            if (limit <= 0 || recruited >= limit)
+                throw new CompanionException("recruit_limit_reached", "The recruit limit leaves no room for another companion.", 409);
+
+            var created = new CompanionAgentRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Name = row.Name,
+                PersonaDocument = row.PersonaDocument,
+                ModelPurpose = "chat",
+                Status = "active",
+                Role = "autonomous",
+                RecruitedByCompanionId = row.ProposerId,
+                Revision = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.Companions.Add(created);
+            createdId = created.Id;
+        }
+
+        row.Status = status;
+        row.CreatedCompanionId = createdId;
+        row.DecidedAt = now;
+        row.UpdatedAt = now;
+        row.Revision++;
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = status == "approved" ? "autonomy_recruit_approved" : "autonomy_recruit_denied",
+            CompanionId = row.ProposerId,
+            Summary = status == "approved"
+                ? $"已批准招募新伙伴「{row.Name}」"
+                : $"已拒绝招募新伙伴「{row.Name}」",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "recruit", decided = status, recruitment_id = row.Id, created_companion_id = createdId
+            }),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, token => SaveAsync(db, token), cancellationToken).ConfigureAwait(false);
+        return CompanionContracts.RecruitmentJson(row);
     }
 
     private static CompanionException Invalid(string message) => new("invalid_request", message, 400);

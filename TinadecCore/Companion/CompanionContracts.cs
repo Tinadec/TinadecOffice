@@ -206,6 +206,8 @@ internal static class CompanionContracts
     {
         ["main_companion_id"] = row?.MainCompanionId,
         ["buddy_companion_id"] = row?.BuddyCompanionId,
+        // How many companions other companions may recruit; 0 turns recruiting off.
+        ["recruit_limit"] = row?.RecruitLimit ?? 3,
         ["autonomy_paused"] = row?.AutonomyPaused ?? false,
         ["revision"] = row?.Revision ?? 0
     };
@@ -290,6 +292,21 @@ internal static class CompanionContracts
         detail = row.Detail,
         payload = ParseJson(row.PayloadJson),
         created_at = row.CreatedAt
+    };
+
+    internal static object RecruitmentJson(CompanionRecruitmentRecord row) => new
+    {
+        id = row.Id,
+        proposer_id = row.ProposerId,
+        name = row.Name,
+        persona_document = row.PersonaDocument,
+        rationale = row.Rationale,
+        status = row.Status,
+        created_companion_id = row.CreatedCompanionId,
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt,
+        decided_at = row.DecidedAt
     };
 
     internal static object MandateJson(CompanionMandateRecord row) => new

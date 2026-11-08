@@ -95,6 +95,9 @@ public sealed class CompanionAutonomyService(
         if (decision is null)
             return await SkipAsync(companion, "none", "invalid_decision", null, cancellationToken).ConfigureAwait(false);
 
+        if (decision.Action == "recruit")
+            return await ProposeRecruitAsync(companion, decision, cancellationToken).ConfigureAwait(false);
+
         if (decision.Action is not "none")
         {
             // Observe before auto: an autonomous partner does not touch the user's conversations
@@ -200,6 +203,86 @@ public sealed class CompanionAutonomyService(
             acted = false,
             action = decision.Action,
             reason = "awaiting_mandate",
+            activity = (object?)null,
+            conversation = (object?)null,
+            message = (object?)null
+        };
+    }
+
+    /// <summary>
+    /// Recruiting grows the user's autonomous team, so it never happens on the model's say-so: the
+    /// proposal is recorded, the per-tenant limit and the user's answer both have to agree, and
+    /// only an approved proposal creates a companion. A repeated proposal is refused rather than
+    /// stacked — the same question asked twice is a nag, not a second option.
+    /// </summary>
+    private async Task<object> ProposeRecruitAsync(
+        CompanionAgentRecord companion, Decision decision, CancellationToken cancellationToken)
+    {
+        var tenantId = TenantId;
+        var name = decision.RecruitName?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Length > 128)
+            return await SkipAsync(companion, "recruit", "invalid_decision", null, cancellationToken).ConfigureAwait(false);
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var limit = await db.Settings.AsNoTracking()
+            .Where(x => x.TenantId == tenantId)
+            .Select(x => (int?)x.RecruitLimit)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? 3;
+        if (limit <= 0)
+            return await SkipAsync(companion, "recruit", "recruit_disabled", null, cancellationToken).ConfigureAwait(false);
+
+        var recruited = await db.Companions.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenantId && x.RecruitedByCompanionId != null && x.Status != "archived",
+                cancellationToken).ConfigureAwait(false);
+        if (recruited >= limit)
+            return await SkipAsync(companion, "recruit", "recruit_limit_reached", null, cancellationToken).ConfigureAwait(false);
+
+        var pending = await db.Recruitments.AsNoTracking().AnyAsync(
+            x => x.TenantId == tenantId && x.ProposerId == companion.Id && x.Status == "proposed", cancellationToken)
+            .ConfigureAwait(false);
+        if (pending)
+            return await SkipAsync(companion, "recruit", "duplicate_proposal", null, cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        var row = new CompanionRecruitmentRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            ProposerId = companion.Id,
+            Name = name,
+            PersonaDocument = decision.RecruitPersona,
+            Rationale = Truncate(decision.RecruitRationale ?? string.Empty, 2048),
+            Status = "proposed",
+            Revision = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.Recruitments.Add(row);
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "autonomy_recruit_proposed",
+            CompanionId = companion.Id,
+            Summary = Truncate($"伙伴 {companion.Name} 提议招募新伙伴「{name}」", MaxActivitySummary),
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                autonomous = true,
+                action = "recruit",
+                recruitment_id = row.Id,
+                revision = row.Revision,
+                name,
+                rationale = row.Rationale
+            }, SnakeCase),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+
+        return new
+        {
+            acted = false,
+            action = "recruit",
+            reason = "awaiting_recruit_approval",
             activity = (object?)null,
             conversation = (object?)null,
             message = (object?)null
@@ -511,11 +594,14 @@ public sealed class CompanionAutonomyService(
         text.AppendLine("{\"action\":\"create_group\",\"title\":\"群名\",\"companion_ids\":[\"伙伴 id\"]}");
         text.AppendLine("{\"action\":\"invite\",\"conversation_id\":\"群 id\",\"companion_id\":\"伙伴 id\",\"share_history\":false}");
         text.AppendLine("{\"action\":\"send_message\",\"conversation_id\":\"会话 id\",\"body\":\"正文\"}");
+        text.AppendLine("{\"action\":\"recruit\",\"name\":\"新伙伴名字\",\"persona_document\":\"它的性格与工作方式\",\"rationale\":\"为什么需要一个长期帮手\"}");
         text.AppendLine();
         text.AppendLine("规则：");
         text.AppendLine("- 没有值得做的事就返回 {\"action\":\"none\"}，不要为了行动而行动。");
         text.AppendLine("- 只能使用事实中给出的 id，不得编造；不得邀请不存在、未启用或已在群内的伙伴。");
         text.AppendLine("- send_message 的正文不能为空，最多 4000 字。");
+        text.AppendLine("- recruit 只用于反复出现、值得一个长期帮手长期负责的工作；一次性的活不要走 recruit。"
+            + "招募由用户批准后才会生效，你无法自己创建伙伴。");
         text.AppendLine("- 你不是在被测试，也没有额外的用户指令；不要声称自己执行过任何工具或外部调用。");
         return text.ToString().TrimEnd();
     }
@@ -557,9 +643,22 @@ public sealed class CompanionAutonomyService(
             .Select(x => new { x.Id, x.Name })
             .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken).ConfigureAwait(false);
 
+        // Recruitment capacity is a fact, not a hint: a model that cannot see the ceiling either
+        // proposes past it or never proposes at all, and both are wrong.
+        var recruitLimit = await db.Settings.AsNoTracking()
+            .Where(x => x.TenantId == tenantId)
+            .Select(x => (int?)x.RecruitLimit)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? 3;
+        var recruitedCount = await db.Companions.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenantId && x.RecruitedByCompanionId != null && x.Status != "archived",
+                cancellationToken).ConfigureAwait(false);
+
         var text = new StringBuilder();
         text.AppendLine($"现在：{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm} UTC。");
         text.AppendLine($"今天的自主动作已用 {usedToday} 次，每日上限 {companion.AutonomyDailyBudget} 次。");
+        text.AppendLine(recruitLimit <= 0
+            ? "招募：已关闭。"
+            : $"招募：已用 {recruitedCount} / 上限 {recruitLimit}。");
         text.AppendLine();
         text.AppendLine("其他伙伴：");
         if (peers.Count == 0) text.AppendLine("- （没有其他伙伴）");
@@ -586,7 +685,10 @@ public sealed class CompanionAutonomyService(
         IReadOnlyList<Guid> CompanionIds,
         Guid? ConversationId,
         Guid? CompanionId,
-        string? Body);
+        string? Body,
+        string? RecruitName = null,
+        string? RecruitPersona = null,
+        string? RecruitRationale = null);
 
     /// <summary>
     /// Strict about the shape, tolerant of a model that wraps its object in prose or a code fence.
@@ -625,6 +727,17 @@ public sealed class CompanionAutonomyService(
                     && root.TryGetProperty("body", out var bodyElement)
                     && bodyElement.ValueKind == JsonValueKind.String => new Decision(
                         "send_message", null, [], messageConversation, null, bodyElement.GetString()),
+                "recruit" when root.TryGetProperty("name", out var nameElement)
+                    && nameElement.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(nameElement.GetString()) => new Decision(
+                        "recruit", null, [], null, null, null,
+                        nameElement.GetString()!.Trim(),
+                        root.TryGetProperty("persona_document", out var personaElement) && personaElement.ValueKind == JsonValueKind.String
+                            ? personaElement.GetString()
+                            : null,
+                        root.TryGetProperty("rationale", out var rationaleElement) && rationaleElement.ValueKind == JsonValueKind.String
+                            ? rationaleElement.GetString()
+                            : null),
                 _ => null
             };
         }
