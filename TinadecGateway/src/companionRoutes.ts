@@ -41,6 +41,7 @@ const companionRoutes: CompanionRoute[] = [
   { method: 'PATCH', path: '/api/v1/companions/:companionId', summary: 'Update a companion profile (If-Match revision)', response: 'CompanionDetail' },
   { method: 'POST', path: '/api/v1/companions/:companionId/archive', summary: 'Archive a companion (If-Match revision)', response: 'CompanionDetail' },
   { method: 'POST', path: '/api/v1/companions/:companionId/autonomy/tick', summary: 'Run one bounded autonomy tick for a companion', response: 'CompanionAutonomyTickResult' },
+  { method: 'POST', path: '/api/v1/companions/:companionId/emote', summary: 'Record a gesture at the companion (activity only, never a message)', response: 'CompanionActivity' },
   { method: 'GET', path: '/api/v1/companions/:companionId/mandates', summary: 'List standing autonomy authorizations', response: 'CompanionMandateList' },
   { method: 'POST', path: '/api/v1/companions/:companionId/mandates/:mandateId/decision', summary: 'Approve or deny one standing authorization (If-Match revision)', response: 'CompanionMandate' },
   { method: 'GET', path: '/api/v1/companion-recruitments', summary: 'Recruit proposals raised by companions', response: 'CompanionRecruitmentList' },

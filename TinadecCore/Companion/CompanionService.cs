@@ -791,6 +791,58 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         return CompanionContracts.RecruitmentJson(row);
     }
 
+    // ── emotes ──
+
+    /// <summary>
+    /// Records that the user waved at or patted the companion. The row is what makes the gesture
+    /// real: it is durable, it reaches every surface through the activity feed, and the companion
+    /// sees it in its next turn's facts. Nothing is written into a conversation — an emote is not
+    /// something the companion said, and a fabricated line would put words in its mouth.
+    /// </summary>
+    public async Task<object> RecordEmoteAsync(Guid companionId, string? emote, CancellationToken cancellationToken = default)
+    {
+        var gesture = emote?.Trim().ToLowerInvariant() switch
+        {
+            "wave" => "wave",
+            "pat" => "pat",
+            _ => throw Invalid("emote must be wave or pat.")
+        };
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        // A click is cheap; a feed of forty identical waves is not. One row per gesture per minute
+        // is the honest resolution: the interaction happened, the log just does not repeat it.
+        //
+        // Ordered and compared in memory: SQLite cannot translate DateTimeOffset ordering, and the
+        // existing feed reads already sort this way for the same reason.
+        var recent = (await db.Activities.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.CompanionId == companionId && x.Kind == "emote_received")
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefault();
+        if (recent is not null && now - recent.CreatedAt < TimeSpan.FromMinutes(1)
+            && recent.PayloadJson is { } payload && payload.Contains($"\"{gesture}\"", StringComparison.Ordinal))
+        {
+            return CompanionContracts.ActivityJson(recent, null, null);
+        }
+
+        var row = new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "emote_received",
+            CompanionId = companionId,
+            Summary = gesture == "wave" ? "你向伙伴打了个招呼" : "你摸了摸伙伴的头",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { emote = gesture }),
+            CreatedAt = now
+        };
+        db.Activities.Add(row);
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+        return CompanionContracts.ActivityJson(row, null, null);
+    }
+
     private static CompanionException Invalid(string message) => new("invalid_request", message, 400);
     private static CompanionException Conflict() => new("companion_revision_conflict", "Revision conflict.", 412);
     private static CompanionException NotFound(string message = "Companion not found.") => new("companion_not_found", message, 404);

@@ -330,6 +330,11 @@ export const companionApi = {
     }),
   tickAutonomy: (id: string) =>
     request<CompanionAutonomyTickResult>(`/api/v1/companions/${encodeURIComponent(id)}/autonomy/tick`, { method: 'POST' }),
+  /** Records a gesture at the companion; it never writes a message into any conversation. */
+  recordEmote: (id: string, emote: 'wave' | 'pat') =>
+    request<CompanionActivity>(`/api/v1/companions/${encodeURIComponent(id)}/emote`, {
+      method: 'POST', body: JSON.stringify({ emote }),
+    }),
   listMandates: (id: string) =>
     request<CompanionMandate[]>(`/api/v1/companions/${encodeURIComponent(id)}/mandates`),
   decideMandate: (id: string, mandateId: string, revision: number, decision: 'approved' | 'denied') =>
@@ -605,4 +610,6 @@ export const companionBridge = {
   getSettings: () => bridged<CompanionSettings>('GET', '/api/v1/companion-settings'),
   tickAutonomy: (id: string) =>
     bridged<CompanionAutonomyTickResult>('POST', `/api/v1/companions/${encodeURIComponent(id)}/autonomy/tick`),
+  recordEmote: (id: string, emote: 'wave' | 'pat') =>
+    bridged<CompanionActivity>('POST', `/api/v1/companions/${encodeURIComponent(id)}/emote`, { emote }),
 }

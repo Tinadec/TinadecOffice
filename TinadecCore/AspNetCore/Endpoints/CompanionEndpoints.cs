@@ -26,6 +26,9 @@ public static class CompanionEndpoints
         app.MapGet("/api/v1/companions/{companionId:guid}/mandates", ListMandates);
         app.MapPost("/api/v1/companions/{companionId:guid}/mandates/{mandateId:guid}/decision", DecideMandate);
 
+        // A gesture at the companion's face. It records the interaction; it never writes a message.
+        app.MapPost("/api/v1/companions/{companionId:guid}/emote", RecordEmote);
+
         // Recruit proposals: a companion asking for a long-lived helper. Approval is what creates
         // it, and the tenant's recruit limit is re-checked at that moment.
         app.MapGet("/api/v1/companion-recruitments", ListRecruitments);
@@ -140,6 +143,17 @@ public static class CompanionEndpoints
         CompanionAutonomyService service,
         CancellationToken cancellationToken = default) =>
         Run(async () => Ok(await service.TickAsync(companionId, cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> RecordEmote(
+        Guid companionId,
+        CompanionEmoteRequest? input,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null) throw new CompanionException("invalid_request", "An emote body is required.", 400);
+            return Ok(await service.RecordEmoteAsync(companionId, input.Emote, cancellationToken).ConfigureAwait(false));
+        });
 
     static Task<IResult> ListRecruitments(
         CompanionService service,

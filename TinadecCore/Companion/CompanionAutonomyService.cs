@@ -653,8 +653,29 @@ public sealed class CompanionAutonomyService(
             .CountAsync(x => x.TenantId == tenantId && x.RecruitedByCompanionId != null && x.Status != "archived",
                 cancellationToken).ConfigureAwait(false);
 
+        // A gesture the user made is a fact about them, not a message to answer. It rides in the
+        // facts so the companion can acknowledge it in its own words if it chooses — nothing is
+        // fabricated on the user's behalf.
+        // Filtered and ordered in memory: SQLite cannot translate a DateTimeOffset comparison or
+        // ordering, and this table is small enough that the read is not the cost.
+        var since = DateTimeOffset.UtcNow.AddDays(-1);
+        var emotes = (await db.Activities.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.CompanionId == companion.Id && x.Kind == "emote_received")
+                .Select(x => new { x.CreatedAt, x.Summary })
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .Where(x => x.CreatedAt >= since)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(3)
+            .Select(x => x.Summary)
+            .ToList();
+
         var text = new StringBuilder();
         text.AppendLine($"现在：{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm} UTC。");
+        if (emotes.Count > 0)
+        {
+            text.AppendLine("最近用户对你做的动作（这是用户的动作，不是你的发言）：");
+            foreach (var emote in emotes) text.AppendLine($"- {emote}");
+        }
         text.AppendLine($"今天的自主动作已用 {usedToday} 次，每日上限 {companion.AutonomyDailyBudget} 次。");
         text.AppendLine(recruitLimit <= 0
             ? "招募：已关闭。"

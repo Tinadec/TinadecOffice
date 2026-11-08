@@ -1550,6 +1550,17 @@
         },
         "type": "object"
       },
+      "CompanionEmoteRequest": {
+        "properties": {
+          "emote": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CompanionInviteRequest": {
         "properties": {
           "companion_id": {
@@ -10609,6 +10620,45 @@
         },
         "tags": [
           "CompanionConversationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/emote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionEmoteRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
         ]
       }
     },

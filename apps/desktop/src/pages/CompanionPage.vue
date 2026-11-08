@@ -302,9 +302,11 @@ const observedStageState = computed<PetState>(() => {
 })
 
 /**
- * A local interaction, not a message: clicking the companion's face makes it wave for one cycle.
- * Nothing is sent anywhere — the companion domain has no emote endpoint, and inventing a fake one
- * would be worse than a visual acknowledgement that claims nothing.
+ * Clicking the companion's face makes it wave for one cycle and records the gesture on the server.
+ *
+ * The record is the point: it is durable, it reaches the activity feed, and the companion sees it
+ * in its next turn. What it must never do is become a message — a fabricated line would put words
+ * in the companion's mouth, so the emote endpoint writes an activity row and nothing else.
  */
 const impulse = ref<PetState | null>(null)
 const greeting = ref(false)
@@ -332,19 +334,30 @@ function playImpulse(next: PetState, note = ''): void {
 
 function greet(): void {
   playImpulse('waving')
+  void recordEmote('wave')
 }
 
 /**
- * Double-clicking the panel's blank space pats the companion.
+ * Best effort, deliberately silent: a gesture that failed to record is still a gesture the user
+ * made, and an error toast over a wave would be louder than the thing it reports.
+ */
+function recordEmote(emote: 'wave' | 'pat'): void {
+  const companionId = selectedCompanionId.value
+  if (!companionId) return
+  void companionBridge.recordEmote(companionId, emote).catch(() => {})
+}
+
+/**
+ * Double-clicking the panel's blank space pats the companion; the gesture is recorded like a wave.
  *
- * Local for the same reason greeting is: the companion domain has no emote endpoint, and a
- * fabricated line in the transcript would be a lie about who said it. A double-click that lands on
- * text, a control or the invite sheet is selection, not affection, so it is ignored.
+ * A double-click that lands on text, a control or the invite sheet is selection, not affection, so
+ * it is ignored.
  */
 function pat(event: MouseEvent): void {
   const target = event.target as HTMLElement | null
   if (target?.closest('.companion-msg, button, a, input, textarea, select, .companion-invite')) return
   playImpulse('jumping', t('companion.pat'))
+  void recordEmote('pat')
 }
 
 /**

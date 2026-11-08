@@ -178,6 +178,45 @@ public sealed class CompanionAutonomyTests
         Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-recruitments"))!);
     }
 
+    /// <summary>
+    /// A gesture is recorded, not spoken: it must reach the feed and must not write a message into
+    /// any conversation. Repeating it inside a minute does not stack a second row.
+    /// </summary>
+    [Fact]
+    public async Task Emote_RecordsAnActivity_WithoutWritingAMessage()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(client, "A")).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+
+        using (var wave = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "wave" }))
+        {
+            Assert.Equal(HttpStatusCode.OK, wave.StatusCode);
+            var body = await wave.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("emote_received", body.GetProperty("kind").GetString());
+            Assert.Equal("wave", body.GetProperty("payload").GetProperty("emote").GetString());
+        }
+
+        // The gesture reached the feed and never became a message the companion "said".
+        Assert.Contains(await ActivityAsync(client), row => row.GetProperty("kind").GetString() == "emote_received");
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companion-conversations/{conversationId}/messages"))!);
+
+        // The same gesture inside a minute is one row, not a click log.
+        using (var again = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "wave" }))
+            Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Single(await ActivityAsync(client), row => row.GetProperty("kind").GetString() == "emote_received");
+
+        // A different gesture is a different row.
+        using (var pat = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "pat" }))
+            Assert.Equal(HttpStatusCode.OK, pat.StatusCode);
+        Assert.Equal(2, (await ActivityAsync(client)).Count(row => row.GetProperty("kind").GetString() == "emote_received"));
+
+        // Anything outside the two gestures is refused rather than recorded as an unknown verb.
+        using var bogus = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "dance" });
+        Assert.Equal(HttpStatusCode.BadRequest, bogus.StatusCode);
+    }
+
     private static string RecruitDecision(string name, string? persona, string? rationale) =>
         JsonSerializer.Serialize(new { action = "recruit", name, persona_document = persona, rationale });
 

@@ -12,6 +12,12 @@ public sealed record CompanionAutonomyRequest(bool? Enabled = null, bool? Paused
 /// <summary>One answer to one standing authorization: approved lets that action class run unattended.</summary>
 public sealed record CompanionMandateDecisionRequest(string? Decision = null);
 
+/// <summary>
+/// A gesture the user made at the companion's face. It records the interaction; it is not a
+/// message and never becomes one — the companion is told about it, it does not say anything back.
+/// </summary>
+public sealed record CompanionEmoteRequest(string? Emote = null);
+
 public sealed record CompanionCreateRequest(
     string? Name = null,
     string? Tagline = null,

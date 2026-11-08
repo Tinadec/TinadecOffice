@@ -291,6 +291,10 @@ export interface paths {
     /** Ensure a private chat or create a group */
     post: operations["postApiV1CompanionsByCompanionIdConversations"];
   };
+  "/api/v1/companions/{companionId}/emote": {
+    /** Record a gesture at the companion (activity only, never a message) */
+    post: operations["postApiV1CompanionsByCompanionIdEmote"];
+  };
   "/api/v1/companions/{companionId}/mandates": {
     /** List standing autonomy authorizations */
     get: operations["getApiV1CompanionsByCompanionIdMandates"];
@@ -4514,6 +4518,22 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** Record a gesture at the companion (activity only, never a message) */
+  postApiV1CompanionsByCompanionIdEmote: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Record a gesture at the companion (activity only, never a message) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionActivity"];
         };
       };
     };

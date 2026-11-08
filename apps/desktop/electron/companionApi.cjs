@@ -31,6 +31,9 @@ const routes = [
   { method: 'GET', pattern: `^/api/v1/companions/${GUID}/conversations$` },
   { method: 'POST', pattern: `^/api/v1/companions/${GUID}/conversations$` },
   { method: 'POST', pattern: `^/api/v1/companions/${GUID}/autonomy/tick$` },
+  // A gesture at the companion's face. It records the interaction only; the route cannot write a
+  // message, so the satellite window still cannot put words in the companion's mouth.
+  { method: 'POST', pattern: `^/api/v1/companions/${GUID}/emote$` },
   { method: 'GET', pattern: `^/api/v1/companion-conversations/${GUID}$` },
   { method: 'POST', pattern: `^/api/v1/companion-conversations/${GUID}/members$` },
   { method: 'GET', pattern: `^/api/v1/companion-conversations/${GUID}/messages$` },

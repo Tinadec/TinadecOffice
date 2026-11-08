@@ -10073,6 +10073,37 @@
         ]
       }
     },
+    "/api/v1/companions/{companionId}/emote": {
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdEmote",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionActivity"
+                }
+              }
+            },
+            "description": "Record a gesture at the companion (activity only, never a message)"
+          }
+        },
+        "summary": "Record a gesture at the companion (activity only, never a message)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
     "/api/v1/companions/{companionId}/mandates": {
       "get": {
         "operationId": "getApiV1CompanionsByCompanionIdMandates",
