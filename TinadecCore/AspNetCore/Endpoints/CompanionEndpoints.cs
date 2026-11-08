@@ -52,6 +52,13 @@ public static class CompanionEndpoints
         app.MapGet("/api/v1/companion-settings", GetSettings);
         app.MapPatch("/api/v1/companion-settings", PatchSettings);
 
+        // BYO Live2D models. Core does not bundle Cubism Core or any model; the user imports a
+        // directory and Core copies it into its own storage root. Import is static, so it is
+        // registered before the id route.
+        app.MapGet("/api/v1/companion-avatars", ListCompanionAvatars);
+        app.MapPost("/api/v1/companion-avatars/import", ImportCompanionAvatar);
+        app.MapDelete("/api/v1/companion-avatars/{avatarId:guid}", DeleteCompanionAvatar);
+
         app.MapCompanionConversationEndpoints();
         app.MapCompanionEventEndpoints();
 
@@ -330,6 +337,34 @@ public static class CompanionEndpoints
         CompanionService service,
         CancellationToken cancellationToken = default) =>
         Run(async () => Ok(await service.GetSettingsAsync(cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> ListCompanionAvatars(
+        CompanionAvatarStore store,
+        CancellationToken cancellationToken = default) =>
+        Run(async () => Ok(await store.ListAsync(cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> ImportCompanionAvatar(
+        CompanionAvatarImportRequest? input,
+        CompanionAvatarStore store,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null || string.IsNullOrWhiteSpace(input.Path))
+                throw new CompanionException("avatar_path_required", "A model directory path is required.", 400);
+            return Ok(await store.ImportAsync(input.Path, cancellationToken).ConfigureAwait(false));
+        });
+
+    static Task<IResult> DeleteCompanionAvatar(
+        Guid avatarId,
+        CompanionAvatarStore store,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            var deleted = await store.DeleteAsync(avatarId, cancellationToken).ConfigureAwait(false);
+            return deleted
+                ? Results.NoContent()
+                : Results.Json(new { code = "companion_avatar_not_found", message = "Companion avatar not found." }, statusCode: 404);
+        });
 
     static Task<IResult> PatchSettings(
         JsonElement input,

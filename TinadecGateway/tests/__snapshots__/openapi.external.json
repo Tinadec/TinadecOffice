@@ -1125,6 +1125,115 @@
         ],
         "type": "object"
       },
+      "CompanionAvatar": {
+        "additionalProperties": true,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/CompanionCapabilities"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "live2d"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "source_path",
+          "capabilities",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "CompanionAvatarList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionAvatar"
+        },
+        "type": "array"
+      },
+      "CompanionCapabilities": {
+        "additionalProperties": true,
+        "properties": {
+          "expressions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "groups": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "hit_areas": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "motions": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                },
+                "min": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "min",
+                "max",
+                "default"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "motions",
+          "expressions",
+          "parameters",
+          "hit_areas",
+          "groups"
+        ],
+        "type": "object"
+      },
       "CompanionConnection": {
         "additionalProperties": true,
         "properties": {
@@ -9320,6 +9429,72 @@
         "summary": "Execute user tool (Core-owned)",
         "tags": [
           "Tools"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars": {
+      "get": {
+        "operationId": "getApiV1Companion-avatars",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionAvatarList"
+                }
+              }
+            },
+            "description": "List imported Live2D models"
+          }
+        },
+        "summary": "List imported Live2D models",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/import": {
+      "post": {
+        "operationId": "postApiV1Companion-avatarsImport",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionAvatar"
+                }
+              }
+            },
+            "description": "Import a model directory (Core copies it into its own storage root)"
+          }
+        },
+        "summary": "Import a model directory (Core copies it into its own storage root)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/{avatarId}": {
+      "delete": {
+        "operationId": "deleteApiV1Companion-avatarsByAvatarId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "avatarId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete an imported model and its copied directory",
+        "tags": [
+          "Companions"
         ]
       }
     },

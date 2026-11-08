@@ -25,6 +25,7 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
     public DbSet<CompanionMandateRecord> Mandates => Set<CompanionMandateRecord>();
     public DbSet<CompanionRecruitmentRecord> Recruitments => Set<CompanionRecruitmentRecord>();
     public DbSet<CompanionActivityRecord> Activities => Set<CompanionActivityRecord>();
+    public DbSet<CompanionAvatarRecord> Avatars => Set<CompanionAvatarRecord>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -207,6 +208,22 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             // the index impossible to create on an upgraded database.
             e.HasIndex(x => new { x.TenantId, x.Seq }).IsUnique().HasFilter("seq > 0");
             e.HasIndex(x => new { x.TenantId, x.CompanionId, x.CreatedAt });
+            e.HasIndex(x => new { x.TenantId, x.CreatedAt });
+        });
+
+        // A user-supplied Live2D model directory, copied into Core's own storage. Core never
+        // bundles Cubism Core or a model: this table only records what the user brought and
+        // what model3.json says it can do, so rendering can be added later without a schema
+        // change. SourcePath is relative to the active storage root and is the only pointer to
+        // the copied bytes; the original import path is deliberately not retained.
+        model.Entity<CompanionAvatarRecord>(e =>
+        {
+            e.ToTable("companion_avatars");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Kind).HasMaxLength(16).IsRequired();
+            e.Property(x => x.SourcePath).HasMaxLength(512).IsRequired();
+            e.Property(x => x.CapabilitiesJson).IsRequired();
             e.HasIndex(x => new { x.TenantId, x.CreatedAt });
         });
 
@@ -479,5 +496,25 @@ public sealed class CompanionActivityRecord
     public string Summary { get; set; } = string.Empty;
     public string? Detail { get; set; }
     public string? PayloadJson { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
+/// One imported Live2D model directory. The row owns no rendering state: capabilities are what
+/// model3.json declared at import time, and SourcePath points at the copy under Core's storage
+/// root so a later renderer can load it without the user's original directory.
+/// </summary>
+public sealed class CompanionAvatarRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    // live2d — the only kind accepted today; a column rather than a constant so a second
+    // format can be added without rewriting existing rows.
+    public string Kind { get; set; } = "live2d";
+    // Relative to the active storage root, forward-slash separated. Never an absolute path:
+    // the storage scope can move, and a stale absolute path would point at nothing.
+    public string SourcePath { get; set; } = string.Empty;
+    public string CapabilitiesJson { get; set; } = "{}";
     public DateTimeOffset CreatedAt { get; set; }
 }

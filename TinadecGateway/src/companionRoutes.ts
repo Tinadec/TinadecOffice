@@ -33,6 +33,13 @@ const companionRoutes: CompanionRoute[] = [
   { method: 'GET', path: '/api/v1/companion-settings', summary: 'Read companion settings (main companion and global autonomy pause)', response: 'CompanionSettings' },
   { method: 'PATCH', path: '/api/v1/companion-settings', summary: 'Update companion settings', response: 'CompanionSettings' },
   { method: 'GET', path: '/api/v1/companion-connections', summary: 'List every companion connection binding with its owner name', response: 'CompanionConnectionOverviewList' },
+  // BYO Live2D registry. `companion-avatars` is its own static prefix, so it is grouped with the
+  // other static companion paths and before any `/companions/:companionId` route. `import` is
+  // listed before the id route even though the methods differ, so a future GET id route cannot
+  // shadow it by registration order.
+  { method: 'GET', path: '/api/v1/companion-avatars', summary: 'List imported Live2D models', response: 'CompanionAvatarList' },
+  { method: 'POST', path: '/api/v1/companion-avatars/import', summary: 'Import a model directory (Core copies it into its own storage root)', response: 'CompanionAvatar' },
+  { method: 'DELETE', path: '/api/v1/companion-avatars/:avatarId', summary: 'Delete an imported model and its copied directory', status: 204 },
   // Static companion paths first — see the ordering note above.
   { method: 'GET', path: '/api/v1/companions/activity', summary: 'Companion activity feed', response: 'CompanionActivityList' },
   { method: 'GET', path: '/api/v1/companions', summary: 'List companions (optionally including archived)', response: 'CompanionList' },

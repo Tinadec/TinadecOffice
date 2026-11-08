@@ -197,6 +197,18 @@ export interface paths {
      */
     post: operations["postApiV1CodeToolsByToolIdExecute"];
   };
+  "/api/v1/companion-avatars": {
+    /** List imported Live2D models */
+    get: operations["getApiV1Companion-avatars"];
+  };
+  "/api/v1/companion-avatars/import": {
+    /** Import a model directory (Core copies it into its own storage root) */
+    post: operations["postApiV1Companion-avatarsImport"];
+  };
+  "/api/v1/companion-avatars/{avatarId}": {
+    /** Delete an imported model and its copied directory */
+    delete: operations["deleteApiV1Companion-avatarsByAvatarId"];
+  };
   "/api/v1/companion-connections": {
     /** List every companion connection binding with its owner name */
     get: operations["getApiV1Companion-connections"];
@@ -1561,6 +1573,37 @@ export interface components {
       conversation: components["schemas"]["CompanionConversation"] | null;
       message: components["schemas"]["CompanionMessage"] | null;
       reason: string | null;
+      [key: string]: unknown;
+    };
+    CompanionAvatar: {
+      capabilities: components["schemas"]["CompanionCapabilities"];
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "live2d";
+      name: string;
+      source_path: string;
+      [key: string]: unknown;
+    };
+    CompanionAvatarList: components["schemas"]["CompanionAvatar"][];
+    CompanionCapabilities: {
+      expressions: string[];
+      groups: {
+        [key: string]: string[];
+      };
+      hit_areas: string[];
+      motions: {
+        [key: string]: string[];
+      };
+      parameters: {
+        [key: string]: {
+          default: number;
+          max: number;
+          min: number;
+        };
+      };
       [key: string]: unknown;
     };
     CompanionConnection: {
@@ -4130,6 +4173,42 @@ export interface operations {
     };
     responses: {
       200: {
+        content: never;
+      };
+    };
+  };
+  /** List imported Live2D models */
+  "getApiV1Companion-avatars": {
+    responses: {
+      /** @description List imported Live2D models */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionAvatarList"];
+        };
+      };
+    };
+  };
+  /** Import a model directory (Core copies it into its own storage root) */
+  "postApiV1Companion-avatarsImport": {
+    responses: {
+      /** @description Import a model directory (Core copies it into its own storage root) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionAvatar"];
+        };
+      };
+    };
+  };
+  /** Delete an imported model and its copied directory */
+  "deleteApiV1Companion-avatarsByAvatarId": {
+    parameters: {
+      path: {
+        avatarId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
         content: never;
       };
     };

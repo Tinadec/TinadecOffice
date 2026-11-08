@@ -326,7 +326,59 @@ const companionAutonomyTickResult = {
   required: ['acted', 'action', 'reason', 'activity', 'conversation', 'message'],
 };
 
+// What model3.json declared at import time. Core leaves a section empty when the model does not
+// declare it; the schema mirrors that (no invented defaults).
+const companionCapabilities = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    motions: {
+      type: 'object',
+      additionalProperties: { type: 'array', items: { type: 'string' } },
+    },
+    expressions: { type: 'array', items: { type: 'string' } },
+    parameters: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          min: { type: 'number' },
+          max: { type: 'number' },
+          default: { type: 'number' },
+        },
+        required: ['min', 'max', 'default'],
+      },
+    },
+    hit_areas: { type: 'array', items: { type: 'string' } },
+    groups: {
+      type: 'object',
+      additionalProperties: { type: 'array', items: { type: 'string' } },
+    },
+  },
+  required: ['motions', 'expressions', 'parameters', 'hit_areas', 'groups'],
+};
+
+// A user-imported Live2D model. `source_path` is relative to Core's storage root: the Gateway and
+// clients never see (or need) an absolute path on the Core host.
+const companionAvatar = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    name: { type: 'string' },
+    kind: { type: 'string', enum: ['live2d'] },
+    source_path: { type: 'string' },
+    capabilities: ref('CompanionCapabilities'),
+    created_at: timestamp,
+  },
+  required: ['id', 'name', 'kind', 'source_path', 'capabilities', 'created_at'],
+};
+
 export const companionOpenApiSchemas = {
+  CompanionCapabilities: companionCapabilities,
+  CompanionAvatar: companionAvatar,
+  CompanionAvatarList: { type: 'array', items: ref('CompanionAvatar') },
   CompanionSummary: companionSummary,
   CompanionDetail: companionDetail,
   CompanionAutonomy: companionAutonomy,

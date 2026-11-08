@@ -24,6 +24,10 @@ const routes: RouteCase[] = [
   { method: 'GET', template: '/api/v1/companion-settings', status: 200 },
   { method: 'PATCH', template: '/api/v1/companion-settings', body: { main_companion_id: id, autonomy_paused: true, expected_revision: 3 }, status: 200 },
   { method: 'GET', template: '/api/v1/companion-connections', status: 200 },
+  // BYO Live2D registry: static prefix, import before the id route.
+  { method: 'GET', template: '/api/v1/companion-avatars', status: 200 },
+  { method: 'POST', template: '/api/v1/companion-avatars/import', body: { path: 'C:/models/nova' }, status: 200 },
+  { method: 'DELETE', template: '/api/v1/companion-avatars/{avatarId}', status: 204 },
   // Static companion path, deliberately before the companion-id routes in the implementation.
   { method: 'GET', template: '/api/v1/companions/activity', query: 'limit=5', status: 200 },
   { method: 'GET', template: '/api/v1/companions', query: 'include_archived=true', status: 200 },
@@ -98,9 +102,9 @@ test('every companion operation forwards the exact path, query, JSON body and st
     assert.equal(call.body, body, `${route.method} ${url} rewrote the body`);
   }
   assert.equal(calls.length, routes.length);
-  // A contract-size pin: 27 paths / 38 operations. Shrinking the proxied surface fails here.
-  assert.equal(new Set(routes.map((route) => route.template)).size, 27);
-  assert.equal(routes.length, 38);
+  // A contract-size pin: 30 paths / 41 operations. Shrinking the proxied surface fails here.
+  assert.equal(new Set(routes.map((route) => route.template)).size, 30);
+  assert.equal(routes.length, 41);
 });
 
 test('If-Match and Idempotency-Key reach Core unchanged', { concurrency: false }, async () => {

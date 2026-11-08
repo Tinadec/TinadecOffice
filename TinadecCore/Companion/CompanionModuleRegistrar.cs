@@ -16,6 +16,7 @@ public sealed class CompanionModuleRegistrar : IModuleRegistrar
         builder.Services.AddDbContextFactory<CompanionDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<CompanionDbContext>>();
         builder.Services.AddSingleton<CompanionService>();
+        builder.Services.AddSingleton<CompanionAvatarStore>();
         builder.Services.AddSingleton<CompanionConversationService>();
         // The run loop is a host singleton: it reads the tenant from the run row, never from a
         // request-scoped accessor, because it runs outside any request.
@@ -31,7 +32,7 @@ public sealed class CompanionModuleRegistrar : IModuleRegistrar
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
-            Version = "0.3.0",
+            Version = "0.4.0",
             Dependencies = ["abstractions", "persistence", "tenancy"],
             Capabilities =
             [
@@ -46,7 +47,8 @@ public sealed class CompanionModuleRegistrar : IModuleRegistrar
                 "companion_messages",
                 "companion_runs",
                 "companion_activity",
-                "companion_autonomy"
+                "companion_autonomy",
+                "companion_avatars"
             ],
             Language = "C#",
             MafPrimitives = [],

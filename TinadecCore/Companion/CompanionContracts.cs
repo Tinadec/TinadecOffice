@@ -77,6 +77,12 @@ public sealed record CompanionMessagePostRequest(string? Body = null, IReadOnlyL
 public sealed record CompanionPauseRequest(bool? Paused = null);
 
 /// <summary>
+/// A directory the user picked on their own disk. Core copies it into its storage root, so this
+/// path is only read during import and never stored.
+/// </summary>
+public sealed record CompanionAvatarImportRequest(string? Path = null);
+
+/// <summary>
 /// A companion-domain refusal. Endpoints translate it verbatim: the code is part of the
 /// contract (companion_not_found / companion_revision_conflict / ...), never a generic
 /// conflict, and the status is the one the caller can branch on.

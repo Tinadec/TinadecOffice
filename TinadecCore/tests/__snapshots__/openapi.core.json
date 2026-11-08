@@ -1414,6 +1414,17 @@
         },
         "type": "object"
       },
+      "CompanionAvatarImportRequest": {
+        "properties": {
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CompanionConnectionCreateRequest": {
         "properties": {
           "authorization": {
@@ -9815,6 +9826,69 @@
         },
         "tags": [
           "Attachments"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/import": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionAvatarImportRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/{avatarId}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "avatarId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
         ]
       }
     },
