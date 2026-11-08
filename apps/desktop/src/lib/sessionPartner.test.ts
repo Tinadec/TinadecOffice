@@ -28,7 +28,9 @@ describe('sessionPartner', () => {
     vi.stubGlobal('window', { tinadec: { sessionPartner: { toggle } } })
 
     await toggleSessionPartner('s1')
-    expect(toggle).toHaveBeenCalledWith('s1')
+    // The scope travels with the toggle: the partner window cannot observe it itself, and a
+    // read that omits it lands in the user store where a project session does not exist.
+    expect(toggle).toHaveBeenCalledWith('s1', 'user')
     expect(isSessionPartnerActive('s1')).toBe(true)
     expect(activeSessionPartners.value.has('s1')).toBe(true)
 

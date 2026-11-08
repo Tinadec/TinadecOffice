@@ -117,7 +117,7 @@ contextBridge.exposeInMainWorld('tinadec', {
 
   // --- Per-session desktop partner windows (the work session's main agent embodied) ---
   sessionPartner: {
-    toggle: (sessionId) => ipcRenderer.invoke('tinadec:session-partner-toggle', sessionId),
+    toggle: (sessionId, storageId) => ipcRenderer.invoke('tinadec:session-partner-toggle', sessionId, storageId),
     isActive: (sessionId) => ipcRenderer.invoke('tinadec:session-partner-active', sessionId),
     // Called by the partner window: surface approvals through the main-process proxy and jump back.
     agentRequest: (payload) => ipcRenderer.invoke('tinadec:pet-agent-api', payload),

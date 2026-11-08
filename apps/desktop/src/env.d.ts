@@ -307,9 +307,13 @@ declare global {
       pets: PetWindowApi;
       /** Per-session desktop partner windows (the work session's main agent embodied). */
       sessionPartner: {
-        toggle: (sessionId: string) => Promise<{ active: boolean; error?: string }>;
+        /** The second argument is the storage scope the session lives in; omitting it means "user". */
+        toggle: (sessionId: string, storageId?: string) => Promise<{ active: boolean; error?: string }>;
         isActive: (sessionId: string) => Promise<boolean>;
-        /** Partner window only: read/decide approvals through the main-process whitelist proxy. */
+        /**
+         * Partner window only: read/decide approvals and read this window's own session
+         * (messages, runs) through the main-process whitelist proxy. Anything else is refused.
+         */
         agentRequest: (payload: { method: 'GET' | 'POST'; path: string; body?: unknown }) => Promise<{ status: number; body: unknown }>;
         /** Partner window only: focus the main window and return to this session. */
         focus: () => Promise<boolean>;

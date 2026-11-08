@@ -41,7 +41,7 @@ function petWindowUrl(instanceId, sessionId = null) {
   return appBundleUrl({ hash, query: { splash: '0' } });
 }
 
-async function createPetWindow(petId, { sessionKey = null } = {}) {
+async function createPetWindow(petId, { sessionKey = null, storageId = null } = {}) {
   if (!petId) throw new Error('A downloaded pet id is required');
   for (const [instanceId, entry] of petWindows) {
     // Decorative pets dedup by petId (one window per pet); session partners dedup by sessionKey
@@ -88,7 +88,7 @@ async function createPetWindow(petId, { sessionKey = null } = {}) {
 
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');
   attachExternalLinkGuards(win.webContents);
-  const entry = { window: win, petId, sessionKey, scale, saveTimer: null };
+  const entry = { window: win, petId, sessionKey, storageId, scale, saveTimer: null };
   petWindows.set(instanceId, entry);
   const saveBounds = () => {
     clearTimeout(entry.saveTimer);
@@ -203,10 +203,20 @@ function getSessionPartnerSessionId(sender) {
   return entry && entry.sessionKey ? entry.sessionKey : null;
 }
 
+/**
+ * The storage scope the window was opened in. A project session lives in that project's store;
+ * a proxy read that omits this header lands in the user store, where the session does not exist,
+ * so every read the window makes would quietly come back empty.
+ */
+function getSessionPartnerStorageId(sender) {
+  const entry = entryForSender(sender);
+  return entry && entry.storageId ? entry.storageId : 'user';
+}
+
 // One window per session: toggling off closes that session's window, toggling on creates it.
 // Closing a session partner does not disable the underlying pet (it may still be a decorative
 // pet elsewhere), so this closes the window directly rather than via setEnabled.
-async function toggleSessionPartnerWindow(sessionId, petId) {
+async function toggleSessionPartnerWindow(sessionId, petId, storageId = 'user') {
   if (!sessionId) return { active: false };
   const existing = sessionPartnerEntry(sessionId);
   if (existing) {
@@ -214,7 +224,7 @@ async function toggleSessionPartnerWindow(sessionId, petId) {
     return { active: false };
   }
   if (!petId) return { active: false, error: 'no_pet' };
-  await createPetWindow(petId, { sessionKey: sessionId });
+  await createPetWindow(petId, { sessionKey: sessionId, storageId });
   return { active: true };
 }
 
@@ -233,4 +243,5 @@ module.exports = {
   toggleSessionPartnerWindow,
   isSessionPartnerWindowSender,
   getSessionPartnerSessionId,
+  getSessionPartnerStorageId,
 };

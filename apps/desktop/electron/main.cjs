@@ -99,6 +99,7 @@ const {
   toggleSessionPartnerWindow,
   isSessionPartnerWindowSender,
   getSessionPartnerSessionId,
+  getSessionPartnerStorageId,
 } = require('./petWindow.cjs');
 const companionWindow = require('./companionWindow.cjs');
 const { createCompanionApiBridge } = require('./companionApi.cjs');
@@ -582,12 +583,16 @@ function broadcastAvatarPetsChanged() {
 
 // --- Local pet window IPC ---
 ipcMain.handle('tinadec:pet-create', async (_event, petId) => createPetWindow(petId));
-ipcMain.handle('tinadec:session-partner-toggle', async (event, sessionId) => {
+ipcMain.handle('tinadec:session-partner-toggle', async (event, sessionId, storageId) => {
   if (!isTrustedHostSender(event) || typeof sessionId !== 'string' || !sessionId) return { active: false };
+  // The scope is decided by the trusted renderer, which owns the session→store registry; the
+  // partner window itself can never observe it. Absent means the user store, which is where a
+  // projectless session lives anyway.
+  const scope = typeof storageId === 'string' && storageId ? storageId : 'user';
   if (isSessionPartnerActive(sessionId)) return toggleSessionPartnerWindow(sessionId, null);
   const pets = await listDownloaded();
   const slug = pets.find((pet) => pet.enabled)?.slug ?? pets[0]?.slug ?? null;
-  return toggleSessionPartnerWindow(sessionId, slug);
+  return toggleSessionPartnerWindow(sessionId, slug, scope);
 });
 ipcMain.handle('tinadec:session-partner-active', async (event, sessionId) => {
   if (!isTrustedHostSender(event)) return false;
@@ -604,6 +609,12 @@ ipcMain.handle('tinadec:pet-agent-api', async (event, payload) => {
     baseUrl,
     token: hostControl.serviceToken,
     isSessionPartnerWindowSender,
+    // Pins the session reads to this window's own session; a partner window cannot read another
+    // session's chat or run list through the proxy.
+    sessionIdForSender: getSessionPartnerSessionId,
+    // The window was opened with the scope its session lives in; reads without it would resolve
+    // in the user store and find nothing for a project session.
+    storageIdForSender: getSessionPartnerStorageId,
   });
   return bridge(event, payload);
 });
