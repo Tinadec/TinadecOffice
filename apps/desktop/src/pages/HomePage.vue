@@ -9,6 +9,7 @@ import { useUiePage } from '@/lib/uiEngine'
 import { useHomeEntrance } from '@/composables/useHomeEntrance'
 import { useNotifications } from '@/composables/useNotifications'
 import { selectionKey } from '@/lib/storageScope'
+import { closeBuddyView } from '@/lib/buddyView'
 
 // The UIE store is a module singleton shared by every UIE route; entering Home
 // switches it back to the home layout (restoring the user's saved home layout).
@@ -59,11 +60,14 @@ consumeRequest(pendingProjectId, (projectId) => {
   navigationGeneration++
   requestedConversationId.value = null
   requestedProjectId.value = projectId
+  // A search hit is a request for the work surface; leaving the buddy view up would hide it.
+  closeBuddyView()
 })
 consumeRequest(pendingConversationId, (sessionId) => {
   navigationGeneration++
   requestedProjectId.value = null
   requestedConversationId.value = sessionId
+  closeBuddyView()
 })
 watch([requestedProjectId, homeController.projects], () => {
   const projectId = requestedProjectId.value

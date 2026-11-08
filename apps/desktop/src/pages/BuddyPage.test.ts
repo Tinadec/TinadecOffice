@@ -5,21 +5,27 @@ import { createI18n } from 'vue-i18n'
 import type { Ref } from 'vue'
 import zh from '@/locales/zh-CN'
 import type { CompanionSummary } from '@/lib/companionApi'
+import { resetBuddyView, buddyViewActive } from '@/lib/buddyView'
 import BuddyPage from './BuddyPage.vue'
 
 const store = vi.hoisted(() => ({
   buddyCompanion: null as unknown as Ref<CompanionSummary | null>,
   loading: null as unknown as Ref<boolean>,
+  failures: null as unknown as Ref<Record<string, unknown>>,
+  refresh: vi.fn(),
 }))
 
 vi.mock('@/lib/companionStore', async () => {
   const { ref } = await import('vue')
   store.buddyCompanion = ref(null)
   store.loading = ref(false)
+  store.failures = ref({})
   return {
     useCompanionCenter: () => ({
       buddyCompanion: store.buddyCompanion,
       loading: store.loading,
+      failures: store.failures,
+      refresh: store.refresh,
     }),
   }
 })
@@ -28,7 +34,9 @@ vi.mock('@/components/companion/BuddyChatPanel.vue', () => ({
   default: { name: 'BuddyChatPanel', props: ['companion'], template: '<div data-testid="buddy-chat-stub">{{ companion.name }}</div>' },
 }))
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+const routing = vi.hoisted(() => ({ push: vi.fn() }))
+
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: routing.push }) }))
 
 function mountPage() {
   return mount(BuddyPage, {
@@ -42,6 +50,9 @@ function mountPage() {
 afterEach(() => {
   store.buddyCompanion.value = null
   store.loading.value = false
+  store.failures.value = {}
+  resetBuddyView()
+  routing.push.mockReset()
 })
 
 describe('BuddyPage', () => {
@@ -59,5 +70,12 @@ describe('BuddyPage', () => {
     const chat = wrapper.find('[data-testid="buddy-chat-stub"]')
     expect(chat.exists()).toBe(true)
     expect(chat.text()).toContain('小搭')
+  })
+
+  it('hands the deep link over to the buddy view on the work page', async () => {
+    mountPage()
+    await flushPromises()
+    expect(buddyViewActive.value).toBe(true)
+    expect(routing.push).toHaveBeenCalledWith('/')
   })
 })

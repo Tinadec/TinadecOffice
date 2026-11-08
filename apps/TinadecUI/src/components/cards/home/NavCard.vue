@@ -5,6 +5,7 @@ import WorkspaceEditorDialog from '@/components/WorkspaceEditorDialog.vue'
 import { homeController } from '@/controllers/HomeController'
 import { requestSettingsSection } from '@/lib/pageRequests'
 import { setFeedFilter } from '@/lib/companionStore'
+import { closeBuddyView, toggleBuddyView } from '@/lib/buddyView'
 import { useUie } from '../../useUie'
 import { isCompanionDomainPage } from './navDomain'
 import { useRoute, useRouter } from 'vue-router'
@@ -24,11 +25,15 @@ const uie = useUie()
 const companionDomain = computed(() => isCompanionDomainPage(uie.snapshot.value.pageId))
 
 async function openSession(id: string) {
+  // Choosing a conversation is a deliberate return to the work surface; leaving the buddy view
+  // up would make the click look like it did nothing.
+  closeBuddyView()
   await c.setSelectedSession(id)
   if (route.path !== '/' && route.path !== '/space') await router.push('/')
 }
 
 async function createSession(projectId: string | null) {
+  closeBuddyView()
   c.startNewConversation(projectId)
   if (route.path !== '/' && route.path !== '/space') await router.push('/')
 }
@@ -52,6 +57,16 @@ function handleCompanionNav(target: 'all' | 'attention' | 'settings') {
     return
   }
   setFeedFilter(target === 'attention' ? 'attention' : 'all')
+}
+
+/**
+ * The buddy entry toggles the view, not a route: the buddy occupies the chat card (or the space
+ * drawer). From another page the toggle still applies, and the work page is opened so the result
+ * is visible rather than silently flipped in the background.
+ */
+function toggleBuddy() {
+  toggleBuddyView()
+  if (route.path !== '/' && route.path !== '/space') void router.push('/')
 }
 
 function toggleCollapse() {
@@ -88,7 +103,7 @@ function toggleCollapse() {
     @retry-workspaces="c.retryWorkspaces($event)"
   @unregister-workspace="c.unregisterWorkspace($event)"
     @go-market="router.push('/market')"
-    @go-buddy="router.push('/buddy')"
+    @go-buddy="toggleBuddy"
     @go-settings="router.push('/settings')"
     @go-companion-center="openCompanionCenter"
     @go-personal="openPersonal"

@@ -7,6 +7,7 @@ import { Bot, ChevronLeft, ChevronRight, GitBranch, ListTodo, Maximize, Minus, P
 import { useI18n } from 'vue-i18n'
 import { UieShell, UieCanvas, UieCardHost, arrangeSpace, routeSpatialEdges, type SpatialChange, type SpatialLayout, type SpatialSeed } from '@tinadec/ui'
 import ComposerBar from '@/components/ComposerBar.vue'
+import BuddyChatPanel from '@/components/companion/BuddyChatPanel.vue'
 import SpatialWorkCard from '@/components/spatial/SpatialWorkCard.vue'
 import { UiButton, UiCheckbox, UiSelect } from '@/components/ui'
 import { homeController as c } from '@/controllers/HomeController'
@@ -16,10 +17,36 @@ import { projectSpatialObjects, projectSpatialRelations } from '@/lib/spatialObj
 import { subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useSpatialGit } from '@/composables/useSpatialGit'
 import { usePanelStyles } from '@/composables/usePanelStyles'
+import { buddyCompanion, failures as companionFailures, loading as companionsLoading, refreshCompanionCenter } from '@/lib/companionStore'
+import { buddyViewActive, closeBuddyView } from '@/lib/buddyView'
+import { useHostAccess } from '@/lib/hostAccess'
+import { requestSettingsSection } from '@/lib/pageRequests'
+import { useRouter } from 'vue-router'
 
 const { t, te, locale } = useI18n()
 const emit = defineEmits<{ ready: [] }>()
+const router = useRouter()
 const uie = ensureProductionUie()
+const { canAccessBackend } = useHostAccess()
+// The buddy drawer is the space-mode half of the same single conversation the flat chat card
+// hosts; the sidebar entry toggles one module-level flag for both.
+const refreshBuddy = () => { if (buddyViewActive.value && canAccessBackend.value) void refreshCompanionCenter() }
+onMounted(refreshBuddy)
+watch(buddyViewActive, (active) => { if (active) refreshBuddy() })
+watch(canAccessBackend, (ready) => { if (ready) refreshBuddy() })
+function openBuddySettings() {
+  requestSettingsSection('companions')
+  closeBuddyView()
+  void router.push('/settings')
+}
+// "No buddy designated" is a fact only when the reads that decide it succeeded; a failed read
+// must not be reported as "you never chose one".
+const buddyReadFailed = computed(() => Boolean(companionFailures.value.companions || companionFailures.value.settings))
+// Esc must close the drawer from anywhere, including the sidebar that opened it — the surface's
+// own keydown only sees events that start inside the canvas.
+function onDocumentKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && buddyViewActive.value) closeBuddyView()
+}
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 const materialStyle = computed(() => {
   const { backgroundColor, backdropFilter, WebkitBackdropFilter, ...tokens } = getPanelStyle()
@@ -221,10 +248,11 @@ onMounted(async () => {
       if (event.type.startsWith('tool.execution.') || event.type === 'run.completed') void git.refresh()
     }, 800)
   })
+  document.addEventListener('keydown', onDocumentKeydown)
   await nextTick()
   emit('ready')
 })
-onBeforeUnmount(() => { alive = false; generation++; topologyAbort?.abort(); unsubscribe?.(); clearTimeout(refreshTimer) })
+onBeforeUnmount(() => { alive = false; generation++; topologyAbort?.abort(); unsubscribe?.(); clearTimeout(refreshTimer); document.removeEventListener('keydown', onDocumentKeydown) })
 
 function commit(changes: SpatialChange[]) {
   if (changes.length) uie.dispatch({ command: { type: 'spaceMove', scope: uie.scope.value, changes }, source: 'user', expectedRevision: uie.snapshot.value.revision })
@@ -296,6 +324,9 @@ function locateBlocker() {
 const hasBlocker = computed(() => pendingApprovals.value.length > 0 || objects.value.some(o => (!o.runId || focusedRun.value === '*' || o.runId === focusedRun.value)
   && (o.waitingFor?.length || ['blocked', 'failed', 'waiting_approval', 'awaiting_user', 'awaiting_approval'].includes(o.status ?? ''))))
 function keyboard(event: KeyboardEvent) {
+  // The buddy drawer owns Escape while it is out (handled on document, since the sidebar that
+  // opened it is outside this surface); don't also collapse the detail panel on the same key.
+  if (event.key === 'Escape' && buddyViewActive.value) return
   if (event.key === 'Escape' && detailOpen.value) { closeDetails(); return }
   const target = event.target as HTMLElement
   if (target.closest('input,textarea,select,[contenteditable=true]') || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return
@@ -406,6 +437,29 @@ function leavePreview(event: FocusEvent) { if (!(event.currentTarget as HTMLElem
             </section>
           </div>
         </aside>
+        <Transition name="space-buddy">
+          <aside v-if="buddyViewActive" class="space-buddy" role="complementary" :aria-label="t('buddy.title')">
+            <header class="space-buddy-heading">
+              <strong>{{ t('buddy.title') }}</strong>
+              <UiButton variant="ghost" size="icon" :aria-label="t('common.close')" :title="t('common.close')" @click="closeBuddyView()"><X /></UiButton>
+            </header>
+            <div class="space-buddy-body">
+              <BuddyChatPanel v-if="buddyCompanion" :companion="buddyCompanion" />
+              <div v-else-if="!canAccessBackend" class="space-buddy-empty" role="status">{{ t('host.previewReason') }}</div>
+              <div v-else-if="companionsLoading" class="space-buddy-empty" role="status">{{ t('buddy.loading') }}</div>
+              <div v-else-if="buddyReadFailed" class="space-buddy-empty" role="alert">
+                <p>{{ t('buddy.loadFailed') }}</p>
+                <UiButton variant="outline" size="sm" @click="refreshBuddy">{{ t('buddy.retry') }}</UiButton>
+              </div>
+              <div v-else class="space-buddy-empty">
+                <Bot :size="24" aria-hidden="true" />
+                <h2>{{ t('buddy.empty') }}</h2>
+                <p>{{ t('buddy.emptyHint') }}</p>
+                <UiButton size="sm" @click="openBuddySettings">{{ t('buddy.openSettings') }}</UiButton>
+              </div>
+            </div>
+          </aside>
+        </Transition>
         <div ref="composerDock" class="space-composer-dock" :class="{ 'space-composer-hero': hero }">
           <nav v-if="visibleEntries.length" class="space-index" :aria-label="t('space.index')" @mouseleave="peek = null" @focusout="leavePreview" @keydown.esc.stop="peek = null">
             <div v-for="entry in visibleEntries" :key="entry.kind" class="space-index-entry">
@@ -466,6 +520,17 @@ function leavePreview(event: FocusEvent) { if (!(event.currentTarget as HTMLElem
 .space-data-status button, .space-hide-terminal { pointer-events: auto; border: 0; border-radius: 6px; padding: 4px 8px; color: var(--text-primary); background: var(--surface-raised); cursor: pointer; }
 .space-hide-terminal { position: absolute; top: 132px; right: 12px; }
 .space-detail { position: absolute; top: 128px; right: 12px; bottom: 152px; width: min(430px, 48%); min-width: 260px; display: flex; flex-direction: column; border-radius: 16px; background: var(--surface-section); backdrop-filter: var(--material-filter-raised, none); border: 1px solid var(--border-muted); box-shadow: var(--shadow-card-subtle); z-index: 5; }
+/* The buddy drawer slides over the canvas from the right. It is deliberately not a UIE card:
+   the buddy conversation is unique, so it must not be splittable, tabbable or closable-to-nothing. */
+.space-buddy { position: absolute; top: 12px; right: 12px; bottom: 12px; width: min(440px, 92%); display: flex; flex-direction: column; border-radius: 16px; background: var(--surface-section); backdrop-filter: var(--material-filter-raised, none); border: 1px solid var(--border-muted); box-shadow: var(--shadow-card-subtle); z-index: 20; }
+.space-buddy-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 4px 18px; font-size: 13px; color: var(--text-primary); }
+.space-buddy-body { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 18px 18px; }
+.space-buddy-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.space-buddy-empty h2 { margin: 0; font-size: 16px; color: var(--text-primary); }
+.space-buddy-empty p { margin: 0; max-width: 420px; line-height: 1.6; }
+.space-buddy-enter-active, .space-buddy-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
+.space-buddy-enter-from, .space-buddy-leave-to { opacity: 0; transform: translateX(16px); }
+@media (prefers-reduced-motion: reduce) { .space-buddy-enter-active, .space-buddy-leave-active { transition: none; } }
 .space-detail-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 4px 18px; font-size: 13px; color: var(--text-primary); }
 .space-detail-scroll { overflow: auto; min-height: 0; flex: 1; }
 .space-detail .spatial-work-card { height: auto; background: transparent; backdrop-filter: none; }
