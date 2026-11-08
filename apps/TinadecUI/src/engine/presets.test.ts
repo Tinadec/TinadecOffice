@@ -52,10 +52,11 @@ describe('built-in presets', () => {
     expect(descriptors('center')).toEqual(['companionBuddy'])
     // Roster first, then what those partners are doing, then the reference surfaces.
     expect(descriptors('right')).toEqual([
-      'companionList', 'companionSupervision', 'companionGroups', 'companionFeed', 'companionConnections',
+      'companionList', 'companionSupervision', 'companionProfile',
+      'companionGroups', 'companionFeed', 'companionConnections',
     ])
-    // Seven cards: the shared sidebar plus six companion panels.
-    expect(Object.keys(preset.cards)).toHaveLength(7)
+    // Eight cards: the shared sidebar plus seven companion panels.
+    expect(Object.keys(preset.cards)).toHaveLength(8)
     // The feature panel clears the window controls exactly like the work pages do.
     expect(preset.columns.right.topInset).toBe(48)
     expect(preset.columns.left.topInset).toBe(8)

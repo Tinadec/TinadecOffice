@@ -181,13 +181,14 @@ describe('repairLayout', () => {
       'companionFeed',
       'companionGroups',
       'companionList',
+      'companionProfile',
       'companionSupervision',
       'nav',
     ])
     // The sidebar island stands alone on the left rail; the buddy timeline owns the centre.
     expect(out.columns.left.primary.tabIds).toHaveLength(1)
     expect(out.columns.center.primary.tabIds).toHaveLength(1)
-    expect(out.columns.right.primary.tabIds).toHaveLength(5)
+    expect(out.columns.right.primary.tabIds).toHaveLength(6)
   })
 
   it('falls back to home for an unknown page id, without touching the companion page', () => {

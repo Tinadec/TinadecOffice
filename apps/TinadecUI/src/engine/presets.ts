@@ -228,6 +228,7 @@ function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
   const buddy = card(n(), 'companionBuddy')
   const list = card(n(), 'companionList')
   const supervision = card(n(), 'companionSupervision')
+  const profile = card(n(), 'companionProfile')
   const feed = card(n(), 'companionFeed')
   const groups = card(n(), 'companionGroups')
   const connections = card(n(), 'companionConnections')
@@ -237,6 +238,7 @@ function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
     [buddy.id]: buddy,
     [list.id]: list,
     [supervision.id]: supervision,
+    [profile.id]: profile,
     [feed.id]: feed,
     [groups.id]: groups,
     [connections.id]: connections,
@@ -254,7 +256,7 @@ function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
     left: column('left', 260, 8, 'float', [nav.id], nav.id),
     center: column('center', 0, 8, 'immersive', [buddy.id], buddy.id),
     right: column('right', 380, HOME_GEOMETRY.rightTopInset, 'float',
-      [list.id, supervision.id, groups.id, feed.id, connections.id], list.id),
+      [list.id, supervision.id, profile.id, groups.id, feed.id, connections.id], list.id),
   }
   snapshot.focusedCardId = buddy.id
   return snapshot

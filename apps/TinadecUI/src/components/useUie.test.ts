@@ -257,7 +257,7 @@ describe('preset revisions for redesigned pages', () => {
       singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '',
     })
     for (const type of ['companionList', 'companionFeed', 'companionGroups', 'companionConnections',
-      'companionBuddy', 'companionSupervision']) {
+      'companionBuddy', 'companionSupervision', 'companionProfile']) {
       reg.register({
         type, component: {} as never, minWidth: 200, minHeight: 160,
         singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '',

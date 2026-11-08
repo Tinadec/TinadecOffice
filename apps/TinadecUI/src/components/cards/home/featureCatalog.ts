@@ -80,6 +80,7 @@ export const FEATURE_CATALOG: FeatureCatalogEntry[] = [
   // tab strip's new-tab menu.
   { descriptorId: 'companionBuddy', titleKey: 'context.companionBuddy', descKey: 'context.companionBuddyDesc', icon: Bot, color: '#58a6ff', pages: ['companionCenter'] },
   { descriptorId: 'companionSupervision', titleKey: 'context.companionSupervision', descKey: 'context.companionSupervisionDesc', icon: MonitorSmartphone, color: '#d29922', pages: ['companionCenter'] },
+  { descriptorId: 'companionProfile', titleKey: 'context.companionProfile', descKey: 'context.companionProfileDesc', icon: FileText, color: '#746294', pages: ['companionCenter'] },
 ]
 
 /**

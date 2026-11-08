@@ -24,6 +24,7 @@ import CompanionFeedCard from './companion/CompanionFeedCard.vue'
 import CompanionGroupsCard from './companion/CompanionGroupsCard.vue'
 import CompanionConnectionsCard from './companion/CompanionConnectionsCard.vue'
 import CompanionBuddyCard from './companion/CompanionBuddyCard.vue'
+import CompanionProfileCard from './companion/CompanionProfileCard.vue'
 import CompanionSupervisionCard from './companion/CompanionSupervisionCard.vue'
 import type { UieCardDescriptor } from '../../engine/types'
 
@@ -80,6 +81,9 @@ export function buildUieRegistry(): CardRegistry {
     // Supervision answers "does this session need me?" for the sessions with a desktop partner
     // window out. It reads runs and approvals itself, so it works without the work page running.
     { type: 'companionSupervision', component: CompanionSupervisionCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
+    // The profile editor follows the roster: picking a partner and then being sent to Settings to
+    // change its persona is a detour the centre can skip. Memory and skills stay in Settings.
+    { type: 'companionProfile', component: CompanionProfileCard, minWidth: 260, minHeight: 220, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
   ]
 
   for (const c of cards) reg.register(c)

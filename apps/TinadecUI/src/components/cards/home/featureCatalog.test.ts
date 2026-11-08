@@ -4,7 +4,7 @@ import { FEATURE_CATALOG, catalogEntriesForPage } from './featureCatalog'
 const COMPANION_IDS = [
   'companionList', 'companionFeed', 'companionGroups', 'companionConnections',
   // The centre's two primary surfaces are catalog entries too, or they would have no icon.
-  'companionBuddy', 'companionSupervision',
+  'companionBuddy', 'companionSupervision', 'companionProfile',
 ]
 
 describe('FEATURE_CATALOG', () => {
@@ -47,6 +47,7 @@ describe('FEATURE_CATALOG', () => {
     expect(homeIds).not.toContain('companionConnections')
     expect(homeIds).not.toContain('companionBuddy')
     expect(homeIds).not.toContain('companionSupervision')
+    expect(homeIds).not.toContain('companionProfile')
     expect(homeIds).toContain('workspace')
 
     const centerIds = catalogEntriesForPage('companionCenter').map((entry) => entry.descriptorId)
