@@ -43,8 +43,16 @@ public static class StorageScopeHttpExtensions
         // Companions are one user-level application domain too: their identity, memories
         // and conversations must never be split into a per-project store by a storage
         // header, so every /api/v1/companions and /api/v1/companion-* route stays on "user".
-        var companionPath = context.Request.Path.StartsWithSegments("/api/v1/companions")
-            || context.Request.Path.StartsWithSegments("/api/v1/companion-");
+        //
+        // The companion family needs a value prefix, not StartsWithSegments: segment matching
+        // compares whole segments, so "/api/v1/companion-" never matches "companion-settings",
+        // "companion-conversations", "companion-runs", "companion-connections" or
+        // "companion-events". With that check the pin silently did nothing for every route in
+        // the family except /companions itself, and a client that sent a project scope split
+        // the companion domain across project stores.
+        var path = context.Request.Path.Value ?? string.Empty;
+        var companionPath = path.StartsWith("/api/v1/companions", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/v1/companion-", StringComparison.OrdinalIgnoreCase);
         var id = context.Request.Path.StartsWithSegments("/api/v1/agent-packs") || companionPath
             ? "user"
             : ids.Count == 0 ? "user" : ids.ToString();

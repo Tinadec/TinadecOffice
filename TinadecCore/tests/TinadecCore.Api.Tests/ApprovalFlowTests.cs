@@ -4,9 +4,12 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Governance;
+using TinadecCore.Lifecycle;
 using TinadecCore.Tools;
 
 namespace TinadecCore.Api.Tests;
@@ -245,6 +248,94 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         var hash = ToolParametersHash.Compute(parameters);
         Assert.False(await approvalCoordinator.TryConsumeApprovalAsync(approvalId, Guid.NewGuid().ToString(), hash));
         Assert.True(await approvalCoordinator.TryConsumeApprovalAsync(approvalId, first.Execution.Id.ToString(), hash));
+    }
+
+    /// <summary>
+    /// A caller scoped to one session must never receive another session's approvals. Approval
+    /// rows were always filtered; policy parks were not, because a park records a run and no
+    /// session, so `?session_id=` looked applied while every pending park in the workspace came
+    /// back — and could be decided from a surface showing a different session.
+    /// </summary>
+    [Fact]
+    public async Task ListApprovals_SessionScoped_ExcludesOtherSessionsParks()
+    {
+        var client = _factory!.CreateClient();
+        var scope = _factory!.Services.GetRequiredService<ITenantContextAccessor>().Current;
+
+        // Two sessions, one run each, and one park hanging off each run. The parks carry no
+        // session column, so only the run → session join can tell them apart.
+        var mineSession = Guid.NewGuid();
+        var theirsSession = Guid.NewGuid();
+        var mineRun = Guid.NewGuid();
+        var theirsRun = Guid.NewGuid();
+        var minePark = Guid.NewGuid();
+        var theirsPark = Guid.NewGuid();
+
+        await using (var lifecycle = await _factory!.Services
+            .GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            foreach (var (runId, sessionId) in new[] { (mineRun, mineSession), (theirsRun, theirsSession) })
+            {
+                lifecycle.Runs.Add(new RunRecord
+                {
+                    Id = runId,
+                    TenantId = scope.TenantId,
+                    WorkspaceId = scope.WorkspaceId,
+                    SessionId = sessionId,
+                    InitiatedByPrincipalId = scope.PrincipalId,
+                    TriggerMessageId = Guid.NewGuid(),
+                    Status = "awaiting_user",
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                });
+            }
+            await lifecycle.SaveChangesAsync();
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        await using (var governance = await _factory!.Services
+            .GetRequiredService<IDbContextFactory<GovernanceDbContext>>().CreateDbContextAsync())
+        {
+            foreach (var (parkId, runId) in new[] { (minePark, mineRun), (theirsPark, theirsRun) })
+            {
+                governance.PermissionRequests.Add(new PermissionRequestRecord
+                {
+                    Id = parkId,
+                    TenantId = scope.TenantId,
+                    WorkspaceId = scope.WorkspaceId,
+                    SubjectPrincipalId = scope.PrincipalId,
+                    Capability = "tool.invoke",
+                    Action = "write",
+                    Resource = "tool://write_file",
+                    RunId = runId,
+                    Risk = "high",
+                    Rationale = "session scoping probe",
+                    IdempotencyKey = $"probe:{parkId:N}",
+                    RequestHash = "hash",
+                    PolicySnapshotHash = "snapshot",
+                    Status = PermissionRequestStatuses.AwaitingUser,
+                    Revision = 1,
+                    ExpiresAt = now.AddMinutes(30),
+                    ExpiresAtUnixMilliseconds = now.AddMinutes(30).ToUnixTimeMilliseconds(),
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+            await governance.SaveChangesAsync();
+        }
+
+        var scoped = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/approvals?status=pending&session_id={mineSession}");
+        var scopedIds = scoped!.Select(x => x.GetProperty("id").GetGuid()).ToList();
+        Assert.Contains(minePark, scopedIds);
+        Assert.DoesNotContain(theirsPark, scopedIds);
+
+        // The park reports the session it belongs to, so a client can group it without guessing.
+        var mineRow = scoped.Single(x => x.GetProperty("id").GetGuid() == minePark);
+        Assert.Equal(mineSession, mineRow.GetProperty("session_id").GetGuid());
+
+        // A session with no runs receives no parks at all — not the whole workspace's.
+        var empty = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/approvals?status=pending&session_id={Guid.NewGuid()}");
+        Assert.Empty(empty!);
     }
 
     private async Task<Guid> CreateApprovalAsync(HttpClient client, string rawParameters)

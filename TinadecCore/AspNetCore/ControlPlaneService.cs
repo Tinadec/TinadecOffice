@@ -749,12 +749,42 @@ public sealed class ControlPlaneService
         var result = rows.Select(row => ToResponse(row, retries)).Cast<object>().ToList();
         if (string.IsNullOrWhiteSpace(status) || string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase))
         {
+            // A policy park carries a run id, never a session id, so `session_id` above cannot
+            // narrow it. Without this the filter looks applied and a caller scoped to one
+            // session still receives every pending park in the workspace — and can decide a
+            // tool call belonging to a session it is not showing. Resolve the session's runs
+            // first and keep only parks that belong to one of them.
+            var sessionRunIds = session is { } parkSessionId
+                ? await db.Runs.AsNoTracking()
+                    .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId
+                        && x.SessionId == parkSessionId)
+                    .Select(x => x.Id)
+                    .ToListAsync(ct).ConfigureAwait(false)
+                : null;
             var permissions = await _authorization.ListPermissionRequestsAsync(null, run, null, ct).ConfigureAwait(false);
             var parks = permissions
                 .Where(x => x.Status is PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser)
+                .Where(x => sessionRunIds is null
+                    || (x.RunId is { } parkRunId && sessionRunIds.Contains(parkRunId)))
                 .ToList();
             var evidence = await LoadParkEvidenceAsync(db, parks.Select(x => x.Id).ToList(), ct);
-            result.AddRange(parks.Select(x => ToPermissionResponse(x, evidence.GetValueOrDefault(x.Id))));
+            // A park knows its run, not its session. Report the session it belongs to so a client
+            // can group and filter parks itself instead of guessing from the request it sent.
+            var parkRunIds = parks.Where(x => x.RunId is not null).Select(x => x.RunId!.Value).Distinct().ToList();
+            var sessionByRun = parkRunIds.Count == 0
+                ? new Dictionary<Guid, Guid>()
+                : await db.Runs.AsNoTracking()
+                    .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId
+                        && parkRunIds.Contains(x.Id))
+                    .Select(x => new { x.Id, x.SessionId })
+                    .ToDictionaryAsync(x => x.Id, x => x.SessionId, ct).ConfigureAwait(false);
+            result.AddRange(parks.Select(x => ToPermissionResponse(
+                x,
+                evidence.GetValueOrDefault(x.Id),
+                // A missing run must report "no session", not the zero guid: a client that reads
+                // Guid.Empty as a real scope would attribute the park to a session that cannot
+                // exist, which is worse than saying it does not know.
+                x.RunId is { } parkRun && sessionByRun.TryGetValue(parkRun, out var parkSession) ? parkSession : (Guid?)null)));
         }
         return Results.Ok(result.OrderByDescending(x => x is ApprovalResponseDto approval ? approval.CreatedAt : DateTimeOffset.MinValue));
     }
@@ -848,10 +878,18 @@ public sealed class ControlPlaneService
         if (row is not null) return Results.Ok(ToResponse(row, await RetryExecutionIdsAsync(db, [row], ct)));
         var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
         if (permission is null) return Results.NotFound();
+        // The session a park belongs to is what makes this read usable for an ownership check:
+        // a caller that only knows its own session must be able to tell a park is not its own.
+        var parkSessionId = permission.Request.RunId is { } parkRunId
+            ? await db.Runs.AsNoTracking()
+                .Where(x => x.Id == parkRunId && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId)
+                .Select(x => (Guid?)x.SessionId)
+                .SingleOrDefaultAsync(ct).ConfigureAwait(false)
+            : null;
         if (permission.Request.Status is not (PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser))
-            return Results.Ok(ToPermissionResponse(permission.Request, evidence: null));
+            return Results.Ok(ToPermissionResponse(permission.Request, evidence: null, parkSessionId));
         var parkEvidence = await LoadParkEvidenceAsync(db, [id], ct);
-        return Results.Ok(ToPermissionResponse(permission.Request, parkEvidence.GetValueOrDefault(id)));
+        return Results.Ok(ToPermissionResponse(permission.Request, parkEvidence.GetValueOrDefault(id), parkSessionId));
     }
     public async Task<IResult> DecideApproval(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
     {
@@ -1166,7 +1204,8 @@ public sealed class ControlPlaneService
 
     private static ApprovalResponseDto ToPermissionResponse(
         PermissionRequestSnapshot value,
-        ApprovalEvidence? evidence)
+        ApprovalEvidence? evidence,
+        Guid? sessionId = null)
     {
         // A policy park used to report nothing but "requires authorization". When it
         // came from a tool call the execution's frozen digest names the real target;
@@ -1175,6 +1214,7 @@ public sealed class ControlPlaneService
         return new ApprovalResponseDto
         {
             Id = value.Id,
+            SessionId = sessionId,
             RunId = value.RunId,
             TaskId = value.TaskId,
             AgentInstanceId = value.SubjectAgentInstanceId,
