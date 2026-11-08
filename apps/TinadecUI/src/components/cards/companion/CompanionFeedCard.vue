@@ -129,6 +129,7 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   autonomy_proposed: ShieldCheck,
   autonomy_mandate_approved: ShieldCheck,
   autonomy_mandate_denied: XCircle,
+  emote_received: Sparkles,
   autonomy_recruit_proposed: UserPlus,
   autonomy_recruit_approved: UserPlus,
   autonomy_recruit_denied: XCircle,
@@ -250,6 +251,15 @@ function eventLine(row: CompanionActivity): EventLine {
           who: speaker,
           preview: text(row.payload, 'preview') || row.summary || '',
         }),
+        namesConversation: false,
+      }
+    // The gesture is the user's, not the companion's, so the sentence says "you" and never names
+    // the companion. The server's summary is Chinese, so a localized line is the only correct one.
+    case 'emote_received':
+      return {
+        text: t(text(row.payload, 'emote') === 'pat'
+          ? 'companion.center.eventEmotePat'
+          : 'companion.center.eventEmoteWave'),
         namesConversation: false,
       }
     case 'autonomy_proposed':

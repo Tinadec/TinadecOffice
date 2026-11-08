@@ -498,7 +498,14 @@ function conversationLabel(conversation: CompanionConversation): string {
   return t('companion.chat.privateLabel')
 }
 
-function mergeMessages(incoming: CompanionMessage[]): void {
+/**
+ * Merge a batch into the transcript.
+ *
+ * `speak` is false for the initial load of a conversation: every historical message is "new" to
+ * an empty list, so reading aloud there would replay the whole chat the moment the window opens.
+ * Only messages that arrive after that first load are spoken.
+ */
+function mergeMessages(incoming: CompanionMessage[], speak = true): void {
   if (incoming.length === 0) return
   const ordered = new Map(messages.value.map((message) => [message.id, message]))
   const fresh: CompanionMessage[] = []
@@ -508,7 +515,7 @@ function mergeMessages(incoming: CompanionMessage[]): void {
     lastSeq = Math.max(lastSeq, message.seq)
   }
   messages.value = [...ordered.values()].sort((left, right) => left.seq - right.seq)
-  speakFresh(fresh)
+  if (speak) speakFresh(fresh)
 }
 
 /**
@@ -550,7 +557,8 @@ async function loadMessagesFor(conversationId: string, token: number): Promise<v
     if (token !== loadToken) return
     messages.value = []
     lastSeq = 0
-    mergeMessages(list ?? [])
+    // The whole transcript is "new" to an empty list; reading it aloud would replay the chat.
+    mergeMessages(list ?? [], false)
     scrollToBottom()
   } catch (error) {
     if (token !== loadToken) return
