@@ -19,6 +19,7 @@ public static class CompanionToolCatalog
     public const string CreateWorkspace = "companion_create_workspace";
     public const string ListWorkspaces = "companion_list_workspaces";
     public const string SessionDetail = "companion_session_detail";
+    public const string Relay = "companion_relay";
 
     public static IReadOnlyList<CompanionToolDeclaration> Tools { get; } =
     [
@@ -65,6 +66,16 @@ public static class CompanionToolCatalog
             + "has been doing. Refused for a session outside this tenant/workspace.",
             Parse("""
                 {"type":"object","properties":{"session_id":{"type":"string","description":"Session id from companion_list_sessions."},"limit":{"type":"integer","description":"How many recent messages to include, 1-50; defaults to 20."}},"required":["session_id"],"additionalProperties":false}
+                """)),
+
+        new(Relay,
+            "Send a message to another companion — the buddy, or an autonomous partner by name. Use it when you need "
+            + "someone else to arrange work, or when you are answering a request one of them sent you. The message "
+            + "reaches their durable inbox; they decide what to do with it on their own turn, under their own tools and "
+            + "approvals. This is a message between agents, not an instruction that executes anything by itself. "
+            + "Refused when the target is not an active companion of this tenant, or when the body is blank.",
+            Parse("""
+                {"type":"object","properties":{"companion_id":{"type":"string","description":"Target companion id from the roster: the buddy, or another autonomous partner."},"content":{"type":"string","description":"The message body, in your own voice."}},"required":["companion_id","content"],"additionalProperties":false}
                 """)),
 
         new(CreateWorkspace,

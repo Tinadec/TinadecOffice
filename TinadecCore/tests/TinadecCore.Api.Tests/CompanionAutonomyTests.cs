@@ -623,6 +623,36 @@ public sealed class CompanionAutonomyTests
         Assert.Empty(factory.Chat.Calls);
     }
 
+    /// <summary>
+    /// Backoff is the cost bound on autonomy: a companion that keeps producing nothing to do must
+    /// wait progressively longer instead of calling the model on a fixed cadence forever, and one
+    /// real action resets the wait. The interval is a pure function of the skip streak — testing
+    /// it through aged database timestamps cannot distinguish a tie in CreatedAt from a real
+    /// backoff, so it is asserted directly.
+    /// </summary>
+    [Fact]
+    public void RepeatedSkips_BackOffTheInterval_AndARealActionResetsIt()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(10), CompanionAutonomyService.BackedOffInterval(10, 0));
+        Assert.Equal(TimeSpan.FromMinutes(20), CompanionAutonomyService.BackedOffInterval(10, 1));
+        Assert.Equal(TimeSpan.FromMinutes(40), CompanionAutonomyService.BackedOffInterval(10, 2));
+        Assert.Equal(TimeSpan.FromMinutes(80), CompanionAutonomyService.BackedOffInterval(10, 3));
+        // Capped: a companion that has skipped a hundred times still waits a bounded time.
+        Assert.Equal(TimeSpan.FromMinutes(80), CompanionAutonomyService.BackedOffInterval(10, 99));
+        // The configured interval is honored, and never falls below one minute.
+        Assert.Equal(TimeSpan.FromMinutes(15), CompanionAutonomyService.BackedOffInterval(15, 0));
+        Assert.Equal(TimeSpan.FromMinutes(8), CompanionAutonomyService.BackedOffInterval(0, 3));
+    }
+
+    [Fact]
+    public void TrailingSkips_StopsAtTheFirstRealAction()
+    {
+        // The newest rows come first. A real action anywhere in the middle ends the streak.
+        Assert.Equal(0, CompanionAutonomyService.TrailingSkips(new[] { "autonomy_message_sent", "autonomy_proposed" }));
+        Assert.Equal(2, CompanionAutonomyService.TrailingSkips(new[] { "autonomy_skipped", "autonomy_skipped", "autonomy_message_sent" }));
+        Assert.Equal(0, CompanionAutonomyService.TrailingSkips(Array.Empty<string>()));
+    }
+
     [Fact]
     public async Task WorkerDueList_AppliesTheIntervalAndTheBudget()
     {

@@ -688,11 +688,14 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         text.AppendLine("- companion_list_workspaces：已登记的项目工作区及其会话数量");
         text.AppendLine("- companion_dispatch：把任务作为用户消息写入一个工作会话并启动运行");
         text.AppendLine("- companion_create_workspace：新建或复用项目工作区");
+        text.AppendLine("- companion_relay：给另一个伙伴（搭子或别的自主伙伴）发一条消息");
         text.AppendLine();
         text.AppendLine("没有其他工具：不能读写文件、执行命令、使用 Git、MCP、浏览器或外部设备。"
             + "派活是管理动作，不需要工具审批；真正写代码的是工作会话里的智能体，它们自己的审批门照旧。");
         text.AppendLine("派活之前值得先看一眼：那个会话是不是已经在做同一件事（companion_session_detail 的最近对话会告诉你）。"
             + "重复派活对用户是噪音，但也不必为了确认而每次都查——你自己判断。");
+        text.AppendLine("遇到需要别人来安排的工作，可以给搭子发消息（companion_relay）；搭子也可以把活派回给你所在的会话。"
+            + "伙伴之间的消息只是消息，收到的一方会用自己的工具和授权来处理，不会因为你说了什么就必须执行。");
         text.AppendLine("不泄露其他成员的私有信息，群聊内容也不会自动成为任何成员的私有记忆。");
         if (memories.Count > 0)
         {
@@ -840,6 +843,21 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
                 var limit = IntArg(args, "limit") ?? 20;
                 return Serialize(await gateway.ReadSessionAsync(detailSessionId, limit, cancellationToken)
                     .ConfigureAwait(false));
+            }
+
+            case CompanionToolCatalog.Relay:
+            {
+                if (!TryGuidArg(args, "companion_id", out var targetCompanionId))
+                    return Failure("invalid_arguments", "companion_id must be a non-empty GUID.");
+                var body = StringArg(args, "content");
+                if (string.IsNullOrWhiteSpace(body))
+                    return Failure("invalid_arguments", "content is required.");
+                // Keyed on facts that survive an effect retry, like dispatch: the same run saying the
+                // same thing to the same companion is one message, not two.
+                var relayKey = $"companion-relay-{run.Id:N}-{targetCompanionId:N}-"
+                    + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body.Trim())))[..12].ToLowerInvariant();
+                return Serialize(await gateway.RelayToCompanionAsync(
+                    run.CompanionId, targetCompanionId, body, relayKey, cancellationToken).ConfigureAwait(false));
             }
 
             case CompanionToolCatalog.ReadRun:

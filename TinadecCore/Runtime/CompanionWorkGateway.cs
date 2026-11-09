@@ -27,6 +27,7 @@ public sealed class CompanionWorkGateway(
     ILifecycleManager lifecycle,
     IFullDuplexRunCoordinator coordinator,
     IDbContextFactory<LifecycleDbContext> runDb,
+    CompanionChatBridge chatBridge,
     ITenantContextAccessor tenant) : ICompanionWorkGateway
 {
     private const int MaxSessions = 50;
@@ -208,6 +209,30 @@ public sealed class CompanionWorkGateway(
             activeRuns > 0,
             messages.Select(message => new CompanionWorkMessage(
                 message.Role, message.Content, message.CreatedAt)).ToList()));
+    }
+
+    public async Task<CompanionWorkResult<CompanionWorkRelay>> RelayToCompanionAsync(
+        Guid fromCompanionId,
+        Guid toCompanionId,
+        string content,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (fromCompanionId == Guid.Empty || toCompanionId == Guid.Empty)
+            return CompanionWorkResult<CompanionWorkRelay>.Fail("invalid_arguments", "companion ids must be non-empty GUIDs.");
+        try
+        {
+            var message = await chatBridge.RelayAsync(
+                fromCompanionId, toCompanionId, content, idempotencyKey, cancellationToken).ConfigureAwait(false);
+            return CompanionWorkResult<CompanionWorkRelay>.Ok(
+                new CompanionWorkRelay(message.ConversationId, message.Id, message.Sequence));
+        }
+        catch (TinaChatException ex)
+        {
+            // A refusal is data: a missing or archived peer, a blank body, or a message the channel
+            // will not carry all come back as a structured result the model can read and act on.
+            return CompanionWorkResult<CompanionWorkRelay>.Fail(ex.Code, ex.Message);
+        }
     }
 
     public async Task<CompanionWorkResult<CompanionWorkWorkspace>> CreateWorkspaceAsync(

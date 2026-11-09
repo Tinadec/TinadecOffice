@@ -68,6 +68,22 @@ public interface ICompanionWorkGateway
         string name,
         string path,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends one message to another companion over TinaChat — the durable channel the three roles
+    /// already share. This is how an autonomous partner asks the buddy to arrange work, and how a
+    /// buddy answers.
+    ///
+    /// It is a message between two agents, never an instruction to execute: the receiver decides
+    /// what to do with it on its own turn, under its own tools and authorizations. The send is made
+    /// as the sender's own participant, so it is a real identity and not a borrowed one.
+    /// </summary>
+    Task<CompanionWorkResult<CompanionWorkRelay>> RelayToCompanionAsync(
+        Guid fromCompanionId,
+        Guid toCompanionId,
+        string content,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -117,3 +133,6 @@ public sealed record CompanionWorkSessionDetail(
     IReadOnlyList<CompanionWorkMessage> RecentMessages);
 
 public sealed record CompanionWorkMessage(string Role, string Content, DateTimeOffset CreatedAt);
+
+/// <summary>One relayed message: the conversation it landed in and the message row itself.</summary>
+public sealed record CompanionWorkRelay(Guid ConversationId, Guid MessageId, long Sequence);

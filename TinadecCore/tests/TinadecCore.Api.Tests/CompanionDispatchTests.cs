@@ -196,7 +196,7 @@ public sealed class CompanionDispatchTests : IAsyncLifetime
     }
 
     [Fact]
-    public void CompanionToolSurface_IsExactlyTheSixManagementTools()
+    public void CompanionToolSurface_IsExactlyTheSevenManagementTools()
     {
         var ids = CompanionToolCatalog.Tools.Select(tool => tool.Id).ToArray();
         Assert.Equal(
@@ -205,6 +205,8 @@ public sealed class CompanionDispatchTests : IAsyncLifetime
                 "companion_list_sessions", "companion_read_run", "companion_dispatch",
                 // Read-only environment probes: the companion asks for them when it needs them.
                 "companion_list_workspaces", "companion_session_detail",
+                // Agent-to-agent messaging over TinaChat; a message is never an execution order.
+                "companion_relay",
                 "companion_create_workspace"
             },
             ids);

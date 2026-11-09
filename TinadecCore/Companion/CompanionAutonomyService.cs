@@ -342,6 +342,7 @@ public sealed class CompanionAutonomyService(
                 && x.Kind.StartsWith("autonomy_"))
             .Select(x => new { CompanionId = x.CompanionId!.Value, x.Kind, x.CreatedAt })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+
         var byCompanion = actions.GroupBy(x => x.CompanionId).ToDictionary(group => group.Key, group => group.ToList());
         var today = UtcToday();
         var now = DateTimeOffset.UtcNow;
@@ -358,11 +359,49 @@ public sealed class CompanionAutonomyService(
             // undone by an old action.
             var lastAction = rows is { Count: > 0 } ? rows.Max(x => x.CreatedAt) : (DateTimeOffset?)null;
             var basis = lastAction is { } value && value > companion.UpdatedAt ? value : companion.UpdatedAt;
-            var interval = TimeSpan.FromMinutes(Math.Max(companion.AutonomyIntervalMinutes, 1));
+
+            // Back off while nothing is happening. Every tick costs one model call, and a companion
+            // with nothing to do would otherwise ask "shall I do something?" on a fixed cadence
+            // forever — the exact waste the interval is supposed to bound, only slower. Each
+            // consecutive skip doubles the wait, capped at eight interval lengths, and any real
+            // action or a configuration change resets it.
+            var trailingSkips = rows is { Count: > 0 }
+                ? TrailingSkips(rows.OrderByDescending(x => x.CreatedAt).Select(x => x.Kind))
+                : 0;
+            var interval = BackedOffInterval(companion.AutonomyIntervalMinutes, trailingSkips);
             if (now < basis.Add(interval)) continue;
             due.Add(companion.Id);
         }
         return due;
+    }
+
+    /// <summary>
+    /// The wait after a run of skips. Consecutive empty ticks double the interval (capped at eight
+    /// times), and a single real action puts it back to the configured interval. Keeping this a pure
+    /// function means the cost bound can be tested without fabricating database timestamps — a
+    /// due-list integration test cannot distinguish a tie in CreatedAt from a real backoff.
+    /// </summary>
+    internal static TimeSpan BackedOffInterval(int intervalMinutes, int trailingSkips)
+    {
+        var minutes = Math.Max(intervalMinutes, 1);
+        if (trailingSkips <= 0) return TimeSpan.FromMinutes(minutes);
+        var multiplier = Math.Min(1 << Math.Min(trailingSkips, 3), 8);
+        return TimeSpan.FromMinutes(minutes * multiplier);
+    }
+
+    /// <summary>
+    /// How many consecutive skips come after the last real action. Zero means the last autonomy
+    /// row was a real action (or there were none), which is when the wait goes back to normal.
+    /// </summary>
+    internal static int TrailingSkips(IEnumerable<string> kindsNewestFirst)
+    {
+        var trailing = 0;
+        foreach (var kind in kindsNewestFirst)
+        {
+            if (kind != "autonomy_skipped") break;
+            trailing++;
+        }
+        return trailing;
     }
 
     /// <summary>
