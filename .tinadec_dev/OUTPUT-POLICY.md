@@ -6,6 +6,7 @@ Use `.tinadec_dev` as the repository's shared, Git-versioned home for useful age
 - Research and comparisons: `.tinadec_dev/research/`.
 - Reviews, investigations, verification reports and durable evidence: `.tinadec_dev/reports/` or `.tinadec_dev/evidence/`.
 - Specs and standalone task checklists: `.tinadec_dev/specs/`.
+- **Exception — Denv / writing / collaboration module:** these product and architecture discussion docs are not stored in this repository. They live in the private `Tinadec/withdocs` repository under `tinadec-denv/` (Tinadec organization members only). Read `tinadec-denv/README.md` first, revise the existing numbered document instead of starting a parallel one, and never create a local or public duplicate. See the 2026-11-11 entry in the root `AGENTS.md`.
 - Project knowledge and memory: `.tinadec_dev/memory/` or `.tinadec_dev/wiki/`.
 - Shared skills and reusable tool rules: `.tinadec_dev/skills/` and `.tinadec_dev/tooling/`.
 
