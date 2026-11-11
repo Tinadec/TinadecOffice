@@ -160,9 +160,10 @@ const runtimeSectionKeys = ['cli', 'tui', 'acp'] as const
 
 /** The four task pages. Runtime is one page holding the CLI / TUI / ACP inventory sub-tabs. */
 const modelCenterTabs = computed(() => [
-  { key: 'suppliers' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
+  { key: 'suppliers' as const, label: t('settings.centerConnections'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
   { key: 'models' as const, label: t('settings.centerModels'), count: modelCenterOverview.value?.models.length ?? 0 },
-  { key: 'routes' as const, label: t('settings.centerRoutes'), count: routes.value.length },
+  // Routes/purpose/candidates are engineering concepts; they live under Advanced.
+  { key: 'routes' as const, label: t('settings.centerAdvanced'), count: routes.value.length },
   {
     key: 'runtime' as const,
     label: t('settings.centerRuntime'),
@@ -474,6 +475,13 @@ async function selectCenterTab(key: CenterTabKey): Promise<void> {
 async function selectProviderDetail(providerId: string): Promise<void> {
   if (showModal.value && providerForm.id === providerId) return
   if (!await confirmDiscardProviderDraft()) return
+  // CLI/ACP/TUI instances are not `api_connections`; the old read-only detail
+  // looked only there, so selecting one landed on an empty pane. Open its editor
+  // (the same fields) instead of dropping the row.
+  if (!modelApiProvider(providerId)) {
+    const instance = providers.value.find(provider => provider.id === providerId)
+    if (instance) { await openEditModal(instance); return }
+  }
   providerRailScroll.value = providerRailEl.value?.scrollTop ?? providerRailScroll.value
   providerDetailOpen.value = true
   selectedProviderDetailId.value = providerId
@@ -1200,7 +1208,9 @@ defineExpose({ canLeave, focusProvider })
       <button
         v-for="tab in modelCenterTabs"
         :key="tab.key"
+        :id="`model-center-tab-${tab.key}`"
         role="tab"
+        :aria-controls="`model-center-panel-${tab.key}`"
         :aria-selected="centerTab === tab.key"
         :tabindex="centerTab === tab.key ? 0 : -1"
         :class="{ active: centerTab === tab.key }"
@@ -1231,7 +1241,12 @@ defineExpose({ canLeave, focusProvider })
       </UiButton>
     </div>
 
-    <main class="center-resource-stage model-center-stage">
+    <main
+      :id="`model-center-panel-${centerTab}`"
+      class="center-resource-stage model-center-stage"
+      role="tabpanel"
+      :aria-labelledby="`model-center-tab-${centerTab}`"
+    >
   <section v-if="modelCenterSection === 'models'" class="center-resource-section">
     <div class="center-resource-heading">
       <div>

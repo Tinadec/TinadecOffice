@@ -88,13 +88,13 @@ import {
 import PetPreview from '@/components/PetPreview.vue'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
-import { UiButton, UiInput, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiSelectField } from '@/components/ui'
+import { UiButton, UiInput, UiBadge, UiLabel, UiSheet, UiSkeleton, UiSwitch, UiSelectField } from '@/components/ui'
 import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
 import AgentModesPanel from '@/settings/sections/AgentModesPanel.vue'
+import AgentCenterSection from '@/settings/agentCenter/AgentCenterSection.vue'
 import PromptEngineeringMerged from '@/settings/sections/PromptEngineeringMerged.vue'
 import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue'
-import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'
 import { consumeRequest, pendingAgentId, pendingModeId, pendingPromptId, pendingToolId, pendingToolAgentId, requestToolAgent, pendingModelProviderId, pendingSettingsSection, pendingCompanionId, type CompanionSettingsTab } from '@/lib/pageRequests'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { createSettingsLeaveGuard } from './settingsNavigation'
@@ -106,16 +106,19 @@ import { useModelCenter } from '@/composables/useModelCenter'
 import { centerDiagnosticLabel as centerDiagnosticText, providerStatusLabel } from '@/settings/modelCenterLabels'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { isAbortError } from '@/lib/isAbortError'
+import { patchAgentCenterUi, readCenterUiState } from '@/settings/drafts/uiState'
+import { withoutRetiredModes } from '@/lib/retiredModes'
+import { clearDraft, markDraftStale, readDraft, writeDraft, type StoredDraft } from '@/settings/drafts/draftStore'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 
 type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'companionAvatar' | 'apiDocs' | 'about'
 
-type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
+type AgentCenterTab = 'teams' | 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime' | 'advanced'
 
+const agentCenterSectionRef = ref<InstanceType<typeof AgentCenterSection> | null>(null)
 const modePanelRef = ref<InstanceType<typeof AgentModesPanel> | null>(null)
 const promptsPanelRef = ref<InstanceType<typeof PromptEngineeringMerged> | null>(null)
 const evolutionPanelRef = ref<InstanceType<typeof AgentEvolutionPanel> | null>(null)
-const agentPacksPanelRef = ref<InstanceType<typeof AgentPacksPanel> | null>(null)
 
 /** Lazily refresh per-tab data when a tab becomes active. */
 function switchAgentCenterTab(tab: AgentCenterTab) {
@@ -124,8 +127,16 @@ function switchAgentCenterTab(tab: AgentCenterTab) {
   if (tab === 'runtime') void nextTick(() => runtimePanelRef.value?.loadRuntimeInstances())
 }
 
+/** A team is opened in the deep graph editor by reusing the existing mode deep-link. */
+function openModeInGraph(id: string) {
+  agentCenterTab.value = 'modes'
+  pendingModeId.value = id
+}
+
 /** Single refresh entry for the whole Agent Center: reloads the active sub-tab. */
 function refreshAgentCenterTab(tab: AgentCenterTab = agentCenterTab.value) {
+  // Teams and Advanced are refreshed by AgentCenterSection itself; this path
+  // only serves the legacy tab panels mounted through slots.
   if (tab === 'modes') void modePanelRef.value?.loadModes()
   else if (tab === 'prompts') void promptsPanelRef.value?.refreshAll()
   else if (tab === 'evolution') void evolutionPanelRef.value?.loadProposals()
@@ -139,7 +150,7 @@ const definitionStatusLabel = (status: string) => (te(`agentCenter.filter.${stat
 // Shared with the Model Center section so the Agent Center words the same catalog rows identically.
 const statusLabel = (status: string) => providerStatusLabel(t, status)
 const centerDiagnosticLabel = (diagnostic: CenterDiagnosticDto) => centerDiagnosticText(t, diagnostic)
-const { canAccessBackend, reason: hostReason } = useHostAccess()
+const { canAccessBackend } = useHostAccess()
 const router = useRouter()
 const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
 
@@ -195,7 +206,25 @@ function openExternal(url: string) {
 const activeSection = ref<SettingsSection>('personal')
 const toolCenterRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
 const storageRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
-const agentCenterTab = ref<AgentCenterTab>('agents')
+const storedCenterUi = readCenterUiState()
+
+/**
+ * The persisted view state already carries the target IA keys (`teams` /
+ * `graph` / `advanced`). Until the navigation switch lands, map them onto the
+ * tab that currently owns the same content so a restored value never selects a
+ * stage that does not exist yet.
+ */
+function initialAgentCenterTab(): AgentCenterTab {
+  const tab = storedCenterUi.agentCenter.tab
+  if (tab === 'teams') return 'teams'
+  if (tab === 'modes' || tab === 'graph') return 'modes'
+  if (tab === 'prompts') return 'prompts'
+  if (tab === 'advanced') return 'advanced'
+  if (tab === 'evolution') return 'evolution'
+  if (tab === 'runtime') return 'runtime'
+  return 'agents'
+}
+const agentCenterTab = ref<AgentCenterTab>(initialAgentCenterTab())
 /**
  * The companion section is mounted on first entry and then kept alive: its reads belong to the
  * section, so unmounting it on every switch would re-read characters the user already saw. A deep
@@ -276,7 +305,12 @@ const configuringAgentId = ref('')
 const requestedAgentId = ref<string | null>(null)
 let agentNavigationGeneration = 0
 let providerNavigationGeneration = 0
-onBeforeUnmount(() => { agentNavigationGeneration++; providerNavigationGeneration++; pendingProviderFocus.value = null })
+onBeforeUnmount(() => {
+  agentNavigationGeneration++
+  providerNavigationGeneration++
+  pendingProviderFocus.value = null
+  flushAgentDraft()
+})
 const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
 const agentRuntimeModelKey = ref('')
 const agentRuntimeRoutePurpose = ref('')
@@ -291,8 +325,19 @@ const agentToolQuery = ref('')
 const agentToolSourceFilter = ref('all')
 const agentToolRiskFilter = ref('all')
 const agentCloneBusy = ref(false)
+const agentQuery = ref('')
+const agentLayerFilter = ref<'all' | 'operation' | 'execution'>('all')
+const agentSourceFilter = ref('all')
+const agentStatusFilter = ref('all')
+const showCreateAgent = ref(false)
+const newAgentName = ref('')
+const newAgentSlug = ref('')
+const newAgentLayer = ref<'operation' | 'execution'>('operation')
+const newAgentRole = ref('')
+const newAgentBusy = ref(false)
 // Versioned profile surface: published version timeline + pending permission requests.
 const agentVersionHistory = ref<AgentVersionDto[]>([])
+const agentVersionHistoryError = ref<ErrorState | null>(null)
 const agentVersionsLoading = ref(false)
 const agentPermissionRequests = ref<PermissionRequestDto[]>([])
 const runtimePanelRef = ref<InstanceType<typeof RuntimeInstancesPanel> | null>(null)
@@ -354,7 +399,10 @@ async function chooseAgentAvatar(mode: 'random' | 'fixed', petSlug?: string) {
   }
 }
 
-const agentViewMode = ref<'topology' | 'list'>('list')
+const agentViewMode = ref<'topology' | 'list'>(storedCenterUi.agentCenter.viewMode)
+watch([agentCenterTab, agentViewMode], () => {
+  patchAgentCenterUi({ tab: agentCenterTab.value, viewMode: agentViewMode.value })
+}, { flush: 'post' })
 const toolDiscoveryQuery = ref('')
 const toolDiscoverySource = ref('all')
 const toolDiscoveryRisk = ref('all')
@@ -488,6 +536,20 @@ function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
 }
 const planningAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'operation'))
 const executionAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'execution'))
+const agentSourceOptions = computed(() =>
+  Array.from(new Set(agents.value.map(agent => agentSourceKindFor(agent.id)))).sort())
+function agentMatchesFilters(agent: AgentViewDto): boolean {
+  if (agentLayerFilter.value !== 'all' && normalizeAgentLayer(agent.layer) !== agentLayerFilter.value) return false
+  if (agentSourceFilter.value !== 'all' && agentSourceKindFor(agent.id) !== agentSourceFilter.value) return false
+  if (agentStatusFilter.value !== 'all' && (agent.status ?? '') !== agentStatusFilter.value) return false
+  const q = agentQuery.value.trim().toLowerCase()
+  if (!q) return true
+  return [agent.name, agent.slug, agent.description, agent.agent_type]
+    .some(value => String(value ?? '').toLowerCase().includes(q))
+}
+const filteredOperationAgents = computed(() => planningAgents.value.filter(agentMatchesFilters))
+const filteredExecutionAgents = computed(() => executionAgents.value.filter(agentMatchesFilters))
+const filteredAgentCount = computed(() => filteredOperationAgents.value.length + filteredExecutionAgents.value.length)
 const manifestToolList = computed(() => manifestTools(harnessManifest.value, availableTools.value))
 // ponytail: agent tool panel filters — reuse manifestTools, no new deps
 const filteredAgentTools = computed(() => {
@@ -597,7 +659,7 @@ async function loadAgentCenterData(context: ReadContext) {
       }
       agentDefinitionFailures.value = failures
       agentCenterOverview.value = null
-      agentModes.value = modes
+      agentModes.value = withoutRetiredModes(modes)
       agentDirectory.value = directory
       // Rows carry the directory projection plus whatever definition was already read for that
       // agent; the inspector fills the rest in when it opens. Until then the card shows its
@@ -750,9 +812,11 @@ async function publishAgentDraft(
     await writeAgentDraft(body, agent.id, revision)
   } catch (error) {
     if (!isRevisionConflict(error)) throw error
+    markDraftStale('user', 'agent', agent.id)
     await resolveAgentConflict(agent.id, body)
     return
   }
+  settleAgentDraft(agent.id)
   await loadAgentCenter()
   notify.success(successTitle)
 }
@@ -767,6 +831,63 @@ async function setAgentEnabled(agent: AgentViewDto, enabled: boolean) {
     await publishAgentDraft(agent, { enabled }, agent.revision, agent.name)
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
+  } finally {
+    busy.value = false
+  }
+}
+
+function openCreateAgent() {
+  newAgentName.value = ''
+  newAgentSlug.value = ''
+  newAgentLayer.value = 'operation'
+  newAgentRole.value = ''
+  showCreateAgent.value = true
+}
+
+async function createAgent() {
+  const name = newAgentName.value.trim()
+  if (!name) return
+  newAgentBusy.value = true
+  try {
+    const created = await api.createAgentDraft({
+      slug: newAgentSlug.value.trim() || undefined,
+      display_name: name,
+      layer: newAgentLayer.value,
+      role: newAgentRole.value.trim() || (newAgentLayer.value === 'operation' ? 'session_coordinator' : 'code_writer'),
+      capabilities: [],
+      tool_scope: [],
+      enabled: true,
+    })
+    showCreateAgent.value = false
+    await loadAgentCenter()
+    const agent = agents.value.find(item => item.id === created.id)
+    if (agent) openAgentConfig(agent)
+    notify.success(name)
+  } catch (error) {
+    notify.error(error, { title: t('settings.newAgent') })
+  } finally {
+    newAgentBusy.value = false
+  }
+}
+
+async function archiveCurrentAgent() {
+  const agent = configuringAgent.value
+  if (!agent || agent.is_built_in) return
+  const confirmed = await confirm({
+    title: t('settings.archiveAgent'),
+    message: t('settings.archiveAgentConfirm', { name: agent.name }),
+    confirmLabel: t('settings.archiveAgent'),
+    cancelLabel: t('common.cancel'),
+  })
+  if (!confirmed) return
+  busy.value = true
+  try {
+    await api.archiveAgent(agent.id, agent.revision)
+    closeAgentConfig()
+    await loadAgentCenter()
+    notify.success(t('settings.agentArchived', { name: agent.name }))
+  } catch (error) {
+    notify.error(error, { title: t('settings.archiveAgent') })
   } finally {
     busy.value = false
   }
@@ -885,6 +1006,121 @@ function agentEditorSnapshot(): string {
     agentEditSystemPrompt.value, agentEditDescription.value, agentRuntimeSelection.value,
     agentRuntimeModelKey.value, agentRuntimeRoutePurpose.value])
 }
+
+const agentDraftNotice = ref<{ status: 'dirty' | 'stale'; savedAt: number } | null>(null)
+let agentDraftTimer: ReturnType<typeof setTimeout> | null = null
+let applyingAgentDraft = false
+
+function agentDraftPayload(agent: AgentViewDto): Record<string, unknown> {
+  return {
+    display_name: agent.name,
+    layer: agent.layer,
+    role: agent.agent_type,
+    tool_scope: [...agentEditTools.value],
+    capabilities: [...agentEditCapabilities.value],
+    system_prompt: agentEditSystemPrompt.value || null,
+    description: agentEditDescription.value || null,
+    enabled: agent.enabled,
+    model_selection: agentRuntimeSelection.value,
+    model_key: agentRuntimeModelKey.value,
+    route_purpose: agentRuntimeRoutePurpose.value,
+  }
+}
+
+function applyAgentDraft(draft: StoredDraft) {
+  const payload = draft.payload
+  applyingAgentDraft = true
+  try {
+    if (Array.isArray(payload.tool_scope)) agentEditTools.value = payload.tool_scope.filter((item): item is string => typeof item === 'string')
+    if (Array.isArray(payload.capabilities)) agentEditCapabilities.value = payload.capabilities.filter((item): item is string => typeof item === 'string')
+    if (typeof payload.system_prompt === 'string' || payload.system_prompt === null) agentEditSystemPrompt.value = payload.system_prompt ?? ''
+    if (typeof payload.description === 'string' || payload.description === null) agentEditDescription.value = payload.description ?? ''
+    if (payload.model_selection === 'inherit' || payload.model_selection === 'route' || payload.model_selection === 'fixed_model') {
+      agentRuntimeSelection.value = payload.model_selection
+    }
+    if (typeof payload.model_key === 'string') agentRuntimeModelKey.value = payload.model_key
+    if (typeof payload.route_purpose === 'string') agentRuntimeRoutePurpose.value = payload.route_purpose
+  } finally {
+    applyingAgentDraft = false
+  }
+  agentDraftNotice.value = { status: draft.status, savedAt: draft.savedAt }
+}
+
+function restoreAgentDraft(agent: AgentViewDto) {
+  agentDraftNotice.value = null
+  const draft = readDraft('user', 'agent', agent.id)
+  if (!draft) return
+  const currentRevision = agent.revision ?? agentEditRevision.value
+  const baseRevision = draft.base.revision
+  // A draft based on another revision is not applied automatically: the user
+  // decides whether to load it over the newer definition or discard it.
+  if (baseRevision != null && currentRevision != null && baseRevision !== currentRevision) {
+    markDraftStale('user', 'agent', agent.id)
+    agentDraftNotice.value = { status: 'stale', savedAt: draft.savedAt }
+    return
+  }
+  if (draft.status === 'stale') {
+    agentDraftNotice.value = { status: 'stale', savedAt: draft.savedAt }
+    return
+  }
+  applyAgentDraft(draft)
+}
+
+function persistAgentDraft() {
+  const agent = configuringAgent.value
+  if (!agent || agent.is_built_in || applyingAgentDraft) return
+  if (agentEditorSnapshot() === agentEditorBaseline) return
+  const baseRevision = agentEditRevision.value ?? agent.revision ?? null
+  const now = Date.now()
+  const result = writeDraft('user', 'agent', agent.id, agentDraftPayload(agent), { revision: baseRevision, etag: null }, now)
+  if (result.ok) {
+    agentDraftNotice.value = { status: 'dirty', savedAt: now }
+  } else if (result.reason === 'too_large') {
+    status.warning({ key: 'agent-draft', source: 'agents', message: t('settings.agentDraftTooLarge') })
+  }
+}
+
+function scheduleAgentDraftSave() {
+  if (applyingAgentDraft) return
+  if (agentDraftTimer) clearTimeout(agentDraftTimer)
+  agentDraftTimer = setTimeout(() => {
+    agentDraftTimer = null
+    persistAgentDraft()
+  }, 400)
+}
+
+function flushAgentDraft() {
+  if (!agentDraftTimer) return
+  clearTimeout(agentDraftTimer)
+  agentDraftTimer = null
+  persistAgentDraft()
+}
+
+function dropAgentDraft() {
+  const agent = configuringAgent.value
+  if (agent) clearDraft('user', 'agent', agent.id)
+  agentDraftNotice.value = null
+}
+
+function loadAgentDraft() {
+  const agent = configuringAgent.value
+  if (!agent) return
+  const draft = readDraft('user', 'agent', agent.id)
+  if (!draft) { agentDraftNotice.value = null; return }
+  applyAgentDraft(draft)
+}
+
+function settleAgentDraft(agentId: string) {
+  clearDraft('user', 'agent', agentId)
+  if (configuringAgentId.value === agentId) agentDraftNotice.value = null
+}
+
+watch(
+  [agentEditTools, agentEditCapabilities, agentEditSystemPrompt, agentEditDescription,
+    agentRuntimeSelection, agentRuntimeModelKey, agentRuntimeRoutePurpose],
+  scheduleAgentDraftSave,
+  { deep: true, flush: 'post' },
+)
 /**
  * The one place a definition is read. The editor is seeded from the merge in
  * `mergeAgentDefinition`, and only then does the panel open — a failed read leaves the panel
@@ -939,6 +1175,7 @@ async function openAgentConfigFromDirectory(agentId: string): Promise<void> {
 }
 
 function openAgentConfig(agent: AgentViewDto) {
+  if (configuringAgentId.value && configuringAgentId.value !== agent.id) flushAgentDraft()
   selectedAgentId.value = agent.id
   if (agentDefinitionFailures.value[agent.id]) { configuringAgentId.value = agent.id; return }
   // The rail is painted before any definition exists; opening one is what reads it.
@@ -968,6 +1205,7 @@ function openAgentConfig(agent: AgentViewDto) {
     || routes.value[0]?.purpose
     || ''
   agentRuntimeModelQuery.value = ''
+  restoreAgentDraft(agent)
   agentEditorBaseline = agentEditorSnapshot()
   void loadAgentVersionHistory(agent.id)
   nextTick(() => {
@@ -980,11 +1218,14 @@ function openAgentConfig(agent: AgentViewDto) {
 /** Published version timeline for the configured agent (immutable snapshots). */
 async function loadAgentVersionHistory(agentId: string) {
   agentVersionsLoading.value = true
+  agentVersionHistoryError.value = null
   try {
     const versions = await api.listAgentVersions(agentId)
     if (configuringAgentId.value === agentId) agentVersionHistory.value = versions
-  } catch {
-    if (configuringAgentId.value === agentId) agentVersionHistory.value = []
+  } catch (error) {
+    // A failed read is not "no versions published": keep the rows we already
+    // have and surface the failure with its own retry.
+    if (configuringAgentId.value === agentId) agentVersionHistoryError.value = toErrorState(error)
   } finally {
     if (configuringAgentId.value === agentId) agentVersionsLoading.value = false
   }
@@ -1000,6 +1241,7 @@ async function loadAgentPermissionRequests() {
 }
 
 function closeAgentConfig() {
+  flushAgentDraft()
   selectedAgentId.value = ''
   configuringAgentId.value = ''
 }
@@ -1033,10 +1275,21 @@ function agentStrategySaveable(): boolean {
   return agentModelStrategy() !== null
 }
 
+/** Definition fields differ from the published row; a model save must not discard them. */
+function agentDefinitionDirty(agent: AgentViewDto): boolean {
+  const same = (a: string[] | null | undefined, b: string[] | null | undefined) =>
+    [...(a ?? [])].sort().join('\u0000') === [...(b ?? [])].sort().join('\u0000')
+  return !same(agentEditTools.value, agent.allowed_tools)
+    || !same(agentEditCapabilities.value, agent.capabilities)
+    || (agentEditSystemPrompt.value || '') !== (agent.system_prompt ?? '')
+    || (agentEditDescription.value || '') !== (agent.description ?? '')
+}
+
 async function saveAgentModelStrategy(agent: AgentViewDto) {
   const strategy = agentModelStrategy()
   if (!strategy) return
   agentRuntimeBusy.value = true
+  if (agentDefinitionDirty(agent)) persistAgentDraft()
   try {
     // 运行时绑定（配置体验改造 A）：覆盖记录，pack 管理的智能体同样可写，
     // 不再走 draft/publish，也就没有 412/409 managed_resource_read_only。
@@ -1060,6 +1313,8 @@ async function saveAgentModelStrategy(agent: AgentViewDto) {
     const index = agents.value.findIndex((item) => item.id === agent.id)
     if (index >= 0) agents.value[index] = patched
     openAgentConfig(patched)
+    if (agentDefinitionDirty(patched)) persistAgentDraft()
+    else settleAgentDraft(agent.id)
     notify.success(t('settings.runtimeBindingSaved', { name: agent.name }))
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
@@ -1265,8 +1520,6 @@ import '../settings/settings.css'
       </nav>
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
-        <p v-if="activeSection === 'model' || activeSection === 'agentCenter'" class="quiet" role="status">{{ t('settings.userConfigurationSource') }}</p>
-        <p v-if="(activeSection === 'model' || activeSection === 'agentCenter') && !canAccessBackend" class="quiet" role="status">{{ hostReason }}</p>
         <Transition name="section-fade" mode="out-in">
         <div
           :key="activeSection"
@@ -1297,35 +1550,23 @@ import '../settings/settings.css'
         </template>
 
         <template v-if="activeSection === 'agentCenter'">
-          <div class="agent-center-merged">
-            <div class="center-command-bar">
-              <div>
-                <h2>{{ t('settings.agentCenter') }}</h2>
-                <p>{{ t('settings.agentCenterSubtitle') }}</p>
-              </div>
-              <div class="center-command-actions">
-                <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || !canAccessBackend" @click="refreshAgentCenterTab()">
-                  <RefreshCw :size="14" />
-                  <span>{{ t('settings.refresh') }}</span>
-                </UiButton>
-              </div>
-            </div>
-            <AgentPacksPanel
-              ref="agentPacksPanelRef"
-              @clone="openGraphSeedPackCloneFlow"
-              @uninstalled="loadAgentCenter()"
-            />
-            <div class="ac-subtabs" role="tablist" data-testid="agent-center-subtabs">
-              <button :class="['ac-subtab', { active: agentCenterTab === 'agents' }]" role="tab" :aria-selected="agentCenterTab === 'agents'" @click="agentCenterTab = 'agents'">{{ t('settings.agents') }}</button>
-              <button :class="['ac-subtab', { active: agentCenterTab === 'modes' }]" role="tab" :aria-selected="agentCenterTab === 'modes'" @click="agentCenterTab = 'modes'">{{ t('settings.agentModes') }}</button>
-              <button :class="['ac-subtab', { active: agentCenterTab === 'prompts' }]" role="tab" :aria-selected="agentCenterTab === 'prompts'" @click="agentCenterTab = 'prompts'">{{ t('settings.promptEngineering') }}</button>
-              <button :class="['ac-subtab', { active: agentCenterTab === 'evolution' }]" role="tab" :aria-selected="agentCenterTab === 'evolution'" @click="agentCenterTab = 'evolution'">{{ t('settings.agentEvolution') }}</button>
-              <button :class="['ac-subtab', { active: agentCenterTab === 'runtime' }]" role="tab" :aria-selected="agentCenterTab === 'runtime'" @click="switchAgentCenterTab('runtime')">{{ t('settings.runtimeInstances') }}</button>
-            </div>
-            <template v-if="agentCenterTab === 'agents'">
+          <AgentCenterSection
+            ref="agentCenterSectionRef"
+            :tab="agentCenterTab"
+            :agents="agents"
+            :modes="agentModes"
+            :can-access-backend="canAccessBackend"
+            :loading="agentCenterLoading"
+            @update:tab="switchAgentCenterTab"
+            @changed="loadAgentCenter"
+            @clone-pack="openGraphSeedPackCloneFlow"
+            @refresh-legacy="refreshAgentCenterTab"
+            @open-graph="openModeInGraph"
+          >
+            <template #agents>
 
           <div class="center-page agent-center-page">
-          <div class="ac-toolbar-row">
+          <div class="ac-toolbar-row ac-agent-toolbar">
             <div class="agent-view-toggle">
               <button
                 :class="['agent-view-btn', { active: agentViewMode === 'topology' }]"
@@ -1346,7 +1587,45 @@ import '../settings/settings.css'
                 <List :size="15" />
               </button>
             </div>
-            <span class="ac-toolbar-readout">{{ t('settings.activeAgents') }} · {{ agents.length }}</span>
+            <div class="agent-tool-search ac-agent-search">
+              <Search :size="14" />
+              <UiInput v-model="agentQuery" :placeholder="t('settings.agentSearchPlaceholder')" />
+            </div>
+            <UiSelectField
+              v-model="agentSourceFilter"
+              class="compact"
+              :aria-label="t('settings.agentFilterSource')"
+              :options="[
+                { value: 'all', label: t('settings.allSources') },
+                ...agentSourceOptions.map(source => ({ value: source, label: agentSourceKindLabel(source) })),
+              ]"
+            />
+            <UiSelectField
+              v-model="agentLayerFilter"
+              class="compact"
+              :aria-label="t('settings.agentFilterLayer')"
+              :options="[
+                { value: 'all', label: t('settings.agentFilterAllLayers') },
+                { value: 'operation', label: t('settings.agentLayerPlanning') },
+                { value: 'execution', label: t('settings.agentLayerExecution') },
+              ]"
+            />
+            <UiSelectField
+              v-model="agentStatusFilter"
+              class="compact"
+              :aria-label="t('settings.agentFilterStatus')"
+              :options="[
+                { value: 'all', label: t('settings.agentFilterAllStatuses') },
+                { value: 'draft', label: t('settings.teamDraft') },
+                { value: 'published', label: t('settings.teamStatusPublished') },
+                { value: 'archived', label: t('settings.teamArchived') },
+              ]"
+            />
+            <span class="ac-toolbar-readout">{{ filteredAgentCount }} / {{ agents.length }}</span>
+            <UiButton size="sm" :disabled="!canAccessBackend" @click="openCreateAgent">
+              <Plus :size="14" />
+              <span>{{ t('settings.newAgent') }}</span>
+            </UiButton>
           </div>
 
           <section class="center-overview-receipt agent-overview-receipt" :aria-label="t('settings.centerOverview')">
@@ -1449,10 +1728,10 @@ import '../settings/settings.css'
             <section class="agent-column compact">
               <div class="model-section-header">
                 <h3>{{ t('settings.planningLayer') }}</h3>
-                <UiBadge variant="secondary">{{ planningAgents.length }}</UiBadge>
+                <UiBadge variant="secondary">{{ filteredOperationAgents.length }}</UiBadge>
               </div>
               <article
-                v-for="agent in planningAgents"
+                v-for="agent in filteredOperationAgents"
                 :key="agent.id"
                 class="agent-card"
                 :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
@@ -1479,10 +1758,10 @@ import '../settings/settings.css'
             <section class="agent-column compact">
               <div class="model-section-header">
                 <h3>{{ t('settings.executionLayer') }}</h3>
-                <UiBadge variant="secondary">{{ executionAgents.length }}</UiBadge>
+                <UiBadge variant="secondary">{{ filteredExecutionAgents.length }}</UiBadge>
               </div>
               <article
-                v-for="agent in executionAgents"
+                v-for="agent in filteredExecutionAgents"
                 :key="agent.id"
                 class="agent-card"
                 :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
@@ -1505,6 +1784,9 @@ import '../settings/settings.css'
                 </button>
               </article>
             </section>
+            <p v-if="!filteredOperationAgents.length && !filteredExecutionAgents.length" class="quiet">
+              {{ t('settings.noFilteredAgents') }}
+            </p>
           </aside>
 
           <main class="center-resource-stage">
@@ -1539,6 +1821,12 @@ import '../settings/settings.css'
               <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || !canAccessBackend" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
             </div>
             <div v-else-if="configuringAgent" class="agent-detail-panel">
+              <div v-if="agentDraftNotice" class="agent-draft-notice" :class="agentDraftNotice.status" role="status" data-testid="agent-draft-notice">
+                <Info :size="14" aria-hidden="true" />
+                <span>{{ agentDraftNotice.status === 'stale' ? t('settings.agentDraftStale') : t('settings.agentDraftRestored') }}</span>
+                <UiButton v-if="agentDraftNotice.status === 'stale'" variant="ghost" size="sm" @click="loadAgentDraft">{{ t('settings.agentDraftApply') }}</UiButton>
+                <UiButton variant="ghost" size="sm" @click="dropAgentDraft">{{ t('settings.agentDraftDiscard') }}</UiButton>
+              </div>
               <div class="agent-detail-head">
                 <div class="agent-card-icon pet" :class="{ execution: configuringAgent.layer === 'execution' }">
                   <AgentPetAvatar :pet-slug="agentAvatarSlug(configuringAgent)" :size="44" :alt="configuringAgent.name" />
@@ -1550,6 +1838,17 @@ import '../settings/settings.css'
                 <UiBadge :variant="configuringAgent.status === 'published' ? 'default' : 'secondary'" class="agent-status-badge">
                   {{ configuringAgent.status === 'published' ? t('settings.agentStatusPublished', { version: configuringAgent.version ?? 1 }) : t('settings.agentStatusDraft') }}
                 </UiBadge>
+                <UiButton
+                  v-if="!configuringAgent.is_built_in"
+                  variant="ghost"
+                  size="icon"
+                  :title="t('settings.archiveAgent')"
+                  :aria-label="t('settings.archiveAgent')"
+                  :disabled="busy"
+                  @click="archiveCurrentAgent"
+                >
+                  <Archive :size="16" />
+                </UiButton>
                 <UiButton variant="ghost" size="icon" :title="t('settings.closeConfig')" @click="closeAgentConfig">
                   <X :size="16" />
                 </UiButton>
@@ -1755,6 +2054,7 @@ import '../settings/settings.css'
                     v-model="agentEditDescription"
                     class="settings-textarea"
                     rows="2"
+                    :disabled="configuringAgent.is_built_in"
                     :placeholder="t('settings.agentDescriptionPlaceholder')"
                   ></textarea>
                 </div>
@@ -1852,12 +2152,12 @@ import '../settings/settings.css'
                 <div class="agent-capability-list">
                   <span v-for="cap in agentEditCapabilities" :key="cap" class="agent-cap-tag">
                     {{ cap }}
-                    <button class="agent-cap-remove" @click="removeAgentCapability(cap)">×</button>
+                    <button class="agent-cap-remove" :disabled="configuringAgent.is_built_in" @click="removeAgentCapability(cap)">×</button>
                   </span>
                 </div>
                 <div class="agent-cap-add-row">
-                  <UiInput v-model="agentNewCapability" :placeholder="t('settings.newCapabilityPlaceholder')" @keydown.enter="addAgentCapability" />
-                  <UiButton variant="outline" size="sm" :disabled="!agentNewCapability.trim()" @click="addAgentCapability">
+                  <UiInput v-model="agentNewCapability" :disabled="configuringAgent.is_built_in" :placeholder="t('settings.newCapabilityPlaceholder')" @keydown.enter="addAgentCapability" />
+                  <UiButton variant="outline" size="sm" :disabled="configuringAgent.is_built_in || !agentNewCapability.trim()" @click="addAgentCapability">
                     <Plus :size="14" />
                     {{ t('settings.addCapability') }}
                   </UiButton>
@@ -1873,6 +2173,7 @@ import '../settings/settings.css'
                     v-model="agentEditSystemPrompt"
                     class="settings-textarea prompt-editor"
                     rows="6"
+                    :disabled="configuringAgent.is_built_in"
                     :placeholder="t('settings.agentSystemPromptPlaceholder')"
                   ></textarea>
                 </div>
@@ -1887,6 +2188,14 @@ import '../settings/settings.css'
                 <p class="agent-config-hint">{{ t('settings.agentVersionHistoryHint') }}</p>
                 <div v-if="agentVersionsLoading" class="center-loading-state" aria-live="polite">
                   <UiSkeleton v-for="index in 2" :key="index" class="center-loading-line agent-version-loading-line" />
+                </div>
+                <div v-else-if="agentVersionHistoryError" class="center-message" role="alert" data-testid="agent-version-read-failure">
+                  <Info :size="16" aria-hidden="true" />
+                  <div class="center-message-content">
+                    <strong>{{ t('settings.centerLoadFailed') }}</strong>
+                    <span>{{ agentVersionHistoryError.message }}</span>
+                  </div>
+                  <UiButton variant="outline" size="sm" @click="loadAgentVersionHistory(configuringAgent.id)">{{ t('settings.retry') }}</UiButton>
                 </div>
                 <div v-else-if="agentVersionHistory.length > 0" class="agent-version-list">
                   <div v-for="version in [...agentVersionHistory].reverse()" :key="version.id" class="center-list-row agent-version-row" :class="{ latest: version.version === configuringAgent.version }">
@@ -1937,19 +2246,50 @@ import '../settings/settings.css'
           </div>
           </div>
         </template>
-            <template v-else-if="agentCenterTab === 'prompts'">
+            <template #prompts>
               <PromptEngineeringMerged ref="promptsPanelRef" />
             </template>
-            <template v-else-if="agentCenterTab === 'modes'">
+            <template #modes>
               <AgentModesPanel ref="modePanelRef" />
             </template>
-            <template v-else-if="agentCenterTab === 'runtime'">
+            <template #runtime>
               <RuntimeInstancesPanel ref="runtimePanelRef" />
             </template>
-            <template v-else-if="agentCenterTab === 'evolution'">
+            <template #evolution>
               <AgentEvolutionPanel ref="evolutionPanelRef" />
             </template>
-          </div>
+          </AgentCenterSection>
+            <UiSheet :open="showCreateAgent" side="right" @update:open="showCreateAgent = $event">
+              <div class="ac-sheet-body">
+                <h3>{{ t('settings.newAgent') }}</h3>
+                <div>
+                  <UiLabel>{{ t('settings.agentName') }}</UiLabel>
+                  <UiInput v-model="newAgentName" :placeholder="t('settings.agentName')" />
+                </div>
+                <div>
+                  <UiLabel>{{ t('settings.agentSlugLabel') }}</UiLabel>
+                  <UiInput v-model="newAgentSlug" placeholder="optional" />
+                </div>
+                <div>
+                  <UiLabel>{{ t('settings.agentLayer') }}</UiLabel>
+                  <UiSelectField
+                    v-model="newAgentLayer"
+                    :options="[
+                      { value: 'operation', label: t('settings.agentLayerPlanning') },
+                      { value: 'execution', label: t('settings.agentLayerExecution') },
+                    ]"
+                  />
+                </div>
+                <div>
+                  <UiLabel>{{ t('settings.agentRole') }}</UiLabel>
+                  <UiInput v-model="newAgentRole" :placeholder="newAgentLayer === 'operation' ? 'session_coordinator' : 'code_writer'" />
+                </div>
+                <div class="ac-sheet-actions">
+                  <UiButton variant="outline" @click="showCreateAgent = false">{{ t('common.cancel') }}</UiButton>
+                  <UiButton :disabled="newAgentBusy || !newAgentName.trim()" @click="createAgent">{{ t('settings.createAgent') }}</UiButton>
+                </div>
+              </div>
+            </UiSheet>
         </template>
 
         <template v-if="activeSection === 'tools'">

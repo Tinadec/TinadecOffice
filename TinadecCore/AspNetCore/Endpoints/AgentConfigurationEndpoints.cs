@@ -621,7 +621,13 @@ public static class AgentConfigurationEndpoints
         await using var db= await f.CreateDbContextAsync(ct);
         var policyResult = ParseRuntimePolicy(el);
         if (policyResult.Error is not null) return Results.BadRequest(new { code = "invalid_runtime_policy", message = policyResult.Error });
-        var rec = new AgentModeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, Slug=Slug(slug,name!), DisplayName=name!, Description= el.TryGetProperty("description",out var d)? d.GetString():null, RuntimePolicyJson=policyResult.Json, Status="draft", Revision=1, Version=0, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p, UpdatedByPrincipalId=p};
+        string? instructions = null;
+        if (el.TryGetProperty("instructions", out var instructionsElement))
+        {
+            try { instructions = ParseModeInstructions(instructionsElement); }
+            catch (ArgumentException exception) { return Results.BadRequest(new { code = "invalid_request", message = exception.Message }); }
+        }
+        var rec = new AgentModeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, Slug=Slug(slug,name!), DisplayName=name!, Description= el.TryGetProperty("description",out var d)? d.GetString():null, Instructions=instructions, RuntimePolicyJson=policyResult.Json, Status="draft", Revision=1, Version=0, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p, UpdatedByPrincipalId=p};
         db.AgentModes.Add(rec); try{await db.SaveChangesAsync(ct);}catch(DbUpdateException){return Results.Conflict(new{code="conflict",message="Draft slug exists"});}
         // optional inline nodes/edges
         await UpsertModeTopology(db, rec, el, t, w, ct);
@@ -642,8 +648,17 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus).ToListAsync(ct);
         var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus).ToListAsync(ct);
         var layout=await db.CanvasLayouts.FirstOrDefaultAsync(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus, ct);
+        // Manual publishes before this change left the projection rows in `draft`
+        // (only pack modes copied them to `published`). Read the draft rows rather
+        // than returning an empty canvas for an otherwise valid published mode.
+        if (!isDraft && nodes.Count == 0)
+        {
+            nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
+            edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
+            layout=await db.CanvasLayouts.FirstOrDefaultAsync(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft", ct);
+        }
         var managed = await packs.FindManagedResourceAsync("mode", id, ct) is not null;
-        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, i18n=i18nElement(rec.I18nJson), runtime_policy=rec.RuntimePolicyJson != null ? JsonSerializer.Deserialize<JsonElement>(rec.RuntimePolicyJson) : (JsonElement?)null, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, i18n=i18nElement(n.I18nJson), position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null, model_strategy_override = n.ModelStrategyOverrideJson!=null ? JsonSerializer.Deserialize<JsonElement>(n.ModelStrategyOverrideJson) : (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
+        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, instructions=rec.Instructions, i18n=i18nElement(rec.I18nJson), runtime_policy=rec.RuntimePolicyJson != null ? JsonSerializer.Deserialize<JsonElement>(rec.RuntimePolicyJson) : (JsonElement?)null, bindings=rec.BindingsJson != null ? JsonSerializer.Deserialize<JsonElement>(rec.BindingsJson) : (JsonElement?)null, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, i18n=i18nElement(n.I18nJson), position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null, relationship= n.RelationshipJson!=null? JsonSerializer.Deserialize<JsonElement>(n.RelationshipJson): (JsonElement?)null, model_strategy_override = n.ModelStrategyOverrideJson!=null ? JsonSerializer.Deserialize<JsonElement>(n.ModelStrategyOverrideJson) : (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey, condition= e.ConditionJson!=null? JsonSerializer.Deserialize<JsonElement>(e.ConditionJson): (JsonElement?)null}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
     }
 
     static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
@@ -657,6 +672,11 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         if(!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft mode can be published."});
         if(el.TryGetProperty("display_name",out var n)) rec.DisplayName=n.GetString()??rec.DisplayName;
         if(el.TryGetProperty("description",out var d)) rec.Description=d.GetString();
+        if (el.TryGetProperty("instructions", out var instructionsElement))
+        {
+            try { rec.Instructions = ParseModeInstructions(instructionsElement); }
+            catch (ArgumentException exception) { return Results.BadRequest(new { code = "invalid_request", message = exception.Message }); }
+        }
         var policyResult = ParseRuntimePolicy(el);
         if (policyResult.Error is not null) return Results.BadRequest(new { code = "invalid_runtime_policy", message = policyResult.Error });
         if (el.TryGetProperty("runtime_policy", out _)) rec.RuntimePolicyJson = policyResult.Json;
@@ -669,41 +689,72 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
     {
         if(el.TryGetProperty("nodes", out var nodes) && nodes.ValueKind==JsonValueKind.Array)
         {
+            var seenNodeKeys=new HashSet<string>(StringComparer.Ordinal);
             foreach(var n in nodes.EnumerateArray())
             {
                 var key=n.TryGetProperty("node_key", out var k)? k.GetString(): n.TryGetProperty("id",out var k2)? k2.GetString(): Guid.NewGuid().ToString("N");
+                if(string.IsNullOrWhiteSpace(key)) continue;
+                seenNodeKeys.Add(key!);
                 var agentId=n.TryGetProperty("agent_definition_id",out var aid)? Guid.TryParse(aid.GetString(), out var g)? g: Guid.Empty : Guid.Empty;
                 if(agentId==Guid.Empty && n.TryGetProperty("agent_id",out var aid2)) Guid.TryParse(aid2.GetString(), out agentId);
                 var layer=n.TryGetProperty("layer",out var l)? l.GetString()??"operation": "operation";
                 if(layer!="operation" && layer!="execution") throw new ArgumentException("Mode node layer must be operation or execution");
+                var relationship = ReadTopologyObject(n, "relationship");
                 var existing=await db.ModeNodes.FirstOrDefaultAsync(x=>x.ModeId==mode.Id && x.NodeKey==key && x.TenantId==t && x.WorkspaceId==w, ct);
                 if(existing is null){
                     var modelOverride = n.TryGetProperty("model_strategy_override", out var overrideValue) ? overrideValue.GetRawText() : null;
                     if (modelOverride is not null && ValidateModelStrategy(modelOverride) is { } error) throw new ArgumentException(error);
-                    db.ModeNodes.Add(new ModeNodeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, ModeId=mode.Id, NodeKey=key!, AgentDefinitionId=agentId, Layer=layer, Label=n.TryGetProperty("label",out var lab)?lab.GetString():null, PositionJson=n.TryGetProperty("position",out var pos)?pos.GetRawText(): n.TryGetProperty("position_json",out var pj)?pj.GetRawText():null, ConfigJson=n.TryGetProperty("config",out var cfg)?cfg.GetRawText():null, ModelStrategyOverrideJson=modelOverride, Status="draft", Revision=1, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow});
+                    db.ModeNodes.Add(new ModeNodeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, ModeId=mode.Id, NodeKey=key!, AgentDefinitionId=agentId, Layer=layer, Label=n.TryGetProperty("label",out var lab)?lab.GetString():null, PositionJson=n.TryGetProperty("position",out var pos)?pos.GetRawText(): n.TryGetProperty("position_json",out var pj)?pj.GetRawText():null, ConfigJson=n.TryGetProperty("config",out var cfg)?cfg.GetRawText():null, RelationshipJson=relationship, ModelStrategyOverrideJson=modelOverride, Status="draft", Revision=1, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow});
                 } else {
                     if(n.TryGetProperty("agent_definition_id",out var aid3) && Guid.TryParse(aid3.GetString(),out var g3)) existing.AgentDefinitionId=g3;
                     if(n.TryGetProperty("layer",out var l2)) existing.Layer=l2.GetString()??existing.Layer;
                     if(n.TryGetProperty("label",out var lab2)) existing.Label=lab2.GetString();
                     if(n.TryGetProperty("position",out var pos2)) existing.PositionJson=pos2.GetRawText();
                     if(n.TryGetProperty("config",out var cfg2)) existing.ConfigJson=cfg2.GetRawText();
+                    if(n.TryGetProperty("relationship",out _)) existing.RelationshipJson=relationship;
                     if(n.TryGetProperty("model_strategy_override",out var overrideValue)) { var error=ValidateModelStrategy(overrideValue.GetRawText()); if(error is not null) throw new ArgumentException(error); existing.ModelStrategyOverrideJson=overrideValue.ValueKind==JsonValueKind.Null?null:overrideValue.GetRawText(); }
                     existing.UpdatedAt=DateTimeOffset.UtcNow; existing.Revision++;
                 }
             }
+            // Full reconciliation: the payload is the draft's complete topology.
+            // Without this, removing a node on the canvas "saved" but stayed in the DB.
+            var staleNodes=await db.ModeNodes.Where(x=>x.ModeId==mode.Id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
+            foreach(var stale in staleNodes.Where(item=>!seenNodeKeys.Contains(item.NodeKey))) db.ModeNodes.Remove(stale);
         }
         if(el.TryGetProperty("edges", out var edges) && edges.ValueKind==JsonValueKind.Array)
         {
+            var seenEdgeKeys=new HashSet<string>(StringComparer.Ordinal);
             foreach(var e in edges.EnumerateArray())
             {
                 var key=e.TryGetProperty("edge_key",out var k)? k.GetString(): Guid.NewGuid().ToString("N");
+                if(string.IsNullOrWhiteSpace(key)) continue;
+                seenEdgeKeys.Add(key!);
                 var src=e.TryGetProperty("source_node_key",out var s)? s.GetString(): e.TryGetProperty("source",out var s2)? s2.GetString(): null;
                 var tgt=e.TryGetProperty("target_node_key",out var t2)? t2.GetString(): e.TryGetProperty("target",out var t3)? t3.GetString(): null;
                 if(string.IsNullOrWhiteSpace(src) || string.IsNullOrWhiteSpace(tgt)) continue;
+                var condition=ReadTopologyObject(e, "condition");
                 var existing=await db.ModeEdges.FirstOrDefaultAsync(x=>x.ModeId==mode.Id && x.EdgeKey==key && x.TenantId==t && x.WorkspaceId==w, ct);
-                if(existing is null) db.ModeEdges.Add(new ModeEdgeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, ModeId=mode.Id, EdgeKey=key!, SourceNodeKey=src!, TargetNodeKey=tgt!, ConditionJson=e.TryGetProperty("condition",out var cond)?cond.GetRawText():null, Status="draft", Revision=1, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow});
-                else { existing.SourceNodeKey=src!; existing.TargetNodeKey=tgt!; existing.UpdatedAt=DateTimeOffset.UtcNow; existing.Revision++; }
+                if(existing is null) db.ModeEdges.Add(new ModeEdgeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, ModeId=mode.Id, EdgeKey=key!, SourceNodeKey=src!, TargetNodeKey=tgt!, ConditionJson=condition, Status="draft", Revision=1, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow});
+                else { existing.SourceNodeKey=src!; existing.TargetNodeKey=tgt!; if(e.TryGetProperty("condition",out _)) existing.ConditionJson=condition; existing.UpdatedAt=DateTimeOffset.UtcNow; existing.Revision++; }
             }
+            var staleEdges=await db.ModeEdges.Where(x=>x.ModeId==mode.Id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
+            foreach(var stale in staleEdges.Where(item=>!seenEdgeKeys.Contains(item.EdgeKey))) db.ModeEdges.Remove(stale);
+        }
+        if(el.TryGetProperty("bindings", out var bindings))
+        {
+            if(bindings.ValueKind==JsonValueKind.Null) mode.BindingsJson=null;
+            else if(bindings.ValueKind==JsonValueKind.Array)
+            {
+                foreach(var binding in bindings.EnumerateArray())
+                {
+                    if(binding.ValueKind!=JsonValueKind.Object) throw new ArgumentException("Mode bindings must be objects.");
+                    var hasNode=binding.TryGetProperty("node_key", out var nodeKey) && nodeKey.ValueKind==JsonValueKind.String && !string.IsNullOrWhiteSpace(nodeKey.GetString());
+                    var hasAgent=binding.TryGetProperty("agent_ref", out var agentRef) && agentRef.ValueKind==JsonValueKind.String && !string.IsNullOrWhiteSpace(agentRef.GetString());
+                    if(!hasNode && !hasAgent) throw new ArgumentException("Each mode binding needs node_key or agent_ref.");
+                }
+                mode.BindingsJson=bindings.GetRawText();
+            }
+            else throw new ArgumentException("Mode bindings must be an array or null.");
         }
         if(el.TryGetProperty("canvas_layout", out var layout) || el.TryGetProperty("layout", out layout))
         {
@@ -713,6 +764,79 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
             else { existing.LayoutJson=json; existing.UpdatedAt=DateTimeOffset.UtcNow; existing.Revision++; }
         }
     }
+
+    /// <summary>
+    /// Reads an optional JSON object/array property as raw text. `null` clears it;
+    /// any other non-object/array shape is rejected instead of stored verbatim.
+    /// </summary>
+    static string? ReadTopologyObject(JsonElement element, string property)
+    {
+        if(!element.TryGetProperty(property, out var value)) return null;
+        if(value.ValueKind==JsonValueKind.Null) return null;
+        if(value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+            throw new ArgumentException($"Mode {property} must be an object or array.");
+        return value.GetRawText();
+    }
+
+    /// <summary>
+    /// A mode's collaboration instructions are frozen into the version snapshot;
+    /// the 4 KiB cap keeps that snapshot inside its 32 KiB column.
+    /// </summary>
+    const int MaxModeInstructionsLength = 4000;
+
+    static string? ParseModeInstructions(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.String)
+            throw new ArgumentException("Mode instructions must be a string.");
+        var text = value.GetString()?.Trim() ?? string.Empty;
+        if (text.Length > MaxModeInstructionsLength)
+            throw new ArgumentException($"Mode instructions must be at most {MaxModeInstructionsLength} characters.");
+        return text.Length == 0 ? null : text;
+    }
+
+    static bool IsConversationNode(string? configJson)
+    {
+        if(string.IsNullOrWhiteSpace(configJson)) return false;
+        try
+        {
+            using var document=JsonDocument.Parse(configJson);
+            return document.RootElement.ValueKind==JsonValueKind.Object
+                && document.RootElement.TryGetProperty("conversation", out var conversation)
+                && conversation.ValueKind==JsonValueKind.True;
+        }
+        catch(JsonException) { return false; }
+    }
+
+    static IReadOnlyList<JsonElement> ParseBindingArray(string? json)
+    {
+        if(string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var document=JsonDocument.Parse(json);
+            if(document.RootElement.ValueKind!=JsonValueKind.Array) return [];
+            return document.RootElement.EnumerateArray().Select(item=>item.Clone()).ToArray();
+        }
+        catch(JsonException) { return []; }
+    }
+
+    static IReadOnlyList<string> RelationshipAgentTypes(string? json)
+    {
+        if(string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var document=JsonDocument.Parse(json);
+            if(document.RootElement.ValueKind!=JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("agent_types", out var types)
+                || types.ValueKind!=JsonValueKind.Array) return [];
+            return types.EnumerateArray()
+                .Where(item=>item.ValueKind==JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                .Select(item=>item.GetString()!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch(JsonException) { return []; }
+    }
     static async Task<IResult> PublishMode(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var exp=IfMatch(req); var (t,w,p)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
@@ -720,14 +844,53 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         if(rec is null) return Results.NotFound(new{code="not_found"});
         if (await packs.FindManagedResourceAsync("mode", id, ct) is { } managed) return ManagedReadOnly(managed);
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict",message="Revision conflict"},statusCode:412);
-        var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w).ToListAsync(ct);
-        var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w).ToListAsync(ct);
-        // dual-lane validation
+        if (!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(new{code="not_draft",message="Only a draft mode can be published."});
+        var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
+        var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
         var agentDefinitions = await db.AgentDefinitions.AsNoTracking().Where(x => nodes.Select(n => n.AgentDefinitionId).Contains(x.Id) && x.TenantId == t && x.WorkspaceId == w).ToDictionaryAsync(x => x.Id, ct);
-        var opCount=nodes.Count(n=>n.Layer=="operation" && agentDefinitions.TryGetValue(n.AgentDefinitionId, out var definition) && definition.Slug=="meeting");
+        // The conversation identity is any operation node with `config.conversation`;
+        // legacy manual modes only marked it by the `meeting` slug.
+        var conversationNodes=nodes.Where(n=>n.Layer=="operation" && IsConversationNode(n.ConfigJson)).ToArray();
+        if(conversationNodes.Length==0)
+            conversationNodes=nodes.Where(n=>n.Layer=="operation" && agentDefinitions.TryGetValue(n.AgentDefinitionId, out var definition) && definition.Slug=="meeting").ToArray();
+        if(conversationNodes.Length!=1)
+            return Results.BadRequest(new{code="invalid_request",message="Mode must have exactly one operation conversation agent."});
+        var conversationNode=conversationNodes[0];
         var exCount=nodes.Count(n=>n.Layer=="execution");
-        if(opCount==0) return Results.BadRequest(new{code="invalid_request",message="Mode must have at least one operation agent (meeting)"});
-        if(exCount==0) return Results.BadRequest(new{code="invalid_request",message="Mode must have at least one execution agent"});
+        var modeBindings=ParseBindingArray(rec.BindingsJson);
+        // Pack publishing filters a node's effective tools through its binding
+        // tool_switches; manual publishing must do the same or a team leader keeps
+        // its whole tool face and the run derives solo_dispatch instead of free_form.
+        var switchesByNode=new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach(var binding in modeBindings)
+        {
+            if(binding.TryGetProperty("node_key", out var bindingNode) && bindingNode.ValueKind==JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(bindingNode.GetString())
+                && binding.TryGetProperty("tool_switches", out var switches) && switches.ValueKind==JsonValueKind.Object)
+                switchesByNode[bindingNode.GetString()!]=switches;
+        }
+        if(exCount==0)
+        {
+            // Solo: the leader itself holds tools. Team: members are spawnable
+            // templates (node-less bindings / relationship agent_types).
+            var hasSpawnableMembers=modeBindings.Any(binding =>
+                !binding.TryGetProperty("node_key", out var nodeKey)
+                || nodeKey.ValueKind!=JsonValueKind.String
+                || string.IsNullOrWhiteSpace(nodeKey.GetString()));
+            var relationshipTypes=RelationshipAgentTypes(conversationNode.RelationshipJson);
+            var leaderTools=ParseTools(agentDefinitions.TryGetValue(conversationNode.AgentDefinitionId, out var leaderDefinition) ? leaderDefinition.ToolScopeJson : null);
+            var leaderModeTools=ParseTools(conversationNode.ConfigJson);
+            HashSet<string> leaderEffective;
+            if(leaderTools.Contains("*")) leaderEffective=leaderModeTools.Count>0 ? new HashSet<string>(leaderModeTools, StringComparer.OrdinalIgnoreCase) : new HashSet<string>(StringComparer.OrdinalIgnoreCase){ "*" };
+            else if(leaderModeTools.Count==0) leaderEffective=new HashSet<string>(leaderTools, StringComparer.OrdinalIgnoreCase);
+            else leaderEffective=new HashSet<string>(leaderTools.Intersect(leaderModeTools, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+            if(switchesByNode.TryGetValue(conversationNode.NodeKey, out var leaderSwitches))
+                leaderEffective=new HashSet<string>(leaderEffective.Where(tool=>!IsSwitchedOff(leaderSwitches, tool)), StringComparer.OrdinalIgnoreCase);
+            var leaderHasTools=leaderEffective.Count>0;
+            if(!hasSpawnableMembers && relationshipTypes.Count==0 && !leaderHasTools)
+                return Results.BadRequest(new{code="invalid_request",message="A mode without execution nodes needs spawnable members or a leader that holds tools."});
+        }
         // cross-layer reuse warning
         var byAgent=nodes.GroupBy(n=>n.AgentDefinitionId).Where(g=>g.Select(x=>x.Layer).Distinct().Count()>1).Select(g=>g.Key).ToArray();
         var warnings = new List<object>();
@@ -747,6 +910,8 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
             if (agentTools.Contains("*")) effective = modeTools.Count>0 ? new HashSet<string>(modeTools, StringComparer.OrdinalIgnoreCase) : new HashSet<string>(StringComparer.OrdinalIgnoreCase){ "*"};
             else if (modeTools.Count==0) effective = new HashSet<string>(agentTools, StringComparer.OrdinalIgnoreCase);
             else effective = new HashSet<string>(agentTools.Intersect(modeTools, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+            if(switchesByNode.TryGetValue(node.NodeKey, out var nodeSwitches))
+                effective=new HashSet<string>(effective.Where(tool=>!IsSwitchedOff(nodeSwitches, tool)), StringComparer.OrdinalIgnoreCase);
             if (effective.Count==0)
                 warnings.Add(new{ code="EMPTY_EFFECTIVE_TOOLS", message=$"Node {node.NodeKey} has no effective tools after intersection", node_key=node.NodeKey, agent_id=node.AgentDefinitionId });
             PromptVersionRecord? promptVersion = null;
@@ -762,6 +927,12 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
                 if (strategyError is not null) return Results.BadRequest(new{code="invalid_request",message=$"Node {node.NodeKey}: {strategyError}"});
                 modelStrategyOverride = JsonSerializer.Deserialize<JsonElement>(node.ModelStrategyOverrideJson);
             }
+            JsonElement? relationship = null;
+            if (!string.IsNullOrWhiteSpace(node.RelationshipJson))
+            {
+                try { relationship = JsonSerializer.Deserialize<JsonElement>(node.RelationshipJson); }
+                catch { return Results.BadRequest(new{code="invalid_request",message=$"Node {node.NodeKey} relationship is invalid JSON."}); }
+            }
             frozenNodes.Add(new
             {
                 node_key = node.NodeKey,
@@ -772,6 +943,7 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
                 label = node.Label,
                 i18n = i18nElement(node.I18nJson),
                 config,
+                relationship,
                 model_strategy_override = modelStrategyOverride,
                 model_strategy_source = modelStrategyOverride is null ? "agent_version" : "mode_node_override",
                 effective_tools = effective.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
@@ -789,8 +961,10 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
             target_node_key = e.TargetNodeKey,
             condition = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(e.ConditionJson) ? "{}" : e.ConditionJson)
         }).ToArray();
-        var layouts = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == id && x.TenantId == t && x.WorkspaceId == w && x.Status == "draft").ToListAsync(ct);
-        var layout = layouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
+        // SQLite cannot ORDER BY DateTimeOffset; materialize first (same rule as
+        // the lifecycle/snapshot readers).
+        var draftLayouts = await db.CanvasLayouts.Where(x => x.ModeId == id && x.TenantId == t && x.WorkspaceId == w && x.Status == "draft").ToListAsync(ct);
+        var layout = draftLayouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
         var canvasLayout = JsonSerializer.Deserialize<JsonElement>(layout?.LayoutJson ?? "{}");
         var snapshotObject = new Dictionary<string, object?>
         {
@@ -798,15 +972,26 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
             ["mode"] = new { id = rec.Id, slug = rec.Slug, display_name = rec.DisplayName, i18n = i18nElement(rec.I18nJson) },
             ["nodes"] = frozenNodes,
             ["edges"] = frozenEdges,
+            ["bindings"] = modeBindings,
             ["canvas_layout"] = canvasLayout
         };
         if (rec.RuntimePolicyJson is not null)
             snapshotObject["runtime_policy"] = JsonSerializer.Deserialize<JsonElement>(rec.RuntimePolicyJson);
+        // Only non-empty instructions are frozen: writing the key unconditionally
+        // would change the topology hash of every newly published legacy mode.
+        if (!string.IsNullOrWhiteSpace(rec.Instructions))
+            snapshotObject["instructions"] = rec.Instructions;
         var snapshot=JsonSerializer.Serialize(snapshotObject);
         var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(snapshot))).ToLowerInvariant();
         var ver=(await db.ModeVersions.Where(x=>x.AgentModeId==id).MaxAsync(x=>(int?)x.Version, ct)??0)+1;
-        db.ModeVersions.Add(new ModeVersionRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, AgentModeId=id, Version=ver, SnapshotJson=snapshot, TopologyHash=hash, WarningJson=warning, Status="published", Revision=1, CreatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p});
-        rec.Version=ver; rec.Revision++; rec.UpdatedAt=DateTimeOffset.UtcNow; rec.Status="published";
+        var now=DateTimeOffset.UtcNow;
+        db.ModeVersions.Add(new ModeVersionRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, AgentModeId=id, Version=ver, SnapshotJson=snapshot, TopologyHash=hash, WarningJson=warning, Status="published", Revision=1, CreatedAt=now, CreatedByPrincipalId=p});
+        // The projection rows become the published topology so GetMode can read them
+        // after the draft status flips.
+        foreach (var node in nodes) { node.Status="published"; node.Revision++; node.UpdatedAt=now; }
+        foreach (var edge in edges) { edge.Status="published"; edge.Revision++; edge.UpdatedAt=now; }
+        if (layout is not null) { layout.Status="published"; layout.Revision++; layout.UpdatedAt=now; }
+        rec.Version=ver; rec.Revision++; rec.UpdatedAt=now; rec.Status="published";
         await db.SaveChangesAsync(ct);
         return Results.Ok(new{ id=rec.Id, version=ver, revision=rec.Revision, topology_hash=hash, warning= warning!=null? JsonSerializer.Deserialize<JsonElement>(warning): (JsonElement?)null });
     }
@@ -1081,6 +1266,20 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         }
     }
 
+    /// <summary>
+    /// `tool_switches` may disable one tool or every tool (`"*": false`). The
+    /// wildcard form is how a team leader sheds its whole business tool face and
+    /// keeps the mode in the free_form tier.
+    /// </summary>
+    static bool IsSwitchedOff(JsonElement switches, string toolId)
+    {
+        static bool Off(JsonElement state) => state.ValueKind==JsonValueKind.False
+            || (state.ValueKind==JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase));
+        if (switches.ValueKind!=JsonValueKind.Object) return false;
+        if (switches.TryGetProperty(toolId, out var exact) && Off(exact)) return true;
+        return switches.TryGetProperty("*", out var all) && Off(all);
+    }
+
     static HashSet<string> ParseTools(string? json)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1192,6 +1391,7 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         slug = r.Slug,
         display_name = r.DisplayName,
         description = r.Description,
+        instructions = r.Instructions,
         i18n = i18nElement(r.I18nJson),
         status = r.Status,
         revision = r.Revision,

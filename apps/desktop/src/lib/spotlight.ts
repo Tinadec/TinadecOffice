@@ -22,6 +22,7 @@ import {
 } from '@/api'
 import { scoreMatch } from '@/lib/appCommands'
 import { selectionKey } from '@/lib/storageScope'
+import { withoutRetiredModes } from '@/lib/retiredModes'
 import { searchedFilePaths, toWorkspaceRelative, type FileSearchDataDto } from '@/lib/workspaceSearch'
 
 export type SpotlightKind = 'command' | 'project' | 'conversation' | 'model' | 'agent' | 'mode' | 'prompt' | 'tool' | 'setting' | 'resource'
@@ -251,7 +252,7 @@ function agentItems(agents: AgentDirectoryItemDto[], host: SpotlightHost): Spotl
 }
 
 function modeItems(modes: AgentModeDto[], host: SpotlightHost): SpotlightItem[] {
-  return modes.map((mode) => ({
+  return withoutRetiredModes(modes).map((mode) => ({
     id: `mode.${mode.id}`,
     kind: 'mode' as const,
     label: mode.display_name || mode.slug || mode.id,

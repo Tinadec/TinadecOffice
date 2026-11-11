@@ -111,6 +111,21 @@ public sealed class BrowserNoticeInfo
 }
 
 /// <summary>
+/// The model-facing copy of a browser capture, mirroring the desktop tools' contract: a PNG the
+/// Electron bridge already downscaled (long edge ≤1568) when the page was larger. Core loads
+/// <c>path</c> into the model conversation; the full-resolution original stays in the result's
+/// own path/bytes fields. Dimensions are optional — older bridges report path/bytes only.
+/// </summary>
+public sealed class BrowserImageInfo
+{
+    [JsonPropertyName("path")] public string? Path { get; set; }
+    [JsonPropertyName("media_type")] public string? MediaType { get; set; }
+    [JsonPropertyName("width")] public int? Width { get; set; }
+    [JsonPropertyName("height")] public int? Height { get; set; }
+    [JsonPropertyName("bytes")] public long? Bytes { get; set; }
+}
+
+/// <summary>
 /// The single result shape every browser tool returns. Expected outcomes (including hard stops)
 /// are `ok = false` with a stable `code`; the model is expected to stop and report those rather
 /// than retry them. Notices are always included so a side effect (popup, download, permission
@@ -131,6 +146,7 @@ public sealed class BrowserToolResult
     [JsonPropertyName("tabs")] public BrowserTabInfo[]? Tabs { get; set; }
     [JsonPropertyName("path")] public string? Path { get; set; }
     [JsonPropertyName("bytes")] public long? Bytes { get; set; }
+    [JsonPropertyName("image")] public BrowserImageInfo? Image { get; set; }
     [JsonPropertyName("ready")] public bool? Ready { get; set; }
     [JsonPropertyName("reason")] public string? Reason { get; set; }
     [JsonPropertyName("ref")] public int? Ref { get; set; }
@@ -184,6 +200,7 @@ internal sealed class BrowserBridgeResponse
 [JsonSerializable(typeof(BrowserEmptyArgs))]
 [JsonSerializable(typeof(BrowserTabInfo))]
 [JsonSerializable(typeof(BrowserNoticeInfo))]
+[JsonSerializable(typeof(BrowserImageInfo))]
 [JsonSerializable(typeof(BrowserToolResult))]
 [JsonSerializable(typeof(BrowserTabInfo[]))]
 [JsonSerializable(typeof(BrowserNoticeInfo[]))]
