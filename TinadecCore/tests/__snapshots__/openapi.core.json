@@ -2912,6 +2912,75 @@
       },
       "JsonElement": {},
       "JsonNode": {},
+      "ManagedMcpProgramPreviewDto": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "manager": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "package_root": {
+            "type": "string"
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "preview_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "program_status": {
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resource_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "server_arguments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "project_id",
+          "action",
+          "expected_revision",
+          "manager",
+          "package",
+          "version",
+          "package_root",
+          "plan_hash",
+          "program_status",
+          "server_arguments",
+          "preview_id"
+        ],
+        "type": "object"
+      },
       "MarketCatalogEntryDto": {
         "properties": {
           "catalog_id": {
@@ -3483,6 +3552,15 @@
               "object"
             ]
           },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -3514,9 +3592,18 @@
               "string"
             ]
           },
+          "transport": {
+            "type": "string"
+          },
           "updated_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "url": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
         "type": "object"
@@ -3577,6 +3664,15 @@
               "object"
             ]
           },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -3585,6 +3681,15 @@
           },
           "project_id": {
             "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "transport": {
+            "type": "string"
+          },
+          "url": {
             "type": [
               "null",
               "string"
@@ -7054,6 +7159,24 @@
               "object"
             ]
           },
+          "header_secret_references": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -7094,6 +7217,15 @@
             "type": [
               "null",
               "object"
+            ]
+          },
+          "transport": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "null",
+              "string"
             ]
           }
         },
@@ -7492,6 +7624,17 @@
               "string"
             ]
           },
+          "rank": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "read_only": {
+            "type": "boolean"
+          },
           "reason": {
             "type": [
               "null",
@@ -7528,7 +7671,16 @@
           "scope": {
             "type": "string"
           },
+          "shadowed_by": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "source": {
+            "type": "string"
+          },
+          "source_kind": {
             "type": "string"
           },
           "user_action_id": {
@@ -7542,6 +7694,12 @@
             "type": "boolean"
           },
           "version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "when_to_use": {
             "type": [
               "null",
               "string"
@@ -7561,6 +7719,9 @@
           "name": {
             "type": "string"
           },
+          "resource_base": {
+            "type": "string"
+          },
           "resource_id": {
             "format": "uuid",
             "type": "string"
@@ -7578,6 +7739,15 @@
           },
           "skill_path": {
             "type": "string"
+          },
+          "source_kind": {
+            "type": "string"
+          },
+          "when_to_use": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
         "type": "object"
@@ -7941,6 +8111,184 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "UserToolActionResult": {
+        "properties": {
+          "action_approval_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "audit_reference": {
+            "type": "string"
+          },
+          "authorization_decision_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "compensation_guidance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error_category": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mutates_workspace": {
+            "type": "boolean"
+          },
+          "non_reversible": {
+            "type": "boolean"
+          },
+          "permission_request_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "principal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recovered_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_decision": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "requires_approval": {
+            "type": "boolean"
+          },
+          "result_json": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "risk": {
+            "type": "string"
+          },
+          "snapshot_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "snapshot_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "snapshot_override": {
+            "type": "boolean"
+          },
+          "snapshot_override_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "audit_reference",
+          "tenant_id",
+          "workspace_id",
+          "project_id",
+          "principal_id",
+          "tool_id",
+          "status",
+          "risk",
+          "mutates_workspace",
+          "requires_approval",
+          "permission_request_id",
+          "authorization_decision_id",
+          "action_approval_id",
+          "snapshot_id",
+          "snapshot_hash",
+          "snapshot_override",
+          "snapshot_override_reason",
+          "non_reversible",
+          "compensation_guidance",
+          "recovery_decision",
+          "recovery_reason",
+          "recovered_at",
+          "result_json",
+          "error_category",
+          "message",
+          "created_at",
+          "updated_at",
+          "completed_at"
+        ],
         "type": "object"
       },
       "UserToolActionSnapshotOverrideRequestDto": {
@@ -12563,6 +12911,16 @@
     },
     "/api/v1/mcp/servers": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -12588,6 +12946,14 @@
             "name": "serverId",
             "required": true,
             "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -17058,6 +17424,136 @@
         ]
       }
     },
+    "/api/v1/tools/mcp/servers/{resourceId}/install": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tools/mcp/servers/{resourceId}/install-preview": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedMcpProgramPreviewDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/tools/mcp/servers/{resourceId}/test": {
       "post": {
         "parameters": [
@@ -17538,6 +18034,28 @@
         ]
       }
     },
+    "/api/v1/tools/skills/diagnostics": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Tool Skills"
+        ]
+      }
+    },
     "/api/v1/tools/skills/import": {
       "post": {
         "requestBody": {
@@ -17773,6 +18291,75 @@
               }
             },
             "description": "Precondition Required"
+          }
+        },
+        "tags": [
+          "Tool Skills"
+        ]
+      }
+    },
+    "/api/v1/tools/skills/{resourceId}/copy-to-project": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillResourceDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [

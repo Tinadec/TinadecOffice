@@ -1,5 +1,19 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-11-11 Skill/MCP 市场三页、图编辑边键与内置技能只读面
+
+**市场是三个 UIE 页面，不是三个筛选状态。** `/market`、`/market/skills`、`/market/mcp` 分别用 `market` / `marketSkills` / `marketMcp` 三个 `UiePageId`，共用 `marketFilter/Catalog/Detail` 三张卡；`MarketPage.vue` 从 `route.meta.uiePage|marketKind` 取页 id 与锁定 kind，并在路由复用同一个组件时 `watch` 重新 `showPage` + `setKind`。`repair.ts` 的合法页、边距、空市场回退三处都要认这三个 id，否则冷启动掉回 Home 或空白。`AppSidebar` 增加 Skills/MCP 入口并 `emit('go-market-skills'|'go-market-mcp')`，`appCommands.ts` 增加 `view.goMarketSkills|Mcp`；标签复用 `market.kindSkill` / `market.kindMcpServer`，不要为它们另造 locale key。
+
+**热刷新是 revision 指纹，不是 SSE。** `MarketController.startExtensionPoll()` 每 10s 读 `listToolSkills` + `listToolMcpResources`，把 `resource_id/revision/enabled/availability/content_hash` 排序成指纹；变化时只重读 catalog/installations。运行中的 run 仍然用准入冻结快照，所以 UI 文案只能说“对新 run 生效”。后续接 Core SSE 时替换这个 poll，不要在两处各存一套状态。
+
+**工具设置里的内置技能是只读的。** `ToolSkillResource` 增加 `source_kind/rank/shadowed_by/read_only`；`ToolResourcesPanel` 对内建/兼容根显示 `toolsSettings.builtinBadge` 并禁用编辑/删除。保存路径本身也会返回 `read_only_skill`，UI 禁用只是提前说明，不是权限边界。
+
+**图编辑器写路径已修。** `AgentModesPanel.toCoreTopology` 给每条边传 `edge_key: e.id`，`currentCanvasLayout()` 把模式布局与实时节点位置合并后保存（不再每次发 `{}`）；节点 sheet 增加删除动作。`AgentModeCanvas` 聚焦后 Delete/Backspace 删除选中节点或边（输入框/contenteditable 内不响应），删节点级联删边；自环、执行层回操作层、成环三道守卫保持不变。Core 侧 `IAgentTopologyService` 才是权威：缺 `edge_key` 返回 `edge_key_required`，提交数组缺席的 draft 节点/边会被删除，`GraphValidation` 在保存前跑，发布门不再要求“meeting + execution node”。
+
+**MCP 表单与内置技能复制。** `ToolMcpResource` 增加 `transport/url/headers`（`transport` 可选以兼容旧行），设置页 JSON schema 的 required 改为 `transport/args/env/headers`；stdio 行显示“安装依赖”（仅 `npx`/`uvx`），HTTP/SSE 行不显示。内置技能行显示“复制到项目”，走 `POST /tools/skills/{id}/copy-to-project` 并跟随审批回执。Core 侧 `ToolDispatcher` 的 E2E 已由 `TinadecConfigToolGatewayTests` 覆盖，桌面只消费同一份工具清单。
+
+**验证：** Desktop 定向 61/61（GraphSeedPack 10、MarketPage 4、MarketController 20、ToolResources 10、ToolCenter 6、i18nParity 8、toolSettingsApi 3）；`vue-tsc` 0；生产 `npm run build` exit 0。**未验证：** 真实 Electron 点击/布局、真实第三方 MCP server。
+
 ## 2026-11-02 Agent 浏览器：Electron 主进程桥 + 独立窗口（P1/P5 完成，P6 卡片挂载未做）
 
 内置浏览器从「预览 iframe」变成 Agent 可驱动的真实浏览器。**没有第二套 Chromium**：复用 Electron 的 `WebContentsView`，主进程只对已登记目标做 CDP。

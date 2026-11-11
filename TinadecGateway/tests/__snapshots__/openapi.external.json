@@ -2806,6 +2806,64 @@
         ],
         "type": "object"
       },
+      "ManagedMcpProgramPreview": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "manager": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "package_root": {
+            "type": "string"
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "preview_id": {
+            "type": "string"
+          },
+          "program_status": {
+            "type": "string"
+          },
+          "project_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "server_arguments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "action",
+          "expected_revision",
+          "manager",
+          "package",
+          "version",
+          "package_root",
+          "plan_hash",
+          "program_status",
+          "preview_id"
+        ],
+        "type": "object"
+      },
       "MarketCatalogEntry": {
         "additionalProperties": true,
         "properties": {
@@ -7218,6 +7276,14 @@
             "nullable": true,
             "type": "object"
           },
+          "headers": {
+            "additionalProperties": {
+              "nullable": true,
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "object"
+          },
           "id": {
             "type": "string"
           },
@@ -7238,8 +7304,20 @@
           "revision": {
             "type": "integer"
           },
+          "transport": {
+            "enum": [
+              "stdio",
+              "http",
+              "sse"
+            ],
+            "type": "string"
+          },
           "updated_at": {
             "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "nullable": true,
             "type": "string"
           }
         },
@@ -7248,6 +7326,7 @@
           "id",
           "name",
           "enabled",
+          "transport",
           "command",
           "args",
           "env",
@@ -7593,6 +7672,32 @@
           "skills",
           "diagnostics",
           "source"
+        ],
+        "type": "object"
+      },
+      "ToolSkillDiagnostics": {
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "skills",
+          "diagnostics"
         ],
         "type": "object"
       },
@@ -17072,6 +17177,61 @@
         ]
       }
     },
+    "/api/v1/tools/mcp/servers/{resourceId}/install": {
+      "post": {
+        "operationId": "postApiV1ToolsMcpServersByResourceIdInstall",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST mcp/servers/:resourceId/install",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/mcp/servers/{resourceId}/install-preview": {
+      "post": {
+        "operationId": "postApiV1ToolsMcpServersByResourceIdInstall-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedMcpProgramPreview"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST mcp/servers/:resourceId/install-preview",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tools/mcp/servers/{resourceId}/test": {
       "post": {
         "operationId": "postApiV1ToolsMcpServersByResourceIdTest",
@@ -17382,6 +17542,27 @@
         ]
       }
     },
+    "/api/v1/tools/skills/diagnostics": {
+      "get": {
+        "operationId": "getApiV1ToolsSkillsDiagnostics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillDiagnostics"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "GET skills/diagnostics",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tools/skills/import": {
       "post": {
         "operationId": "postApiV1ToolsSkillsImport",
@@ -17516,6 +17697,37 @@
           }
         },
         "summary": "PUT skills/:resourceId",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/skills/{resourceId}/copy-to-project": {
+      "post": {
+        "operationId": "postApiV1ToolsSkillsByResourceIdCopy-to-project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillResource"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST skills/:resourceId/copy-to-project",
         "tags": [
           "Tools"
         ]

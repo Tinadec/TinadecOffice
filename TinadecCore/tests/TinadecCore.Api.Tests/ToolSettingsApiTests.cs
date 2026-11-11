@@ -124,6 +124,38 @@ public sealed class ToolSettingsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task McpHttpTransport_RequiresUrlAndKeepsHeaderSecretsOutOfSnapshots()
+    {
+        var client = _factory.CreateClient();
+        Assert.Equal(HttpStatusCode.BadRequest, (await CreateMcpAsync(client, new { id = "bad-http", transport = "http", args = Array.Empty<string>() })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await CreateMcpAsync(client, new { id = "bad-scheme", transport = "http", url = "ftp://example.test/mcp", args = Array.Empty<string>() })).StatusCode);
+
+        var created = await CreateMcpAsync(client, new
+        {
+            id = "remote-http", name = "Remote HTTP", transport = "http", url = "https://example.test/mcp",
+            args = Array.Empty<string>(), headers = new Dictionary<string, string> { ["Authorization"] = "Bearer credential-one" },
+        });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var dto = await created.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("http", dto.GetProperty("transport").GetString());
+        Assert.Equal("https://example.test/mcp", dto.GetProperty("url").GetString());
+        Assert.Equal("********", dto.GetProperty("headers").GetProperty("Authorization").GetString());
+
+        var resolver = _factory.Services.GetRequiredService<IToolConfigurationResolver>();
+        var snapshot = await resolver.ResolveAsync(null);
+        var server = Assert.Single(snapshot.McpServers);
+        Assert.Equal("http", server.Transport);
+        Assert.Null(server.Headers);
+        Assert.NotNull(server.HeaderSecretReferences);
+        var materialized = await resolver.MaterializeForCallAsync(snapshot, ["mcp_invoke"]);
+        Assert.Equal("Bearer credential-one", Assert.Single(materialized.McpServers).Headers!["Authorization"]);
+
+        var dbFactory = _factory.Services.GetRequiredService<IDbContextFactory<ToolsSettingsDbContext>>();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        Assert.DoesNotContain("credential-one", (await db.McpResources.SingleAsync()).HeaderReferencesJson);
+    }
+
+    [Fact]
     public async Task AdmissionSnapshots_FreezeSharedDefaultsAndPerAgentOverrides()
     {
         var client = _factory.CreateClient();

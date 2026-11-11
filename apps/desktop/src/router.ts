@@ -31,6 +31,18 @@ const router = createRouter({
       component: () => import('./pages/MarketPage.vue'),
     },
     {
+      path: '/market/skills',
+      name: 'marketSkills',
+      component: () => import('./pages/MarketPage.vue'),
+      meta: { uiePage: 'marketSkills', marketKind: 'skill' },
+    },
+    {
+      path: '/market/mcp',
+      name: 'marketMcp',
+      component: () => import('./pages/MarketPage.vue'),
+      meta: { uiePage: 'marketMcp', marketKind: 'mcp-server' },
+    },
+    {
       path: '/debug-studio',
       name: 'debug-studio',
       component: () => import('./pages/DebugStudioPage.vue'),

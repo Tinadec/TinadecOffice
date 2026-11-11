@@ -19,12 +19,18 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
 {
     private readonly IDbContextFactory<AgentConfigurationDbContext> _dbFactory;
     private readonly ITenantContextAccessor _tenant;
+    private readonly IAgentTopologyService _topology;
 
-    public AgentConfigurationService(IDbContextFactory<AgentConfigurationDbContext> dbFactory, ITenantContextAccessor tenant, IContentStore content)
+    public AgentConfigurationService(
+        IDbContextFactory<AgentConfigurationDbContext> dbFactory,
+        ITenantContextAccessor tenant,
+        IContentStore content,
+        IAgentTopologyService topology)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _ = content;
+        _topology = topology;
     }
 
     public async Task<object> CreateDraftAsync(string kind, object payload, CancellationToken cancellationToken = default)
@@ -50,11 +56,11 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
         var scope = _tenant.Current;
         var now = DateTimeOffset.UtcNow;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         var agent = await db.AgentDefinitions.SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
         if (agent is not null)
         {
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             CheckDraft(agent.Status, agent.Revision, ifMatchRevision);
             ValidateLayer(agent.Layer);
             if (string.IsNullOrWhiteSpace(agent.DisplayName)) throw new InvalidDataException("Agent display name is required.");
@@ -67,39 +73,28 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
             return new { id = agent.Id, kind = "agent", version, revision = agent.Revision, content_hash = hash };
         }
 
-        var mode = await db.AgentModes.SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+        var mode = await db.AgentModes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
         if (mode is not null)
         {
-            CheckDraft(mode.Status, mode.Revision, ifMatchRevision);
-            var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.ModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken).ConfigureAwait(false);
-            if (!nodes.Any(x => x.Layer == "execution")) throw new InvalidDataException("Mode must contain at least one execution-layer node.");
-            var edges = await db.ModeEdges.AsNoTracking().Where(x => x.ModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken).ConfigureAwait(false);
-            // Graph semantics shared with pack admission (GraphValidation): replaces
-            // the legacy hardcoded operation-layer-meeting check. The conversation
-            // node is resolved by marker → capability → legacy meeting tiers.
-            var agentIds = nodes.Select(x => x.AgentDefinitionId).Distinct().ToArray();
-            var agentDefs = await db.AgentDefinitions.AsNoTracking()
-                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && agentIds.Contains(x.Id))
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            var agentRefs = agentDefs.Select(x => new GraphValidation.AgentRef(x.Id.ToString(), x.Slug, x.Layer, ParseCapabilities(x.CapabilitiesJson))).ToArray();
-            var nodeRefs = nodes.Select(x => new GraphValidation.NodeRef(x.NodeKey, x.AgentDefinitionId.ToString(), x.Layer, x.Label, ParseConfig(x.ConfigJson), default)).ToArray();
-            var edgeRefs = edges.Select(x => new GraphValidation.EdgeRef(x.EdgeKey, x.SourceNodeKey, x.TargetNodeKey)).ToArray();
-            GraphValidation.ValidateModeGraph(mode.Slug, nodeRefs, edgeRefs, agentRefs);
-            var snapshot = JsonSerializer.Serialize(new { mode = new { id = mode.Id, slug = mode.Slug, display_name = mode.DisplayName }, nodes, edges });
-            var hash = Hash(snapshot); var version = (await db.ModeVersions.Where(x => x.AgentModeId == mode.Id).MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) ?? 0) + 1;
-            db.ModeVersions.Add(new ModeVersionRecord { Id = Guid.NewGuid(), TenantId = mode.TenantId, WorkspaceId = mode.WorkspaceId, AgentModeId = mode.Id, Version = version, SnapshotJson = snapshot, TopologyHash = hash, Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
-            mode.Version = version; mode.Status = "published"; mode.Revision++; mode.UpdatedAt = now; mode.UpdatedByPrincipalId = scope.PrincipalId;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new { id = mode.Id, kind = "mode", version, revision = mode.Revision, topology_hash = hash };
+            // One publish implementation for modes: the editor endpoint, the tinadec_*
+            // tools and candidate promotion all go through AgentTopologyService, so the
+            // frozen snapshot, the GraphValidation gate and the warnings cannot diverge.
+            var published = await _topology.PublishAsync(mode.Id, ifMatchRevision, cancellationToken).ConfigureAwait(false);
+            if (!published.Ok)
+                throw published.StatusCode == 404
+                    ? new KeyNotFoundException(published.Message ?? "Configuration entity was not found.")
+                    : new InvalidDataException($"[{published.Code}] {published.Message}");
+            return new { id = mode.Id, kind = "mode", version = published.Version, revision = published.Revision, topology_hash = published.TopologyHash };
         }
 
         var pipeline = await db.PromptPipelines.SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
         if (pipeline is null) throw new KeyNotFoundException("Configuration entity was not found.");
+        await using var pipelineTransaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         CheckDraft(pipeline.Status, pipeline.Revision, ifMatchRevision);
         var pipelineHash = Hash(pipeline.GraphJson); var pipelineVersion = (await db.PromptVersions.Where(x => x.PromptPipelineId == pipeline.Id).MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) ?? 0) + 1;
         db.PromptVersions.Add(new PromptVersionRecord { Id = Guid.NewGuid(), TenantId = pipeline.TenantId, WorkspaceId = pipeline.WorkspaceId, PromptPipelineId = pipeline.Id, Version = pipelineVersion, GraphJson = pipeline.GraphJson, ContentHash = pipelineHash, ContentLength = Encoding.UTF8.GetByteCount(pipeline.GraphJson), Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
         pipeline.Version = pipelineVersion; pipeline.Status = "published"; pipeline.Revision++; pipeline.UpdatedAt = now; pipeline.UpdatedByPrincipalId = scope.PrincipalId;
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); await pipelineTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new { id = pipeline.Id, kind = "prompt_pipeline", version = pipelineVersion, revision = pipeline.Revision, content_hash = pipelineHash };
     }
 

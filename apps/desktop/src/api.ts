@@ -1560,7 +1560,9 @@ export interface AgentModeEdgeDto {
 /** Core UpsertModeTopology write contract (node_key/agent_definition_id/layer). */
 export interface AgentModeTopologyWriteDto {
   nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null; model_strategy_override?: Record<string, unknown> | null }>;
-  edges: Array<{ source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
+  /** `edge_key` is the edge's stable identity: Core upserts and deletes by it, and a
+   *  missing key is refused (`edge_key_required`) instead of being minted a new GUID. */
+  edges: Array<{ edge_key?: string; source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
   canvas_layout?: Record<string, unknown> | null;
   runtime_policy?: AgentModeRuntimePolicy | null;
 }
@@ -2267,6 +2269,21 @@ export type UserToolActionStatus =
   | string;
 
 /** Core-owned user action. Nonces and internal lease material never cross this DTO. */
+export interface ManagedMcpProgramPreview {
+  resource_id: string;
+  project_id?: string | null;
+  action: 'install' | 'uninstall';
+  expected_revision: number;
+  manager: string;
+  package: string;
+  version: string;
+  package_root: string;
+  plan_hash: string;
+  program_status: string;
+  server_arguments: string[];
+  preview_id: string;
+}
+
 export interface UserToolActionDto {
   id: string;
   audit_reference: string;
@@ -3058,12 +3075,17 @@ export const api = {
   saveToolMcpResource: (resourceId: string, body: ToolMcpInput, revision: number, projectId?: string) => request<ToolMcpResource>(`/api/v1/tools/mcp/servers/${encodeURIComponent(resourceId)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { method: 'PUT', headers: { 'if-match': `"${revision}"` }, body: JSON.stringify(body) }),
   deleteToolMcpResource: (resourceId: string, revision: number, projectId?: string) => request<void>(`/api/v1/tools/mcp/servers/${encodeURIComponent(resourceId)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { method: 'DELETE', headers: { 'if-match': `"${revision}"` } }),
   testToolMcpResource: (resourceId: string, projectId?: string) => request<Record<string, unknown>>(`/api/v1/tools/mcp/servers/${encodeURIComponent(resourceId)}/test${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { method: 'POST' }),
+  previewToolMcpProgram: (resourceId: string, projectId?: string, action: 'install' | 'uninstall' = 'install') =>
+    request<ManagedMcpProgramPreview>(`/api/v1/tools/mcp/servers/${encodeURIComponent(resourceId)}/install-preview?${new URLSearchParams({ action, ...(projectId ? { project_id: projectId } : {}) })}`, { method: 'POST' }),
+  installToolMcpProgram: (resourceId: string, projectId?: string, action: 'install' | 'uninstall' = 'install') =>
+    request<UserToolActionDto>(`/api/v1/tools/mcp/servers/${encodeURIComponent(resourceId)}/install?${new URLSearchParams({ action, ...(projectId ? { project_id: projectId } : {}) })}`, { method: 'POST' }),
   listToolSkills: (projectId?: string) => request<{ skills: ToolSkillResource[]; diagnostics: string[]; source: string }>(`/api/v1/tools/skills${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   getToolSkill: (resourceId: string, projectId?: string) => request<ToolSkillResource>(`/api/v1/tools/skills/${encodeURIComponent(resourceId)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   importToolSkill: (body: { scope: 'shared' | 'project'; project_id?: string; name: string; content: string; files?: Record<string, string>; enabled?: boolean }) => request<ToolSkillResource>('/api/v1/tools/skills/import', { method: 'POST', headers: { 'if-match': '"0"' }, body: JSON.stringify(body) }),
   getToolSkillFile: (resourceId: string, path: string, projectId?: string) => request<{ path: string; content_hash: string; size_bytes: number; content: string | null; base64: string }>(`/api/v1/tools/skills/${encodeURIComponent(resourceId)}/files?${new URLSearchParams({ path, ...(projectId ? { project_id: projectId } : {}) })}`),
   saveToolSkill: (resourceId: string, body: { content?: string; enabled?: boolean; files?: Record<string, string>; replace_files?: boolean; expected_file_hash?: string }, revision: number, projectId?: string) => request<ToolSkillResource>(`/api/v1/tools/skills/${encodeURIComponent(resourceId)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { method: 'PUT', headers: { 'if-match': `"${revision}"` }, body: JSON.stringify(body) }),
   deleteToolSkill: (resourceId: string, revision: number, projectId?: string) => request<ToolSkillResource>(`/api/v1/tools/skills/${encodeURIComponent(resourceId)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { method: 'DELETE', headers: { 'if-match': `"${revision}"` } }),
+  copyToolSkillToProject: (resourceId: string, projectId: string) => request<ToolSkillResource>(`/api/v1/tools/skills/${encodeURIComponent(resourceId)}/copy-to-project?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' }),
   // Participant and conversation writes below are actor-scoped: Core re-verifies the authenticated
   // principal against every actor_id on each call, so a stale local identity fails closed here.
   tinaChatParticipants: (query?: string, signal?: AbortSignal) => {
@@ -3432,7 +3454,7 @@ export const api = {
     method: 'POST'
   }),
   listMarketInstallations: () => request<MarketInstallationListDto>('/api/v1/market/installations'),
-  listMcpServers: () => request<McpInventoryDto>('/api/v1/mcp/servers'),
+  listMcpServers: (projectId?: string) => request<McpInventoryDto>(`/api/v1/mcp/servers${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   listMcpServerTools: (serverId: string) =>
     request<McpServerToolsDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools`),
   listAcpAdapters: (options?: { signal?: AbortSignal }) => cachedRead(catalogKey('acp-adapters'), () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'), options?.signal, CATALOG_READ_CACHE_TTL_MS),

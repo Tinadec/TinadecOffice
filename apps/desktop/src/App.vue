@@ -85,7 +85,8 @@ function onPageReady() {
 function onRouteMounted() {
   // UIE routes report readiness after selecting and measuring their layouts.
   // Other routes have their own entry animations and are ready on mount.
-  if (route.name !== 'home' && route.name !== 'market' && route.name !== 'space') onPageReady()
+  if (route.name !== 'home' && route.name !== 'market' && route.name !== 'marketSkills'
+    && route.name !== 'marketMcp' && route.name !== 'space') onPageReady()
 }
 
 watch(connectionState, (state) => {

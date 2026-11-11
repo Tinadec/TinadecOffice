@@ -92,6 +92,13 @@ public static class ToolSettingsEndpoints
         {
             await registry.DeleteAsync(resourceId, Revision(request), ct); return Results.NoContent();
         }).Produces(StatusCodes.Status204NoContent).ProducesProblem(428).ProducesProblem(412).ProducesProblem(404);
+           app.MapPost("/api/v1/tools/mcp/servers/{resourceId:guid}/install-preview", async (Guid resourceId, Guid? project_id, string? action, IManagedMcpProgramService programs, CancellationToken ct) =>
+            Results.Ok(await programs.PreviewAsync(resourceId, project_id, action ?? "install", ct))).Produces<ManagedMcpProgramPreviewDto>().ProducesProblem(404).ProducesProblem(409);
+        app.MapPost("/api/v1/tools/mcp/servers/{resourceId:guid}/install", async (Guid resourceId, Guid? project_id, string? action, IManagedMcpProgramService programs, CancellationToken ct) =>
+        {
+            var preview = await programs.PreviewAsync(resourceId, project_id, action ?? "install", ct);
+            return Results.Ok(await programs.RequestApplyAsync(preview, ct));
+        }).Produces<UserToolActionResult>().ProducesProblem(404).ProducesProblem(409);
         app.MapPost("/api/v1/tools/mcp/servers/{resourceId:guid}/test", async (Guid resourceId, IMcpResourceRegistry registry, IToolConfigurationResolver resolver, IToolProvider provider, ISessionLocator sessions, IConfiguration configuration, CancellationToken ct) =>
         {
             var resource = await registry.GetAsync(resourceId, ct) ?? throw new ToolSettingsException("mcp_resource_not_found", "MCP resource not found.", 404);

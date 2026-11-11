@@ -16,11 +16,19 @@ export const toolsSettingsSchemas = {
   ToolCapabilities: { type: 'object', properties: { status: { type: 'string', enum: ['available', 'unavailable'] }, reason: { type: 'string', nullable: true }, capabilities: { ...object, nullable: true }, settings_hash: { type: 'string', nullable: true } }, required: ['status'] },
   ToolMcpResource: { type: 'object', properties: {
     resource_id: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, enabled: { type: 'boolean' },
+    transport: { type: 'string', enum: ['stdio', 'http', 'sse'] }, url: { type: 'string', nullable: true },
     command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, env: { type: 'object', nullable: true, additionalProperties: { type: 'string', nullable: true } },
+    headers: { type: 'object', nullable: true, additionalProperties: { type: 'string', nullable: true } },
     cwd: { type: 'string', nullable: true }, revision: { type: 'integer' }, configuration_hash: { type: 'string' }, project_id: { type: 'string', nullable: true },
     updated_at: { type: 'string', format: 'date-time' }, import_source: { type: 'string', nullable: true },
-  }, required: ['resource_id', 'id', 'name', 'enabled', 'command', 'args', 'env', 'revision', 'configuration_hash'] },
+  }, required: ['resource_id', 'id', 'name', 'enabled', 'transport', 'command', 'args', 'env', 'revision', 'configuration_hash'] },
   ToolMcpResourceList: { type: 'array', items: ref('ToolMcpResource') },
+  ManagedMcpProgramPreview: { type: 'object', properties: {
+    resource_id: { type: 'string' }, project_id: { type: 'string', nullable: true }, action: { type: 'string' },
+    expected_revision: { type: 'integer' }, manager: { type: 'string' }, package: { type: 'string' }, version: { type: 'string' },
+    package_root: { type: 'string' }, plan_hash: { type: 'string' }, program_status: { type: 'string' },
+    server_arguments: { type: 'array', items: { type: 'string' } }, preview_id: { type: 'string' },
+  }, required: ['resource_id', 'action', 'expected_revision', 'manager', 'package', 'version', 'package_root', 'plan_hash', 'program_status', 'preview_id'], additionalProperties: true },
   ToolSkillResource: { type: 'object', properties: {
     resource_id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, scope: { type: 'string' },
     project_id: { type: 'string', nullable: true }, enabled: { type: 'boolean' }, valid: { type: 'boolean' }, path: { type: 'string' }, content_hash: { type: 'string' }, revision: { type: 'integer' }, content: { type: 'string', nullable: true },
@@ -32,6 +40,7 @@ export const toolsSettingsSchemas = {
   ToolSkillPackageFile: { type: 'object', properties: { path: { type: 'string' }, content_hash: { type: 'string' }, size_bytes: { type: 'integer' } }, required: ['path', 'content_hash', 'size_bytes'] },
   ToolSkillFile: { type: 'object', properties: { path: { type: 'string' }, content_hash: { type: 'string' }, size_bytes: { type: 'integer' }, content: { type: 'string', nullable: true }, base64: { type: 'string', nullable: true } }, required: ['path', 'content_hash', 'size_bytes'] },
   ToolSkillCatalog: { type: 'object', properties: { skills: { type: 'array', items: ref('ToolSkillResource') }, diagnostics: { type: 'array', items: { type: 'string' } }, source: { type: 'string' } }, required: ['skills', 'diagnostics', 'source'] },
+  ToolSkillDiagnostics: { type: 'object', properties: { source: { type: 'string' }, skills: { type: 'array', items: object }, diagnostics: { type: 'array', items: { type: 'string' } } }, required: ['source', 'skills', 'diagnostics'] },
 };
 
 /** Configuration authority, credentials, resource writes and revisions remain in Core. */
@@ -50,8 +59,12 @@ export function registerToolsSettingsRoutes(app: AnyElysia, forwardHeaders: (req
     ['PUT', '/api/v1/tools/mcp/servers/:resourceId', 'ToolMcpResource'],
     ['DELETE', '/api/v1/tools/mcp/servers/:resourceId', ''],
     ['POST', '/api/v1/tools/mcp/servers/:resourceId/test', ''],
+    ['POST', '/api/v1/tools/mcp/servers/:resourceId/install-preview', 'ManagedMcpProgramPreview'],
+    ['POST', '/api/v1/tools/mcp/servers/:resourceId/install', ''],
     ['GET', '/api/v1/tools/skills', 'ToolSkillCatalog'],
+    ['GET', '/api/v1/tools/skills/diagnostics', 'ToolSkillDiagnostics'],
     ['POST', '/api/v1/tools/skills/import', 'ToolSkillResource'],
+    ['POST', '/api/v1/tools/skills/:resourceId/copy-to-project', 'ToolSkillResource'],
     ['GET', '/api/v1/tools/skills/:resourceId', 'ToolSkillResource'],
     ['GET', '/api/v1/tools/skills/:resourceId/files', 'ToolSkillFile'],
     ['PUT', '/api/v1/tools/skills/:resourceId', 'ToolSkillResource'],
@@ -72,7 +85,7 @@ export function registerToolsSettingsRoutes(app: AnyElysia, forwardHeaders: (req
       ...(path.endsWith('/files') ? { parameters: [{ name: 'path', in: 'query', required: true, schema: { type: 'string' }, description: 'Exact relative package file path; Core enforces the resource root.' }, { name: 'project_id', in: 'query', required: false, schema: { type: 'string', format: 'uuid' } }] } : {}),
       ...(bodySchema ? { requestBody: { required: true, content: { 'application/json': { schema: ref(bodySchema) } } } } : {}),
       responses: { [method === 'DELETE' && !response ? 204 : 200]: { description: 'Core-owned configuration and resource result', ...(response ? { content: { 'application/json': { schema: ref(response) } } } : {}) } },
-      ...(method === 'PUT' || method === 'DELETE' || (method === 'POST' && !path.endsWith('/test')) ? { parameters: [{ name: 'If-Match', in: 'header', required: true, schema: { type: 'string' }, description: method === 'POST' ? 'Quoted zero revision for a new resource' : 'Quoted revision returned by Core' }] } : {}),
+      ...(method === 'PUT' || method === 'DELETE' || (method === 'POST' && !path.endsWith('/test') && !path.endsWith('/install') && !path.endsWith('/install-preview') && !path.endsWith('/copy-to-project')) ? { parameters: [{ name: 'If-Match', in: 'header', required: true, schema: { type: 'string' }, description: method === 'POST' ? 'Quoted zero revision for a new resource' : 'Quoted revision returned by Core' }] } : {}),
     } as never });
   }
 }

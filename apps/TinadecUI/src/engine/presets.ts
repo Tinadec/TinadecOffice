@@ -138,8 +138,21 @@ function buildSettingsPreset(ctx: PresetContext): UieLayoutSnapshot {
 }
 
 function buildMarketPreset(ctx: PresetContext): UieLayoutSnapshot {
+  return buildMarketSurface(ctx, 'market')
+}
+
+/**
+ * The Skill and MCP pages are the same three-card surface with the kind locked. They are separate
+ * pages, not a filter remembered across visits: a user who opens Skills expects Skills next time,
+ * and a stored layout on one page must not rearrange the other.
+ */
+function buildMarketKindPreset(ctx: PresetContext, pageId: 'marketSkills' | 'marketMcp'): UieLayoutSnapshot {
+  return buildMarketSurface(ctx, pageId)
+}
+
+function buildMarketSurface(ctx: PresetContext, pageId: 'market' | 'marketSkills' | 'marketMcp'): UieLayoutSnapshot {
   const n = ctx.nextInstanceId
-  const snapshot = createEmptySnapshot('market')
+  const snapshot = createEmptySnapshot(pageId)
   snapshot.gap = 8
   snapshot.edgeInset = 8
 
@@ -266,6 +279,8 @@ export const PRESET_BUILDERS: Record<UiePageId, (ctx: PresetContext) => UieLayou
   home: buildHomePreset,
   settings: buildSettingsPreset,
   market: buildMarketPreset,
+  marketSkills: (ctx) => buildMarketKindPreset(ctx, 'marketSkills'),
+  marketMcp: (ctx) => buildMarketKindPreset(ctx, 'marketMcp'),
   code: buildCodePreset,
   debug: buildDebugPreset,
   companionCenter: buildCompanionCenterPreset,

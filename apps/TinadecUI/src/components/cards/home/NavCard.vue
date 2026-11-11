@@ -103,6 +103,8 @@ function toggleCollapse() {
     @retry-workspaces="c.retryWorkspaces($event)"
   @unregister-workspace="c.unregisterWorkspace($event)"
     @go-market="router.push('/market')"
+    @go-market-skills="router.push('/market/skills')"
+    @go-market-mcp="router.push('/market/mcp')"
     @go-buddy="toggleBuddy"
     @go-settings="router.push('/settings')"
     @go-companion-center="openCompanionCenter"

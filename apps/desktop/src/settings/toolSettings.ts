@@ -63,9 +63,12 @@ export interface ToolMcpResource {
   id: string
   name: string
   enabled: boolean
+  transport?: string
+  url?: string | null
   command: string
   args: string[]
   env: Record<string, string | null>
+  headers?: Record<string, string | null> | null
   cwd?: string | null
   revision: number
   configuration_hash: string
@@ -99,6 +102,12 @@ export interface ToolSkillResource {
   source?: string | null
   version?: string | null
   commit?: string | null
+  /** Loader root: builtin / user / project / compat / scope. */
+  source_kind?: string | null
+  rank?: number
+  shadowed_by?: string | null
+  read_only?: boolean
+  when_to_use?: string | null
   [key: string]: unknown
 }
 export interface SettingsIssue { path: string; message: string }

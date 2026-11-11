@@ -57,7 +57,7 @@ export default {
     resources: '资源目录', binding: '为此配置提供的资源', inherit: '继承默认', none: '不选择任何资源', custom: '自定义选择',
     addMcp: '添加 MCP 服务器', importSkill: '导入技能', mcpHint: '服务器配置由 Core 保存。环境变量中的已有密钥以掩码显示，保留掩码不会覆盖密钥。',
     skillHint: '技能绑定控制自动提供的技能索引。未提供的技能文件仍受普通文件与 Shell 授权约束，不代表禁止读取。',
-    noResources: '此范围尚无资源。', enabled: '启用', disabled: '停用', edit: '编辑', previewFile: '预览', connectionTest: '本次连接测试', test: '测试连接', delete: '删除', deleteResource: '删除此工具资源？',
+    noResources: '此范围尚无资源。', enabled: '启用', disabled: '停用', edit: '编辑', previewFile: '预览', connectionTest: '本次连接测试', test: '测试连接', installProgram: '安装依赖', builtinBadge: '内置', copyToProject: '复制到项目', delete: '删除', deleteResource: '删除此工具资源？',
     mcpConfiguration: 'MCP 服务器配置', skillDocument: '技能文档', name: '技能名称（与 SKILL.md 的 name 一致）', packageFiles: '添加技能资源文件', packageDirectory: '导入整个技能目录', remove: '移除此附件',
     skillQueued: '项目技能操作状态：{status}。工具操作 {id} 的后续处理由 Core 审批状态决定。', skillActionFailed: '技能操作未完成：{status}', packageTooLarge: '技能包超过 16 MiB 大小限制。', assetTooLarge: '单个技能资源超过 4 MiB 大小限制。', binaryResource: '二进制资源无法在文本预览中显示。', packageChanged: '技能包内容发生变化或不可读取，请重新打开后编辑。', packageCommit: '固定提交', packageHash: '包摘要', packageSource: '来源', availability: '可用状态', pending: '处理中', invalid: '无效', pendingApproval: '等待审批', skillQueuedShared: '共享技能操作状态：{status}。工具操作 {id} 的后续处理由 Core 审批状态决定。', packageReview: '提交前确认：目标 {scope}，共 {count} 个文件，摘要由 Core 在提交时计算。'
   },

@@ -9,7 +9,7 @@ import type { Component } from 'vue'
 // so every part can be unit-tested without mounting components.
 // ---------------------------------------------------------------------------
 
-export type UiePageId = 'home' | 'settings' | 'market' | 'code' | 'debug' | 'companionCenter'
+export type UiePageId = 'home' | 'settings' | 'market' | 'marketSkills' | 'marketMcp' | 'code' | 'debug' | 'companionCenter'
 export type UieSlotId = 'left' | 'center' | 'right'
 /** secondary only exists when a column is vertically split. */
 export type UieStackId = 'primary' | 'secondary'
@@ -53,9 +53,9 @@ export interface UieLayoutSnapshot {
   /** instanceId -> instance. Cards not in any stack are still listed here. */
   cards: Record<string, PersistedCardInstance>
   focusedCardId: string | null
-  /** Column gap (px). home/settings = 8, market = 1. */
+  /** Column gap (px). home/settings/market = 8. */
   gap: number
-  /** Window-edge inset (px). home/settings = 8 (float pages); market/code/debug = 0 (app pages, flush to edges). */
+  /** Window-edge inset (px). home/settings/market = 8 (float pages); code/debug = 0 (app pages, flush to edges). */
   edgeInset: number
 }
 

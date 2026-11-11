@@ -249,6 +249,8 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
         : CoreVirtualToolPolicy.IsSpecPropose(toolId) ? CoreSpecProposalTool.ManifestEntry()
         : CoreVirtualToolPolicy.IsCorrectionTrace(toolId) ? CoreCorrectionTraceTool.ManifestEntry()
         : CoreVirtualToolPolicy.IsReadAttachment(toolId) ? CoreAttachmentReadTool.ManifestEntry()
+        : CoreVirtualToolPolicy.IsLoadSkill(toolId) ? CoreSkillLoadTool.ManifestEntry()
+        : CoreVirtualToolPolicy.IsTinadecConfig(toolId) ? CoreTinadecConfigTools.ManifestEntry(toolId)
         : TinaChatVirtualTools.ManifestEntry(toolId)
         ?? OrganizationVirtualTools.ManifestEntry(toolId)
         ?? ExplorationVirtualTools.ManifestEntry(toolId)

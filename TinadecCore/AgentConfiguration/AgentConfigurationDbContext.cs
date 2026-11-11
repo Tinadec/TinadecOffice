@@ -76,7 +76,12 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Layer).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Role).HasMaxLength(128).IsRequired();
-            entity.Property(x => x.SnapshotJson).HasMaxLength(16384).IsRequired();
+            // The snapshot carries the frozen tool surface as well as the prompt, and that
+            // surface keeps growing (the workbench tools are the latest addition). The stored
+            // columns are `text` in both provider migrations, so 16 KiB was an annotation,
+            // not a schema fact; the projection validator enforces it as a hard cap, which
+            // made a legitimate tool grant look like a corrupt document.
+            entity.Property(x => x.SnapshotJson).HasMaxLength(32768).IsRequired();
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasIndex(x => new { x.AgentDefinitionId, x.Version }).IsUnique();

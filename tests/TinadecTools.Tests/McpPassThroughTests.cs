@@ -3,6 +3,7 @@ using TinadecTools.Tools.Mcp;
 
 namespace TinadecTools.Tests;
 
+[Collection("McpRuntime")]
 public sealed class McpPassThroughTests : IAsyncLifetime
 {
     private string? _configPath;

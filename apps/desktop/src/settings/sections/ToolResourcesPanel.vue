@@ -49,8 +49,8 @@ const visibleRows = computed(() => rows.value.filter(row => scope.value === 'pro
 const activeIds = computed(() => props.selection ?? (props.inherited ? props.effectiveSelection : null) ?? rows.value.filter(row => row.enabled && (!('valid' in row) || row.valid !== false)).map(row => row.resource_id))
 const dirty = computed(() => editing.value && (content.value !== baseline.value || enabled.value !== (selected.value?.enabled ?? true) || name.value !== (selected.value?.name ?? '') || JSON.stringify(files.value) !== baselineFiles.value))
 watch(dirty, value => emit('dirty', value), { immediate: true })
-const mcpSchema: ToolJsonSchema = { type: 'object', additionalProperties: false, required: ['id', 'name', 'enabled', 'command', 'args', 'env'], properties: {
-  id: { type: 'string', minLength: 1 }, name: { type: 'string' }, enabled: { type: 'boolean' }, command: { type: 'string', minLength: 1 }, args: { type: 'array', items: { type: 'string' } }, env: { type: 'object', additionalProperties: { type: ['string', 'null'] } }, cwd: { type: ['string', 'null'] }, project_id: { type: ['string', 'null'] },
+const mcpSchema: ToolJsonSchema = { type: 'object', additionalProperties: false, required: ['id', 'name', 'enabled', 'transport', 'args', 'env', 'headers'], properties: {
+  id: { type: 'string', minLength: 1 }, name: { type: 'string' }, enabled: { type: 'boolean' }, transport: { type: 'string', enum: ['stdio', 'http', 'sse'] }, url: { type: ['string', 'null'] }, command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, env: { type: 'object', additionalProperties: { type: ['string', 'null'] } }, headers: { type: 'object', additionalProperties: { type: ['string', 'null'] } }, cwd: { type: ['string', 'null'] }, project_id: { type: ['string', 'null'] },
 } }
 const validation = computed(() => validateSettings(content.value, mcpSchema, t))
 function discard() { ++epoch; editing.value = false; selected.value = null; content.value = baseline.value = ''; name.value = ''; enabled.value = true; files.value = {}; packageLoaded.value = false; baselineFiles.value = JSON.stringify({}); previewPath.value = previewContent.value = ''; emit('dirty', false) }
@@ -118,7 +118,7 @@ async function open(row?: ToolMcpResource | ToolSkillResource) {
   discard(); editing.value = true; selected.value = row ?? null; error.value = ''; result.value = ''
   if (props.kind === 'mcp') {
     const resource = row as ToolMcpResource | undefined
-    content.value = baseline.value = formatSettings({ id: resource?.id ?? '', name: resource?.name ?? '', enabled: resource?.enabled ?? true, command: resource?.command ?? '', args: resource?.args ?? [], env: resource?.env ?? {}, cwd: resource?.cwd ?? null, project_id: resource?.project_id ?? (scope.value === 'project' ? props.projectId : null) })
+    content.value = baseline.value = formatSettings({ id: resource?.id ?? '', name: resource?.name ?? '', enabled: resource?.enabled ?? true, transport: resource?.transport ?? 'stdio', url: resource?.url ?? null, command: resource?.command ?? '', args: resource?.args ?? [], env: resource?.env ?? {}, headers: resource?.headers ?? {}, cwd: resource?.cwd ?? null, project_id: resource?.project_id ?? (scope.value === 'project' ? props.projectId : null) })
     return
   }
   name.value = row?.name ?? ''; enabled.value = row?.enabled ?? true
@@ -219,6 +219,42 @@ async function test(row: ToolMcpResource) {
   catch (err) { if (current === contextEpoch) { error.value = err instanceof Error ? err.message : String(err); connectionResults.value[row.resource_id] = { status: 'error', reason: error.value } } }
   finally { if (current === contextEpoch) busy.value = false }
 }
+function canInstallProgram(row: ToolMcpResource): boolean {
+  return /^(npx|uvx)$/i.test(row.command.trim())
+}
+/** Embedded and compatibility skills are served read-only; the save path refuses them anyway. */
+function isReadOnlySkill(row: ToolSkillResource): boolean {
+  return row.read_only === true
+}
+async function copyToProject(row: ToolSkillResource) {
+  if (!props.projectId) return
+  busy.value = true; error.value = ''
+  const current = contextEpoch
+  try {
+    const receipt = await api.copyToolSkillToProject(row.resource_id, props.projectId)
+    if (current !== contextEpoch) return
+    result.value = t('toolsSettings.skillQueued', { status: userActionStatusLabel(receipt.action_status ?? ''), id: receipt.user_action_id ?? '' })
+    if (receipt.user_action_id) followAction(receipt.user_action_id, receipt.action_status ?? '')
+    emit('changed')
+  } catch (err) { if (current === contextEpoch) error.value = err instanceof Error ? err.message : String(err) }
+  finally { if (current === contextEpoch) busy.value = false }
+}
+/** Registering a server and installing its `npx`/`uvx` program are separate governed actions. */
+async function installProgram(row: ToolMcpResource) {
+  busy.value = true; error.value = ''
+  const current = contextEpoch
+  try {
+    const preview = await api.previewToolMcpProgram(row.resource_id, props.projectId || undefined)
+    if (current !== contextEpoch) return
+    if (preview.program_status === 'installed') { result.value = formatSettings(preview); return }
+    const action = await api.installToolMcpProgram(row.resource_id, props.projectId || undefined)
+    if (current !== contextEpoch) return
+    result.value = formatSettings({ preview, action })
+    followAction(action.id, action.status)
+    emit('changed')
+  } catch (err) { if (current === contextEpoch) error.value = err instanceof Error ? err.message : String(err) }
+  finally { if (current === contextEpoch) busy.value = false }
+}
 async function remove(row: ToolMcpResource | ToolSkillResource) {
   if (!await allowDiscard()) return
   if (!await confirm({ title: t('toolsSettings.deleteResource'), message: `${row.name}\n${row.resource_id}`, confirmLabel: t('toolsSettings.delete'), cancelLabel: t('common.cancel') })) return
@@ -252,6 +288,7 @@ onBeforeUnmount(() => { ++epoch; ++contextEpoch; stopActionPoll(); chooseDraft?.
             <strong>{{ row.name }}</strong><small>{{ row.resource_id }}</small>
             <small>{{ t(row.project_id ? 'toolsSettings.projectResources' : 'toolsSettings.shared') }} · {{ t('toolsSettings.revision') }} {{ row.revision ?? 0 }}</small>
             <small v-if="'description' in row">{{ row.description }}</small>
+            <small v-if="kind === 'skills' && (row as ToolSkillResource).source_kind">{{ (row as ToolSkillResource).source_kind }}<template v-if="(row as ToolSkillResource).shadowed_by"> · shadowed</template></small>
             <small v-if="'reason' in row" :title="skillReasonTitle(row)">{{ skillReason(row) }}</small>
             <small v-if="kind === 'skills' && skillMeta(row, 'package_hash')">{{ t('toolsSettings.packageHash') }}: {{ skillMeta(row, 'package_hash') }}</small>
             <small v-if="kind === 'skills' && skillMeta(row, 'source')">{{ t('toolsSettings.packageSource') }}: {{ skillMeta(row, 'source') }}<template v-if="skillMeta(row, 'version')"> @ {{ skillMeta(row, 'version') }}</template></small>
@@ -259,10 +296,13 @@ onBeforeUnmount(() => { ++epoch; ++contextEpoch; stopActionPoll(); chooseDraft?.
             <small v-if="kind === 'mcp' && connectionResults[row.resource_id]">{{ t('toolsSettings.connectionTest') }}: {{ t(`toolsSettings.connectionStatus.${connectionResults[row.resource_id]?.status}`, connectionResults[row.resource_id]?.status ?? '') }} {{ connectionResults[row.resource_id]?.status === 'disabled' ? t('toolsSettings.connectionDisabledHint') : connectionResults[row.resource_id]?.status === 'not_reported' ? '' : connectionResults[row.resource_id]?.reason }}</small>
           </span>
         </label>
+        <UiBadge v-if="kind === 'skills' && (row as ToolSkillResource).read_only" variant="secondary">{{ t('toolsSettings.builtinBadge') }}</UiBadge>
         <UiBadge :variant="skillStatus(row) === 'invalid' || skillStatus(row) === 'pending' ? 'secondary' : row.enabled ? 'outline' : 'secondary'">{{ t(skillStatus(row) === 'invalid' ? 'toolsSettings.invalid' : skillStatus(row) === 'pending' ? 'toolsSettings.pendingApproval' : row.enabled ? 'toolsSettings.enabled' : 'toolsSettings.disabled') }}</UiBadge>
-        <UiButton variant="ghost" size="sm" :disabled="busy" @click="open(row)">{{ t('toolsSettings.edit') }}</UiButton>
+        <UiButton variant="ghost" size="sm" :disabled="busy || (kind === 'skills' && isReadOnlySkill(row as ToolSkillResource))" @click="open(row)">{{ t('toolsSettings.edit') }}</UiButton>
+        <UiButton v-if="kind === 'skills' && isReadOnlySkill(row as ToolSkillResource)" variant="ghost" size="sm" :disabled="busy || !projectId" @click="copyToProject(row as ToolSkillResource)">{{ t('toolsSettings.copyToProject') }}</UiButton>
         <UiButton v-if="kind === 'mcp'" variant="ghost" size="sm" :disabled="busy" @click="test(row as ToolMcpResource)">{{ t('toolsSettings.test') }}</UiButton>
-        <UiButton v-if="kind === 'mcp' || !row.project_id" variant="ghost" size="sm" :disabled="busy" @click="remove(row)">{{ t('toolsSettings.delete') }}</UiButton>
+        <UiButton v-if="kind === 'mcp' && canInstallProgram(row as ToolMcpResource)" variant="ghost" size="sm" :disabled="busy" @click="installProgram(row as ToolMcpResource)">{{ t('toolsSettings.installProgram') }}</UiButton>
+        <UiButton v-if="kind === 'mcp' || !row.project_id" variant="ghost" size="sm" :disabled="busy || (kind === 'skills' && isReadOnlySkill(row as ToolSkillResource))" @click="remove(row)">{{ t('toolsSettings.delete') }}</UiButton>
       </article>
     </div>
     <p v-if="kind === 'skills' && scope === 'project'" class="quiet">{{ t('toolsSettings.projectSkillRemoval') }}</p>

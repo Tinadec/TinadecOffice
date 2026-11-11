@@ -71,6 +71,9 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
     private readonly IRunTraceSearch? _runTraceSearch;
     /// <summary>One run's dossier behind <c>run_dossier</c> (B9). Optional like the trace reader.</summary>
     private readonly IRunDossier? _runDossier;
+    private readonly IToolSkillResourceService? _skillResources;
+    /// <summary>The workbench-configuration gateway behind <c>tinadec_*</c>. Optional: a trimmed host offers no such tools.</summary>
+    private readonly ITinadecConfigToolGateway? _tinadecConfig;
     /// <summary>The environment steward's registry behind <c>environment_*</c>. Optional like the archive.</summary>
     private readonly IEnvironmentRegistry? _environments;
     /// <summary>Standing approvals a person gave (todo E7): command prefixes honored at prepare, shell's per-session delegation opt-in re-checked at the gates.</summary>
@@ -106,7 +109,9 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         IExplorationGraph? exploration = null,
         IPlanLedger? planLedger = null,
         IRunTraceSearch? runTraceSearch = null,
-        IRunDossier? runDossier = null)
+        IRunDossier? runDossier = null,
+        IToolSkillResourceService? skillResources = null,
+        ITinadecConfigToolGateway? tinadecConfig = null)
     {
         _provider = provider;
         _scopeResolver = scopeResolver;
@@ -134,6 +139,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         _planLedger = planLedger;
         _runTraceSearch = runTraceSearch;
         _runDossier = runDossier;
+        _skillResources = skillResources;
+        _tinadecConfig = tinadecConfig;
     }
 
     public Task<ToolDispatchResultDto> ExecuteAsync(ToolDispatchRequestDto request, CancellationToken cancellationToken = default) =>
@@ -898,6 +905,18 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             // The run engine executes task_wait and plan_update against the task graph it owns;
             // reaching the dispatcher means the call came from outside a worker's tool loop.
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = $"{wire.ToolId} can only be called from inside a run's tool loop." };
+        }
+
+        if (CoreVirtualToolPolicy.IsLoadSkill(wire.ToolId))
+        {
+            return await CoreSkillLoadTool.ExecuteAsync(_skillResources, scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (CoreVirtualToolPolicy.IsTinadecConfig(wire.ToolId))
+        {
+            return _tinadecConfig is null
+                ? new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "Workbench configuration tools are not available in this host." }
+                : await _tinadecConfig.ExecuteAsync(wire.ToolId, scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
         if (CoreVirtualToolPolicy.IsReadAttachment(wire.ToolId))

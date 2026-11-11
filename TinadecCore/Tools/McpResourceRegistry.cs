@@ -59,14 +59,33 @@ public sealed class McpResourceRegistry(IDbContextFactory<ToolsSettingsDbContext
             }
             references = next;
         }
+        var headerReferences = row is null ? new Dictionary<string, string>() : ParseReferences(row.HeaderReferencesJson);
+        if (input.Headers is not null)
+        {
+            var next = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in input.Headers)
+            {
+                if (pair.Value is null) continue;
+                if (pair.Value == Mask)
+                {
+                    if (!headerReferences.TryGetValue(pair.Key, out var existing)) throw new ToolSettingsException("missing_mcp_secret", "A masked header value needs an existing secret.");
+                    next[pair.Key] = existing;
+                }
+                else next[pair.Key] = await secrets.PutAsync("mcp-header-" + Guid.NewGuid().ToString("N"), pair.Value, cancellationToken);
+            }
+            headerReferences = next;
+        }
         // Deleted rows keep old versioned secret references, while their identity is reusable.
         var deleted = await db.McpResources.Where(x => x.TenantId == actor.TenantId && x.WorkspaceId == actor.WorkspaceId && x.ScopeKey == scope && x.ServerId == input.Id && x.DeletedAt != null).ToListAsync(cancellationToken);
         foreach (var old in deleted) old.ServerId = "deleted-" + old.Id.ToString("N");
         if (row is null) { row = new() { Id = Guid.NewGuid(), TenantId = actor.TenantId, WorkspaceId = actor.WorkspaceId, ProjectId = input.ProjectId, ScopeKey = scope }; db.McpResources.Add(row); }
-        row.ServerId = input.Id; row.Name = string.IsNullOrWhiteSpace(input.Name) ? input.Id : input.Name; row.Command = input.Command;
-        row.Enabled = input.Enabled; row.ArgsJson = JsonSerializer.Serialize(input.Args); row.SecretReferencesJson = JsonSerializer.Serialize(references); row.Cwd = input.Cwd;
+        row.ServerId = input.Id; row.Name = string.IsNullOrWhiteSpace(input.Name) ? input.Id : input.Name;
+        row.Transport = NormalizeTransport(input.Transport); row.Url = string.IsNullOrWhiteSpace(input.Url) ? null : input.Url.Trim();
+        row.Command = input.Command;
+        row.Enabled = input.Enabled; row.ArgsJson = JsonSerializer.Serialize(input.Args); row.SecretReferencesJson = JsonSerializer.Serialize(references);
+        row.HeaderReferencesJson = JsonSerializer.Serialize(headerReferences); row.Cwd = input.Cwd;
         row.Revision++; row.UpdatedAt = DateTimeOffset.UtcNow; row.UpdatedByPrincipalId = actor.PrincipalId;
-        row.ConfigurationHash = ToolSettingsSchema.Hash(JsonSerializer.SerializeToElement(new { row.Id, row.ServerId, row.Name, row.Command, row.ArgsJson, row.SecretReferencesJson, row.Cwd, row.Enabled, row.Revision }));
+        row.ConfigurationHash = ToolSettingsSchema.Hash(JsonSerializer.SerializeToElement(new { row.Id, row.ServerId, row.Name, row.Transport, row.Url, row.Command, row.ArgsJson, row.SecretReferencesJson, row.HeaderReferencesJson, row.Cwd, row.Enabled, row.Revision }));
         try { await db.SaveChangesAsync(cancellationToken); }
         catch (DbUpdateException) { throw new ToolSettingsException("revision_conflict", "MCP resources changed concurrently. Reload before saving.", 412); }
         return ToDto(row);
@@ -108,10 +127,40 @@ public sealed class McpResourceRegistry(IDbContextFactory<ToolsSettingsDbContext
     private static string Scope(Guid? id) => id is null ? "shared" : "project:" + id.Value.ToString("N");
     private static void ValidateInput(McpResourceWriteDto input)
     {
-        if (string.IsNullOrWhiteSpace(input.Id) || input.Id.Length > 128 || input.Id.Any(c => !(char.IsLetterOrDigit(c) || c is '_' or '-' or '.')) || string.IsNullOrWhiteSpace(input.Command) || input.Command.Length > 2048 || input.Name is null || input.Name.Length > 256 || input.Args is null || input.Args.Count > 256 || input.Args.Any(x => x is null || x.Length > 8192) || input.Cwd?.Length > 2048 || input.Env?.Count > 128) throw new ToolSettingsException("invalid_mcp_resource", "Invalid MCP server identity, command, arguments or environment.");
-        if (input.Env is not null && input.Env.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Key.Length > 128 || x.Key.Contains('=') || x.Key.Contains('\0') || x.Value?.Length > 32768)) throw new ToolSettingsException("invalid_mcp_environment", "Invalid MCP environment name or value.");
+        var transport = NormalizeTransport(input.Transport);
+        if (string.IsNullOrWhiteSpace(input.Id) || input.Id.Length > 128 || input.Id.Any(c => !(char.IsLetterOrDigit(c) || c is '_' or '-' or '.')) || input.Name is null || input.Name.Length > 256
+            || input.Args is null || input.Args.Count > 256 || input.Args.Any(x => x is null || x.Length > 8192) || input.Cwd?.Length > 2048
+            || input.Env?.Count > 128 || input.Headers?.Count > 64)
+            throw new ToolSettingsException("invalid_mcp_resource", "Invalid MCP server identity, transport, command, arguments, environment or headers.");
+        if (transport == "stdio")
+        {
+            if (string.IsNullOrWhiteSpace(input.Command) || input.Command.Length > 2048)
+                throw new ToolSettingsException("invalid_mcp_resource", "A stdio MCP server needs a command.");
+            if (!string.IsNullOrWhiteSpace(input.Url) || input.Headers is { Count: > 0 })
+                throw new ToolSettingsException("invalid_mcp_resource", "A stdio MCP server cannot carry a URL or HTTP headers.");
+        }
+        else
+        {
+            if (!Uri.TryCreate(input.Url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) || input.Url!.Length > 2048)
+                throw new ToolSettingsException("invalid_mcp_url", "An HTTP/SSE MCP server needs an absolute http(s) URL.");
+            if (!string.IsNullOrWhiteSpace(input.Command))
+                throw new ToolSettingsException("invalid_mcp_resource", "An HTTP/SSE MCP server cannot carry a stdio command.");
+        }
+        if (input.Env is not null && input.Env.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Key.Length > 128 || x.Key.Contains('=') || x.Key.Contains('\0') || x.Value?.Length > 32768))
+            throw new ToolSettingsException("invalid_mcp_environment", "Invalid MCP environment name or value.");
+        if (input.Headers is not null && input.Headers.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Key.Length > 128
+            || x.Key.Any(c => c <= ' ' || c >= 127 || c is ':' or '\0') || x.Value?.Length > 32768))
+            throw new ToolSettingsException("invalid_mcp_headers", "Invalid MCP header name or value.");
     }
+
+    private static string NormalizeTransport(string? transport) => (transport ?? "").Trim().ToLowerInvariant() switch
+    {
+        "" or "stdio" => "stdio",
+        "http" or "streamable-http" or "streamable_http" => "http",
+        "sse" => "sse",
+        _ => throw new ToolSettingsException("invalid_mcp_transport", "MCP transport must be stdio, http or sse."),
+    };
     private static Dictionary<string,string> ParseReferences(string json) => JsonSerializer.Deserialize<Dictionary<string,string>>(json) ?? [];
-    private static ToolMcpServerSnapshotDto ToSnapshot(McpResourceRecord row) => new() { ResourceId = row.Id, Id = row.ServerId, Name = row.Name, Command = row.Command, Args = JsonSerializer.Deserialize<string[]>(row.ArgsJson) ?? [], SecretReferences = ParseReferences(row.SecretReferencesJson), Cwd = row.Cwd, Revision = row.Revision, ConfigurationHash = row.ConfigurationHash };
-    private static McpResourceDto ToDto(McpResourceRecord row) => new() { ResourceId = row.Id, ProjectId = row.ProjectId, Id = row.ServerId, Name = row.Name, Enabled = row.Enabled, Command = row.Command, Args = JsonSerializer.Deserialize<string[]>(row.ArgsJson) ?? [], Env = ParseReferences(row.SecretReferencesJson).ToDictionary(x => x.Key, _ => (string?)Mask), Cwd = row.Cwd, Revision = row.Revision, ConfigurationHash = row.ConfigurationHash, UpdatedAt = row.UpdatedAt, ImportSource = row.ImportSource };
+    private static ToolMcpServerSnapshotDto ToSnapshot(McpResourceRecord row) => new() { ResourceId = row.Id, Id = row.ServerId, Name = row.Name, Transport = row.Transport, Url = row.Url, Command = row.Command, Args = JsonSerializer.Deserialize<string[]>(row.ArgsJson) ?? [], SecretReferences = ParseReferences(row.SecretReferencesJson), HeaderSecretReferences = ParseReferences(row.HeaderReferencesJson), Cwd = row.Cwd, Revision = row.Revision, ConfigurationHash = row.ConfigurationHash };
+    private static McpResourceDto ToDto(McpResourceRecord row) => new() { ResourceId = row.Id, ProjectId = row.ProjectId, Id = row.ServerId, Name = row.Name, Enabled = row.Enabled, Transport = row.Transport, Url = row.Url, Command = row.Command, Args = JsonSerializer.Deserialize<string[]>(row.ArgsJson) ?? [], Env = ParseReferences(row.SecretReferencesJson).ToDictionary(x => x.Key, _ => (string?)Mask), Headers = ParseReferences(row.HeaderReferencesJson).ToDictionary(x => x.Key, _ => (string?)Mask), Cwd = row.Cwd, Revision = row.Revision, ConfigurationHash = row.ConfigurationHash, UpdatedAt = row.UpdatedAt, ImportSource = row.ImportSource };
 }

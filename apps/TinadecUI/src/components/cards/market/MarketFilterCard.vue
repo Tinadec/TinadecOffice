@@ -7,6 +7,7 @@ import {
   PlugZap,
   RefreshCw,
   Search,
+  Settings,
   Store,
   Terminal,
   ToggleLeft,
@@ -16,6 +17,7 @@ import {
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { requestSettingsSection } from '@/lib/pageRequests'
 import { UiBadge, UiButton, UiInput, UiLabel, UiSelectField } from '@/components/ui'
 import {
   catalogKindLabel, kindOptions as _kindOptions, marketController, sourceKindLabel,
@@ -25,7 +27,7 @@ const { t } = useI18n()
 const router = useRouter()
 
 const {
-  sources, supportedKinds, kindFilter, sourceFilter, query, busy,
+  sources, supportedKinds, kindFilter, sourceFilter, query, busy, kindLocked,
   sourceForm, loadCatalog, addSource, refreshSource, toggleSource, removeSource,
 } = marketController
 
@@ -37,6 +39,12 @@ const sourceKindOptions = computed(() => supportedKinds.value.map(kind => ({ val
 function filterLabel(key: string) {
   return key === 'all' ? t('market.filterAll') : catalogKindLabel(key)
 }
+
+/** Installed resources are managed next to their bindings in Settings → Tools, not duplicated here. */
+function manageInstalled() {
+  requestSettingsSection('tools')
+  router.push('/settings')
+}
 </script>
 
 <template>
@@ -46,7 +54,7 @@ function filterLabel(key: string) {
         <ArrowLeft :size="16" />
       </UiButton>
       <div>
-        <h1>{{ t('market.title') }}</h1>
+        <h1>{{ kindLocked ? filterLabel(kindFilter) : t('market.title') }}</h1>
         <p>{{ t('market.subtitle') }}</p>
       </div>
     </div>
@@ -59,7 +67,7 @@ function filterLabel(key: string) {
       </UiButton>
     </div>
 
-    <div class="market-filter-list">
+    <div v-if="!kindLocked" class="market-filter-list">
       <UiButton
         v-for="option in kindOptions"
         :key="option.key"
@@ -121,6 +129,11 @@ function filterLabel(key: string) {
         {{ t('market.add') }}
       </UiButton>
     </div>
+
+    <UiButton variant="ghost" size="sm" class="w-full justify-start" data-testid="market-manage-installed" @click="manageInstalled">
+      <Settings :size="14" />
+      {{ t('settings.toolLayer') }}
+    </UiButton>
   </aside>
 </template>
 

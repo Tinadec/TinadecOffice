@@ -10,8 +10,26 @@ public static class ToolSkillEndpoints
         var group = app.MapGroup("/api/v1/tools/skills").WithTags("Tool Skills");
         group.MapGet("", async (Guid? project_id, IToolSkillResourceService skills, CancellationToken ct) =>
         {
-            try { return Results.Ok(await skills.ListAsync(project_id, ct)); } catch (ToolSettingsException ex) { return Problem(ex); }
+            try { return Results.Ok(await skills.ListAsync(project_id, includeBuiltins: true, ct)); } catch (ToolSettingsException ex) { return Problem(ex); }
         }).Produces<ToolSkillListDto>();
+        group.MapGet("/diagnostics", async (Guid? project_id, IToolSkillResourceService skills, CancellationToken ct) =>
+        {
+            try
+            {
+                var list = await skills.ListAsync(project_id, includeBuiltins: true, ct);
+                return Results.Ok(new
+                {
+                    source = list.Source,
+                    skills = list.Skills.Select(x => new
+                    {
+                        x.ResourceId, x.Name, x.SourceKind, x.Scope, x.Rank, x.Enabled, x.Valid,
+                        x.ShadowedBy, x.ReadOnly, x.ReasonCode, x.Path,
+                    }).ToArray(),
+                    diagnostics = list.Diagnostics,
+                });
+            }
+            catch (ToolSettingsException ex) { return Problem(ex); }
+        });
         group.MapGet("/{resourceId:guid}", async (Guid resourceId, Guid? project_id, HttpResponse response, IToolSkillResourceService skills, CancellationToken ct) =>
         {
             try
@@ -23,6 +41,11 @@ public static class ToolSkillEndpoints
             }
             catch (ToolSettingsException ex) { return Problem(ex); }
         }).Produces<ToolSkillResourceDto>().Produces(StatusCodes.Status404NotFound);
+        group.MapPost("/{resourceId:guid}/copy-to-project", async (Guid resourceId, Guid project_id, IToolSkillResourceService skills, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await skills.RequestCopyToProjectAsync(resourceId, project_id, ct)); }
+            catch (ToolSettingsException ex) { return Problem(ex); }
+        }).Produces<ToolSkillResourceDto>().ProducesProblem(400).ProducesProblem(404).ProducesProblem(409);
         group.MapGet("/{resourceId:guid}/files", async (Guid resourceId, Guid? project_id, string path, IToolSkillResourceService skills, CancellationToken ct) =>
         {
             try

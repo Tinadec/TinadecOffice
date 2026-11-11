@@ -9,6 +9,7 @@ import {
   Archive,
   ArrowRightLeft,
   Bot,
+  PlugZap,
   Bug,
   ChevronRight,
   FolderOpen,
@@ -94,6 +95,8 @@ const emit = defineEmits<{
   'go-settings': []
   'go-personal': []
   'go-market': []
+  'go-market-skills': []
+  'go-market-mcp': []
   'go-buddy': []
   'go-companion-center': []
   /** Companion-domain shortcuts: which view the centre should show next. */
@@ -736,6 +739,28 @@ watch([displayName, () => props.collapsed], async () => {
       >
         <Store :size="16" class="sidebar-icon" />
         <span class="sidebar-label">{{ t('sidebar.market') }}</span>
+      </UiButton>
+      <UiButton
+        variant="ghost"
+        size="sm"
+        class="sidebar-nav-item w-full justify-start"
+        :title="t('market.kindSkill')"
+        data-testid="sidebar-market-skills"
+        @click="emit('go-market-skills')"
+      >
+        <Bot :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('market.kindSkill') }}</span>
+      </UiButton>
+      <UiButton
+        variant="ghost"
+        size="sm"
+        class="sidebar-nav-item w-full justify-start"
+        :title="t('market.kindMcpServer')"
+        data-testid="sidebar-market-mcp"
+        @click="emit('go-market-mcp')"
+      >
+        <PlugZap :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('market.kindMcpServer') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"

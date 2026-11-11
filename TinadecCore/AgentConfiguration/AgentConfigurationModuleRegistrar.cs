@@ -16,6 +16,8 @@ public sealed class AgentConfigurationModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<AgentConfigurationDbContext>>();
         builder.Services.AddSingleton<AgentConfigurationService>();
         builder.Services.AddSingleton<IAgentConfigurationService>(sp => sp.GetRequiredService<AgentConfigurationService>());
+        builder.Services.AddSingleton<AgentTopologyService>();
+        builder.Services.AddSingleton<IAgentTopologyService>(sp => sp.GetRequiredService<AgentTopologyService>());
         builder.Services.AddSingleton<AgentPackService>();
         builder.Services.AddSingleton<IAgentPackService>(sp => sp.GetRequiredService<AgentPackService>());
         builder.Services.AddSingleton<IAgentVersionSnapshotReader, AgentVersionSnapshotReader>();

@@ -85,6 +85,9 @@ public static class TinadecCoreServiceCollectionExtensions
         // The session as a graph (runs, instances, tasks, leases, organization members): composed here
         // because only the host reads across those modules. Serves graph_view and the topology endpoint.
         services.AddSingleton<ISessionTopology, SessionTopologyService>();
+        // The tinadec_* workbench tools: Tools only knows the port, Runtime owns the
+        // implementation because configuration, skills, MCP and market all meet here.
+        services.AddSingleton<ITinadecConfigToolGateway, TinadecConfigToolGateway>();
         // TinaChat turns are owed by durable rows, not by this process: one singleton scheduler drains them.
         services.AddSingleton<TinaChatWakeService>();
         services.AddHostedService(sp => sp.GetRequiredService<TinaChatWakeService>());

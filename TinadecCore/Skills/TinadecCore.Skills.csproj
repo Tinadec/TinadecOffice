@@ -16,4 +16,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="BuiltinSkills\**\*" LogicalName="builtin-skills/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>
