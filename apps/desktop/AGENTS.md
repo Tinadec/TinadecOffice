@@ -1,5 +1,15 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-11-12 macOS 封印分两步：先签暂存 runtime，再签 bundle
+
+**签名顺序不是风格问题，是发版门禁。** Office 渠道的模块归档由 `package-office-channel.mjs` 从 `apps/desktop/runtime`（暂存目录）打包，而 `verify-office-channel.mjs` 要求归档条目与 `mac-arm64/TinadecOffice.app/Contents/Resources/runtime` 里的副本逐字节相等。因此：
+
+1. `package.mjs` 在 darwin 上调 `signStagedRuntime()`，先把暂存目录里 5 个 runtime Mach-O 签好，electron-builder 之后复制出去的每一份都带着同一份签名字节；
+2. `afterPack`（`scripts/sign-mac-adhoc.mjs`）只签 Helpers → Frameworks → `.app`，**不要再签 bundle 内的 runtime 副本**，否则字节又变一次；
+3. `afterPack` 末尾用 `assertBundledRuntimeMatches()` 逐字节比较 bundled 与暂存副本，不一致时在打包目录里就报出具体文件。
+
+定位是 `indexOf(...) < indexOf(...)` 的测试断言在目标缺失时会拿 `-1` 恒真——夹具必须真的创建 `chrome_crashpad_handler`，并先断言索引 `>= 0`。
+
 ## 2026-11-11 Skill/MCP 市场三页、图编辑边键与内置技能只读面
 
 **市场是三个 UIE 页面，不是三个筛选状态。** `/market`、`/market/skills`、`/market/mcp` 分别用 `market` / `marketSkills` / `marketMcp` 三个 `UiePageId`，共用 `marketFilter/Catalog/Detail` 三张卡；`MarketPage.vue` 从 `route.meta.uiePage|marketKind` 取页 id 与锁定 kind，并在路由复用同一个组件时 `watch` 重新 `showPage` + `setKind`。`repair.ts` 的合法页、边距、空市场回退三处都要认这三个 id，否则冷启动掉回 Home 或空白。`AppSidebar` 增加 Skills/MCP 入口并 `emit('go-market-skills'|'go-market-mcp')`，`appCommands.ts` 增加 `view.goMarketSkills|Mcp`；标签复用 `market.kindSkill` / `market.kindMcpServer`，不要为它们另造 locale key。
