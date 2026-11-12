@@ -7,6 +7,16 @@
 **Last Verified Commit:** fa671c5c + 本轮工作树（扩展层 M1/M2/M3/M4；未提交）
 **Branch:** main
 
+### 2026-11-12 启动容错：坏配置降级、投影与迁移解耦
+
+**建表不再先过配置校验。** `AddTinadecConfigurationFiles` 为每个带投影的上下文额外注册 `IRawDbContextFactory<T>`（`Persistence/IRawDbContextFactory.cs`），`DbContextMigrationParticipant<T>` 优先用它建库；没有注册的上下文（无投影）回落到既有工厂。语义边界：投影感知工厂 `IDbContextFactory<T>.CreateDbContextAsync` **仍然**在坏文档时抛 `ConfigurationDocumentException`（既有用例与调用方不变），只是迁移路径不再经过它。
+
+**启动失败 = 可诊断状态，不是 abort。** `StartupConfigurationState`（Persistence）只在 `ConfigurationDocumentException` 上降级（`IsRecoverable`）；`Api/Program.cs` 的迁移块与 seed/reconcile 块各自 try/catch 后继续 `app.Run()`。`ReadinessService` 新增 `configuration` 项：有诊断时 `blocked` + `reason_code`，干净启动 `ready`；收据的其它十项与总体规则未变。**注意**：`CleanupAsync`/`CompileAsync` 这类显式路径仍按原语义抛错，别把降级理解成"坏配置可以继续跑取数"。
+
+**诊断文案分开。** `ConfigurationProjectionCoordinator.ThrowDiagnostics` 用 `configuration_missing`（提示恢复文件）与 `configuration_invalid`（带首条诊断原文）替代过去的同一句 `Configuration document 'x' is invalid.`；code 与诊断对象不变。
+
+**踩过的坑（别重犯）**：想加"比本二进制更新的迁移"守卫时，不要在单个 `DbContextMigrationParticipant` 里比较 `GetAppliedMigrations()` 与 `GetMigrations()` —— 多个上下文共用同一张 `__EFMigrationsHistory`，每个上下文都会把别的上下文的行当成"未知迁移"，结果是所有共享库的测试一起红（`ApiEndpointTests` 7 例）。要做需要在 runner 层用全体参与者的迁移全集比较。
+
 ### 2026-11-11 扩展层：内置 Skill、分层技能目录与 Agent 配置工具
 
 **内置技能是嵌入资源，不落用户磁盘。** `Skills/BuiltinSkillCatalog.cs` 从 `TinadecCore.Skills.dll` 的 `builtin-skills/<name>/...` 资源加载 4 个包，按 `WorkspaceSkillPolicy.Check` 校验 frontmatter，资源包哈希与 `ResourceId` 稳定。`TinadecCore.Skills.csproj` 用 `EmbeddedResource Include="BuiltinSkills\**\*" LogicalName="builtin-skills/%(RecursiveDir)%(Filename)%(Extension)"` 保留包内路径；Windows 上资源名带反斜杠，目录加载器会归一化为 `/`。

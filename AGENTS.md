@@ -9,6 +9,16 @@
 
 > The metadata above is advisory and goes stale by design. Never treat an "implemented/current" claim in this file as fact without verifying it against source and tests.
 
+### 2026-11-12 安装可用性：mac 封印、Core 启动容错与 dev 数据根隔离
+
+**macOS 的「App 已损坏」是封印缺失，不是缺公证。** `build.mac.identity` 仍是 `null`（没有 Developer ID），但 electron-builder 现在会跑 `afterPack: scripts/sign-mac-adhoc.mjs`：由内向外签 Helper .app → Framework 内 Helpers → Framework → `Contents/Resources/runtime` 下 5 个 Mach-O → .app。没有这一步，产物保留预编译 Electron 的空壳签名（Identifier=Electron、linker-signed、Sealed Resources=none），带 quarantine 的下载会被判「已损坏」，用户连右键放行的入口都没有；有完整封印之后才是常规的「无法验证开发者」。CI 的 mac 腿新增 `codesign --verify --deep --strict` + 代码标识断言（`com.tinadec.office`），因为既有 smoke 是直接跑挂载点里的二进制，从不经过 Gatekeeper。**仍然未做**：Developer ID + 公证（`notarytool`/`stapler`）与 entitlements；同一份签名清单加 `--options runtime` 与时间戳即可复用。
+
+**Core 启动不再被一份坏配置打死。** 协调迁移改用 `IRawDbContextFactory<T>`（不挂投影），所以建表不依赖配置校验；`Program` 把配置投影失败捕获进 `StartupConfigurationState` 并继续 `app.Run()`，`/api/v1/readiness` 新增 `configuration` 项（blocked + reason_code）承载原因，数据库/磁盘类错误仍 fail-fast。诊断文案区分 `configuration_missing` 与 `configuration_invalid`（后者带首条诊断原文）。
+
+**开发与安装版分根。** `npm run dev` 的三个宿主统一 `TINADEC_HOME=<repo>/.tinadec-dev`（显式设置仍优先），与 smoke 脚本一致；此前 dev 直接写 `~/.tinadec`，其 32768 快照与 `202611110001_McpTransport` 迁移让 10/28 构建的 0.4.1 一启动即崩。
+
+**桌面端启动失败带原因。** `serviceManager` 记录子进程 stderr 的最后一条失败行，作为 `error.diagnostic`+`exitCode` 抛出；`main.cjs` 在启动失败处落日志。UI 仍使用脱敏后的固定文案。
+
 ### 2026-11-11 扩展层：内置 Skill、分层加载器、Agent 配置工具与 Skill/MCP 市场页
 
 **Skill 加载器不再只有「项目目录里找 SKILL.md」。** `TinadecCore/Skills/BuiltinSkillCatalog.cs` 从 Skills 程序集嵌入资源加载 4 个只读内置技能（`tinadec-workbench` / `tinadec-skill-authoring` / `tinadec-mcp-setup` / `tinadec-market`），`ToolSkillResourceService.ListAsync(projectId, includeBuiltins, ct)` 把它们与项目 `.tinadec/skills`、用户 `~/.tinadec/skills`、兼容根 `.agents/skills` 按 rank 合并：项目 100 < 用户 300 < 兼容 400/500 < 内置 900，低 rank 胜出；败者保留 `shadowed_by` 诊断而不是消失。内置与兼容根 `read_only=true`，保存/删除返回 `read_only_skill`；显式 `resource_id` 绑定仍可选中被同名遮蔽的副本，自动选择则排除它们。
