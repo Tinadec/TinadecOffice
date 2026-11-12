@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Api.Tests;
 
@@ -164,6 +165,30 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         Assert.Equal("ready", database.GetProperty("status").GetString());
         var coreStorage = itemList.Single(item => item.GetProperty("id").GetString() == "core_storage");
         Assert.Equal("ready", coreStorage.GetProperty("status").GetString());
+
+        // An invalid configuration document must still produce a receipt: the row names the code and
+        // keeps document/driver text out of the response body (that detail stays in the Core log).
+        var startup = _factory.Services.GetRequiredService<StartupConfigurationState>();
+        try
+        {
+            startup.Record("projection", "configuration_invalid",
+                "Configuration document 'agents' failed validation: agent_versions.snapshot_json: value exceeds the supported length.",
+                [new ConfigurationDiagnostic("configuration_schema", "agent_versions.snapshot_json: value exceeds the supported length.")]);
+            var withFailure = await client.GetAsync("/api/v1/readiness");
+            Assert.Equal(HttpStatusCode.OK, withFailure.StatusCode);
+            var failedBody = await withFailure.Content.ReadAsStringAsync();
+            using var failedDoc = JsonDocument.Parse(failedBody);
+            var configuration = failedDoc.RootElement.GetProperty("items").EnumerateArray()
+                .Single(item => item.GetProperty("id").GetString() == "configuration");
+            Assert.Equal("blocked", configuration.GetProperty("status").GetString());
+            Assert.Equal("configuration_invalid", configuration.GetProperty("reason_code").GetString());
+            Assert.DoesNotContain("snapshot_json", failedBody);
+            Assert.Contains("configuration_schema", failedBody);
+        }
+        finally
+        {
+            startup.Clear();
+        }
 
         // Module registration facts stay on the harness manifest.
         var manifestResponse = await client.GetAsync("/api/v1/harness/manifest");

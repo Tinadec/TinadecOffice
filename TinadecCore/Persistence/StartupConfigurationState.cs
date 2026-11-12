@@ -23,6 +23,12 @@ public sealed class StartupConfigurationState
 
     public bool IsBroken => Diagnostics.Count > 0;
 
+    /// <summary>Drops recorded diagnostics; used by hosts that repair a configuration and retry.</summary>
+    public void Clear()
+    {
+        lock (_gate) _diagnostics = [];
+    }
+
     /// <summary>
     /// Startup failures that must not abort the process. Everything else (a missing database, a
     /// disk error) still fails fast exactly as before.
