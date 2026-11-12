@@ -99,11 +99,12 @@ using (var scope = app.Services.CreateScope())
     var connection = scope.ServiceProvider.GetRequiredService<IDatabaseConnectionInfo>();
     if (storageOptions.Enabled && connection.IsConfigured)
     {
+        var abandonedPurges = 0;
         try
         {
             await scope.ServiceProvider.GetRequiredService<IStorageMigrationRunner>().RunAsync();
             await scope.ServiceProvider.GetRequiredService<TinadecCore.Lifecycle.StorageLifecycleService>().ReconcileAsync();
-            if (scopesEnabled) await scope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>().RecoverPendingPurgesAsync();
+            if (scopesEnabled) abandonedPurges = (await scope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>().RecoverPendingPurgesAsync()).Count;
         }
         catch (Exception error) when (StartupConfigurationState.IsRecoverable(error))
         {
@@ -111,6 +112,14 @@ using (var scope = app.Services.CreateScope())
             app.Logger.LogError(error,
                 "Storage startup continued with {Count} configuration diagnostic(s); see /api/v1/readiness.",
                 startupConfiguration.Diagnostics.Count);
+        }
+        if (abandonedPurges > 0)
+        {
+            // An abandoned purge means a delete did not finish: say so in the receipt instead of leaving
+            // it to look like a completed cleanup.
+            startupConfiguration.Record("purge", "session_purge_abandoned",
+                abandonedPurges + " interrupted session purge(s) were abandoned after a configuration error; their data is still on disk.");
+            app.Logger.LogError("Abandoned {Count} session purge journal(s) after a configuration error.", abandonedPurges);
         }
     }
 }
