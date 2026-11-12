@@ -25,6 +25,8 @@ if (builder.Configuration.GetValue<bool>("Logging:EventLog:Enabled"))
 
 // Shared database abstraction (SQLite default; PostgreSQL optional) before business modules.
 builder.Services.AddTinadecPersistence(builder.Configuration, builder.Environment.ContentRootPath);
+// Startup keeps running when a configuration document is invalid; the state is what /readiness reports.
+builder.Services.AddSingleton<StartupConfigurationState>();
 
 // Register all TinadecCore modules, then the mountable HTTP layer.
 if (scopesEnabled) builder.Services.AddHostedService<StorageHostShutdownService>();
@@ -54,25 +56,48 @@ if (scopesEnabled) app.UseTinadecStorageScopes();
 app.MapOpenApi("/openapi/core.json").WithSummary("TinadecCore internal OpenAPI");
 
 // SQLite migrates at local startup. PostgreSQL only does so when explicitly configured.
+// A configuration document that fails validation is recorded, not fatal: the process must still
+// reach app.Run() so a client can read /api/v1/readiness and the per-scope availability rows that
+// name the broken file. Anything else (no database, disk error) keeps failing fast as before.
+var startupConfiguration = app.Services.GetRequiredService<StartupConfigurationState>();
 using (var scope = app.Services.CreateScope())
 {
     var storageOptions = scope.ServiceProvider.GetRequiredService<IOptions<TinadecPersistenceOptions>>().Value;
     var connection = scope.ServiceProvider.GetRequiredService<IDatabaseConnectionInfo>();
     if (storageOptions.Enabled && connection.IsConfigured)
     {
-        await scope.ServiceProvider.GetRequiredService<IStorageMigrationRunner>().RunAsync();
-        await scope.ServiceProvider.GetRequiredService<TinadecCore.Lifecycle.StorageLifecycleService>().ReconcileAsync();
-        if (scopesEnabled) await scope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>().RecoverPendingPurgesAsync();
+        try
+        {
+            await scope.ServiceProvider.GetRequiredService<IStorageMigrationRunner>().RunAsync();
+            await scope.ServiceProvider.GetRequiredService<TinadecCore.Lifecycle.StorageLifecycleService>().ReconcileAsync();
+            if (scopesEnabled) await scope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>().RecoverPendingPurgesAsync();
+        }
+        catch (Exception error) when (StartupConfigurationState.IsRecoverable(error))
+        {
+            startupConfiguration.Record("storage", error);
+            app.Logger.LogError(error,
+                "Storage startup continued with {Count} configuration diagnostic(s); see /api/v1/readiness.",
+                startupConfiguration.Diagnostics.Count);
+        }
     }
 }
 
 // Idempotent dev bootstrap: chat route + planner/executor agents when missing.
 using (var seedScope = app.Services.CreateScope())
 {
-    if (!scopesEnabled || initialConfiguration)
-        await TinadecCore.Runtime.DevSeed.SeedIfMissingAsync(seedScope.ServiceProvider, CancellationToken.None);
-    if (scopesEnabled)
-        await seedScope.ServiceProvider.GetRequiredService<IConfigurationProjectionCoordinator>().ReconcileAsync();
+    try
+    {
+        if (!scopesEnabled || initialConfiguration)
+            await TinadecCore.Runtime.DevSeed.SeedIfMissingAsync(seedScope.ServiceProvider, CancellationToken.None);
+        if (scopesEnabled)
+            await seedScope.ServiceProvider.GetRequiredService<IConfigurationProjectionCoordinator>().ReconcileAsync();
+    }
+    catch (Exception error) when (StartupConfigurationState.IsRecoverable(error))
+    {
+        startupConfiguration.Record("projection", error);
+        app.Logger.LogError(error,
+            "Configuration projection attach was skipped at startup; requests will report the document diagnostics.");
+    }
 }
 
 // Complete /api/v1 route surface lives in the packable TinadecCore.AspNetCore layer.

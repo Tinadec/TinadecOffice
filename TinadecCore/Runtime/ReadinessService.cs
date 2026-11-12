@@ -49,7 +49,7 @@ public sealed record ReadinessReceipt
 }
 
 /// <summary>
-/// Aggregates the ten fixed readiness items: database, core_storage, agent_pack,
+/// Aggregates the fixed readiness items: configuration, database, core_storage, agent_pack,
 /// default_mode, model_provider, model_secret, model_route, model_probe,
 /// tool_provider, manifest_hash. Every item carries an actionable <see cref="ReadinessItem.Action"/>
 /// (a command or a model-center page hint) so a clean environment always shows the
@@ -70,6 +70,7 @@ public sealed class ReadinessService
     private readonly IToolProvider _toolProvider;
     private readonly ModelProbeService _modelProbe;
     private readonly IConfiguration _configuration;
+    private readonly StartupConfigurationState? _startup;
     private readonly ILogger<ReadinessService>? _logger;
     private readonly object _toolGate = new();
     private (DateTimeOffset ExpiresAt, ReadinessItem ToolProvider, ReadinessItem ManifestHash)? _toolCache;
@@ -86,7 +87,8 @@ public sealed class ReadinessService
         IToolProvider toolProvider,
         ModelProbeService modelProbe,
         IConfiguration configuration,
-        ILogger<ReadinessService>? logger = null)
+        ILogger<ReadinessService>? logger = null,
+        StartupConfigurationState? startup = null)
     {
         _database = database;
         _agentConfig = agentConfig;
@@ -100,13 +102,15 @@ public sealed class ReadinessService
         _modelProbe = modelProbe;
         _configuration = configuration;
         _logger = logger;
+        _startup = startup;
     }
 
     public async Task<ReadinessReceipt> GetReceiptAsync(CancellationToken cancellationToken = default)
     {
         var checkedAt = DateTimeOffset.UtcNow;
-        var items = new List<ReadinessItem>(10)
+        var items = new List<ReadinessItem>(11)
         {
+            CheckStartupConfiguration(checkedAt),
             await CheckDatabaseAsync(cancellationToken).ConfigureAwait(false),
             await CheckCoreStorageAsync(checkedAt, cancellationToken).ConfigureAwait(false),
         };
@@ -128,6 +132,41 @@ public sealed class ReadinessService
                 && !(item.Id == ModelProbeItemId && item.Status == "unavailable")) ? "degraded"
             : "ready";
         return new ReadinessReceipt { Status = overall, CheckedAt = checkedAt, Items = items };
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // configuration — documents that failed validation while the host was starting.
+    // Startup records instead of aborting, so this row is how a client learns which file to repair.
+    // ──────────────────────────────────────────────────────────
+    private ReadinessItem CheckStartupConfiguration(DateTimeOffset checkedAt)
+    {
+        var diagnostics = _startup?.Diagnostics ?? [];
+        if (diagnostics.Count == 0)
+            return new ReadinessItem
+            {
+                Id = "configuration",
+                Status = "ready",
+                ReasonCode = "configuration_valid",
+                Reason = "Every configuration document validated during startup.",
+                CheckedAt = checkedAt
+            };
+        var first = diagnostics[0];
+        return new ReadinessItem
+        {
+            Id = "configuration",
+            Status = "blocked",
+            ReasonCode = first.Code,
+            Reason = first.Message,
+            Action = "Repair or restore the named configuration document, then restart Core. The storage scope rows name the file.",
+            CheckedAt = checkedAt,
+            Data = new
+            {
+                count = diagnostics.Count,
+                diagnostics = diagnostics.Take(5)
+                    .Select(diagnostic => new { code = diagnostic.Code, message = diagnostic.Message, line = diagnostic.Line, column = diagnostic.Column })
+                    .ToArray()
+            }
+        };
     }
 
     // ──────────────────────────────────────────────────────────
