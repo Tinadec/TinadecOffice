@@ -8,6 +8,8 @@
 2. `afterPack`（`scripts/sign-mac-adhoc.mjs`）只签 Helpers → Frameworks → `.app`，**不要再签 bundle 内的 runtime 副本**，否则字节又变一次；
 3. `afterPack` 末尾用 `assertBundledRuntimeMatches()` 逐字节比较 bundled 与暂存副本，不一致时在打包目录里就报出具体文件。
 
+**启动失败要说出文件名。** `storage.toml` / `logging.toml` 坏在 HTTP 宿主之前，`/readiness` 报不出来；Core 会写 `<userRoot>/state/startup-failure.json`，主进程 `electron/startupFailure.cjs` 读它（缺文件/坏 JSON/无 code 都返回 null），`hostConnection.classify` 转成 `host_startup_configuration_invalid` 并带 `document`，渲染层按 code 出五语文案——子进程原始消息不进快照。
+
 定位是 `indexOf(...) < indexOf(...)` 的测试断言在目标缺失时会拿 `-1` 恒真——夹具必须真的创建 `chrome_crashpad_handler`，并先断言索引 `>= 0`。
 
 ## 2026-11-11 Skill/MCP 市场三页、图编辑边键与内置技能只读面
