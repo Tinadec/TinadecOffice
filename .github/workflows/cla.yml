@@ -47,7 +47,7 @@ jobs:
           branch: 'cla-signatures'
           allowlist: dependabot[bot],github-actions[bot],greenkeeper[bot],renovate[bot],bot*
           create-file-commit-message: 'docs(cla): create signature store for CLA'
-          signed-commit-message: 'docs(cla): $contributorName signed the CLA in $owner/$repo'
+          signed-commit-message: 'docs(cla): contributor signed the CLA in $owner/$repo'
           custom-notsigned-prcomment: |
             Thank you for your contribution! Before we can accept it, please read
             and sign our Contributor License Agreement (CLA):
