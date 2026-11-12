@@ -3000,6 +3000,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       manifest_unavailable: "先にツールプログラムを利用できるようにしてください。",
     },
     item: {
+      configuration: "構成設定",
       database: "データベース",
       core_storage: "Core のストレージ",
       agent_pack: "エージェントパック",

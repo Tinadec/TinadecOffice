@@ -3000,6 +3000,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       manifest_unavailable: "Сначала сделайте программу инструментов доступной.",
     },
     item: {
+      configuration: "Конфигурация",
       database: "База данных",
       core_storage: "Хранилище Core",
       agent_pack: "Пакет агентов",

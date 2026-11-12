@@ -2545,7 +2545,7 @@ agentAvatarSaveFailed: '形象保存失败',
       tools_handshake_failed: '重新构建工具程序后重启 Core。',
       manifest_unavailable: '请先让工具程序可用。',
     },
-    item: { database: '数据库', core_storage: 'Core 存储', agent_pack: '智能体包', default_mode: '默认模式', model_provider: '模型供应商', model_secret: '模型 API 密钥', model_route: '模型路由', model_probe: '模型连通性', tool_provider: '工具提供方', manifest_hash: '工具清单' },
+    item: { configuration: '配置', database: '数据库', core_storage: 'Core 存储', agent_pack: '智能体包', default_mode: '默认模式', model_provider: '模型供应商', model_secret: '模型 API 密钥', model_route: '模型路由', model_probe: '模型连通性', tool_provider: '工具提供方', manifest_hash: '工具清单' },
   },
   debugStudio: {
     preview: {

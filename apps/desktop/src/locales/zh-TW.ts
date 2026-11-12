@@ -3000,6 +3000,7 @@ agentAvatarSaveFailed: "形象儲存失敗",
       manifest_unavailable: "請先讓工具程式可用。",
     },
     item: {
+      configuration: "設定",
       database: "資料庫",
       core_storage: "Core 儲存",
       agent_pack: "智能體包",

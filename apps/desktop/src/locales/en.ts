@@ -2547,7 +2547,7 @@ agentAvatarSaveFailed: 'Could not save the avatar',
       tools_handshake_failed: 'Rebuild the tool program and restart Core.',
       manifest_unavailable: 'Make the tool program available first.',
     },
-    item: { database: 'Database', core_storage: 'Core storage', agent_pack: 'Agent pack', default_mode: 'Default mode', model_provider: 'Model provider', model_secret: 'Model API key', model_route: 'Model route', model_probe: 'Model connectivity', tool_provider: 'Tool provider', manifest_hash: 'Tool manifest' },
+    item: { configuration: 'Configuration', database: 'Database', core_storage: 'Core storage', agent_pack: 'Agent pack', default_mode: 'Default mode', model_provider: 'Model provider', model_secret: 'Model API key', model_route: 'Model route', model_probe: 'Model connectivity', tool_provider: 'Tool provider', manifest_hash: 'Tool manifest' },
   },
   debugStudio: {
     preview: {
