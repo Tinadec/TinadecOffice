@@ -163,6 +163,13 @@ function createServiceManager({
     child.stderr?.removeAllListeners('data');
   }
 
+  const FAILURE_LINE = /(unhandled exception|exception|error|fatal|failed|refused|denied)/i;
+  function lastFailureLine(previous, chunk) {
+    const lines = String(chunk).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const candidate = lines.find(line => FAILURE_LINE.test(line));
+    return candidate ? candidate.slice(0, 500) : previous;
+  }
+
   function startProcess(label, command, args, cwd, env, logsDir) {
     const logSink = createLogSink(logsDir, { budgetDirectory: join(logsDir, '..') });
     logSink.write(label, `${new Date().toISOString()} starting ${label}\n`);
@@ -185,8 +192,13 @@ function createServiceManager({
     }
 
     child.startupError = null;
+    // The last failure-looking stderr line is what a startup timeout should say out loud. The full
+    // stream already lands in the service log; a user staring at "host unavailable" needs the one
+    // line that names the cause (a crashed Core prints "Unhandled exception. ..." here).
+    child.lastDiagnostic = '';
     for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => {
       try { logSink.write(label, data); } catch (error) { console.error(`[tinadec] ${label} log write failed: ${error.message}`); }
+      if (stream === child.stderr) child.lastDiagnostic = lastFailureLine(child.lastDiagnostic, data);
     });
     ownedChildren.set(label, child);
     child.once('error', (error) => {
@@ -216,11 +228,24 @@ function createServiceManager({
       }
       if (child.startupError) throw child.startupError;
       if (child.exitCode !== null || child.signalCode != null) {
-        throw new Error(`${label} exited with code ${child.exitCode}. See the service log for details.`);
+        throw serviceStartFailure(label, child);
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
-    throw new Error(`${label} did not become ready within ${startupTimeoutMs / 1000} seconds.`);
+    const timeout = new Error(`${label} did not become ready within ${startupTimeoutMs / 1000} seconds.`);
+    timeout.code = 'service_start_failed';
+    timeout.diagnostic = child.lastDiagnostic || null;
+    throw timeout;
+  }
+
+  /** A startup failure that keeps its cause: the caller logs it, the UI stays sanitized. */
+  function serviceStartFailure(label, child) {
+    const detail = child.lastDiagnostic ? ': ' + child.lastDiagnostic : '';
+    const error = new Error(`${label} exited with code ${child.exitCode ?? child.signalCode}${detail}`);
+    error.code = 'service_start_failed';
+    error.diagnostic = child.lastDiagnostic || null;
+    error.exitCode = child.exitCode;
+    return error;
   }
 
   function waitForExit(child, timeoutMs) {

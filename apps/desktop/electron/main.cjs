@@ -987,15 +987,23 @@ app.whenReady().then(async () => {
       signal.throwIfAborted();
       if (!managed) return true;
       if (!localServicesInitialized) {
-        await ensureLocalServices({
-          isPackaged: app.isPackaged,
-          gatewayUrl,
-          resourcesPath: process.resourcesPath,
-          userStorageRoot: hostPaths.root,
-          hostControlToken: hostControl.serviceToken,
-          localAppDataPath: process.env.LOCALAPPDATA,
-          signal,
-        });
+        try {
+          await ensureLocalServices({
+            isPackaged: app.isPackaged,
+            gatewayUrl,
+            resourcesPath: process.resourcesPath,
+            userStorageRoot: hostPaths.root,
+            hostControlToken: hostControl.serviceToken,
+            localAppDataPath: process.env.LOCALAPPDATA,
+            signal,
+          });
+        } catch (error) {
+          // hostConnection deliberately replaces host errors with fixed, secret-free sentences, so
+          // the real cause has to be written down here or it is lost.
+          console.error('[tinadec] local service startup failed:',
+            error?.code ?? 'unknown', error?.diagnostic ?? error?.message ?? error);
+          throw error;
+        }
         signal.throwIfAborted();
         localServicesInitialized = true;
       }
