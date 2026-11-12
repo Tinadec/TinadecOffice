@@ -5,14 +5,13 @@ name: CLA Assistant
 #
 # Signatures are recorded as comments ("I have read the CLA Document and I hereby
 # sign the CLA") and stored in the repository at signatures/version1/cla.json on
-# the branch named below.
+# the dedicated, unprotected cla-signatures branch. Keeping the store off main
+# lets main require the CLAAssistant check without blocking the bot's own commit.
 #
-# GitHub App or PAT: the bot needs write access to this repository. The built-in
-# GITHUB_TOKEN is sufficient because signatures are stored in THIS repository
-# (no remote-organization-name / remote-repository-name). Grant the workflow the
-# "contents: write" + "pull-requests: write" permissions below; if a protected
-# branch blocks the bot's commit, either store signatures on an unprotected
-# branch or supply a PAT in secrets.PERSONAL_ACCESS_TOKEN with repo scope.
+# The built-in GITHUB_TOKEN is sufficient because signatures are stored in THIS
+# repository (no remote-organization-name / remote-repository-name). "actions:
+# write" lets the action re-run its last failed check after a signature is
+# recorded.
 
 on:
   issue_comment:
@@ -21,6 +20,7 @@ on:
     types: [opened, closed, synchronize]
 
 permissions:
+  actions: write  # bot re-runs the last failed CLA check after signing
   contents: write   # bot commits signatures/version1/cla.json
   pull-requests: write
   issues: write
@@ -30,7 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: "CLA Assistant"
-        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        if: >-
+          github.event_name == 'pull_request_target' ||
+          (github.event_name == 'issue_comment' &&
+           github.event.issue.pull_request != null &&
+           (github.event.comment.body == 'recheck' ||
+            github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
         uses: contributor-assistant/github-action@v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -39,11 +44,10 @@ jobs:
         with:
           path-to-signatures: 'signatures/version1/cla.json'
           path-to-document: 'https://github.com/Tinadec/TinadecOffice/blob/main/CLA.md'
-          # branch should not be protected against the bot's commits
-          branch: 'main'
-          allowlist: lincube,Tinadec,dependabot[bot],github-actions[bot],greenkeeper[bot],renovate[bot],bot*
+          branch: 'cla-signatures'
+          allowlist: dependabot[bot],github-actions[bot],greenkeeper[bot],renovate[bot],bot*
           create-file-commit-message: 'docs(cla): create signature store for CLA'
-          signed-commit-message: 'docs(cla): $contributorName signed the CLA in $owner/$repo#$pullRequestNo'
+          signed-commit-message: 'docs(cla): $contributorName signed the CLA in $owner/$repo'
           custom-notsigned-prcomment: |
             Thank you for your contribution! Before we can accept it, please read
             and sign our Contributor License Agreement (CLA):

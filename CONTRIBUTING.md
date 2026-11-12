@@ -98,8 +98,9 @@ sign. Reply with the exact sentence:
 > I have read the CLA Document and I hereby sign the CLA
 
 Your GitHub username, the date and the pull request number are recorded in
-`signatures/version1/cla.json` as evidence. After you sign, the bot updates the
-check; once it passes, a maintainer can merge.
+`signatures/version1/cla.json` on the `cla-signatures` branch as evidence.
+After you sign, the bot updates the `CLAAssistant` check; that check is required
+on `main` before a pull request can be merged.
 
 If you need to re-check after signing, comment `recheck`.
 

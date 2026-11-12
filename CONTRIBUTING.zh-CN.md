@@ -87,8 +87,9 @@ CLA Assistant 机器人会在您的 Pull Request 上发布评论，邀请您签�
 > I have read the CLA Document and I hereby sign the CLA
 
 您的 GitHub 用户名、日期与 Pull Request 编号将被记录在
-`signatures/version1/cla.json` 中作为证据。签署后机器人会更新检查状态；检查
-通过后维护者即可合并。
+`cla-signatures` 分支的 `signatures/version1/cla.json` 中作为证据。签署后
+机器人会更新 `CLAAssistant` 检查；`main` 要求该检查通过后才能合并 Pull
+Request。
 
 若签署后需要重新检查，请评论 `recheck`。
 
