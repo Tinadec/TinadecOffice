@@ -6,23 +6,29 @@ import { join } from 'node:path';
  * Ad-hoc signing for the macOS bundle.
  *
  * electron-builder is told to skip signing (build.mac.identity is null: there is no Developer ID
- * yet), so the .app keeps the prebuilt Electron stub signature: identifier "Electron",
+ * yet), so the .app would keep the prebuilt Electron stub signature: identifier "Electron",
  * linker-signed, no resource seal, Info.plist unbound. With a quarantine attribute macOS then calls
  * the app "damaged" instead of merely "unidentified developer", and the user has no way through.
  *
- * A complete ad-hoc signature fixes exactly that: the seal exists, so Finder shows the ordinary
- * "unidentified developer" path (right-click -> Open) and the app launches. Signing order matters
- * and matches what codesign requires: nested code first, the bundle last. The runtime binaries under
- * Contents/Resources are not Mach-O-agnostic to codesign, so they are signed explicitly - a
- * Developer ID build will need the same list (with --options runtime and a timestamp) before
+ * Two-stage order is load-bearing:
+ *
+ * 1. The staged runtime under `apps/desktop/runtime` is signed BEFORE electron-builder copies it
+ *    into `Contents/Resources/runtime`. The Office channel archives are built from that staged
+ *    directory, and `verify-office-channel.mjs` requires the archived module files to be
+ *    byte-identical to the bundle's copies. Signing the bundle copies afterwards would change their
+ *    bytes and turn every macOS release into a failed byte-comparison.
+ * 2. `afterPack` signs the nested code inside the bundle (Helpers, Frameworks) and the bundle
+ *    itself, then asserts the bundled runtime still matches the staged one.
+ *
+ * A Developer ID build needs the same two lists with `--options runtime` and a timestamp before
  * notarization will accept the bundle.
  */
 export const RUNTIME_EXECUTABLES = [
-  'Contents/Resources/runtime/core/TinadecCore.Api',
-  'Contents/Resources/runtime/gateway/TinadecGateway',
-  'Contents/Resources/runtime/tools/TinadecTools',
-  'Contents/Resources/runtime/tools/rg',
-  'Contents/Resources/runtime/native/rg/rg',
+  'core/TinadecCore.Api',
+  'gateway/TinadecGateway',
+  'tools/TinadecTools',
+  'tools/rg',
+  'native/rg/rg',
 ];
 
 function list(dir) {
@@ -30,9 +36,9 @@ function list(dir) {
 }
 
 /**
- * Nested code, deepest first. Helper .app bundles come before the frameworks that host them, and
- * the top-level bundle is always last: signing an outer bundle seals its contents, so anything
- * inside signed afterwards leaves the seal stale.
+ * Nested code inside the bundle, deepest first. Helper .app bundles come before the frameworks that
+ * host them, and the top-level bundle is always last: signing an outer bundle seals its contents, so
+ * anything inside signed afterwards leaves the seal stale.
  */
 export function signingPlan(appPath) {
   const plan = [];
@@ -52,13 +58,25 @@ export function signingPlan(appPath) {
     }
     plan.push(framework);
   }
-  for (const relative of RUNTIME_EXECUTABLES) plan.push(join(appPath, relative));
   plan.push(appPath);
   return plan;
 }
 
 export function codesignArguments(target) {
   return ['--force', '--sign', '-', '--timestamp=none', target];
+}
+
+/** Sign the staged runtime in place, so every copy electron-builder makes is already sealed. */
+export function signStagedRuntime(runtimeDir, { run = execFileSync, platform = process.platform } = {}) {
+  if (platform !== 'darwin') return [];
+  const signed = [];
+  for (const relative of RUNTIME_EXECUTABLES) {
+    const target = join(runtimeDir, relative);
+    if (!existsSync(target)) continue;
+    run('codesign', codesignArguments(target), { stdio: 'pipe' });
+    signed.push(target);
+  }
+  return signed;
 }
 
 export function signMacAdhoc(appPath, { run = execFileSync, platform = process.platform } = {}) {
@@ -75,19 +93,44 @@ export function signMacAdhoc(appPath, { run = execFileSync, platform = process.p
   return signed;
 }
 
-/** electron-builder afterPack hook: unsigned everywhere except macOS, where the seal must exist. */
+/**
+ * The Office channel archives and the bundle must carry the same runtime bytes; verify-office-channel
+ * compares them one by one. Failing here names the file while the bundle is still in the build
+ * directory, instead of failing later with "differs from the full app's bundled runtime copy".
+ */
+export function assertBundledRuntimeMatches(appPath, runtimeDir, { readFile = readFileSync } = {}) {
+  if (!existsSync(runtimeDir)) return [];
+  const checked = [];
+  for (const relative of RUNTIME_EXECUTABLES) {
+    const staged = join(runtimeDir, relative);
+    const bundled = join(appPath, 'Contents', 'Resources', 'runtime', relative);
+    if (!existsSync(staged) || !existsSync(bundled)) continue;
+    if (!readFile(staged).equals(readFile(bundled))) {
+      throw new Error('Bundled runtime differs from the staged runtime: ' + relative
+        + '. Sign the staged runtime before packaging so the Office channel archives stay byte-identical.');
+    }
+    checked.push(relative);
+  }
+  return checked;
+}
+
+/** electron-builder afterPack hook: sign the bundle, then prove its runtime copies match staging. */
 export default async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
   const productName = context.packager.appInfo.productFilename;
-  signMacAdhoc(join(context.appOutDir, productName + '.app'));
+  const appPath = join(context.appOutDir, productName + '.app');
+  signMacAdhoc(appPath);
+  assertBundledRuntimeMatches(appPath, join(context.packager.projectDir, 'runtime'));
 }
 
 if (process.argv[1] && process.argv[1].endsWith('sign-mac-adhoc.mjs')) {
-  const appPath = process.argv[2];
+  const [appPath, stagedRuntimeDir] = process.argv.slice(2);
   if (!appPath) {
-    console.error('usage: node scripts/sign-mac-adhoc.mjs <path-to-app>');
+    console.error('usage: node scripts/sign-mac-adhoc.mjs <path-to-app> [staged-runtime-dir]');
     process.exit(2);
   }
+  if (stagedRuntimeDir) signStagedRuntime(stagedRuntimeDir);
   const signed = signMacAdhoc(appPath);
+  if (stagedRuntimeDir) assertBundledRuntimeMatches(appPath, stagedRuntimeDir);
   console.log('ad-hoc signed ' + signed.length + ' nested target(s) and ' + appPath);
 }

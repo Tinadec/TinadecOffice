@@ -47,6 +47,11 @@ test("macOS ships a dmg sealed by the ad-hoc hook and Linux a .deb, each named a
 	// "damaged" instead of "unidentified developer", which is a dead end for the user.
 	assert.equal(build.afterPack, "scripts/sign-mac-adhoc.mjs", "the ad-hoc seal hook is what makes the dmg launchable");
 	assert.ok(existsSync(join(desktopDir, build.afterPack)), "the afterPack hook file exists");
+	// The seal must be applied to the STAGED runtime before electron-builder copies it: the Office
+	// channel archives are built from that directory and compared byte-for-byte with the bundle's
+	// copy, so signing only the bundle copies would fail every macOS release verification.
+	const packager = readFileSync(join(desktopDir, "scripts", "package.mjs"), "utf8");
+	assert.match(packager, /signStagedRuntime\(join\(desktopDir, "runtime"\)\)/, "package.mjs seals the staged runtime first");
 });
 
 test("The deb has the metadata the packager refuses to build without", () => {
