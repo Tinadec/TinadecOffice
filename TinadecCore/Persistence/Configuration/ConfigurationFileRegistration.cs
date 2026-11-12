@@ -25,6 +25,11 @@ public static class ConfigurationFileRegistration
             services.Remove(descriptor);
             services.AddSingleton(rawType, sp => Activator.CreateInstance(rawType, CreateOriginal(sp, descriptor))!);
             services.AddSingleton<IConfigurationProjectionSource>(sp => (IConfigurationProjectionSource)sp.GetRequiredService(rawType));
+            // Coordinated migrations need the schema even when a document fails validation, so they
+            // get a context that skips the projection attach. Registered per context; contexts without
+            // a projection simply have no such registration and the participant falls back.
+            services.AddSingleton(typeof(IRawDbContextFactory<>).MakeGenericType(context),
+                sp => Activator.CreateInstance(typeof(RawConfigurationProjectionFactory<>).MakeGenericType(context), sp.GetRequiredService(rawType))!);
             services.Add(new ServiceDescriptor(descriptor.ServiceType,
                 sp => Activator.CreateInstance(wrappedType, sp.GetRequiredService(rawType), sp.GetRequiredService<ConfigurationProjectionCoordinator>())!, descriptor.Lifetime));
         }
@@ -52,6 +57,13 @@ internal sealed class ConfigurationProjectionSource<T>(IDbContextFactory<T> orig
     public IDbContextFactory<T> Original => original;
     public async Task<ConfigurationProjectionDbContext> CreateRawAsync(CancellationToken cancellationToken) =>
         await original.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+}
+
+internal sealed class RawConfigurationProjectionFactory<T>(ConfigurationProjectionSource<T> source)
+    : IRawDbContextFactory<T> where T : ConfigurationProjectionDbContext
+{
+    public async Task<T> CreateRawDbContextAsync(CancellationToken cancellationToken = default) =>
+        (T)await source.CreateRawAsync(cancellationToken).ConfigureAwait(false);
 }
 
 internal sealed class ConfigurationProjectionDbContextFactory<T>(

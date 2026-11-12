@@ -518,6 +518,21 @@ public sealed class ConfigurationDocumentTests : IDisposable
         Assert.Equal("{}", (await historical.ModeVersions.SingleAsync()).SnapshotJson);
     }
 
+    [Fact]
+    public async Task InvalidConfigurationDocumentDoesNotStopCoordinatedMigrations()
+    {
+        await using (var original = Build(_root, new MemoryContentStore())) await InitializeAsync(original);
+        // A projection that cannot be validated must not take schema creation down with it: the
+        // migration participant asks for a context that skips the projection attach.
+        await File.WriteAllTextAsync(Path.Combine(_root, "config", "agents.toml"), "schema_version = 1\n[[agent_versions]]\nid = \"not-a-guid\"\n");
+        await using var restarted = Build(_root, new MemoryContentStore());
+        Assert.NotNull(restarted.GetService<IRawDbContextFactory<AgentConfigurationDbContext>>());
+        var participant = ActivatorUtilities.CreateInstance<DbContextMigrationParticipant<AgentConfigurationDbContext>>(restarted);
+        await participant.MigrateAsync();
+        // The projection-aware factory still refuses to hand out a context for the invalid document.
+        await Assert.ThrowsAsync<ConfigurationDocumentException>(() => restarted.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync());
+    }
+
     private static ServiceProvider Build(string root, MemoryContentStore content, bool validateToolSettings = false, IConfigurationDocumentValidator? observer = null)
     {
         Directory.CreateDirectory(root);
