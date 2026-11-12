@@ -24,6 +24,17 @@ function createHostConnection({ verify, managed = true, onStatusChange = () => {
     timer?.unref?.();
   }
   function classify(error) {
+    // A child that died during bootstrap never bound a port: retrying cannot fix a broken document,
+    // and "temporarily unavailable" hides the one thing a user can act on.
+    const startupFailure = error?.startupFailure;
+    if (startupFailure?.code) {
+      return { state: 'unavailable', error: {
+        code: 'host_startup_configuration_invalid',
+        message: 'A configuration file cannot be read, so the local services did not start. Repair or restore it, then retry.',
+        document: typeof startupFailure.document === 'string' ? startupFailure.document : null,
+        reason: typeof startupFailure.code === 'string' ? startupFailure.code : null,
+      } };
+    }
     const rejected = ['host_identity_rejected', 'host_endpoint_invalid', 'host_credential_invalid', 'host_nonce_invalid'].includes(error?.code)
       || /unexpected service|invalid trusted host identity proof/i.test(error?.message ?? '');
     return rejected

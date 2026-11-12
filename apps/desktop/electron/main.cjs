@@ -47,6 +47,7 @@ const { ensureLocalServices, stopLocalServices, canonicalLocalGatewayUrl } = req
 const { createHostControl } = require('./hostControl.cjs');
 const { verifyManagedHost } = require('./hostIdentity.cjs');
 const { createHostConnection } = require('./hostConnection.cjs');
+const { readStartupFailure } = require('./startupFailure.cjs');
 let trustedHostReady = false;
 let hostConnection;
 let shuttingDown = false;
@@ -999,9 +1000,15 @@ app.whenReady().then(async () => {
           });
         } catch (error) {
           // hostConnection deliberately replaces host errors with fixed, secret-free sentences, so
-          // the real cause has to be written down here or it is lost.
+          // the real cause has to be written down here or it is lost. A bootstrap-time configuration
+          // failure leaves a receipt behind (Core never binds a port, so /readiness cannot report it);
+          // attaching it here is what lets the window name the file instead of guessing.
+          const startupFailure = readStartupFailure(hostPaths.root);
+          if (startupFailure && error && typeof error === 'object') error.startupFailure = startupFailure;
           console.error('[tinadec] local service startup failed:',
-            error?.code ?? 'unknown', error?.message ?? error);
+            startupFailure?.code ?? error?.code ?? 'unknown',
+            startupFailure?.document ?? '',
+            startupFailure?.message ?? error?.message ?? error);
           throw error;
         }
         signal.throwIfAborted();

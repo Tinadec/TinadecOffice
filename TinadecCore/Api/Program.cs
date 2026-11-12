@@ -8,7 +8,26 @@ using TinadecCore.Abstractions.Ports;
 var builder = WebApplication.CreateBuilder(args);
 var scopesEnabled = builder.Configuration.GetValue<bool?>("TinadecStorage:Enabled") ?? !builder.Environment.IsEnvironment("Testing");
 var initialConfiguration = scopesEnabled && !File.Exists(Path.Combine(StorageScopePaths.UserRoot(builder.Configuration["TinadecStorage:UserRoot"]), "config", "agents.toml"));
-var userScope = scopesEnabled ? StorageHostBootstrap.Configure(builder.Configuration) : null;
+// Bootstrap still fails fast: without a readable storage document there is no database to open, and
+// guessing a default path could point the app at the wrong data. What changed is where the reason
+// goes — this stage runs before the HTTP host exists, so /readiness cannot report it. The receipt is
+// the only channel left for the desktop host to name the broken file.
+var userRootForBootstrap = scopesEnabled
+    ? StorageScopePaths.UserRoot(builder.Configuration["TinadecStorage:UserRoot"])
+    : null;
+IScopeStorageLocations? userScope = null;
+if (scopesEnabled)
+{
+    try
+    {
+        userScope = StorageHostBootstrap.Configure(builder.Configuration);
+    }
+    catch (Exception error) when (error is ConfigurationDocumentException or InvalidDataException)
+    {
+        StartupFailureReceipt.Write(userRootForBootstrap!, DocumentFailureCode(error), "storage", error.Message);
+        throw;
+    }
+}
 if (userScope is not null) builder.Services.AddSingleton<IScopeStorageLocations>(userScope);
 
 // Logging is a side channel. Console/Debug by default; the Windows Event Log
@@ -17,7 +36,21 @@ if (userScope is not null) builder.Services.AddSingleton<IScopeStorageLocations>
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
-if (userScope is not null) builder.Logging.AddProvider(new ScopeDiagnosticLoggerProvider(userScope));
+if (userScope is not null)
+{
+    try
+    {
+        builder.Logging.AddProvider(new ScopeDiagnosticLoggerProvider(userScope));
+    }
+    catch (Exception error) when (error is ConfigurationDocumentException or InvalidDataException)
+    {
+        // logging.toml is read by the scope logger provider, also before the host exists.
+        StartupFailureReceipt.Write(userRootForBootstrap!, DocumentFailureCode(error), "logging", error.Message);
+        throw;
+    }
+    // Bootstrap completed: a receipt from an earlier failed start must not survive as current advice.
+    StartupFailureReceipt.Clear(userRootForBootstrap!);
+}
 if (builder.Configuration.GetValue<bool>("Logging:EventLog:Enabled"))
 {
     builder.Logging.AddEventLog();
@@ -104,6 +137,9 @@ using (var seedScope = app.Services.CreateScope())
 app.MapTinadecCore();
 
 app.Run();
+
+static string DocumentFailureCode(Exception error)
+    => error is ConfigurationDocumentException document ? document.Code : "configuration_invalid";
 
 /// <summary>
 /// Exposed for integration test hosting (WebApplicationFactory).
