@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),
   closeWindow: () => ipcRenderer.send('tinadec:close'),
   openDebugStudio: () => ipcRenderer.invoke('tinadec:open-debug-studio'),
+  openDenv: () => ipcRenderer.invoke('tinadec:open-denv'),
   saveDebugStudioEnabled: (enabled) => ipcRenderer.invoke('tinadec:debug-studio-enabled-save', enabled),
   // --- Logto OIDC login ---
   openLogin: () => ipcRenderer.invoke('tinadec:open-login'),

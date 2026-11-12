@@ -106,6 +106,10 @@ export function installPreviewShimIfNeeded(): void {
       window.location.hash = '/debug-studio'
       return Promise.resolve(true)
     },
+    openDenv: () => {
+      window.location.hash = '/denv'
+      return Promise.resolve(true)
+    },
     openLogin: () => Promise.resolve(null),
     logout: () => Promise.resolve({ loggedIn: false }),
     getAuthState: () => Promise.resolve({ loggedIn: false }),

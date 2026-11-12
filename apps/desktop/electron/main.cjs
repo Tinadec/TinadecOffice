@@ -68,6 +68,7 @@ initializeTrustedHostRequests({
 });
 const layoutStore = require('./layoutStore.cjs');
 const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
+const { createDenvWindow, closeDenvWindow } = require('./denvWindow.cjs');
 const { openLogin, logout, getAuthState, updateProfile } = require('./auth.cjs');
 const {
   createPanelWindow,
@@ -471,6 +472,14 @@ ipcMain.handle('tinadec:open-debug-studio', async (event) => {
   if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) return false;
   if (!loadAppConfig(appConfigFile()).debug_studio_enabled) return false;
   return Boolean(await createDebugStudioWindow());
+});
+
+// The collaboration window is a real product surface, not a detached settings card. It is opened
+// from the trusted renderer, but owns its route and lifecycle so the main workbench never navigates
+// away from a running agent session.
+ipcMain.handle('tinadec:open-denv', async (event) => {
+  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) return false;
+  return Boolean(await createDenvWindow());
 });
 
 // --- Window and tray preferences ---
@@ -1130,6 +1139,7 @@ app.on('window-all-closed', () => {
   closeAllPanelWindows();
   closeAllPetWindows();
   companionWindow.closeCompanionWindow();
+  closeDenvWindow();
   agentBrowserManager.closeAll();
   // A hidden main window is still an open window, so this only runs once the window really closed:
   // the preference is off, the tray could not be created, or the user is quitting.

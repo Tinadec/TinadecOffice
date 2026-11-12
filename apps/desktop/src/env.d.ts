@@ -303,6 +303,7 @@ declare global {
       maximizeWindow: () => void;
       closeWindow: () => void;
       openDebugStudio: () => Promise<boolean>;
+      openDenv: () => Promise<boolean>;
       /** Open the Logto login flow in the system browser; resolves with the synced identity or null. */
       openLogin: () => Promise<LoginIdentity | null>;
       /** Revoke the current login session. */

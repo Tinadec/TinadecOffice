@@ -48,6 +48,11 @@ const router = createRouter({
       component: () => import('./pages/DebugStudioPage.vue'),
     },
     {
+      path: '/denv',
+      name: 'denv',
+      component: () => import('./pages/DenvWindowPage.vue'),
+    },
+    {
       path: '/code-editor',
       name: 'code-editor',
       component: () => import('./pages/CodePage.vue'),
