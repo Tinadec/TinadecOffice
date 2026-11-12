@@ -214,6 +214,17 @@ jobs:
           npm run smoke:packaged:posix -w @tinadec/desktop --
           --executable=/opt/TinadecOffice/TinadecOffice --label="linux-x64 installed"
 
+      # electron-builder skips signing (no Developer ID yet); the afterPack hook seals the bundle
+      # ad hoc. Without that seal macOS calls a quarantined download "damaged" and there is no way
+      # for the user to open it, so this is the assertion that notices the seal disappearing.
+      - name: Verify the macOS bundle carries a complete ad-hoc seal
+        if: matrix.label == 'osx-arm64'
+        run: |
+          app=$(ls -d apps/desktop/release/mac-arm64/*.app)
+          codesign --verify --deep --strict "$app"
+          identifier=$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')
+          test "$identifier" = "com.tinadec.office" || { echo "unexpected code identity: $identifier"; exit 1; }
+
       # The macOS smoke mounts the .dmg and runs the binary inside it, so this step is the evidence
       # that the shipped artifact — not just the directory that fed the packager — starts.
       - name: Smoke test the packaged application (macOS)

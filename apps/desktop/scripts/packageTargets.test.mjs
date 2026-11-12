@@ -32,7 +32,7 @@ test("Every shipping target has an electron-builder mapping and nothing else doe
 	assert.throws(() => builderArgs("osx-x64"), /No electron-builder mapping/);
 });
 
-test("macOS ships an unsigned dmg and Linux a .deb, each named after its platform", () => {
+test("macOS ships a dmg sealed by the ad-hoc hook and Linux a .deb, each named after its platform", () => {
 	assert.deepEqual(build.mac.target, [{ target: "dmg", arch: ["arm64"] }]);
 	assert.deepEqual(build.linux.target, [{ target: "deb", arch: ["x64"] }]);
 
@@ -41,7 +41,12 @@ test("macOS ships an unsigned dmg and Linux a .deb, each named after its platfor
 	assert.match(build.mac.artifactName, /osx-arm64/);
 	assert.match(build.linux.artifactName, /linux-x64/);
 	assert.match(build.nsis.artifactName, /win-x64/);
-	assert.equal(build.mac.identity, null, "unsigned by decision: no Apple Developer identity yet");
+	// No Developer ID yet, so electron-builder must not look for one...
+	assert.equal(build.mac.identity, null, "no Apple Developer identity yet");
+	// ...but the bundle still needs a complete seal: without it macOS calls a quarantined download
+	// "damaged" instead of "unidentified developer", which is a dead end for the user.
+	assert.equal(build.afterPack, "scripts/sign-mac-adhoc.mjs", "the ad-hoc seal hook is what makes the dmg launchable");
+	assert.ok(existsSync(join(desktopDir, build.afterPack)), "the afterPack hook file exists");
 });
 
 test("The deb has the metadata the packager refuses to build without", () => {
