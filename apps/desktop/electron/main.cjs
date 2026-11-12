@@ -1001,7 +1001,7 @@ app.whenReady().then(async () => {
           // hostConnection deliberately replaces host errors with fixed, secret-free sentences, so
           // the real cause has to be written down here or it is lost.
           console.error('[tinadec] local service startup failed:',
-            error?.code ?? 'unknown', error?.diagnostic ?? error?.message ?? error);
+            error?.code ?? 'unknown', error?.message ?? error);
           throw error;
         }
         signal.throwIfAborted();

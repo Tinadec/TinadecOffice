@@ -164,10 +164,19 @@ function createServiceManager({
   }
 
   const FAILURE_LINE = /(unhandled exception|exception|error|fatal|failed|refused|denied)/i;
-  function lastFailureLine(previous, chunk) {
-    const lines = String(chunk).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    const candidate = lines.find(line => FAILURE_LINE.test(line));
-    return candidate ? candidate.slice(0, 500) : previous;
+  /**
+   * Keep the LAST failure line, not the first: a service usually prints "Error: retrying" before the
+   * line that actually ended it. Chunks are stderr pipe reads, not lines, so an unfinished trailing
+   * line is held until the next chunk (or the stream close) completes it.
+   */
+  function recordFailureLines(child, chunk) {
+    child.stderrPending += String(chunk);
+    const lines = child.stderrPending.split(/\r?\n/);
+    child.stderrPending = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed && FAILURE_LINE.test(trimmed)) child.lastDiagnostic = trimmed.slice(0, 500);
+    }
   }
 
   function startProcess(label, command, args, cwd, env, logsDir) {
@@ -196,9 +205,10 @@ function createServiceManager({
     // stream already lands in the service log; a user staring at "host unavailable" needs the one
     // line that names the cause (a crashed Core prints "Unhandled exception. ..." here).
     child.lastDiagnostic = '';
+    child.stderrPending = '';
     for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => {
       try { logSink.write(label, data); } catch (error) { console.error(`[tinadec] ${label} log write failed: ${error.message}`); }
-      if (stream === child.stderr) child.lastDiagnostic = lastFailureLine(child.lastDiagnostic, data);
+      if (stream === child.stderr) recordFailureLines(child, data);
     });
     ownedChildren.set(label, child);
     child.once('error', (error) => {
@@ -206,6 +216,8 @@ function createServiceManager({
       closeLog(child);
     });
     child.once('close', () => {
+      // Flush a final line that never got its newline before the pipe closed.
+      recordFailureLines(child, '\n');
       if (ownedChildren.get(label) === child) ownedChildren.delete(label);
       closeLog(child);
     });
@@ -245,6 +257,8 @@ function createServiceManager({
     error.code = 'service_start_failed';
     error.diagnostic = child.lastDiagnostic || null;
     error.exitCode = child.exitCode;
+    // A signal termination reports a null exit code; keep the signal so the host log can say which one.
+    error.signal = child.signalCode ?? null;
     return error;
   }
 
