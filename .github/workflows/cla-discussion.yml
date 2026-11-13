@@ -1,0 +1,285 @@
+name: CLA Discussion Signature
+
+on:
+  discussion_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      import_existing:
+        description: 'Import matching comments already posted in Discussion 67'
+        required: false
+        default: 'true'
+
+permissions:
+  actions: write
+  contents: write
+  discussions: read
+
+env:
+  CLA_BRANCH: cla-signatures
+  CLA_SIGNATURES_PATH: signatures/version1/cla.json
+  CLA_DISCUSSION_ID: D_kwDOShozKc4ArF8z
+  CLA_DISCUSSION_NUMBER: 67
+  CLA_REPOSITORY_NODE_ID: R_kgDOShozKQ
+  CLA_REPOSITORY_DATABASE_ID: 1243231017
+  CLA_TITLE: TinadecOffice CLA v1 Signature Register
+  CLA_COMMIT: 43980b3bafaac217faf756d9e0dd039b3832cedd
+  CLA_STATEMENT: 我已阅读并同意 TinadecOffice CLA v1（CLA.md / CLA.zh-CN.md，commit 43980b3bafaac217faf756d9e0dd039b3832cedd），并授权项目方按该 CLA 使用我提交的代码。
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve signature comments
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          IMPORT_EXISTING: ${{ inputs.import_existing }}
+        run: |
+          set -euo pipefail
+          export CLA_BRANCH CLA_SIGNATURES_PATH CLA_DISCUSSION_ID CLA_DISCUSSION_NUMBER CLA_REPOSITORY_NODE_ID CLA_TITLE CLA_COMMIT CLA_STATEMENT
+          node <<'NODE'
+          const fs = require('fs')
+          const { execFileSync } = require('child_process')
+
+          const env = (name, required = true) => {
+            const value = process.env[name]
+            if (!value && required) throw new Error(`Missing ${name}`)
+            return value ?? ''
+          }
+          const gh = (args, input) => execFileSync('gh', args, {
+            encoding: 'utf8',
+            input: input ? JSON.stringify(input) : undefined,
+            env: process.env,
+          })
+          const graphql = (query, variables) => JSON.parse(gh([
+            'api', 'graphql', '--input', '-',
+          ], { query, variables }))
+          const discussionQuery = graphql(`
+            query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                discussion(number: $number) {
+                  id
+                  number
+                  title
+                  category { name }
+                  repository { id nameWithOwner }
+                  comments(first: 100) {
+                    nodes {
+                      id
+                      databaseId
+                      body
+                      createdAt
+                      lastEditedAt
+                      url
+                      author { __typename login ... on User { databaseId } }
+                    }
+                  }
+                }
+              }
+            }
+          `, {
+            owner: env('GITHUB_REPOSITORY_OWNER'),
+            repo: env('GITHUB_REPOSITORY').split('/')[1],
+            number: Number(env('CLA_DISCUSSION_NUMBER')),
+          })
+          const discussion = discussionQuery.data.repository.discussion
+          if (!discussion) throw new Error('Discussion 67 not found')
+          if (discussion.id !== env('CLA_DISCUSSION_ID') ||
+              discussion.title !== env('CLA_TITLE') ||
+              discussion.category.name !== 'Announcements' ||
+              discussion.repository.id !== env('CLA_REPOSITORY_NODE_ID')) {
+            throw new Error('Discussion identity mismatch')
+          }
+          if (discussion.comments.nodes.length === 100) {
+            throw new Error('Too many comments; pagination is not configured')
+          }
+
+          const allComments = discussion.comments.nodes.map(comment => ({
+            ...comment,
+            discussion: {
+              id: discussion.id,
+              number: discussion.number,
+              title: discussion.title,
+              category: { name: discussion.category.name },
+              repository: discussion.repository,
+            },
+          }))
+          const eventName = env('EVENT_NAME')
+          let candidates
+          if (eventName === 'discussion_comment') {
+            candidates = allComments.filter(comment => comment.databaseId === Number(env('COMMENT_ID')))
+            if (candidates.length !== 1) {
+              throw new Error('Event comment is not in Discussion 67')
+            }
+          } else {
+            if (env('IMPORT_EXISTING') !== 'true') {
+              throw new Error('Import disabled')
+            }
+            candidates = allComments
+          }
+
+          const statement = env('CLA_STATEMENT')
+          const commit = env('CLA_COMMIT')
+          const valid = candidates.filter(comment =>
+            comment.body.trim() === statement &&
+            comment.body.includes(commit) &&
+            comment.lastEditedAt === null &&
+            comment.author?.__typename === 'User' &&
+            Number.isInteger(comment.author.databaseId) &&
+            comment.discussion.id === env('CLA_DISCUSSION_ID') &&
+            comment.discussion.number === Number(env('CLA_DISCUSSION_NUMBER')) &&
+            comment.discussion.title === env('CLA_TITLE') &&
+            comment.discussion.repository.id === env('CLA_REPOSITORY_NODE_ID'))
+
+          if (eventName === 'discussion_comment' && valid.length === 0) {
+            throw new Error('Comment is not a valid CLA v1 signature')
+          }
+          fs.writeFileSync(process.env.GITHUB_OUTPUT, `count=${valid.length}\n`, { flag: 'a' })
+          fs.writeFileSync('/tmp/cla-signatures.json', JSON.stringify(valid))
+          NODE
+
+      - name: Checkout signature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CLA_BRANCH }}
+
+      - name: Append signatures
+        id: append
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COUNT: ${{ steps.resolve.outputs.count }}
+        run: |
+          set -euo pipefail
+          export CLA_BRANCH CLA_SIGNATURES_PATH CLA_DISCUSSION_ID CLA_DISCUSSION_NUMBER CLA_REPOSITORY_NODE_ID CLA_REPOSITORY_DATABASE_ID CLA_TITLE CLA_COMMIT CLA_STATEMENT
+          node <<'NODE'
+          const fs = require('fs')
+          const crypto = require('crypto')
+          const { execFileSync } = require('child_process')
+
+          const env = (name) => {
+            const value = process.env[name]
+            if (!value) throw new Error(`Missing ${name}`)
+            return value
+          }
+          const path = env('CLA_SIGNATURES_PATH')
+          const store = JSON.parse(fs.readFileSync(path, 'utf8'))
+          if (!Array.isArray(store.signedContributors)) {
+            throw new Error('Invalid signature store')
+          }
+          const comments = JSON.parse(fs.readFileSync('/tmp/cla-signatures.json', 'utf8'))
+          const existing = new Set(store.signedContributors.map(entry => entry.id))
+          const added = []
+          for (const comment of comments) {
+            if (existing.has(comment.author.databaseId)) continue
+            existing.add(comment.author.databaseId)
+            added.push({
+              name: comment.author.login,
+              id: comment.author.databaseId,
+              comment_id: comment.databaseId,
+              created_at: comment.createdAt,
+              repoId: Number(env('CLA_REPOSITORY_DATABASE_ID')),
+              source: 'discussion',
+              source_id: comment.discussion.id,
+              source_number: comment.discussion.number,
+              source_url: comment.url,
+              cla_version: 'v1',
+              cla_commit: env('CLA_COMMIT'),
+              statement_sha256: crypto.createHash('sha256')
+                .update(comment.body.trim(), 'utf8').digest('hex'),
+              pullRequestNo: null,
+            })
+          }
+          if (added.length === 0) {
+            console.log('No new signatures')
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'added=0\n')
+            process.exit(0)
+          }
+          store.signedContributors.push(...added)
+          fs.writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`)
+
+          const sha = execFileSync('git', ['rev-parse', `HEAD:${path}`], {
+            encoding: 'utf8',
+          }).trim()
+          const content = fs.readFileSync(path).toString('base64')
+          execFileSync('gh', [
+            'api', '-X', 'PUT',
+            `repos/${env('GITHUB_REPOSITORY')}/contents/${path}`,
+            '-f', 'message=docs(cla): record CLA v1 discussion signatures',
+            '-f', `content=${content}`,
+            '-f', `branch=${env('CLA_BRANCH')}`,
+            '-f', `sha=${sha}`,
+            '--jq', '.commit.sha',
+          ], { env: process.env, stdio: 'inherit' })
+          console.log(`Recorded ${added.length} signature(s)`)
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `added=${added.length}\n`)
+          NODE
+
+      - name: Re-run affected PR checks
+        if: steps.append.outputs.added != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs')
+          const { execFileSync } = require('child_process')
+
+          const call = (args, input) => execFileSync('gh', args, {
+            encoding: 'utf8',
+            input: input ? JSON.stringify(input) : undefined,
+            env: process.env,
+          })
+          const graphql = (query, variables) => JSON.parse(call([
+            'api', 'graphql', '--input', '-',
+          ], { query, variables }))
+          const comments = JSON.parse(fs.readFileSync('/tmp/cla-signatures.json', 'utf8'))
+          const ids = new Set(comments.map(comment => comment.author.databaseId))
+          const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/')
+          const openPulls = graphql(`
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequests(states: OPEN, first: 100) {
+                  nodes {
+                    number
+                    headRefName
+                    commits(first: 100) {
+                      nodes {
+                        commit {
+                          author { user { databaseId } }
+                          committer { user { databaseId } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          `, { owner, repo }).data.repository.pullRequests
+          if (openPulls.nodes.length === 100) {
+            throw new Error('Too many open PRs; pagination is not configured')
+          }
+          for (const pull of openPulls.nodes) {
+            if (pull.commits.nodes.length === 100) {
+              throw new Error(`PR #${pull.number} has too many commits; pagination is not configured`)
+            }
+            const committers = new Set(pull.commits.nodes.flatMap(node => [
+              node.commit.author.user?.databaseId,
+              node.commit.committer.user?.databaseId,
+            ]).filter(id => Number.isInteger(id)))
+            if (![...ids].some(id => committers.has(id))) continue
+            const runs = JSON.parse(call([
+              'api',
+              `repos/${owner}/${repo}/actions/workflows/cla.yml/runs?event=pull_request_target&status=failure&branch=${encodeURIComponent(pull.headRefName)}&per_page=1`,
+            ]))
+            const run = runs.workflow_runs?.[0]
+            if (!run) continue
+            call([
+              'api', '-X', 'POST',
+              `repos/${owner}/${repo}/actions/runs/${run.id}/rerun`,
+            ])
+            console.log(`Re-ran CLA check for PR #${pull.number}: ${run.id}`)
+          }
+          NODE

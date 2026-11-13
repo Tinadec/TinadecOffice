@@ -166,6 +166,12 @@ Contributors sign by commenting on their pull request:
 
 > I have read the CLA Document and I hereby sign the CLA
 
+The canonical CLA v1 signature register is
+[Discussion #67](https://github.com/Tinadec/TinadecOffice/discussions/67).
+Post the exact Chinese statement shown there to bind your GitHub account to
+CLA v1 for all future contributions. Pull-request comments remain supported for
+contributors who prefer the per-PR flow.
+
 The [CLA Assistant workflow](.github/workflows/cla.yml) enforces this on every
 pull request.
 

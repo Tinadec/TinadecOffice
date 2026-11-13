@@ -163,6 +163,12 @@ TinadecOffice/
 
 > I have read the CLA Document and I hereby sign the CLA
 
+正式的 CLA v1 签署台账是
+[Discussion #67](https://github.com/Tinadec/TinadecOffice/discussions/67)。
+在该 Discussion 中发布页面写明的确切中文授权语句，即可把您的 GitHub 账号与
+CLA v1 绑定，之后本仓库的所有贡献均受该协议覆盖。按 PR 评论签署的旧流程仍
+保留。
+
 [CLA Assistant 工作流](.github/workflows/cla.yml)会在每个 Pull Request 上
 强制执行此要求。
 
