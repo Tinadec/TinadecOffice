@@ -5,8 +5,7 @@ name: CLA Assistant
 #
 # Signatures are recorded as comments ("I have read the CLA Document and I hereby
 # sign the CLA") or in Discussion 67 and stored in the repository at
-# signatures/version1/cla.json on main. The cla-signatures branch is an
-# audit mirror maintained by the Discussion workflow.
+# signatures/version1/cla.json on the dedicated cla-signatures branch.
 #
 # The built-in GITHUB_TOKEN is sufficient because signatures are stored in THIS
 # repository (no remote-organization-name / remote-repository-name). "actions:
@@ -44,7 +43,7 @@ jobs:
         with:
           path-to-signatures: 'signatures/version1/cla.json'
           path-to-document: 'https://github.com/Tinadec/TinadecOffice/blob/main/CLA.md'
-          branch: 'main'
+          branch: 'cla-signatures'
           allowlist: dependabot[bot],github-actions[bot],greenkeeper[bot],renovate[bot],bot*
           create-file-commit-message: 'docs(cla): create signature store for CLA'
           signed-commit-message: 'docs(cla): contributor signed the CLA in $owner/$repo'

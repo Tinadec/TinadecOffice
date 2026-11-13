@@ -144,7 +144,7 @@ jobs:
       - name: Checkout signature branch
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ env.CLA_BRANCH }}
 
       - name: Append signatures
         id: append
@@ -207,22 +207,19 @@ jobs:
           store.signedContributors.push(...added)
           fs.writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`)
 
+          const sha = execFileSync('git', ['rev-parse', `HEAD:${path}`], {
+            encoding: 'utf8',
+          }).trim()
           const content = fs.readFileSync(path).toString('base64')
-          for (const branch of ['main', env('CLA_BRANCH')]) {
-            const response = JSON.parse(execFileSync('gh', [
-              'api',
-              `repos/${env('GITHUB_REPOSITORY')}/contents/${path}?ref=${branch}`,
-            ], { encoding: 'utf8', env: process.env }))
-            execFileSync('gh', [
-              'api', '-X', 'PUT',
-              `repos/${env('GITHUB_REPOSITORY')}/contents/${path}`,
-              '-f', 'message=docs(cla): record CLA v1 discussion signatures',
-              '-f', `content=${content}`,
-              '-f', `branch=${branch}`,
-              '-f', `sha=${response.sha}`,
-              '--jq', '.commit.sha',
-            ], { env: process.env, stdio: 'inherit' })
-          }
+          execFileSync('gh', [
+            'api', '-X', 'PUT',
+            `repos/${env('GITHUB_REPOSITORY')}/contents/${path}`,
+            '-f', 'message=docs(cla): record CLA v1 discussion signatures',
+            '-f', `content=${content}`,
+            '-f', `branch=${env('CLA_BRANCH')}`,
+            '-f', `sha=${sha}`,
+            '--jq', '.commit.sha',
+          ], { env: process.env, stdio: 'inherit' })
           const changed = added.length + updated
           console.log(`Recorded ${added.length} new and ${updated} updated signature(s)`)
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`)
