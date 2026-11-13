@@ -21,6 +21,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Mirror the ASP.NET Core Web SDK implicit usings so the endpoint
          files compile without per-file using changes. -->
     <Using Include="Microsoft.AspNetCore.Builder" />

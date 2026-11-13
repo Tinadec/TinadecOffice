@@ -32,21 +32,39 @@ public static class AuthEndpoints
         return app;
     }
 
-    private static async Task<IResult> BeginAsync(OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
+    private static async Task<IResult> BeginAsync(HttpContext context, OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
     {
         if (!options.Value.Enabled)
             return Results.Json(new { code = "oidc_not_configured", message = "Logto OIDC login is not configured on this host." }, statusCode: 503);
-        var (state, nonce) = store.BeginLogin();
-        var url = await client.BuildAuthorizationUrlAsync(state, nonce, ct).ConfigureAwait(false);
-        return Results.Json(new { authorizeUrl = url, state });
+        (string State, string Nonce) login;
+        try
+        {
+            login = store.BeginLogin();
+        }
+        catch (OidcLoginCapacityException ex)
+        {
+            context.Response.Headers.RetryAfter = "60";
+            return Results.Json(new { code = "too_many_logins", message = ex.Message }, statusCode: 429);
+        }
+        var url = await client.BuildAuthorizationUrlAsync(login.State, login.Nonce, ct).ConfigureAwait(false);
+        return Results.Json(new { authorizeUrl = url, state = login.State });
     }
 
-    private static async Task<IResult> LoginAsync(OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
+    private static async Task<IResult> LoginAsync(HttpContext context, OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
     {
         if (!options.Value.Enabled)
             return Results.Json(new { code = "oidc_not_configured", message = "Logto OIDC login is not configured on this host." }, statusCode: 503);
-        var (state, nonce) = store.BeginLogin();
-        var url = await client.BuildAuthorizationUrlAsync(state, nonce, ct).ConfigureAwait(false);
+        (string State, string Nonce) login;
+        try
+        {
+            login = store.BeginLogin();
+        }
+        catch (OidcLoginCapacityException ex)
+        {
+            context.Response.Headers.RetryAfter = "60";
+            return Results.Json(new { code = "too_many_logins", message = ex.Message }, statusCode: 429);
+        }
+        var url = await client.BuildAuthorizationUrlAsync(login.State, login.Nonce, ct).ConfigureAwait(false);
         return Results.Redirect(url);
     }
 
