@@ -97,7 +97,8 @@ TinadecOffice 是一个**多许可证仓库**。各许可证的精确范围见
 > I have read the CLA Document and I hereby sign the CLA
 
 您的 GitHub 用户 ID、评论 URL 与钉住的 CLA commit 将被记录在
-`cla-signatures` 分支的 `signatures/version1/cla.json` 中作为证据。签署后
+`main` 的 `signatures/version1/cla.json`，并镜像到 `cla-signatures` 分支作为证据。
+签署后
 工作流会重跑您已开启 PR 的 `CLAAssistant` 检查；`main` 要求该检查通过后才能
 合并 Pull Request。
 

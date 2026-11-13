@@ -144,7 +144,7 @@ jobs:
       - name: Checkout signature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.CLA_BRANCH }}
+          ref: main
 
       - name: Append signatures
         id: append
@@ -207,19 +207,22 @@ jobs:
           store.signedContributors.push(...added)
           fs.writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`)
 
-          const sha = execFileSync('git', ['rev-parse', `HEAD:${path}`], {
-            encoding: 'utf8',
-          }).trim()
           const content = fs.readFileSync(path).toString('base64')
-          execFileSync('gh', [
-            'api', '-X', 'PUT',
-            `repos/${env('GITHUB_REPOSITORY')}/contents/${path}`,
-            '-f', 'message=docs(cla): record CLA v1 discussion signatures',
-            '-f', `content=${content}`,
-            '-f', `branch=${env('CLA_BRANCH')}`,
-            '-f', `sha=${sha}`,
-            '--jq', '.commit.sha',
-          ], { env: process.env, stdio: 'inherit' })
+          for (const branch of ['main', env('CLA_BRANCH')]) {
+            const response = JSON.parse(execFileSync('gh', [
+              'api',
+              `repos/${env('GITHUB_REPOSITORY')}/contents/${path}?ref=${branch}`,
+            ], { encoding: 'utf8', env: process.env }))
+            execFileSync('gh', [
+              'api', '-X', 'PUT',
+              `repos/${env('GITHUB_REPOSITORY')}/contents/${path}`,
+              '-f', 'message=docs(cla): record CLA v1 discussion signatures',
+              '-f', `content=${content}`,
+              '-f', `branch=${branch}`,
+              '-f', `sha=${response.sha}`,
+              '--jq', '.commit.sha',
+            ], { env: process.env, stdio: 'inherit' })
+          }
           const changed = added.length + updated
           console.log(`Recorded ${added.length} new and ${updated} updated signature(s)`)
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`)
@@ -278,15 +281,16 @@ jobs:
               node.commit.committer.user?.databaseId,
             ]).filter(id => Number.isInteger(id)))
             if (![...ids].some(id => committers.has(id))) continue
-            try {
-              call([
-                'api', '-X', 'POST',
-                `repos/${owner}/${repo}/issues/${pull.number}/comments`,
-                '-f', 'body=recheck',
-              ])
-              console.log(`Requested CLA recheck for PR #${pull.number}`)
-            } catch (error) {
-              console.warn(`Could not request CLA recheck for PR #${pull.number}: ${error.message}`)
-            }
+            const runs = JSON.parse(call([
+              'api',
+              `repos/${owner}/${repo}/actions/workflows/cla.yml/runs?event=pull_request_target&status=failure&branch=${encodeURIComponent(pull.headRefName)}&per_page=1`,
+            ]))
+            const run = runs.workflow_runs?.[0]
+            if (!run) continue
+            call([
+              'api', '-X', 'POST',
+              `repos/${owner}/${repo}/actions/runs/${run.id}/rerun`,
+            ])
+            console.log(`Re-ran CLA check for PR #${pull.number}: ${run.id}`)
           }
           NODE
