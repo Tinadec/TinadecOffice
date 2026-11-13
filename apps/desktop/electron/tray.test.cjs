@@ -289,8 +289,8 @@ test('the first hide explains itself once, and only where balloons exist', () =>
 test('main.cjs hides the window on close, quits only when nothing is keeping it alive', () => {
   const source = fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8');
 
-  assert.match(source, /win\.on\('close', \(event\) => \{\s*if \(!keepRunningInTray\(\)\) \{[\s\S]{0,240}?companionWindow\.closeCompanionWindow\(\);\s*return;\s*\}\s*event\.preventDefault\(\);\s*win\.hide\(\);[\s\S]{0,80}?\}\);/,
-    'closing hides the window only while a tray exists, always prevents the teardown, and takes the companion down with it');
+  assert.match(source, /win\.on\('close', \(event\) => \{\s*if \(!keepRunningInTray\(\)\) \{[\s\S]{0,240}?companionWindow\.closeCompanionWindow\(\);[\s\S]{0,120}?agentBrowserManager\.closeAll\(\);\s*return;\s*\}\s*event\.preventDefault\(\);\s*win\.hide\(\);[\s\S]{0,80}?\}\);/,
+    'closing hides the window only while a tray exists, always prevents the teardown, and takes the companion and agent browser down with it');
   assert.match(source, /function keepRunningInTray\(\) \{\s*return shouldHideOnClose\(\{[\s\S]{0,160}?trayActive: Boolean\(trayController\?\.isActive\(\)\),/,
     'the decision comes from the shared rule, including the tray check');
   assert.match(source, /win\.on\('closed', \(\) => \{ if \(mainWindow === win\) mainWindow = null; \}\);/,

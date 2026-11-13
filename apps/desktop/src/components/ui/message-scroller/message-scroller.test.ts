@@ -102,23 +102,25 @@ const many = (count: number) => Array.from({ length: count }, (_, i) => ({ id: `
 describe('MessageScroller', () => {
   it('opens at the end and follows new rows while the reader is at the bottom', async () => {
     const { rows, viewport, wrapper } = harness(many(10), { autoScroll: true })
-    await frames()
-    expect(viewport().scrollTop).toBe(10 * ROW - VIEWPORT)
+    // Poll rather than read after a fixed sleep: the mount → default-scroll and the append →
+    // follow chain each settle a task or two later when the machine is busy.
+    await vi.waitFor(() => expect(viewport().scrollTop).toBe(10 * ROW - VIEWPORT), { timeout: 2000, interval: 20 })
     rows.value = [...rows.value, { id: 'm10' }, { id: 'm11' }]
-    await frames()
-    expect(viewport().scrollTop).toBe(12 * ROW - VIEWPORT)
+    await vi.waitFor(() => expect(viewport().scrollTop).toBe(12 * ROW - VIEWPORT), { timeout: 2000, interval: 20 })
     wrapper.unmount()
   })
 
   it('does not take the scroll position away from a reader who scrolled up', async () => {
     const { rows, viewport, wrapper } = harness(many(10), { autoScroll: true })
-    await frames()
+    await vi.waitFor(() => expect(viewport().scrollTop).toBe(10 * ROW - VIEWPORT), { timeout: 2000, interval: 20 })
     const el = viewport()
     el.dispatchEvent(new WheelEvent('wheel', { deltaY: -200 }))
     el.scrollTop = 100
     el.dispatchEvent(new Event('scroll'))
     await frames()
     rows.value = [...rows.value, { id: 'm10' }]
+    // Wait until the appended row is actually in the DOM, so "stayed at 100" cannot be vacuous.
+    await vi.waitFor(() => expect(el.querySelectorAll('[data-slot="message-scroller-item"]').length).toBe(11), { timeout: 2000, interval: 20 })
     await frames()
     expect(el.scrollTop).toBe(100)
     wrapper.unmount()
@@ -130,9 +132,14 @@ describe('MessageScroller', () => {
     rows.value = [...rows.value, { id: 'turn', anchor: true }, { id: 'answer' }]
     await frames()
     // The anchor (row 6) lands below the previous-row peek; its spacer keeps that reachable.
-    const anchorTop = 6 * ROW - viewport().scrollTop
-    expect(anchorTop).toBeGreaterThanOrEqual(0)
-    expect(anchorTop).toBeLessThanOrEqual(64 + 1)
+    // Poll instead of reading once: the mutation → anchor-scroll chain settles a task or two
+    // later under load (a fixed sleep read the pre-scroll position on a busy machine and made
+    // this look like a lost anchor). Both bounds still hold, so a truly lost scroll stays red.
+    await vi.waitFor(() => {
+      const anchorTop = 6 * ROW - viewport().scrollTop
+      expect(anchorTop).toBeGreaterThanOrEqual(0)
+      expect(anchorTop).toBeLessThanOrEqual(64 + 1)
+    }, { timeout: 2000, interval: 20 })
     wrapper.unmount()
   })
 
@@ -140,13 +147,16 @@ describe('MessageScroller', () => {
     // Upstream read every row above the viewport on each scroll (capturePrependAnchor) and
     // every row for the content height; at 200 rows that was 417 reads for one scroll + append.
     const { rows, viewport, wrapper } = harness(many(count), { autoScroll: true })
-    await frames()
-    rowMeasurements = 0
     const el = viewport()
+    await vi.waitFor(() => expect(el.querySelectorAll('[data-slot="message-scroller-item"]').length).toBe(count), { timeout: 2000, interval: 20 })
+    rowMeasurements = 0
     el.scrollTop = (count - 5) * ROW
     el.dispatchEvent(new Event('scroll'))
     await frames()
     rows.value = [...rows.value, { id: 'extra' }]
+    // Wait for the append to be processed: an unprocessed append would read 0 rows and pass
+    // vacuously.
+    await vi.waitFor(() => expect(el.querySelectorAll('[data-slot="message-scroller-item"]').length).toBe(count + 1), { timeout: 2000, interval: 20 })
     await frames()
     expect(rowMeasurements).toBeLessThan(50)
     wrapper.unmount()

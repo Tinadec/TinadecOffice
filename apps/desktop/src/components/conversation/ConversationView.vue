@@ -40,14 +40,28 @@ const jumpBehavior = computed<ScrollBehavior>(() => (motion.value === 'reduce' ?
 // one user-facing view of tool work, so it never reaches the transcript.
 const visibleMessages = computed(() => props.messages.filter((message) => message.role !== 'tool_evidence'))
 
+// Turn structure only depends on the messages, the run list and the streaming answers —
+// not on which events a run has accumulated. Cache the built turns so a published feed
+// batch (which bumps `revision` every frame while streaming) reuses the same turn objects
+// for every turn whose structure did not change; their components then skip re-deriving.
+// `feed.runs.size` is part of the key so a run whose activity record first appears mid-stream
+// still rebuilds once and picks the record up (the record reference itself is stable after).
+let turnsCache: { messages: unknown; runs: unknown; streaming: unknown; runCount: number; result: ReturnType<typeof buildTurns> } | null = null
 const turns = computed(() => {
   void props.feed.revision.value
-  return buildTurns({
+  const runCount = props.feed.state.value.runs.size
+  if (turnsCache && turnsCache.messages === props.messages && turnsCache.runs === props.runs
+    && turnsCache.streaming === props.streamingReplies && turnsCache.runCount === runCount) {
+    return turnsCache.result
+  }
+  const result = buildTurns({
     messages: visibleMessages.value,
     runs: props.runs,
     feed: props.feed.state.value,
     streaming: new Map(Object.entries(props.streamingReplies ?? {}).filter(([, text]) => text)),
   })
+  turnsCache = { messages: props.messages, runs: props.runs, streaming: props.streamingReplies, runCount, result }
+  return result
 })
 
 /** A date line above each turn that starts on a later day than the one before it. */
