@@ -1,4 +1,5 @@
 using TinadecTools.Tools.FileRW;
+using TinadecTools.Tools.Git;
 
 namespace TinadecTools.Runtime.Sandbox;
 
@@ -107,7 +108,8 @@ internal static class CommandSandboxRuntime
             ProtectedPaths = (ToolExecutionContext.Current?.ProjectStorageWrite == true
                 ? WorkspaceStoragePolicy.ForbiddenRoots(workingDir)
                 : WorkspaceStoragePolicy.ProtectedPaths(workingDir)).ToList(),
-            ReadExceptions = ToolExecutionContext.Current?.ReadRoots.Where(path => !WorkspaceStoragePolicy.PermanentHostPaths().Any(root => WorkspaceRootSet.IsWithin(root, path))).ToList() ?? []
+            ReadExceptions = ToolExecutionContext.Current?.ReadRoots.Where(path => !WorkspaceStoragePolicy.PermanentHostPaths().Any(root => WorkspaceRootSet.IsWithin(root, path))).ToList() ?? [],
+            EnvironmentOverrides = GitHookPolicy.ShellOverrides(workingDir)
         };
     }
 
@@ -126,7 +128,8 @@ internal static class CommandSandboxRuntime
             ReadExceptions = additional.ReadExceptions,
             StorageId = additional.StorageId,
             StorageRoot = additional.StorageRoot,
-            StorageWrite = additional.StorageWrite
+            StorageWrite = additional.StorageWrite,
+            EnvironmentOverrides = additional.EnvironmentOverrides
         };
     }
 

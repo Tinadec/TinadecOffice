@@ -46,6 +46,25 @@ internal static class GitHookPolicy
         return ["-c", "core.hooksPath=" + EmptyHooksDirectory(repoTopLevel)];
     }
 
+    /// <summary>
+    /// The same suppression for a command the sandbox runs, where there is no argv to
+    /// prepend because the user's shell owns the command line. GIT_CONFIG_* is the highest
+    /// precedence git offers, above a repository-level core.hooksPath (verified against git
+    /// 2.55.0.windows.2). Applied through SandboxPermissions.EnvironmentOverrides, which every
+    /// backend sets after building the environment and before stripping the host token, so
+    /// this cannot be used to put that token back.
+    /// </summary>
+    internal static Dictionary<string, string> ShellOverrides(string workingDirectory)
+    {
+        if (HooksEnabled) return new Dictionary<string, string>(StringComparer.Ordinal);
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["GIT_CONFIG_COUNT"] = "1",
+            ["GIT_CONFIG_KEY_0"] = "core.hooksPath",
+            ["GIT_CONFIG_VALUE_0"] = EmptyHooksDirectory(workingDirectory)
+        };
+    }
+
     private static string? FirstSubcommand(IReadOnlyList<string> arguments)
     {
         for (var i = 0; i < arguments.Count; i++)
