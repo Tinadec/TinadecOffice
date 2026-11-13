@@ -113,9 +113,11 @@ internal static class GitCli
                 timeoutMs = timeoutMs == 60_000 ? configuredTimeout : Math.Min(timeoutMs, configuredTimeout);
                 maxOutputChars = maxOutputChars == 4 * 1024 * 1024 ? configuredOutput : Math.Min(maxOutputChars, configuredOutput);
             }
+            var prefix = GitHookPolicy.Prefix(arguments, repoTopLevel);
+            var argv = prefix.Length == 0 ? arguments : [.. prefix, .. arguments];
             var r = await TerminalRunner.RunAsync(
                 "git",
-                arguments,
+                argv,
                 repoTopLevel,
                 stdin,
                 timeoutMs,
@@ -131,7 +133,7 @@ internal static class GitCli
             // instead of letting the failure surface as an empty string.
             if (r.TimedOut)
                 return new GitExecResult(false, -1, r.Stdout, string.IsNullOrWhiteSpace(r.Stderr)
-                    ? $"git {string.Join(' ', arguments)} timed out after {timeoutMs} ms."
+                    ? $"git {string.Join(' ', argv)} timed out after {timeoutMs} ms."
                     : r.Stderr);
 
             if (r.StdoutTruncated || r.StderrTruncated)

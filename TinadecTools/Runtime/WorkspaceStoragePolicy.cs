@@ -39,6 +39,7 @@ internal static class WorkspaceStoragePolicy
     internal static bool CanAccess(string workspaceRoot, string path, bool writable,
         IReadOnlyList<string> explicitReadRoots)
     {
+        if (writable && IsGitMetadata(path)) return false;
         if (ForbiddenRoots(workspaceRoot).Any(root => WorkspaceRootSet.IsWithin(root, path)))
             return !writable && !PermanentHostPaths().Any(root => WorkspaceRootSet.IsWithin(root, path))
                 && explicitReadRoots.Any(root => WorkspaceRootSet.IsWithin(root, path));
@@ -49,6 +50,19 @@ internal static class WorkspaceStoragePolicy
         if (ToolExecutionContext.Current?.ProjectStorageWrite == true) return true;
         return !writable && explicitReadRoots.Any(root => WorkspaceRootSet.IsWithin(root, path));
     }
+
+    // Git metadata is an execution surface, not just storage: hooks run on commit, and
+    // .git/config names programs through core.fsmonitor, core.sshCommand, core.pager,
+    // core.editor, filter.*.clean/smudge and alias.*. An agent that can write there and
+    // then reach a git subcommand has arbitrary execution outside the command sandbox.
+    //
+    // Writes only. Reads stay open so ls/stat keep working, and git itself is unaffected:
+    // it writes .git as a subprocess, which never passes through this classification.
+    // Segment matching covers nested repositories and the .git file of a worktree; a
+    // gitdir outside the workspace is already refused by the root containment check.
+    private static bool IsGitMetadata(string path) =>
+        path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => segment.Equals(".git", StringComparison.OrdinalIgnoreCase));
 
     internal static IReadOnlyList<string> ProtectedPaths(string workspaceRoot) =>
         InternalDirectories.Select(name => Path.Combine(StorageRoot(workspaceRoot), name))

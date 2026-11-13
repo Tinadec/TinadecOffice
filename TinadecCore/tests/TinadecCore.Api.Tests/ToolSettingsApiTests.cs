@@ -57,6 +57,34 @@ public sealed class ToolSettingsApiTests : IAsyncLifetime
         Assert.Equal(TimeSpan.FromSeconds(50), budget);
     }
 
+    /// <summary>
+    /// git.allow_hooks is the deliberate trade for the hook escape chain: off by default an
+    /// agent-initiated git command runs no repository hook; on, the user's pre-commit,
+    /// commit-msg and pre-push hooks run again — outside the command sandbox, with the host's
+    /// ambient environment. The setting must exist, default to false, stay boolean and survive
+    /// a merge, or the tool-side suppression loses its only opt-out.
+    /// </summary>
+    [Fact]
+    public void GitAllowHooks_DefaultsOffIsBooleanAndSurvivesMerge()
+    {
+        Assert.False(ToolSettingsSchema.Defaults.GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+
+        var property = ToolSettingsSchema.Schema().GetProperty("properties").GetProperty("git")
+            .GetProperty("properties").GetProperty("allow_hooks");
+        Assert.Equal("boolean", property.GetProperty("type").GetString());
+        Assert.False(property.GetProperty("default").GetBoolean());
+        Assert.Contains("outside the command sandbox", property.GetProperty("description").GetString()!, StringComparison.Ordinal);
+
+        Assert.False(ToolSettingsSchema.Validate(JsonSerializer.SerializeToElement(new { git = new { allow_hooks = false } }))
+            .GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+        Assert.True(ToolSettingsSchema.Validate(JsonSerializer.SerializeToElement(new { git = new { allow_hooks = true } }))
+            .GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+        Assert.Throws<ToolSettingsException>(() => ToolSettingsSchema.Validate(JsonSerializer.SerializeToElement(new { git = new { allow_hooks = "yes" } })));
+
+        var merged = ToolSettingsSchema.Merge(ToolSettingsSchema.Defaults, JsonSerializer.SerializeToElement(new { git = new { allow_hooks = true } }));
+        Assert.True(merged.GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+    }
+
     [Fact]
     public void DeleteFileRespectsWriteCategorySettingsAndCannotLoseItsMutationClassification()
     {

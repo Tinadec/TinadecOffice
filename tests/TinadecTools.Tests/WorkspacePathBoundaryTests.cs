@@ -165,4 +165,59 @@ public sealed class WorkspacePathBoundaryTests : IDisposable
         Assert.Equal("mcp.json", relative);
         Assert.DoesNotContain("..", relative.Split(Path.DirectorySeparatorChar));
     }
+
+    /// <summary>
+    /// Git metadata is an execution surface: hooks run on commit, and .git/config names
+    /// programs through core.fsmonitor, core.sshCommand, core.pager, filter.* and alias.*.
+    /// The refusal is write-only — ls and stat resolve with writable:false and must keep
+    /// working, and git itself writes .git as a subprocess that never passes through here.
+    /// </summary>
+    [Theory]
+    [InlineData(".git")]
+    [InlineData(".git/hooks/pre-commit")]
+    [InlineData(".git/config")]
+    [InlineData(".git/HEAD")]
+    [InlineData(".git/objects/ab/cdef0123")]
+    [InlineData("sub/.git/config")]
+    [InlineData("nested/deep/.git/hooks/post-checkout")]
+    public void GitMetadata_IsRefusedForWrite(string relative)
+    {
+        var roots = Roots();
+        var target = Path.Combine(_writable, relative);
+        Assert.Throws<UnauthorizedAccessException>(() => roots.Resolve(target, writable: true));
+    }
+
+    [Theory]
+    [InlineData(".git")]
+    [InlineData(".git/hooks/pre-commit")]
+    [InlineData(".git/config")]
+    [InlineData("sub/.git/config")]
+    public void GitMetadata_StaysReadable(string relative)
+    {
+        var roots = Roots();
+        var target = Path.Combine(_writable, relative.Replace('/', Path.DirectorySeparatorChar));
+        Assert.Equal(target, roots.Resolve(target, writable: false));
+        Assert.True(roots.IsAllowed(target));
+    }
+
+    [Fact]
+    public void OrdinaryWorkingTreeFile_IsStillReadableAndWritable()
+    {
+        var roots = Roots();
+        var target = Path.Combine(_writable, "src", "app.ts");
+        Assert.Equal(target, roots.Resolve(target, writable: false));
+        Assert.Equal(target, roots.Resolve(target, writable: true));
+    }
+
+    [Fact]
+    public void ANameThatMerelyStartsWithDotGit_IsNotGitMetadata()
+    {
+        var roots = Roots();
+        // Segment equality, not a prefix test: .github and .gitignore are ordinary files.
+        foreach (var relative in new[] { ".github/workflows/ci.yml", ".gitignore", ".gitattributes", "src/.gitkeep" })
+        {
+            var target = Path.Combine(_writable, relative.Replace('/', Path.DirectorySeparatorChar));
+            Assert.Equal(target, roots.Resolve(target, writable: true));
+        }
+    }
 }
