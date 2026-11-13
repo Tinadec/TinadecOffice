@@ -278,11 +278,15 @@ jobs:
               node.commit.committer.user?.databaseId,
             ]).filter(id => Number.isInteger(id)))
             if (![...ids].some(id => committers.has(id))) continue
-            call([
-              'api', '-X', 'POST',
-              `repos/${owner}/${repo}/issues/${pull.number}/comments`,
-              '-f', 'body=recheck',
-            ])
-            console.log(`Requested CLA recheck for PR #${pull.number}`)
+            try {
+              call([
+                'api', '-X', 'POST',
+                `repos/${owner}/${repo}/issues/${pull.number}/comments`,
+                '-f', 'body=recheck',
+              ])
+              console.log(`Requested CLA recheck for PR #${pull.number}`)
+            } catch (error) {
+              console.warn(`Could not request CLA recheck for PR #${pull.number}: ${error.message}`)
+            }
           }
           NODE
