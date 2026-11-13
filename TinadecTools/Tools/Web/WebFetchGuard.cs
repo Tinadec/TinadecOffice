@@ -184,6 +184,19 @@ internal static class WebFetchGuard
         if (ip.Equals(IPAddress.IPv6Loopback))
             return "loopback";
 
+        // ::127.0.0.1 is the deprecated IPv4-compatible form, not the v4-mapped one: its
+        // non-zero bytes sit at 12 and 15, so bytes[10..11] are 0x00 and IsIPv4MappedToIPv6
+        // above does not recognise it. Without this it fell through to "allowed". :: and ::1
+        // are already handled, so anything else with twelve leading zero bytes carries an
+        // embedded v4 address that the v4 branch never inspected. Whether a stack actually
+        // routes ::7f00:1 is not established here; refusing the whole reserved ::/8 is
+        // deliberate defence in depth, not a claim that this shape is reachable.
+        var compatible = true;
+        for (var i = 0; i < 12; i++)
+            if (bytes[i] != 0) { compatible = false; break; }
+        if (compatible)
+            return BlockReason(new IPAddress(bytes[12..16])) ?? "IPv4-compatible IPv6";
+
         if (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80)
             return "link-local";
 
@@ -207,8 +220,9 @@ internal static class WebFetchGuard
         if (bytes[0] == 0x20 && bytes[1] == 0x02)
             return "6to4";
 
-        // 64:ff9b::/96 is the NAT64 well-known prefix: it translates to a v4
-        // address that the v4 branch above never inspected.
+        // NAT64. Only the first four bytes are compared, so this covers the whole 64:ff9b::/32,
+        // wider than the RFC 6052 well-known /96. That is deliberate: the rest of /32 is IANA
+        // reserved too, and narrowing it to /96 would let 64:ff9b:1::1 through.
         if (bytes[0] == 0x00 && bytes[1] == 0x64 && bytes[2] == 0xFF && bytes[3] == 0x9B)
             return "NAT64";
 
