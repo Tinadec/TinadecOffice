@@ -113,7 +113,7 @@ public static class CoreDiagnosticsEndpoints
             return Results.Ok(receipt);
         }).WithSummary("Readiness receipt").WithDescription(
             "Unified readiness receipt: overall ready|degraded|blocked plus fixed items " +
-            "(database, core_storage, agent_pack, default_mode, model_provider, model_secret, " +
+            "(configuration, database, core_storage, agent_pack, default_mode, model_provider, model_secret, " +
             "model_route, model_probe, tool_provider, manifest_hash), each with reason/action.");
 
         // ============================================================

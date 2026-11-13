@@ -5,7 +5,7 @@ export interface HostConnectionStatus {
   state: 'checking' | 'ready' | 'unavailable' | 'rejected' | 'preview' | 'restart_required'
   managed: boolean
   checked_at?: string
-  error?: { code: string; message: string }
+  error?: { code: string; message: string; document?: string | null; reason?: string | null }
 }
 
 export interface HostStatusBridge {
@@ -34,10 +34,13 @@ const HOST_ERROR_KEYS: Record<string, string> = {
   host_identity_rejected: 'host.identityRejected',
   host_identity_unavailable: 'host.identityUnavailable',
   host_connection_stopped: 'host.connectionStopped',
+  host_startup_configuration_invalid: 'host.startupConfigurationInvalid',
 }
 export function localizeHostStatus(status: HostConnectionStatus): HostConnectionStatus {
   const key = status.error ? HOST_ERROR_KEYS[status.error.code] : undefined
-  return key && status.error ? { ...status, error: { ...status.error, message: i18n.global.t(key) } } : status
+  return key && status.error
+    ? { ...status, error: { ...status.error, message: i18n.global.t(key, { file: status.error.document ?? 'configuration.toml' }) } }
+    : status
 }
 
 /** Missing methods on an existing preload must fail closed; a bare browser is preview. */

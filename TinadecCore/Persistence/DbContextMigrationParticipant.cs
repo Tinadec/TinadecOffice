@@ -7,12 +7,25 @@ namespace TinadecCore.Persistence;
 public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationParticipant where TContext : DbContext
 {
     private readonly IDbContextFactory<TContext> _factory;
+    private readonly IRawDbContextFactory<TContext>? _raw;
 
-    public DbContextMigrationParticipant(IDbContextFactory<TContext> factory) => _factory = factory;
+    /// <summary>
+    /// The raw factory is present only for contexts that own a configuration projection. It matters
+    /// here because the projection-aware factory validates every configuration document before it
+    /// hands out a context, and an invalid document must not stop schema creation: without the
+    /// schema no other module can even report what is wrong.
+    /// </summary>
+    public DbContextMigrationParticipant(IDbContextFactory<TContext> factory, IRawDbContextFactory<TContext>? raw = null)
+    {
+        _factory = factory;
+        _raw = raw;
+    }
 
     public async Task MigrateAsync(CancellationToken cancellationToken = default)
     {
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var db = _raw is null
+            ? await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false)
+            : await _raw.CreateRawDbContextAsync(cancellationToken).ConfigureAwait(false);
         var migrations = db.Database.GetMigrations().ToArray();
         if (migrations.Length != 0)
         {

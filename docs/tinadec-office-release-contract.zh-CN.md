@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | `win-x64` | windows/x64 | `.zip` | NSIS setup + portable | System32 bsdtar |
 | `linux-x64` | linux/x64 | `.tar.gz` | `.deb` | 系统 GNU tar |
-| `osx-arm64` | macos/arm64 | `.tar.gz` | `.dmg`（ad-hoc 签名） | 系统 bsdtar |
+| `osx-arm64` | macos/arm64 | `.tar.gz` | `.dmg`（ad-hoc 封印，未公证） | 系统 bsdtar |
 
 归档格式按平台分裂不是审美选择，是量出来的：Linux runner 上的 `tar` 是 GNU tar，`tar -a -cf module.zip` 会以 0 退出码写出一个**tar 归档**（首字节 `2e 2f 00 00`，不是 `50 4b 03 04`），并且反过来读真 zip 时报 `This does not look like a tar archive`（exit 2）。Manager 的 `extractArchive()` 调的正是同一个 `tar`。所以 POSIX 腿发 tar.gz：GNU tar 会把它自己的执行位写进归档（实测 `-rwxr-xr-x`），Windows 腿继续发 zip 给 bsdtar 消费。
 
@@ -133,4 +133,4 @@ Manager 只负责机器级运行时和 Pack 的获取、完整性校验、版本
 - `expectedArtifact` 在线上的 catalog 里是通配形式（实测：`TinadecTools*`、`TinadecCore.Api*`、`TinadecGateway*`；AgentPack 保持精确的 `manifest.json`，完整安装包为 `""`）。要收紧到本平台的 entrypoint，需要 Manager 改读 `artifact.packageMetadata.entrypoint`（`install-flow.ts:266-276` 一处回退即可），而它的 `Artifact` 类型还没有这个字段——值本身已经在 catalog 里。
 - **消费侧的 `agent-pack` 拒绝已修**：`TinadecManger/src/shared/manifest.ts` 的 `VALID_FAMILIES`/`VALID_DELIVERY` 此前不含 `agent-pack`，实测用 Manager 自己的 `validateManifest()` 跑真实产物得到的 2 条拒绝（`$.products[4].family`、`.delivery`）会让 `assertManifestOrThrow()` 拒绝整份 Office catalog；补上两个合法值后同一份真 catalog 读数为 **0 条**（Manager 仓库 commit `eda169c`）。
 - Manager 的 `extractArchive()` 直接调 PATH 上的 `tar`：在 Windows 开发机上它可能是 Git Bash 的 GNU tar，读不了 zip（`tests/install-flow.test.ts` 4 例在本机因此为红，且与本次改动无关，在 HEAD 上同样红）。渠道按平台分裂归档格式之后，Linux/macOS 拿到的都是 tar.gz，正好落在两种 `tar` 都能读的那一格；生产路径（Explorer 启动，PATH 里 System32 在前）用 bsdtar 读 zip。
-- macOS 是 ad-hoc 签名，`.dmg` 不带公证；`format: "executable"` 对 `.deb`/`.dmg` 的含义只有"单文件交付"，不代表 Manager 能解包安装。
+- macOS 的 `.app` 由 electron-builder 的 `afterPack` 钩子（`scripts/sign-mac-adhoc.mjs`）做完整 ad-hoc 封印，`.dmg` 不带公证。封印完整与缺失是两种体验：缺失时带 quarantine 的下载被判「已损坏，无法打开」，完整时才是「无法验证开发者」，可右键打开或到系统设置放行。CI 的 mac 腿用 `codesign --verify --deep --strict` 与代码标识断言守住这条；Developer ID + `notarytool`/`stapler` 仍未接入，同一份清单加 `--options runtime` 与时间戳即可复用。`format: "executable"` 对 `.deb`/`.dmg` 的含义只有"单文件交付"，不代表 Manager 能解包安装。

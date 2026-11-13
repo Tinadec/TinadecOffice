@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostRuntimeTarget } from "./runtimeTargets.mjs";
+import { signStagedRuntime } from "./sign-mac-adhoc.mjs";
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = join(desktopDir, ".runtime-cache", "tmp");
@@ -31,6 +32,10 @@ if (isDirectRun) {
 	const target = hostRuntimeTarget();
 	const passthrough = process.argv.slice(2);
 	mkdirSync(tempDir, { recursive: true });
+	// Seal the staged runtime before electron-builder copies it into the bundle. The Office channel
+	// archives are built from this directory and compared byte-for-byte with the bundle's copy, so
+	// signing the bundle copy afterwards would silently break every macOS release.
+	if (process.platform === "darwin") signStagedRuntime(join(desktopDir, "runtime"));
 	const command = process.platform === "win32" ? "npx.cmd" : "npx";
 	const result = spawnSync(command, ["electron-builder", ...builderArgs(target.key, passthrough)], {
 		cwd: desktopDir,

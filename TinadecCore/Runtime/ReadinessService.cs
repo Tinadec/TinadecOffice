@@ -49,7 +49,7 @@ public sealed record ReadinessReceipt
 }
 
 /// <summary>
-/// Aggregates the ten fixed readiness items: database, core_storage, agent_pack,
+/// Aggregates the fixed readiness items: configuration, database, core_storage, agent_pack,
 /// default_mode, model_provider, model_secret, model_route, model_probe,
 /// tool_provider, manifest_hash. Every item carries an actionable <see cref="ReadinessItem.Action"/>
 /// (a command or a model-center page hint) so a clean environment always shows the
@@ -70,6 +70,7 @@ public sealed class ReadinessService
     private readonly IToolProvider _toolProvider;
     private readonly ModelProbeService _modelProbe;
     private readonly IConfiguration _configuration;
+    private readonly StartupConfigurationState? _startup;
     private readonly ILogger<ReadinessService>? _logger;
     private readonly object _toolGate = new();
     private (DateTimeOffset ExpiresAt, ReadinessItem ToolProvider, ReadinessItem ManifestHash)? _toolCache;
@@ -86,7 +87,8 @@ public sealed class ReadinessService
         IToolProvider toolProvider,
         ModelProbeService modelProbe,
         IConfiguration configuration,
-        ILogger<ReadinessService>? logger = null)
+        ILogger<ReadinessService>? logger = null,
+        StartupConfigurationState? startup = null)
     {
         _database = database;
         _agentConfig = agentConfig;
@@ -100,13 +102,15 @@ public sealed class ReadinessService
         _modelProbe = modelProbe;
         _configuration = configuration;
         _logger = logger;
+        _startup = startup;
     }
 
     public async Task<ReadinessReceipt> GetReceiptAsync(CancellationToken cancellationToken = default)
     {
         var checkedAt = DateTimeOffset.UtcNow;
-        var items = new List<ReadinessItem>(10)
+        var items = new List<ReadinessItem>(11)
         {
+            CheckStartupConfiguration(checkedAt),
             await CheckDatabaseAsync(cancellationToken).ConfigureAwait(false),
             await CheckCoreStorageAsync(checkedAt, cancellationToken).ConfigureAwait(false),
         };
@@ -128,6 +132,41 @@ public sealed class ReadinessService
                 && !(item.Id == ModelProbeItemId && item.Status == "unavailable")) ? "degraded"
             : "ready";
         return new ReadinessReceipt { Status = overall, CheckedAt = checkedAt, Items = items };
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // configuration — documents that failed validation while the host was starting.
+    // Startup records instead of aborting, so this row is how a client learns which file to repair.
+    // ──────────────────────────────────────────────────────────
+    private ReadinessItem CheckStartupConfiguration(DateTimeOffset checkedAt)
+    {
+        var diagnostics = _startup?.Diagnostics ?? [];
+        if (diagnostics.Count == 0)
+            return new ReadinessItem
+            {
+                Id = "configuration",
+                Status = "ready",
+                ReasonCode = "configuration_valid",
+                Reason = "Every configuration document validated during startup.",
+                CheckedAt = checkedAt
+            };
+        // The HTTP-visible text stays generic on purpose: a configuration diagnostic can carry a
+        // database driver message (configuration_projection_invalid does), and the repository contract
+        // keeps driver text and SQL state out of response bodies. The full detail is in the Core log.
+        return new ReadinessItem
+        {
+            Id = "configuration",
+            Status = "blocked",
+            ReasonCode = diagnostics[0].Code,
+            Reason = "A configuration document failed validation during startup; the Core log names the file and field.",
+            Action = "Repair or restore the named configuration document, then restart Core. The affected storage scope reports the same code.",
+            CheckedAt = checkedAt,
+            Data = new
+            {
+                count = diagnostics.Count,
+                codes = diagnostics.Select(diagnostic => diagnostic.Code).Distinct(StringComparer.Ordinal).ToArray()
+            }
+        };
     }
 
     // ──────────────────────────────────────────────────────────
@@ -299,7 +338,21 @@ public sealed class ReadinessService
     private async Task<ReadinessItem[]> CheckModelLayersAsync(DateTimeOffset checkedAt, CancellationToken cancellationToken)
     {
         // model_route reuses the model module's own route resolution (plan: 复用 CheckReadinessAsync).
-        var modelReadiness = await _modelProvider.CheckReadinessAsync(cancellationToken).ConfigureAwait(false);
+        ModelReadiness modelReadiness;
+        var modelConfigurationInvalid = false;
+        try
+        {
+            modelReadiness = await _modelProvider.CheckReadinessAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (ConfigurationDocumentException)
+        {
+            // models.toml is a projected document: an invalid file makes the model context throw before
+            // the route query below can run. Readiness still has to answer, so this becomes a blocked
+            // model route instead of a failed request — the receipt is the only place that names the
+            // problem for a client.
+            modelConfigurationInvalid = true;
+            modelReadiness = new ModelReadiness { IsReady = false, StatusMessage = "The model configuration is invalid." };
+        }
         var route = new ReadinessItem
         {
             Id = "model_route",
@@ -367,7 +420,12 @@ public sealed class ReadinessService
 
         var providerItem = new ReadinessItem { Id = "model_provider", CheckedAt = checkedAt };
         var secretItem = new ReadinessItem { Id = "model_secret", CheckedAt = checkedAt };
-        if (configError is not null)
+        if (modelConfigurationInvalid)
+        {
+            providerItem = providerItem with { Status = "blocked", ReasonCode = "provider_config_invalid", Reason = "The model configuration document is invalid, so the provider could not be read.", Action = "Repair or restore models.toml in the model center, then restart Core." };
+            secretItem = secretItem with { Status = "blocked", ReasonCode = "secret_unchecked_config_invalid", Reason = "The model configuration is invalid, so the key was not checked.", Action = providerItem.Action };
+        }
+        else if (configError is not null)
         {
             providerItem = providerItem with { Status = "unavailable", ReasonCode = "provider_config_unreadable", Reason = $"Reading the provider configuration failed: {configError}", Action = "Check the Core log; recreate the provider in the model center if needed.", Data = new { error = configError } };
             secretItem = secretItem with { Status = "unavailable", ReasonCode = "secret_unchecked_config", Reason = "The provider configuration is unreadable, so the key was not checked.", Action = "Fix the provider configuration, then check the key again." };

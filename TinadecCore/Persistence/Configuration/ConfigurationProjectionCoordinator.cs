@@ -417,9 +417,16 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     private static ConfigurationDocumentException Invalid(string path, string message) => new("configuration_invalid", "Configuration validation failed.", [new("configuration_schema", path + ": " + message)]);
     private static void ThrowDiagnostics(ScopeConfigurationDocument document)
     {
-        if (document.Diagnostics.Any(d => d.Severity == "error"))
-            throw new ConfigurationDocumentException(document.Diagnostics.Any(d => d.Code == "configuration_missing")
-                ? "configuration_missing" : "configuration_invalid", "Configuration document '" + document.Id + "' is invalid.", document.Diagnostics);
+        var failing = document.Diagnostics.FirstOrDefault(d => d.Severity == "error");
+        if (failing is null) return;
+        // A missing file and an invalid file are different repairs. They used to share one sentence,
+        // which made "restore agents.toml" look identical to "agents.toml is malformed".
+        var missing = document.Diagnostics.Any(d => d.Code == "configuration_missing");
+        throw new ConfigurationDocumentException(missing ? "configuration_missing" : "configuration_invalid",
+            missing
+                ? "Configuration file '" + document.Id + ".toml' is missing; restore it or save a valid replacement."
+                : "Configuration document '" + document.Id + "' failed validation: " + failing.Message,
+            document.Diagnostics);
     }
     internal static void ValidateSchema(TomlTable table, string id)
     { if (!table.TryGetValue("schema_version", out var schema) || Convert.ToInt64(schema, CultureInfo.InvariantCulture) != 1) throw Invalid(id, "schema_version must be 1."); }
