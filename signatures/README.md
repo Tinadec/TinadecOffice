@@ -3,9 +3,8 @@
 This directory stores the contributor signatures collected by the CLA Assistant
 workflow (`.github/workflows/cla.yml`).
 
-- `.github/workflows/cla-discussion.yml` writes `version1/cla.json` to both the
-  `cla-signatures` audit branch and `main`. Keeping the same content on `main`
-  also lets older, re-run CLA workflow attempts read it for
+- The workflows read and write `version1/cla.json` on the dedicated
+  `cla-signatures` branch. The `main` copy is a bootstrap seed for
   **CLA.md / CLA.zh-CN.md (version 1)**.
 
 - `.github/workflows/cla-discussion.yml` records fixed statements posted to
