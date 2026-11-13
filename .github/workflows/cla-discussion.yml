@@ -170,12 +170,11 @@ jobs:
             throw new Error('Invalid signature store')
           }
           const comments = JSON.parse(fs.readFileSync('/tmp/cla-signatures.json', 'utf8'))
-          const existing = new Set(store.signedContributors.map(entry => entry.id))
+          const byId = new Map(store.signedContributors.map(entry => [entry.id, entry]))
           const added = []
+          let updated = 0
           for (const comment of comments) {
-            if (existing.has(comment.author.databaseId)) continue
-            existing.add(comment.author.databaseId)
-            added.push({
+            const signature = {
               name: comment.author.login,
               id: comment.author.databaseId,
               comment_id: comment.databaseId,
@@ -190,11 +189,19 @@ jobs:
               statement_sha256: crypto.createHash('sha256')
                 .update(comment.body.trim(), 'utf8').digest('hex'),
               pullRequestNo: null,
-            })
+            }
+            const existing = byId.get(comment.author.databaseId)
+            if (existing) {
+              Object.assign(existing, signature)
+              updated += 1
+              continue
+            }
+            byId.set(comment.author.databaseId, signature)
+            added.push(signature)
           }
-          if (added.length === 0) {
-            console.log('No new signatures')
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'added=0\n')
+          if (added.length === 0 && updated === 0) {
+            console.log('No signature changes')
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'changed=0\n')
             process.exit(0)
           }
           store.signedContributors.push(...added)
@@ -213,12 +220,13 @@ jobs:
             '-f', `sha=${sha}`,
             '--jq', '.commit.sha',
           ], { env: process.env, stdio: 'inherit' })
-          console.log(`Recorded ${added.length} signature(s)`)
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `added=${added.length}\n`)
+          const changed = added.length + updated
+          console.log(`Recorded ${added.length} new and ${updated} updated signature(s)`)
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`)
           NODE
 
       - name: Re-run affected PR checks
-        if: steps.append.outputs.added != '0'
+        if: steps.append.outputs.changed != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
