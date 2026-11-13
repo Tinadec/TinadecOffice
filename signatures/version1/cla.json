@@ -3,10 +3,17 @@
     {
       "name": "wwiinnddyy",
       "id": 170236045,
-      "comment_id": 6820351875,
-      "created_at": "2026-11-12T09:51:38Z",
+      "comment_id": 19578339,
+      "created_at": "2026-11-13T00:37:08Z",
       "repoId": 1243231017,
-      "pullRequestNo": 66
+      "pullRequestNo": null,
+      "source": "discussion",
+      "source_id": "D_kwDOShozKc4ArF8z",
+      "source_number": 67,
+      "source_url": "https://github.com/Tinadec/TinadecOffice/discussions/67#discussioncomment-19578339",
+      "cla_version": "v1",
+      "cla_commit": "43980b3bafaac217faf756d9e0dd039b3832cedd",
+      "statement_sha256": "0a912ed92ae86d13f42e190ff03a7220859149e69f2a3228362a0916d0b04e25"
     }
   ]
 }
