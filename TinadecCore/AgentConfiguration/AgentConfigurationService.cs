@@ -55,47 +55,52 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
         if (entityId == Guid.Empty) throw new ArgumentException("Entity id is required.", nameof(entityId));
         var scope = _tenant.Current;
         var now = DateTimeOffset.UtcNow;
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-
-        var agent = await db.AgentDefinitions.SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
-        if (agent is not null)
+        // The three branches return different anonymous shapes, so the type argument is explicit:
+        // without it inference fails and the void overload is selected instead.
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync<object>(async ct =>
         {
-            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            CheckDraft(agent.Status, agent.Revision, ifMatchRevision);
-            ValidateLayer(agent.Layer);
-            if (string.IsNullOrWhiteSpace(agent.DisplayName)) throw new InvalidDataException("Agent display name is required.");
-            var version = (await db.AgentVersions.Where(x => x.AgentDefinitionId == agent.Id).MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) ?? 0) + 1;
-            var snapshot = JsonSerializer.Serialize(new { id = agent.Id, slug = agent.Slug, display_name = agent.DisplayName, layer = agent.Layer, role = agent.Role, capabilities = ParseJson(agent.CapabilitiesJson), model_strategy = ParseJson(agent.ModelStrategyJson), tool_scope = ParseJson(agent.ToolScopeJson), system_prompt = agent.SystemPrompt, description = agent.Description, enabled = agent.Enabled });
-            var hash = Hash(snapshot);
-            db.AgentVersions.Add(new AgentVersionRecord { Id = Guid.NewGuid(), TenantId = agent.TenantId, WorkspaceId = agent.WorkspaceId, AgentDefinitionId = agent.Id, Version = version, Layer = agent.Layer, Role = agent.Role, SnapshotJson = snapshot, ContentHash = hash, ContentLength = Encoding.UTF8.GetByteCount(snapshot), Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
-            agent.Version = version; agent.Status = "published"; agent.Revision++; agent.UpdatedAt = now; agent.UpdatedByPrincipalId = scope.PrincipalId;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new { id = agent.Id, kind = "agent", version, revision = agent.Revision, content_hash = hash };
-        }
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
-        var mode = await db.AgentModes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
-        if (mode is not null)
-        {
-            // One publish implementation for modes: the editor endpoint, the tinadec_*
-            // tools and candidate promotion all go through AgentTopologyService, so the
-            // frozen snapshot, the GraphValidation gate and the warnings cannot diverge.
-            var published = await _topology.PublishAsync(mode.Id, ifMatchRevision, cancellationToken).ConfigureAwait(false);
-            if (!published.Ok)
-                throw published.StatusCode == 404
-                    ? new KeyNotFoundException(published.Message ?? "Configuration entity was not found.")
-                    : new InvalidDataException($"[{published.Code}] {published.Message}");
-            return new { id = mode.Id, kind = "mode", version = published.Version, revision = published.Revision, topology_hash = published.TopologyHash };
-        }
+            var agent = await db.AgentDefinitions.SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+            if (agent is not null)
+            {
+                await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                CheckDraft(agent.Status, agent.Revision, ifMatchRevision);
+                ValidateLayer(agent.Layer);
+                if (string.IsNullOrWhiteSpace(agent.DisplayName)) throw new InvalidDataException("Agent display name is required.");
+                var version = (await db.AgentVersions.Where(x => x.AgentDefinitionId == agent.Id).MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) ?? 0) + 1;
+                var snapshot = JsonSerializer.Serialize(new { id = agent.Id, slug = agent.Slug, display_name = agent.DisplayName, layer = agent.Layer, role = agent.Role, capabilities = ParseJson(agent.CapabilitiesJson), model_strategy = ParseJson(agent.ModelStrategyJson), tool_scope = ParseJson(agent.ToolScopeJson), system_prompt = agent.SystemPrompt, description = agent.Description, enabled = agent.Enabled });
+                var hash = Hash(snapshot);
+                db.AgentVersions.Add(new AgentVersionRecord { Id = Guid.NewGuid(), TenantId = agent.TenantId, WorkspaceId = agent.WorkspaceId, AgentDefinitionId = agent.Id, Version = version, Layer = agent.Layer, Role = agent.Role, SnapshotJson = snapshot, ContentHash = hash, ContentLength = Encoding.UTF8.GetByteCount(snapshot), Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
+                agent.Version = version; agent.Status = "published"; agent.Revision++; agent.UpdatedAt = now; agent.UpdatedByPrincipalId = scope.PrincipalId;
+                await db.SaveChangesAsync(ct).ConfigureAwait(false); await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return new { id = agent.Id, kind = "agent", version, revision = agent.Revision, content_hash = hash };
+            }
 
-        var pipeline = await db.PromptPipelines.SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
-        if (pipeline is null) throw new KeyNotFoundException("Configuration entity was not found.");
-        await using var pipelineTransaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        CheckDraft(pipeline.Status, pipeline.Revision, ifMatchRevision);
-        var pipelineHash = Hash(pipeline.GraphJson); var pipelineVersion = (await db.PromptVersions.Where(x => x.PromptPipelineId == pipeline.Id).MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) ?? 0) + 1;
-        db.PromptVersions.Add(new PromptVersionRecord { Id = Guid.NewGuid(), TenantId = pipeline.TenantId, WorkspaceId = pipeline.WorkspaceId, PromptPipelineId = pipeline.Id, Version = pipelineVersion, GraphJson = pipeline.GraphJson, ContentHash = pipelineHash, ContentLength = Encoding.UTF8.GetByteCount(pipeline.GraphJson), Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
-        pipeline.Version = pipelineVersion; pipeline.Status = "published"; pipeline.Revision++; pipeline.UpdatedAt = now; pipeline.UpdatedByPrincipalId = scope.PrincipalId;
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); await pipelineTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new { id = pipeline.Id, kind = "prompt_pipeline", version = pipelineVersion, revision = pipeline.Revision, content_hash = pipelineHash };
+            var mode = await db.AgentModes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+            if (mode is not null)
+            {
+                // One publish implementation for modes: the editor endpoint, the tinadec_*
+                // tools and candidate promotion all go through AgentTopologyService, so the
+                // frozen snapshot, the GraphValidation gate and the warnings cannot diverge.
+                var published = await _topology.PublishAsync(mode.Id, ifMatchRevision, ct).ConfigureAwait(false);
+                if (!published.Ok)
+                    throw published.StatusCode == 404
+                        ? new KeyNotFoundException(published.Message ?? "Configuration entity was not found.")
+                        : new InvalidDataException($"[{published.Code}] {published.Message}");
+                return new { id = mode.Id, kind = "mode", version = published.Version, revision = published.Revision, topology_hash = published.TopologyHash };
+            }
+
+            var pipeline = await db.PromptPipelines.SingleOrDefaultAsync(x => x.Id == entityId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+            if (pipeline is null) throw new KeyNotFoundException("Configuration entity was not found.");
+            await using var pipelineTransaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            CheckDraft(pipeline.Status, pipeline.Revision, ifMatchRevision);
+            var pipelineHash = Hash(pipeline.GraphJson); var pipelineVersion = (await db.PromptVersions.Where(x => x.PromptPipelineId == pipeline.Id).MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) ?? 0) + 1;
+            db.PromptVersions.Add(new PromptVersionRecord { Id = Guid.NewGuid(), TenantId = pipeline.TenantId, WorkspaceId = pipeline.WorkspaceId, PromptPipelineId = pipeline.Id, Version = pipelineVersion, GraphJson = pipeline.GraphJson, ContentHash = pipelineHash, ContentLength = Encoding.UTF8.GetByteCount(pipeline.GraphJson), Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
+            pipeline.Version = pipelineVersion; pipeline.Status = "published"; pipeline.Revision++; pipeline.UpdatedAt = now; pipeline.UpdatedByPrincipalId = scope.PrincipalId;
+            await db.SaveChangesAsync(ct).ConfigureAwait(false); await pipelineTransaction.CommitAsync(ct).ConfigureAwait(false);
+            return new { id = pipeline.Id, kind = "prompt_pipeline", version = pipelineVersion, revision = pipeline.Revision, content_hash = pipelineHash };
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<object> CreateAgentAsync(AgentConfigurationDbContext db, JsonElement input, TenantContext scope, DateTimeOffset now, CancellationToken ct)

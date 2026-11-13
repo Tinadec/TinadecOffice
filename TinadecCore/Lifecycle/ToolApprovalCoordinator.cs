@@ -1293,60 +1293,63 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (normalized is not ("approved" or "rejected")) throw new ArgumentException("decision must be approved or rejected", nameof(decision));
         var scope = _tenant.Current;
         var now = DateTimeOffset.UtcNow;
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == approvalId
-            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Approval was not found.");
-        if (decidedByPrincipalId == Guid.Empty && row.ExecutionId is { } specExecutionId
-            && await db.ToolExecutions.AsNoTracking().AnyAsync(item => item.Id == specExecutionId
-                && item.ToolId == CoreVirtualToolPolicy.SpecProposeToolId, cancellationToken).ConfigureAwait(false))
-            throw new InvalidOperationException("Specification documents require the user's own confirmation.");
-        if (row.ExpiresAt <= now && row.Status == "pending")
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            var expired = await db.ApprovalRequests.Where(x => x.Id == approvalId
+            await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == approvalId
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Approval was not found.");
+            if (decidedByPrincipalId == Guid.Empty && row.ExecutionId is { } specExecutionId
+                && await db.ToolExecutions.AsNoTracking().AnyAsync(item => item.Id == specExecutionId
+                    && item.ToolId == CoreVirtualToolPolicy.SpecProposeToolId, ct).ConfigureAwait(false))
+                throw new InvalidOperationException("Specification documents require the user's own confirmation.");
+            if (row.ExpiresAt <= now && row.Status == "pending")
+            {
+                var expired = await db.ApprovalRequests.Where(x => x.Id == approvalId
+                        && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                        && x.Status == "pending")
+                    .ExecuteUpdateAsync(set => set
+                        .SetProperty(x => x.Status, "expired")
+                        .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
+                if (expired == 1)
+                    await transaction.CommitAsync(ct).ConfigureAwait(false);
+                else
+                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                throw new InvalidOperationException("Approval is no longer actionable.");
+            }
+            if (row.Status != "pending")
+            {
+                await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                throw new InvalidOperationException("Approval is no longer actionable.");
+            }
+            var decisionReason = string.IsNullOrWhiteSpace(reason) ? null : Truncate(reason, 4096);
+            var changed = await db.ApprovalRequests.Where(x => x.Id == approvalId
                     && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
                     && x.Status == "pending")
                 .ExecuteUpdateAsync(set => set
-                    .SetProperty(x => x.Status, "expired")
-                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-            if (expired == 1)
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            else
-                await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            throw new InvalidOperationException("Approval is no longer actionable.");
-        }
-        if (row.Status != "pending")
-        {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            throw new InvalidOperationException("Approval is no longer actionable.");
-        }
-        var decisionReason = string.IsNullOrWhiteSpace(reason) ? null : Truncate(reason, 4096);
-        var changed = await db.ApprovalRequests.Where(x => x.Id == approvalId
-                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
-                && x.Status == "pending")
-            .ExecuteUpdateAsync(set => set
-                .SetProperty(x => x.Status, normalized)
-                .SetProperty(x => x.Decision, normalized)
-                .SetProperty(x => x.DecisionReason, decisionReason)
-                .SetProperty(x => x.DecidedAt, now)
-                // The execution window only starts on an approval: after it
-                // lapses the approved call hard-fails instead of replaying.
-                .SetProperty(x => x.ExecutionWindowExpiresAt, normalized == "approved" ? now.Add(_executionWindow) : (DateTimeOffset?)null)
-                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        if (changed != 1)
-        {
-            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            throw new InvalidOperationException("Approval is no longer actionable.");
-        }
-        db.ApprovalDecisions.Add(new ApprovalDecisionRecord
-        {
-            Id = Guid.NewGuid(), ApprovalRequestId = row.Id, Decision = normalized, Reason = decisionReason,
-            DecidedByPrincipalId = decidedByPrincipalId ?? scope.PrincipalId, CreatedAt = now
-        });
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new ToolApprovalDecision(row.Id, normalized, row.RunId, row.TaskId, row.ExecutionId, now);
+                    .SetProperty(x => x.Status, normalized)
+                    .SetProperty(x => x.Decision, normalized)
+                    .SetProperty(x => x.DecisionReason, decisionReason)
+                    .SetProperty(x => x.DecidedAt, now)
+                    // The execution window only starts on an approval: after it
+                    // lapses the approved call hard-fails instead of replaying.
+                    .SetProperty(x => x.ExecutionWindowExpiresAt, normalized == "approved" ? now.Add(_executionWindow) : (DateTimeOffset?)null)
+                    .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
+            if (changed != 1)
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                throw new InvalidOperationException("Approval is no longer actionable.");
+            }
+            db.ApprovalDecisions.Add(new ApprovalDecisionRecord
+            {
+                Id = Guid.NewGuid(), ApprovalRequestId = row.Id, Decision = normalized, Reason = decisionReason,
+                DecidedByPrincipalId = decidedByPrincipalId ?? scope.PrincipalId, CreatedAt = now
+            });
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return new ToolApprovalDecision(row.Id, normalized, row.RunId, row.TaskId, row.ExecutionId, now);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ToolExecutionRecord> GetExecutionForWriteAsync(Guid executionId, CancellationToken cancellationToken)

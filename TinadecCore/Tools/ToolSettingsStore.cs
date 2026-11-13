@@ -36,29 +36,38 @@ public sealed class ToolSettingsStore(IDbContextFactory<ToolsSettingsDbContext> 
             var catalog = resources is null ? [] : (await resources.ListAsync(projectId, cancellationToken)).Skills;
             if (ids.Any(id => !catalog.Any(resource => resource.ResourceId == id && resource.Valid))) throw new ToolSettingsException("skill_binding_not_found", "A Skill binding is invisible, stale, invalid or outside the selected project.");
         }
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var actor = tenant.Current;
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var rows = await db.Settings.Where(x => x.TenantId == actor.TenantId && x.WorkspaceId == actor.WorkspaceId).ToListAsync(cancellationToken);
-        var scope = Scope(agentDefinitionId);
-        var row = rows.SingleOrDefault(x => x.ScopeKey == scope);
-        if ((row?.Revision ?? 0) != expectedRevision) throw new ToolSettingsException("revision_conflict", "Tool settings changed since they were read.", 412);
-        var shared = rows.SingleOrDefault(x => x.ScopeKey == "shared");
-        var sharedEffective = ToolSettingsSchema.Merge(ToolSettingsSchema.Defaults, shared is null ? Empty : Parse(shared.SettingsJson));
-        if (agentDefinitionId is null)
+        // The revision-conflict mapping stays outside the retry: a real concurrent edit must
+        // surface as 412, not be retried until it accidentally succeeds.
+        try
         {
-            var changedDefaults = ToolSettingsSchema.Merge(ToolSettingsSchema.Defaults, validated);
-            foreach (var other in rows.Where(x => x.ScopeKey != "shared"))
-                try { ToolSettingsSchema.MergeAgent(changedDefaults, Parse(other.SettingsJson)); }
-                catch (ToolSettingsException ex) { throw new ToolSettingsException(ex.Code, $"Shared defaults conflict with {other.ScopeKey}: {ex.Message}", ex.StatusCode); }
+            return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            {
+                await using var db = await factory.CreateDbContextAsync(ct);
+                await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+                var rows = await db.Settings.Where(x => x.TenantId == actor.TenantId && x.WorkspaceId == actor.WorkspaceId).ToListAsync(ct);
+                var scope = Scope(agentDefinitionId);
+                var row = rows.SingleOrDefault(x => x.ScopeKey == scope);
+                if ((row?.Revision ?? 0) != expectedRevision) throw new ToolSettingsException("revision_conflict", "Tool settings changed since they were read.", 412);
+                var shared = rows.SingleOrDefault(x => x.ScopeKey == "shared");
+                var sharedEffective = ToolSettingsSchema.Merge(ToolSettingsSchema.Defaults, shared is null ? Empty : Parse(shared.SettingsJson));
+                if (agentDefinitionId is null)
+                {
+                    var changedDefaults = ToolSettingsSchema.Merge(ToolSettingsSchema.Defaults, validated);
+                    foreach (var other in rows.Where(x => x.ScopeKey != "shared"))
+                        try { ToolSettingsSchema.MergeAgent(changedDefaults, Parse(other.SettingsJson)); }
+                        catch (ToolSettingsException ex) { throw new ToolSettingsException(ex.Code, $"Shared defaults conflict with {other.ScopeKey}: {ex.Message}", ex.StatusCode); }
+                }
+                else ToolSettingsSchema.MergeAgent(sharedEffective, validated);
+                if (row is null) { row = new() { Id = Guid.NewGuid(), TenantId = actor.TenantId, WorkspaceId = actor.WorkspaceId, ScopeKey = scope }; db.Settings.Add(row); rows.Add(row); }
+                row.SettingsJson = validated.GetRawText(); row.Revision++; row.UpdatedAt = DateTimeOffset.UtcNow; row.UpdatedByPrincipalId = actor.PrincipalId;
+                db.SettingVersions.Add(new() { Id = Guid.NewGuid(), SettingsId = row.Id, Revision = row.Revision, SettingsJson = row.SettingsJson, CreatedAt = row.UpdatedAt });
+                await db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+                return Document(rows, agentDefinitionId);
+            }, cancellationToken);
         }
-        else ToolSettingsSchema.MergeAgent(sharedEffective, validated);
-        if (row is null) { row = new() { Id = Guid.NewGuid(), TenantId = actor.TenantId, WorkspaceId = actor.WorkspaceId, ScopeKey = scope }; db.Settings.Add(row); rows.Add(row); }
-        row.SettingsJson = validated.GetRawText(); row.Revision++; row.UpdatedAt = DateTimeOffset.UtcNow; row.UpdatedByPrincipalId = actor.PrincipalId;
-        db.SettingVersions.Add(new() { Id = Guid.NewGuid(), SettingsId = row.Id, Revision = row.Revision, SettingsJson = row.SettingsJson, CreatedAt = row.UpdatedAt });
-        try { await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); }
         catch (DbUpdateException) { throw new ToolSettingsException("revision_conflict", "Tool settings changed concurrently. Reload before saving.", 412); }
-        return Document(rows, agentDefinitionId);
     }
     // A reset is itself a revision, preserving monotonic preconditions and audit history.
     public Task<ToolSettingsDocumentDto> ResetAsync(Guid? agentDefinitionId, long expectedRevision, CancellationToken cancellationToken = default) => SaveAsync(agentDefinitionId, Empty, expectedRevision, cancellationToken);

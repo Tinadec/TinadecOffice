@@ -111,41 +111,46 @@ public static class ScopeSessionDataGraph
     {
         foreach (var group in graph.Entities.GroupBy(x => x.ContextType))
         {
-            await using var db = await OpenAsync(target, group.Key, ct).ConfigureAwait(false);
-            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
-            foreach (var set in group)
-                foreach (var source in set.Rows)
-                {
-                    var row = JsonSerializer.Deserialize(JsonSerializer.Serialize(source, set.EntityType), set.EntityType)!;
-                    var key = db.Model.FindEntityType(set.EntityType)!.FindPrimaryKey()!;
-                    var values = key.Properties.Select(p => p.PropertyInfo!.GetValue(row)).ToArray();
-                    if (row.GetType().GetProperty("ProjectId") is { CanWrite: true } project && (project.PropertyType == typeof(Guid?) || project.PropertyType == typeof(Guid)))
-                        project.SetValue(row, projectId);
-                    if (key.Properties.Count == 1 && key.Properties[0].ClrType == typeof(long)
-                        && key.Properties[0].ValueGenerated == Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.OnAdd)
+            // One group is one transaction. The copy skips rows that already match, so re-running
+            // a group after a rolled-back attempt adds nothing twice.
+            await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            {
+                await using var db = await OpenAsync(target, group.Key, ct).ConfigureAwait(false);
+                await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                foreach (var set in group)
+                    foreach (var source in set.Rows)
                     {
-                        var task = (Task<List<object>>)typeof(ScopeSessionDataGraph).GetMethod(nameof(ReadRowsAsync), BindingFlags.Static | BindingFlags.NonPublic)!
-                            .MakeGenericMethod(set.EntityType).Invoke(null, [db, ct])!;
-                        var generated = key.Properties[0].PropertyInfo!;
-                        generated.SetValue(row, 0L);
-                        var same = false;
-                        foreach (var existing in await task.ConfigureAwait(false))
+                        var row = JsonSerializer.Deserialize(JsonSerializer.Serialize(source, set.EntityType), set.EntityType)!;
+                        var key = db.Model.FindEntityType(set.EntityType)!.FindPrimaryKey()!;
+                        var values = key.Properties.Select(p => p.PropertyInfo!.GetValue(row)).ToArray();
+                        if (row.GetType().GetProperty("ProjectId") is { CanWrite: true } project && (project.PropertyType == typeof(Guid?) || project.PropertyType == typeof(Guid)))
+                            project.SetValue(row, projectId);
+                        if (key.Properties.Count == 1 && key.Properties[0].ClrType == typeof(long)
+                            && key.Properties[0].ValueGenerated == Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.OnAdd)
                         {
-                            generated.SetValue(existing, 0L);
-                            if (JsonSerializer.Serialize(existing, set.EntityType) == JsonSerializer.Serialize(row, set.EntityType)) { same = true; break; }
+                            var task = (Task<List<object>>)typeof(ScopeSessionDataGraph).GetMethod(nameof(ReadRowsAsync), BindingFlags.Static | BindingFlags.NonPublic)!
+                                .MakeGenericMethod(set.EntityType).Invoke(null, [db, ct])!;
+                            var generated = key.Properties[0].PropertyInfo!;
+                            generated.SetValue(row, 0L);
+                            var same = false;
+                            foreach (var existing in await task.ConfigureAwait(false))
+                            {
+                                generated.SetValue(existing, 0L);
+                                if (JsonSerializer.Serialize(existing, set.EntityType) == JsonSerializer.Serialize(row, set.EntityType)) { same = true; break; }
+                            }
+                            if (same) continue;
                         }
-                        if (same) continue;
+                        else if (await db.FindAsync(set.EntityType, values, ct).ConfigureAwait(false) is { } existing)
+                        {
+                            if (JsonSerializer.Serialize(existing, set.EntityType) != JsonSerializer.Serialize(row, set.EntityType))
+                                throw new InvalidOperationException("The destination already contains different facts with the same identity: " + set.EntityType.Name);
+                            continue;
+                        }
+                        db.Add(row);
                     }
-                    else if (await db.FindAsync(set.EntityType, values, ct).ConfigureAwait(false) is { } existing)
-                    {
-                        if (JsonSerializer.Serialize(existing, set.EntityType) != JsonSerializer.Serialize(row, set.EntityType))
-                            throw new InvalidOperationException("The destination already contains different facts with the same identity: " + set.EntityType.Name);
-                        continue;
-                    }
-                    db.Add(row);
-                }
-            await db.SaveChangesAsync(ct).ConfigureAwait(false);
-            await transaction.CommitAsync(ct).ConfigureAwait(false);
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
         }
     }
 
@@ -154,17 +159,20 @@ public static class ScopeSessionDataGraph
         // Dependencies go before Memory session; a retry is safe after a partially completed module transaction.
         foreach (var group in graph.Entities.GroupBy(x => x.ContextType).OrderBy(x => x.Key == typeof(MemoryDbContext) ? 1 : 0))
         {
-            await using var db = await OpenAsync(source, group.Key, ct).ConfigureAwait(false);
-            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
-            foreach (var set in group)
-                foreach (var row in set.Rows)
-                {
-                    var key = db.Model.FindEntityType(set.EntityType)!.FindPrimaryKey()!;
-                    var values = key.Properties.Select(p => p.PropertyInfo!.GetValue(row)).ToArray();
-                    if (await db.FindAsync(set.EntityType, values, ct).ConfigureAwait(false) is { } existing) db.Remove(existing);
-                }
-            await db.SaveChangesAsync(ct).ConfigureAwait(false);
-            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            {
+                await using var db = await OpenAsync(source, group.Key, ct).ConfigureAwait(false);
+                await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                foreach (var set in group)
+                    foreach (var row in set.Rows)
+                    {
+                        var key = db.Model.FindEntityType(set.EntityType)!.FindPrimaryKey()!;
+                        var values = key.Properties.Select(p => p.PropertyInfo!.GetValue(row)).ToArray();
+                        if (await db.FindAsync(set.EntityType, values, ct).ConfigureAwait(false) is { } existing) db.Remove(existing);
+                    }
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
         }
     }
 

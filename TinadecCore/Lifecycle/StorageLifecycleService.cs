@@ -758,52 +758,59 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         var stored = await _contentStore.PutAsync(new ContentWriteRequest(
             run.TenantId, run.WorkspaceId, "run_configuration", "application/json", body), cancellationToken).ConfigureAwait(false);
         var now = DateTimeOffset.UtcNow;
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var frozen = await db.Runs.Where(x => x.Id == runId && x.FrozenConfigurationReference == null)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(x => x.FrozenConfigurationReference, stored.Value)
-                .SetProperty(x => x.FrozenConfigurationHash, stored.Sha256)
-                .SetProperty(x => x.FrozenConfigurationLength, stored.Length)
-                .SetProperty(x => x.FrozenConfigurationSchemaVersion, schemaVersion)
-                .SetProperty(x => x.FrozenConfigurationAt, now)
-                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        if (frozen == 1)
+        // The blob is already stored and its reference is stable, so only the transaction is
+        // retried. The compare-and-set on FrozenConfigurationReference makes a retry after an
+        // ambiguous commit fall through to the winner path instead of freezing twice.
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            foreach (var binding in bindings
-                .Where(item => !string.IsNullOrWhiteSpace(item.ConfigurationKind))
-                .GroupBy(item => new { Kind = item.ConfigurationKind.Trim().ToLowerInvariant(), item.ConfigurationVersionId }))
+            await using var txDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await txDb.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var frozen = await txDb.Runs.Where(x => x.Id == runId && x.FrozenConfigurationReference == null)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.FrozenConfigurationReference, stored.Value)
+                    .SetProperty(x => x.FrozenConfigurationHash, stored.Sha256)
+                    .SetProperty(x => x.FrozenConfigurationLength, stored.Length)
+                    .SetProperty(x => x.FrozenConfigurationSchemaVersion, schemaVersion)
+                    .SetProperty(x => x.FrozenConfigurationAt, now)
+                    .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
+            if (frozen == 1)
             {
-                var item = binding.First();
-                var exists = await db.RunConfigurationBindings.AnyAsync(x => x.RunId == runId
-                    && x.ConfigurationKind == binding.Key.Kind
-                    && x.ConfigurationVersionId == item.ConfigurationVersionId, cancellationToken).ConfigureAwait(false);
-                if (exists) continue;
-                db.RunConfigurationBindings.Add(new RunConfigurationBindingRecord
+                foreach (var binding in bindings
+                    .Where(item => !string.IsNullOrWhiteSpace(item.ConfigurationKind))
+                    .GroupBy(item => new { Kind = item.ConfigurationKind.Trim().ToLowerInvariant(), item.ConfigurationVersionId }))
                 {
-                    RunId = runId,
-                    TenantId = run.TenantId,
-                    ConfigurationKind = binding.Key.Kind,
-                    ConfigurationId = item.ConfigurationId,
-                    ConfigurationVersionId = item.ConfigurationVersionId,
-                    ManifestHash = item.ManifestHash ?? string.Empty,
-                    BoundAt = now
-                });
+                    var item = binding.First();
+                    var exists = await txDb.RunConfigurationBindings.AnyAsync(x => x.RunId == runId
+                        && x.ConfigurationKind == binding.Key.Kind
+                        && x.ConfigurationVersionId == item.ConfigurationVersionId, ct).ConfigureAwait(false);
+                    if (exists) continue;
+                    txDb.RunConfigurationBindings.Add(new RunConfigurationBindingRecord
+                    {
+                        RunId = runId,
+                        TenantId = run.TenantId,
+                        ConfigurationKind = binding.Key.Kind,
+                        ConfigurationId = item.ConfigurationId,
+                        ConfigurationVersionId = item.ConfigurationVersionId,
+                        ManifestHash = item.ManifestHash ?? string.Empty,
+                        BoundAt = now
+                    });
+                }
+                await txDb.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return new FrozenRunConfiguration(run.Id.ToString(), schemaVersion, configuration.Content,
+                    stored.Value, stored.Sha256, stored.Length, now, bindings.ToArray());
             }
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new FrozenRunConfiguration(run.Id.ToString(), schemaVersion, configuration.Content,
-                stored.Value, stored.Sha256, stored.Length, now, bindings.ToArray());
-        }
 
-        await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-        await using var winnerDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var winner = await winnerDb.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Run was not found.");
-        if (!string.Equals(winner.FrozenConfigurationHash, requestedHash, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("The run already has a different frozen configuration.");
-        }
-        return await ReadFrozenConfigurationAsync(winner, cancellationToken).ConfigureAwait(false);
+            await transaction.RollbackAsync(ct).ConfigureAwait(false);
+            await using var winnerDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var winner = await winnerDb.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, ct).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Run was not found.");
+            if (!string.Equals(winner.FrozenConfigurationHash, requestedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("The run already has a different frozen configuration.");
+            }
+            return await ReadFrozenConfigurationAsync(winner, ct).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<FrozenRunConfiguration?> GetFrozenRunConfigurationAsync(Guid runId, CancellationToken cancellationToken = default)
@@ -857,41 +864,46 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             AppliedThroughEventSequence = appliedThroughEventSequence, CreatedAt = now
         };
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var runUpdate = db.Runs.Where(x => x.Id == runId && x.CheckpointRevision == checkpoint.ExpectedRevision);
-        if (expectedRunStatus is not null) runUpdate = runUpdate.Where(x => x.Status == expectedRunStatus);
-        if (checkpoint.RequireCompletionUnclaimed) runUpdate = runUpdate.Where(x => x.CompletedAt == null);
-        if (!string.IsNullOrWhiteSpace(checkpoint.ExpectedLeaseOwner))
-            runUpdate = runUpdate.Where(x => x.LeaseOwner == checkpoint.ExpectedLeaseOwner);
-        if (checkpoint.ExpectedRecoveryCount is not null)
-            runUpdate = runUpdate.Where(x => x.RecoveryCount == checkpoint.ExpectedRecoveryCount.Value);
-        var updated = await runUpdate
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(x => x.CurrentCheckpointId, record.Id)
-                .SetProperty(x => x.CheckpointRevision, record.Revision)
-                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        if (updated == 1)
+        // The content reference and the row id are produced above, outside the transaction, so a
+        // retry reuses the same stored blob and the same identity instead of writing a second one.
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            db.RunCheckpoints.Add(record);
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new RunCheckpoint(record.Id, runId.ToString(), record.Revision, record.Phase, checkpoint.Content,
-                record.ContentReference, record.ContentHash, record.ContentLength, record.AppliedThroughEventSequence, record.IdempotencyKey, record.CreatedAt);
-        }
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var runUpdate = db.Runs.Where(x => x.Id == runId && x.CheckpointRevision == checkpoint.ExpectedRevision);
+            if (expectedRunStatus is not null) runUpdate = runUpdate.Where(x => x.Status == expectedRunStatus);
+            if (checkpoint.RequireCompletionUnclaimed) runUpdate = runUpdate.Where(x => x.CompletedAt == null);
+            if (!string.IsNullOrWhiteSpace(checkpoint.ExpectedLeaseOwner))
+                runUpdate = runUpdate.Where(x => x.LeaseOwner == checkpoint.ExpectedLeaseOwner);
+            if (checkpoint.ExpectedRecoveryCount is not null)
+                runUpdate = runUpdate.Where(x => x.RecoveryCount == checkpoint.ExpectedRecoveryCount.Value);
+            var updated = await runUpdate
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.CurrentCheckpointId, record.Id)
+                    .SetProperty(x => x.CheckpointRevision, record.Revision)
+                    .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
+            if (updated == 1)
+            {
+                db.RunCheckpoints.Add(record);
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return new RunCheckpoint(record.Id, runId.ToString(), record.Revision, record.Phase, checkpoint.Content,
+                    record.ContentReference, record.ContentHash, record.ContentLength, record.AppliedThroughEventSequence, record.IdempotencyKey, record.CreatedAt);
+            }
 
-        await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-        await using var conflictDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var winner = await conflictDb.RunCheckpoints.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.RunId == runId && x.IdempotencyKey == key, cancellationToken).ConfigureAwait(false);
-        if (winner is not null)
-        {
-            return await ReadMatchingCheckpointAsync(winner, runId, checkpoint, phase, requestedHash, appliedThroughEventSequence, cancellationToken).ConfigureAwait(false);
-        }
-        var actualRevision = await conflictDb.Runs.AsNoTracking().Where(x => x.Id == runId)
-            .Select(x => (long?)x.CheckpointRevision).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-        if (actualRevision is null) throw new KeyNotFoundException("Run was not found.");
-        throw new RunCheckpointConflictException(runId.ToString(), checkpoint.ExpectedRevision, actualRevision.Value);
+            await transaction.RollbackAsync(ct).ConfigureAwait(false);
+            await using var conflictDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var winner = await conflictDb.RunCheckpoints.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RunId == runId && x.IdempotencyKey == key, ct).ConfigureAwait(false);
+            if (winner is not null)
+            {
+                return await ReadMatchingCheckpointAsync(winner, runId, checkpoint, phase, requestedHash, appliedThroughEventSequence, ct).ConfigureAwait(false);
+            }
+            var actualRevision = await conflictDb.Runs.AsNoTracking().Where(x => x.Id == runId)
+                .Select(x => (long?)x.CheckpointRevision).SingleOrDefaultAsync(ct).ConfigureAwait(false);
+            if (actualRevision is null) throw new KeyNotFoundException("Run was not found.");
+            throw new RunCheckpointConflictException(runId.ToString(), checkpoint.ExpectedRevision, actualRevision.Value);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<RunCheckpoint?> GetCurrentRunCheckpointAsync(Guid runId, CancellationToken cancellationToken = default)

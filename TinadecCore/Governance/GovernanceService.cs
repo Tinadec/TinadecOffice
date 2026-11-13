@@ -168,38 +168,41 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var rulesJson = CapabilityRuleMatcher.SerializeRules(rules);
         var rulesHash = CapabilityRuleMatcher.HashRules(rules);
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var bundle = await FindPolicyBundleAsync(db, command.PolicyBundleId, scope, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Policy bundle was not found.");
-        if (bundle.Status != "active") throw new InvalidOperationException("Only an active policy bundle can be published.");
-        var nextVersion = await db.PolicyVersions
-            .Where(x => x.PolicyBundleId == bundle.Id)
-            .MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) is { } current
-            ? current + 1
-            : 1;
-        var version = new PolicyVersionRecord
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            Id = Guid.NewGuid(),
-            TenantId = bundle.TenantId,
-            ScopeKind = bundle.ScopeKind,
-            ScopeId = bundle.ScopeId,
-            PolicyBundleId = bundle.Id,
-            Version = nextVersion,
-            RulesJson = rulesJson,
-            ContentHash = rulesHash,
-            Status = "published",
-            CreatedByPrincipalId = scope.PrincipalId,
-            CreatedAt = now
-        };
-        db.PolicyVersions.Add(version);
-        bundle.CurrentVersionId = version.Id;
-        bundle.Revision++;
-        bundle.UpdatedAt = now;
-        bundle.UpdatedByPrincipalId = scope.PrincipalId;
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return ToSnapshot(version);
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var bundle = await FindPolicyBundleAsync(db, command.PolicyBundleId, scope, ct).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Policy bundle was not found.");
+            if (bundle.Status != "active") throw new InvalidOperationException("Only an active policy bundle can be published.");
+            var nextVersion = await db.PolicyVersions
+                .Where(x => x.PolicyBundleId == bundle.Id)
+                .MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) is { } current
+                ? current + 1
+                : 1;
+            var version = new PolicyVersionRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = bundle.TenantId,
+                ScopeKind = bundle.ScopeKind,
+                ScopeId = bundle.ScopeId,
+                PolicyBundleId = bundle.Id,
+                Version = nextVersion,
+                RulesJson = rulesJson,
+                ContentHash = rulesHash,
+                Status = "published",
+                CreatedByPrincipalId = scope.PrincipalId,
+                CreatedAt = now
+            };
+            db.PolicyVersions.Add(version);
+            bundle.CurrentVersionId = version.Id;
+            bundle.Revision++;
+            bundle.UpdatedAt = now;
+            bundle.UpdatedByPrincipalId = scope.PrincipalId;
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return ToSnapshot(version);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<CapabilityGrantSnapshot> GrantCapabilityAsync(
@@ -216,41 +219,44 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var now = UtcNow;
         ValidateExpiry(now, command.ExpiresAt);
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
-        CapabilityGrantRecord? parent = null;
-        if (command.ParentGrantId is { } parentGrantId)
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            parent = await db.CapabilityGrants.SingleOrDefaultAsync(x =>
-                x.Id == parentGrantId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
-                cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("Parent capability grant is outside the current scope or does not exist.");
-            ValidateParentGrant(parent, command, claim, now);
-            var reserved = await ReserveGrantUsesAsync(db, parent.Id, command.MaxUses, now, cancellationToken).ConfigureAwait(false);
-            if (!reserved) throw new InvalidOperationException("Parent capability grant is expired, revoked, or exhausted.");
-        }
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
 
-        var grant = NewGrant(
-            scope,
-            command.SubjectPrincipalId,
-            command.SubjectAgentInstanceId,
-            claim,
-            command.RunId,
-            command.TaskId,
-            command.ParentGrantId,
-            sourceDelegationId: null,
-            transferable: command.Transferable && (parent?.Transferable ?? true),
-            command.MaxUses,
-            now,
-            command.ExpiresAt,
-            scope.PrincipalId,
-            issuedByAgentInstanceId: null,
-            command.Reason);
-        db.CapabilityGrants.Add(grant);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return ToSnapshot(grant);
+            CapabilityGrantRecord? parent = null;
+            if (command.ParentGrantId is { } parentGrantId)
+            {
+                parent = await db.CapabilityGrants.SingleOrDefaultAsync(x =>
+                    x.Id == parentGrantId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                    ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("Parent capability grant is outside the current scope or does not exist.");
+                ValidateParentGrant(parent, command, claim, now);
+                var reserved = await ReserveGrantUsesAsync(db, parent.Id, command.MaxUses, now, ct).ConfigureAwait(false);
+                if (!reserved) throw new InvalidOperationException("Parent capability grant is expired, revoked, or exhausted.");
+            }
+
+            var grant = NewGrant(
+                scope,
+                command.SubjectPrincipalId,
+                command.SubjectAgentInstanceId,
+                claim,
+                command.RunId,
+                command.TaskId,
+                command.ParentGrantId,
+                sourceDelegationId: null,
+                transferable: command.Transferable && (parent?.Transferable ?? true),
+                command.MaxUses,
+                now,
+                command.ExpiresAt,
+                scope.PrincipalId,
+                issuedByAgentInstanceId: null,
+                command.Reason);
+            db.CapabilityGrants.Add(grant);
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return ToSnapshot(grant);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ApprovalDelegationSnapshot> CreateApprovalDelegationAsync(
@@ -1210,32 +1216,35 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var normalizedReason = CapabilityRuleMatcher.Required(reason, nameof(reason), 4096);
         var scope = _tenantAccessor.Current;
         var now = UtcNow;
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var bundle = await db.PolicyBundles.SingleOrDefaultAsync(x =>
-            x.Id == policyBundleId && x.TenantId == scope.TenantId
-            && ((x.ScopeKind == "tenant" && x.ScopeId == scope.TenantId)
-                || (x.ScopeKind == "workspace" && x.ScopeId == scope.WorkspaceId)), cancellationToken)
-            .ConfigureAwait(false);
-        if (bundle is null || bundle.Status == "archived")
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return false;
-        }
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var bundle = await db.PolicyBundles.SingleOrDefaultAsync(x =>
+                x.Id == policyBundleId && x.TenantId == scope.TenantId
+                && ((x.ScopeKind == "tenant" && x.ScopeId == scope.TenantId)
+                    || (x.ScopeKind == "workspace" && x.ScopeId == scope.WorkspaceId)), ct)
+                .ConfigureAwait(false);
+            if (bundle is null || bundle.Status == "archived")
+            {
+                await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                return false;
+            }
 
-        bundle.Status = "archived";
-        bundle.Revision++;
-        bundle.UpdatedAt = now;
-        bundle.UpdatedByPrincipalId = scope.PrincipalId;
-        bundle.ArchivedAt = now;
-        var currentVersion = await db.PolicyVersions.SingleOrDefaultAsync(x =>
-            x.Id == bundle.CurrentVersionId && x.TenantId == scope.TenantId, cancellationToken)
-            .ConfigureAwait(false);
-        if (currentVersion is not null) currentVersion.Status = "archived";
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        _ = normalizedReason; // The reason is accepted for audit/API compatibility; the bundle row has no reason column.
-        return true;
+            bundle.Status = "archived";
+            bundle.Revision++;
+            bundle.UpdatedAt = now;
+            bundle.UpdatedByPrincipalId = scope.PrincipalId;
+            bundle.ArchivedAt = now;
+            var currentVersion = await db.PolicyVersions.SingleOrDefaultAsync(x =>
+                x.Id == bundle.CurrentVersionId && x.TenantId == scope.TenantId, ct)
+                .ConfigureAwait(false);
+            if (currentVersion is not null) currentVersion.Status = "archived";
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            _ = normalizedReason; // The reason is accepted for audit/API compatibility; the bundle row has no reason column.
+            return true;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private DateTimeOffset UtcNow => _timeProvider.GetUtcNow();
