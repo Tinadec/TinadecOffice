@@ -100,7 +100,6 @@ public sealed class LifecycleDbContext : DbContext
             entity.HasIndex(x => new { x.RunId, x.Sequence }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.Timestamp });
             entity.HasIndex(x => new { x.ProjectId, x.Timestamp });
-            entity.HasIndex(x => new { x.RunId, x.Sequence });
             entity.HasIndex(x => new { x.ApprovalId, x.EventType, x.Timestamp });
         });
         modelBuilder.Entity<ApprovalRequestRecord>(entity => { entity.ToTable("approval_requests"); entity.HasKey(x => x.Id); entity.Property(x => x.Kind).HasMaxLength(64).IsRequired(); entity.Property(x => x.ToolId).HasMaxLength(256).IsRequired(); entity.Property(x => x.Risk).HasMaxLength(32).IsRequired(); entity.Property(x => x.RequestHash).HasMaxLength(128).IsRequired(); entity.Property(x => x.NonceHash).HasMaxLength(128); entity.Property(x => x.NonceSecretReference).HasMaxLength(512); entity.Property(x => x.Status).HasMaxLength(32).IsRequired(); entity.Property(x => x.Decision).HasMaxLength(32); entity.Property(x => x.ParametersReference).HasMaxLength(1024).IsRequired(); entity.Property(x => x.ArgumentsDigest).HasMaxLength(4096).IsRequired(); entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Status, x.ExpiresAt }); entity.HasIndex(x => new { x.RunId, x.ToolId, x.RequestHash }); entity.HasIndex(x => x.ExecutionId); entity.HasIndex(x => x.UserToolActionId).IsUnique(); });

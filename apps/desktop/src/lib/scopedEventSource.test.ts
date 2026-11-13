@@ -6,6 +6,8 @@ import { setHostAccessStatus } from './hostAccess'
 
 const originalHost = window.tinadec
 const ready = { state: 'ready' as const, managed: true }
+const RUN_A = 'a'.repeat(32)
+const RUN_B = 'b'.repeat(32)
 afterEach(() => {
   vi.useRealTimers()
   Object.defineProperty(window, 'tinadec', { configurable: true, value: originalHost })
@@ -18,7 +20,7 @@ it('reconnects with the original storage id and replay cursor', async () => {
   const calls: RequestInit[] = []
   const fakeFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
     calls.push(init ?? {})
-    return new Response('id: 9\nevent: tool.execution.completed\ndata: {"id":"result"}\n\n', { headers: { 'content-type': 'text/event-stream' } })
+    return new Response(`id: ${RUN_A}:9\nevent: tool.execution.completed\ndata: {"id":"result"}\n\n`, { headers: { 'content-type': 'text/event-stream' } })
   }) as typeof fetch
   const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'old-scope', fakeFetch)
   const received: string[] = []
@@ -31,7 +33,7 @@ it('reconnects with the original storage id and replay cursor', async () => {
   expect(calls).toHaveLength(2)
   expect(getHostStatus).toHaveBeenCalledTimes(2)
   for (const call of calls) expect(new Headers(call.headers).get('x-tinadec-storage-id')).toBe('old-scope')
-  expect(new Headers(calls[1]?.headers).get('last-event-id')).toBe('9')
+  expect(new Headers(calls[1]?.headers).get('last-event-id')).toBe(`${RUN_A}:9`)
 })
 it('checks admission before the first fetch and refuses preview retries', async () => {
   vi.useFakeTimers()
@@ -53,7 +55,7 @@ it('rechecks revoked host access on reconnect and preserves the cursor for recov
     .mockResolvedValueOnce({ state: 'unavailable', managed: true, error: { code: 'host_unavailable', message: 'Host disconnected' } })
     .mockResolvedValueOnce(ready)
   Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus } })
-  const fakeFetch = vi.fn<typeof fetch>().mockImplementation(async () => new Response('id: 9\ndata: {"id":"result"}\n\n'))
+  const fakeFetch = vi.fn<typeof fetch>().mockImplementation(async () => new Response(`id: ${RUN_A}:9\ndata: {"id":"result"}\n\n`))
   const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'original-scope', fakeFetch)
   await vi.advanceTimersByTimeAsync(0)
   expect(fakeFetch).toHaveBeenCalledOnce()
@@ -65,7 +67,7 @@ it('rechecks revoked host access on reconnect and preserves the cursor for recov
   expect(fakeFetch).toHaveBeenCalledTimes(2)
   const recovered = fakeFetch.mock.calls[1]?.[1]
   expect(new Headers(recovered?.headers).get('x-tinadec-storage-id')).toBe('original-scope')
-  expect(new Headers(recovered?.headers).get('last-event-id')).toBe('9')
+  expect(new Headers(recovered?.headers).get('last-event-id')).toBe(`${RUN_A}:9`)
 })
 it('never fetches after closing while host admission is pending', async () => {
   vi.useFakeTimers()
@@ -104,7 +106,7 @@ it('cancels a late fetch body after closing without dispatching or reconnecting'
 it('dispatches CRLF frames whose delimiter is split across reads', async () => {
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({ start(controller) {
-    controller.enqueue(encoder.encode('id: 2\r\ndata: {"message":"hello"}\r'))
+    controller.enqueue(encoder.encode(`id: ${RUN_A}:2\r\ndata: {"message":"hello"}\r`))
     controller.enqueue(encoder.encode('\n\r\n'))
   } })
   const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'scope', (async () => new Response(stream)) as typeof fetch)
@@ -119,7 +121,7 @@ it('calls the injected fetch without binding it to the event source', async () =
   let receiver: unknown
   const fakeFetch = function (this: unknown) {
     receiver = this
-    return Promise.resolve(new Response('id: 1\nevent: worker.completed\ndata: {"ok":true}\n\n'))
+    return Promise.resolve(new Response(`id: ${RUN_A}:1\nevent: worker.completed\ndata: {"ok":true}\n\n`))
   } as unknown as typeof fetch
   const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'scope', fakeFetch)
   const received = vi.fn()
@@ -139,7 +141,7 @@ it('drops a silent half-open stream after the idle timeout and resumes from its 
     const signal = init?.signal
     return new Response(new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode('id: 7\ndata: {"id":"first"}\n\n'))
+        controller.enqueue(new TextEncoder().encode(`id: ${RUN_A}:7\ndata: {"id":"first"}\n\n`))
         signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')))
       },
     }))
@@ -150,5 +152,65 @@ it('drops a silent half-open stream after the idle timeout and resumes from its 
   await vi.advanceTimersByTimeAsync(100 + 1000)
   source.close()
   expect(calls).toHaveLength(2)
-  expect(new Headers(calls[1]?.headers).get('last-event-id')).toBe('7')
+  expect(new Headers(calls[1]?.headers).get('last-event-id')).toBe(`${RUN_A}:7`)
+})
+it('merges scalar frames from two runs into one resume vector without a heartbeat', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus: vi.fn(async () => ready) } })
+  const calls: RequestInit[] = []
+  // No heartbeat between the frames: the client must accumulate both runs from scalar ids alone,
+  // otherwise a reconnect replays the run it did not last hear from.
+  const fakeFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(init ?? {})
+    return new Response(
+      `id: ${RUN_A}:1\ndata: {"run":"a"}\n\n` +
+      `id: ${RUN_B}:1\ndata: {"run":"b"}\n\n` +
+      `id: ${RUN_A}:2\ndata: {"run":"a"}\n\n`,
+      { headers: { 'content-type': 'text/event-stream' } })
+  }) as typeof fetch
+  const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'scope', fakeFetch)
+  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(1000)
+  source.close()
+  expect(calls).toHaveLength(2)
+  const resumed = new Headers(calls[1]?.headers).get('last-event-id') ?? ''
+  expect(resumed.split(',').sort()).toEqual([`${RUN_A}:2`, `${RUN_B}:1`].sort())
+})
+it('replaces the whole vector when a heartbeat carries one', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus: vi.fn(async () => ready) } })
+  const calls: RequestInit[] = []
+  const RUN_C = 'c'.repeat(32)
+  const fakeFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(init ?? {})
+    return new Response(
+      `id: ${RUN_A}:9\ndata: {"run":"a"}\n\n` +
+      `id: ${RUN_B}:4,${RUN_C}:2\nevent: heartbeat\ndata: {"after_seq":4,"cursor":"${RUN_B}:4,${RUN_C}:2"}\n\n`,
+      { headers: { 'content-type': 'text/event-stream' } })
+  }) as typeof fetch
+  const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'scope', fakeFetch)
+  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(1000)
+  source.close()
+  // The heartbeat is authoritative: a run it omits is no longer part of the session's vector.
+  expect(new Headers(calls[1]?.headers).get('last-event-id')).toBe(`${RUN_B}:4,${RUN_C}:2`)
+})
+it('drops a rejected cursor instead of retrying with it forever', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus: vi.fn(async () => ready) } })
+  const calls: RequestInit[] = []
+  const fakeFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(init ?? {})
+    if (calls.length === 1) return new Response(`id: ${RUN_A}:3\ndata: {"run":"a"}\n\n`)
+    if (calls.length === 2) return new Response('{"code":"INVALID_EVENT_CURSOR"}', { status: 400 })
+    return new Response('data: {"run":"a"}\n\n')
+  }) as typeof fetch
+  const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'scope', fakeFetch)
+  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(new Headers(calls[1]?.headers).get('last-event-id')).toBe(`${RUN_A}:3`)
+  await vi.advanceTimersByTimeAsync(1000)
+  source.close()
+  expect(calls).toHaveLength(3)
+  expect(new Headers(calls[2]?.headers).get('last-event-id')).toBeNull()
 })

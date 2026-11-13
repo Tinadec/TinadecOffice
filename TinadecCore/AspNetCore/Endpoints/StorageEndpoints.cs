@@ -377,7 +377,7 @@ public static class StorageEndpoints
             return Results.Ok((await lifecycle.ListRunsAsync(id, ct).ConfigureAwait(false)).Select(ToRun));
         });
 
-        app.MapGet("/api/v1/events", async (HttpContext context, string? sessionId, string? session_id, long? afterSeq, long? after_seq, StorageLifecycleService lifecycle, CancellationToken ct) =>
+        app.MapGet("/api/v1/events", async (HttpContext context, string? sessionId, string? session_id, string? cursor, StorageLifecycleService lifecycle, CancellationToken ct) =>
         {
             var selected = sessionId ?? session_id;
             // The feed is a session's live view. An unfiltered subscription has no consumer: every
@@ -394,17 +394,23 @@ public static class StorageEndpoints
             {
                 if (!Guid.TryParse(selected, out var parsed)) { context.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
                 selectedSessionId = parsed;
-            }            var cursor = afterSeq ?? after_seq ?? 0;
-            if (context.Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
-                && long.TryParse(lastEventId.ToString(), out var headerCursor))
-            {
-                cursor = Math.Max(cursor, headerCursor);
             }
-            if (cursor < 0)
+            var resumeText = cursor;
+            if (string.IsNullOrWhiteSpace(resumeText) && context.Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId))
+                resumeText = lastEventId.ToString();
+            var followWatermarks = new Dictionary<Guid, long>();
+            if (!string.IsNullOrWhiteSpace(resumeText))
             {
-                context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await context.Response.WriteAsJsonAsync(new { code = "INVALID_EVENT_CURSOR" }, ct).ConfigureAwait(false);
-                return;
+                // A cursor that cannot be parsed is rejected rather than ignored: silently
+                // dropping it would replay the whole session on every reconnect and look like
+                // a working stream while duplicating every event the client already has.
+                if (!EventCursor.TryParse(resumeText, out var resumed))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    await context.Response.WriteAsJsonAsync(new { code = "INVALID_EVENT_CURSOR", message = "cursor must be run:sequence pairs, comma separated." }, ct).ConfigureAwait(false);
+                    return;
+                }
+                followWatermarks = resumed;
             }
             context.Response.StatusCode = StatusCodes.Status200OK;
             context.Response.ContentType = "text/event-stream";
@@ -412,36 +418,27 @@ public static class StorageEndpoints
             context.Response.Headers["X-Accel-Buffering"] = "no";
             try
             {
-                // Event sequences are allocated per run, so the client-facing
-                // Last-Event-ID cursor cannot be used as a database key once a
-                // new run restarts at sequence one. The initial replay honors
-                // the cursor; follow cycles keep a per-run watermark and read
-                // only the runs whose sequence head moved past it.
+                // One watermark-driven read serves both the initial replay and the follow
+                // cycles: with an empty vector it reads the session from the start, and with a
+                // resumed vector it reads only what the subscriber has not consumed. Sequences
+                // are per run, so a scalar cursor cannot express that once a second run exists.
                 var lastSequenceByRun = new Dictionary<string, long>(StringComparer.Ordinal);
-                var followWatermarks = new Dictionary<Guid, long>();
                 var unsequencedSeenIds = new HashSet<string>(StringComparer.Ordinal);
                 var lastHeartbeat = DateTimeOffset.UtcNow;
                 var initialReplay = true;
 
                 while (!ct.IsCancellationRequested)
                 {
-                    var events = initialReplay
-                        ? await lifecycle.ReplayEventsAsync(selectedSessionId, 0, ct).ConfigureAwait(false)
-                        : await lifecycle.FollowEventsAsync(selectedSessionId, followWatermarks, ct).ConfigureAwait(false);
+                    var events = await lifecycle.FollowEventsAsync(selectedSessionId, followWatermarks, ct).ConfigureAwait(false);
                     var wrote = false;
                     foreach (var item in events)
                     {
                         var sequence = GetEventSequence(item);
                         var runKey = item.RunId ?? string.Empty;
-                        if (initialReplay && sequence is not null && Guid.TryParse(item.RunId, out var replayedRun)
-                            && sequence.Value > followWatermarks.GetValueOrDefault(replayedRun))
-                            followWatermarks[replayedRun] = sequence.Value;
                         if (sequence is not null)
                         {
                             if (lastSequenceByRun.TryGetValue(runKey, out var seen) && sequence.Value <= seen) continue;
                             lastSequenceByRun[runKey] = sequence.Value;
-                            if (initialReplay && sequence.Value <= cursor) continue;
-                            if (sequence.Value > cursor) cursor = sequence.Value;
                         }
                         else if (!unsequencedSeenIds.Add(item.EventId)) continue;
                         await WriteEventAsync(context, item, sequence, ct).ConfigureAwait(false);
@@ -451,7 +448,7 @@ public static class StorageEndpoints
                     var now = DateTimeOffset.UtcNow;
                     if (initialReplay || now - lastHeartbeat >= EventHeartbeatInterval)
                     {
-                        await WriteHeartbeatAsync(context, cursor, ct).ConfigureAwait(false);
+                        await WriteHeartbeatAsync(context, followWatermarks, ct).ConfigureAwait(false);
                         lastHeartbeat = now;
                         wrote = true;
                     }
@@ -686,12 +683,23 @@ public static class StorageEndpoints
 
     private static async Task WriteEventAsync(HttpContext context, EventEnvelope item, long? sequence, CancellationToken cancellationToken)
     {
-        if (sequence is not null) await context.Response.WriteAsync($"id: {sequence.Value}\n", cancellationToken).ConfigureAwait(false);
+        if (sequence is not null && Guid.TryParse(item.RunId, out var runId))
+            await context.Response.WriteAsync($"id: {EventCursor.EncodeEvent(runId, sequence.Value)}\n", cancellationToken).ConfigureAwait(false);
         await context.Response.WriteAsync($"event: {item.EventType}\ndata: {JsonSerializer.Serialize(item, SseJsonOptions)}\n\n", cancellationToken).ConfigureAwait(false);
     }
 
-    private static Task WriteHeartbeatAsync(HttpContext context, long cursor, CancellationToken cancellationToken) =>
-        context.Response.WriteAsync($"event: heartbeat\ndata: {{\"after_seq\":{cursor}}}\n\n", cancellationToken);
+    /// <summary>
+    /// The heartbeat carries the whole watermark vector, not just the run that last spoke: a
+    /// subscriber that only kept the last scalar id would lose every other run's position and
+    /// replay those runs from zero on reconnect.
+    /// </summary>
+    private static Task WriteHeartbeatAsync(HttpContext context, IReadOnlyDictionary<Guid, long> watermarks, CancellationToken cancellationToken)
+    {
+        var vector = EventCursor.EncodeVector(watermarks);
+        var afterSeq = watermarks.Count == 0 ? 0 : watermarks.Values.Max();
+        var id = vector.Length == 0 ? string.Empty : $"id: {vector}\n";
+        return context.Response.WriteAsync($"{id}event: heartbeat\ndata: {{\"after_seq\":{afterSeq},\"cursor\":\"{vector}\"}}\n\n", cancellationToken);
+    }
 
     private static long? GetEventSequence(EventEnvelope item)
     {

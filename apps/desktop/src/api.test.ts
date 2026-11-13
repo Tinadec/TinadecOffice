@@ -78,14 +78,24 @@ describe('normalizeEventEnvelope', () => {
 
   it('falls back to lastEventId when payload.sequence is missing, and to 0 when both are', () => {
     const raw = { event_type: 'task.assigned', timestamp: '2026-08-27T00:00:00Z', payload: {} }
-    expect(normalizeEventEnvelope(raw, '9').seq).toBe(9)
+    const run = 'a'.repeat(32)
+    expect(normalizeEventEnvelope(raw, `${run}:9`).seq).toBe(9)
     expect(normalizeEventEnvelope(raw).seq).toBe(0)
   })
 
+  it('reads the sequence out of a per-run cursor entry and ignores a retired scalar id', () => {
+    const run = 'a'.repeat(32)
+    expect(normalizeEventEnvelope({ payload: { sequence: 7 } }, `${run}:3`).seq).toBe(7)
+    expect(normalizeEventEnvelope({}, `${run}:3`).seq).toBe(3)
+    expect(normalizeEventEnvelope({}, '3').seq).toBe(0)
+    expect(normalizeEventEnvelope({}, `${run}:3,${'b'.repeat(32)}:1`).seq).toBe(0)
+  })
+
   it('coerces string sequence values and rejects non-numeric ones', () => {
+    const run = 'a'.repeat(32)
     expect(normalizeEventEnvelope({ payload: { sequence: '3' } }).seq).toBe(3)
     expect(normalizeEventEnvelope({ payload: { sequence: 'abc' } }).seq).toBe(0)
-    expect(normalizeEventEnvelope({ payload: { sequence: 'abc' } }, '5').seq).toBe(5)
+    expect(normalizeEventEnvelope({ payload: { sequence: 'abc' } }, `${run}:5`).seq).toBe(5)
   })
 
   it('replaces malformed payloads (null/array/string) with an empty object', () => {

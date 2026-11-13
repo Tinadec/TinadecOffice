@@ -2892,7 +2892,9 @@ export function normalizeEventEnvelope(
       : null;
   const payload = durablePayload ? { ...wirePayload, ...durablePayload } : wirePayload;
   const seqFromPayload = Number(wirePayload.sequence)
-  const seqFromId = Number(lastEventId)
+  // The SSE id is a per-run vector entry (<run hex>:<sequence>), not a bare number.
+  const idSequence = /^[0-9a-f]{32}:(\d+)$/.exec(lastEventId ?? '')?.[1]
+  const seqFromId = idSequence === undefined ? NaN : Number(idSequence)
   const seqCandidate =
     typeof raw.seq === 'number' && Number.isFinite(raw.seq)
       ? raw.seq

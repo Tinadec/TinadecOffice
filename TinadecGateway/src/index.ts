@@ -1070,7 +1070,7 @@ const app = new Elysia()
     const q = query as Record<string,unknown>;
     if (q.session_id) params.set('sessionId', String(q.session_id));
     const cursor = (q.cursor as string) ?? (q.after_seq as string) ?? request.headers.get('last-event-id') ?? request.headers.get('Last-Event-ID');
-    if (cursor) params.set('afterSeq', String(cursor));
+    if (cursor) params.set('cursor', String(cursor));
     const response = await proxySse(`/api/v1/events?${params.toString()}`, { headers: { ...headers, ...(cursor ? { 'last-event-id': String(cursor) } : {}) }, signal: request.signal });
     set.headers['content-type'] = 'text/event-stream';
     set.headers['cache-control'] = 'no-cache';
