@@ -5,10 +5,13 @@ namespace TinadecCore.AspNetCore.Auth;
 
 /// <summary>
 /// The Logto login surface mounted under <c>/auth/*</c>. These routes sit outside
-/// <c>/api/v1</c> on purpose: the host-control middleware never touches them, so
-/// the login window can complete the OIDC dance before any session exists. The
-/// session token arrives over <c>X-Tinadec-Session</c>, which only the Electron
-/// main process injects.
+/// <c>/api/v1</c> because the login window completes the OIDC dance before any session
+/// exists — but they are still inside the host-control gate. That gate checks the host
+/// credential, which the Desktop main process holds from launch, not the session token
+/// that only exists after login. <c>/auth/callback</c> is the one exemption: the system
+/// browser makes that request and cannot carry a private header, so it validates a
+/// single-use state instead. The session token arrives over <c>X-Tinadec-Session</c>,
+/// which only the Electron main process injects.
 /// </summary>
 public static class AuthEndpoints
 {

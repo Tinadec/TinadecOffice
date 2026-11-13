@@ -23,8 +23,16 @@ public static class StorageScopeHttpExtensions
         // Every mounted API request is a host operation. Directory restrictions alone
         // cannot stop an Agent shell from calling loopback HTTP to read protected data,
         // approve its own tool action or mutate another registered project's facts.
-        if (context.Request.Path.StartsWithSegments("/api/v1")
-            && !(HttpMethods.IsGet(context.Request.Method) && context.Request.Path is var publicPath
+        //
+        // /auth/* is inside the same gate. Its routes return a login state and resolve an
+        // identity, and any local web page could otherwise read them cross-origin. Only the
+        // browser's callback is exempt: it is the one request the system browser makes, so it
+        // cannot carry a private header, and it validates a single-use state of its own.
+        var requestPath = context.Request.Path;
+        var isAuth = requestPath.StartsWithSegments("/auth");
+        var authExempt = isAuth && HttpMethods.IsGet(context.Request.Method) && requestPath == "/auth/callback";
+        if ((requestPath.StartsWithSegments("/api/v1") || (isAuth && !authExempt))
+            && !(HttpMethods.IsGet(context.Request.Method) && requestPath is var publicPath
                 && (publicPath == "/api/v1/health" || publicPath == "/api/v1/host-challenge")))
         {
             var expected = Environment.GetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN");
