@@ -93,6 +93,11 @@ internal static class BubblewrapLauncher
             else if (File.Exists(path)) Add("--ro-bind", "/dev/null", path);
         }
         foreach (var path in maskedDirectories) Add("--remount-ro", path);
+        // Last, so no later bind re-grants write. A read-only bind keeps the contents visible —
+        // unlike --tmpfs, which would hide git's own config and break every git command. Landlock
+        // is additive and still grants the whole tree, so this refusal rests on the mount view alone.
+        foreach (var path in permissions.WriteDeniedPaths.Where(path => Directory.Exists(path) || File.Exists(path)).Distinct(StringComparer.Ordinal))
+            Add("--ro-bind", path, path);
 
         void Add(params string[] args) { foreach (var arg in args) start.ArgumentList.Add(arg); }
     }

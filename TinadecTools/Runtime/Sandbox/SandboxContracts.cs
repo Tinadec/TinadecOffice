@@ -15,6 +15,11 @@ internal sealed class SandboxPermissions
     public List<string> EnvironmentVariableNames { get; set; } = new();
     public List<string> ProtectedPaths { get; set; } = new();
     public List<string> ReadExceptions { get; set; } = new();
+    /// <summary>
+    /// Paths inside a granted write root that stay read-only. Derived from the workspace on
+    /// every launch, never persisted: the policy file's schema is fail-closed on unknown fields.
+    /// </summary>
+    public List<string> WriteDeniedPaths { get; set; } = new();
     public string? StorageId { get; set; }
     public string? StorageRoot { get; set; }
     public bool StorageWrite { get; set; }

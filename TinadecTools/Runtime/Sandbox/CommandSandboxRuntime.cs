@@ -109,7 +109,8 @@ internal static class CommandSandboxRuntime
                 ? WorkspaceStoragePolicy.ForbiddenRoots(workingDir)
                 : WorkspaceStoragePolicy.ProtectedPaths(workingDir)).ToList(),
             ReadExceptions = ToolExecutionContext.Current?.ReadRoots.Where(path => !WorkspaceStoragePolicy.PermanentHostPaths().Any(root => WorkspaceRootSet.IsWithin(root, path))).ToList() ?? [],
-            EnvironmentOverrides = GitHookPolicy.ShellOverrides(workingDir)
+            EnvironmentOverrides = GitHookPolicy.ShellOverrides(workingDir),
+            WriteDeniedPaths = WorkspaceStoragePolicy.GitWriteDeniedPaths(writePaths).ToList()
         };
     }
 
@@ -129,7 +130,8 @@ internal static class CommandSandboxRuntime
             StorageId = additional.StorageId,
             StorageRoot = additional.StorageRoot,
             StorageWrite = additional.StorageWrite,
-            EnvironmentOverrides = additional.EnvironmentOverrides
+            EnvironmentOverrides = additional.EnvironmentOverrides,
+            WriteDeniedPaths = additional.WriteDeniedPaths
         };
     }
 

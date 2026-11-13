@@ -187,7 +187,7 @@ internal sealed class PosixSandboxBackend : ISandboxBackend
             psi.FileName = SandboxExecPath;
             psi.ArgumentList.Add("-p");
             psi.ArgumentList.Add(SeatbeltProfile.Build(writePaths, permissions.ProtectedPaths, permissions.ReadExceptions,
-                permissions.StorageWrite ? null : permissions.StorageRoot));
+                permissions.StorageWrite ? null : permissions.StorageRoot, permissions.WriteDeniedPaths));
             psi.ArgumentList.Add("--");
             psi.ArgumentList.Add(request.Executable);
             foreach (var arg in request.Arguments)

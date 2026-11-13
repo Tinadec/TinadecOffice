@@ -64,6 +64,18 @@ internal static class WorkspaceStoragePolicy
         path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .Any(segment => segment.Equals(".git", StringComparison.OrdinalIgnoreCase));
 
+    // The sandbox keeps .git/hooks and .git/config read-only even though the workspace around
+    // them is writable: a hook, or a core.fsmonitor/core.sshCommand/filter.*.clean entry, is
+    // arbitrary execution. The rest of .git stays writable so a person typing git commit inside
+    // the sandbox can still write index, objects and refs.
+    //
+    // Only each writable root's own .git is enumerated. A nested repository's .git is refused by
+    // CanAccess above, not here, and a worktree whose .git is a file pointing outside the workspace
+    // has no .git/hooks to protect.
+    internal static IEnumerable<string> GitWriteDeniedPaths(IEnumerable<string> roots) =>
+        roots.SelectMany(root => new[] { Path.Combine(root, ".git", "hooks"), Path.Combine(root, ".git", "config") })
+            .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     internal static IReadOnlyList<string> ProtectedPaths(string workspaceRoot) =>
         InternalDirectories.Select(name => Path.Combine(StorageRoot(workspaceRoot), name))
             .Append(Path.Combine(StorageRoot(workspaceRoot), "project.toml"))
