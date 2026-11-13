@@ -278,16 +278,11 @@ jobs:
               node.commit.committer.user?.databaseId,
             ]).filter(id => Number.isInteger(id)))
             if (![...ids].some(id => committers.has(id))) continue
-            const runs = JSON.parse(call([
-              'api',
-              `repos/${owner}/${repo}/actions/workflows/cla.yml/runs?event=pull_request_target&status=failure&branch=${encodeURIComponent(pull.headRefName)}&per_page=1`,
-            ]))
-            const run = runs.workflow_runs?.[0]
-            if (!run) continue
             call([
               'api', '-X', 'POST',
-              `repos/${owner}/${repo}/actions/runs/${run.id}/rerun`,
+              `repos/${owner}/${repo}/issues/${pull.number}/comments`,
+              '-f', 'body=recheck',
             ])
-            console.log(`Re-ran CLA check for PR #${pull.number}: ${run.id}`)
+            console.log(`Requested CLA recheck for PR #${pull.number}`)
           }
           NODE
