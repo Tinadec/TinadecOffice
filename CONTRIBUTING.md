@@ -109,7 +109,8 @@ asking you to sign. Reply with the exact sentence:
 > I have read the CLA Document and I hereby sign the CLA
 
 Your GitHub user ID, comment URL and the pinned CLA commit are recorded in
-`signatures/version1/cla.json` on the `cla-signatures` branch as evidence.
+`signatures/version1/cla.json` on `main` and the `cla-signatures` branch as
+evidence.
 After you sign, the workflows re-run the `CLAAssistant` check for your open PRs;
 that check is required on `main` before a pull request can be merged.
 
