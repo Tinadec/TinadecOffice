@@ -155,25 +155,27 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         return await AuthorizeAndMaybeRunAsync(action, descriptor, project, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<UserToolActionResult?> GetAsync(Guid actionId, CancellationToken cancellationToken = default)
-    {
-        var action = await FindAsync(actionId, cancellationToken).ConfigureAwait(false);
-        return action is null ? null : await ToResultAsync(action, cancellationToken).ConfigureAwait(false);
-    }
+    public Task<UserToolActionResult?> GetAsync(Guid actionId, CancellationToken cancellationToken = default) =>
+        SqliteTransientRetry.ReadAsync(async token =>
+        {
+            var action = await FindAsync(actionId, token).ConfigureAwait(false);
+            return action is null ? null : await ToResultAsync(action, token).ConfigureAwait(false);
+        }, cancellationToken);
 
-    public async Task<IReadOnlyList<UserToolActionResult>> ListAsync(string? status = null, CancellationToken cancellationToken = default)
-    {
-        var scope = _tenant.Current;
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var query = db.UserToolActions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
-        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status.Trim().ToLowerInvariant());
-        var rows = await query.ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
-        if (rows.Length > 200) rows = rows[..200];
-        var results = new List<UserToolActionResult>(rows.Length);
-        foreach (var row in rows) results.Add(await ToResultAsync(row, cancellationToken).ConfigureAwait(false));
-        return results;
-    }
+    public Task<IReadOnlyList<UserToolActionResult>> ListAsync(string? status = null, CancellationToken cancellationToken = default) =>
+        SqliteTransientRetry.ReadAsync(async token =>
+        {
+            var scope = _tenant.Current;
+            await using var db = await _dbFactory.CreateDbContextAsync(token).ConfigureAwait(false);
+            var query = db.UserToolActions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
+            if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status.Trim().ToLowerInvariant());
+            var rows = await query.ToArrayAsync(token).ConfigureAwait(false);
+            Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
+            if (rows.Length > 200) rows = rows[..200];
+            var results = new List<UserToolActionResult>(rows.Length);
+            foreach (var row in rows) results.Add(await ToResultAsync(row, token).ConfigureAwait(false));
+            return (IReadOnlyList<UserToolActionResult>)results;
+        }, cancellationToken);
 
     public async Task<UserToolActionResult> ResumeAsync(Guid actionId, CancellationToken cancellationToken = default)
     {

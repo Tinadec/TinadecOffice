@@ -725,15 +725,7 @@ public sealed class ControlPlaneService
         // This is a read-only projection across two contexts. Retry the whole read with
         // fresh contexts on SQLITE_BUSY/LOCKED, including connection initialization errors.
         // Never turn a failed read into an empty approval list, and never retry decisions here.
-        for (var attempt = 0; ; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-            try { return await ReadApprovalsAsync(status, session, run, ct).ConfigureAwait(false); }
-            catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6 && attempt < 2)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(50 * (attempt + 1)), ct).ConfigureAwait(false);
-            }
-        }
+        return await SqliteTransientRetry.ReadAsync(token => ReadApprovalsAsync(status, session, run, token), ct).ConfigureAwait(false);
     }
 
     private async Task<IResult> ReadApprovalsAsync(string? status, Guid? session, Guid? run, CancellationToken ct)
@@ -871,7 +863,10 @@ public sealed class ControlPlaneService
         }, statusCode: 201);
     }
 
-    public async Task<IResult> GetApproval(Guid id, CancellationToken ct)
+    public Task<IResult> GetApproval(Guid id, CancellationToken ct) =>
+        SqliteTransientRetry.ReadAsync(token => ReadApprovalAsync(id, token), ct);
+
+    private async Task<IResult> ReadApprovalAsync(Guid id, CancellationToken ct)
     {
         await using var db = await _lifecycle.CreateDbContextAsync(ct);
         var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);

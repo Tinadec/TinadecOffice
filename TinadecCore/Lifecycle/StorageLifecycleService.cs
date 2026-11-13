@@ -488,6 +488,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<EventEnvelope>> ReplayEventsAsync(Guid? sessionId, long afterSequence, CancellationToken cancellationToken = default,
         IReadOnlyCollection<string>? eventTypes = null)
     {
+        var rows = await SqliteTransientRetry.ReadAsync(token => ReplayRowsAsync(sessionId, afterSequence, eventTypes, token), cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<EventIndexRecord>> ReplayRowsAsync(Guid? sessionId, long afterSequence,
+        IReadOnlyCollection<string>? eventTypes, CancellationToken cancellationToken)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var query = db.EventIndex.AsNoTracking().Where(x => x.Sequence > afterSequence);
         if (sessionId is { } id)
@@ -497,8 +504,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
         }
         if (eventTypes?.ToArray() is { } types) query = query.Where(x => types.Contains(x.EventType));
-        var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+        return await query.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -508,6 +514,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<EventEnvelope>> ReplayRunEventsAsync(Guid sessionId, Guid runId, CancellationToken cancellationToken = default,
         IReadOnlyCollection<string>? eventTypes = null)
     {
+        var rows = await SqliteTransientRetry.ReadAsync(token => ReplayRunRowsAsync(sessionId, runId, eventTypes, token), cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<EventIndexRecord>> ReplayRunRowsAsync(Guid sessionId, Guid runId,
+        IReadOnlyCollection<string>? eventTypes, CancellationToken cancellationToken)
+    {
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null) return [];
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -515,8 +528,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             .Where(x => x.SessionId == sessionId && x.RunId == runId
                 && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
         if (eventTypes?.ToArray() is { } types) query = query.Where(x => types.Contains(x.EventType));
-        var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+        return await query.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -536,6 +548,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<EventEnvelope>> FollowEventsAsync(Guid? sessionId, IDictionary<Guid, long> watermarks, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(watermarks);
+        // The caller's watermarks advance only after the whole read succeeds. A retry that began
+        // from a half-advanced map would skip the rows the failed attempt had already read, and
+        // the subscriber would never see them. Materialising stays outside the retry: it reads
+        // the journal, not the database, so it cannot raise a transient SQLite error.
+        var advanced = new Dictionary<Guid, long>();
+        var rows = await SqliteTransientRetry.ReadAsync(async token =>
+        {
+            advanced.Clear();
+            return await FollowRowsAsync(sessionId, watermarks, advanced, token).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
+        foreach (var (runId, sequence) in advanced) watermarks[runId] = sequence;
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<EventIndexRecord>> FollowRowsAsync(Guid? sessionId, IDictionary<Guid, long> watermarks,
+        IDictionary<Guid, long> advanced, CancellationToken cancellationToken)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var runs = db.Runs.AsNoTracking();
         if (sessionId is { } id)
@@ -556,10 +585,10 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 .Select(x => new EventIndexRecord { RunId = x.RunId, Sequence = x.Sequence, Timestamp = x.Timestamp, ByteOffset = x.ByteOffset, ByteLength = x.ByteLength })
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (fresh.Count == 0) continue;
-            watermarks[head.Id] = fresh.Max(x => x.Sequence);
+            advanced[head.Id] = fresh.Max(x => x.Sequence);
             rows.AddRange(fresh);
         }
-        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+        return rows;
     }
 
     private async Task<List<EventEnvelope>> MaterializeAsync(List<EventIndexRecord> rows, CancellationToken cancellationToken)
@@ -1108,18 +1137,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<DurableRunStreamChunk>> ReplayRunStreamAsync(Guid runId, Guid? turnId, long afterSequence, CancellationToken cancellationToken = default)
     {
         if (afterSequence < 0) throw new ArgumentOutOfRangeException(nameof(afterSequence));
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
-        if (run is null) throw new KeyNotFoundException("Run was not found.");
-        var query = db.RunStream.AsNoTracking().Where(x => x.RunId == runId && x.Sequence > afterSequence);
-        if (turnId is { } selectedTurn) query = query.Where(x => x.TurnId == selectedTurn);
-        var records = await query.OrderBy(x => x.Sequence).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var records = await SqliteTransientRetry.ReadAsync(token => ReplayRunStreamRowsAsync(runId, turnId, afterSequence, token), cancellationToken).ConfigureAwait(false);
         var chunks = new List<DurableRunStreamChunk>(records.Count);
         foreach (var record in records)
         {
             chunks.Add(await ReadRunStreamChunkAsync(record, cancellationToken).ConfigureAwait(false));
         }
         return chunks;
+    }
+
+    private async Task<List<RunStreamRecord>> ReplayRunStreamRowsAsync(Guid runId, Guid? turnId, long afterSequence, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
+        if (run is null) throw new KeyNotFoundException("Run was not found.");
+        var query = db.RunStream.AsNoTracking().Where(x => x.RunId == runId && x.Sequence > afterSequence);
+        if (turnId is { } selectedTurn) query = query.Where(x => x.TurnId == selectedTurn);
+        return await query.OrderBy(x => x.Sequence).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ToolExecutionRecord> StartToolExecutionAsync(ToolExecutionStart start, CancellationToken cancellationToken = default)

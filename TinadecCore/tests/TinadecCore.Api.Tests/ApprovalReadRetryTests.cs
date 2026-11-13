@@ -41,6 +41,10 @@ public sealed class ApprovalReadRetryTests : IAsyncLifetime
     [InlineData(5, 3)]
     [InlineData(6, 3)]
     [InlineData(1, 1)]
+    // Extended codes carry the same contention in the low byte. CI hit 261 (BUSY_RECOVERY)
+    // as a 500 right after a scope opened; a bare "is 5 or 6" would not retry it.
+    [InlineData(261, 3)]
+    [InlineData(517, 3)]
     public async Task PersistentOrNonTransientFailures_RemainErrors(int code, int attempts)
     {
         var inner = _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();

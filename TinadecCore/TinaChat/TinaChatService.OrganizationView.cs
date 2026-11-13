@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.TinaChat;
 
@@ -18,47 +19,53 @@ public sealed partial class TinaChatService : ISessionOrganizationView
     async Task<OrganizationDto?> ISessionOrganizationView.GetAsync(Guid sessionId, CancellationToken ct)
     {
         var scope = await ScopeAsync(ct);
-        await using var db = await factory.CreateDbContextAsync(ct);
-        var org = await OwnedOrganizationAsync(db, scope, sessionId, ct);
-        if (org is null) return null;
-        var members = await db.Participants.AsNoTracking().Where(x => x.OrganizationId == org.Id && x.OrgRole != OrganizationRoles.Host)
-            .OrderBy(x => x.Presence == Online ? 0 : 1).ThenBy(x => x.OrgRole).ThenBy(x => x.DisplayName)
-            .Take(ViewMemberLimit + 1).ToArrayAsync(ct);
-        var rooms = await db.Conversations.AsNoTracking().Where(x => x.OrganizationId == org.Id && x.Kind != "direct")
-            .OrderBy(x => x.Kind).ThenBy(x => x.Title).Take(ViewRoomLimit + 1).ToArrayAsync(ct);
-        var roomIds = rooms.Select(x => x.Id).ToArray();
-        var counts = await db.Members.AsNoTracking().Where(x => roomIds.Contains(x.ConversationId) && x.Status == "active")
-            .GroupBy(x => x.ConversationId).Select(g => new { Id = g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Id, x => x.Count, ct);
-        var mine = await db.Members.AsNoTracking().Where(x => roomIds.Contains(x.ConversationId) && x.ParticipantId == org.HumanParticipantId && x.Status == "active")
-            .Select(x => x.ConversationId).ToArrayAsync(ct);
-        var open = await db.Reports.AsNoTracking().CountAsync(x => x.OrganizationId == org.Id && x.Status == "open", ct);
-        return new OrganizationDto(org.Id, org.SessionId, org.Status, org.HumanParticipantId,
-            members.Take(ViewMemberLimit).Select(x => new OrganizationMemberDto(x.Id, x.Handle, x.DisplayName, x.OrgRole ?? "",
-                x.Presence ?? Offline, x.AgentSlug, x.ParentParticipantId, x.CurrentRunId, x.VisibilityScope)).ToArray(),
-            rooms.Take(ViewRoomLimit).Select(x => new OrganizationRoomDto(x.Id, x.Kind, x.Title, x.LastSequence,
-                counts.GetValueOrDefault(x.Id), mine.Contains(x.Id), x.PlanOwnerId)).ToArray(),
-            open, members.Length > ViewMemberLimit, rooms.Length > ViewRoomLimit);
+        return await SqliteTransientRetry.ReadAsync(async token =>
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var org = await OwnedOrganizationAsync(db, scope, sessionId, token);
+            if (org is null) return null;
+            var members = await db.Participants.AsNoTracking().Where(x => x.OrganizationId == org.Id && x.OrgRole != OrganizationRoles.Host)
+                .OrderBy(x => x.Presence == Online ? 0 : 1).ThenBy(x => x.OrgRole).ThenBy(x => x.DisplayName)
+                .Take(ViewMemberLimit + 1).ToArrayAsync(token);
+            var rooms = await db.Conversations.AsNoTracking().Where(x => x.OrganizationId == org.Id && x.Kind != "direct")
+                .OrderBy(x => x.Kind).ThenBy(x => x.Title).Take(ViewRoomLimit + 1).ToArrayAsync(token);
+            var roomIds = rooms.Select(x => x.Id).ToArray();
+            var counts = await db.Members.AsNoTracking().Where(x => roomIds.Contains(x.ConversationId) && x.Status == "active")
+                .GroupBy(x => x.ConversationId).Select(g => new { Id = g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Id, x => x.Count, token);
+            var mine = await db.Members.AsNoTracking().Where(x => roomIds.Contains(x.ConversationId) && x.ParticipantId == org.HumanParticipantId && x.Status == "active")
+                .Select(x => x.ConversationId).ToArrayAsync(token);
+            var open = await db.Reports.AsNoTracking().CountAsync(x => x.OrganizationId == org.Id && x.Status == "open", token);
+            return new OrganizationDto(org.Id, org.SessionId, org.Status, org.HumanParticipantId,
+                members.Take(ViewMemberLimit).Select(x => new OrganizationMemberDto(x.Id, x.Handle, x.DisplayName, x.OrgRole ?? "",
+                    x.Presence ?? Offline, x.AgentSlug, x.ParentParticipantId, x.CurrentRunId, x.VisibilityScope)).ToArray(),
+                rooms.Take(ViewRoomLimit).Select(x => new OrganizationRoomDto(x.Id, x.Kind, x.Title, x.LastSequence,
+                    counts.GetValueOrDefault(x.Id), mine.Contains(x.Id), x.PlanOwnerId)).ToArray(),
+                open, members.Length > ViewMemberLimit, rooms.Length > ViewRoomLimit);
+        }, ct);
     }
 
     public async Task<OrganizationMessagePage> ReadRoomAsync(Guid sessionId, Guid roomId, long afterSequence = 0, int limit = 50, CancellationToken ct = default)
     {
         ValidatePage(afterSequence, limit);
         var scope = await ScopeAsync(ct);
-        await using var db = await factory.CreateDbContextAsync(ct);
-        var org = await OwnedOrganizationAsync(db, scope, sessionId, ct) ?? throw Missing();
-        var human = await db.Participants.AsNoTracking().SingleAsync(x => x.Id == org.HumanParticipantId, ct);
-        var room = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == roomId && x.OrganizationId == org.Id, ct) ?? throw Missing();
-        var rows = await db.Messages.AsNoTracking().Where(x => x.ConversationId == room.Id && x.Sequence > afterSequence)
-            .OrderBy(x => x.Sequence).Take(limit * 2).ToArrayAsync(ct);
-        var page = new List<ChatMessage>();
-        var cursor = afterSequence;
-        foreach (var row in rows)
+        return await SqliteTransientRetry.ReadAsync(async token =>
         {
-            cursor = row.Sequence;
-            if (await CanReadOrganizationMessageAsync(db, human, row, ct)) page.Add(row);
-            if (page.Count == limit) break;
-        }
-        return new OrganizationMessagePage(await ViewMessagesAsync(db, org, page, ct), cursor);
+            await using var db = await factory.CreateDbContextAsync(token);
+            var org = await OwnedOrganizationAsync(db, scope, sessionId, token) ?? throw Missing();
+            var human = await db.Participants.AsNoTracking().SingleAsync(x => x.Id == org.HumanParticipantId, token);
+            var room = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == roomId && x.OrganizationId == org.Id, token) ?? throw Missing();
+            var rows = await db.Messages.AsNoTracking().Where(x => x.ConversationId == room.Id && x.Sequence > afterSequence)
+                .OrderBy(x => x.Sequence).Take(limit * 2).ToArrayAsync(token);
+            var page = new List<ChatMessage>();
+            var cursor = afterSequence;
+            foreach (var row in rows)
+            {
+                cursor = row.Sequence;
+                if (await CanReadOrganizationMessageAsync(db, human, row, token)) page.Add(row);
+                if (page.Count == limit) break;
+            }
+            return new OrganizationMessagePage(await ViewMessagesAsync(db, org, page, token), cursor);
+        }, ct);
     }
 
     public async Task<OrganizationMessageDto> PostAsync(Guid sessionId, Guid roomId, OrganizationPostRequest request, CancellationToken ct = default)
@@ -96,16 +103,19 @@ public sealed partial class TinaChatService : ISessionOrganizationView
         if (limit is < 1 or > 200) throw Invalid("limit must be between 1 and 200.");
         if (status is not (null or "open" or "acted" or "dismissed" or "superseded")) throw Invalid("status must be open, acted, dismissed or superseded.");
         var scope = await ScopeAsync(ct);
-        await using var db = await factory.CreateDbContextAsync(ct);
-        var org = await OwnedOrganizationAsync(db, scope, sessionId, ct);
-        if (org is null) return new OrganizationReportPage([], false);
-        var query = db.Reports.AsNoTracking().Where(x => x.OrganizationId == org.Id);
-        if (status is not null) query = query.Where(x => x.Status == status);
-        // SQLite cannot order by DateTimeOffset; a bounded page is sorted in memory.
-        var rows = await query.Take(1000).ToArrayAsync(ct);
-        var ordered = rows.OrderBy(x => x.Status == "open" ? 0 : 1).ThenBy(x => SeverityRank(x.Severity)).ThenByDescending(x => x.CreatedAt).ToArray();
-        var names = await NamesAsync(db, org.Id, ordered.Take(limit).Select(x => x.AuthorId), ct);
-        return new OrganizationReportPage(ordered.Take(limit).Select(x => ToReportDto(x, names)).ToArray(), ordered.Length > limit);
+        return await SqliteTransientRetry.ReadAsync(async token =>
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var org = await OwnedOrganizationAsync(db, scope, sessionId, token);
+            if (org is null) return new OrganizationReportPage([], false);
+            var query = db.Reports.AsNoTracking().Where(x => x.OrganizationId == org.Id);
+            if (status is not null) query = query.Where(x => x.Status == status);
+            // SQLite cannot order by DateTimeOffset; a bounded page is sorted in memory.
+            var rows = await query.Take(1000).ToArrayAsync(token);
+            var ordered = rows.OrderBy(x => x.Status == "open" ? 0 : 1).ThenBy(x => SeverityRank(x.Severity)).ThenByDescending(x => x.CreatedAt).ToArray();
+            var names = await NamesAsync(db, org.Id, ordered.Take(limit).Select(x => x.AuthorId), token);
+            return new OrganizationReportPage(ordered.Take(limit).Select(x => ToReportDto(x, names)).ToArray(), ordered.Length > limit);
+        }, ct);
     }
 
     public async Task<OrganizationReportDto> DecideReportAsync(Guid sessionId, Guid reportId, OrganizationReportDecisionRequest request, CancellationToken ct = default)

@@ -951,27 +951,28 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         return request is null ? null : await LoadResolutionAsync(db, request, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<PermissionRequestSnapshot>> ListPermissionRequestsAsync(
+    public Task<IReadOnlyList<PermissionRequestSnapshot>> ListPermissionRequestsAsync(
         string? status = null,
         Guid? runId = null,
         Guid? taskId = null,
-        CancellationToken cancellationToken = default)
-    {
-        var scope = _tenantAccessor.Current;
-        var normalizedStatus = string.IsNullOrWhiteSpace(status) ? null : status.Trim().ToLowerInvariant();
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var query = db.PermissionRequests.AsNoTracking().Where(x =>
-            x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
-        if (normalizedStatus is not null) query = query.Where(x => x.Status == normalizedStatus);
-        if (runId is not null) query = query.Where(x => x.RunId == runId);
-        if (taskId is not null) query = query.Where(x => x.TaskId == taskId);
-        // SQLite cannot translate DateTimeOffset ordering. Keep filtering
-        // server-side and apply the bounded deterministic order in memory.
-        var rows = await query.ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
-        if (rows.Length > 200) rows = rows[..200];
-        return rows.Select(ToSnapshot).ToArray();
-    }
+        CancellationToken cancellationToken = default) =>
+        SqliteTransientRetry.ReadAsync(async token =>
+        {
+            var scope = _tenantAccessor.Current;
+            var normalizedStatus = string.IsNullOrWhiteSpace(status) ? null : status.Trim().ToLowerInvariant();
+            await using var db = await _dbFactory.CreateDbContextAsync(token).ConfigureAwait(false);
+            var query = db.PermissionRequests.AsNoTracking().Where(x =>
+                x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
+            if (normalizedStatus is not null) query = query.Where(x => x.Status == normalizedStatus);
+            if (runId is not null) query = query.Where(x => x.RunId == runId);
+            if (taskId is not null) query = query.Where(x => x.TaskId == taskId);
+            // SQLite cannot translate DateTimeOffset ordering. Keep filtering
+            // server-side and apply the bounded deterministic order in memory.
+            var rows = await query.ToArrayAsync(token).ConfigureAwait(false);
+            Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
+            if (rows.Length > 200) rows = rows[..200];
+            return (IReadOnlyList<PermissionRequestSnapshot>)rows.Select(ToSnapshot).ToArray();
+        }, cancellationToken);
 
     private async Task<LeaseConsumptionResult> ConsumeLeaseAsync(
         LeaseConsumptionCommand command,
