@@ -137,6 +137,41 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IToolExecu
         CancellationToken cancellationToken = default) =>
         CallAsync(workspaceRoot, request, timeout, observer: null, cancellationToken);
 
+    public Task<ToolWireResponseDto> CallForRunAsync(
+        string runId,
+        string workspaceRoot,
+        ToolWireRequestDto request,
+        CancellationToken cancellationToken = default) =>
+        CallAsync(workspaceRoot, request, timeout: null, observer: null, cancellationToken, ResolveOwnedProcessKey(runId));
+
+    /// <summary>
+    /// The live process this run already owns, or null when the run has none (a host restart
+    /// clears the map, and the authoritative terminal sessions live in the Tools child, so they
+    /// are gone with it). Null keeps the ordinary context-hash resolution.
+    /// </summary>
+    internal string? ResolveOwnedProcessKey(string runId)
+    {
+        lock (_stateLock)
+            return _contextRoots.TryGetValue(runId, out var owned)
+                ? owned.FirstOrDefault(key => _processes.TryGetValue(key, out var process) && !process.Process.HasExited)
+                : null;
+    }
+
+    /// <summary>
+    /// The identity of the child a context selects. Only the fields that change the
+    /// child's grant boundary take part; a control call that re-derives a context can
+    /// drift them, which is why terminal control reuses the run's owned key instead.
+    /// </summary>
+    internal static string ComputeProcessKey(string root, ToolExecutionContextDto? context) =>
+        context is null ? root : root + "|" + ToolSettingsSchema.Hash(JsonSerializer.SerializeToElement(new { context.StorageId, context.WorkspaceRoots, context.WorkspaceFiles, context.PrimaryRootId, context.ProjectStorageWrite }));
+
+    /// <summary>Every key the run owns. Terminal control must not add a second one.</summary>
+    internal string[] OwnedProcessKeysForTests(string runId)
+    {
+        lock (_stateLock)
+            return _contextRoots.TryGetValue(runId, out var owned) ? owned.ToArray() : [];
+    }
+
     public Task<ToolWireResponseDto> CallStreamingAsync(
         string workspaceRoot,
         ToolWireRequestDto request,
@@ -159,8 +194,7 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IToolExecu
         CancellationToken cancellationToken, string? ownedProcessKey = null)
     {
         var root = ResolveRoot(workspaceRoot);
-        var processKey = ownedProcessKey ?? (request.ExecutionContext is { } context
-            ? root + "|" + ToolSettingsSchema.Hash(JsonSerializer.SerializeToElement(new { context.StorageId, context.WorkspaceRoots, context.WorkspaceFiles, context.PrimaryRootId, context.ProjectStorageWrite })) : root);
+        var processKey = ownedProcessKey ?? ComputeProcessKey(root, request.ExecutionContext);
         if (!string.IsNullOrWhiteSpace(request.ExecutionContext?.RunId))
             lock (_stateLock)
             {

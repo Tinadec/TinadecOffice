@@ -1990,7 +1990,11 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             scope.ExecutionRoot,
             command,
             status,
-            DateTimeOffset.UtcNow));
+            DateTimeOffset.UtcNow,
+            // The creating call's own frozen context. Reconstructing one from the run's frozen
+            // configuration would be a second derivation that can hash differently and land the
+            // control call on a Tools process that has never heard of this session.
+            scope.ToolExecutionContext));
     }
 
     private async Task<(ToolManifestEntryDto? Entry, string? Error)> FindV2ToolAsync(ToolInvocationScope scope, string toolId, CancellationToken cancellationToken)

@@ -31,6 +31,7 @@ public static class TerminalEndpoints
             TerminalStdinRequest? input,
             ITerminalSessionRegistry registry,
             IToolProvider provider,
+            IToolConfigurationResolver toolSettings,
             ILifecycleManager lifecycle,
             CancellationToken ct) =>
         {
@@ -49,24 +50,10 @@ public static class TerminalEndpoints
                 ["data"] = input.Data
             });
 
-            ToolWireResponseDto response;
-            try
-            {
-                response = await provider.CallAsync(session.WorkspaceRoot, new ToolWireRequestDto
-                {
-                    ToolId = TerminalControlToolId,
-                    SessionId = session.RunId.ToString(),
-                    Approved = false,
-                    Params = payload
-                }, cancellationToken: ct).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                return Results.Json(new { code = "TOOL_PROVIDER_UNAVAILABLE", message = "The tool provider rejected the terminal write." },
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
+            var (response, failure) = await CallTerminalAsync(session, payload, provider, toolSettings, ct).ConfigureAwait(false);
+            if (failure is not null) return failure;
 
-            if (!response.IsSuccess)
+            if (!response!.IsSuccess)
                 return Results.Json(new { code = "TERMINAL_WRITE_FAILED", message = response.Error ?? "Terminal write failed." },
                     statusCode: StatusCodes.Status502BadGateway);
 
@@ -87,6 +74,7 @@ public static class TerminalEndpoints
             string terminalSessionId,
             ITerminalSessionRegistry registry,
             IToolProvider provider,
+            IToolConfigurationResolver toolSettings,
             ILifecycleManager lifecycle,
             CancellationToken ct) =>
         {
@@ -100,21 +88,8 @@ public static class TerminalEndpoints
                 ["terminal_session_id"] = terminalSessionId
             });
 
-            try
-            {
-                await provider.CallAsync(session.WorkspaceRoot, new ToolWireRequestDto
-                {
-                    ToolId = TerminalControlToolId,
-                    SessionId = session.RunId.ToString(),
-                    Approved = false,
-                    Params = payload
-                }, cancellationToken: ct).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                return Results.Json(new { code = "TOOL_PROVIDER_UNAVAILABLE", message = "The tool provider rejected the terminal kill." },
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
+            var (_, failure) = await CallTerminalAsync(session, payload, provider, toolSettings, ct).ConfigureAwait(false);
+            if (failure is not null) return failure;
 
             registry.MarkExited(terminalSessionId, -1, false);
             await lifecycle.AppendEventAsync(session.RunId, "terminal.session.killed", new
@@ -129,6 +104,51 @@ public static class TerminalEndpoints
         });
 
         return app;
+    }
+
+    /// <summary>
+    /// Routes the control call to the Tools process that already owns the run. The
+    /// context carried on the record is the one the creating dispatch used, so
+    /// re-deriving it from the session's workspace root cannot drift the process key.
+    /// </summary>
+    private static async Task<(ToolWireResponseDto? Response, IResult? Failure)> CallTerminalAsync(
+        TerminalSessionRecord session,
+        JsonElement payload,
+        IToolProvider provider,
+        IToolConfigurationResolver toolSettings,
+        CancellationToken ct)
+    {
+        ToolExecutionContextDto? context;
+        try
+        {
+            context = session.ToolExecutionContext is { } frozen
+                ? await toolSettings.MaterializeForCallAsync(frozen, [TerminalControlToolId], ct,
+                    session.RunId.ToString(), TerminalControlToolId, session.WorkspaceRoot).ConfigureAwait(false)
+                : null;
+        }
+        catch (ToolSettingsException ex)
+        {
+            return (null, Results.Json(new { code = "TERMINAL_CONTEXT_UNAVAILABLE", message = ex.Message },
+                statusCode: StatusCodes.Status409Conflict));
+        }
+
+        try
+        {
+            var response = await provider.CallForRunAsync(session.RunId.ToString(), session.WorkspaceRoot, new ToolWireRequestDto
+            {
+                ToolId = TerminalControlToolId,
+                SessionId = session.RunId.ToString(),
+                Approved = false,
+                Params = payload,
+                ExecutionContext = context
+            }, ct).ConfigureAwait(false);
+            return (response, null);
+        }
+        catch (Exception)
+        {
+            return (null, Results.Json(new { code = "TOOL_PROVIDER_UNAVAILABLE", message = "The tool provider rejected the terminal control call." },
+                statusCode: StatusCodes.Status503ServiceUnavailable));
+        }
     }
 
     private static object Project(TerminalSessionRecord session) => new
