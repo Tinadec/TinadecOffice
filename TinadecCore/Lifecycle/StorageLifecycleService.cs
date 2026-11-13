@@ -1207,8 +1207,19 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         // line (measured 3,247 trips / ~55 s mounting one real project scope, which the first page
         // load waits behind). The set keeps the original global event_id test exactly: an event
         // already indexed under a different run stays a skip, not a duplicate-key insert.
-        var known = (await db.EventIndex.AsNoTracking().Select(x => x.EventId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false)).ToHashSet();
+        //
+        // The sequence set is the other half of the same hazard. AppendEventAsync fsyncs the
+        // journal line before it opens the index transaction, so a SQLITE_BUSY at commit leaves
+        // the line behind with no row and no advance of the run's counter. The next append reuses
+        // that sequence under a new event_id, and an event_id-only test then re-indexes the orphan
+        // into UNIQUE(run_id, sequence) — which fails the whole scope mount, so one transient lock
+        // turns into a project the user cannot open. The indexed row is authoritative: the run's
+        // counter advanced for it.
+        var indexed = await db.EventIndex.AsNoTracking()
+            .Select(x => new { x.EventId, x.RunId, x.Sequence })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var known = indexed.Select(x => x.EventId).ToHashSet();
+        var indexedSequences = indexed.Select(x => (x.RunId, x.Sequence)).ToHashSet();
         // A line can reach the journal while its index row and the run's sequence counter do
         // not (the host stopped between the two writes). Re-indexing the line without moving the
         // counter left the run one append away from a duplicate (run_id, sequence) key, and left
@@ -1233,7 +1244,11 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 {
                     var record = JsonSerializer.Deserialize<EventFileRecord>(bytes.AsSpan(offset, newline - offset), JsonOptions)
                         ?? throw new JsonException("Event record was empty.");
-                    if (known.Add(record.EventId))
+                    var isNewEvent = known.Add(record.EventId);
+                    var isNewSequence = indexedSequences.Add((record.RunId, record.Sequence));
+                    if (isNewEvent && !isNewSequence)
+                        _diagnostics.Add($"Ignoring orphaned JSONL record for run {record.RunId} at byte {offset}: sequence {record.Sequence} is already indexed under another event.");
+                    if (isNewEvent && isNewSequence)
                     {
                         db.EventIndex.Add(new EventIndexRecord { EventId = record.EventId, TenantId = run.TenantId, WorkspaceId = run.WorkspaceId, RunId = record.RunId, SessionId = record.SessionId, ProjectId = record.ProjectId, EventType = record.EventType, Severity = record.Severity, Sequence = record.Sequence, TaskId = record.TaskId, ApprovalId = record.ApprovalId, ToolId = record.ToolId, Summary = record.Summary, SchemaVersion = record.Version, PayloadHash = Convert.ToHexString(SHA256.HashData(bytes.AsSpan(offset, newline - offset))).ToLowerInvariant(), RelativeFilePath = Path.Combine("events", run.Id + ".events.jsonl"), ByteOffset = offset, ByteLength = length, Timestamp = record.Timestamp });
                         if (record.RunId == run.Id && record.Sequence > Math.Max(run.LastEventSequence, recoveredHeads.GetValueOrDefault(run.Id)))
