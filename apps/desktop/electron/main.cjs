@@ -68,7 +68,9 @@ initializeTrustedHostRequests({
 });
 const layoutStore = require('./layoutStore.cjs');
 const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
-const { openLogin, logout, getAuthState, updateProfile } = require('./auth.cjs');
+const { configureAuth, openLogin, logout, getAuthState, updateProfile } = require('./auth.cjs');
+// Before any auth call: restoreSession is lazy (getAuthState triggers it), so nothing has run yet.
+configureAuth({ hostControlToken: hostControl.serviceToken });
 const {
   createPanelWindow,
   closePanelWindow,

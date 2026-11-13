@@ -216,6 +216,10 @@ const app = new Elysia()
     startRequestTiming(request);
     const origin = request.headers.get('origin');
     const corsHeaders = corsHeadersFor(origin);
+    // /auth/* serves only the trusted main process, so no browser origin gets CORS headers there
+    // and a local page cannot read the response body. Defence in depth only: CORS does not stop
+    // the request being sent — Core's host gate is what refuses it.
+    const allowBrowserOrigin = !new URL(request.url).pathname.startsWith('/auth/');
     if (request.method === 'OPTIONS') {
       const requestMethod = request.headers.get('access-control-request-method');
       const requestHeaders = request.headers.get('access-control-request-headers');
@@ -223,12 +227,12 @@ const app = new Elysia()
       if (requestHeaders) corsHeaders['access-control-allow-headers'] = requestHeaders;
       else corsHeaders['access-control-allow-headers'] = 'accept, content-type, authorization, x-api-key, x-tenant-id, x-user-id, x-request-id, x-tinadec-principal, x-tinadec-storage-id, x-tinadec-session, idempotency-key, if-match, last-event-id';
       corsHeaders['access-control-max-age'] = '86400';
-      set.headers = { ...set.headers, ...corsHeaders };
+      if (allowBrowserOrigin) set.headers = { ...set.headers, ...corsHeaders };
       set.status = 204;
       emitServerTiming(request, set);
       return '';
     }
-    Object.assign(set.headers, corsHeaders);
+    if (allowBrowserOrigin) Object.assign(set.headers, corsHeaders);
     // ensure correlation id on every response
     const rid = ensureRequestId(request.headers.get('x-request-id') ?? request.headers.get('X-Request-Id'));
     set.headers['x-request-id'] = rid;
