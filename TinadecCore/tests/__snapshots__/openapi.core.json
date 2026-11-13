@@ -11855,26 +11855,9 @@
           },
           {
             "in": "query",
-            "name": "afterSeq",
+            "name": "cursor",
             "schema": {
-              "format": "int64",
-              "pattern": "^-?(?:0|[1-9]\\d*)$",
-              "type": [
-                "integer",
-                "string"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "after_seq",
-            "schema": {
-              "format": "int64",
-              "pattern": "^-?(?:0|[1-9]\\d*)$",
-              "type": [
-                "integer",
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
