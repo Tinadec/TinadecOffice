@@ -93,6 +93,11 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
             .DecideAsync(waiting!.ActionApprovalId!.Value, "approved", "approve");
         await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
         {
+            // Same invariant on the user-tool approval row: the nonce reference names the row it
+            // belongs to, so a retried mint overwrites one file instead of orphaning each attempt.
+            var row = await db.ApprovalRequests.Where(x => x.Id == waiting.ActionApprovalId)
+                .Select(x => new { x.Id, x.NonceSecretReference }).SingleAsync();
+            Assert.EndsWith($"_{row.Id:N}", row.NonceSecretReference);
             await db.ApprovalRequests.Where(x => x.Id == waiting.ActionApprovalId)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Risk, "critical"));
         }
@@ -209,6 +214,10 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
         await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<GovernanceDbContext>>().CreateDbContextAsync())
         {
             var secretReference = await db.CapabilityLeases.Where(x => x.Id == lease.Id).Select(x => x.NonceSecretReference).SingleAsync();
+            // The reference must name this lease, not a fresh Guid: the secret store overwrites on
+            // a repeated reference, so a stable name is what keeps a retried mint from leaving one
+            // orphan file per attempt. Reverting to Guid.NewGuid() here turns this red.
+            Assert.EndsWith($"_{lease.Id:N}", secretReference);
             await _factory.Services.GetRequiredService<INonceMaterialStore>().DeleteAsync(secretReference);
         }
 

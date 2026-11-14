@@ -1772,14 +1772,18 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         string policyHash)
     {
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var leaseId = Guid.NewGuid();
         return (new CapabilityLeaseRecord
         {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+            Id = leaseId, TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
             SubjectPrincipalId = grant.SubjectPrincipalId, SubjectAgentInstanceId = leaseSubjectAgentInstanceId,
             CapabilityGrantId = grant.Id, PermissionRequestId = permissionRequestId,
             Capability = claim.Capability, Action = claim.Action, Resource = claim.Resource,
             RunId = runId, TaskId = taskId, NonceHash = CapabilityRuleMatcher.HashNonce(nonce),
-            NonceSecretReference = $"lease_nonce_{scope.TenantId:N}_{Guid.NewGuid():N}", Nonce = nonce,
+            // The reference is derived from this lease's own id, never from a fresh Guid: the
+            // secret store overwrites the file for a repeated reference, so a stable name is what
+            // makes a retried transaction leave one file instead of an orphan per attempt.
+            NonceSecretReference = $"lease_nonce_{scope.TenantId:N}_{leaseId:N}", Nonce = nonce,
             PolicySnapshotHash = policyHash, Status = "active", MaxUses = maxUses, UseCount = 0, Revision = 1,
             StartsAt = now, ExpiresAt = expiresAt, StartsAtUnixMilliseconds = now.ToUnixTimeMilliseconds(),
             ExpiresAtUnixMilliseconds = expiresAt.ToUnixTimeMilliseconds(), CreatedAt = now, UpdatedAt = now

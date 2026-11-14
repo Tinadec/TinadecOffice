@@ -588,12 +588,16 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or UnauthorizedAccessException)
         {
         }
+        var approvalId = Guid.NewGuid();
         var row = new ApprovalRequestRecord
         {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = action.ProjectId,
+            Id = approvalId, TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = action.ProjectId,
             UserToolActionId = action.Id, Kind = "user_tool", ToolId = action.ToolId, Risk = action.Risk,
             RequestHash = action.ParametersHash, NonceHash = ToolParametersHash.Compute(nonce),
-            NonceSecretReference = $"approval_nonce_{scope.TenantId:N}_{Guid.NewGuid():N}", ParametersReference = action.ParametersReference,
+            // Derived from this row's id, not a fresh Guid: the secret store overwrites on a
+            // repeated reference, so a stable name keeps a retried transaction from leaving one
+            // orphan file per attempt.
+            NonceSecretReference = $"approval_nonce_{scope.TenantId:N}_{approvalId:N}", ParametersReference = action.ParametersReference,
             ArgumentsDigest = argumentsDigest,
             Summary = $"User requested '{action.ToolId}'.", Status = "pending", ExpiresAt = now.AddMinutes(30),
             RequestedByPrincipalId = scope.PrincipalId, CreatedAt = now, UpdatedAt = now, Nonce = nonce
