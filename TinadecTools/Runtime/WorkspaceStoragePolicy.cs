@@ -18,17 +18,6 @@ internal static class WorkspaceStoragePolicy
     {
         var storageRoot = StorageRoot(workspaceRoot);
         if (!WorkspaceRootSet.IsWithin(storageRoot, path)) return false;
-        // A project can live under the storage root — a folder opened inside the app's own data
-        // directory, which every test project does. Its tree is project content, not the app's
-        // managed storage, and classifying it as internal denied every tool write inside such a
-        // project unless whole-scope storage write had been granted. The managed entries below stay
-        // internal regardless: they are siblings of the project root, so they never satisfy the
-        // containment test. The equality guard keeps the degenerate case (the writable root IS the
-        // storage root) on the original path.
-        if (!string.Equals(WorkspaceRootSet.Normalize(storageRoot), WorkspaceRootSet.Normalize(workspaceRoot),
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
-            && WorkspaceRootSet.IsWithin(workspaceRoot, path))
-            return false;
         if (ToolExecutionContext.Current?.WorkingDirectory is { } assigned
             && WorkspaceRootSet.IsWithin(Path.Combine(storageRoot, "worktrees"), assigned)
             && !string.Equals(WorkspaceRootSet.Normalize(assigned), WorkspaceRootSet.Normalize(Path.Combine(storageRoot, "worktrees")),
@@ -40,6 +29,26 @@ internal static class WorkspaceStoragePolicy
             var child = Path.GetRelativePath(nested, path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
             return child is not ("." or "config" or "skills");
         }
+        // A project can live under the storage root — a folder opened inside the app's own data
+        // directory, which every test project does. Its tree is project content, not the app's
+        // managed storage, and classifying it as internal denied every tool write inside such a
+        // project unless whole-scope storage write had been granted.
+        //
+        // The containment direction is the whole point, and it runs one way only: the project root
+        // is a strict descendant of the storage root. The ordinary layout is the opposite — the
+        // project root CONTAINS ".tinadec" — and reading that as project content would open the
+        // managed data/state/logs/cache/temp/packages/worktrees entries for writing, which is the
+        // boundary these tools exist to hold. The equality guard keeps the degenerate case (the
+        // writable root IS the storage root) on the original path.
+        //
+        // Ordered after the worktree branch on purpose: an assigned worktree is itself a
+        // descendant of the storage root, so it would otherwise reach this return and lose the
+        // .tinadec/<managed> protection that branch implements.
+        if (!string.Equals(WorkspaceRootSet.Normalize(storageRoot), WorkspaceRootSet.Normalize(workspaceRoot),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            && WorkspaceRootSet.IsWithin(storageRoot, workspaceRoot)
+            && WorkspaceRootSet.IsWithin(workspaceRoot, path))
+            return false;
         var relative = Path.GetRelativePath(storageRoot, path);
         if (relative == ".") return false; // The container may be listed; its children are classified separately.
         var first = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
