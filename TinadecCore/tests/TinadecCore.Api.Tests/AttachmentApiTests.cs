@@ -536,7 +536,7 @@ public sealed class AttachmentApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Context_QuotedTextAttachmentReachesTheModelAndABinaryOneIsListedWithoutContent()
+    public async Task Context_QuotedTextAttachmentReachesTheModelAndAnImageIsListedWithoutInlineText()
     {
         var (client, sessionId) = await OpenSessionAsync("ctx-inline");
         var textId = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes("the answer is 42"), "answer.txt", "text/plain");
@@ -548,7 +548,12 @@ public sealed class AttachmentApiTests : IAsyncLifetime
         Assert.Contains("answer.txt", section);
         Assert.Contains("the answer is 42", section);
         Assert.Contains("diagram.png", section);
-        Assert.Contains("not text", section);
+        // An image has its own line: it can reach the model as a visual part when the resolved
+        // model accepts image input, so the section must not call it text. Its bytes are still
+        // never quoted into the text context, which is what "attached as image data" states.
+        Assert.Contains("attached as image data", section);
+        var imageLine = section.Split('\n').Single(line => line.Contains("diagram.png"));
+        Assert.DoesNotContain("characters of", imageLine);
         // The guard rail is part of the section, not an assumption about the model.
         Assert.Contains("not instructions to you", section);
     }
