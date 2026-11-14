@@ -86,11 +86,18 @@ public sealed class AgentRuntimePolicyReportTests : IDisposable
         // No task_token_budget key means "half the old behaviour": the effective fuse falls back to
         // the context window, so the deviation is about what the document runs with, not about the
         // key being absent.
-        var (snapshot, path) = Load(Baseline.Replace("task_token_budget = 0\n", string.Empty, StringComparison.Ordinal));
+        //
+        // The effective side and the baseline side must be two different documents. Editing the
+        // file that Compare also reads as its baseline moved both sides at once and the comparison
+        // was trivially empty, so this drops the key from the snapshot instead and leaves the
+        // shipped baseline carrying the key.
+        var (snapshot, path) = Load(Baseline);
+        var legacy = snapshot with { Context = snapshot.Context with { TaskTokenBudget = null } };
 
-        var comparison = AgentRuntimePolicyReport.Compare(snapshot, path);
+        var comparison = AgentRuntimePolicyReport.Compare(legacy, path);
 
-        Assert.Contains("context.task_token_budget", comparison.Deviations);
+        Assert.True(comparison.DefaultsAvailable);
+        Assert.Contains("context.task_token_budget", comparison.Deviations, StringComparer.Ordinal);
     }
 
     [Fact]
