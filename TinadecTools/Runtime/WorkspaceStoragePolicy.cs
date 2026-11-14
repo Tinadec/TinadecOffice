@@ -18,6 +18,17 @@ internal static class WorkspaceStoragePolicy
     {
         var storageRoot = StorageRoot(workspaceRoot);
         if (!WorkspaceRootSet.IsWithin(storageRoot, path)) return false;
+        // A project can live under the storage root — a folder opened inside the app's own data
+        // directory, which every test project does. Its tree is project content, not the app's
+        // managed storage, and classifying it as internal denied every tool write inside such a
+        // project unless whole-scope storage write had been granted. The managed entries below stay
+        // internal regardless: they are siblings of the project root, so they never satisfy the
+        // containment test. The equality guard keeps the degenerate case (the writable root IS the
+        // storage root) on the original path.
+        if (!string.Equals(WorkspaceRootSet.Normalize(storageRoot), WorkspaceRootSet.Normalize(workspaceRoot),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            && WorkspaceRootSet.IsWithin(workspaceRoot, path))
+            return false;
         if (ToolExecutionContext.Current?.WorkingDirectory is { } assigned
             && WorkspaceRootSet.IsWithin(Path.Combine(storageRoot, "worktrees"), assigned)
             && !string.Equals(WorkspaceRootSet.Normalize(assigned), WorkspaceRootSet.Normalize(Path.Combine(storageRoot, "worktrees")),
