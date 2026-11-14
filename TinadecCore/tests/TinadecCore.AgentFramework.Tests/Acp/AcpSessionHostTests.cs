@@ -138,8 +138,14 @@ public sealed class AcpSessionHostTests : IDisposable
         var first = Guid.NewGuid();
         var second = Guid.NewGuid();
 
-        var root = Path.GetFullPath(Path.Combine(_contentRoot, "data", "harness-workspaces"));
-        Assert.StartsWith(root, Path.GetFullPath(host.ScratchDirectoryFor(first)), StringComparison.Ordinal);
+        // The scratch root lives under Temp, not Data: StoragePaths.HarnessWorkspace moved it off
+        // "acp-sessions" so harness scratch files stay out of the backed-up data tree. Asking
+        // StoragePaths for the root keeps this assertion honest across the next move.
+        var paths = new StoragePaths(_contentRoot, Options.Create(new TinadecPersistenceOptions { DataRoot = "data" }));
+        var root = Path.GetFullPath(paths.Locations.Temp);
+        var actual = Path.GetFullPath(host.ScratchDirectoryFor(first));
+        Assert.StartsWith(root, actual, StringComparison.Ordinal);
+        Assert.Contains("harness", actual, StringComparison.Ordinal);
         Assert.Equal(host.ScratchDirectoryFor(first), host.ScratchDirectoryFor(first));
         Assert.True(Directory.Exists(host.ScratchDirectoryFor(first)));
         Assert.NotEqual(host.ScratchDirectoryFor(first), host.ScratchDirectoryFor(second));
