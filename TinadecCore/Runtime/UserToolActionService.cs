@@ -545,11 +545,18 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         {
             if (_contextLifecycle is not null) await _contextLifecycle.ReleaseAsync($"user-action:{action.Id:N}", CancellationToken.None).ConfigureAwait(false);
         }
-        if (!response.IsSuccess)
+        // A tool that rejects its own target reports that inside its result payload rather than on the
+        // wire: ToolHandlerBase sets IsSuccess whenever the handler did not throw. Recording such a
+        // call as completed would durably tell the user a mutating action succeeded when nothing was
+        // written, so the payload's own success flag decides too.
+        var payloadFailure = false;
+        string? payloadError = null;
+        if (response.IsSuccess) payloadFailure = TryReadPayloadFailure(response.Result, out payloadError);
+        if (!response.IsSuccess || payloadFailure)
         {
             action.Status = "failed";
             action.ErrorCategory = "tool_error";
-            action.SafeErrorMessage = SafeMessage(response.Error);
+            action.SafeErrorMessage = SafeMessage(payloadFailure ? payloadError : response.Error);
             action.CompletedAt = DateTimeOffset.UtcNow;
             action.UpdatedAt = action.CompletedAt.Value;
             await SaveAsync(action, cancellationToken).ConfigureAwait(false);
@@ -1065,6 +1072,20 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
     { if (project.TenantId != scope.TenantId || project.WorkspaceId != scope.WorkspaceId) throw new UnauthorizedAccessException("Project is outside the current tenant/workspace."); }
     private static bool FixedEquals(string? left, string? right) => !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(left), Encoding.UTF8.GetBytes(right));
     private static string SafeMessage(string? message) => string.IsNullOrWhiteSpace(message) ? "User tool action failed." : message.Trim()[..Math.Min(message.Trim().Length, 4096)];
+
+    /// <summary>
+    /// Reads the payload-level failure flag a tool sets when it declined the work it was asked to do
+    /// (for example write_file refusing a target outside its authorized roots). Absent, non-boolean
+    /// or true means the tool did not report a failure, so the wire result stands.
+    /// </summary>
+    private static bool TryReadPayloadFailure(JsonElement? result, out string? message)
+    {
+        message = null;
+        if (result is not { ValueKind: JsonValueKind.Object } payload) return false;
+        if (!payload.TryGetProperty("success", out var success) || success.ValueKind is not JsonValueKind.False) return false;
+        if (payload.TryGetProperty("error", out var error) && error.ValueKind is JsonValueKind.String) message = error.GetString();
+        return true;
+    }
 
     private sealed record TrustedTool(int ProtocolVersion, string ManifestHash, ToolManifestEntryDto Descriptor);
     private sealed record FrozenToolValidation(ToolManifestEntryDto? Descriptor, (string Code, string Message)? Error)

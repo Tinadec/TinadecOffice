@@ -83,7 +83,15 @@ public sealed class ToolConfigurationResolver(IToolSettingsStore settings, IMcpR
             }
             else if (catalog is not null) skills = await catalog.ResolveAsync(projectId, skillBindings, ct);
         }
-        var roots = skills.Select(s => new ToolReadRootDto { ResourceId = s.ResourceId, Path = s.RootPath }).ToArray();
+        // A builtin skill ships inside the tool host, so it has no filesystem root to grant:
+        // ToolSkillResourceService reports RootPath as an empty string for it. Emitting that
+        // verbatim sends read_roots[].path="" and the tool host rejects the entire execution
+        // context ("read_roots paths must be absolute"), which fails every call in the project
+        // rather than just that skill. Only a real, absolute root becomes a read root.
+        var roots = skills
+            .Where(s => !string.IsNullOrWhiteSpace(s.RootPath) && Path.IsPathFullyQualified(s.RootPath))
+            .Select(s => new ToolReadRootDto { ResourceId = s.ResourceId, Path = s.RootPath })
+            .ToArray();
         if (admitted is null && services.GetService<IManagedMcpProgramService>() is { } programs)
         {
             var resolvedServers = new List<ToolMcpServerSnapshotDto>();
