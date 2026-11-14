@@ -836,13 +836,56 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             || !string.Equals(approval.Decision, "approved", StringComparison.OrdinalIgnoreCase))
             return new ToolExecutionStartDecision("not_approved", snapshot, "Approval is not executable.");
 
+        // The consume-and-start transition is retried as one unit. Every precondition that
+        // guards a write is re-read inside the retried delegate, on a context that attempt
+        // owns, because a rolled-back attempt leaves this outer context's transaction dirty:
+        // reusing it would replay the work on a dead transaction and turn one lock conflict
+        // into a different error.
+        //
+        // Retrying is safe for the reason this path has no tool call in it. The coordinator
+        // only moves rows: it claims the run lease epoch, flips the approval to consumed
+        // through a compare-and-set on ConsumedByExecutionId, and marks the execution running.
+        // Nothing here replays a tool, so the "Never replay a potentially mutating call
+        // automatically" invariant above is about resetting a consumed execution back to a
+        // startable state, and is untouched by this retry.
+        return await SqliteTransientRetry.WriteInTransactionAsync(
+            ct => ConsumeApprovalAndStartAsync(scope, executionId, approvalId, authority, ct), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// One attempt at the approval-consume transaction, on a context this attempt owns.
+    /// Re-reads everything the write depends on and re-applies the same guards, so a retry
+    /// after a lock conflict decides on committed state instead of the caller's stale read.
+    /// </summary>
+    private async Task<ToolExecutionStartDecision> ConsumeApprovalAndStartAsync(
+        TenantContext scope,
+        Guid executionId,
+        Guid approvalId,
+        RunExecutionAuthority? authority,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var execution = await db.ToolExecutions.SingleOrDefaultAsync(x =>
+            x.Id == executionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+            cancellationToken).ConfigureAwait(false);
+        if (execution is null) return new ToolExecutionStartDecision("not_found", null, "Tool execution was not found.");
+        var approval = await db.ApprovalRequests.SingleOrDefaultAsync(x =>
+            x.Id == approvalId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+            cancellationToken).ConfigureAwait(false);
+        if (approval is null || approval.Status != "approved"
+            || !string.Equals(approval.Decision, "approved", StringComparison.OrdinalIgnoreCase))
+            return new ToolExecutionStartDecision("not_approved",
+                await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), "Approval is not executable.");
+
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         if (authority is not null
             && !await TryClaimRunAuthorityAsync(db, execution, authority, cancellationToken).ConfigureAwait(false))
         {
             await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return LostRunAuthority(snapshot);
+            return LostRunAuthority(await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false));
         }
+        var now = DateTimeOffset.UtcNow;
         var consumed = await db.ApprovalRequests
             .Where(x => x.Id == approvalId
                 && x.TenantId == scope.TenantId
@@ -866,10 +909,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (consumed != 1)
         {
             await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return new ToolExecutionStartDecision("not_approved", snapshot, "Approval could not be consumed.");
+            return new ToolExecutionStartDecision("not_approved",
+                await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), "Approval could not be consumed.");
         }
-        // ExecuteUpdate bypasses EF's tracked entity. Keep the in-memory row in
-        // sync so the later execution save cannot restore its former status.
+        // ExecuteUpdate bypasses EF's tracked entity. Keep the in-memory row in sync so the
+        // later execution save cannot restore its former status.
         approval.Status = "consumed";
         approval.ConsumedByExecutionId = executionId;
         approval.ConsumedAt = now;
