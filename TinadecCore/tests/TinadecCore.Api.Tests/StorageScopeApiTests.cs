@@ -647,6 +647,36 @@ public sealed class StorageScopeApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"/api/v1/host-challenge?nonce={nonce}&nonce={nonce}")).StatusCode);
     }
 
+    // The free-session migration is a durable transfer: the request is accepted and answered with
+    // a receipt a client can follow, and the move itself happens outside the request. It is also
+    // only mapped when storage scopes are enabled, which is why a scope-less test host answers 404
+    // "No endpoint matches this request" rather than any transfer error.
+    [Fact]
+    public async Task FreeSessionTransferIsAcceptedWithAReceiptThatCanBeFollowed()
+    {
+        using var client = _factory!.CreateClient();
+        // A projectless session lives in the user scope, which is what an absent storage header selects.
+        var created = await client.PostAsJsonAsync("/api/v1/sessions", new { title = "Free conversation" });
+        created.EnsureSuccessStatusCode();
+        var sessionId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var path = Path.Combine(_root, "migrated"); Directory.CreateDirectory(path);
+
+        var migrate = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/migrate",
+            new { project_name = "Migrated", project_path = path });
+
+        Assert.Equal(HttpStatusCode.Accepted, migrate.StatusCode);
+        var receipt = await migrate.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(sessionId, receipt.GetProperty("session_id").GetGuid());
+        Assert.Equal("user", receipt.GetProperty("source_storage_id").GetString());
+        Assert.NotEqual("user", receipt.GetProperty("storage_id").GetString());
+        Assert.Equal("pending", receipt.GetProperty("status").GetString());
+        // The advertised location must resolve to the same durable receipt.
+        var followed = await client.GetAsync(migrate.Headers.Location!.ToString());
+        followed.EnsureSuccessStatusCode();
+        Assert.Equal(receipt.GetProperty("transfer_id").GetGuid(),
+            (await followed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("transfer_id").GetGuid());
+    }
+
     private sealed class ScopeFactory(string root, string token) : IsolatedApiFactory
     {
         protected override bool UsesManagedStorage => true;

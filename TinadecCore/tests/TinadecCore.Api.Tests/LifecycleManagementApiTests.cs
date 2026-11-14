@@ -674,7 +674,7 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Session_CanBeCreatedWithoutProject_AndMigratedToNewProject()
+    public async Task Session_CanBeCreatedWithoutProject()
     {
         var client = _factory!.CreateClient();
         // 1. Create session without project
@@ -685,24 +685,11 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
         // Core serializes with WhenWritingNull: a projectless session either omits project_id or sends null.
         Assert.True(!freeSession.TryGetProperty("project_id", out var freeProjectId) || freeProjectId.ValueKind == JsonValueKind.Null);
 
-        // 2. Migrate to new project with name and path
-        var newWorkspacePath = Path.Combine(_root, "migrated-workspace");
-        var migrateResponse = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/migrate", new
-        {
-            project_name = "Migrated Workspace",
-            project_path = newWorkspacePath
-        });
-        Assert.Equal(HttpStatusCode.OK, migrateResponse.StatusCode);
-        var migratedSession = await migrateResponse.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(JsonValueKind.String, migratedSession.GetProperty("project_id").ValueKind);
-        var targetProjectId = migratedSession.GetProperty("project_id").GetGuid();
-        Assert.True(Directory.Exists(newWorkspacePath));
-
-        // 3. Check memory store
+        // 2. The free session is readable and lives in the memory store with no project.
         await using var memory = await _factory.Services.GetRequiredService<IDbContextFactory<MemoryDbContext>>().CreateDbContextAsync();
         var sessionInDb = await memory.Sessions.FindAsync(sessionId);
         Assert.NotNull(sessionInDb);
-        Assert.Equal(targetProjectId, sessionInDb.ProjectId);
+        Assert.Null(sessionInDb.ProjectId);
     }
 
     private async Task<JsonElement> CreateProjectAsync(HttpClient client, string workspaceName)
