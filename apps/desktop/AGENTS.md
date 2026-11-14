@@ -1,5 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-11-14 原生测试发现改为目录展开
+
+桌面 `node --test` 曾用手写文件清单，`electron/companionAvatars.test.cjs`（信任发送方校验，与 issue #33 同类安全边界）不在其中，因此本地与 CI 都没有跑过它。现改为 `vitest run && node ../../scripts/run-node-tests.mjs electron scripts ../../scripts/check-dependencies.test.mjs`：`run-node-tests.mjs`（仓库根 `scripts/`）把目录展开为其内部的 `*.test.js|cjs|mjs`，所以新增测试文件自动被发现（`mainStartup.test.cjs` 那条“已加入 `package.json` 的 `node --test` 清单”的历史记录自此不再需要手工登记）。跨包的 `../../scripts/check-dependencies.test.mjs` 仍显式列出，因为 `desktop-release.yml` 只跑本包的 test，而 root 的 `test:scripts` 不在那条链上。**未验证**：本轮终端不可用，未运行 vitest / `node --test`。
+
 ## 2026-11-11 Skill/MCP 市场三页、图编辑边键与内置技能只读面
 
 **市场是三个 UIE 页面，不是三个筛选状态。** `/market`、`/market/skills`、`/market/mcp` 分别用 `market` / `marketSkills` / `marketMcp` 三个 `UiePageId`，共用 `marketFilter/Catalog/Detail` 三张卡；`MarketPage.vue` 从 `route.meta.uiePage|marketKind` 取页 id 与锁定 kind，并在路由复用同一个组件时 `watch` 重新 `showPage` + `setKind`。`repair.ts` 的合法页、边距、空市场回退三处都要认这三个 id，否则冷启动掉回 Home 或空白。`AppSidebar` 增加 Skills/MCP 入口并 `emit('go-market-skills'|'go-market-mcp')`，`appCommands.ts` 增加 `view.goMarketSkills|Mcp`；标签复用 `market.kindSkill` / `market.kindMcpServer`，不要为它们另造 locale key。
