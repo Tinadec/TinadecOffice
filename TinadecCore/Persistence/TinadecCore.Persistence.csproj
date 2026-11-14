@@ -12,6 +12,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Governance keeps its own duplicate-key compare-and-set around lease consumption and approval
+         minting. It has to ask the same "is this a lock conflict or a real duplicate?" question the
+         retry helper asks, so the predicate is shared rather than reimplemented and drifting. -->
+    <InternalsVisibleTo Include="TinadecCore.Governance" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />

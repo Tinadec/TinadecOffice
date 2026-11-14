@@ -67,7 +67,10 @@ public static class SqliteTransientRetry
 
     // SaveChanges wraps a provider failure in DbUpdateException, so on a write the transient code
     // sits on an inner exception. A unique-violation (19) is not transient and must not be retried.
-    private static bool IsTransientWrite(Exception exception)
+    // Internal because a caller with its own duplicate-key compare-and-set must ask the same
+    // question: catching every DbUpdateException as "someone else won" mislabels a lock conflict
+    // as a duplicate, and returns a receipt that a rolled-back attempt never wrote.
+    internal static bool IsTransientWrite(Exception exception)
     {
         for (Exception? current = exception; current is not null; current = current.InnerException)
             if (current is SqliteException sqlite && IsTransient(sqlite)) return true;

@@ -1103,7 +1103,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             {
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (DbUpdateException)
+            catch (DbUpdateException ex) when (!SqliteTransientRetry.IsTransientWrite(ex))
             {
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 return await ReadLeaseConsumptionAsync(scope, command.CapabilityLeaseId, idempotencyKey, cancellationToken).ConfigureAwait(false);
@@ -1156,7 +1156,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         {
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (!SqliteTransientRetry.IsTransientWrite(ex))
         {
             await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
             return await ReadLeaseConsumptionAsync(scope, command.CapabilityLeaseId, idempotencyKey, cancellationToken).ConfigureAwait(false);
