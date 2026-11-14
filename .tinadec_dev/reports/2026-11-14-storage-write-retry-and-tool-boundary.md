@@ -87,7 +87,9 @@
 3. `AcpStdioChatClientTests.ConcurrentRuns_OnOneProviderInstance_QueueInsteadOfFaulting`：
    整套并行时偶发失败，单跑通过，时序敏感。
 4. `tests/Tinadec.Contracts.Tests` 引用不存在的 `src/TinadecCore`，自初始提交
-   即损坏，属遗留项目。
+   即损坏。已确认它**不在** `TinadecOffice.slnx` 中（该解决方案只含
+   `TinadecCore/Contracts/TinadecCore.Contracts.csproj`），属遗留目录，
+   不影响任何构建或 CI，无需修复。
 
 **`TinadecCore.Api.Tests` 的全量数字在本机不可得**：第 1、2 条都会卡到超时，
 整套跑一小时以上仍未产出结果。本报告的覆盖来自逐套件切片，不等于整套跑通。
