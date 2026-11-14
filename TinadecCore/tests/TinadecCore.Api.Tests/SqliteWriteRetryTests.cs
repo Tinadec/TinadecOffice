@@ -244,6 +244,58 @@ public sealed class SqliteWriteRetryTests : IDisposable
         Assert.Equal(1, await db.Runs.Where(x => x.Id == run.Id).Select(x => x.LastEventSequence).SingleAsync());
     }
 
+    /// <summary>
+    /// EnsureApprovalAsync mints an approval whose nonce material is a file named after the approval
+    /// id. The whole transaction is retried, so the id has to be hoisted out of the retried delegate:
+    /// a fresh Guid per attempt would write a new secret file each time and orphan the earlier ones.
+    /// This asserts one approval, one execution binding and one secret file across a retry.
+    /// </summary>
+    [Fact]
+    public async Task AnApprovalMintRetryWritesOneApprovalAndOneSecretFile()
+    {
+        await using var factory = new ApiEndpointFactory();
+        var inner = factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+        string connectionString;
+        await using (var probe = await inner.CreateDbContextAsync())
+            connectionString = probe.Database.GetConnectionString()!;
+
+        var scope = factory.Services.GetRequiredService<ITenantContextAccessor>().Current;
+        var executionId = Guid.NewGuid();
+        await using (var seed = await inner.CreateDbContextAsync())
+        {
+            seed.ToolExecutions.Add(new ToolExecutionRecord
+            {
+                Id = executionId, TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+                SessionId = Guid.NewGuid(), RunId = Guid.NewGuid(), TaskId = Guid.NewGuid(), AgentInstanceId = Guid.NewGuid(),
+                ToolId = "write_file", ToolCallKey = "retry-guard-" + executionId.ToString("N"), Risk = "high",
+                RequiresApproval = true, MutatesWorkspace = true, Status = "requested",
+                ArgumentsDigest = string.Empty, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        // The mint's first context creation is attempt one; the retry creates the second.
+        var faults = new FaultOnCreationFactory(connectionString, failOnCreation: 1);
+        var coordinator = ActivatorUtilities.CreateInstance<ToolApprovalCoordinator>(factory.Services, faults);
+
+        var snapshot = await coordinator.EnsureApprovalAsync(executionId);
+
+        Assert.Equal(2, faults.Creations);
+        Assert.NotNull(snapshot.ApprovalId);
+        await using var db = await inner.CreateDbContextAsync();
+        var approvals = await db.ApprovalRequests.Where(x => x.ExecutionId == executionId).ToListAsync();
+        var approval = Assert.Single(approvals);
+        Assert.Equal(snapshot.ApprovalId, approval.Id);
+        Assert.EndsWith($"_{approval.Id:N}", approval.NonceSecretReference);
+        Assert.Equal(snapshot.ApprovalId, await db.ToolExecutions.Where(x => x.Id == executionId).Select(x => x.ApprovalId).SingleAsync());
+
+        var secretsRoot = Path.Combine(factory.Services.GetRequiredService<StoragePaths>().Locations.Root, "security", "secrets");
+        var files = Directory.Exists(secretsRoot)
+            ? Directory.GetFiles(secretsRoot, approval.NonceSecretReference + ".*")
+            : [];
+        Assert.Single(files);
+    }
+
     private sealed class FaultOnCreationFactory(string connectionString, int failOnCreation) : IDbContextFactory<LifecycleDbContext>
     {
         public int Creations { get; private set; }

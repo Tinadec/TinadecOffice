@@ -268,63 +268,73 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     public async Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default)
     {
         var scope = _tenant.Current;
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var row = await db.ToolExecutions.SingleOrDefaultAsync(x => x.Id == executionId
-            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Tool execution was not found.");
-        if (!row.RequiresApproval || row.ApprovalId is not null)
-        {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
-        }
-        row.ApprovalId = Guid.NewGuid();
-        row.Status = "awaiting_approval";
-        row.UpdatedAt = DateTimeOffset.UtcNow;
-        // The deferred mint reaches this path with only the execution row in hand.
-        // Its frozen evidence digest is what lets the approval name the command or
-        // path instead of the bare tool id plus an agent GUID.
-        var hasEvidence = ApprovalEvidenceProjector.TryDecode(row.ArgumentsDigest, out var executionEvidence);
-        var approval = new ApprovalRequestRecord
-        {
-            Id = row.ApprovalId.Value,
-            TenantId = row.TenantId,
-            WorkspaceId = row.WorkspaceId,
-            ProjectId = row.ProjectId,
-            SessionId = row.SessionId,
-            RunId = row.RunId,
-            TaskId = row.TaskId,
-            AgentInstanceId = row.AgentInstanceId,
-            ExecutionId = row.Id,
-            Kind = "tool",
-            ToolId = row.ToolId,
-            Risk = row.Risk,
-            RequestHash = row.ParametersHash,
-            ParametersReference = row.ParametersReference,
-            ArgumentsDigest = row.ArgumentsDigest,
-            Summary = Truncate(hasEvidence
-                ? executionEvidence.Summary
-                : $"Tool '{row.ToolId}' requested by agent {row.AgentInstanceId}.", 4096),
-            Status = "pending",
-            ExpiresAt = row.UpdatedAt.Add(_decisionWindow),
-            RequestedByPrincipalId = scope.PrincipalId,
-            CreatedAt = row.UpdatedAt,
-            UpdatedAt = row.UpdatedAt
-        };
-        await PrepareApprovalNonceAsync(approval, cancellationToken).ConfigureAwait(false);
-        db.ApprovalRequests.Add(approval);
+        // Hoisted out of the retried delegate: the nonce reference is derived from this id, and the
+        // secret store overwrites the file for a repeated reference. A retry that minted a new id
+        // would leave one orphan secret file per attempt.
+        var approvalId = Guid.NewGuid();
         try
         {
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+            return await SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            {
+                await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                var row = await db.ToolExecutions.SingleOrDefaultAsync(x => x.Id == executionId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false)
+                    ?? throw new KeyNotFoundException("Tool execution was not found.");
+                if (!row.RequiresApproval || row.ApprovalId is not null)
+                {
+                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    return await ToSnapshotAsync(row, ct).ConfigureAwait(false);
+                }
+                row.ApprovalId = approvalId;
+                row.Status = "awaiting_approval";
+                row.UpdatedAt = DateTimeOffset.UtcNow;
+                // The deferred mint reaches this path with only the execution row in hand.
+                // Its frozen evidence digest is what lets the approval name the command or
+                // path instead of the bare tool id plus an agent GUID.
+                var hasEvidence = ApprovalEvidenceProjector.TryDecode(row.ArgumentsDigest, out var executionEvidence);
+                var approval = new ApprovalRequestRecord
+                {
+                    Id = approvalId,
+                    TenantId = row.TenantId,
+                    WorkspaceId = row.WorkspaceId,
+                    ProjectId = row.ProjectId,
+                    SessionId = row.SessionId,
+                    RunId = row.RunId,
+                    TaskId = row.TaskId,
+                    AgentInstanceId = row.AgentInstanceId,
+                    ExecutionId = row.Id,
+                    Kind = "tool",
+                    ToolId = row.ToolId,
+                    Risk = row.Risk,
+                    RequestHash = row.ParametersHash,
+                    ParametersReference = row.ParametersReference,
+                    ArgumentsDigest = row.ArgumentsDigest,
+                    Summary = Truncate(hasEvidence
+                        ? executionEvidence.Summary
+                        : $"Tool '{row.ToolId}' requested by agent {row.AgentInstanceId}.", 4096),
+                    Status = "pending",
+                    ExpiresAt = row.UpdatedAt.Add(_decisionWindow),
+                    RequestedByPrincipalId = scope.PrincipalId,
+                    CreatedAt = row.UpdatedAt,
+                    UpdatedAt = row.UpdatedAt
+                };
+                // A disk write inside the retried segment, which the helper's contract otherwise
+                // forbids. It is safe only because the reference is stable: the store overwrites
+                // the same file, so a second attempt replaces it rather than orphaning the first.
+                await PrepareApprovalNonceAsync(approval, ct).ConfigureAwait(false);
+                db.ApprovalRequests.Add(approval);
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return await ToSnapshotAsync(row, ct).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
             // The unique execution_id index makes approval creation a durable
             // compare-and-set under concurrent resume/recovery hosts. Re-read
             // the winner rather than surfacing a duplicate approval error.
-            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            // A unique violation is not a transient code, so the helper never retried it.
             await using var retryDb = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
             var winner = await retryDb.ToolExecutions.AsNoTracking().SingleOrDefaultAsync(x =>
                 x.Id == executionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
