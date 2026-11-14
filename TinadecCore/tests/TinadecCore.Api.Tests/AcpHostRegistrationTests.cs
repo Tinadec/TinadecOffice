@@ -66,17 +66,19 @@ public sealed class AcpHostRegistrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public void ScratchDirectory_IsCreatedUnderTheHostsOwnDataRoot()
+    public void ScratchDirectory_IsCreatedUnderTheHostsOwnTempRoot()
     {
         var host = (AcpSessionHost)_factory!.Services.GetRequiredService<IAcpSessionHost>();
         var provider = Guid.NewGuid();
 
         var scratch = host.ScratchDirectoryFor(provider);
 
-        Assert.StartsWith(
-            Path.GetFullPath(Path.Combine(_root, "data", "harness-workspaces")),
-            Path.GetFullPath(scratch),
-            StringComparison.Ordinal);
+        // The governed scratch root lives under Temp, not Data: StoragePaths.HarnessWorkspace moved
+        // it off the older "acp-sessions" name so harness scratch files stay out of the backed-up
+        // data tree. Ask the mounted scope where Temp is instead of pinning a location the product
+        // has already moved once.
+        var temp = _factory.Services.GetRequiredService<IScopeStorageLocations>().Temp;
+        Assert.StartsWith(Path.GetFullPath(temp), Path.GetFullPath(scratch), StringComparison.Ordinal);
         Assert.True(Directory.Exists(scratch), "the host must create the governed directory, not only name it");
         // Stable across calls: a chat client is built per model invocation, and a directory that moved
         // between invocations would be read as a moved session root and refused.
