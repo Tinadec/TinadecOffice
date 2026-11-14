@@ -468,14 +468,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 RelativeFilePath = Path.Combine("events", runId + ".events.jsonl"), ByteOffset = location.Offset,
                 ByteLength = location.Length, Timestamp = timestamp, IdempotencyKey = idempotencyKey
             };
-            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            db.EventIndex.Add(index);
-            run.LastEventSequence = sequence;
-            run.LastEventAt = timestamp;
-            run.UpdatedAt = timestamp;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return index;
+            // Only the transaction is retried. AppendLineAsync above already wrote the journal
+            // line, so re-running it would leave an orphan line for reconcile to skip; the index
+            // record and its sequence are stable, and the run head is set by a keyed update
+            // rather than through the pre-read's tracked entity.
+            return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            {
+                await using var txDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                await using var transaction = await txDb.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                txDb.EventIndex.Add(index);
+                await txDb.Runs.Where(x => x.Id == runId).ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.LastEventSequence, sequence)
+                    .SetProperty(x => x.LastEventAt, timestamp)
+                    .SetProperty(x => x.UpdatedAt, timestamp), ct).ConfigureAwait(false);
+                await txDb.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return index;
+            }, cancellationToken).ConfigureAwait(false);
         }
         finally { gate.Release(); }
     }

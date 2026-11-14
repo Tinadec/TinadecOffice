@@ -206,6 +206,44 @@ public sealed class SqliteWriteRetryTests : IDisposable
         Assert.Equal(checkpoint.Id, rows[0].Id);
     }
 
+    /// <summary>
+    /// AppendEventAsync writes the journal line before the transaction, so only the transaction is
+    /// retried. A retry must therefore leave exactly one journal line and one index row, and must
+    /// advance the run's sequence once — not write a second line for reconcile to clean up.
+    /// </summary>
+    [Fact]
+    public async Task AnEventAppendRetryWritesOneJournalLineAndOneIndexRow()
+    {
+        await using var factory = new ApiEndpointFactory();
+        var inner = factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+        string connectionString;
+        await using (var probe = await inner.CreateDbContextAsync())
+            connectionString = probe.Database.GetConnectionString()!;
+
+        var lifecycle = factory.Services.GetRequiredService<StorageLifecycleService>();
+        var paths = factory.Services.GetRequiredService<StoragePaths>();
+        using var client = factory.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Append retry", path = Path.Combine(_root, "ws-append") })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Append retry" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "append" })).Content.ReadFromJsonAsync<JsonElement>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+
+        // Creation 1 is the pre-read context, 2 is the transaction's own context.
+        var faults = new FaultOnCreationFactory(connectionString, failOnCreation: 2);
+        var retrying = ActivatorUtilities.CreateInstance<StorageLifecycleService>(factory.Services, faults);
+
+        var index = await retrying.AppendEventAsync(run.Id, "run.progress", new { source = "append-retry" }, "Append retry");
+
+        Assert.Equal(3, faults.Creations);
+        Assert.Equal(1, index.Sequence);
+        var lines = await File.ReadAllLinesAsync(paths.EventLog(run.Id));
+        Assert.Single(lines);
+        await using var db = await inner.CreateDbContextAsync();
+        Assert.Equal(1, await db.EventIndex.CountAsync(x => x.RunId == run.Id));
+        Assert.Equal(1, await db.Runs.Where(x => x.Id == run.Id).Select(x => x.LastEventSequence).SingleAsync());
+    }
+
     private sealed class FaultOnCreationFactory(string connectionString, int failOnCreation) : IDbContextFactory<LifecycleDbContext>
     {
         public int Creations { get; private set; }
