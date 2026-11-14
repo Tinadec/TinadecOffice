@@ -80,7 +80,14 @@
 
 1. `TinadecToolsProcessTests.CallAsync_ShellTool_ResultUsesSnakeCaseWireKeys`：
    `shell` 调用 120s 超时。同类其余 7 条通过，`origin/main` 上同样红。
-2. `TinadecCore.AgentFramework.Tests` 间歇性失败 4–5 条，两次跑失败集合不同
-   （基线 752/756、本分支 751/756），两侧都红，根因未定。
-3. `tests/Tinadec.Contracts.Tests` 引用不存在的 `src/TinadecCore`，自初始提交
+2. `UnattendedLaneEndToEndTests` 的两条 `*_EndToEnd_GitCommitWithoutHuman`：
+   走真实 `shell` + `git_commit`。本分支的失败链是
+   `terminal.command → tool.execution.failed`（shell 步骤挂掉）；在干净
+   `origin/main`（`472a636e`）上跑同一条**同样失败**，确证非本分支引入。
+3. `AcpStdioChatClientTests.ConcurrentRuns_OnOneProviderInstance_QueueInsteadOfFaulting`：
+   整套并行时偶发失败，单跑通过，时序敏感。
+4. `tests/Tinadec.Contracts.Tests` 引用不存在的 `src/TinadecCore`，自初始提交
    即损坏，属遗留项目。
+
+**`TinadecCore.Api.Tests` 的全量数字在本机不可得**：第 1、2 条都会卡到超时，
+整套跑一小时以上仍未产出结果。本报告的覆盖来自逐套件切片，不等于整套跑通。
