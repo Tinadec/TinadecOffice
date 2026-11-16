@@ -38,8 +38,8 @@ function createSpawnOpts(extraEnv = {}, trustedHost = false) {
 }
 
 const viteProcess = isWindows
-  ? spawn("npx vite --host 127.0.0.1", [], createSpawnOpts())
-  : spawn("npx", ["vite", "--host", "127.0.0.1"], createSpawnOpts());
+  ? spawn("bunx vite --host 127.0.0.1", [], createSpawnOpts())
+  : spawn("bunx", ["vite", "--host", "127.0.0.1"], createSpawnOpts());
 
 viteProcess.stdout.on("data", (data) => {
   process.stdout.write(`[vite] ${data}`);
@@ -169,7 +169,7 @@ async function main() {
     ".",
   ];
   const electronProcess = spawn(
-    "npx",
+    "bunx",
     electronArgs,
     createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true),
   );

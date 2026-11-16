@@ -45,6 +45,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(1);
   }
 
-  const result = spawnSync(process.execPath, ["--test", ...files], { stdio: "inherit" });
+  // process.execPath is whichever runtime invoked us: under `bun run` that is bun.exe and
+  // `--test` is not a flag it accepts (the files would run as plain scripts and `node:test`
+  // throws "Cannot use test outside of the test runner"). `bun test` understands the same
+  // file list under both invocations.
+  const result = spawnSync("bun", ["test", ...files], { stdio: "inherit", shell: process.platform === "win32" });
   process.exit(result.status ?? 1);
 }

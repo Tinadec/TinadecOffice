@@ -7,9 +7,9 @@ import concurrently from 'concurrently';
 export function developmentHostCommands(environment = process.env, token = randomBytes(32).toString('base64url')) {
   const env = { ...environment, TINADEC_HOST_CONTROL_TOKEN: token };
   return [
-    { command: 'npm run dev:core', name: 'core', prefixColor: 'blue', env: { ...env } },
-    { command: 'npm run dev:gateway', name: 'gateway', prefixColor: 'magenta', env: { ...env } },
-    { command: 'npm run dev:desktop', name: 'desktop', prefixColor: 'green', env: { ...env } },
+    { command: 'bun run dev:core', name: 'core', prefixColor: 'blue', env: { ...env } },
+    { command: 'bun run dev:gateway', name: 'gateway', prefixColor: 'magenta', env: { ...env } },
+    { command: 'bun run dev:desktop', name: 'desktop', prefixColor: 'green', env: { ...env } },
   ];
 }
 
