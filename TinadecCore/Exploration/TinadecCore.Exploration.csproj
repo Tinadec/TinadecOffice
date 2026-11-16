@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <Description>Session exploration graph: recorded facts and findings, their links, the declared asset inventory with coverage, and digests whose sources are archived verbatim.</Description>
   </PropertyGroup>

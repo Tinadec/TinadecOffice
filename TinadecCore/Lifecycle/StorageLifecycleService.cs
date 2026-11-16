@@ -1354,8 +1354,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             var type = property.ClrType == typeof(long) || property.ClrType == typeof(long?)
                 ? "INTEGER NULL"
                 : "TEXT NULL";
-            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"runs\" ADD COLUMN \"{column}\" {type}", cancellationToken).ConfigureAwait(false);
+#pragma warning disable EF1002 // column/type are model-metadata or literal SQL identifiers
+            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"runs\" ADD COLUMN \"{EnsureSqliteIdentifier(column)}\" {type}", cancellationToken).ConfigureAwait(false);
+#pragma warning restore EF1002
         }
+    }
+
+    // SQLite identifiers cannot be bound parameters, so ADD COLUMN interpolates them.
+    // Names come from EF model metadata or a hard-coded allow-list; this check is the
+    // tripwire that keeps an unexpected character out of the interpolated DDL.
+    private static string EnsureSqliteIdentifier(string? name)
+    {
+        if (string.IsNullOrEmpty(name)
+            || name.Any(static c => !(char.IsLetterOrDigit(c) || c == '_')))
+        {
+            throw new InvalidOperationException($"Unsafe SQLite identifier: {name}");
+        }
+        return name;
     }
 
     // SQLite migrations are intentionally additive for local databases that may
@@ -1391,9 +1406,11 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         foreach (var (column, definition) in required)
         {
             if (existing.Contains(column)) continue;
+#pragma warning disable EF1002 // column is a hard-coded allow-list identifier, definition a literal
             await db.Database.ExecuteSqlRawAsync(
-                $"ALTER TABLE \"tool_executions\" ADD COLUMN \"{column}\" {definition}",
+                $"ALTER TABLE \"tool_executions\" ADD COLUMN \"{EnsureSqliteIdentifier(column)}\" {definition}",
                 cancellationToken).ConfigureAwait(false);
+#pragma warning restore EF1002
         }
     }
 

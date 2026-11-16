@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <Description>Graph-shaped governance: the resource ledger, subscription-driven governance wakes, and multi-gate approvals.</Description>
   </PropertyGroup>
@@ -8,7 +8,6 @@
     <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
     <ProjectReference Include="..\Persistence\TinadecCore.Persistence.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
   </ItemGroup>
 </Project>

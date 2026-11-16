@@ -8514,7 +8514,7 @@
     "title": "TinadecCore.Api | v1",
     "version": "1.0.0"
   },
-  "openapi": "3.1.1",
+  "openapi": "3.2.0",
   "paths": {
     "/api/v1/acp/adapters": {
       "get": {
@@ -19027,63 +19027,63 @@
   },
   "servers": [
     {
-      "url": "http://localhost/"
+      "url": "http://localhost"
     }
   ],
   "tags": [
     {
-      "name": "TinadecCore.Api"
-    },
-    {
-      "name": "Attachments"
-    },
-    {
-      "name": "CorrectionEndpoints"
-    },
-    {
       "name": "AgentConfigurationEndpoints"
-    },
-    {
-      "name": "CompanionEndpoints"
-    },
-    {
-      "name": "CompanionConversationEndpoints"
-    },
-    {
-      "name": "Companions"
-    },
-    {
-      "name": "ModelAgentControlEndpoints"
     },
     {
       "name": "AgentPacks"
     },
     {
-      "name": "InteractionsEndpoints"
+      "name": "ApprovalRules"
     },
     {
-      "name": "ToolExecutions"
+      "name": "Attachments"
     },
     {
       "name": "AuthEndpoints"
     },
     {
-      "name": "Tool Skills"
+      "name": "CompanionConversationEndpoints"
     },
     {
-      "name": "Market"
+      "name": "CompanionEndpoints"
     },
     {
-      "name": "TinaChat"
+      "name": "Companions"
     },
     {
-      "name": "Organization"
+      "name": "CorrectionEndpoints"
     },
     {
       "name": "Environments"
     },
     {
-      "name": "ApprovalRules"
+      "name": "InteractionsEndpoints"
+    },
+    {
+      "name": "Market"
+    },
+    {
+      "name": "ModelAgentControlEndpoints"
+    },
+    {
+      "name": "Organization"
+    },
+    {
+      "name": "TinaChat"
+    },
+    {
+      "name": "TinadecCore.Api"
+    },
+    {
+      "name": "Tool Skills"
+    },
+    {
+      "name": "ToolExecutions"
     }
   ]
 }

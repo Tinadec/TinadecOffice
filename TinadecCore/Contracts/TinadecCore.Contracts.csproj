@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <RootNamespace>TinadecCore.Contracts</RootNamespace>
     <Description>TinadecCore public DTOs and event envelopes. No MAF, ASP.NET, or F# dependencies.</Description>
     <!-- Contracts are the stable northbound package. Internal implementation

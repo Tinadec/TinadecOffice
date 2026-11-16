@@ -43,7 +43,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.300
+          dotnet-version: 11.0.100
 
       - name: Build reviewed Bubblewrap 0.13.0 (Linux)
         if: runner.os == 'Linux'
