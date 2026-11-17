@@ -221,9 +221,14 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
   async function setDefaultChatModel(providerInstanceId: string, modelId: string) {
     modelCenterBusy.value = true
     try {
-      // “设为默认模型”= 把 chat 路由指向该模型；路由/候选链等工程概念对用户隐藏。
+      // “设为默认模型”= 把该模型放到 chat 路由首位。Keep the existing
+      // candidates as fallbacks: a single-candidate overwrite silently deleted a
+      // failover chain the user had configured.
       const chatRoute = routes.value.find((route: { purpose: string }) => route.purpose === 'chat')
-      await api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerInstanceId, model: modelId }] },
+      const existing = (chatRoute?.candidates ?? [])
+        .filter(candidate => !(candidate.provider_instance_id === providerInstanceId && candidate.model === modelId))
+        .map(candidate => ({ provider_instance_id: candidate.provider_instance_id, model: candidate.model }))
+      await api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerInstanceId, model: modelId }, ...existing] },
         undefined,
         chatRoute?.revision != null ? { expected_revision: chatRoute.revision } : undefined)
       notify.success(t('settings.defaultModelSet', { model: modelId }))

@@ -45,6 +45,7 @@ vi.mock('@/components/ui', () => ({
   UiSkeleton: { template: '<span />' },
   UiSwitch: { inheritAttrs: false, template: '<button v-bind="$attrs" />' },
   UiDropdownMenu: { template: '<div><slot /></div>' },
+  UiSheet: { props: ['open', 'side'], emits: ['update:open'], template: '<div v-if="open"><slot /></div>' },
   UiSelectField: {
     props: ['value', 'modelValue', 'options', 'disabled'],
     emits: ['update:modelValue', 'update:value', 'change'],
@@ -153,6 +154,11 @@ async function openCenter() {
   await flushPromises()
   await wrapper.findAll('.settings-nav-item').find(item => item.text().includes('settings.agentCenter'))!.trigger('click')
   await flushPromises()
+  // Agent Center is a sub-tab section now (default 'teams'); the agent card rail lives
+  // on the 'agents' tab. The test bundle surfaces raw i18n keys, so match the key text.
+  const agentsTab = wrapper.findAll('.ac-subtab').find(b => b.text().trim() === 'settings.agents')
+  if (agentsTab) await agentsTab.trigger('click')
+  await settle()
   return wrapper
 }
 

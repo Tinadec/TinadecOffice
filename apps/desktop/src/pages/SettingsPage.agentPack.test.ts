@@ -55,6 +55,7 @@ vi.mock('@/components/ui', () => ({
   UiSkeleton: { template: '<span />' },
   UiSwitch: { inheritAttrs: false, template: '<button v-bind="$attrs" />' },
   UiDropdownMenu: { template: '<div><slot /></div>' },
+  UiSheet: { props: ['open', 'side'], emits: ['update:open'], template: '<div v-if="open"><slot /></div>' },
   UiSelectField: {
     props: ['value', 'modelValue', 'options', 'disabled'],
     emits: ['update:modelValue', 'update:value', 'change'],
@@ -254,6 +255,9 @@ describe('SettingsPage GraphSeedPack clone flow', () => {
     expect(agentCenterNav).toBeDefined()
     await agentCenterNav!.trigger('click')
     await flushPromises()
+    // Agent Center opens on the 'teams' sub-tab now; the agent detail panel lives on 'agents'.
+    await wrapper.findAll('.ac-subtab').find(b => b.text().trim() === 'settings.agents')?.trigger('click')
+    await flushPromises()
 
     if (!wrapper.find('.agent-detail-panel').exists()) {
       throw new Error(`Agent Center did not render: ${wrapper.find('.settings-content').text().slice(0, 500)}`)
@@ -296,6 +300,9 @@ describe('SettingsPage Agent Center read recovery', () => {
     const wrapper = mount(SettingsPage, { global: { stubs: { Transition: transition, transition, GeneralSection: true } } })
     await flushPromises()
     await wrapper.findAll('.settings-nav-item').find(item => item.text().includes('settings.agentCenter'))!.trigger('click')
+    await flushPromises()
+    // Agent Center is a sub-tab section (default 'teams'); the detail panel lives on 'agents'.
+    await wrapper.findAll('.ac-subtab').find(b => b.text().trim() === 'settings.agents')?.trigger('click')
     await flushPromises()
     return wrapper
   }
@@ -434,6 +441,9 @@ describe('SettingsPage installed Agent Pack inventory', () => {
       .find((item) => item.text().includes('settings.agentCenter'))
     expect(agentCenterNav).toBeDefined()
     await agentCenterNav!.trigger('click')
+    await flushPromises()
+    // Same sub-tab default ('teams'); installed packs/agents assertions need 'agents'.
+    await wrapper.findAll('.ac-subtab').find(b => b.text().trim() === 'settings.agents')?.trigger('click')
     await flushPromises()
     return wrapper
   }

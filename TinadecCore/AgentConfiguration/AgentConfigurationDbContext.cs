@@ -109,6 +109,10 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.Property(x => x.DisplayName).HasMaxLength(256).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(4096);
             entity.Property(x => x.RuntimePolicyJson).HasMaxLength(4096);
+            entity.Property(x => x.Instructions).HasMaxLength(4000);
+            // Draft-only bindings for user-authored modes (team member envelopes).
+            // Pack modes carry bindings inside their frozen snapshot instead.
+            entity.Property(x => x.BindingsJson).HasMaxLength(16384);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Slug }).IsUnique().HasFilter("status = 'draft'");
@@ -138,6 +142,7 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.Property(x => x.Label).HasMaxLength(256);
             entity.Property(x => x.PositionJson).HasMaxLength(4096);
             entity.Property(x => x.ConfigJson).HasMaxLength(8192);
+            entity.Property(x => x.RelationshipJson).HasMaxLength(8192);
             entity.Property(x => x.ModelStrategyOverrideJson).HasMaxLength(4096);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
@@ -470,6 +475,14 @@ public sealed class AgentModeRecord
     // json: { "<locale>": { display_name, description } }
     public string? I18nJson { get; set; }
     public string? RuntimePolicyJson { get; set; }
+    /// <summary>
+    /// Team-level collaboration instructions. Frozen into the mode version snapshot
+    /// at publish time and injected into the conversation identity's system prompt.
+    /// Null for modes that predate the field and for packs that do not declare one.
+    /// </summary>
+    public string? Instructions { get; set; }
+    // json array: [{ node_key?, agent_ref, duty_description_ref?, tool_switches?, envelope?, includes_core_reserved? }]
+    public string? BindingsJson { get; set; }
     public string Status { get; set; } = "draft";
     public long Revision { get; set; }
     public int Version { get; set; }
@@ -512,6 +525,8 @@ public sealed class ModeNodeRecord
     public string? I18nJson { get; set; }
     public string? PositionJson { get; set; }
     public string? ConfigJson { get; set; }
+    // json: { duty?, inputs_outputs?, allowed_dispatch_targets?, success_criteria?, agent_types?, subscriptions? }
+    public string? RelationshipJson { get; set; }
     public string? ModelStrategyOverrideJson { get; set; }
     public string Status { get; set; } = "draft";
     public long Revision { get; set; }

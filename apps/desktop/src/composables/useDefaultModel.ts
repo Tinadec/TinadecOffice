@@ -98,8 +98,13 @@ export function useDefaultModel() {
   async function choose(providerId: string, model: string) {
     // Never on a list read from another scope: the storage watcher clears `loaded` until it reloads.
     if (busy.value || !loaded.value || isCurrent(providerId, model)) return
-    await write(() => api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerId, model }] }, undefined,
-      chatRoute.value?.revision != null ? { expected_revision: chatRoute.value.revision } : undefined), 'composer.modelSwitch.failed')
+    await write(() => {
+      const existing = (chatRoute.value?.candidates ?? [])
+        .filter(candidate => !(candidate.provider_instance_id === providerId && candidate.model === model))
+        .map(candidate => ({ provider_instance_id: candidate.provider_instance_id, model: candidate.model }))
+      return api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerId, model }, ...existing] }, undefined,
+        chatRoute.value?.revision != null ? { expected_revision: chatRoute.value.revision } : undefined)
+    }, 'composer.modelSwitch.failed')
   }
 
   async function setReasoningEffort(effort: ReasoningEffortChoice) {

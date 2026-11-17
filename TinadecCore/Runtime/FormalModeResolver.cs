@@ -159,6 +159,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             var nodes = ParseModeSnapshot(mv);
             var envelopes = ParseBindingEnvelopes(mv);
             var runtimePolicy = ParseRuntimePolicy(mv);
+            var modeInstructions = ParseModeInstructions(mv);
             var policyTools = CorrectionRuntimePolicy.IsStructuredInvestigation(runtimePolicy)
                 ? new[] { CoreVirtualToolPolicy.CorrectionTraceToolId }
                 : [];
@@ -331,7 +332,11 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     item.Node.AgentVersionId,
                     item.Node.AgentVersionHash)
                 {
-                    SystemPrompt = item.SystemPrompt,
+                    // Team instructions belong to the collaboration identity only:
+                    // workers receive their task brief, not the team's routing rules.
+                    SystemPrompt = isConversation && modeInstructions is { Length: > 0 } collaboration
+                        ? (string.IsNullOrEmpty(item.SystemPrompt) ? collaboration : item.SystemPrompt + "\n\n" + collaboration)
+                        : item.SystemPrompt,
                     Description = item.Description,
                     Triggers = item.Node.RelationshipSubscriptions is { Count: > 0 } subscriptions ? subscriptions : null,
                     AllowedDispatchTargets = item.Node.RelationshipDispatchTargets,
@@ -382,7 +387,8 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 ConversationNodeKey = conversationNodeKey,
                 ConversationTemplateSlug = conversationSlug,
                 SpawnableTemplates = spawnable,
-                RuntimePolicy = runtimePolicy
+                RuntimePolicy = runtimePolicy,
+                ModeInstructions = modeInstructions
             };
         }
         catch (Exception ex)
@@ -670,6 +676,21 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         if (prefix.Split('/', StringSplitOptions.RemoveEmptyEntries).Contains(".."))
             throw new InvalidDataException("Resource grant prefixes must not escape the workspace root ('..' is not allowed).");
         return prefix.Length == 0 ? string.Empty : prefix.EndsWith('/') ? prefix : prefix + "/";
+    }
+
+    /// <summary>
+    /// Reads the optional team-level collaboration instructions from the frozen
+    /// snapshot. Snapshots published before the field existed simply omit it.
+    /// </summary>
+    private static string? ParseModeInstructions(ModeVersionRecord version)
+    {
+        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return null;
+        using var document = JsonDocument.Parse(version.SnapshotJson);
+        if (!document.RootElement.TryGetProperty("instructions", out var element)
+            || element.ValueKind != JsonValueKind.String)
+            return null;
+        var text = element.GetString();
+        return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
     }
 
     private static IReadOnlyList<ModeNodeSnapshot> ParseModeSnapshot(ModeVersionRecord version)

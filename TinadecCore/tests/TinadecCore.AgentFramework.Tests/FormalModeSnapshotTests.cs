@@ -46,6 +46,37 @@ public sealed class FormalModeSnapshotTests
     }
 
     [Fact]
+    public async Task ResolveRoster_InjectsModeInstructionsIntoConversationIdentityOnly()
+    {
+        const string instructions = "Always answer with the evidence gathered by the workers.";
+        await using var fixture = await FormalModeFixture.CreateAsync(instructions: instructions);
+
+        var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterAsync(fixture.SessionId);
+
+        Assert.NotNull(roster);
+        Assert.Equal(instructions, roster.ModeInstructions);
+        var meeting = Assert.Single(roster.Operation, agent => agent.Id == "meeting");
+        Assert.Equal($"meeting-system-v1\n\n{instructions}", meeting.SystemPrompt);
+        var planner = Assert.Single(roster.Execution);
+        Assert.Equal("planner-system-v1", planner.SystemPrompt);
+        Assert.DoesNotContain(instructions, planner.SystemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResolveRoster_WithoutModeInstructions_LeavesSystemPromptUnchanged()
+    {
+        await using var fixture = await FormalModeFixture.CreateAsync();
+
+        var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterAsync(fixture.SessionId);
+
+        Assert.NotNull(roster);
+        Assert.Null(roster.ModeInstructions);
+        Assert.Equal("meeting-system-v1", Assert.Single(roster.Operation, agent => agent.Id == "meeting").SystemPrompt);
+    }
+
+    [Fact]
     public async Task ResolveRoster_RejectsAgentVersionHashMismatch()
     {
         await using var fixture = await FormalModeFixture.CreateAsync(tamperAgentHash: true);
@@ -117,7 +148,8 @@ public sealed class FormalModeSnapshotTests
 
         public static async Task<FormalModeFixture> CreateAsync(
             bool tamperAgentHash = false,
-            bool structuredInvestigation = false)
+            bool structuredInvestigation = false,
+            string? instructions = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "tinadec-formal-mode-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -233,6 +265,7 @@ public sealed class FormalModeSnapshotTests
                                 agent_version_hash = tamperAgentHash ? new string('0', 64) : meetingV1Hash,
                                 layer = "operation",
                                 effective_tools = Array.Empty<string>(),
+                                config = new { conversation = true },
                                 prompt_pipeline_id = promptPipelineId,
                                 prompt_version_id = promptVersionV1,
                                 prompt_version_hash = promptV1Hash,
@@ -245,6 +278,7 @@ public sealed class FormalModeSnapshotTests
                         },
                         edges = Array.Empty<object>(),
                         canvas_layout = (object?)null,
+                        instructions,
                         runtime_policy = structuredInvestigation
                             ? new
                             {

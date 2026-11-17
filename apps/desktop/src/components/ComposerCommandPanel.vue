@@ -10,6 +10,7 @@ import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } 
 import { composerSettings, pageDepth, parentPage, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
 import { defaultSpaceOptions } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
+import { withoutRetiredModes } from '@/lib/retiredModes'
 import { pickLocalized } from '@/lib/packI18n'
 import type { DefaultModel } from '@/composables/useDefaultModel'
 import type { AgentModels, ModelChoice, NamedStrategy } from '@/composables/useAgentModels'
@@ -459,7 +460,7 @@ async function loadCatalogs() {
   try {
     const catalog = await baseApi.listAgentModeTopologies()
     if (sequence !== loadSequence) return
-    modes.value = Array.isArray(catalog) ? catalog : []
+    modes.value = withoutRetiredModes(Array.isArray(catalog) ? catalog : [])
   } catch {
     failed = true
   }

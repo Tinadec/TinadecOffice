@@ -4481,9 +4481,28 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   border-bottom: 1px solid var(--border-default);
 }
 
+.agent-pack-inventory > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-pack-inventory > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-pack-inventory-chevron {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  transition: transform 140ms ease;
+}
+
+.agent-pack-inventory[open] .agent-pack-inventory-chevron {
+  transform: rotate(90deg);
+}
+
 .agent-pack-inventory-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
 }
 
@@ -4581,6 +4600,25 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   font-size: 12px;
 }
 
+/* Agent list filters: wrap instead of shrinking the search box to nothing. */
+.ac-agent-toolbar {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.ac-agent-toolbar .ac-agent-search {
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+.ac-agent-toolbar .ui-select {
+  min-width: 118px;
+}
+
+.ac-agent-toolbar .ac-toolbar-readout {
+  margin-left: auto;
+}
+
 /* Shared right-sheet body for Agent Center panels (modes node config / version history,
    evolution promote). */
 .ac-sheet-body {
@@ -4595,6 +4633,29 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   gap: 8px;
   justify-content: flex-end;
   margin-top: 10px;
+}
+
+.agent-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-advanced-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
+  background: var(--surface-section);
+}
+
+.agent-advanced-links p {
+  margin: 0 auto 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .ac-toolbar-row .agent-view-toggle {
@@ -4727,6 +4788,30 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--border-muted);
+}
+
+.agent-draft-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--surface-section);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-draft-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-draft-notice.stale {
+  border-color: color-mix(in srgb, var(--accent-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-warning) 10%, var(--surface-section));
 }
 
 .agent-detail-head {

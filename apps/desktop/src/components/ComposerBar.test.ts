@@ -580,7 +580,13 @@ describe('ComposerBar unified command panel', () => {
     expect(document.querySelector('[data-testid="command-panel-provider-1:route-only"]')?.getAttribute('aria-pressed')).toBe('true')
     click('[data-testid="command-panel-provider-1:model-b"]')
     await flushPromises()
-    expect(apiMock.api.saveModelRoute).toHaveBeenCalledWith('chat', { candidates: [{ provider_instance_id: 'provider-1', model: 'model-b' }] }, undefined, { expected_revision: 3 })
+    // The new default goes first; the previous candidate stays as the fallback.
+    expect(apiMock.api.saveModelRoute).toHaveBeenCalledWith('chat', {
+      candidates: [
+        { provider_instance_id: 'provider-1', model: 'model-b' },
+        { provider_instance_id: 'provider-1', model: 'route-only' },
+      ],
+    }, undefined, { expected_revision: 3 })
     expect(wrapper.emitted('update:meetingModelOverride')).toBeUndefined()
     wrapper.unmount()
   })

@@ -53,6 +53,8 @@ import settingsPageSource from './SettingsPage.vue?raw'
 import modelCenterSource from '@/composables/useModelCenter.ts?raw'
 // The channel panes themselves moved into their own section; pin them against that source.
 import modelCenterSectionSource from '@/settings/sections/ModelCenterSection.vue?raw'
+// AgentPacksPanel moved inside the extracted Agent Center section; pin it there.
+import agentCenterSectionSource from '@/settings/agentCenter/AgentCenterSection.vue?raw'
 
 describe('SettingsPage smoke (D7 safety net)', () => {
   beforeEach(() => {
@@ -120,7 +122,6 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       'AgentModesPanel',
       'PromptEngineeringMerged',
       'RuntimeInstancesPanel',
-      'AgentPacksPanel',
       'CompanionSection',
       'ModelCenterSection',
     ]
@@ -129,6 +130,11 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       // `<Name` rather than `<Name />`: a panel that declares props never closes its tag.
       expect(settingsPageSource).toContain(`<${name}`)
     }
+    // AgentCenterSection lives one directory deeper; the packs panel renders inside it.
+    expect(settingsPageSource).toContain(`import AgentCenterSection from '@/settings/agentCenter/AgentCenterSection.vue'`)
+    expect(settingsPageSource).toContain(`<AgentCenterSection`)
+    expect(agentCenterSectionSource).toContain(`import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'`)
+    expect(agentCenterSectionSource).toContain(`<AgentPacksPanel`)
   })
 
   it('assigns the routes ref from loadModelCenter (regression: route writes sent no If-Match)', () => {

@@ -153,8 +153,10 @@ public sealed class AgentTopologyService : IAgentTopologyService
         slug = mode.Slug,
         display_name = mode.DisplayName,
         description = mode.Description,
+        instructions = mode.Instructions,
         i18n = Element(mode.I18nJson),
         runtime_policy = Element(mode.RuntimePolicyJson),
+        bindings = Element(mode.BindingsJson),
         status = mode.Status,
         revision = mode.Revision,
         version = mode.Version,
@@ -169,6 +171,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
             i18n = Element(n.I18nJson),
             position = Element(n.PositionJson),
             config = Element(n.ConfigJson),
+            relationship = Element(n.RelationshipJson),
             model_strategy_override = Element(n.ModelStrategyOverrideJson),
         }).ToArray(),
         edges = edges.Select(e => new
@@ -177,6 +180,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
             edge_key = e.EdgeKey,
             source_node_key = e.SourceNodeKey,
             target_node_key = e.TargetNodeKey,
+            condition = Element(e.ConditionJson),
         }).ToArray(),
         canvas_layout = Element(layout?.LayoutJson),
         created_at = mode.CreatedAt,
@@ -393,6 +397,19 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (byAgent.Length > 0)
             warnings.Add(JsonSerializer.SerializeToElement(new { code = "CROSS_LAYER_REUSE", message = "Same agent reused across operation and execution", agent_ids = byAgent }));
 
+        // Per-node tool_switches from the mode bindings narrow the node's effective
+        // tools the same way pack publishing does. `"*": false` on the conversation
+        // leader is what sheds its business tool face and keeps a team run in the
+        // free_form tier instead of solo_dispatch.
+        var switchesByNode = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var binding in ParseBindingArray(mode.BindingsJson))
+        {
+            if (binding.TryGetProperty("node_key", out var bindingNode) && bindingNode.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(bindingNode.GetString())
+                && binding.TryGetProperty("tool_switches", out var switches) && switches.ValueKind == JsonValueKind.Object)
+                switchesByNode[bindingNode.GetString()!] = switches;
+        }
+
         // Freeze exact AgentVersion/PromptVersion bindings. Runtime consumes only this snapshot.
         var frozenNodes = new List<object>();
         foreach (var node in nodes.OrderBy(n => n.NodeKey, StringComparer.Ordinal))
@@ -409,6 +426,8 @@ public sealed class AgentTopologyService : IAgentTopologyService
             if (agentTools.Contains("*")) effective = modeTools.Count > 0 ? new HashSet<string>(modeTools, StringComparer.OrdinalIgnoreCase) : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "*" };
             else if (modeTools.Count == 0) effective = new HashSet<string>(agentTools, StringComparer.OrdinalIgnoreCase);
             else effective = new HashSet<string>(agentTools.Intersect(modeTools, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+            if (switchesByNode.TryGetValue(node.NodeKey, out var nodeSwitches))
+                effective = new HashSet<string>(effective.Where(tool => !IsSwitchedOff(nodeSwitches, tool)), StringComparer.OrdinalIgnoreCase);
             if (effective.Count == 0)
                 warnings.Add(JsonSerializer.SerializeToElement(new { code = "EMPTY_EFFECTIVE_TOOLS", message = $"Node {node.NodeKey} has no effective tools after intersection", node_key = node.NodeKey, agent_id = node.AgentDefinitionId }));
             PromptVersionRecord? promptVersion = null;
@@ -429,6 +448,12 @@ public sealed class AgentTopologyService : IAgentTopologyService
                     return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidModelStrategy, $"Node {node.NodeKey}: {strategyError}");
                 modelStrategyOverride = JsonSerializer.Deserialize<JsonElement>(node.ModelStrategyOverrideJson);
             }
+            JsonElement? relationship = null;
+            if (!string.IsNullOrWhiteSpace(node.RelationshipJson))
+            {
+                try { relationship = JsonSerializer.Deserialize<JsonElement>(node.RelationshipJson); }
+                catch { return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, $"Node {node.NodeKey} relationship is invalid JSON."); }
+            }
             frozenNodes.Add(new
             {
                 node_key = node.NodeKey,
@@ -439,6 +464,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
                 label = node.Label,
                 i18n = Element(node.I18nJson),
                 config,
+                relationship,
                 model_strategy_override = modelStrategyOverride,
                 model_strategy_source = modelStrategyOverride is null ? "agent_version" : "mode_node_override",
                 effective_tools = effective.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
@@ -468,8 +494,17 @@ public sealed class AgentTopologyService : IAgentTopologyService
             ["edges"] = frozenEdges,
             ["canvas_layout"] = canvasLayout
         };
+        // The mode-level team bindings are part of the frozen shape so the runtime and
+        // readers see the same list the editor saved; absent/empty serializes as [].
+        snapshotObject["bindings"] = string.IsNullOrWhiteSpace(mode.BindingsJson)
+            ? Array.Empty<object>()
+            : JsonSerializer.Deserialize<JsonElement>(mode.BindingsJson);
         if (mode.RuntimePolicyJson is not null)
             snapshotObject["runtime_policy"] = JsonSerializer.Deserialize<JsonElement>(mode.RuntimePolicyJson);
+        // Only non-empty instructions are frozen: writing the key unconditionally would
+        // change the topology hash of every newly published legacy mode.
+        if (!string.IsNullOrWhiteSpace(mode.Instructions))
+            snapshotObject["instructions"] = mode.Instructions;
         var snapshot = JsonSerializer.Serialize(snapshotObject);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(snapshot))).ToLowerInvariant();
         var version = (await db.ModeVersions.Where(x => x.AgentModeId == modeId).MaxAsync(x => (int?)x.Version, cancellationToken) ?? 0) + 1;
@@ -508,7 +543,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
 
     private sealed record SubmittedNode(
         string NodeKey, Guid AgentDefinitionId, string Layer, string? Label,
-        string? PositionJson, string? ConfigJson, string? ModelStrategyOverrideJson);
+        string? PositionJson, string? ConfigJson, string? RelationshipJson, string? ModelStrategyOverrideJson);
 
     private sealed record SubmittedEdge(string EdgeKey, string SourceNodeKey, string TargetNodeKey, string? ConditionJson);
 
@@ -516,6 +551,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
     /// A submitted topology. <see cref="HasNodes"/>/<see cref="HasEdges"/> distinguish
     /// "an empty array = delete everything" from "the property was not sent = leave it
     /// alone": only a submitted array can be the full state a deletion is derived from.
+    /// <see cref="HasInstructions"/>/<see cref="HasBindings"/> apply the same rule to the
+    /// two mode-level fields: absent leaves the stored value, an explicit value
+    /// (including JSON <c>null</c>) replaces it.
     /// </summary>
     private sealed record TopologyInput(
         IReadOnlyList<SubmittedNode> Nodes,
@@ -523,7 +561,11 @@ public sealed class AgentTopologyService : IAgentTopologyService
         bool HasNodes,
         bool HasEdges,
         bool HasLayout,
-        string? LayoutJson);
+        string? LayoutJson,
+        bool HasInstructions,
+        string? Instructions,
+        bool HasBindings,
+        string? BindingsJson);
 
     /// <summary>The draft projection after a write: what validation reads.</summary>
     private sealed record TopologyState(IReadOnlyList<SubmittedNode> Nodes, IReadOnlyList<SubmittedEdge> Edges);
@@ -557,6 +599,8 @@ public sealed class AgentTopologyService : IAgentTopologyService
                         $"Node '{key}' layer must be operation or execution."));
                 if (node.TryGetProperty("config", out var config) && config.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null))
                     return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, $"Node '{key}' config must be an object."));
+                if (node.TryGetProperty("relationship", out var relationshipProbe) && relationshipProbe.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null))
+                    return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, $"Node '{key}' relationship must be an object."));
                 var modelOverride = node.TryGetProperty("model_strategy_override", out var overrideValue) && overrideValue.ValueKind != JsonValueKind.Null
                     ? overrideValue.GetRawText() : null;
                 if (modelOverride is not null && ValidateModelStrategy(modelOverride) is { } strategyError)
@@ -568,6 +612,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
                     Text(node, "label"),
                     node.TryGetProperty("position", out var position) ? position.GetRawText() : node.TryGetProperty("position_json", out var positionJson) ? positionJson.GetRawText() : null,
                     node.TryGetProperty("config", out var configValue) ? configValue.GetRawText() : null,
+                    node.TryGetProperty("relationship", out var relationship) && relationship.ValueKind != JsonValueKind.Null ? relationship.GetRawText() : null,
                     modelOverride));
             }
         }
@@ -594,8 +639,48 @@ public sealed class AgentTopologyService : IAgentTopologyService
         }
 
         var hasLayout = payload.TryGetProperty("canvas_layout", out var layout) || payload.TryGetProperty("layout", out layout);
-        return new(new TopologyInput(nodes, edges, hasNodes, hasEdges, hasLayout, hasLayout ? layout.GetRawText() : null), null);
+
+        // instructions: a string (<=4000 chars) or null to clear. Absent = leave alone.
+        var hasInstructions = payload.TryGetProperty("instructions", out var instructionsElement);
+        string? instructions = null;
+        if (hasInstructions && instructionsElement.ValueKind != JsonValueKind.Null)
+        {
+            if (instructionsElement.ValueKind != JsonValueKind.String)
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "instructions must be a string or null."));
+            instructions = instructionsElement.GetString();
+            if (instructions is { Length: > MaxModeInstructionsLength })
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, $"instructions must be at most {MaxModeInstructionsLength} characters."));
+        }
+
+        // bindings: a JSON array of objects (each needs node_key or agent_ref) or null to
+        // clear. This is the mode-level team-member binding list, not the per-node
+        // mode_bindings narrowing table; it rides the same draft rows and is frozen into
+        // the published snapshot verbatim.
+        var hasBindings = payload.TryGetProperty("bindings", out var bindingsElement);
+        string? bindingsJson = null;
+        if (hasBindings && bindingsElement.ValueKind != JsonValueKind.Null)
+        {
+            if (bindingsElement.ValueKind != JsonValueKind.Array)
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "bindings must be an array or null."));
+            foreach (var binding in bindingsElement.EnumerateArray())
+            {
+                if (binding.ValueKind != JsonValueKind.Object)
+                    return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "Each mode binding must be an object."));
+                var hasNode = binding.TryGetProperty("node_key", out var bindingNode) && bindingNode.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(bindingNode.GetString());
+                var hasAgent = binding.TryGetProperty("agent_ref", out var bindingAgent) && bindingAgent.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(bindingAgent.GetString());
+                if (!hasNode && !hasAgent)
+                    return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "Each mode binding needs node_key or agent_ref."));
+            }
+            bindingsJson = bindingsElement.GetRawText();
+        }
+
+        return new(new TopologyInput(nodes, edges, hasNodes, hasEdges, hasLayout, hasLayout ? layout.GetRawText() : null,
+            hasInstructions, instructions, hasBindings, bindingsJson), null);
     }
+
+    /// A mode's collaboration instructions are frozen into the version snapshot;
+    /// the 4 KiB cap keeps that snapshot inside its 32 KiB column.
+    private const int MaxModeInstructionsLength = 4000;
 
     /// <summary>
     /// Applies the submitted arrays to the tracked draft projection: upsert by key,
@@ -636,6 +721,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
                         Id = Guid.NewGuid(), TenantId = tenantId, WorkspaceId = workspaceId, ModeId = mode.Id,
                         NodeKey = node.NodeKey, AgentDefinitionId = node.AgentDefinitionId, Layer = node.Layer,
                         Label = node.Label, PositionJson = node.PositionJson, ConfigJson = node.ConfigJson,
+                        RelationshipJson = node.RelationshipJson,
                         ModelStrategyOverrideJson = node.ModelStrategyOverrideJson,
                         Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now,
                     });
@@ -647,6 +733,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
                     existing.Label = node.Label;
                     existing.PositionJson = node.PositionJson;
                     existing.ConfigJson = node.ConfigJson;
+                    existing.RelationshipJson = node.RelationshipJson;
                     existing.ModelStrategyOverrideJson = node.ModelStrategyOverrideJson;
                     existing.UpdatedAt = now;
                     existing.Revision++;
@@ -660,7 +747,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
         {
             foreach (var existing in existingNodes)
                 nodeState[existing.NodeKey] = new SubmittedNode(existing.NodeKey, existing.AgentDefinitionId, existing.Layer,
-                    existing.Label, existing.PositionJson, existing.ConfigJson, existing.ModelStrategyOverrideJson);
+                    existing.Label, existing.PositionJson, existing.ConfigJson, existing.RelationshipJson, existing.ModelStrategyOverrideJson);
         }
 
         var submittedEdgeKeys = input.Edges.Select(e => e.EdgeKey).ToHashSet(StringComparer.Ordinal);
@@ -728,6 +815,14 @@ public sealed class AgentTopologyService : IAgentTopologyService
                 layout.Revision++;
             }
         }
+
+        // Mode-level fields ride the same draft-write semantics as the topology arrays:
+        // only a submitted value replaces what is stored (null clears; absent leaves).
+        if (input.HasInstructions)
+            mode.Instructions = input.Instructions;
+        if (input.HasBindings)
+            mode.BindingsJson = input.BindingsJson;
+
         return (new TopologyState(nodeState.Values.ToArray(), edgeState.Values.ToArray()), null);
     }
 
@@ -744,7 +839,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
             .Where(x => x.TenantId == tenantId && x.WorkspaceId == workspaceId && agentIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, cancellationToken);
         var nodeRefs = state.Nodes.Select(n => new GraphValidation.NodeRef(
-            n.NodeKey, n.AgentDefinitionId.ToString(), n.Layer, n.Label, ParseConfig(n.ConfigJson), default)).ToArray();
+            n.NodeKey, n.AgentDefinitionId.ToString(), n.Layer, n.Label, ParseConfig(n.ConfigJson), ParseRelationship(n.RelationshipJson))).ToArray();
         var edgeRefs = state.Edges.Select(e => new GraphValidation.EdgeRef(e.EdgeKey, e.SourceNodeKey, e.TargetNodeKey)).ToArray();
         var error = ValidateGraph(mode.Slug, nodeRefs, edgeRefs, agents);
         if (error is null) return null;
@@ -780,7 +875,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
         IReadOnlyList<ModeEdgeRecord> edges,
         IReadOnlyDictionary<Guid, AgentDefinitionRecord> agents)
     {
-        var nodeRefs = nodes.Select(n => new GraphValidation.NodeRef(n.NodeKey, n.AgentDefinitionId.ToString(), n.Layer, n.Label, ParseConfig(n.ConfigJson), default)).ToArray();
+        var nodeRefs = nodes.Select(n => new GraphValidation.NodeRef(n.NodeKey, n.AgentDefinitionId.ToString(), n.Layer, n.Label, ParseConfig(n.ConfigJson), ParseRelationship(n.RelationshipJson))).ToArray();
         var edgeRefs = edges.Select(e => new GraphValidation.EdgeRef(e.EdgeKey, e.SourceNodeKey, e.TargetNodeKey)).ToArray();
         return ValidateGraph(modeKey, nodeRefs, edgeRefs, agents);
     }
@@ -892,6 +987,31 @@ public sealed class AgentTopologyService : IAgentTopologyService
         return set;
     }
 
+    /// <summary>Parses the mode-level bindings array; malformed/non-array reads as
+    /// empty so a corrupt draft degrades to "no switches" instead of throwing.</summary>
+    private static IReadOnlyList<JsonElement> ParseBindingArray(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Array) return [];
+            return document.RootElement.EnumerateArray().Select(item => item.Clone()).ToArray();
+        }
+        catch (JsonException) { return []; }
+    }
+
+    /// <summary>A tool is switched off by an explicit <c>false</c> (bool or string) on
+    /// its own id, or by the wildcard <c>"*": false</c> that sheds the whole face.</summary>
+    private static bool IsSwitchedOff(JsonElement switches, string toolId)
+    {
+        static bool Off(JsonElement state) => state.ValueKind == JsonValueKind.False
+            || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase));
+        if (switches.ValueKind != JsonValueKind.Object) return false;
+        if (switches.TryGetProperty(toolId, out var exact) && Off(exact)) return true;
+        return switches.TryGetProperty("*", out var all) && Off(all);
+    }
+
     private static IReadOnlyList<string> ParseCapabilities(string? capabilitiesJson)
     {
         if (string.IsNullOrWhiteSpace(capabilitiesJson)) return [];
@@ -914,6 +1034,20 @@ public sealed class AgentTopologyService : IAgentTopologyService
             return element.ValueKind == JsonValueKind.Object ? element : default;
         }
         catch (JsonException) { return default; }
+    }
+
+    /// <summary>Node relationship for graph validation: parsed the same tolerant way
+    /// as config; a malformed document reads as absent rather than throwing here, and
+    /// the publish path re-parses it strictly where it can return a real error.</summary>
+    private static JsonElement? ParseRelationship(string? relationshipJson)
+    {
+        if (string.IsNullOrWhiteSpace(relationshipJson)) return null;
+        try
+        {
+            var element = JsonSerializer.Deserialize<JsonElement>(relationshipJson);
+            return element.ValueKind == JsonValueKind.Object ? element : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     private static string? Text(JsonElement element, string name) =>

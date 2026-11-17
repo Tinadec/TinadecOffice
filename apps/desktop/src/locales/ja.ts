@@ -1,4 +1,3 @@
-// Japanese interface text for every window and TinadecUI; same keys as en.ts. Code refers to keys, never to the text.
 export default {
   toolsSettings: {
     skillPackageTooMany: "スキルパッケージのファイル数が {max} を超えています。",
@@ -19,7 +18,7 @@ export default {
       minItems: "{value} 件以上必要です。",
       maxItems: "最大 {value} 件までです。",
       required: "必須のプロパティがありません。",
-      unknownProperty: "不明なプロパティです。",
+      unknownProperty: "不明なプロパティです。"
     },
     allResources: "利用可能なすべてのリソース",
     agentSettingsLink: "このエージェントのツール設定を開く",
@@ -38,13 +37,13 @@ export default {
       skills_missing: "スキルリソースが存在しないか、このプロジェクトでは表示されません。",
       skills_invalid: "スキルリソースが無効です。",
       skills_disabled: "このスキルリソースは無効になっています。",
-      mcp_program: "MCP サーバーのプログラムは{status}です。サーバーを登録してもプログラムはインストールされません。別途のインストール操作を確認して承認してください。",
+      mcp_program: "MCP サーバーのプログラムは{status}です。サーバーを登録してもプログラムはインストールされません。別途のインストール操作を確認して承認してください。"
     },
     programStatus: {
       not_installed: "未インストール",
       outdated: "古いバージョン",
       invalid: "無効",
-      needs_reinstall: "再インストールが必要",
+      needs_reinstall: "再インストールが必要"
     },
     connectionDisabledHint: "テストする前にこのリソースを有効にしてください。",
     connectionStatus: {
@@ -53,12 +52,12 @@ export default {
       error: "エラー",
       unavailable: "利用不可",
       unknown: "不明",
-      not_reported: "ツールホストから報告されていません",
+      not_reported: "ツールホストから報告されていません"
     },
     capabilityReason: {
       not_found: "設定または解決されたパスに実行ファイルが見つかりません。",
       not_in_path: "PATH に実行ファイルが見つかりません。",
-      unsupported_platform: "このプラットフォームには対応していません。",
+      unsupported_platform: "このプラットフォームには対応していません。"
     },
     skillReason: {
       shadowed: "同じ名前のプロジェクトスキルが、継承されたバインディングで優先されます。",
@@ -77,7 +76,7 @@ export default {
       name_invalid: "名前に使えるのは小文字、数字、単独のハイフンのみで、ハイフンで始めたり終えたりすることはできません。",
       description_missing: "frontmatter に description がありません。",
       description_too_long: "説明が {max} 文字を超えています。",
-      name_directory_mismatch: "名前「{name}」が、そのフォルダー「{directory}」と一致しません。",
+      name_directory_mismatch: "名前「{name}」が、そのフォルダー「{directory}」と一致しません。"
     },
     sourceUndeclared: "ソース未宣言",
     usedBy: "使用しているエージェント：{agents}",
@@ -111,7 +110,7 @@ export default {
       web: "Web",
       mcp: "MCP",
       skills: "スキル",
-      advanced: "詳細",
+      advanced: "詳細"
     },
     agent: "設定対象",
     project: "プロジェクトのリソースコンテキスト",
@@ -186,7 +185,7 @@ export default {
     invalid: "無効",
     pendingApproval: "承認待ち",
     skillQueuedShared: "共有スキル操作の状態：{status}。ツール操作 {id} のその後の処理は Core の承認状態に従います。",
-    packageReview: "送信前に確認してください：対象 {scope}、ファイル {count} 個、ダイジェストは送信時に Core が計算します。",
+    packageReview: "送信前に確認してください：対象 {scope}、ファイル {count} 個、ダイジェストは送信時に Core が計算します。"
   },
   space: {
     sessionUnsupported: "スペースのセッションを作成できません。サービスがまだセッション種別の分離に対応していません。サービスを更新してから再試行してください。",
@@ -230,7 +229,7 @@ export default {
       result: "目標の結果",
       tool: "ツールのアクティビティ",
       git: "プロジェクトのリソース",
-      approval: "承認",
+      approval: "承認"
     },
     cluster: {
       routeBlocked: "カードがこの接続線を遮っています。この目標を整理すると表示されます。",
@@ -273,7 +272,7 @@ export default {
       source: "ソース",
       noRelations: "読み込まれた依存関係はありません。",
       terminal: "エージェントのターミナル",
-      hideTerminal: "ターミナルパネルを隠す",
+      hideTerminal: "ターミナルパネルを隠す"
     },
     status: {
       running: "実行中",
@@ -290,8 +289,8 @@ export default {
       approved: "承認済み",
       rejected: "却下",
       blocked: "ブロック中",
-      idle: "準備完了",
-    },
+      idle: "準備完了"
+    }
   },
   errors: {
     invalidServerResponse: "サーバーから無効な応答がありました：{text}",
@@ -520,7 +519,7 @@ export default {
       harness_channel_unsupported: "このツールはそのチャネルを提供していません。",
       harness_protocol_unsupported: "このツールはそのプロトコルに対応していません。",
       tool_execution_not_found: "ツール呼び出しが見つかりません。",
-      internal_error: "バックエンドで予期しないエラーが発生しました。",
+      internal_error: "バックエンドで予期しないエラーが発生しました。"
     },
     category: {
       config: "モデルまたはワークスペースの設定が不完全です。",
@@ -573,7 +572,7 @@ export default {
       recovery_marked_failed: "復旧中に失敗としてマークされました。",
       explicit_deny: "許可ルールによってこの呼び出しは拒否されています。",
       boundary_not_allowed: "この呼び出しを許可するルールがありません。",
-      missing_authorization_boundary: "この呼び出しには許可ルールが設定されていません。",
+      missing_authorization_boundary: "この呼び出しには許可ルールが設定されていません。"
     },
     workspaceNotRegistered: "選択したワークスペースは TinadecCore に登録されていません。",
     actions: {
@@ -583,8 +582,8 @@ export default {
       openStorageSettings: "ストレージ設定",
       openToolSettings: "ツール設定",
       unregisterWorkspace: "登録解除",
-      chooseFolder: "フォルダーを選択",
-    },
+      chooseFolder: "フォルダーを選択"
+    }
   },
   app: {
     name: "TinadecOffice",
@@ -637,7 +636,7 @@ export default {
       preview: "プレビュー",
       settings: "設定",
       storage: "ストレージ",
-      tools: "ツール",
+      tools: "ツール"
     },
     fromOtherWindow: "別のウィンドウから",
     operationCompleted: "操作が完了しました",
@@ -651,12 +650,12 @@ export default {
     backendNotConnected: "バックエンドに接続されていません",
     backendNotConnectedMessage: "30 秒以内に Core/Gateway に接続できませんでした。一部の機能が使えない可能性があります。",
     backendDisconnected: "バックエンドとの接続が切れました",
-    backendDisconnectedMessage: "Core/Gateway との接続が切れました。サービスが利用可能になったら再試行してください。",
+    backendDisconnectedMessage: "Core/Gateway との接続が切れました。サービスが利用可能になったら再試行してください。"
   },
   nav: {
     chat: "チャット",
     projects: "プロジェクト",
-    settings: "設定",
+    settings: "設定"
   },
   sidebar: {
     showAll: "すべて表示",
@@ -694,8 +693,8 @@ export default {
     recentConversations: "最近の会話",
     projectConversations: "プロジェクト会話",
     recentActivity: "最近のアクティビティ",
-    allActivity: 'すべてのアクティビティ',
-    projectActivity: 'プロジェクトのアクティビティ',
+    allActivity: "すべてのアクティビティ",
+    projectActivity: "プロジェクトのアクティビティ",
     activityEmpty: "アクティビティはまだありません",
     activityState: {
       awaiting: "あなたの対応待ち",
@@ -704,15 +703,15 @@ export default {
       failed: "エラー",
       cancelled: "キャンセル済み",
       unknown: "状態不明",
-      idle: "タスクなし",
+      idle: "タスクなし"
     },
-    tokenUsage: '直近{days}日間のトークン使用量',
-    tokenUsageSummary: '直近{days}日間で合計{tokens}トークン',
-    tokenUsageSummaryTruncated: '直近{days}日間で少なくとも{tokens}トークン',
-    tokenUsageTruncated: '直近{count}件の呼び出しのみ集計',
-    tokenUsageDay: '{date} · {tokens}トークン',
-    tokenUsageDayEmpty: '{date} · 記録なし',
-    tokenUsageUnreported: 'これらの呼び出しはトークン使用量を報告していません',
+    tokenUsage: "直近{days}日間のトークン使用量",
+    tokenUsageSummary: "直近{days}日間で合計{tokens}トークン",
+    tokenUsageSummaryTruncated: "直近{days}日間で少なくとも{tokens}トークン",
+    tokenUsageTruncated: "直近{count}件の呼び出しのみ集計",
+    tokenUsageDay: "{date} · {tokens}トークン",
+    tokenUsageDayEmpty: "{date} · 記録なし",
+    tokenUsageUnreported: "これらの呼び出しはトークン使用量を報告していません",
     editWorkspace: "ワークスペースを編集",
     moveUp: "上へ移動",
     moveDown: "下へ移動",
@@ -734,7 +733,7 @@ export default {
     trashSessionConfirmMessage: "「{name}」をごみ箱に移動しますか？設定で復元または完全に削除できます。",
     migrateSession: "プロジェクトへ移動",
     migrationTarget: "移動先のプロジェクト",
-    migrationExplanation: "待機中のメッセージは先に実行するかキャンセルしてください。現在の実行が終わった後に会話と参照内容が移動し、以降の実行では移動先プロジェクトの公開済み既定モードが使われます。",
+    migrationExplanation: "待機中のメッセージは先に実行するかキャンセルしてください。現在の実行が終わった後に会話と参照内容が移動し、以降の実行では移動先プロジェクトの公開済み既定モードが使われます。"
   },
   tinaChat: {
     refresh: "更新",
@@ -797,7 +796,7 @@ export default {
     policySaved: "メッセージポリシーを更新しました",
     policyUnavailable: "このワークスペースのメッセージポリシーを読み取れませんでした。",
     revisionStale: "この会話が別の場所で変更されました。再読み込みしてもう一度お試しください",
-    actionFailed: "操作に失敗しました",
+    actionFailed: "操作に失敗しました"
   },
   organization: {
     title: "組織",
@@ -816,7 +815,7 @@ export default {
       reports: "レポート",
       evidence: "証拠",
       environments: "環境",
-      topology: "トポロジー",
+      topology: "トポロジー"
     },
     environments: {
       hint: "このワークスペースに登録されたテスト・クラウド・リモート・ローカル・ターミナルの環境です。エージェントは environment_acquire で取得し、使い終わったら返却します。各スロットは同時に 1 つの実行だけに属し、実行が終わると返却されます。",
@@ -842,8 +841,8 @@ export default {
         cloud: "クラウド",
         remote: "リモート",
         terminal: "ターミナル",
-        test: "テスト",
-      },
+        test: "テスト"
+      }
     },
     evidenceSearch: {
       placeholder: "探すもの：キーワード、パス、search#1 のようなハンドル、または文章",
@@ -853,19 +852,19 @@ export default {
       noHits: "一致する証拠はありません。",
       mode: {
         hybrid: "意味 + キーワード",
-        keyword: "キーワード",
+        keyword: "キーワード"
       },
       kinds: {
         task_result: "タスクの結果",
         report: "レポート",
         member_turn: "メンバーの結論",
-        summary: "要約",
+        summary: "要約"
       },
       matchedBy: {
         semantic: "意味で一致",
         keyword: "キーワードで一致",
-        both: "意味とキーワードの両方で一致",
-      },
+        both: "意味とキーワードの両方で一致"
+      }
     },
     role: {
       human: "ユーザー",
@@ -873,7 +872,7 @@ export default {
       governance: "ガバナンス",
       executor: "実行者",
       host: "システム",
-      other: "その他",
+      other: "その他"
     },
     online: "オンライン",
     offline: "オフライン",
@@ -895,7 +894,7 @@ export default {
       board: "掲示板",
       plan: "計画ルーム",
       adhoc: "臨時ルーム",
-      other: "その他",
+      other: "その他"
     },
     roomMeta: "メンバー {members} 人 · メッセージ {messages} 件",
     joined: "参加中",
@@ -908,7 +907,7 @@ export default {
     noMessages: "このルームにはまだメッセージがありません",
     messageKind: {
       report: "レポート",
-      notice: "お知らせ",
+      notice: "お知らせ"
     },
     confidential: "機密",
     notMember: "このルームのメンバーではないため、閲覧のみできます",
@@ -922,20 +921,20 @@ export default {
     severity: {
       info: "情報",
       warning: "警告",
-      blocking: "ブロッキング",
+      blocking: "ブロッキング"
     },
     reportKind: {
       conflict: "競合",
       risk: "リスク",
       drift: "逸脱",
       budget: "予算",
-      progress: "進捗",
+      progress: "進捗"
     },
     reportStatus: {
       open: "未処理",
       acted: "対応済み",
       dismissed: "却下",
-      superseded: "置き換え済み",
+      superseded: "置き換え済み"
     },
     subject: "対象",
     subjectKind: {
@@ -944,7 +943,7 @@ export default {
       lease: "リース",
       approval: "承認",
       member: "メンバー",
-      path: "パス",
+      path: "パス"
     },
     subjectState: {
       lease_active: "保持中",
@@ -952,7 +951,7 @@ export default {
       path_held: "保持中",
       path_free: "空き",
       member_online: "オンライン",
-      member_offline: "オフライン",
+      member_offline: "オフライン"
     },
     subjectUnknown: "現在の状態は不明です",
     proposed: "提案",
@@ -966,7 +965,7 @@ export default {
       resume_run: "実行を再開",
       stop_run: "実行を停止",
       assign_environment: "環境を割り当てる",
-      ask_user: "ユーザーに確認",
+      ask_user: "ユーザーに確認"
     },
     evidence: "証拠",
     notePlaceholder: "メモ（任意）",
@@ -987,7 +986,7 @@ export default {
       handle: "ハンドル",
       task: "タスク",
       status: "状態",
-      writeScope: "書き込み範囲",
+      writeScope: "書き込み範囲"
     },
     noTasks: "この実行にはまだタスクがありません",
     tasksTruncated: "タスク一覧は省略されています",
@@ -1019,8 +1018,8 @@ export default {
       created: "作成済み",
       blocked: "ブロック中",
       waiting: "待機中",
-      proposed: "提案済み",
-    },
+      proposed: "提案済み"
+    }
   },
   chat: {
     title: "Tinadec セッション",
@@ -1057,7 +1056,7 @@ export default {
       tip: "ヒント",
       important: "重要",
       warning: "警告",
-      caution: "注意",
+      caution: "注意"
     },
     copy: "メッセージをコピー",
     copied: "コピーしました",
@@ -1082,7 +1081,7 @@ export default {
     jumpToLatest: "最新へ移動",
     thinking: "考え中",
     usingTools: "ツールを使用中",
-    waitingForApproval: "承認待ち",
+    waitingForApproval: "承認待ち"
   },
   context: {
     approval: "承認",
@@ -1109,12 +1108,12 @@ export default {
     companionGroupsDesc: "メンバーと最近のメッセージを読み取り専用で確認",
     companionConnections: "接続",
     companionConnectionsDesc: "コンパニオンごとの承認・実行状態・最終確認時刻",
-    companionBuddy: '相棒との会話',
-    companionBuddyDesc: '唯一の相棒との会話。上にはあなたの対応待ちが並びます。',
-    companionSupervision: 'セッションパートナーの監視',
-    companionSupervisionDesc: 'どのセッションパートナーが対応待ち・実行中・完了かを示します。',
-    companionProfile: '人格とモデル',
-    companionProfileDesc: '選択したコンパニオンの人格と応答モデルを編集します。',
+    companionBuddy: "相棒との会話",
+    companionBuddyDesc: "唯一の相棒との会話。上にはあなたの対応待ちが並びます。",
+    companionSupervision: "セッションパートナーの監視",
+    companionSupervisionDesc: "どのセッションパートナーが対応待ち・実行中・完了かを示します。",
+    companionProfile: "人格とモデル",
+    companionProfileDesc: "選択したコンパニオンの人格と応答モデルを編集します。",
     gitWidgetPrimary: "メインフォルダー",
     gitWidgetPrimaryOnly: "ワークスペースのメインフォルダーのみを表示し、他のルートは合算しません。",
     gitWidgetNoProject: "ワークスペースを選択すると Git の状態が表示されます",
@@ -1349,7 +1348,7 @@ export default {
       forceDeleteBranch: "ブランチ {branch} を強制削除",
       renameBranch: "現在のブランチの名前を {name} に変更",
       createWorktree: "{branch} のワークツリー {path} を作成",
-      removeWorktree: "ワークツリー {path} を削除",
+      removeWorktree: "ワークツリー {path} を削除"
     },
     gitWorkspaceRequired: "プロジェクトのワークスペースが必要です。",
     gitNoDiffText: "表示できる差分の内容はありません。",
@@ -1428,7 +1427,7 @@ export default {
       Configuration: "設定",
       Security: "セキュリティ",
       API: "API",
-      Size: "規模",
+      Size: "規模"
     },
     gitRisk: {
       conflict: "{path} に未解決のマージ競合があります",
@@ -1447,7 +1446,7 @@ export default {
       summary: "{n} 個のファイルを更新しました（{concerns}）。",
       concernCount: "潜在的な懸念 {n} 件",
       localExplanation: "ローカルのルールで生成しました。AI 分析は利用できません。",
-      aiExplanation: "AI が生成したリスク評価です。",
+      aiExplanation: "AI が生成したリスク評価です。"
     },
     gitAiGenerate: "AI でコミットメッセージを生成",
     gitAiGenerating: "AI が生成中...",
@@ -1468,7 +1467,7 @@ export default {
     gitConvSubjectTooLong: "コミットの件名が 72 文字の上限を超えています",
     gitConvSubjectWarn: "コミットの件名が推奨の 50 文字を超えています",
     gitConvInvalidType: "コミットの種類が Conventional Commits の仕様に合っていません",
-    gitConvBodyTooLong: "本文の一部の行が推奨の 72 文字を超えています",
+    gitConvBodyTooLong: "本文の一部の行が推奨の 72 文字を超えています"
   },
   settings: {
     codeFont: "コードフォント",
@@ -1487,7 +1486,7 @@ export default {
       followConfirm: "この設定を使う",
       followed: "「{name}」はこのモデル設定を使うようになりました",
       detached: "「{name}」は独自のモデル設定を使うようになりました",
-      switchFailed: "ワークスペースのモデル設定を切り替えられませんでした",
+      switchFailed: "ワークスペースのモデル設定を切り替えられませんでした"
     },
     modelParameters: "モデルのパラメーター",
     modelParametersFor: "{model} のパラメーター",
@@ -1520,9 +1519,12 @@ export default {
       low: "低",
       medium: "中",
       high: "高",
-      xhigh: "最大",
+      xhigh: "最大"
     },
-    reasoningScale: { faster: "より速く", smarter: "より賢く" },
+    reasoningScale: {
+      faster: "より速く",
+      smarter: "より賢く"
+    },
     title: "設定",
     back: "戻る",
     personal: "個人",
@@ -1611,11 +1613,26 @@ export default {
     conversationFlow: "会話の流れ",
     conversationFlowHint: "1 回の作業のうち、ステップと詳細をどこまで会話に残すかを選びます。回答・承認・失敗理由は変わりません。",
     conversationFlowPresets: {
-      minimal: { label: "最小", summary: "要約 1 行だけを残し、ツールとサブエージェントの過程はすべて畳みます。" },
-      concise: { label: "簡潔", summary: "直近のステップを残し、それ以前は 1 行に畳みます。" },
-      balanced: { label: "標準", summary: "各ステップを 1 行ずつ表示し、読み取りや検索も 1 行になります。" },
-      detailed: { label: "詳細", summary: "サブエージェントはタスク・所要時間・結果を 1 行で示し、その場で展開できます。" },
-      rich: { label: "豊富", summary: "すべてのステップを残し、実行中のサブエージェントは自動で展開されます。" },
+      minimal: {
+        label: "最小",
+        summary: "要約 1 行だけを残し、ツールとサブエージェントの過程はすべて畳みます。"
+      },
+      concise: {
+        label: "簡潔",
+        summary: "直近のステップを残し、それ以前は 1 行に畳みます。"
+      },
+      balanced: {
+        label: "標準",
+        summary: "各ステップを 1 行ずつ表示し、読み取りや検索も 1 行になります。"
+      },
+      detailed: {
+        label: "詳細",
+        summary: "サブエージェントはタスク・所要時間・結果を 1 行で示し、その場で展開できます。"
+      },
+      rich: {
+        label: "豊富",
+        summary: "すべてのステップを残し、実行中のサブエージェントは自動で展開されます。"
+      }
     },
     defaultModeTopology: "既定のモードトポロジー",
     defaultModeTopologyHint: "セッションでのやり取りを振り分けるときに使う、既定のエージェントモードトポロジーのバージョンです。",
@@ -1641,7 +1658,7 @@ export default {
     serviceCoreUnreachable: "Core オフライン",
     serviceMode: {
       local: "ローカル",
-      cloud: "クラウド",
+      cloud: "クラウド"
     },
     serviceCurrent: "現在の接続",
     serviceCoreDirectHint: "Core への直接接続の候補は参考表示のみです。ツールの通信には Gateway が必要です。",
@@ -1706,7 +1723,7 @@ export default {
       runBudget: "run 累積トークン fuse",
       runBudgetHint: "1 回の run の累積トークン fuse。無効時は重複呼び出しや連続エラーで停止します。",
       toolCalls: "ツール呼び出し fuse",
-      toolCallsHint: "1 タスクで許可されるツール呼び出しの総数。通常のタスクは到達しません。",
+      toolCallsHint: "1 タスクで許可されるツール呼び出しの総数。通常のタスクは到達しません。"
     },
     fragmentCountLabel: "フラグメント",
     pipelineCountLabel: "パイプライン",
@@ -1821,7 +1838,7 @@ export default {
       tagline: "キャッチコピー",
       avatar: "アバター",
       avatarHint: "一覧と会話に表示される短いテキストまたは絵文字。",
-      avatarLive2dNote: 'このアバターはインポートした Live2D モデルです。アプリにレンダラーは同梱されていないため、まだ表示されません（紐付けのみ記録します）。',
+      avatarLive2dNote: "このアバターはインポートした Live2D モデルです。アプリにレンダラーは同梱されていないため、まだ表示されません（紐付けのみ記録します）。",
       avatarDefault: "既定のアバター",
       model: "モデル",
       modelDefault: "既定のチャットルートに従う",
@@ -1849,7 +1866,7 @@ export default {
         motionCount: "モーション {count} 件",
         expressionCount: "表情 {count} 件",
         rendererNote: "レンダラーはアプリに同梱されていません。モデルのインポートと能力の読み取りのみで、表示は行われません。表示するには Cubism Core をご自身で用意してください。",
-        unavailableShort: "Live2D は未対応",
+        unavailableShort: "Live2D は未対応"
       },
       memory: {
         title: "プライベート記憶",
@@ -1879,7 +1896,7 @@ export default {
         created: "作成 {time}",
         loadFailed: "記憶を読み込めませんでした",
         saveFailed: "記憶を保存できませんでした",
-        deleteFailed: "記憶を削除できませんでした",
+        deleteFailed: "記憶を削除できませんでした"
       },
       skill: {
         title: "スキル",
@@ -1908,7 +1925,7 @@ export default {
         neverLoaded: "未読み込み",
         loadFailed: "スキルを読み込めませんでした",
         saveFailed: "スキルを保存できませんでした",
-        deleteFailed: "スキルを削除できませんでした",
+        deleteFailed: "スキルを削除できませんでした"
       },
       connection: {
         title: "接続",
@@ -1946,7 +1963,7 @@ export default {
         deleteConfirm: "削除",
         loadFailed: "接続を読み込めませんでした",
         saveFailed: "接続を保存できませんでした",
-        deleteFailed: "接続を削除できませんでした",
+        deleteFailed: "接続を削除できませんでした"
       },
       autonomy: {
         title: "自律ルール",
@@ -1980,10 +1997,10 @@ export default {
           duplicate_group: "同じグループはすでに作成済みです",
           duplicate_member: "そのメンバーはすでにグループに参加しています",
           conversation_paused: "この会話の自動返信は一時停止中です",
-          duplicate_message: "そのメッセージはすでに送信済みです",
+          duplicate_message: "そのメッセージはすでに送信済みです"
         },
-        saveFailed: "自律ルールを保存できませんでした",
-      },
+        saveFailed: "自律ルールを保存できませんでした"
+      }
     },
     pets: "コンパニオンアバター",
     petdexCatalog: "Petdex カタログ",
@@ -1992,16 +2009,16 @@ export default {
     loadingPets: "ペットを読み込み中",
     noPetsFound: "一致するペットはありません",
     noDownloadedPets: "ダウンロードしたペットはありません",
-builtinPetBadge: "内蔵",
-builtinPetHint: "アプリに同梱された代替イメージです。削除できません",
-agentAvatarSection: "イメージ",
-agentAvatarHint: "ランダムでは派遣ごとに変わります。固定すると、このエージェントは毎回同じペットを使います。",
-agentAvatarRandom: "ランダム",
-agentAvatarEmpty: "利用できるペット素材がありません。代わりに予備のイメージを表示します。",
-agentAvatarSaveFailed: "イメージを保存できませんでした",
+    builtinPetBadge: "内蔵",
+    builtinPetHint: "アプリに同梱された代替イメージです。削除できません",
+    agentAvatarSection: "イメージ",
+    agentAvatarHint: "ランダムでは派遣ごとに変わります。固定すると、このエージェントは毎回同じペットを使います。",
+    agentAvatarRandom: "ランダム",
+    agentAvatarEmpty: "利用できるペット素材がありません。代わりに予備のイメージを表示します。",
+    agentAvatarSaveFailed: "イメージを保存できませんでした",
     petDownloaded: "ダウンロード済み",
     petKind: {
-      pet: "ペット",
+      pet: "ペット"
     },
     petEnabled: "有効",
     downloadPet: "ダウンロード",
@@ -2236,13 +2253,13 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     channelReason: {
       headless_frame_unverified: "このビルドはまだ {harness} のヘッドレス応答を取得できていないため、このチャネルでは操作できません。",
       terminal_host_unsupported: "このプラットフォームには {harness} の TUI に対応したターミナルホストがありません。",
-      protocol_unsupported: "このビルドにはまだこのチャネルのクライアントがありません。",
+      protocol_unsupported: "このビルドにはまだこのチャネルのクライアントがありません。"
     },
     probeNote: {
       start_failed: "{command} を起動できませんでした。",
       probe_timeout: "{name} が {timeout_ms} ミリ秒以内に {command} に応答しなかったため、インストールされているかどうか分かりません。",
       exit_code: "{name} は {command} の実行中に終了コード {exit_code} で終了しました。",
-      probe_failed: "{name} を調べられませんでした：{error}",
+      probe_failed: "{name} を調べられませんでした：{error}"
     },
     harnessProviderInstance: "プロバイダーのインスタンス",
     protocolUnknown: "プロトコルの記録なし",
@@ -2640,6 +2657,153 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     moduleLoading: "設定を読み込み中…",
     moduleError: "このセクションを読み込めませんでした。",
     retryModule: "再読み込み",
+    agentTeams: "エージェントチーム",
+    teamSearch: "チームを検索…",
+    teamEmptyList: "チームはまだありません。右側のテンプレートから作成してください。",
+    teamLoading: "チームを読み込み中…",
+    teamWelcomeTitle: "エージェントをチームとして編成",
+    teamWelcomeHint: "リーダーが委任する形、固定パイプライン、単独実行から選べます。いつでもグラフエディターで詳細編集できます。",
+    teamEditorHint: "簡易編集：リーダー + メンバー + 協働スタイル。下書き保存または公開後、送信欄で選択できます。",
+    teamReadOnlyHint: "組み込みまたは公開済みのチームは読み取り専用です。複製して編集してください。",
+    teamClone: "自分のチームとして複製",
+    teamSaveDraft: "下書きを保存",
+    teamPublish: "公開",
+    teamOpenGraph: "グラフエディターで開く",
+    teamComplexShape: "このチームには分岐・複数バインディング・カスタムエンベロープがあり、簡易エディターでは損失なく表現できません。グラフエディターで編集してください。",
+    teamName: "チーム名",
+    teamDescription: "チームの説明",
+    teamStyle: "協働スタイル",
+    teamLeader: "リーダー（会話アイデンティティ）",
+    teamMembers: "メンバー",
+    teamNoMembers: "メンバーがいません。下から追加してください。",
+    teamMoveUp: "上へ",
+    teamMoveDown: "下へ",
+    teamRemoveMember: "メンバーを削除",
+    teamMemberScope: "メンバーの範囲",
+    teamMemberRead: "読取",
+    teamMemberWrite: "書込",
+    teamLeaderRequired: "先にリーダーを選択してください",
+    teamNameRequired: "チーム名は必須です",
+    teamNameTaken: "同じ名前のチームが既にあります",
+    teamLeaderUnavailable: "リーダーが利用できません。有効・公開済みで operation レイヤーの必要があります",
+    teamMembersRequired: "チームには 1 名以上のメンバーが必要です",
+    teamMembersLimit: "メンバーは最大 {max} 名です",
+    teamMemberUnavailable: "利用できないメンバー：{names}",
+    teamNoLeader: "利用できる operation レイヤーのエージェントがありません",
+    teamTemplateNoMembers: "利用できるメンバーエージェントがありません。先にエージェントページで作成または有効化してください。",
+    teamInstructions: "協働の指示",
+    teamInstructionsPlaceholder: "リーダーの分派方法、メンバーの報告方法、最終的な収束方法",
+    teamMemberCount: "{count} / {max} 名",
+    teamSetDefault: "既定に設定",
+    teamDefaultCurrent: "既定のチーム",
+    teamDefaultSet: "既定のチームに設定しました",
+    teamNoExecutionAgents: "利用できる execution レイヤーのエージェントがありません。パイプラインチームには execution メンバーが必要です",
+    teamUnavailableAgents: "利用できないエージェント：{names}（無効または未公開）",
+    teamTemplateTeamInstructions: "あなたはチームリーダーです。目標を分解し、独立したサブタスクを職務に応じてメンバーへ割り当ててください。各メンバーは自分のセッションで作業し、完全な結果を最終返信に書きます。あなたは証拠を確認し、衝突を解決し、1 つの完全な回答をまとめます。委任できるのはあなただけであり、メンバー同士は転送しません。",
+    teamTemplatePipelineInstructions: "順番に進めます。リーダーが目標を分解し、最初のメンバーが結果を次へ渡し、最後にリーダーが確認して要約します。各メンバーは自分の工程だけを担当し、完全な成果物を最終返信に書きます。",
+    teamTemplateSoloInstructions: "自分で目標を完成させます。まず制約と証拠を確認してから実行し、他のメンバーへ委任しないでください。",
+    teamCreated: "チーム「{name}」を作成しました",
+    teamDraftSaved: "チームの下書きを保存しました",
+    teamPublished: "チームを公開しました",
+    teamStatusPublished: "公開済み",
+    teamDraft: "下書き",
+    teamArchived: "アーカイブ済み",
+    teamBuiltIn: "組み込み",
+    teamCopySuffix: "のコピー",
+    teamTemplateTeam: "自主編成",
+    teamTemplateTeamHint: "リーダーが目標を理解し、必要に応じてメンバーへ委任して最後に統合します。",
+    teamTemplatePipeline: "固定パイプライン",
+    teamTemplatePipelineHint: "メンバーへ順番に作業を渡し、各ステップを検証できます。",
+    teamTemplateSolo: "単独",
+    teamTemplateSoloHint: "リーダーが自分で作業し、サブタスクを委任しません。",
+    bindingsInvalid: "バインディング JSON が無効です",
+    bindingsMustBeArray: "バインディングは配列である必要があります",
+    bindingsMustBeObjects: "各バインディングはオブジェクトである必要があります",
+    bindingNeedsKey: "各バインディングには node_key または agent_ref が必要です",
+    jsonObjectRequired: "{field} は JSON オブジェクトである必要があります",
+    nodeRelationshipField: "ノード関係 (JSON)",
+    nodeRelationshipHint: "duty / success_criteria / agent_types / allowed_dispatch_targets / subscriptions。",
+    edgeConditionField: "エッジ条件 (JSON)",
+    bindingsAdvanced: "詳細バインディング (JSON)",
+    bindingsAdvancedHint: "ノードのエンベロープ、ツールスイッチ、ノードなしメンバーのバインディング。保存時に配列全体を置き換えます。",
+    restoreVersion: "下書きとして復元",
+    modeVersionSnapshotMissing: "このバージョンには読み取り可能なスナップショットがありません",
+    modeDiscardChanges: "未保存の変更を破棄しますか？",
+    modeDiscardChangesMessage: "モードを切り替えると、保存していないノード・接続・バインディングの変更が失われます。",
+    modeNameRequired: "モード名は必須です",
+    modePublishBlocked: "公開する前にグラフのエラー（会話アイデンティティ、循環、逆流など）を修正してください",
+    modeNoAgents: "利用できるエージェントがありません。先にエージェントページで作成してください。",
+    modeNoAgentsInLane: "このレイヤーに利用できるエージェントがありません",
+    laneAgentMismatch: "ノードのレイヤーがエージェントのレイヤーと一致しません",
+    spawnMembersTitle: "派遣可能なメンバー",
+    spawnMembersHint: "メンバーは派遣テンプレートであり、グラフのノードではありません",
+    spawnMembersEmpty: "メンバーがまだありません",
+    spawnMemberAdd: "メンバーを追加",
+    spawnMemberLimit: "メンバーは最大 4 名です",
+    conversationNodeRequired: "会話アイデンティティのノードは削除できません。先に会話マーカーを別の operation ノードへ移してください。",
+    conversationLayerRequired: "会話アイデンティティは operation レイヤーに必要です",
+    deleteNodeTitle: "ノードを削除",
+    deleteNodeMessage: "「{name}」と関連する接続を削除しますか？",
+    modeNameField: "モード名",
+    modeDescriptionField: "モードの説明",
+    modeInstructionsField: "協働の指示",
+    modeInstructionsPlaceholder: "リーダーの分派方法、メンバーの報告方法、最終的な収束方法",
+    modeUnsaved: "未保存",
+    undoGraph: "元に戻す",
+    redoGraph: "やり直す",
+    nodeLane: "レイヤー",
+    conversationNode: "会話アイデンティティにする",
+    edgeConfigTitle: "接続の設定",
+    edgeLabelField: "接続ラベル",
+    modeRestoreName: "{name} · v{version} を復元",
+    modeRestored: "v{version} から復元しました",
+    agentSearchPlaceholder: "エージェントを検索…",
+    agentFilterSource: "ソースで絞り込み",
+    agentFilterLayer: "レイヤーで絞り込み",
+    agentFilterAllLayers: "すべてのレイヤー",
+    agentFilterStatus: "状態で絞り込み",
+    agentFilterAllStatuses: "すべての状態",
+    noFilteredAgents: "条件に一致するエージェントはありません。",
+    newAgent: "新しいエージェント",
+    createAgent: "作成",
+    archiveAgent: "エージェントをアーカイブ",
+    archiveAgentConfirm: "「{name}」をアーカイブしますか？ディレクトリから外れますが、履歴とバージョンは残ります。",
+    agentArchived: "「{name}」をアーカイブしました",
+    agentName: "名前",
+    agentRole: "ロール",
+    advanced: "詳細",
+    agentAdvancedHint: "ワークスペースの既定値と設定ファイルの原文。TOML の変更は次回の読み込みに反映されます。",
+    workspaceDefaults: "ワークスペースの既定値",
+    workspaceDefaultsHint: "モードを明示しない新しい会話はこの既定モードを使います。",
+    workspaceDefaultMode: "既定モード",
+    workspaceDefaultAgent: "既定エージェント",
+    workspaceDefaultNone: "未設定",
+    workspaceDefaultsSave: "保存して公開",
+    workspaceDefaultsSaved: "ワークスペースの既定値を公開しました",
+    workspaceDefaultsSaveFailed: "ワークスペースの既定値を保存できません",
+    workspaceDefaultsLoadFailed: "ワークスペースの既定値を読み込めません",
+    tomlTitle: "設定ファイル (TOML)",
+    tomlHint: "TOML が編集の正であり、SQL は投影です。保存前に検証します。インポートしたファイルは自動では書き込まれません。",
+    tomlSelect: "設定ファイルを選択",
+    tomlEdit: "編集",
+    tomlCancel: "キャンセル",
+    tomlValidate: "検証",
+    tomlSave: "保存",
+    tomlExport: "エクスポート",
+    tomlImport: "インポート",
+    tomlValid: "検証に合格しました",
+    tomlInvalid: "検証に失敗しました。診断を確認してください",
+    tomlSaved: "保存しました",
+    tomlImported: "エディターに読み込みました。保存前に検証してください",
+    tomlLoadFailed: "設定ファイルを読み込めません",
+    tomlSaveFailed: "設定ファイルを保存できません",
+    agentDraftRestored: "未保存の下書きを復元しました",
+    agentDraftStale: "この下書きは古いバージョンに基づいています。読み込むと新しい変更を上書きする可能性があります",
+    agentDraftApply: "下書きを読み込む",
+    agentDraftDiscard: "下書きを破棄",
+    agentDraftTooLarge: "下書きが大きすぎるためローカルに保存できません。先にサーバーへ保存してください",
+    centerConnections: "接続",
+    centerAdvanced: "詳細"
   },
   providers: {
     openaiCompatible: "OpenAI 互換",
@@ -2701,7 +2865,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     zcode: "ZCode",
     zcodeSummary: "ZCode エージェント。ACP には非対応で、1 回実行またはターミナルセッションのみ",
     custom: "カスタムプロバイダー",
-    customSummary: "カスタムの OpenAI 互換エンドポイント",
+    customSummary: "カスタムの OpenAI 互換エンドポイント"
   },
   accentColors: {
     blue: "ブルー",
@@ -2712,7 +2876,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     red: "レッド",
     cyan: "シアン",
     yellow: "イエロー",
-    dynamic: "背景から",
+    dynamic: "背景から"
   },
   market: {
     action: {
@@ -2722,14 +2886,14 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       installPreview: "インストールのプレビュー",
       queueInstall: "インストールの待機列への追加",
       refreshSource: "ソースの更新",
-      uninstallPreview: "アンインストールのプレビュー",
+      uninstallPreview: "アンインストールのプレビュー"
     },
     defaultSourceName: "MCP レジストリ",
     sourceAdded: "ソースを追加しました。",
     sourceNoAnswer: "ソースが応答しませんでした（{outcome}）。",
     sourceOutcome: {
       blocked: "アドレスポリシーによってこのソースへのアクセスがブロックされました。",
-      unavailable: "今回はこのソースを読み取れませんでした。カタログは以前のままです。",
+      unavailable: "今回はこのソースを読み取れませんでした。カタログは以前のままです。"
     },
     sourceStale: "前回の更新に失敗したため、以下のエントリは以前のデータです：{error}",
     installBlocker: {
@@ -2745,7 +2909,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       detail_too_large: "このエントリのパッケージの説明は、Core が保存できるサイズを超えています。",
       detail_missing: "このエントリには詳細が保存されていません。",
       detail_unreadable: "このエントリに保存された詳細を読み取れませんでした。",
-      not_installable: "このエントリはこのビルドではインストールできません。",
+      not_installable: "このエントリはこのビルドではインストールできません。"
     },
     refreshedTruncated: "{pages} ページから {rows} 件のエントリを更新しました。リストはこれより長くなっています。",
     refreshed: "{rows} 件のエントリを更新しました（拒否 {refused} 件、削除 {removed} 件、インストール済みのため保持 {retained} 件）。",
@@ -2824,7 +2988,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     packageCommit: "固定コミット",
     packageHash: "パッケージのダイジェスト",
     packageFiles: "パッケージのファイル",
-    scope: "スコープ",
+    scope: "スコープ"
   },
   approval: {
     runCommandSummary: "コマンドを実行：{command}",
@@ -2833,14 +2997,14 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     kind: {
       tool: "ツール呼び出し",
       user_tool: "あなたのツール操作",
-      permission: "権限リクエスト",
+      permission: "権限リクエスト"
     },
     specConfirmation: "仕様の確認",
     specConfirmationHint: "ドキュメント全体を読んでください。この判断は下のドキュメントにのみ適用され、後の段階ではそれぞれ確認が必要です。",
     summaryCode: {
       user_requested: "{tool} の実行をリクエストしました。",
       retry_after_unknown: "{tool} を再試行：前回の実行の結果が不明です。",
-      permission_request: "{tool} の実行には許可が必要です。",
+      permission_request: "{tool} の実行には許可が必要です。"
     },
     specRequirements: "要件",
     specDesign: "設計",
@@ -2887,9 +3051,9 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         rejected: "却下",
         escalated: "あなたに戻す",
         skipped: "確認なし",
-        superseded: "あなたの判断で置き換え",
-      },
-    },
+        superseded: "あなたの判断で置き換え"
+      }
+    }
   },
   doctor: {
     title: "診断",
@@ -2899,7 +3063,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     counts: {
       ready: "準備完了",
       warning: "警告",
-      blocked: "ブロック中",
+      blocked: "ブロック中"
     },
     status: {
       ok: "正常",
@@ -2913,7 +3077,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       error: "エラー",
       rejected: "却下",
       missing: "なし",
-      blocked: "ブロック中",
+      blocked: "ブロック中"
     },
     reason: {
       database_ready: "データベースに接続できます。",
@@ -2961,7 +3125,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       tools_handshake_failed: "ツールプログラムが正しく応答しませんでした。",
       manifest_ready: "ツール一覧のフィンガープリントを利用できます。",
       manifest_hash_missing: "ツール一覧にフィンガープリントがないため、その変更を検出できません。",
-      manifest_unavailable: "ツールプログラムを利用できないため、ツール一覧は不明です。",
+      manifest_unavailable: "ツールプログラムを利用できないため、ツール一覧は不明です。"
     },
     action: {
       database_unavailable: "データベースの接続設定を確認して、Core を再起動してください。",
@@ -2997,7 +3161,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       probe_failed: "{base_url} のエンドポイントが利用できるか確認して再試行してください。詳細は Core のログにあります。",
       tools_not_built: "npm run dev:tools を実行してください（npm run dev は先に自動でビルドします）。",
       tools_handshake_failed: "ツールプログラムをビルドし直して、Core を再起動してください。",
-      manifest_unavailable: "先にツールプログラムを利用できるようにしてください。",
+      manifest_unavailable: "先にツールプログラムを利用できるようにしてください。"
     },
     item: {
       database: "データベース",
@@ -3009,8 +3173,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       model_route: "モデルルート",
       model_probe: "モデルの接続性",
       tool_provider: "ツールプロバイダー",
-      manifest_hash: "ツールマニフェスト",
-    },
+      manifest_hash: "ツールマニフェスト"
+    }
   },
   debugStudio: {
     preview: {
@@ -3036,7 +3200,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         toolCalls: "ツール呼び出し",
         events: "イベント",
         agents: "エージェント",
-        tools: "ツール",
+        tools: "ツール"
       },
       noOrchestration: "このシナリオにはオーケストレーションの実行がありません。「データあり」または「エージェント作業中」に切り替えると表示されます。",
       noGitDiff: "このシナリオには Git の差分がありません。「Git の変更」に切り替えると表示されます。",
@@ -3056,7 +3220,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         code: "コードエディター（実際の CodePage）",
         settings: "設定（実際の SettingsPage）",
         allTabs: "すべてのタブを利用可能",
-        market: "拡張機能マーケット（実際の MarketPage · UIE エンジンは分離）",
+        market: "拡張機能マーケット（実際の MarketPage · UIE エンジンは分離）"
       },
       items: {
         ChatPanel: "チャットパネル",
@@ -3073,50 +3237,50 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         ToolStatsDashboard: "ツール統計ダッシュボード",
         DiffViewer: "差分ビューアー",
         CommitMessageEditor: "コミットメッセージエディター",
-        FileTreePanel: "ファイルツリーパネル",
+        FileTreePanel: "ファイルツリーパネル"
       },
       scenario: {
         populated: {
           label: "データあり",
-          description: "既定の豊富なデータ状態：プロジェクト、セッション、メッセージ、オーケストレーション、ツール呼び出しなど。",
+          description: "既定の豊富なデータ状態：プロジェクト、セッション、メッセージ、オーケストレーション、ツール呼び出しなど。"
         },
         empty: {
           label: "空",
-          description: "プロジェクト、セッション、メッセージがない状態。空の状態の UI を確認します。",
+          description: "プロジェクト、セッション、メッセージがない状態。空の状態の UI を確認します。"
         },
         loading: {
           label: "読み込み中",
-          description: "データを読み込み中です。すべてのコレクションは空で、コンポーネントはスケルトンや読み込み表示を出す必要があります。",
+          description: "データを読み込み中です。すべてのコレクションは空で、コンポーネントはスケルトンや読み込み表示を出す必要があります。"
         },
         busy: {
           label: "エージェント作業中",
-          description: "オーケストレーションの実行が進行中で、ツール呼び出しの実行と保留中の承認があります。",
+          description: "オーケストレーションの実行が進行中で、ツール呼び出しの実行と保留中の承認があります。"
         },
         approvalPending: {
           label: "承認待ち",
-          description: "git / shell / code にわたる 3 件の承認待ち。承認の UI を確認します。",
+          description: "git / shell / code にわたる 3 件の承認待ち。承認の UI を確認します。"
         },
         error: {
           label: "エラー状態",
-          description: "Doctor がエラーを報告し、準備状況がブロックされています。エラー状態の UI を確認します。",
+          description: "Doctor がエラーを報告し、準備状況がブロックされています。エラー状態の UI を確認します。"
         },
         agentWorking: {
           label: "エージェント稼働中",
-          description: "複数の step_results がスタブ状態のオーケストレーション実行で、エージェントのアクティビティバナーを表示します。",
+          description: "複数の step_results がスタブ状態のオーケストレーション実行で、エージェントのアクティビティバナーを表示します。"
         },
         manyMessages: {
           label: "大量のメッセージ",
-          description: "長い Markdown を含む 20 件以上のメッセージ。リストのスクロールと描画の性能を確認します。",
+          description: "長い Markdown を含む 20 件以上のメッセージ。リストのスクロールと描画の性能を確認します。"
         },
         gitChanges: {
           label: "Git の変更",
-          description: "Git の差分プレビューには 3 つのセクション（ワークツリー / ステージ / ブランチ比較）と複数の変更ファイルがあります。",
+          description: "Git の差分プレビューには 3 つのセクション（ワークツリー / ステージ / ブランチ比較）と複数の変更ファイルがあります。"
         },
         toolFailures: {
           label: "ツールの失敗",
-          description: "複数のツール呼び出しが失敗しています。失敗時の UI とエラー表示を確認します。",
-        },
-      },
+          description: "複数のツール呼び出しが失敗しています。失敗時の UI とエラー表示を確認します。"
+        }
+      }
     },
     tabPreview: "プレビュー",
     simulation: {
@@ -3129,7 +3293,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       approved: "シミュレーションの承認：承認済み",
       rejectedApproval: "シミュレーションの承認：却下",
       decisionRejected: "承認の判断は拒否されました",
-      decisionFailed: "承認の判断に失敗しました",
+      decisionFailed: "承認の判断に失敗しました"
     },
     requestFailed: {
       injectMessage: "メッセージを挿入できませんでした：{error}",
@@ -3144,7 +3308,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       fetchDiagnostics: "診断を取得できませんでした：{error}",
       fetchProcessInfo: "プロセス情報を取得できませんでした：{error}",
       fetchTraces: "トレースを取得できませんでした：{error}",
-      fetchTraceDetail: "トレースの詳細を取得できませんでした：{error}",
+      fetchTraceDetail: "トレースの詳細を取得できませんでした：{error}"
     },
     title: "エージェントデバッグスタジオ",
     tabTimeline: "タイムライン",
@@ -3205,7 +3369,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     errors: "{count} 件のエラー",
     loadingGraph: "エージェントグラフを読み込み中...",
     graphLoadFailed: "Gateway からエージェントのディレクトリを読み込めませんでした。",
-    graphDirectoryNote: "層ごとのエージェントのディレクトリ — 実行のトポロジーは各実行のオーケストレーションタブにあります",
+    graphDirectoryNote: "層ごとのエージェントのディレクトリ — 実行のトポロジーは各実行のオーケストレーションタブにあります"
   },
   permission: {
     selectLabel: "ツールの承認方法",
@@ -3221,7 +3385,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     delegateBoth: "両方が承認",
     delegateConversationHint: "あなたの目標を把握しているコーディネーターが承認します。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。",
     delegateReviewerHint: "レビュアーが独立したコンテキストで承認します（見るのは操作と事実だけで、会話は見ません）。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。",
-    delegateBothHint: "レビュアーとコーディネーターの両方が承認した場合にのみ実行し、どちらかが却下すれば拒否されます。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。",
+    delegateBothHint: "レビュアーとコーディネーターの両方が承認した場合にのみ実行し、どちらかが却下すれば拒否されます。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。"
   },
   agent: {
     agent: "エージェント",
@@ -3270,7 +3434,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     supervisionCorrect: "修正",
     supervisionCancel: "キャンセル",
     supervisionCorrectionPrompt: "修正内容を入力してください。送信すると実行は計画し直されます。",
-    supervisionDecisionFailed: "監督の判断に失敗しました",
+    supervisionDecisionFailed: "監督の判断に失敗しました"
   },
   terminal: {
     agentBadge: "エージェント",
@@ -3290,7 +3454,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       cwd: "（作業ディレクトリ：{cwd}）",
       exited: "[プロセスは終了コード {code} で終了しました]",
       terminated: "[セッションは終了しました]",
-      inputLost: "[入力は届きませんでした]",
+      inputLost: "[入力は届きませんでした]"
     },
     call: {
       notReady: "ターミナルのセッションはまだ準備できていません。しばらくしてから再試行してください",
@@ -3302,11 +3466,11 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       resume: "再開",
       pause: "一時停止",
       stop: "停止",
-      openInPanel: "パネルで開く",
+      openInPanel: "パネルで開く"
     },
     shellName: {
       cmd: "コマンド プロンプト",
-      default: "既定のシェル",
+      default: "既定のシェル"
     },
     defaultTitle: "ターミナル",
     defaultShell: "既定のシェル",
@@ -3314,18 +3478,18 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     exited: "終了",
     notAvailable: "ターミナルを利用できません",
     notAvailableHint: "統合ターミナルには Electron のデスクトップアプリが必要です。ブラウザーや Web プレビューでは利用できません。",
-    shortcutHint: "Ctrl+Shift+T 新規 · Ctrl+W 閉じる · Ctrl+Tab 切り替え",
+    shortcutHint: "Ctrl+Shift+T 新規 · Ctrl+W 閉じる · Ctrl+Tab 切り替え"
   },
   orchestrationPanel: {
     conversationNode: "会話担当",
     tier: {
       deterministic: "deterministic · 固定のトポロジー",
       self_dispatch: "self_dispatch · 接続に沿って自分で振り分け",
-      free_form: "free_form · 自由な構成",
+      free_form: "free_form · 自由な構成"
     },
     layer: {
       operation: "運用層",
-      execution: "実行層",
+      execution: "実行層"
     },
     stepResults: "ステップの結果",
     noStepResults: "ステップの結果はありません。",
@@ -3340,7 +3504,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     tabs: {
       timeline: "タイムライン",
       catalog: "カタログ",
-      stats: "統計",
+      stats: "統計"
     },
     refreshTools: "ツールを更新",
     refreshToolsHint: "ツールカタログを更新",
@@ -3370,7 +3534,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     groupTokens: "{name}{via} · {tokens} トークン{partial} · {calls}",
     unreported: "（未報告 {count} 件）",
     flows: "{count} 件のフロー",
-    identity: "· 会話担当",
+    identity: "· 会話担当"
   },
   toolPanel: {
     filters: {
@@ -3378,7 +3542,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       success: "成功",
       failed: "失敗",
       approval: "承認",
-      running: "実行中",
+      running: "実行中"
     },
     newest: "新しい順",
     oldest: "古い順",
@@ -3406,7 +3570,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       completedWithFailure: "{tool} は終了しましたが、失敗を報告しました。",
       failed: "{tool} が失敗しました。",
       failedWith: "{tool} が失敗しました：{reason}",
-      outcome_unknown: "{tool} の結果は不明です。",
+      outcome_unknown: "{tool} の結果は不明です。"
     },
     catalog: {
       search: "名前、機能、領域でツールを検索…",
@@ -3428,7 +3592,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       capabilities: "機能",
       required: "必要",
       notRequired: "不要",
-      execute: "実行",
+      execute: "実行"
     },
     stats: {
       overview: "概要",
@@ -3445,15 +3609,15 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       blocked: "ブロック中",
       topTools: "よく使うツール",
       bySource: "ソース別",
-      empty: "このセッションにはまだツールの実行データがありません。",
-    },
+      empty: "このセッションにはまだツールの実行データがありません。"
+    }
   },
   taskGraph: {
     empty: "タスクを送信するとオーケストレーションの計画が作成されます。",
-    escalated: "エスカレーション済み",
+    escalated: "エスカレーション済み"
   },
   eventsPanel: {
-    empty: "この会話にはまだイベントがありません。",
+    empty: "この会話にはまだイベントがありません。"
   },
   governance: {
     preAuthorizeHint: "1 回の実行で特定のツールを無人で使える回数を限定して許可します。呼び出しのたびにバインディングの確認は行われます。",
@@ -3466,29 +3630,29 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       auditReference: "監査の参照",
       snapshot: "スナップショット ID",
       lastReason: "前回の復旧理由",
-      message: "メッセージ",
+      message: "メッセージ"
     },
     snapshotKind: {
       filesystem: "ファイルのコピー",
-      git: "Git",
+      git: "Git"
     },
     snapshotStatus: {
       created: "作成済み",
       conflict: "競合あり",
       restored: "復元済み",
-      restored_with_conflicts: "復元済み（競合あり）",
+      restored_with_conflicts: "復元済み（競合あり）"
     },
     fileChange: {
       added: "追加",
       deleted: "削除",
       modified: "変更",
-      unchanged: "変更なし",
+      unchanged: "変更なし"
     },
     snapshotFacts: {
       files: "ファイル数",
       workspaceHash: "ワークスペースのハッシュ",
       contentHash: "内容のハッシュ",
-      createdAt: "作成日時",
+      createdAt: "作成日時"
     },
     riskMeta: "リスク：{risk}",
     actionApprovals: "操作の承認",
@@ -3530,7 +3694,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     snapshotsTitle: "ワークスペースのスナップショット",
     supervision: "監督のレビュー",
     supervisionEmpty: "監督の指摘はまだありません。",
-    undoFile: "このファイルを元に戻す",
+    undoFile: "このファイルを元に戻す"
   },
   canvas: {
     unbound: "未割り当て",
@@ -3543,6 +3707,27 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     choosePipeline: "キャンバスをプレビューするパイプラインを選んでください",
     pipelineHint: "ノードをドラッグ · 接続 · 選択して詳細を表示",
     contractEdge: "契約",
+    zoomIn: "拡大",
+    zoomOut: "縮小",
+    fitView: "ビューに合わせる",
+    autoLayout: "自動レイアウト",
+    addNode: "ノードを追加",
+    conversationBadge: "会話",
+    emptyTitle: "ノードがありません",
+    emptyHint: "最初のエージェントを追加するか、既存のノードを自動レイアウトで整えます。",
+    emptyReadonly: "このモードは Agent Pack が管理しています。複製すると編集できます。",
+    issue: {
+      empty: "グラフが空です",
+      "unbound-node": "エージェントが未割り当てのノードがあります",
+      "self-loop": "ノードを自分自身に接続できません",
+      "duplicate-edge": "重複した接続",
+      "dangling-endpoint": "接続先のノードが存在しません",
+      cycle: "循環があるため自動レイヤー分けができません",
+      backflow: "execution から operation へは接続できません",
+      "no-conversation": "会話アイデンティティのノードがありません",
+      "multi-conversation": "会話アイデンティティは 1 つだけです",
+      "conversation-layer": "会話アイデンティティは operation レイヤーに必要です"
+    }
   },
   workbench: {
     title: "ワークベンチ",
@@ -3555,7 +3740,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       mode: "モード {value}",
       config: "設定 {value}",
       revision: "リビジョン {value}",
-      manifest: "マニフェスト {value}",
+      manifest: "マニフェスト {value}"
     },
     facts: {
       layer: "層",
@@ -3564,7 +3749,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       depth: "派生の深さ",
       parent: "親インスタンス",
       task: "タスク",
-      capabilities: "機能",
+      capabilities: "機能"
     },
     counts: "ノード {nodes} 個 · 指摘 {findings} 件 · コンテキストのバージョン {versions} 個",
     findings: "監督の指摘",
@@ -3576,7 +3761,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     executionLane: "実行層",
     laneEmpty: "この実行にはまだエージェントのインスタンスがありません。",
     lineageEdge: "派生関係",
-    operationLane: "運用層",
+    operationLane: "運用層"
   },
   documents: {
     tree: "ファイル",
@@ -3587,7 +3772,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     hideTree: "フォルダーを隠す",
     noWorkspace: "プロジェクトが選択されていないため、ワークスペースのファイルを読み込めません。",
     loadingEditor: "エディタを読み込み中…",
-    editorFailed: "エディタを読み込めませんでした",
+    editorFailed: "エディタを読み込めませんでした"
   },
   docReader: {
     tabs: "開いているドキュメント",
@@ -3611,12 +3796,12 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     tooLargeTitle: "ファイルが大きすぎます",
     tooLargeDetail: "ファイルサイズは {size} です。サイドパネルには表示しません。",
     closeTab: "ドキュメントを閉じる",
-    truncated: "先頭 {count} 行のみ表示しています",
+    truncated: "先頭 {count} 行のみ表示しています"
   },
   codeEditor: {
     emptyTitle: "編集するファイルを選んでください",
     emptyHint: "左側はこのワークスペースのフォルダー構造です。保存には承認が必要です。",
-    closeFile: "このファイルを閉じる",
+    closeFile: "このファイルを閉じる"
   },
   code: {
     selectProject: "プロジェクトを選択…",
@@ -3647,16 +3832,16 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       saveShortcut: "保存（Ctrl+S）",
       noChanges: "変更はありません",
       save: "保存",
-      close: "エディターを閉じる",
+      close: "エディターを閉じる"
     },
     tabMode: {
       view: "表示",
-      edit: "編集",
+      edit: "編集"
     },
     viewer: {
       reload: "再読み込み",
       editFile: "ファイルを編集",
-      edit: "編集",
+      edit: "編集"
     },
     tree: {
       loadFailed: "ディレクトリを読み込めませんでした",
@@ -3677,7 +3862,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       empty: "ディレクトリは空です。",
       open: "開く",
       rename: "名前を変更（承認が必要）",
-      delete: "削除（承認が必要）",
+      delete: "削除（承認が必要）"
     },
     patch: {
       title: "差分：{path}",
@@ -3690,7 +3875,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       rejected: "パッチの承認は却下されました。",
       apply: "パッチを適用",
       noChanges: "プレビューする変更はありません。",
-      loading: "差分を読み込み中…",
+      loading: "差分を読み込み中…"
     },
     search: {
       files: "ファイル",
@@ -3702,8 +3887,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       searching: "検索中…",
       noResults: "結果は見つかりませんでした。",
       hint: "検索する内容を入力して Enter を押してください。",
-      truncated: "最初の一致のみを表示しています。条件を絞り込むと範囲を狭められます。",
-    },
+      truncated: "最初の一致のみを表示しています。条件を絞り込むと範囲を狭められます。"
+    }
   },
   userAction: {
     status: {
@@ -3719,8 +3904,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       failed: "{operation} に失敗しました。",
       failedDetail: "{operation} に失敗しました：{detail}",
       other: "{operation}：{status}。",
-      otherDetail: "{operation}：{detail}",
-    },
+      otherDetail: "{operation}：{detail}"
+    }
   },
   hostBanner: {
     previewTitle: "UI プレビュー",
@@ -3738,7 +3923,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     restarting: "再起動中…",
     checking: "デスクトップホストを再検証しています…",
     retry: "ホストへの接続を再試行",
-    retrying: "再試行中…",
+    retrying: "再試行中…"
   },
   uie: {
     move: "移動",
@@ -3784,8 +3969,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       debugMetrics: "メトリクス",
       debugDiagnostics: "診断",
       debugPreview: "プレビュー",
-      debugSimulator: "シミュレーター",
-    },
+      debugSimulator: "シミュレーター"
+    }
   },
   buddy: {
     title: "相棒",
@@ -3799,7 +3984,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     retry: "再試行",
     you: "あなた",
     systemAuthor: "システム",
-    thinking: "思考中…",
+    thinking: "思考中…"
   },
   host: {
     previewReason: "UI プレビューはユーザーデータに接続していません。ワークスペース、ストレージ、リソースのインストールはデスクトップアプリで行ってください。",
@@ -3812,7 +3997,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     connectionStopped: "ホストは終了処理中です。",
     bridgeUnavailable: "デスクトップホストの状態インターフェースを利用できません。接続を再試行してください。",
     connectionCheckFailed: "ホストとの接続を確認できませんでした。デスクトップホストを再試行してください。",
-    previewShim: "UI プレビュー：ワークスペース、ストレージ、インストールの操作はデスクトップアプリで行ってください。",
+    previewShim: "UI プレビュー：ワークスペース、ストレージ、インストールの操作はデスクトップアプリで行ってください。"
   },
   workspaceRoots: {
     title: "ワークスペース",
@@ -3873,8 +4058,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       duplicate: "同じ名前が同じドロップに複数あります",
       exists: "同名ファイルが既にあり、上書きしていません",
       copy_failed: "コピーに失敗しました",
-      unresolved: "実際のパスを取得できません",
-    },
+      unresolved: "実際のパスを取得できません"
+    }
   },
   workspaceEditor: {
     editTitle: "ワークスペースを編集",
@@ -3909,7 +4094,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     save: "保存",
     create: "ワークスペースを作成",
     duplicateFolder: "このフォルダーはすでに追加されています：{path}",
-    tooManyFolders: "ソースフォルダーは最大 {max} 個まで追加できます。",
+    tooManyFolders: "ソースフォルダーは最大 {max} 個まで追加できます。"
   },
   home: {
     untitledProject: "プロジェクト",
@@ -3932,7 +4117,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       sendMessage: "メッセージの送信",
       steerMessage: "方向転換メッセージの送信",
       stopRun: "実行の停止",
-      unregisterWorkspace: "ワークスペースの登録解除",
+      unregisterWorkspace: "ワークスペースの登録解除"
     },
     loadFailed: "読み込みに失敗しました",
     workspacesLoadFailed: "ワークスペースを読み込めませんでした",
@@ -3957,7 +4142,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       recheck: "移動をもう一度確認",
       accepted: "セッションの移動を受け付けました。",
       queued: "このセッションには受け付け済みの待機中のメッセージがまだあります。移動する前に、待機列を実行するかキャンセルしてください。",
-      failed: "セッションの移動に失敗しました",
+      failed: "セッションの移動に失敗しました"
     },
     attachmentSessionPreparing: "添付ファイル用のセッションを準備しています。しばらくしてから再度送信してください。",
     attachmentUploading: "添付ファイルをアップロード中です。しばらくしてから再度送信してください。",
@@ -3965,7 +4150,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     stream: {
       httpFailed: "実行のストリームを開けませんでした（HTTP {status}）",
       noBody: "実行のストリームがデータを返しませんでした",
-      closedEarly: "実行が終わる前にストリームが閉じました。再接続しています",
+      closedEarly: "実行が終わる前にストリームが閉じました。再接続しています"
     },
     sendError: {
       modeUnavailable: "会話モードを利用できません。入力欄の左下でモードを選び直してください。",
@@ -3973,7 +4158,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       modelNotConfigured: "モデルが設定されていません。設定でモデルを選んでから再試行してください。",
       forbidden: "権限がありません",
       recovering: "復旧中です。しばらくしてから再試行してください",
-      offline: "ネットワークが切断されています",
+      offline: "ネットワークが切断されています"
     },
     editBlockedByDraft: "入力欄に未送信のテキストがあります。以前のメッセージを編集する前に、送信するか消去してください。",
     editBlockedByRun: "このメッセージは実行で使用中です。履歴を書き換えるには、先に実行を停止してください。",
@@ -3982,7 +4167,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     toolNeedsApproval: "ツールに承認が必要です",
     toolCompleted: "ツールが完了しました",
     sessionLoadFailed: "セッションを読み込めませんでした",
-    sessionRecoverFailed: "セッションを復旧できませんでした",
+    sessionRecoverFailed: "セッションを復旧できませんでした"
   },
   activity: {
     roles: {
@@ -4000,7 +4185,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       file_finder: "ファイルの検索",
       git_manager: "Git の管理",
       code_writer: "コードの作成",
-      designer: "デザインエージェント",
+      designer: "デザインエージェント"
     },
     banner: {
       thinking: "考え中",
@@ -4012,7 +4197,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       elapsed: "経過時間 {time}",
       planningAgents: "計画層のエージェント",
       executionAgents: "実行層のエージェント",
-      waitingAssignment: "エージェントの割り当てを待っています…",
+      waitingAssignment: "エージェントの割り当てを待っています…"
     },
     agent: {
       active: "実行中",
@@ -4021,7 +4206,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       error: "エラー",
       idle: "アイドル",
       planningLayer: "計画層",
-      executionLayer: "実行層",
+      executionLayer: "実行層"
     },
     agentFallback: "エージェント",
     coordinator: "コーディネーター",
@@ -4092,7 +4277,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     shellAwaitingApproval: "シェルのコマンドが承認待ちです：{command}",
     messageCreated: "新しいメッセージが作成されました",
     workerInterrupted: "{who} は中断され、新しい指示で作業を続けています",
-    runInterrupted: "実行が中断されました。新しい指示で現在のステップをやり直しています",
+    runInterrupted: "実行が中断されました。新しい指示で現在のステップをやり直しています"
   },
   storage: {
     unsavedDraft: "未保存の下書き",
@@ -4120,12 +4305,12 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       logs: "ログ",
       cache: "キャッシュ",
       temp: "一時ファイル",
-      worktrees: "ワークツリー",
+      worktrees: "ワークツリー"
     },
     hostSource: {
       default: "既定",
       desktop: "デスクトップ設定",
-      environment: "環境変数",
+      environment: "環境変数"
     },
     expires: "有効期限",
     cleanupPreview: "クリーンアップのプレビュー",
@@ -4156,7 +4341,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       configuration_unique_filter_unsupported: "この一意インデックスのフィルターには対応していません：{detail}",
       runtime_configuration_missing: "ランタイムの設定ドキュメントが必要です。",
       runtime_configuration_invalid: "ランタイムの設定が無効です：{detail}",
-      tool_configuration_invalid: "ツールの設定が無効です：{detail}",
+      tool_configuration_invalid: "ツールの設定が無効です：{detail}"
     },
     secretReference: "シークレットの参照",
     postgresReference: "PostgreSQL の接続の参照",
@@ -4178,8 +4363,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     title: "ストレージと設定",
     closingCancelled: "閉じる処理をキャンセルしました。プロジェクトの接続を再開しました。",
     closingWait: "プロジェクトの実行と接続が終わるのを待っています。",
-    readingScope: 'ストレージ使用量を集計しています（キャッシュにファイルが多いと時間がかかります）…',
-    statsPartial: 'ファイルが多く集計を打ち切りました（実際はこれ以上）',
+    readingScope: "ストレージ使用量を集計しています（キャッシュにファイルが多いと時間がかかります）…",
+    statsPartial: "ファイルが多く集計を打ち切りました（実際はこれ以上）",
     closeScope: "スコープを閉じる",
     closeMessage: "スコープへの接続を閉じ、設定とデータはすべて残します。閉じる処理は現在の実行とリクエストが終わるのを待ちます。このプロジェクトを表示している他のウィンドウを閉じると、ライブ接続が解放されます。",
     unregister: "登録解除",
@@ -4209,7 +4394,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     discardDraft: "下書きを破棄",
     unsavedMessage: "移動すると現在の下書きは破棄されます。",
     unsavedTitle: "未保存の TOML 設定",
-    trustedWindowRequired: "この変更には信頼されたメインウィンドウのホストが必要です。リモートや Web のクライアントには、明示的に信頼されたホストの認証情報が必要です。",
+    trustedWindowRequired: "この変更には信頼されたメインウィンドウのホストが必要です。リモートや Web のクライアントには、明示的に信頼されたホストの認証情報が必要です。"
   },
   companion: {
     expand: "コンパニオンパネルを開く",
@@ -4263,7 +4448,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       groupLabel: "グループチャット",
       groupSubtitle: "{title} · {members}",
       companionPicker: "コンパニオン",
-      conversationPicker: "会話",
+      conversationPicker: "会話"
     },
     center: {
       loading: "コンパニオンのデータを読み込み中…",
@@ -4390,8 +4575,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       connectionRuntimeUnknown: "未検出",
       connectionRuntimeOnline: "オンライン",
       connectionCheckedAt: "{time} に確認",
-      connectionNeverChecked: "未確認",
-    },
+      connectionNeverChecked: "未確認"
+    }
   },
   desktopPet: {
     window: "ペットのウィンドウ",
@@ -4402,7 +4587,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     approvalTitle: "承認が必要です",
     approve: "承認",
     reject: "拒否",
-    returnToSession: "セッションに戻る",
+    returnToSession: "セッションに戻る"
   },
   library: {
     title: "ライブラリ",
@@ -4413,14 +4598,14 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       cards: "カード",
       feedback: "フィードバック",
       data: "データ表示",
-      layout: "レイアウト",
+      layout: "レイアウト"
     },
     variants: {
       default: "既定",
       secondary: "セカンダリ",
       ghost: "ゴースト",
       outline: "アウトライン",
-      destructive: "破壊的",
+      destructive: "破壊的"
     },
     buttons: {
       variants: "バリエーション",
@@ -4429,7 +4614,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       small: "小",
       large: "大",
       disabled: "無効",
-      loading: "読み込み中",
+      loading: "読み込み中"
     },
     inputs: {
       text: "テキスト入力",
@@ -4437,19 +4622,19 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       value: "値：{value}",
       switch: "スイッチ",
       on: "オン",
-      off: "オフ",
+      off: "オフ"
     },
     cards: {
       title: "既定のカード",
       description: "タイトルと説明のあるカード",
       body: "本文スロットの内容。外枠には {header}/{footer} スロットを使います。",
       action: "操作",
-      badges: "バッジ",
+      badges: "バッジ"
     },
     feedback: {
       notes: "メモ",
       notesBody: "通知はアイランドホスト（App.vue）で表示され、{call} で表示できます。はみ出さないよう、ここでは描画しません。",
-      icons: "アイコン",
+      icons: "アイコン"
     },
     data: {
       table: "表",
@@ -4458,13 +4643,13 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       status: "状態",
       owner: "所有者",
       active: "有効",
-      draft: "下書き",
+      draft: "下書き"
     },
     layout: {
       uie: "ホームとマーケットは {canvas} + {column} を使います。ライブラリは独立したスクロールレイアウトを使います。",
       shell: "シェル",
-      shellBody: "シェル：{shell} は {header} とスクロールする内容を含む縦方向の flex です。パネル：TinadecUI の 3 カラムエンジン。",
-    },
+      shellBody: "シェル：{shell} は {header} とスクロールする内容を含む縦方向の flex です。パネル：TinadecUI の 3 カラムエンジン。"
+    }
   },
   statusLabels: {
     run: {
@@ -4486,7 +4671,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       gate_review: "ゲートレビュー",
       finalizing: "仕上げ中",
       done: "完了",
-      blocked: "ブロック中",
+      blocked: "ブロック中"
     },
     tool: {
       completed: "完了",
@@ -4496,20 +4681,20 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       waiting_approval: "承認待ち",
       blocked: "ブロック中",
       requested: "リクエスト済み",
-      outcome_unknown: "結果不明",
+      outcome_unknown: "結果不明"
     },
     risk: {
       low: "低リスク",
       medium: "中リスク",
       high: "高リスク",
       elevated: "やや高いリスク",
-      critical: "重大なリスク",
+      critical: "重大なリスク"
     },
     severity: {
       info: "情報",
       warning: "警告",
       error: "エラー",
-      blocking: "ブロッキング",
+      blocking: "ブロッキング"
     },
     userAction: {
       requested: "送信済み",
@@ -4521,7 +4706,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       completed: "完了",
       failed: "失敗",
       blocked: "ブロック中",
-      outcome_unknown: "結果不明",
+      outcome_unknown: "結果不明"
     },
     availability: {
       available: "利用可能",
@@ -4529,12 +4714,12 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       unavailable: "利用不可",
       invalid: "不正",
       pending: "処理中",
-      unknown: "不明",
+      unknown: "不明"
     },
     instance: {
       created: "作成済み",
       running: "実行中",
-      released: "解放済み",
+      released: "解放済み"
     },
     approval: {
       pending: "承認待ち",
@@ -4543,8 +4728,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       expired: "期限切れ",
       consumed: "使用済み",
       cancelled: "キャンセル済み",
-      revoked: "取り消し済み",
-    },
+      revoked: "取り消し済み"
+    }
   },
   aboutPage: {
     developerTools: "開発者ツール",
@@ -4595,8 +4780,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       reviewTerminal: "テストエージェント · ターミナルのコマンド",
       reviewPassed: "自動レビューに合格",
       reviewSsh: "テストエージェント · SSH の確認",
-      reviewWaiting: "あなたの判断待ち",
-    },
+      reviewWaiting: "あなたの判断待ち"
+    }
   },
   agentPack: {
     name: "GraphSeedPack",
@@ -4615,7 +4800,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       conflict: "競合",
       owner_required: "ワークスペースのオーナーが必要",
       deferred: "後回し",
-      error: "確認に失敗しました",
+      error: "確認に失敗しました"
     },
     checkAction: "確認してインストール",
     installAction: "インストール",
@@ -4668,11 +4853,12 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     uninstallFailed: "エージェントパックのアンインストールに失敗しました",
     toggleFailed: "エージェントパックの状態を変更できませんでした",
     adoptFailed: "ワークスペースの既定に設定できませんでした",
+    bundledVersion: "同梱バージョン {version}"
   },
   agentCenter: {
     createMode: "新しいモード",
     tabs: {
-      topology: "トポロジー",
+      topology: "トポロジー"
     },
     diagnostics: {
       title: "ガバナンスとハーネスのツール",
@@ -4681,7 +4867,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       layerRules: "層のガバナンスルール",
       layerRulesDesc: "運用層はワークフローと監督を調整し、実行層はタスクを計画してツールを実行します。",
       conflictDetection: "競合の検出",
-      conflictDetectionDesc: "公開時はリビジョンの同時実行トークンと ETag ヘッダーで上書きを防ぎます。",
+      conflictDetectionDesc: "公開時はリビジョンの同時実行トークンと ETag ヘッダーで上書きを防ぎます。"
     },
     filter: {
       searchAgents: "エージェントの名前、種類、説明で検索...",
@@ -4697,7 +4883,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       published: "公開済み",
       archived: "アーカイブ済み",
       active: "有効",
-      resultCount: "{total} 件中 {visible} 件を表示",
+      resultCount: "{total} 件中 {visible} 件を表示"
     },
     agentForm: {
       createTitle: "新しいエージェント定義",
@@ -4724,7 +4910,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       delete: "削除",
       saveSuccess: "エージェントの定義を保存しました",
       publishSuccess: "エージェントを公開しました",
-      deleteSuccess: "エージェントを削除しました",
+      deleteSuccess: "エージェントを削除しました"
     },
     evolution: {
       panelHint: "観察したワークフローの実行から、再利用できる特化エージェントの候補を抽出します。",
@@ -4767,7 +4953,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       fieldModelRoute: "モデルルートの用途",
       add: "追加",
       capabilityPlaceholder: "機能",
-      systemPromptPlaceholder: "カスタムのシステムプロンプトで上書き",
+      systemPromptPlaceholder: "カスタムのシステムプロンプトで上書き"
     },
     runtimeInfo: {
       statusRunning: "実行中",
@@ -4783,19 +4969,19 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       frozenVersion: "固定されたバージョン",
       recentModel: "最近のモデル",
       fallbackSummary: "候補の試行",
-      usedFallback: "フォールバックを使用",
+      usedFallback: "フォールバックを使用"
     },
     empty: {
       noAgents: "一致するエージェントが見つかりません",
       noAgentsHint: "キーワードを変える、絞り込みをリセットする、または新しいエージェントの定義を作成してみてください。",
       noModes: "実行のトポロジーが見つかりません",
-      noPrompts: "一致するプロンプトフラグメントが見つかりません",
+      noPrompts: "一致するプロンプトフラグメントが見つかりません"
     },
     revisionShort: "リビジョン {revision}",
     newNodeLabel: "ノード {n}",
     facts: {
       modelStrategy: "モデル戦略",
-      route: "ルート",
+      route: "ルート"
     },
     governanceRoles: "ガバナンスの役割",
     governanceRolesMissing: "次のガバナンスの役割には、公開済みのエージェントが割り当てられていません：",
@@ -4810,7 +4996,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     modeSaveFailed: "モードを保存できませんでした",
     modePublished: "モードを公開しました",
     versionHistory: "バージョン履歴",
-    publishedReadOnlyHint: "このモードは公開済みのため読み取り専用で表示されます。編集するには複製してカスタムのコピーを作ってください。",
+    publishedReadOnlyHint: "このモードは公開済みのため読み取り専用で表示されます。編集するには複製してカスタムのコピーを作ってください。"
   },
   commandPanel: {
     kw: {
@@ -4827,13 +5013,13 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       runtime: "cli acp",
       agentModels: "agents executor エージェント 実行",
       image: "image picture 画像",
-      file: "file attachment ファイル 添付",
+      file: "file attachment ファイル 添付"
     },
     backHint: "検索が空のときに Backspace または Delete を押すと戻ります。",
     risk: {
       low: "低リスク",
       medium: "中リスク",
-      high: "高リスク",
+      high: "高リスク"
     },
     model: "モデル",
     modelHint: "あなたと会話するエージェントのモデルです。他のエージェントは 1 つ下の階層でそれぞれ設定します",
@@ -4871,7 +5057,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     nextTask: "設定はこの会話の次のタスクに適用されます。送信済みのタスクは元の設定のままです。",
     modelFooter: "各エージェント自身のモデルで、エージェントセンターと同じ設定です。個別に指定されていないエージェントは、モデルセンターで設定した既定のモデルに従います。",
     modelAgents: "他のエージェント",
-    modelAgentsHint: "実行者などの他のエージェントに個別のモデルを指定します",
+    modelAgentsHint: "実行者などの他のエージェントに個別のモデルを指定します"
   },
   composer: {
     agentModels: {
@@ -4887,19 +5073,19 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       inMode: "選択中のモードで使用",
       ownCount: "{count} 個が個別のモデルを使用",
       none: "他のエージェントはありません",
-      failed: "{agent} のモデルを保存できませんでした",
+      failed: "{agent} のモデルを保存できませんでした"
     },
     reasoning: {
       label: "推論の強度",
       hint: "{model} の推論の強度です。このモデルの次のタスクから適用されます",
-      failed: "推論の強度を保存できませんでした",
+      failed: "推論の強度を保存できませんでした"
     },
     modelSwitch: {
       hint: "既定のモデル：すべての会話で使われます。モデルセンターの「既定のモデルに設定」と同じです",
       none: "既定のモデルがありません",
       empty: "モデルはまだありません。モデルセンターで追加してください",
       manage: "モデルセンターで管理…",
-      failed: "既定のモデルを切り替えられませんでした",
+      failed: "既定のモデルを切り替えられませんでした"
     },
     pinnedModel: "固定：{model} · 既定を使う",
     pinnedModelUnavailable: "{model} は利用できません · 既定を使う",
@@ -4937,7 +5123,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     attachFailedUnknown: "アップロードに失敗しました",
     attachFailed: "アップロードに失敗しました（{code}）",
     attachNeedsSession: "最初のメッセージを送ってからファイルを添付してください",
-    removeAttachment: "{name} を削除",
+    removeAttachment: "{name} を削除"
   },
   palette: {
     kwProjectRow: "プロジェクト ワークスペース フォルダー project workspace folder",
@@ -5016,7 +5202,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     kwPets: "pets desktop pet widget ペット デスクトップペット ウィジェット",
     kwLanguage: "language english chinese japanese russian interface translation 言語 英語 中国語 日本語 ロシア語 インターフェース 翻訳",
     kwApiDocs: "api docs developer debug API ドキュメント 開発者 デバッグ",
-    kwAbout: "about version copyright update 情報 バージョン 著作権 更新",
+    kwAbout: "about version copyright update 情報 バージョン 著作権 更新"
   },
   memory: {
     title: "記憶のレビュー",
@@ -5044,7 +5230,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     status: {
       proposed: "提案中",
       promoted: "記憶済み",
-      rejected: "破棄済み",
+      rejected: "破棄済み"
     },
     kind: {
       fact: "事実",
@@ -5053,7 +5239,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       success_pattern: "うまくいったこと",
       failure_pattern: "うまくいかなかったこと",
       task_template: "タスクのテンプレート",
-      supervision_rule: "監督のルール",
+      supervision_rule: "監督のルール"
     },
     scopeLabel: "範囲",
     scope: {
@@ -5061,13 +5247,13 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       workspace: "ワークスペース",
       principal: "自分について",
       project: "プロジェクト",
-      agent: "エージェント",
-    },
+      agent: "エージェント"
+    }
   },
   web: {
     gatewayManaged: "Gateway の URL は Web のデプロイ側で管理されています。",
     petsUnavailable: "Web 版ではペットを利用できません。",
-    panelsUnavailable: "Web 版ではパネルのウィンドウを利用できません。",
+    panelsUnavailable: "Web 版ではパネルのウィンドウを利用できません。"
   },
   common: {
     copyName: "{name}（コピー）",
@@ -5091,7 +5277,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     loading: "読み込み中…",
     none: "なし",
     cancel: "キャンセル",
-    refresh: "更新",
+    refresh: "更新"
   },
   contextMenu: {
     label: "テキストの操作",
@@ -5102,7 +5288,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     copyLink: "リンクをコピー",
     openLink: "リンクを開く",
     clearTerminal: "ターミナルをクリア",
-    hint: "選択したテキストに適用されます",
+    hint: "選択したテキストに適用されます"
   },
   conversation: {
     listSeparator: "、",
@@ -5112,7 +5298,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       files: "{count} 個のファイル",
       searches: "{count} 回の検索",
       lists: "{count} 個のフォルダー",
-      thoughts: "{count} 件の思考",
+      thoughts: "{count} 件の思考"
     },
     duration: {
       underSecond: "<1 秒",
@@ -5120,18 +5306,18 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       minutes: "{m} 分",
       minutesSeconds: "{m} 分 {s} 秒",
       hours: "{h} 時間",
-      hoursMinutes: "{h} 時間 {m} 分",
+      hoursMinutes: "{h} 時間 {m} 分"
     },
     day: {
       today: "今日",
-      yesterday: "昨日",
+      yesterday: "昨日"
     },
     reasoning: {
       drafting: "下書き中…",
       planning: "計画中",
       thinking: "考え中",
       thoughtFor: "{duration} 考えました",
-      showAll: "すべて表示",
+      showAll: "すべて表示"
     },
     agents: {
       openInPanel: "パネルで開く",
@@ -5146,12 +5332,12 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         completed: "完了",
         failed: "失敗",
         blocked: "ブロック中",
-        cancelled: "キャンセル済み",
-      },
+        cancelled: "キャンセル済み"
+      }
     },
     wait: {
       waiting: "{names} を待っています",
-      resolved: "{names} から結果を受け取りました",
+      resolved: "{names} から結果を受け取りました"
     },
     plan: {
       updated: "計画を更新 · {done}/{total}",
@@ -5160,8 +5346,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       status: {
         pending: "未着手",
         in_progress: "進行中",
-        completed: "完了",
-      },
+        completed: "完了"
+      }
     },
     supervision: {
       revise: "監督が修正を求めました",
@@ -5182,21 +5368,52 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         option: {
           continue: "現在の証拠を保持し、不完全な結果を承認して終了します。",
           correct: "指示を追加し、終了前に再計画します。",
-          cancel: "この run を停止し、記録済みの証拠を保持します。",
-        },
-      },
+          cancel: "この run を停止し、記録済みの証拠を保持します。"
+        }
+      }
     },
     correction: {
-      phase: { observe: "問題を特定中", intervene: "修正を実行中", converge: "結果を検証中", backtrack: "調査を再開中" },
-      status: { investigating: "調査中", blocked: "証拠不足", awaiting_user: "あなたの確認待ち", ready: "証拠が揃いました", resolved: "解決済み", reopened: "再開しました" },
-      goal: "目標", symptom: "症状", doneWhen: "完了条件", rootCause: "根本原因",
-      hypotheses: "仮説", evidence: "証拠", coverage: "完了カバレッジ", interventions: "修正履歴", questions: "未解決の質問",
-      empty: "まだ記録はありません", coverageSummary: "変更 {modified} 件、検証済み {verified} 件",
-      waitingQuestion: "続行するには回答が必要です。", questionTitle: "修正内容の確認",
-      answerPlaceholder: "観察や選択を追加…", answerAction: "回答して続行",
-      feedbackPrompt: "この修正の実際の結果は？", stillReproduces: "まだ再現する", resolvedAction: "解決した",
-      reopened: "調査を再開しました", resolved: "解決済みとして記録しました", answerFailed: "回答を送信できませんでした", feedbackFailed: "フィードバックを送信できませんでした",
-      hypothesisStatus: { testing: "検証中", confirmed: "確認済み", rejected: "却下" },
+      phase: {
+        observe: "問題を特定中",
+        intervene: "修正を実行中",
+        converge: "結果を検証中",
+        backtrack: "調査を再開中"
+      },
+      status: {
+        investigating: "調査中",
+        blocked: "証拠不足",
+        awaiting_user: "あなたの確認待ち",
+        ready: "証拠が揃いました",
+        resolved: "解決済み",
+        reopened: "再開しました"
+      },
+      goal: "目標",
+      symptom: "症状",
+      doneWhen: "完了条件",
+      rootCause: "根本原因",
+      hypotheses: "仮説",
+      evidence: "証拠",
+      coverage: "完了カバレッジ",
+      interventions: "修正履歴",
+      questions: "未解決の質問",
+      empty: "まだ記録はありません",
+      coverageSummary: "変更 {modified} 件、検証済み {verified} 件",
+      waitingQuestion: "続行するには回答が必要です。",
+      questionTitle: "修正内容の確認",
+      answerPlaceholder: "観察や選択を追加…",
+      answerAction: "回答して続行",
+      feedbackPrompt: "この修正の実際の結果は？",
+      stillReproduces: "まだ再現する",
+      resolvedAction: "解決した",
+      reopened: "調査を再開しました",
+      resolved: "解決済みとして記録しました",
+      answerFailed: "回答を送信できませんでした",
+      feedbackFailed: "フィードバックを送信できませんでした",
+      hypothesisStatus: {
+        testing: "検証中",
+        confirmed: "確認済み",
+        rejected: "却下"
+      }
     },
     marker: {
       compacted: "コンテキストを圧縮しました",
@@ -5209,7 +5426,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       run_failed: "停止しました：{reason}",
       run_failed_unknown: "エラーで停止しました",
       run_cancelled: "停止しました",
-      worker_interrupted: "エージェントが中断されました",
+      worker_interrupted: "エージェントが中断されました"
     },
     approval: {
       title: "承認が必要です",
@@ -5224,7 +5441,7 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       allowPrefix: "{prefix} で始まるコマンドを常に許可",
       approveShortcut: "承認（⌘/Ctrl+Enter）",
       rejectShortcut: "却下（⌘/Ctrl+Backspace）",
-      failed: "判断を適用できませんでした",
+      failed: "判断を適用できませんでした"
     },
     turn: {
       workedFor: "{duration} 作業しました",
@@ -5237,7 +5454,12 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
       retryHint: "このメッセージを入力欄に戻す",
       newTurns: "新着 {count} 件",
       foldedEarlier: "前の {count} ステップ",
-      awaiting: { awaiting_user: "あなたの判断待ち", awaiting_approval: "あなたの承認待ち", awaiting_delegate: "あなたの委任待ち", generic: "あなたの操作待ち" },
+      awaiting: {
+        awaiting_user: "あなたの判断待ち",
+        awaiting_approval: "あなたの承認待ち",
+        awaiting_delegate: "あなたの委任待ち",
+        generic: "あなたの操作待ち"
+      }
     },
     tool: {
       terminalTitle: "エージェントのターミナル",
@@ -5254,63 +5476,63 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
         withheld: "結果は表示されません",
         withheldSensitive: "非表示：このファイルには認証情報が含まれている可能性があります",
         exitCode: "終了コード {code}",
-        timedOut: "タイムアウトしました",
+        timedOut: "タイムアウトしました"
       },
       read: {
         active: "{subject} を読み取り中",
         done: "{subject} を読み取りました",
-        failed: "{subject} を読み取れませんでした",
+        failed: "{subject} を読み取れませんでした"
       },
       list: {
         active: "{subject} を一覧表示中",
         done: "{subject} を一覧表示しました",
-        failed: "{subject} を一覧表示できませんでした",
+        failed: "{subject} を一覧表示できませんでした"
       },
       search: {
         active: "{subject} を検索中",
         done: "{subject} を検索しました",
-        failed: "検索に失敗しました：{subject}",
+        failed: "検索に失敗しました：{subject}"
       },
       edit: {
         active: "{subject} を編集中",
         done: "{subject} を編集しました",
-        failed: "{subject} を編集できませんでした",
+        failed: "{subject} を編集できませんでした"
       },
       run: {
         active: "{subject} を実行中",
         done: "{subject} を実行しました",
-        failed: "失敗しました：{subject}",
+        failed: "失敗しました：{subject}"
       },
       git: {
         active: "{subject} を実行中",
         done: "{subject} を実行しました",
-        failed: "失敗しました：{subject}",
+        failed: "失敗しました：{subject}"
       },
       mcp: {
         active: "{subject} を呼び出し中",
         done: "{subject} を呼び出しました",
-        failed: "呼び出しに失敗しました：{subject}",
+        failed: "呼び出しに失敗しました：{subject}"
       },
       fetch: {
         active: "{subject} を取得中",
         done: "{subject} を取得しました",
-        failed: "{subject} を取得できませんでした",
+        failed: "{subject} を取得できませんでした"
       },
       browse: {
         active: "{subject} を閲覧中",
         done: "{subject} を閲覧しました",
-        failed: "{subject} を閲覧できませんでした",
+        failed: "{subject} を閲覧できませんでした"
       },
       workspace: {
         active: "ワークスペース {subject} を作成中",
         done: "ワークスペース {subject} を作成しました",
-        failed: "ワークスペース {subject} を作成できませんでした",
+        failed: "ワークスペース {subject} を作成できませんでした"
       },
       other: {
         active: "{subject} を使用中",
         done: "{subject} を使用しました",
-        failed: "{subject} が失敗しました",
-      },
-    },
-  },
-}
+        failed: "{subject} が失敗しました"
+      }
+    }
+  }
+};

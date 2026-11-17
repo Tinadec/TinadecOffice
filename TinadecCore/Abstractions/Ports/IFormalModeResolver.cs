@@ -90,6 +90,13 @@ public sealed record FormalModeRoster(
     public IReadOnlyList<DeclaredSpawnableTemplate> SpawnableTemplates { get; init; } = [];
 
     /// <summary>
+    /// Team-level collaboration instructions frozen in the mode version snapshot.
+    /// The resolver appends them to the conversation identity's system prompt; they
+    /// are audit-visible here so tests and projections can assert what ran.
+    /// </summary>
+    public string? ModeInstructions { get; init; }
+
+    /// <summary>
     /// Host-owned workflow selected by the published mode. Null means ordinary
     /// mode behavior; old mode versions remain byte-compatible.
     /// </summary>

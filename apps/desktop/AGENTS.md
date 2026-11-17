@@ -566,6 +566,22 @@ scope-enabled Core 全部业务 API 要求私有宿主头，health/challenge 两
 **Last Verified Commit:** 0ca6e0fb + 本轮工作树（发送闩语义 + 模式目录作用域修复）；历史证据见 .tinadec_dev/reports/2026-10-11-settings-recovery.zh-CN.md 与 2026-10-11-home-git-widget.zh-CN.md。
 **Branch:** main
 
+### 2026-11-04 模式拓扑图编辑器重建 + 团队协作指令
+
+原 #63 编辑器线对接进 main 的 `IAgentTopologyService`（后端契约见 `TinadecCore/AGENTS.md` 同主题条目）；前端全套来自该 PR，写模型本就是 `node_key`/`edge_key`/`agent_definition_id`/`layer`，与 service 契约同构，只补 `config`/`relationship`/`instructions`/`bindings` 四字段。
+
+- **连线修复**：自定义节点此前没有 `<Handle>`，`useVueFlow()` 与 `<VueFlow>` 也没传 id 各自建 store。`AgentModeCanvas.vue` 用 `FLOW_ID` 同传两者，节点左 target / 右 source，smooth-step + `ArrowClosed` + `interactionWidth:32`；`PromptPipelineCanvas.vue` 同类缺陷一倂修。
+- **布局/校验**：新纯模块 `components/canvas/modeLayout.ts`（最长路径分层 + 确定性排序 + `findFreeSlot`）与 `modeValidation.ts`（自环/重复/悬空/环/回流/无会话身份/多会话/未绑定/空图），画布常驻问题条可点定位；发布用 `requireConversation` 错误集禁用。
+- **面板正确性**：保存后用响应 `revision` 刷新 `If-Match`（此前第二次必 412）；保存/克隆/恢复保留 `canvas_layout`；`toCoreTopology` 写 `edge_key: e.edge_key ?? e.id`；节点删除连带边与 binding、会话身份节点禁删；节点检查器可切 lane/会话身份/标签，边检查器改 Sheet；模式设置可改名称/描述/协作指令。
+- **交互**：工具栏（缩放/适配/自动布局/添加）、snap grid 20、`node-drag-stop` 才提交、切模式后 `fitView`、本地撤销重做（50 步）、键盘 Del/Backspace/Ctrl+Z/Ctrl+Shift+Z/Esc。
+- **团队语义**：`settings/agentCenter/` 一套（`AgentCenterSection`/`TeamsTab`/`TomlDocumentPanel`/`WorkspaceDefaultsPanel`/`teamShape`/`teamTemplates`）。TeamsTab 把团队做成 Mode 浅层视图（Leader+成员+协作方式），复杂拓扑提示去图编排；协作指令写 `agent_modes.instructions`；成员池为「除 Leader 外已启用已发布」，上限 4；成员读写范围写回 node-less bindings `envelope.resources`。`settings/drafts/{draftStore,uiState,storage}.ts` 按 scope/entity/id 隔离草稿、412 标 stale、脱敏、256 KiB 上限。
+- **验证**：`vue-tsc` 0。**未验证**：真实 Electron 连线手感/拖拽观感/发布后跑一轮；原 PR 在旧端点上的 vitest 记录不适用于本对接。
+
+### 2026-11-03 退役模式隐藏与默认模型候选链
+
+- `lib/retiredModes.ts`：已退役模式（auto 等）不再出现在选择器；`ComposerCommandPanel`/`spotlight`/`mockApi`/`mockData` 配套。
+- `useDefaultModel`/`useModelCenter`：切换默认模型改为「新模型置顶 + 保留既有候选作为回退」，不再清掉原候选链。
+
 ### 2026-10-08 工具设置
 
 “工具 / Tools”由ToolCenterSection承载九个标签。ToolJsonEditor只编辑严格JSON行为参数并显示Schema说明/校验/有效值/差异；普通页管理资源状态与Agent绑定。共享默认和持久AgentDefinitionId覆盖通过Core保存，数组整体替换，资源缺省继承与空绑定不同。tool_scope仍由AgentCenter单点编辑。项目/Agent切换、迟到响应、未保存离开、冲突保留草稿和显式恢复默认必须保持。禁用write不等于只读；Shell/Git仍可能写。MCP凭据响应只显示遮蔽/引用，项目Skill修改展示实际治理动作状态。测试/真实Electron与平台边界见`.tinadec_dev/reports/2026-10-08-tools-settings.zh-CN.md`。

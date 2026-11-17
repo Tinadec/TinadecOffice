@@ -475,7 +475,7 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       delay(
         {
           agent_id: input.agent_id,
-          mode: input.mode ?? 'auto',
+          mode: input.mode ?? 'manual',
           fragments: data().promptFragments,
           context_pack_ids: ['ctx-001', 'ctx-002'],
           estimated_tokens: 4096,

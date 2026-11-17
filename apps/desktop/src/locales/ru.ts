@@ -1,4 +1,3 @@
-// Russian interface text for every window and TinadecUI; same keys as en.ts. Code refers to keys, never to the text.
 export default {
   toolsSettings: {
     skillPackageTooMany: "В пакете навыка больше {max} файлов.",
@@ -19,7 +18,7 @@ export default {
       minItems: "Минимум элементов: {value}.",
       maxItems: "Максимум элементов: {value}.",
       required: "Обязательное свойство.",
-      unknownProperty: "Неизвестное свойство.",
+      unknownProperty: "Неизвестное свойство."
     },
     allResources: "Все доступные ресурсы",
     agentSettingsLink: "Открыть настройки инструментов этого агента",
@@ -38,13 +37,13 @@ export default {
       skills_missing: "Ресурс навыка отсутствует или не виден в этом проекте.",
       skills_invalid: "Ресурс навыка недействителен.",
       skills_disabled: "Этот ресурс навыка отключён.",
-      mcp_program: "Программа MCP-сервера {status}. Регистрация сервера не устанавливает его программу: проверьте и одобрите отдельное действие установки.",
+      mcp_program: "Программа MCP-сервера {status}. Регистрация сервера не устанавливает его программу: проверьте и одобрите отдельное действие установки."
     },
     programStatus: {
       not_installed: "не установлена",
       outdated: "устарела",
       invalid: "недействительна",
-      needs_reinstall: "требует переустановки",
+      needs_reinstall: "требует переустановки"
     },
     connectionDisabledHint: "Включите этот ресурс перед проверкой.",
     connectionStatus: {
@@ -53,12 +52,12 @@ export default {
       error: "Ошибка",
       unavailable: "Недоступно",
       unknown: "Неизвестно",
-      not_reported: "Хост инструментов не сообщил о ресурсе",
+      not_reported: "Хост инструментов не сообщил о ресурсе"
     },
     capabilityReason: {
       not_found: "Исполняемый файл не найден по заданному или вычисленному пути.",
       not_in_path: "Исполняемый файл не найден в PATH.",
-      unsupported_platform: "Не поддерживается на этой платформе.",
+      unsupported_platform: "Не поддерживается на этой платформе."
     },
     skillReason: {
       shadowed: "Навык проекта с тем же именем заменяет его в унаследованных привязках.",
@@ -77,7 +76,7 @@ export default {
       name_invalid: "Имя может содержать только строчные буквы, цифры и одиночные дефисы и не может начинаться или заканчиваться дефисом.",
       description_missing: "Во frontmatter нет description.",
       description_too_long: "Описание длиннее {max} символов.",
-      name_directory_mismatch: "Имя «{name}» не совпадает с папкой «{directory}».",
+      name_directory_mismatch: "Имя «{name}» не совпадает с папкой «{directory}»."
     },
     sourceUndeclared: "Источник не указан",
     usedBy: "Используют: {agents}",
@@ -111,7 +110,7 @@ export default {
       web: "Веб",
       mcp: "MCP",
       skills: "Навыки",
-      advanced: "Дополнительно",
+      advanced: "Дополнительно"
     },
     agent: "Объект настройки",
     project: "Контекст ресурсов проекта",
@@ -186,7 +185,7 @@ export default {
     invalid: "Недействительно",
     pendingApproval: "Ожидает одобрения",
     skillQueuedShared: "Состояние действия с общим навыком: {status}. Действие инструмента {id} зависит от состояния одобрения в Core.",
-    packageReview: "Проверьте перед отправкой: цель {scope}, файлов: {count}, дайджест вычислит Core при отправке.",
+    packageReview: "Проверьте перед отправкой: цель {scope}, файлов: {count}, дайджест вычислит Core при отправке."
   },
   space: {
     sessionUnsupported: "Не удалось создать сеанс пространства: сервис пока не поддерживает отдельные типы сеансов. Обновите сервис и повторите попытку.",
@@ -230,7 +229,7 @@ export default {
       result: "Результат цели",
       tool: "Активность инструментов",
       git: "Ресурсы проекта",
-      approval: "Одобрения",
+      approval: "Одобрения"
     },
     cluster: {
       routeBlocked: "Карточки загораживают эту связь. Упорядочьте эту цель, чтобы её увидеть.",
@@ -273,7 +272,7 @@ export default {
       source: "Источник",
       noRelations: "Загруженных зависимостей нет.",
       terminal: "Терминал агента",
-      hideTerminal: "Скрыть панель терминала",
+      hideTerminal: "Скрыть панель терминала"
     },
     status: {
       running: "Выполняется",
@@ -290,8 +289,8 @@ export default {
       approved: "Одобрено",
       rejected: "Отклонено",
       blocked: "Заблокировано",
-      idle: "Готово",
-    },
+      idle: "Готово"
+    }
   },
   errors: {
     invalidServerResponse: "Сервер вернул недопустимый ответ: {text}",
@@ -520,7 +519,7 @@ export default {
       harness_channel_unsupported: "Этот инструмент не предоставляет такой канал.",
       harness_protocol_unsupported: "Этот инструмент не поддерживает такой протокол.",
       tool_execution_not_found: "Вызов инструмента не найден.",
-      internal_error: "На сервере произошла непредвиденная ошибка.",
+      internal_error: "На сервере произошла непредвиденная ошибка."
     },
     category: {
       config: "Конфигурация модели или рабочей области неполна.",
@@ -573,7 +572,7 @@ export default {
       recovery_marked_failed: "Помечено как неудачное при восстановлении.",
       explicit_deny: "Правило авторизации запрещает этот вызов.",
       boundary_not_allowed: "Ни одно правило авторизации не разрешает этот вызов.",
-      missing_authorization_boundary: "Для этого вызова не настроены правила авторизации.",
+      missing_authorization_boundary: "Для этого вызова не настроены правила авторизации."
     },
     workspaceNotRegistered: "Выбранная рабочая область не зарегистрирована в TinadecCore.",
     actions: {
@@ -583,8 +582,8 @@ export default {
       openStorageSettings: "Настройки хранилища",
       openToolSettings: "Настройки инструментов",
       unregisterWorkspace: "Отменить регистрацию",
-      chooseFolder: "Выбрать папку",
-    },
+      chooseFolder: "Выбрать папку"
+    }
   },
   app: {
     name: "TinadecOffice",
@@ -637,7 +636,7 @@ export default {
       preview: "Предпросмотр",
       settings: "Настройки",
       storage: "Хранилище",
-      tools: "Инструменты",
+      tools: "Инструменты"
     },
     fromOtherWindow: "Из другого окна",
     operationCompleted: "Операция завершена",
@@ -651,12 +650,12 @@ export default {
     backendNotConnected: "Нет подключения к серверу",
     backendNotConnectedMessage: "Не удалось подключиться к Core/Gateway за 30 секунд. Некоторые функции могут быть недоступны.",
     backendDisconnected: "Соединение с сервером потеряно",
-    backendDisconnectedMessage: "Соединение с Core/Gateway потеряно. Повторите попытку, когда сервис станет доступен.",
+    backendDisconnectedMessage: "Соединение с Core/Gateway потеряно. Повторите попытку, когда сервис станет доступен."
   },
   nav: {
     chat: "Чат",
     projects: "Проекты",
-    settings: "Настройки",
+    settings: "Настройки"
   },
   sidebar: {
     showAll: "Показать все",
@@ -694,8 +693,8 @@ export default {
     recentConversations: "Недавние разговоры",
     projectConversations: "Разговоры проектов",
     recentActivity: "Недавняя активность",
-    allActivity: 'Вся активность',
-    projectActivity: 'Активность проекта',
+    allActivity: "Вся активность",
+    projectActivity: "Активность проекта",
     activityEmpty: "Активности пока нет",
     activityState: {
       awaiting: "Ждёт вашего ответа",
@@ -704,15 +703,15 @@ export default {
       failed: "Ошибка",
       cancelled: "Отменено",
       unknown: "Неизвестное состояние",
-      idle: "Нет задачи",
+      idle: "Нет задачи"
     },
-    tokenUsage: 'Расход токенов за {days} дней',
-    tokenUsageSummary: 'За последние {days} дн.: {tokens} токенов',
-    tokenUsageSummaryTruncated: 'За последние {days} дн.: не менее {tokens} токенов',
-    tokenUsageTruncated: 'Учтены только последние {count} вызовов',
-    tokenUsageDay: '{date} · {tokens} токенов',
-    tokenUsageDayEmpty: '{date} · нет данных',
-    tokenUsageUnreported: 'Эти вызовы не сообщили расход токенов',
+    tokenUsage: "Расход токенов за {days} дней",
+    tokenUsageSummary: "За последние {days} дн.: {tokens} токенов",
+    tokenUsageSummaryTruncated: "За последние {days} дн.: не менее {tokens} токенов",
+    tokenUsageTruncated: "Учтены только последние {count} вызовов",
+    tokenUsageDay: "{date} · {tokens} токенов",
+    tokenUsageDayEmpty: "{date} · нет данных",
+    tokenUsageUnreported: "Эти вызовы не сообщили расход токенов",
     editWorkspace: "Изменить рабочую область",
     moveUp: "Переместить вверх",
     moveDown: "Переместить вниз",
@@ -734,7 +733,7 @@ export default {
     trashSessionConfirmMessage: "Переместить «{name}» в корзину? Восстановить или окончательно удалить его можно в настройках.",
     migrateSession: "Перенести в проект",
     migrationTarget: "Целевой проект",
-    migrationExplanation: "Сначала выполните или отмените сообщения в очереди. Диалог и связанные материалы перенесутся после завершения текущего запуска; дальнейшие запуски используют опубликованный режим по умолчанию целевого проекта.",
+    migrationExplanation: "Сначала выполните или отмените сообщения в очереди. Диалог и связанные материалы перенесутся после завершения текущего запуска; дальнейшие запуски используют опубликованный режим по умолчанию целевого проекта."
   },
   tinaChat: {
     refresh: "Обновить",
@@ -797,7 +796,7 @@ export default {
     policySaved: "Политика сообщений обновлена",
     policyUnavailable: "Не удалось прочитать политику сообщений этой рабочей области.",
     revisionStale: "Диалог был изменён; перезагрузите и повторите попытку",
-    actionFailed: "Действие не выполнено",
+    actionFailed: "Действие не выполнено"
   },
   organization: {
     title: "Организация",
@@ -816,7 +815,7 @@ export default {
       reports: "Отчёты",
       evidence: "Свидетельства",
       environments: "Окружения",
-      topology: "Топология",
+      topology: "Топология"
     },
     environments: {
       hint: "Тестовые, облачные, удалённые, локальные и терминальные окружения, зарегистрированные в этой рабочей области. Агенты берут окружение через environment_acquire и возвращают после работы; каждый слот одновременно принадлежит только одному запуску и освобождается, когда запуск завершается.",
@@ -842,8 +841,8 @@ export default {
         cloud: "Облачное",
         remote: "Удалённое",
         terminal: "Терминал",
-        test: "Тестовое",
-      },
+        test: "Тестовое"
+      }
     },
     evidenceSearch: {
       placeholder: "Что искать: ключевые слова, путь, идентификатор вроде search#1 или фразу",
@@ -853,19 +852,19 @@ export default {
       noHits: "Подходящих свидетельств не найдено.",
       mode: {
         hybrid: "Смысл + ключевые слова",
-        keyword: "Ключевые слова",
+        keyword: "Ключевые слова"
       },
       kinds: {
         task_result: "Результат задачи",
         report: "Отчёт",
         member_turn: "Вывод участника",
-        summary: "Сводка",
+        summary: "Сводка"
       },
       matchedBy: {
         semantic: "Совпадение по смыслу",
         keyword: "Совпадение по ключевым словам",
-        both: "Совпадение по смыслу и ключевым словам",
-      },
+        both: "Совпадение по смыслу и ключевым словам"
+      }
     },
     role: {
       human: "Пользователь",
@@ -873,7 +872,7 @@ export default {
       governance: "Управление",
       executor: "Исполнитель",
       host: "Система",
-      other: "Другое",
+      other: "Другое"
     },
     online: "В сети",
     offline: "Не в сети",
@@ -895,7 +894,7 @@ export default {
       board: "Доска объявлений",
       plan: "Комната плана",
       adhoc: "Временная комната",
-      other: "Другое",
+      other: "Другое"
     },
     roomMeta: "Участников: {members} · сообщений: {messages}",
     joined: "Вы участник",
@@ -908,7 +907,7 @@ export default {
     noMessages: "В этой комнате пока нет сообщений",
     messageKind: {
       report: "Отчёт",
-      notice: "Уведомление",
+      notice: "Уведомление"
     },
     confidential: "Конфиденциально",
     notMember: "Вы не участник этой комнаты, поэтому можете только читать её",
@@ -922,20 +921,20 @@ export default {
     severity: {
       info: "Информация",
       warning: "Предупреждение",
-      blocking: "Блокирующее",
+      blocking: "Блокирующее"
     },
     reportKind: {
       conflict: "Конфликт",
       risk: "Риск",
       drift: "Отклонение",
       budget: "Бюджет",
-      progress: "Прогресс",
+      progress: "Прогресс"
     },
     reportStatus: {
       open: "Открыт",
       acted: "Обработан",
       dismissed: "Отклонён",
-      superseded: "Заменён",
+      superseded: "Заменён"
     },
     subject: "Объект",
     subjectKind: {
@@ -944,7 +943,7 @@ export default {
       lease: "Аренда",
       approval: "Одобрение",
       member: "Участник",
-      path: "Путь",
+      path: "Путь"
     },
     subjectState: {
       lease_active: "Удерживается",
@@ -952,7 +951,7 @@ export default {
       path_held: "Занят",
       path_free: "Свободен",
       member_online: "В сети",
-      member_offline: "Не в сети",
+      member_offline: "Не в сети"
     },
     subjectUnknown: "Текущее состояние неизвестно",
     proposed: "Предлагает",
@@ -966,7 +965,7 @@ export default {
       resume_run: "Возобновить запуск",
       stop_run: "Остановить запуск",
       assign_environment: "Назначить окружение",
-      ask_user: "Спросить пользователя",
+      ask_user: "Спросить пользователя"
     },
     evidence: "Свидетельства",
     notePlaceholder: "Примечание (необязательно)",
@@ -987,7 +986,7 @@ export default {
       handle: "Идентификатор",
       task: "Задача",
       status: "Статус",
-      writeScope: "Область записи",
+      writeScope: "Область записи"
     },
     noTasks: "В этом запуске пока нет задач",
     tasksTruncated: "Список задач сокращён",
@@ -1019,8 +1018,8 @@ export default {
       created: "Создано",
       blocked: "Заблокировано",
       waiting: "Ожидание",
-      proposed: "Предложено",
-    },
+      proposed: "Предложено"
+    }
   },
   chat: {
     title: "Сеанс Tinadec",
@@ -1057,7 +1056,7 @@ export default {
       tip: "Совет",
       important: "Важно",
       warning: "Предупреждение",
-      caution: "Осторожно",
+      caution: "Осторожно"
     },
     copy: "Копировать сообщение",
     copied: "Скопировано",
@@ -1082,7 +1081,7 @@ export default {
     jumpToLatest: "К последним сообщениям",
     thinking: "Думает",
     usingTools: "Использует инструменты",
-    waitingForApproval: "Ожидает одобрения",
+    waitingForApproval: "Ожидает одобрения"
   },
   context: {
     approval: "Одобрение",
@@ -1109,12 +1108,12 @@ export default {
     companionGroupsDesc: "Участники и последние сообщения только для чтения",
     companionConnections: "Подключения",
     companionConnectionsDesc: "Авторизация, состояние запуска и время последней проверки по каждому компаньону",
-    companionBuddy: 'Разговор с напарником',
-    companionBuddyDesc: 'Единственный разговор с напарником; сверху — всё, что ждёт вашего решения.',
-    companionSupervision: 'Наблюдение за напарниками',
-    companionSupervisionDesc: 'Кто из напарников сессий ждёт вас, работает или уже готов.',
-    companionProfile: 'Личность и модель',
-    companionProfileDesc: 'Изменить личность выбранного компаньона и модель ответов.',
+    companionBuddy: "Разговор с напарником",
+    companionBuddyDesc: "Единственный разговор с напарником; сверху — всё, что ждёт вашего решения.",
+    companionSupervision: "Наблюдение за напарниками",
+    companionSupervisionDesc: "Кто из напарников сессий ждёт вас, работает или уже готов.",
+    companionProfile: "Личность и модель",
+    companionProfileDesc: "Изменить личность выбранного компаньона и модель ответов.",
     gitWidgetPrimary: "Основная папка",
     gitWidgetPrimaryOnly: "Показана только основная папка рабочей области; другие корни не объединяются.",
     gitWidgetNoProject: "Выберите рабочую область, чтобы увидеть состояние Git",
@@ -1349,7 +1348,7 @@ export default {
       forceDeleteBranch: "Принудительно удалить ветку {branch}",
       renameBranch: "Переименовать текущую ветку в {name}",
       createWorktree: "Создать рабочее дерево {path} для {branch}",
-      removeWorktree: "Удалить рабочее дерево {path}",
+      removeWorktree: "Удалить рабочее дерево {path}"
     },
     gitWorkspaceRequired: "Нужна рабочая область проекта.",
     gitNoDiffText: "Нет текста различий для отображения.",
@@ -1428,7 +1427,7 @@ export default {
       Configuration: "Конфигурация",
       Security: "Безопасность",
       API: "API",
-      Size: "Объём",
+      Size: "Объём"
     },
     gitRisk: {
       conflict: "В {path} есть неразрешённые конфликты слияния",
@@ -1447,7 +1446,7 @@ export default {
       summary: "Обновлён {n} файл; {concerns}. | Обновлено {n} файла; {concerns}. | Обновлено {n} файлов; {concerns}.",
       concernCount: "{n} потенциальная проблема | {n} потенциальные проблемы | {n} потенциальных проблем",
       localExplanation: "Сформировано локальными эвристиками; анализ ИИ недоступен.",
-      aiExplanation: "Оценка рисков, созданная ИИ.",
+      aiExplanation: "Оценка рисков, созданная ИИ."
     },
     gitAiGenerate: "Сгенерировать сообщение коммита с ИИ",
     gitAiGenerating: "ИИ генерирует...",
@@ -1468,7 +1467,7 @@ export default {
     gitConvSubjectTooLong: "Заголовок коммита длиннее 72 символов",
     gitConvSubjectWarn: "Заголовок коммита длиннее рекомендуемых 50 символов",
     gitConvInvalidType: "Тип коммита не соответствует спецификации Conventional Commits",
-    gitConvBodyTooLong: "Некоторые строки текста длиннее рекомендуемых 72 символов",
+    gitConvBodyTooLong: "Некоторые строки текста длиннее рекомендуемых 72 символов"
   },
   settings: {
     codeFont: "Шрифт кода",
@@ -1487,7 +1486,7 @@ export default {
       followConfirm: "Использовать эту конфигурацию",
       followed: "«{name}» теперь использует эту конфигурацию моделей",
       detached: "«{name}» теперь использует собственную конфигурацию моделей",
-      switchFailed: "Не удалось переключить конфигурацию моделей рабочей области",
+      switchFailed: "Не удалось переключить конфигурацию моделей рабочей области"
     },
     modelParameters: "Параметры модели",
     modelParametersFor: "Параметры для {model}",
@@ -1520,9 +1519,12 @@ export default {
       low: "Низкая",
       medium: "Средняя",
       high: "Высокая",
-      xhigh: "Максимальная",
+      xhigh: "Максимальная"
     },
-    reasoningScale: { faster: "Быстрее", smarter: "Умнее" },
+    reasoningScale: {
+      faster: "Быстрее",
+      smarter: "Умнее"
+    },
     title: "Настройки",
     back: "Назад",
     personal: "Личное",
@@ -1611,11 +1613,26 @@ export default {
     conversationFlow: "Ход диалога",
     conversationFlowHint: "Сколько шагов и подробностей хода остаётся в диалоге. Ответы, подтверждения и причины ошибок не меняются.",
     conversationFlowPresets: {
-      minimal: { label: "Минимум", summary: "Одна строка итога, шаги инструментов и субагентов полностью свёрнуты." },
-      concise: { label: "Кратко", summary: "Последние шаги остаются, более ранние сворачиваются в одну строку." },
-      balanced: { label: "Средне", summary: "Каждый шаг отдельной строкой, включая чтение файлов и поиск." },
-      detailed: { label: "Подробно", summary: "Строка субагента называет задачу, время и результат, её можно раскрыть на месте." },
-      rich: { label: "Полно", summary: "Все шаги остаются в диалоге, работающий субагент раскрывается сам." },
+      minimal: {
+        label: "Минимум",
+        summary: "Одна строка итога, шаги инструментов и субагентов полностью свёрнуты."
+      },
+      concise: {
+        label: "Кратко",
+        summary: "Последние шаги остаются, более ранние сворачиваются в одну строку."
+      },
+      balanced: {
+        label: "Средне",
+        summary: "Каждый шаг отдельной строкой, включая чтение файлов и поиск."
+      },
+      detailed: {
+        label: "Подробно",
+        summary: "Строка субагента называет задачу, время и результат, её можно раскрыть на месте."
+      },
+      rich: {
+        label: "Полно",
+        summary: "Все шаги остаются в диалоге, работающий субагент раскрывается сам."
+      }
     },
     defaultModeTopology: "Топология режима по умолчанию",
     defaultModeTopologyHint: "Версия топологии режима агентов по умолчанию, используемая при отправке сообщений в сеансе.",
@@ -1641,7 +1658,7 @@ export default {
     serviceCoreUnreachable: "Core не в сети",
     serviceMode: {
       local: "Локальный",
-      cloud: "Облачный",
+      cloud: "Облачный"
     },
     serviceCurrent: "Текущее подключение",
     serviceCoreDirectHint: "Прямые подключения к Core показаны только для сведения: для передачи данных инструментов нужен Gateway.",
@@ -1706,7 +1723,7 @@ export default {
       runBudget: "Предохранитель токенов запуска",
       runBudgetHint: "Суммарный предохранитель токенов запуска; когда выключен, работу останавливают повторы и ошибки.",
       toolCalls: "Предохранитель вызовов инструментов",
-      toolCallsHint: "Сколько вызовов инструментов допускает одна задача; обычная задача не приближается к нему.",
+      toolCallsHint: "Сколько вызовов инструментов допускает одна задача; обычная задача не приближается к нему."
     },
     fragmentCountLabel: "фрагментов",
     pipelineCountLabel: "конвейеров",
@@ -1821,7 +1838,7 @@ export default {
       tagline: "Подпись",
       avatar: "Аватар",
       avatarHint: "Короткий текст или эмодзи; показывается в списках и чатах.",
-      avatarLive2dNote: 'Это импортированная модель Live2D. Рендерер не поставляется с приложением, поэтому она пока не отображается — сохраняется только привязка.',
+      avatarLive2dNote: "Это импортированная модель Live2D. Рендерер не поставляется с приложением, поэтому она пока не отображается — сохраняется только привязка.",
       avatarDefault: "Аватар по умолчанию",
       model: "Модель",
       modelDefault: "Как в маршруте чата по умолчанию",
@@ -1849,7 +1866,7 @@ export default {
         motionCount: "Движений: {count}",
         expressionCount: "Выражений: {count}",
         rendererNote: "Рендерер не входит в состав приложения: модели импортируются и их возможности читаются, но не отображаются. Чтобы показывать модель, предоставьте Cubism Core самостоятельно.",
-        unavailableShort: "Live2D не готов",
+        unavailableShort: "Live2D не готов"
       },
       memory: {
         title: "Личная память",
@@ -1879,7 +1896,7 @@ export default {
         created: "Создано {time}",
         loadFailed: "Не удалось загрузить память",
         saveFailed: "Не удалось сохранить запись",
-        deleteFailed: "Не удалось удалить запись",
+        deleteFailed: "Не удалось удалить запись"
       },
       skill: {
         title: "Навыки",
@@ -1908,7 +1925,7 @@ export default {
         neverLoaded: "Не загружался",
         loadFailed: "Не удалось загрузить навыки",
         saveFailed: "Не удалось сохранить навык",
-        deleteFailed: "Не удалось удалить навык",
+        deleteFailed: "Не удалось удалить навык"
       },
       connection: {
         title: "Подключения",
@@ -1946,7 +1963,7 @@ export default {
         deleteConfirm: "Удалить",
         loadFailed: "Не удалось загрузить подключения",
         saveFailed: "Не удалось сохранить подключение",
-        deleteFailed: "Не удалось удалить подключение",
+        deleteFailed: "Не удалось удалить подключение"
       },
       autonomy: {
         title: "Правила автономии",
@@ -1980,10 +1997,10 @@ export default {
           duplicate_group: "Такая группа уже создана",
           duplicate_member: "Этот участник уже в группе",
           conversation_paused: "Автоответы в этом диалоге приостановлены",
-          duplicate_message: "Это сообщение уже отправлено",
+          duplicate_message: "Это сообщение уже отправлено"
         },
-        saveFailed: "Не удалось сохранить правила автономии",
-      },
+        saveFailed: "Не удалось сохранить правила автономии"
+      }
     },
     pets: "Образ компаньона",
     petdexCatalog: "Каталог Petdex",
@@ -1992,16 +2009,16 @@ export default {
     loadingPets: "Загрузка питомцев",
     noPetsFound: "Подходящих питомцев нет",
     noDownloadedPets: "Загруженных питомцев нет",
-builtinPetBadge: "Встроенный",
-builtinPetHint: "Встроенный запасной образ, удалить нельзя",
-agentAvatarSection: "Образ",
-agentAvatarHint: "«Случайно» — у каждого запуска свой питомец; «закреплено» — этот агент всегда использует одного.",
-agentAvatarRandom: "Случайно",
-agentAvatarEmpty: "Материалы питомцев ещё не установлены; агенты используют заглушку.",
-agentAvatarSaveFailed: "Не удалось сохранить образ",
+    builtinPetBadge: "Встроенный",
+    builtinPetHint: "Встроенный запасной образ, удалить нельзя",
+    agentAvatarSection: "Образ",
+    agentAvatarHint: "«Случайно» — у каждого запуска свой питомец; «закреплено» — этот агент всегда использует одного.",
+    agentAvatarRandom: "Случайно",
+    agentAvatarEmpty: "Материалы питомцев ещё не установлены; агенты используют заглушку.",
+    agentAvatarSaveFailed: "Не удалось сохранить образ",
     petDownloaded: "Загружен",
     petKind: {
-      pet: "Питомец",
+      pet: "Питомец"
     },
     petEnabled: "Включён",
     downloadPet: "Скачать",
@@ -2236,13 +2253,13 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     channelReason: {
       headless_frame_unverified: "Эта сборка ещё не получила безголовый ответ от {harness}, поэтому не может управлять этим каналом.",
       terminal_host_unsupported: "На этой платформе нет поддерживаемого хоста терминала для TUI {harness}.",
-      protocol_unsupported: "В этой сборке пока нет клиента для этого канала.",
+      protocol_unsupported: "В этой сборке пока нет клиента для этого канала."
     },
     probeNote: {
       start_failed: "Не удалось запустить {command}.",
       probe_timeout: "{name} не ответил на {command} за {timeout_ms} мс, поэтому неизвестно, установлен ли он.",
       exit_code: "{name} завершился с кодом {exit_code} при выполнении {command}.",
-      probe_failed: "Не удалось проверить {name}: {error}",
+      probe_failed: "Не удалось проверить {name}: {error}"
     },
     harnessProviderInstance: "Экземпляр провайдера",
     protocolUnknown: "протокол не записан",
@@ -2640,6 +2657,153 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     moduleLoading: "Загрузка настроек…",
     moduleError: "Не удалось загрузить этот раздел.",
     retryModule: "Загрузить снова",
+    agentTeams: "Команды агентов",
+    teamSearch: "Поиск команд…",
+    teamEmptyList: "Команд пока нет. Создайте одну из шаблона справа.",
+    teamLoading: "Чтение команды…",
+    teamWelcomeTitle: "Организуйте агентов в команду",
+    teamWelcomeHint: "Выберите отправную точку: лидер делегирует, фиксированный конвейер или одиночная работа. Графовый редактор доступен в любой момент.",
+    teamEditorHint: "Простое редактирование: лидер + участники + стиль взаимодействия. Сохраните черновик или опубликуйте, затем выберите команду в поле ввода.",
+    teamReadOnlyHint: "Встроенные и опубликованные команды доступны только для чтения; склонируйте одну для изменений.",
+    teamClone: "Клонировать как мою команду",
+    teamSaveDraft: "Сохранить черновик",
+    teamPublish: "Опубликовать",
+    teamOpenGraph: "Открыть в графовом редакторе",
+    teamComplexShape: "В этой команде есть ветвления, несколько привязок или пользовательский конверт; простой редактор не выразит их без потерь. Продолжите в графовом редакторе.",
+    teamName: "Название команды",
+    teamDescription: "Описание команды",
+    teamStyle: "Стиль взаимодействия",
+    teamLeader: "Лидер (идентичность диалога)",
+    teamMembers: "Участники",
+    teamNoMembers: "Участников пока нет; добавьте ниже.",
+    teamMoveUp: "Вверх",
+    teamMoveDown: "Вниз",
+    teamRemoveMember: "Удалить участника",
+    teamMemberScope: "Доступ участника",
+    teamMemberRead: "Чтение",
+    teamMemberWrite: "Запись",
+    teamLeaderRequired: "Сначала выберите лидера",
+    teamNameRequired: "Имя команды не может быть пустым",
+    teamNameTaken: "Команда с таким именем уже существует",
+    teamLeaderUnavailable: "Лидер недоступен: он должен быть включён, опубликован и находиться в слое operation",
+    teamMembersRequired: "В команде должен быть хотя бы один участник",
+    teamMembersLimit: "Не более {max} участников",
+    teamMemberUnavailable: "Недоступные участники: {names}",
+    teamNoLeader: "Нет доступного агента слоя operation",
+    teamTemplateNoMembers: "Нет доступных агентов-участников. Сначала создайте или включите их на вкладке агентов.",
+    teamInstructions: "Инструкции по взаимодействию",
+    teamInstructionsPlaceholder: "Как лидер распределяет работу, как участники отчитываются и как команда завершает задачу",
+    teamMemberCount: "{count} / {max} участников",
+    teamSetDefault: "Сделать по умолчанию",
+    teamDefaultCurrent: "Команда по умолчанию",
+    teamDefaultSet: "Команда назначена по умолчанию",
+    teamNoExecutionAgents: "Нет доступного агента слоя execution; конвейерной команде нужны участники execution",
+    teamUnavailableAgents: "Недоступные агенты: {names} (отключены или не опубликованы)",
+    teamTemplateTeamInstructions: "Вы лидер команды. Разбейте цель и распределите независимые подзадачи по обязанностям. Каждый участник работает в своей сессии и помещает полный результат в финальный ответ. Вы проверяете доказательства, разрешаете конфликты и даёте один полный ответ. Делегировать можете только вы, участники не пересылают работу друг другу.",
+    teamTemplatePipelineInstructions: "Работайте по порядку: лидер разбивает цель, первый участник передаёт результат следующему, лидер проверяет и обобщает в конце. Каждый участник выполняет только свой шаг и пишет полный результат в финальном ответе.",
+    teamTemplateSoloInstructions: "Выполните цель самостоятельно. Сначала уточните ограничения и доказательства, затем действуйте; не делегируйте другим участникам.",
+    teamCreated: "Команда «{name}» создана",
+    teamDraftSaved: "Черновик команды сохранён",
+    teamPublished: "Команда опубликована",
+    teamStatusPublished: "Опубликована",
+    teamDraft: "Черновик",
+    teamArchived: "В архиве",
+    teamBuiltIn: "Встроенная",
+    teamCopySuffix: "копия",
+    teamTemplateTeam: "Самоорганизация",
+    teamTemplateTeamHint: "Лидер понимает цель, при необходимости делегирует участникам и подводит итог.",
+    teamTemplatePipeline: "Фиксированный конвейер",
+    teamTemplatePipelineHint: "Передаёт работу участникам по порядку с проверяемым шагом.",
+    teamTemplateSolo: "Один",
+    teamTemplateSoloHint: "Лидер выполняет работу сам, без подзадач.",
+    bindingsInvalid: "Некорректный JSON привязок",
+    bindingsMustBeArray: "Привязки должны быть массивом",
+    bindingsMustBeObjects: "Каждая привязка должна быть объектом",
+    bindingNeedsKey: "Каждой привязке нужен node_key или agent_ref",
+    jsonObjectRequired: "{field} должен быть JSON-объектом",
+    nodeRelationshipField: "Связи узла (JSON)",
+    nodeRelationshipHint: "duty / success_criteria / agent_types / allowed_dispatch_targets / subscriptions.",
+    edgeConditionField: "Условие ребра (JSON)",
+    bindingsAdvanced: "Расширенные привязки (JSON)",
+    bindingsAdvancedHint: "Конверты узлов, переключатели инструментов и привязки участников без узла; сохранение заменяет весь массив.",
+    restoreVersion: "Восстановить как черновик",
+    modeVersionSnapshotMissing: "У этой версии нет читаемого снимка",
+    modeDiscardChanges: "Отменить несохранённые изменения?",
+    modeDiscardChangesMessage: "При переключении режима будут потеряны несохранённые изменения узлов, связей и привязок.",
+    modeNameRequired: "Имя режима не может быть пустым",
+    modePublishBlocked: "Сначала исправьте ошибки графа (диалоговая идентичность, цикл, обратный поток и т. д.)",
+    modeNoAgents: "Нет доступных агентов. Сначала создайте агента на вкладке агентов.",
+    modeNoAgentsInLane: "В этом слое нет доступных агентов",
+    laneAgentMismatch: "Слой узла не совпадает со слоем агента",
+    spawnMembersTitle: "Участники для вызова",
+    spawnMembersHint: "Участники — это шаблоны вызова, а не узлы графа",
+    spawnMembersEmpty: "Участников пока нет",
+    spawnMemberAdd: "Добавить участника",
+    spawnMemberLimit: "Не более 4 участников",
+    conversationNodeRequired: "Узел диалоговой идентичности нельзя удалить. Сначала перенесите маркер на другой узел operation.",
+    conversationLayerRequired: "Диалоговая идентичность должна оставаться в слое operation",
+    deleteNodeTitle: "Удалить узел",
+    deleteNodeMessage: "Удалить «{name}» и связанные с ним связи?",
+    modeNameField: "Имя режима",
+    modeDescriptionField: "Описание режима",
+    modeInstructionsField: "Инструкции по взаимодействию",
+    modeInstructionsPlaceholder: "Как лидер распределяет работу, как участники отчитываются и как команда завершает задачу",
+    modeUnsaved: "Не сохранено",
+    undoGraph: "Отменить",
+    redoGraph: "Повторить",
+    nodeLane: "Слой",
+    conversationNode: "Сделать диалоговой идентичностью",
+    edgeConfigTitle: "Настройки связи",
+    edgeLabelField: "Подпись связи",
+    modeRestoreName: "{name} · восстановление v{version}",
+    modeRestored: "Восстановлено из v{version}",
+    agentSearchPlaceholder: "Поиск агентов…",
+    agentFilterSource: "Фильтр по источнику",
+    agentFilterLayer: "Фильтр по уровню",
+    agentFilterAllLayers: "Все уровни",
+    agentFilterStatus: "Фильтр по статусу",
+    agentFilterAllStatuses: "Все статусы",
+    noFilteredAgents: "Нет агентов, подходящих под фильтры.",
+    newAgent: "Новый агент",
+    createAgent: "Создать",
+    archiveAgent: "Архивировать агента",
+    archiveAgentConfirm: "Архивировать «{name}»? Он исчезнет из каталога, но история и версии сохранятся.",
+    agentArchived: "«{name}» архивирован",
+    agentName: "Имя",
+    agentRole: "Роль",
+    advanced: "Дополнительно",
+    agentAdvancedHint: "Значения рабочей области по умолчанию и исходные файлы конфигурации. Изменения TOML влияют на следующее чтение.",
+    workspaceDefaults: "Значения рабочей области",
+    workspaceDefaultsHint: "Новые диалоги без явного выбора режима используют этот режим.",
+    workspaceDefaultMode: "Режим по умолчанию",
+    workspaceDefaultAgent: "Агент по умолчанию",
+    workspaceDefaultNone: "Не задано",
+    workspaceDefaultsSave: "Сохранить и опубликовать",
+    workspaceDefaultsSaved: "Значения рабочей области опубликованы",
+    workspaceDefaultsSaveFailed: "Не удалось сохранить значения рабочей области",
+    workspaceDefaultsLoadFailed: "Не удалось прочитать значения рабочей области",
+    tomlTitle: "Файл конфигурации (TOML)",
+    tomlHint: "TOML — источник редактирования, SQL — только проекция. Перед сохранением выполняется проверка; импортированный файл не записывается автоматически.",
+    tomlSelect: "Выберите файл конфигурации",
+    tomlEdit: "Изменить",
+    tomlCancel: "Отмена",
+    tomlValidate: "Проверить",
+    tomlSave: "Сохранить",
+    tomlExport: "Экспорт",
+    tomlImport: "Импорт",
+    tomlValid: "Проверка пройдена",
+    tomlInvalid: "Проверка не пройдена; смотрите диагностику",
+    tomlSaved: "Сохранено",
+    tomlImported: "Загружено в редактор; проверьте перед сохранением",
+    tomlLoadFailed: "Не удалось прочитать файл конфигурации",
+    tomlSaveFailed: "Не удалось сохранить файл конфигурации",
+    agentDraftRestored: "Восстановлен несохранённый черновик",
+    agentDraftStale: "Черновик основан на старой версии; загрузка может перезаписать новые изменения",
+    agentDraftApply: "Загрузить черновик",
+    agentDraftDiscard: "Отменить черновик",
+    agentDraftTooLarge: "Черновик слишком большой для локального хранения; сначала сохраните его на сервере",
+    centerConnections: "Подключения",
+    centerAdvanced: "Дополнительно"
   },
   providers: {
     openaiCompatible: "Совместимый с OpenAI",
@@ -2701,7 +2865,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     zcode: "ZCode",
     zcodeSummary: "Агент ZCode. Без ACP: только однократный запуск или сеанс терминала",
     custom: "Пользовательский провайдер",
-    customSummary: "Пользовательская конечная точка, совместимая с OpenAI",
+    customSummary: "Пользовательская конечная точка, совместимая с OpenAI"
   },
   accentColors: {
     blue: "Синий",
@@ -2712,7 +2876,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     red: "Красный",
     cyan: "Голубой",
     yellow: "Жёлтый",
-    dynamic: "Из фона",
+    dynamic: "Из фона"
   },
   market: {
     action: {
@@ -2722,14 +2886,14 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       installPreview: "Предпросмотр установки",
       queueInstall: "Постановка установки в очередь",
       refreshSource: "Обновление источника",
-      uninstallPreview: "Предпросмотр удаления",
+      uninstallPreview: "Предпросмотр удаления"
     },
     defaultSourceName: "Реестр MCP",
     sourceAdded: "Источник добавлен.",
     sourceNoAnswer: "Источник не ответил ({outcome}).",
     sourceOutcome: {
       blocked: "Политика адресов заблокировала доступ к этому источнику.",
-      unavailable: "На этот раз источник прочитать не удалось; каталог остался прежним.",
+      unavailable: "На этот раз источник прочитать не удалось; каталог остался прежним."
     },
     sourceStale: "Последнее обновление не удалось, поэтому записи ниже взяты из более ранних данных: {error}",
     installBlocker: {
@@ -2745,7 +2909,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       detail_too_large: "Описание пакета этой записи больше, чем может хранить Core.",
       detail_missing: "У этой записи нет сохранённых подробностей.",
       detail_unreadable: "Не удалось прочитать сохранённые подробности этой записи.",
-      not_installable: "Эту запись нельзя установить в этой сборке.",
+      not_installable: "Эту запись нельзя установить в этой сборке."
     },
     refreshedTruncated: "Обновлено записей: {rows} (страниц: {pages}); список длиннее.",
     refreshed: "Обновлено записей: {rows} (отклонено: {refused}, удалено: {removed}, сохранено как установленные: {retained}).",
@@ -2824,7 +2988,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     packageCommit: "Зафиксированный коммит",
     packageHash: "Дайджест пакета",
     packageFiles: "Файлы пакета",
-    scope: "Область",
+    scope: "Область"
   },
   approval: {
     runCommandSummary: "Выполнить команду: {command}",
@@ -2833,14 +2997,14 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     kind: {
       tool: "Вызов инструмента",
       user_tool: "Ваше действие с инструментом",
-      permission: "Запрос разрешения",
+      permission: "Запрос разрешения"
     },
     specConfirmation: "Проверка спецификации",
     specConfirmationHint: "Прочитайте документ целиком. Это решение относится только к документу ниже; последующие этапы требуют отдельного подтверждения.",
     summaryCode: {
       user_requested: "Вы запросили выполнение {tool}.",
       retry_after_unknown: "Повторить {tool}: результат предыдущего запуска неизвестен.",
-      permission_request: "Для выполнения {tool} нужна авторизация.",
+      permission_request: "Для выполнения {tool} нужна авторизация."
     },
     specRequirements: "Требования",
     specDesign: "Проектирование",
@@ -2887,9 +3051,9 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         rejected: "Отклонено",
         escalated: "Возвращено вам",
         skipped: "Не опрашивался",
-        superseded: "Заменено вашим решением",
-      },
-    },
+        superseded: "Заменено вашим решением"
+      }
+    }
   },
   doctor: {
     title: "Диагностика",
@@ -2899,7 +3063,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     counts: {
       ready: "готово",
       warning: "с предупреждением",
-      blocked: "заблокировано",
+      blocked: "заблокировано"
     },
     status: {
       ok: "в норме",
@@ -2913,7 +3077,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       error: "ошибка",
       rejected: "отклонено",
       missing: "отсутствует",
-      blocked: "заблокировано",
+      blocked: "заблокировано"
     },
     reason: {
       database_ready: "База данных доступна.",
@@ -2961,7 +3125,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       tools_handshake_failed: "Программа инструментов ответила некорректно.",
       manifest_ready: "Отпечаток списка инструментов доступен.",
       manifest_hash_missing: "У списка инструментов нет отпечатка, поэтому его изменения нельзя обнаружить.",
-      manifest_unavailable: "Список инструментов неизвестен, потому что программа инструментов недоступна.",
+      manifest_unavailable: "Список инструментов неизвестен, потому что программа инструментов недоступна."
     },
     action: {
       database_unavailable: "Проверьте настройки подключения к базе данных и перезапустите Core.",
@@ -2997,7 +3161,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       probe_failed: "Убедитесь, что конечная точка по адресу {base_url} доступна, и повторите попытку; подробности в журнале Core.",
       tools_not_built: "Выполните npm run dev:tools (npm run dev сначала собирает её сам).",
       tools_handshake_failed: "Пересоберите программу инструментов и перезапустите Core.",
-      manifest_unavailable: "Сначала сделайте программу инструментов доступной.",
+      manifest_unavailable: "Сначала сделайте программу инструментов доступной."
     },
     item: {
       database: "База данных",
@@ -3009,8 +3173,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       model_route: "Маршрут модели",
       model_probe: "Связь с моделью",
       tool_provider: "Провайдер инструментов",
-      manifest_hash: "Манифест инструментов",
-    },
+      manifest_hash: "Манифест инструментов"
+    }
   },
   debugStudio: {
     preview: {
@@ -3036,7 +3200,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         toolCalls: "Вызовы инструментов",
         events: "События",
         agents: "Агенты",
-        tools: "Инструменты",
+        tools: "Инструменты"
       },
       noOrchestration: "В этом сценарии нет запуска оркестрации; переключитесь на «С данными» или «Агенты работают», чтобы его увидеть.",
       noGitDiff: "В этом сценарии нет различий Git; переключитесь на «Изменения Git», чтобы их увидеть.",
@@ -3056,7 +3220,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         code: "Редактор кода (настоящий CodePage)",
         settings: "Настройки (настоящий SettingsPage)",
         allTabs: "Доступны все вкладки",
-        market: "Маркетплейс расширений (настоящий MarketPage · изолированный движок UIE)",
+        market: "Маркетплейс расширений (настоящий MarketPage · изолированный движок UIE)"
       },
       items: {
         ChatPanel: "Панель чата",
@@ -3073,50 +3237,50 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         ToolStatsDashboard: "Панель статистики инструментов",
         DiffViewer: "Просмотр различий",
         CommitMessageEditor: "Редактор сообщения коммита",
-        FileTreePanel: "Панель дерева файлов",
+        FileTreePanel: "Панель дерева файлов"
       },
       scenario: {
         populated: {
           label: "С данными",
-          description: "Стандартное насыщенное состояние: проекты, сеансы, сообщения, оркестрация, вызовы инструментов и многое другое.",
+          description: "Стандартное насыщенное состояние: проекты, сеансы, сообщения, оркестрация, вызовы инструментов и многое другое."
         },
         empty: {
           label: "Пусто",
-          description: "Нет проектов, сеансов и сообщений; проверка интерфейса пустого состояния.",
+          description: "Нет проектов, сеансов и сообщений; проверка интерфейса пустого состояния."
         },
         loading: {
           label: "Загрузка",
-          description: "Данные загружаются: все коллекции пусты, а компоненты должны показывать заглушки или индикаторы загрузки.",
+          description: "Данные загружаются: все коллекции пусты, а компоненты должны показывать заглушки или индикаторы загрузки."
         },
         busy: {
           label: "Агенты работают",
-          description: "Запуск оркестрации выполняется, идут вызовы инструментов и есть ожидающие одобрения.",
+          description: "Запуск оркестрации выполняется, идут вызовы инструментов и есть ожидающие одобрения."
         },
         approvalPending: {
           label: "Ожидают одобрения",
-          description: "Три ожидающих одобрения для git / shell / code; проверка интерфейса одобрений.",
+          description: "Три ожидающих одобрения для git / shell / code; проверка интерфейса одобрений."
         },
         error: {
           label: "Ошибка",
-          description: "Doctor сообщает об ошибках, готовность заблокирована; проверка интерфейса ошибок.",
+          description: "Doctor сообщает об ошибках, готовность заблокирована; проверка интерфейса ошибок."
         },
         agentWorking: {
           label: "Агент активен",
-          description: "Запуск оркестрации с несколькими step_results в состоянии заглушки и баннером активности агента.",
+          description: "Запуск оркестрации с несколькими step_results в состоянии заглушки и баннером активности агента."
         },
         manyMessages: {
           label: "Много сообщений",
-          description: "Более 20 сообщений с длинным Markdown; проверка прокрутки и скорости отрисовки списка.",
+          description: "Более 20 сообщений с длинным Markdown; проверка прокрутки и скорости отрисовки списка."
         },
         gitChanges: {
           label: "Изменения Git",
-          description: "Предпросмотр различий Git содержит 3 раздела (рабочее дерево / индекс / сравнение веток) и несколько изменённых файлов.",
+          description: "Предпросмотр различий Git содержит 3 раздела (рабочее дерево / индекс / сравнение веток) и несколько изменённых файлов."
         },
         toolFailures: {
           label: "Сбои инструментов",
-          description: "Несколько вызовов инструментов завершились ошибкой; проверка интерфейса сбоев и отображения ошибок.",
-        },
-      },
+          description: "Несколько вызовов инструментов завершились ошибкой; проверка интерфейса сбоев и отображения ошибок."
+        }
+      }
     },
     tabPreview: "Предпросмотр",
     simulation: {
@@ -3129,7 +3293,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       approved: "Имитационное одобрение: одобрено",
       rejectedApproval: "Имитационное одобрение: отклонено",
       decisionRejected: "Решение по одобрению отклонено",
-      decisionFailed: "Не удалось принять решение по одобрению",
+      decisionFailed: "Не удалось принять решение по одобрению"
     },
     requestFailed: {
       injectMessage: "Не удалось вставить сообщение: {error}",
@@ -3144,7 +3308,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       fetchDiagnostics: "Не удалось получить диагностику: {error}",
       fetchProcessInfo: "Не удалось получить сведения о процессе: {error}",
       fetchTraces: "Не удалось получить трассировки: {error}",
-      fetchTraceDetail: "Не удалось получить подробности трассировки: {error}",
+      fetchTraceDetail: "Не удалось получить подробности трассировки: {error}"
     },
     title: "Студия отладки агентов",
     tabTimeline: "Временная шкала",
@@ -3205,7 +3369,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     errors: "Ошибок: {count}",
     loadingGraph: "Загрузка графа агентов...",
     graphLoadFailed: "Не удалось загрузить каталог агентов из Gateway.",
-    graphDirectoryNote: "Каталог агентов по уровням — топология запуска находится на вкладке оркестрации этого запуска",
+    graphDirectoryNote: "Каталог агентов по уровням — топология запуска находится на вкладке оркестрации этого запуска"
   },
   permission: {
     selectLabel: "Способ одобрения инструментов",
@@ -3221,7 +3385,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     delegateBoth: "Одобряют оба",
     delegateConversationHint: "Одобряет координатор, знающий вашу цель. Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы.",
     delegateReviewerHint: "Одобряет рецензент в собственном контексте (только действие и факты, без диалога). Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы.",
-    delegateBothHint: "Выполняется, только если одобрили и рецензент, и координатор; один отказ означает отказ. Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы.",
+    delegateBothHint: "Выполняется, только если одобрили и рецензент, и координатор; один отказ означает отказ. Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы."
   },
   agent: {
     agent: "Агент",
@@ -3270,7 +3434,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     supervisionCorrect: "Исправить",
     supervisionCancel: "Отмена",
     supervisionCorrectionPrompt: "Опишите исправление; после отправки запуск будет перепланирован.",
-    supervisionDecisionFailed: "Не удалось принять решение надзора",
+    supervisionDecisionFailed: "Не удалось принять решение надзора"
   },
   terminal: {
     agentBadge: "АГЕНТ",
@@ -3290,7 +3454,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       cwd: "(рабочий каталог: {cwd})",
       exited: "[Процесс завершился с кодом {code}]",
       terminated: "[Сеанс завершён]",
-      inputLost: "[Ввод не доставлен]",
+      inputLost: "[Ввод не доставлен]"
     },
     call: {
       notReady: "Сеанс терминала ещё не готов; повторите попытку чуть позже",
@@ -3302,11 +3466,11 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       resume: "Продолжить",
       pause: "Пауза",
       stop: "Остановить",
-      openInPanel: "Открыть на панели",
+      openInPanel: "Открыть на панели"
     },
     shellName: {
       cmd: "Командная строка",
-      default: "Оболочка по умолчанию",
+      default: "Оболочка по умолчанию"
     },
     defaultTitle: "Терминал",
     defaultShell: "Оболочка по умолчанию",
@@ -3314,18 +3478,18 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     exited: "Завершён",
     notAvailable: "Терминал недоступен",
     notAvailableHint: "Встроенному терминалу нужно настольное приложение Electron. В браузере или веб-предпросмотре он недоступен.",
-    shortcutHint: "Ctrl+Shift+T — новый · Ctrl+W — закрыть · Ctrl+Tab — переключить",
+    shortcutHint: "Ctrl+Shift+T — новый · Ctrl+W — закрыть · Ctrl+Tab — переключить"
   },
   orchestrationPanel: {
     conversationNode: "агент диалога",
     tier: {
       deterministic: "deterministic · фиксированная топология",
       self_dispatch: "self_dispatch · распределение по связям",
-      free_form: "free_form · свободная сборка",
+      free_form: "free_form · свободная сборка"
     },
     layer: {
       operation: "операционный уровень",
-      execution: "уровень исполнения",
+      execution: "уровень исполнения"
     },
     stepResults: "Результаты шагов",
     noStepResults: "Результатов шагов нет.",
@@ -3340,7 +3504,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     tabs: {
       timeline: "Временная шкала",
       catalog: "Каталог",
-      stats: "Статистика",
+      stats: "Статистика"
     },
     refreshTools: "Обновить инструменты",
     refreshToolsHint: "Обновить каталог инструментов",
@@ -3370,7 +3534,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     groupTokens: "{name}{via} · токенов: {tokens}{partial} · {calls}",
     unreported: " (без отчёта: {count})",
     flows: "{count} поток | {count} потока | {count} потоков",
-    identity: "· агент диалога",
+    identity: "· агент диалога"
   },
   toolPanel: {
     filters: {
@@ -3378,7 +3542,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       success: "Успешно",
       failed: "Ошибка",
       approval: "Одобрение",
-      running: "Выполняется",
+      running: "Выполняется"
     },
     newest: "Сначала новые",
     oldest: "Сначала старые",
@@ -3406,7 +3570,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       completedWithFailure: "{tool} завершился, но сообщил об ошибке.",
       failed: "{tool} завершился ошибкой.",
       failedWith: "{tool} завершился ошибкой: {reason}",
-      outcome_unknown: "Результат {tool} неизвестен.",
+      outcome_unknown: "Результат {tool} неизвестен."
     },
     catalog: {
       search: "Поиск инструментов по имени, возможности или области…",
@@ -3428,7 +3592,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       capabilities: "Возможности",
       required: "Требуется",
       notRequired: "Не требуется",
-      execute: "Выполнить",
+      execute: "Выполнить"
     },
     stats: {
       overview: "Обзор",
@@ -3445,15 +3609,15 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       blocked: "Заблокированы",
       topTools: "Частые инструменты",
       bySource: "По источникам",
-      empty: "В этом сеансе ещё нет данных о выполнении инструментов.",
-    },
+      empty: "В этом сеансе ещё нет данных о выполнении инструментов."
+    }
   },
   taskGraph: {
     empty: "Отправьте задачу, чтобы создать план оркестрации.",
-    escalated: "эскалировано",
+    escalated: "эскалировано"
   },
   eventsPanel: {
-    empty: "В этом диалоге пока нет событий.",
+    empty: "В этом диалоге пока нет событий."
   },
   governance: {
     preAuthorizeHint: "Разрешите ограниченное число использований выбранных инструментов без присмотра в одном запуске. Проверки привязки всё равно применяются к каждому вызову.",
@@ -3466,29 +3630,29 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       auditReference: "ссылка аудита",
       snapshot: "ID снимка",
       lastReason: "последняя причина восстановления",
-      message: "сообщение",
+      message: "сообщение"
     },
     snapshotKind: {
       filesystem: "Копия файлов",
-      git: "Git",
+      git: "Git"
     },
     snapshotStatus: {
       created: "создан",
       conflict: "конфликт",
       restored: "восстановлен",
-      restored_with_conflicts: "восстановлен с конфликтами",
+      restored_with_conflicts: "восстановлен с конфликтами"
     },
     fileChange: {
       added: "добавлен",
       deleted: "удалён",
       modified: "изменён",
-      unchanged: "без изменений",
+      unchanged: "без изменений"
     },
     snapshotFacts: {
       files: "Файлы",
       workspaceHash: "Хеш рабочей области",
       contentHash: "Хеш содержимого",
-      createdAt: "Создан",
+      createdAt: "Создан"
     },
     riskMeta: "риск: {risk}",
     actionApprovals: "Одобрения действий",
@@ -3530,7 +3694,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     snapshotsTitle: "Снимки рабочей области",
     supervision: "Проверка надзора",
     supervisionEmpty: "Замечаний надзора пока нет.",
-    undoFile: "Откатить этот файл",
+    undoFile: "Откатить этот файл"
   },
   canvas: {
     unbound: "Не привязано",
@@ -3543,6 +3707,27 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     choosePipeline: "Выберите конвейер, чтобы увидеть его холст",
     pipelineHint: "Перетаскивайте узлы · соединяйте · выберите, чтобы увидеть подробности",
     contractEdge: "контракт",
+    zoomIn: "Увеличить",
+    zoomOut: "Уменьшить",
+    fitView: "По размеру",
+    autoLayout: "Авторазметка",
+    addNode: "Добавить узел",
+    conversationBadge: "диалог",
+    emptyTitle: "Узлов пока нет",
+    emptyHint: "Добавьте первого агента или разложите существующие узлы авторазметкой.",
+    emptyReadonly: "Этот режим управляется Agent Pack. Клонируйте его, чтобы изменить.",
+    issue: {
+      empty: "Граф пуст",
+      "unbound-node": "У узла не привязан агент",
+      "self-loop": "Узел нельзя соединить с самим собой",
+      "duplicate-edge": "Дублирующаяся связь",
+      "dangling-endpoint": "Связь указывает на отсутствующий узел",
+      cycle: "В графе есть цикл, разметка по слоям невозможна",
+      backflow: "Из execution нельзя соединить обратно в operation",
+      "no-conversation": "Нет узла диалоговой идентичности",
+      "multi-conversation": "Допускается только одна диалоговая идентичность",
+      "conversation-layer": "Диалоговая идентичность должна быть в слое operation"
+    }
   },
   workbench: {
     title: "Рабочая панель",
@@ -3555,7 +3740,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       mode: "режим {value}",
       config: "конф. {value}",
       revision: "ред. {value}",
-      manifest: "манифест {value}",
+      manifest: "манифест {value}"
     },
     facts: {
       layer: "уровень",
@@ -3564,7 +3749,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       depth: "глубина порождения",
       parent: "родитель",
       task: "задача",
-      capabilities: "возможности",
+      capabilities: "возможности"
     },
     counts: "узлов: {nodes} · замечаний: {findings} · версий контекста: {versions}",
     findings: "Замечания надзора",
@@ -3576,7 +3761,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     executionLane: "исполнение",
     laneEmpty: "Для этого запуска ещё нет экземпляров агентов.",
     lineageEdge: "связь порождения",
-    operationLane: "операционный уровень",
+    operationLane: "операционный уровень"
   },
   documents: {
     tree: "Файлы",
@@ -3587,7 +3772,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     hideTree: "Скрыть папки",
     noWorkspace: "Проект не выбран, поэтому файлы рабочей области недоступны.",
     loadingEditor: "Загружаем редактор…",
-    editorFailed: "Не удалось загрузить редактор",
+    editorFailed: "Не удалось загрузить редактор"
   },
   docReader: {
     tabs: "Открытые документы",
@@ -3611,12 +3796,12 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     tooLargeTitle: "Файл слишком большой",
     tooLargeDetail: "Размер файла {size}; он не отображается на боковой панели.",
     closeTab: "Закрыть документ",
-    truncated: "Показаны только первые {count} строк",
+    truncated: "Показаны только первые {count} строк"
   },
   codeEditor: {
     emptyTitle: "Выберите файл для правки",
     emptyHint: "Слева — структура папок этой рабочей области; сохранение требует одобрения.",
-    closeFile: "Закрыть этот файл",
+    closeFile: "Закрыть этот файл"
   },
   code: {
     selectProject: "Выберите проект…",
@@ -3647,16 +3832,16 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       saveShortcut: "Сохранить (Ctrl+S)",
       noChanges: "Изменений нет",
       save: "Сохранить",
-      close: "Закрыть редактор",
+      close: "Закрыть редактор"
     },
     tabMode: {
       view: "Просмотр",
-      edit: "Правка",
+      edit: "Правка"
     },
     viewer: {
       reload: "Перезагрузить",
       editFile: "Изменить файл",
-      edit: "Изменить",
+      edit: "Изменить"
     },
     tree: {
       loadFailed: "Не удалось загрузить каталог",
@@ -3677,7 +3862,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       empty: "Каталог пуст.",
       open: "Открыть",
       rename: "Переименовать (с одобрением)",
-      delete: "Удалить (с одобрением)",
+      delete: "Удалить (с одобрением)"
     },
     patch: {
       title: "Различия: {path}",
@@ -3690,7 +3875,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       rejected: "Одобрение патча отклонено.",
       apply: "Применить патч",
       noChanges: "Нет изменений для предпросмотра.",
-      loading: "Загрузка различий…",
+      loading: "Загрузка различий…"
     },
     search: {
       files: "Файлы",
@@ -3702,8 +3887,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       searching: "Поиск…",
       noResults: "Ничего не найдено.",
       hint: "Введите запрос и нажмите Enter.",
-      truncated: "Показаны первые совпадения — уточните запрос, чтобы сузить их.",
-    },
+      truncated: "Показаны первые совпадения — уточните запрос, чтобы сузить их."
+    }
   },
   userAction: {
     status: {
@@ -3719,8 +3904,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       failed: "{operation}: не удалось.",
       failedDetail: "{operation}: не удалось: {detail}",
       other: "{operation}: {status}.",
-      otherDetail: "{operation}: {detail}",
-    },
+      otherDetail: "{operation}: {detail}"
+    }
   },
   hostBanner: {
     previewTitle: "Предпросмотр интерфейса",
@@ -3738,7 +3923,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     restarting: "Перезапуск…",
     checking: "Повторная проверка хоста приложения…",
     retry: "Повторить подключение к хосту",
-    retrying: "Повтор…",
+    retrying: "Повтор…"
   },
   uie: {
     move: "Переместить",
@@ -3784,8 +3969,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       debugMetrics: "Метрики",
       debugDiagnostics: "Диагностика",
       debugPreview: "Предпросмотр",
-      debugSimulator: "Симулятор",
-    },
+      debugSimulator: "Симулятор"
+    }
   },
   buddy: {
     title: "Напарник",
@@ -3799,7 +3984,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     retry: "Повторить",
     you: "Вы",
     systemAuthor: "Система",
-    thinking: "Думает…",
+    thinking: "Думает…"
   },
   host: {
     previewReason: "Предпросмотр интерфейса не подключён к данным пользователя. Рабочие области, хранилище и установку ресурсов используйте в настольном приложении.",
@@ -3812,7 +3997,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     connectionStopped: "Хост завершает работу.",
     bridgeUnavailable: "Интерфейс состояния хоста приложения недоступен; повторите подключение.",
     connectionCheckFailed: "Не удалось проверить подключение к хосту. Повторите подключение к хосту приложения.",
-    previewShim: "Предпросмотр интерфейса: операции с рабочими областями, хранилищем и установкой выполняйте в настольном приложении.",
+    previewShim: "Предпросмотр интерфейса: операции с рабочими областями, хранилищем и установкой выполняйте в настольном приложении."
   },
   workspaceRoots: {
     title: "Рабочее пространство",
@@ -3873,8 +4058,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       duplicate: "Одно и то же имя в одном переносе",
       exists: "Файл с таким именем уже есть; не перезаписан",
       copy_failed: "Копирование не удалось",
-      unresolved: "Не удалось получить реальный путь",
-    },
+      unresolved: "Не удалось получить реальный путь"
+    }
   },
   workspaceEditor: {
     editTitle: "Изменение рабочей области",
@@ -3909,7 +4094,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     save: "Сохранить",
     create: "Создать рабочую область",
     duplicateFolder: "Папка уже добавлена: {path}",
-    tooManyFolders: "Можно добавить не более {max} папок с исходным кодом.",
+    tooManyFolders: "Можно добавить не более {max} папок с исходным кодом."
   },
   home: {
     untitledProject: "Проект",
@@ -3932,7 +4117,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       sendMessage: "Отправка сообщения",
       steerMessage: "Отправка направляющего сообщения",
       stopRun: "Остановка запуска",
-      unregisterWorkspace: "Отмена регистрации рабочей области",
+      unregisterWorkspace: "Отмена регистрации рабочей области"
     },
     loadFailed: "Не удалось загрузить",
     workspacesLoadFailed: "Не удалось загрузить рабочие области",
@@ -3957,7 +4142,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       recheck: "Проверить перенос снова",
       accepted: "Перенос сеанса принят.",
       queued: "В этом сеансе ещё есть принятые сообщения в очереди. Выполните или отмените очередь перед переносом.",
-      failed: "Не удалось перенести сеанс",
+      failed: "Не удалось перенести сеанс"
     },
     attachmentSessionPreparing: "Сеанс для вложения ещё готовится; отправьте снова чуть позже.",
     attachmentUploading: "Вложение ещё загружается; отправьте снова чуть позже.",
@@ -3965,7 +4150,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     stream: {
       httpFailed: "Не удалось открыть поток запуска (HTTP {status})",
       noBody: "Поток запуска не вернул данных",
-      closedEarly: "Поток запуска закрылся до завершения запуска; переподключение",
+      closedEarly: "Поток запуска закрылся до завершения запуска; переподключение"
     },
     sendError: {
       modeUnavailable: "Режим диалога недоступен. Выберите режим заново в левом нижнем углу поля ввода.",
@@ -3973,7 +4158,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       modelNotConfigured: "Модель не настроена. Выберите модель в настройках и повторите попытку.",
       forbidden: "Недостаточно прав",
       recovering: "Идёт восстановление; повторите попытку чуть позже",
-      offline: "Нет подключения к сети",
+      offline: "Нет подключения к сети"
     },
     editBlockedByDraft: "В поле ввода остался неотправленный текст. Отправьте или очистите его, прежде чем редактировать прежнее сообщение.",
     editBlockedByRun: "Это сообщение использует запуск. Остановите его, прежде чем переписывать историю.",
@@ -3982,7 +4167,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     toolNeedsApproval: "Инструменту нужно одобрение",
     toolCompleted: "Инструмент завершил работу",
     sessionLoadFailed: "Не удалось загрузить сеанс",
-    sessionRecoverFailed: "Не удалось восстановить сеанс",
+    sessionRecoverFailed: "Не удалось восстановить сеанс"
   },
   activity: {
     roles: {
@@ -4000,7 +4185,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       file_finder: "Поиск файлов",
       git_manager: "Управление Git",
       code_writer: "Написание кода",
-      designer: "Агент дизайна",
+      designer: "Агент дизайна"
     },
     banner: {
       thinking: "Думает",
@@ -4012,7 +4197,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       elapsed: "Прошло {time}",
       planningAgents: "Агенты уровня планирования",
       executionAgents: "Агенты уровня исполнения",
-      waitingAssignment: "Ожидание назначения агентов…",
+      waitingAssignment: "Ожидание назначения агентов…"
     },
     agent: {
       active: "Выполняется",
@@ -4021,7 +4206,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       error: "Ошибка",
       idle: "Простаивает",
       planningLayer: "Уровень планирования",
-      executionLayer: "Уровень исполнения",
+      executionLayer: "Уровень исполнения"
     },
     agentFallback: "Агент",
     coordinator: "Координатор",
@@ -4092,7 +4277,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     shellAwaitingApproval: "Команда shell ожидает одобрения: {command}",
     messageCreated: "Создано новое сообщение",
     workerInterrupted: "{who} прерван и продолжает по новым указаниям",
-    runInterrupted: "Запуск прерван; текущий шаг выполняется заново по новым указаниям",
+    runInterrupted: "Запуск прерван; текущий шаг выполняется заново по новым указаниям"
   },
   storage: {
     unsavedDraft: "Несохранённый черновик",
@@ -4120,12 +4305,12 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       logs: "Журналы",
       cache: "Кэш",
       temp: "Временные файлы",
-      worktrees: "Рабочие деревья",
+      worktrees: "Рабочие деревья"
     },
     hostSource: {
       default: "По умолчанию",
       desktop: "Настройки приложения",
-      environment: "Переменная окружения",
+      environment: "Переменная окружения"
     },
     expires: "Действует до",
     cleanupPreview: "Предпросмотр очистки",
@@ -4156,7 +4341,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       configuration_unique_filter_unsupported: "Этот фильтр уникального индекса не поддерживается: {detail}",
       runtime_configuration_missing: "Требуется документ конфигурации среды выполнения.",
       runtime_configuration_invalid: "Конфигурация среды выполнения недействительна: {detail}",
-      tool_configuration_invalid: "Конфигурация инструментов недействительна: {detail}",
+      tool_configuration_invalid: "Конфигурация инструментов недействительна: {detail}"
     },
     secretReference: "ссылка на секрет",
     postgresReference: "Ссылка на подключение PostgreSQL",
@@ -4178,8 +4363,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     title: "Хранилище и конфигурация",
     closingCancelled: "Закрытие отменено. Подключения проекта восстановлены.",
     closingWait: "Ожидание завершения запусков и подключений проекта.",
-    readingScope: 'Считаем занятое место (дольше, если в кэше много файлов)…',
-    statsPartial: 'файлов слишком много, подсчёт остановлен (на самом деле больше)',
+    readingScope: "Считаем занятое место (дольше, если в кэше много файлов)…",
+    statsPartial: "файлов слишком много, подсчёт остановлен (на самом деле больше)",
     closeScope: "Закрыть область",
     closeMessage: "Закрыть подключение к области, сохранив всю конфигурацию и данные. Закрытие ждёт завершения текущих запусков и запросов; закройте другие окна этого проекта, чтобы освободить активные подключения.",
     unregister: "Отменить регистрацию",
@@ -4209,7 +4394,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     discardDraft: "Отменить черновик",
     unsavedMessage: "Если уйти, текущий черновик будет потерян.",
     unsavedTitle: "Несохранённая конфигурация TOML",
-    trustedWindowRequired: "Для этого изменения нужен доверенный хост главного окна. Удалённым и веб-клиентам нужны явно доверенные учётные данные хоста.",
+    trustedWindowRequired: "Для этого изменения нужен доверенный хост главного окна. Удалённым и веб-клиентам нужны явно доверенные учётные данные хоста."
   },
   companion: {
     expand: "Открыть панель компаньона",
@@ -4263,7 +4448,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       groupLabel: "Групповой чат",
       groupSubtitle: "{title} · {members}",
       companionPicker: "Компаньон",
-      conversationPicker: "Беседа",
+      conversationPicker: "Беседа"
     },
     center: {
       loading: "Загрузка данных компаньонов…",
@@ -4390,8 +4575,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       connectionRuntimeUnknown: "Не проверено",
       connectionRuntimeOnline: "В сети",
       connectionCheckedAt: "проверено {time}",
-      connectionNeverChecked: "Никогда не проверялось",
-    },
+      connectionNeverChecked: "Никогда не проверялось"
+    }
   },
   desktopPet: {
     window: "Окно питомца",
@@ -4402,7 +4587,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     approvalTitle: "Требуется ваше одобрение",
     approve: "Одобрить",
     reject: "Отклонить",
-    returnToSession: "Вернуться к сессии",
+    returnToSession: "Вернуться к сессии"
   },
   library: {
     title: "Библиотека",
@@ -4413,14 +4598,14 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       cards: "Карточки",
       feedback: "Обратная связь",
       data: "Отображение данных",
-      layout: "Раскладка",
+      layout: "Раскладка"
     },
     variants: {
       default: "По умолчанию",
       secondary: "Вторичная",
       ghost: "Призрачная",
       outline: "Контурная",
-      destructive: "Разрушительная",
+      destructive: "Разрушительная"
     },
     buttons: {
       variants: "Варианты",
@@ -4429,7 +4614,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       small: "Маленькая",
       large: "Большая",
       disabled: "Отключена",
-      loading: "Загрузка",
+      loading: "Загрузка"
     },
     inputs: {
       text: "Текстовое поле",
@@ -4437,19 +4622,19 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       value: "значение: {value}",
       switch: "Переключатель",
       on: "вкл.",
-      off: "выкл.",
+      off: "выкл."
     },
     cards: {
       title: "Карточка по умолчанию",
       description: "Карточка с заголовком и описанием",
       body: "Содержимое слота тела. Для обрамления используйте слоты {header}/{footer}.",
       action: "Действие",
-      badges: "Значки",
+      badges: "Значки"
     },
     feedback: {
       notes: "Примечания",
       notesBody: "Уведомления показывает хост острова (App.vue). Вызывайте их через {call} — здесь они не отрисовываются, чтобы не выходить за границы.",
-      icons: "Значки",
+      icons: "Значки"
     },
     data: {
       table: "Таблица",
@@ -4458,13 +4643,13 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       status: "Статус",
       owner: "Владелец",
       active: "активен",
-      draft: "черновик",
+      draft: "черновик"
     },
     layout: {
       uie: "Главная и маркетплейс используют {canvas} + {column}. Библиотека использует отдельную прокручиваемую раскладку.",
       shell: "Оболочка",
-      shellBody: "Оболочка: {shell} — вертикальный flex с {header} и прокручиваемым содержимым. Панели: трёхколоночный движок TinadecUI.",
-    },
+      shellBody: "Оболочка: {shell} — вертикальный flex с {header} и прокручиваемым содержимым. Панели: трёхколоночный движок TinadecUI."
+    }
   },
   statusLabels: {
     run: {
@@ -4486,7 +4671,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       gate_review: "проверка шлюза",
       finalizing: "завершение",
       done: "готово",
-      blocked: "заблокировано",
+      blocked: "заблокировано"
     },
     tool: {
       completed: "завершено",
@@ -4496,20 +4681,20 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       waiting_approval: "ожидает одобрения",
       blocked: "заблокировано",
       requested: "запрошено",
-      outcome_unknown: "результат неизвестен",
+      outcome_unknown: "результат неизвестен"
     },
     risk: {
       low: "низкий риск",
       medium: "средний риск",
       high: "высокий риск",
       elevated: "повышенный риск",
-      critical: "критический риск",
+      critical: "критический риск"
     },
     severity: {
       info: "информация",
       warning: "предупреждение",
       error: "ошибка",
-      blocking: "блокирующее",
+      blocking: "блокирующее"
     },
     userAction: {
       requested: "отправлено",
@@ -4521,7 +4706,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       completed: "завершено",
       failed: "ошибка",
       blocked: "заблокировано",
-      outcome_unknown: "результат неизвестен",
+      outcome_unknown: "результат неизвестен"
     },
     availability: {
       available: "доступно",
@@ -4529,12 +4714,12 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       unavailable: "недоступно",
       invalid: "недействительно",
       pending: "обрабатывается",
-      unknown: "неизвестно",
+      unknown: "неизвестно"
     },
     instance: {
       created: "создан",
       running: "работает",
-      released: "освобождён",
+      released: "освобождён"
     },
     approval: {
       pending: "ожидает",
@@ -4543,8 +4728,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       expired: "истекло",
       consumed: "использовано",
       cancelled: "отменено",
-      revoked: "отозвано",
-    },
+      revoked: "отозвано"
+    }
   },
   aboutPage: {
     developerTools: "Инструменты разработчика",
@@ -4595,8 +4780,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       reviewTerminal: "Тестовый агент · команда терминала",
       reviewPassed: "Автоматическая проверка пройдена",
       reviewSsh: "Тестовый агент · проверка SSH",
-      reviewWaiting: "Ждёт вашего решения",
-    },
+      reviewWaiting: "Ждёт вашего решения"
+    }
   },
   agentPack: {
     name: "GraphSeedPack",
@@ -4615,7 +4800,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       conflict: "Конфликт",
       owner_required: "Нужен владелец рабочей области",
       deferred: "Отложено",
-      error: "Проверка не удалась",
+      error: "Проверка не удалась"
     },
     checkAction: "Проверить и установить",
     installAction: "Установить",
@@ -4668,11 +4853,12 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     uninstallFailed: "Не удалось удалить пакет агентов",
     toggleFailed: "Не удалось изменить состояние пакета агентов",
     adoptFailed: "Не удалось сделать пакет режимом по умолчанию для рабочей области",
+    bundledVersion: "Встроенная версия {version}"
   },
   agentCenter: {
     createMode: "Новый режим",
     tabs: {
-      topology: "Топология",
+      topology: "Топология"
     },
     diagnostics: {
       title: "Управление и инструменты обвязки",
@@ -4681,7 +4867,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       layerRules: "Правила управления уровнями",
       layerRulesDesc: "Операционный уровень координирует процессы и надзор; уровень исполнения планирует задачи и запускает инструменты.",
       conflictDetection: "Обнаружение конфликтов",
-      conflictDetectionDesc: "При публикации маркеры ревизий и заголовки ETag защищают от перезаписи.",
+      conflictDetectionDesc: "При публикации маркеры ревизий и заголовки ETag защищают от перезаписи."
     },
     filter: {
       searchAgents: "Поиск по имени, типу или описанию агента...",
@@ -4697,7 +4883,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       published: "Опубликован",
       archived: "В архиве",
       active: "Действует",
-      resultCount: "Показано {visible} / {total}",
+      resultCount: "Показано {visible} / {total}"
     },
     agentForm: {
       createTitle: "Новое определение агента",
@@ -4724,7 +4910,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       delete: "Удалить",
       saveSuccess: "Определение агента сохранено",
       publishSuccess: "Агент опубликован",
-      deleteSuccess: "Агент удалён",
+      deleteSuccess: "Агент удалён"
     },
     evolution: {
       panelHint: "Извлекайте кандидатов в специализированные агенты из наблюдаемых запусков.",
@@ -4767,7 +4953,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       fieldModelRoute: "Назначение маршрута модели",
       add: "Добавить",
       capabilityPlaceholder: "возможность",
-      systemPromptPlaceholder: "Свой системный промпт вместо стандартного",
+      systemPromptPlaceholder: "Свой системный промпт вместо стандартного"
     },
     runtimeInfo: {
       statusRunning: "Выполняется",
@@ -4783,19 +4969,19 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       frozenVersion: "Зафиксированная версия",
       recentModel: "Последняя модель",
       fallbackSummary: "Попытки кандидатов",
-      usedFallback: "использован резерв",
+      usedFallback: "использован резерв"
     },
     empty: {
       noAgents: "Подходящих агентов не найдено",
       noAgentsHint: "Попробуйте другие ключевые слова, сбросьте фильтры или создайте новое определение агента.",
       noModes: "Топологии выполнения не найдены",
-      noPrompts: "Подходящих фрагментов промптов не найдено",
+      noPrompts: "Подходящих фрагментов промптов не найдено"
     },
     revisionShort: "ред. {revision}",
     newNodeLabel: "узел {n}",
     facts: {
       modelStrategy: "стратегия модели",
-      route: "маршрут",
+      route: "маршрут"
     },
     governanceRoles: "Роли управления",
     governanceRolesMissing: "Этим ролям управления не назначен опубликованный агент:",
@@ -4810,7 +4996,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     modeSaveFailed: "Не удалось сохранить режим",
     modePublished: "Режим опубликован",
     versionHistory: "История версий",
-    publishedReadOnlyHint: "Этот режим опубликован и показан только для чтения; клонируйте его, чтобы изменить свою копию.",
+    publishedReadOnlyHint: "Этот режим опубликован и показан только для чтения; клонируйте его, чтобы изменить свою копию."
   },
   commandPanel: {
     kw: {
@@ -4827,13 +5013,13 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       runtime: "cli acp",
       agentModels: "agents executor агенты исполнитель",
       image: "image picture изображение картинка",
-      file: "file attachment файл вложение",
+      file: "file attachment файл вложение"
     },
     backHint: "Когда поиск пуст, нажмите Backspace или Delete, чтобы вернуться.",
     risk: {
       low: "Низкий риск",
       medium: "Средний риск",
-      high: "Высокий риск",
+      high: "Высокий риск"
     },
     model: "Модель",
     modelHint: "Модель агента, который отвечает вам; другим агентам модель задаётся уровнем ниже",
@@ -4871,7 +5057,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     nextTask: "Настройки применяются к следующей задаче в этом диалоге. Отправленные задачи сохраняют исходные настройки.",
     modelFooter: "Собственная модель каждого агента — та же настройка, что и в центре агентов. Агент без своей модели использует модель по умолчанию, заданную в центре моделей.",
     modelAgents: "Другие агенты",
-    modelAgentsHint: "Задать отдельную модель исполнителям и другим агентам",
+    modelAgentsHint: "Задать отдельную модель исполнителям и другим агентам"
   },
   composer: {
     agentModels: {
@@ -4887,19 +5073,19 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       inMode: "Используется выбранным режимом",
       ownCount: "Со своей моделью: {count}",
       none: "Других агентов нет",
-      failed: "Не удалось сохранить модель для {agent}",
+      failed: "Не удалось сохранить модель для {agent}"
     },
     reasoning: {
       label: "Интенсивность рассуждений",
       hint: "Интенсивность рассуждений для {model}; применяется к следующей задаче с этой моделью",
-      failed: "Не удалось сохранить интенсивность рассуждений",
+      failed: "Не удалось сохранить интенсивность рассуждений"
     },
     modelSwitch: {
       hint: "Модель по умолчанию: используется во всех диалогах, как «Сделать моделью по умолчанию» в центре моделей",
       none: "Модель по умолчанию не задана",
       empty: "Моделей пока нет — добавьте их в центре моделей",
       manage: "Управлять в центре моделей…",
-      failed: "Не удалось сменить модель по умолчанию",
+      failed: "Не удалось сменить модель по умолчанию"
     },
     pinnedModel: "Закреплено: {model} · по умолчанию",
     pinnedModelUnavailable: "{model} недоступна · по умолчанию",
@@ -4937,7 +5123,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     attachFailedUnknown: "Загрузка не удалась",
     attachFailed: "Загрузка не удалась ({code})",
     attachNeedsSession: "Сначала отправьте первое сообщение, затем прикрепляйте файлы",
-    removeAttachment: "Удалить {name}",
+    removeAttachment: "Удалить {name}"
   },
   palette: {
     kwProjectRow: "проект рабочая область папка project workspace folder",
@@ -5016,7 +5202,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     kwPets: "pets desktop pet widget питомцы питомец виджет",
     kwLanguage: "language english chinese japanese russian interface translation язык английский китайский японский русский интерфейс перевод",
     kwApiDocs: "api docs developer debug API документация разработчик отладка",
-    kwAbout: "about version copyright update о программе версия авторские права обновление",
+    kwAbout: "about version copyright update о программе версия авторские права обновление"
   },
   memory: {
     title: "Проверка памяти",
@@ -5044,7 +5230,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     status: {
       proposed: "предложено",
       promoted: "запомнено",
-      rejected: "отброшено",
+      rejected: "отброшено"
     },
     kind: {
       fact: "факт",
@@ -5053,7 +5239,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       success_pattern: "что сработало",
       failure_pattern: "что пошло не так",
       task_template: "шаблон задачи",
-      supervision_rule: "правило надзора",
+      supervision_rule: "правило надзора"
     },
     scopeLabel: "Область",
     scope: {
@@ -5061,13 +5247,13 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       workspace: "рабочая область",
       principal: "обо мне",
       project: "проект",
-      agent: "агент",
-    },
+      agent: "агент"
+    }
   },
   web: {
     gatewayManaged: "URL Gateway задаётся веб-развёртыванием.",
     petsUnavailable: "В веб-версии питомцы недоступны.",
-    panelsUnavailable: "В веб-версии окна панелей недоступны.",
+    panelsUnavailable: "В веб-версии окна панелей недоступны."
   },
   common: {
     copyName: "{name} (копия)",
@@ -5091,7 +5277,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     loading: "Загрузка…",
     none: "Нет",
     cancel: "Отмена",
-    refresh: "Обновить",
+    refresh: "Обновить"
   },
   contextMenu: {
     label: "Действия с текстом",
@@ -5102,7 +5288,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     copyLink: "Копировать ссылку",
     openLink: "Открыть ссылку",
     clearTerminal: "Очистить терминал",
-    hint: "Применяется к выделенному тексту",
+    hint: "Применяется к выделенному тексту"
   },
   conversation: {
     listSeparator: ", ",
@@ -5112,7 +5298,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       files: "{count} файл | {count} файла | {count} файлов",
       searches: "{count} поиск | {count} поиска | {count} поисков",
       lists: "{count} папка | {count} папки | {count} папок",
-      thoughts: "{count} рассуждение | {count} рассуждения | {count} рассуждений",
+      thoughts: "{count} рассуждение | {count} рассуждения | {count} рассуждений"
     },
     duration: {
       underSecond: "<1 с",
@@ -5120,18 +5306,18 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       minutes: "{m} мин",
       minutesSeconds: "{m} мин {s} с",
       hours: "{h} ч",
-      hoursMinutes: "{h} ч {m} мин",
+      hoursMinutes: "{h} ч {m} мин"
     },
     day: {
       today: "Сегодня",
-      yesterday: "Вчера",
+      yesterday: "Вчера"
     },
     reasoning: {
       drafting: "Набросок…",
       planning: "Планирование",
       thinking: "Думает",
       thoughtFor: "Время рассуждения: {duration}",
-      showAll: "Показать всё",
+      showAll: "Показать всё"
     },
     agents: {
       openInPanel: "Открыть на панели",
@@ -5146,12 +5332,12 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         completed: "Готово",
         failed: "Ошибка",
         blocked: "Заблокирован",
-        cancelled: "Отменён",
-      },
+        cancelled: "Отменён"
+      }
     },
     wait: {
       waiting: "Ожидание: {names}",
-      resolved: "Получены результаты: {names}",
+      resolved: "Получены результаты: {names}"
     },
     plan: {
       updated: "План обновлён · {done}/{total}",
@@ -5160,8 +5346,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       status: {
         pending: "ожидает",
         in_progress: "в работе",
-        completed: "готово",
-      },
+        completed: "готово"
+      }
     },
     supervision: {
       revise: "Надзор запросил изменения",
@@ -5182,21 +5368,52 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         option: {
           continue: "Сохранить текущие доказательства и завершить с принятым неполным результатом.",
           correct: "Добавить указания и перепланировать до завершения.",
-          cancel: "Остановить запуск и сохранить записанные доказательства.",
-        },
-      },
+          cancel: "Остановить запуск и сохранить записанные доказательства."
+        }
+      }
     },
     correction: {
-      phase: { observe: "Поиск проблемы", intervene: "Исправление", converge: "Проверка результата", backtrack: "Повторное расследование" },
-      status: { investigating: "Расследование", blocked: "Не хватает доказательств", awaiting_user: "Ожидает вас", ready: "Доказательства собраны", resolved: "Решено", reopened: "Открыто снова" },
-      goal: "Цель", symptom: "Симптом", doneWhen: "Готово, когда", rootCause: "Причина",
-      hypotheses: "Гипотезы", evidence: "Доказательства", coverage: "Покрытие", interventions: "Исправления", questions: "Открытые вопросы",
-      empty: "Пока ничего нет", coverageSummary: "Изменено: {modified}, проверено: {verified}",
-      waitingQuestion: "Чтобы продолжить, нужен ваш ответ.", questionTitle: "Нужна ваша проверка",
-      answerPlaceholder: "Добавьте наблюдение или выбор…", answerAction: "Ответить и продолжить",
-      feedbackPrompt: "Что произошло после исправления?", stillReproduces: "Всё ещё воспроизводится", resolvedAction: "Решено",
-      reopened: "Расследование открыто снова", resolved: "Отмечено как решённое", answerFailed: "Не удалось отправить ответ", feedbackFailed: "Не удалось отправить отзыв",
-      hypothesisStatus: { testing: "проверяется", confirmed: "подтверждена", rejected: "отклонена" },
+      phase: {
+        observe: "Поиск проблемы",
+        intervene: "Исправление",
+        converge: "Проверка результата",
+        backtrack: "Повторное расследование"
+      },
+      status: {
+        investigating: "Расследование",
+        blocked: "Не хватает доказательств",
+        awaiting_user: "Ожидает вас",
+        ready: "Доказательства собраны",
+        resolved: "Решено",
+        reopened: "Открыто снова"
+      },
+      goal: "Цель",
+      symptom: "Симптом",
+      doneWhen: "Готово, когда",
+      rootCause: "Причина",
+      hypotheses: "Гипотезы",
+      evidence: "Доказательства",
+      coverage: "Покрытие",
+      interventions: "Исправления",
+      questions: "Открытые вопросы",
+      empty: "Пока ничего нет",
+      coverageSummary: "Изменено: {modified}, проверено: {verified}",
+      waitingQuestion: "Чтобы продолжить, нужен ваш ответ.",
+      questionTitle: "Нужна ваша проверка",
+      answerPlaceholder: "Добавьте наблюдение или выбор…",
+      answerAction: "Ответить и продолжить",
+      feedbackPrompt: "Что произошло после исправления?",
+      stillReproduces: "Всё ещё воспроизводится",
+      resolvedAction: "Решено",
+      reopened: "Расследование открыто снова",
+      resolved: "Отмечено как решённое",
+      answerFailed: "Не удалось отправить ответ",
+      feedbackFailed: "Не удалось отправить отзыв",
+      hypothesisStatus: {
+        testing: "проверяется",
+        confirmed: "подтверждена",
+        rejected: "отклонена"
+      }
     },
     marker: {
       compacted: "Контекст сжат",
@@ -5209,7 +5426,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       run_failed: "Остановлено: {reason}",
       run_failed_unknown: "Остановлено из-за ошибки",
       run_cancelled: "Остановлено",
-      worker_interrupted: "Агент прерван",
+      worker_interrupted: "Агент прерван"
     },
     approval: {
       title: "Нужно одобрение",
@@ -5224,7 +5441,7 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       allowPrefix: "Всегда разрешать команды, начинающиеся с {prefix}",
       approveShortcut: "Одобрить (⌘/Ctrl+Enter)",
       rejectShortcut: "Отклонить (⌘/Ctrl+Backspace)",
-      failed: "Не удалось применить решение",
+      failed: "Не удалось применить решение"
     },
     turn: {
       workedFor: "Время работы: {duration}",
@@ -5237,7 +5454,12 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
       retryHint: "Вернуть это сообщение в поле ввода",
       newTurns: "Новых: {count}",
       foldedEarlier: "Раньше: {count} шаг | Раньше: {count} шага | Раньше: {count} шагов",
-      awaiting: { awaiting_user: "Ждёт вашего решения", awaiting_approval: "Ждёт вашего одобрения", awaiting_delegate: "Ждёт вашего делегирования", generic: "Ждёт вашего действия" },
+      awaiting: {
+        awaiting_user: "Ждёт вашего решения",
+        awaiting_approval: "Ждёт вашего одобрения",
+        awaiting_delegate: "Ждёт вашего делегирования",
+        generic: "Ждёт вашего действия"
+      }
     },
     tool: {
       terminalTitle: "Терминал агента",
@@ -5254,63 +5476,63 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
         withheld: "Результат не показан",
         withheldSensitive: "Не показано: файл может содержать учётные данные",
         exitCode: "Код выхода {code}",
-        timedOut: "Истекло время ожидания",
+        timedOut: "Истекло время ожидания"
       },
       read: {
         active: "Чтение {subject}",
         done: "Прочитано: {subject}",
-        failed: "Не удалось прочитать {subject}",
+        failed: "Не удалось прочитать {subject}"
       },
       list: {
         active: "Просмотр {subject}",
         done: "Просмотрено: {subject}",
-        failed: "Не удалось просмотреть {subject}",
+        failed: "Не удалось просмотреть {subject}"
       },
       search: {
         active: "Поиск: {subject}",
         done: "Поиск выполнен: {subject}",
-        failed: "Поиск не удался: {subject}",
+        failed: "Поиск не удался: {subject}"
       },
       edit: {
         active: "Правка {subject}",
         done: "Изменено: {subject}",
-        failed: "Не удалось изменить {subject}",
+        failed: "Не удалось изменить {subject}"
       },
       run: {
         active: "Выполнение {subject}",
         done: "Выполнено: {subject}",
-        failed: "Ошибка: {subject}",
+        failed: "Ошибка: {subject}"
       },
       git: {
         active: "Выполнение {subject}",
         done: "Выполнено: {subject}",
-        failed: "Ошибка: {subject}",
+        failed: "Ошибка: {subject}"
       },
       mcp: {
         active: "Вызов {subject}",
         done: "Вызвано: {subject}",
-        failed: "Вызов не удался: {subject}",
+        failed: "Вызов не удался: {subject}"
       },
       fetch: {
         active: "Загрузка {subject}",
         done: "Загружено: {subject}",
-        failed: "Не удалось загрузить {subject}",
+        failed: "Не удалось загрузить {subject}"
       },
       browse: {
         active: "Просмотр {subject}",
         done: "Просмотрено: {subject}",
-        failed: "Не удалось просмотреть {subject}",
+        failed: "Не удалось просмотреть {subject}"
       },
       workspace: {
         active: "Создание рабочей области {subject}",
         done: "Создана рабочая область {subject}",
-        failed: "Не удалось создать рабочую область {subject}",
+        failed: "Не удалось создать рабочую область {subject}"
       },
       other: {
         active: "Использование {subject}",
         done: "Использовано: {subject}",
-        failed: "{subject}: ошибка",
-      },
-    },
-  },
-}
+        failed: "{subject}: ошибка"
+      }
+    }
+  }
+};

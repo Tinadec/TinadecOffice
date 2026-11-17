@@ -4,7 +4,7 @@ import { useErrorState } from '@/composables/useErrorState'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CopyPlus, PackageCheck, PackagePlus, RefreshCw, Trash2 } from '@lucide/vue'
+import { ChevronRight, CopyPlus, PackageCheck, PackagePlus, RefreshCw, Trash2 } from '@lucide/vue'
 import { api as baseApi, type AgentPackDto } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
@@ -173,12 +173,7 @@ defineExpose({ reloadPackInventory })
         <UiBadge :variant="badgeVariant">{{ statusLabel }}</UiBadge>
         <UiBadge variant="outline">{{ t('agentPack.managed') }}</UiBadge>
       </div>
-      <p>
-        {{ t('agentPack.versionSummary', {
-          bundled: GRAPH_SEED_PACK_VERSION,
-          installed: graphSeedPackState.active_version ?? t('agentPack.notInstalled'),
-        }) }}
-      </p>
+      <p>{{ t('agentPack.bundledVersion', { version: GRAPH_SEED_PACK_VERSION }) }}</p>
     </div>
     <div class="agent-pack-status-actions">
       <UiButton
@@ -211,17 +206,15 @@ defineExpose({ reloadPackInventory })
       </UiButton>
     </div>
   </section>
-  <section class="agent-pack-inventory" data-testid="installed-agent-packs">
-    <div class="agent-pack-inventory-head">
+  <details v-if="installedAgentPacks.length > 0 || inventoryFailure.error.value" class="agent-pack-inventory" data-testid="installed-agent-packs">
+    <summary class="agent-pack-inventory-head">
+      <ChevronRight :size="14" class="agent-pack-inventory-chevron" aria-hidden="true" />
       <strong>{{ t('agentPack.installedTitle') }}</strong>
       <span class="agent-pack-inventory-count">
         {{ t('agentPack.installedCount', { count: installedAgentPacks.length }) }}
       </span>
-    </div>
-    <p v-if="!inventoryLoading && !inventoryFailure.error.value && canAccessBackend && installedAgentPacks.length === 0" class="agent-pack-inventory-empty">
-      {{ t('agentPack.installedEmpty') }}
-    </p>
-    <ul v-else class="agent-pack-inventory-list">
+    </summary>
+    <ul class="agent-pack-inventory-list">
       <li
         v-for="pack in installedAgentPacks"
         :key="pack.pack_id"
@@ -277,5 +270,5 @@ defineExpose({ reloadPackInventory })
         </div>
       </li>
     </ul>
-  </section>
+  </details>
 </template>

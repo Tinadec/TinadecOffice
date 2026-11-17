@@ -23,6 +23,18 @@
 
 **验证：** `TinadecOffice.slnx` 0 错误；Core 定向 96/96（含 `AgentModeTopologyTests` 4/4、`TinadecConfigToolGatewayTests` 4/4、WorkspaceSkill 含 copy-to-project）；TinadecTools MCP 17/17；OpenAPI core snapshot 已再生成。**边界：** 真实第三方 MCP server、PostgreSQL/Linux/macOS 未验收；`tool_mcp_resources` 的 HTTP/SSE 只用本地 TCP 夹具验证。
 
+### 2026-11-04 模式拓扑扩展字段：instructions / bindings / relationship（入 `IAgentTopologyService`）
+
+编辑器线（原 #63 的编辑器部分）对接进 `AgentTopologyService`——这是 draft/publish 唯一实现，端点只透传，不另写内联实现。
+
+- **存储**：`AgentModeRecord.Instructions`（text ≤4000）、`AgentModeRecord.BindingsJson`（顶层 JSON 数组，团队 spawnable-member 绑定，**不是** `ModeBindings` 那张 per-node 收窄表）、`ModeNodeRecord.RelationshipJson`。三列由同一个迁移 `202611040001_ModeInstructions`（Sqlite/PG 各一份）补齐。
+- **读写**：`ParseTopology` 收 `instructions`（string/null、≤4000）与 `bindings`（对象数组/null、每项需 `node_key` 或 `agent_ref`），`ApplyTopologyAsync` 按「提交才改、null 清除、缺席不动」写；`SubmittedNode` 增 `relationship`（object/null 校验）。`ProjectDetail` 投影三字段。
+- **发布**：`frozenNodes` 冻结 `relationship`；`snapshotObject` 写 `bindings`（缺席序列化为 `[]`）与**仅非空时**写 `instructions`（无条件写会改所有旧模式 topology hash）。`tool_switches`（含 `"*": false`）在 `effective_tools` 交集后再过滤——团队 Leader 剥光业务工具面 → run 推导 `free_form`。
+- **校验**：`GraphValidation` 的 `NodeRef` 第六参现在吃真 `relationship`（此前传 `default`）：5 必填字段（duty/inputs_outputs/allowed_dispatch_targets/success_criteria/agent_types）+ `subscriptions` 主题白名单 + 16 KiB 上限。**发布门仍是 `GraphValidation` 的 conversation 契约**（恰好一个 conversation 节点），不是原 PR 那套「1 conversation + spawnable-member」检查——后者被前者覆盖。
+- **运行时**：`FormalModeResolver` 读快照 `instructions`，只注入会话身份节点的 system prompt（worker 不注入）；`FormalModeRoster.ModeInstructions` 供测试/审计。
+
+**验证：** `vue-tsc` 0；`AgentModeTeamTopologyTests`、`AgentModeTopologyTests`、`FormalModeSnapshotTests` 定向。**边界：** relationship 的 5 必填校验比原 PR（自由 JSON）严——原测试数据缺 `inputs_outputs`，需按本契约补全或另行放宽；PostgreSQL 迁移未实跑。
+
 ### 2026-11-02 Agent 浏览器：Core 侧治理（工具本体在 TinadecTools）
 
 浏览器工具的语义实现不在这里（见 `apps/desktop/AGENTS.md` 与 `TinadecTools/Tools/Browser/`），Core 只做四件事：

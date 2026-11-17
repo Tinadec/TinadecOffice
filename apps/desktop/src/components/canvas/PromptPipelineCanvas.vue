@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { VueFlow, Panel, useVueFlow, type Node, type Edge, type Connection } from '@vue-flow/core'
+import { VueFlow, Panel, Handle, MarkerType, Position, type Node, type Edge, type Connection } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import type { PromptPipelineDto } from '@/api'
+
+const FLOW_ID = 'prompt-pipeline-editor'
 
 const { t } = useI18n()
 const props = defineProps<{ pipeline: PromptPipelineDto | null }>()
@@ -14,7 +16,6 @@ const emit = defineEmits<{
   'select-edge': [edge: unknown | null]
 }>()
 
-const { onConnect } = useVueFlow()
 const selectedId = ref<string | null>(null)
 const selectedEdgeId = ref<string | null>(null)
 const warn = ref('')
@@ -40,7 +41,9 @@ const vfNodes = computed<Node[]>(() =>
 )
 const vfEdges = computed<Edge[]>(() =>
   rawEdges.value.map((e) => ({
-    id: e.id, source: e.source, target: e.target, label: e.label ?? '',
+    id: e.id, source: e.source, target: e.target, type: 'smoothstep', label: e.label ?? '',
+    interactionWidth: 32,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: selectedEdgeId.value === e.id ? 'var(--accent-primary)' : 'var(--border-default)' },
     style: { stroke: selectedEdgeId.value === e.id ? 'var(--accent-primary)' : 'var(--border-default)', strokeWidth: selectedEdgeId.value === e.id ? '2.2' : '1.4' },
     labelStyle: { fontSize: '10px', fill: 'var(--text-secondary)' },
     labelBgStyle: { fill: 'var(--surface-raised)', fillOpacity: 0.9 },
@@ -56,14 +59,14 @@ function hasCycle(next: RawEdge[]): boolean {
   return false
 }
 
-onConnect((c: Connection) => {
+function handleConnect(c: Connection) {
   if (!c.source || !c.target) return
   if (c.source === c.target) { warn.value = t('canvas.noSelfLink'); setTimeout(() => warn.value = '', 1800); return }
   if (rawEdges.value.some((e) => e.source === c.source && e.target === c.target)) return
   const next: RawEdge = { id: `e-${c.source}-${c.target}`, source: c.source, target: c.target }
   if (hasCycle([...rawEdges.value, next])) { warn.value = t('canvas.cycleBlocked'); setTimeout(() => warn.value = '', 2200); return }
   emit('update:edges', [...rawEdges.value, next])
-})
+}
 function onNodeClick(e: { node: Node }) { selectedId.value = e.node.id; selectedEdgeId.value = null; const n = rawNodes.value.find((x) => x.id === e.node.id) ?? null; emit('select-node', n); emit('select-edge', null) }
 function onEdgeClick(e: { edge: Edge }) { selectedEdgeId.value = e.edge.id; selectedId.value = null; const ed = rawEdges.value.find((x) => x.id === e.edge.id) ?? null; emit('select-edge', ed); emit('select-node', null) }
 function onPaneClick() { selectedId.value = null; selectedEdgeId.value = null; emit('select-node', null); emit('select-edge', null) }
@@ -80,13 +83,15 @@ function handleNodesChange(changes: unknown) {
     <div v-if="warn" class="pp-warn">{{ warn }}</div>
     <div v-if="!pipeline" class="center-empty-state"><span>{{ t('canvas.choosePipeline') }}</span></div>
     <div v-else class="pp-wrap">
-      <VueFlow :nodes="vfNodes" :edges="vfEdges" fit-view-on-init class="vf" @node-click="onNodeClick" @edge-click="onEdgeClick" @pane-click="onPaneClick" @nodes-change="handleNodesChange">
+      <VueFlow :id="FLOW_ID" :nodes="vfNodes" :edges="vfEdges" fit-view-on-init class="vf" @connect="handleConnect" @node-click="onNodeClick" @edge-click="onEdgeClick" @pane-click="onPaneClick" @nodes-change="handleNodesChange">
         <Background />
         <Panel position="top-right" class="vf-panel">{{ t('canvas.pipelineHint') }}</Panel>
         <template #node-custom="{ data }">
           <div class="pp-node" :class="{ sel: data.selected }">
+            <Handle type="target" :position="Position.Left" />
             <div class="pp-node-head"><span class="pp-node-type">{{ data.nodeType }}</span><strong :title="data.label">{{ data.label }}</strong></div>
             <div class="pp-node-id">{{ (data.raw as RawNode)?.id }}</div>
+            <Handle type="source" :position="Position.Right" />
           </div>
         </template>
       </VueFlow>
@@ -100,7 +105,7 @@ function handleNodesChange(changes: unknown) {
 .pp-wrap { height: 360px; border: 1px solid var(--border-muted); border-radius: 12px; overflow: hidden; background: var(--surface-section); position: relative; }
 .vf { width: 100%; height: 100%; }
 .vf-panel { font-size: 11px; color: var(--text-muted); background: var(--surface-raised); padding: 4px 8px; border-radius: 6px; }
-.pp-node { width: 200px; padding: 8px 10px; border-radius: 10px; background: var(--surface-raised); border: 1px solid var(--border-muted); display: grid; gap: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+.pp-node { position: relative; width: 200px; padding: 8px 10px; border-radius: 10px; background: var(--surface-raised); border: 1px solid var(--border-muted); display: grid; gap: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
 .pp-node.sel { border-color: var(--accent-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 22%, transparent); }
 .pp-node-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pp-node-type { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); background: var(--surface-section); padding: 2px 6px; border-radius: 999px; }
