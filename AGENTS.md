@@ -736,12 +736,12 @@ The legacy `src/` directory is intentionally absent.
 | `TinadecTools MCP` | Tool suite | `TinadecTools/Tools/Mcp` | 基于 official `ModelContextProtocol` SDK 的独立 MCP pass-through 工具：list/search/invoke。 |
 
 ## CONVENTIONS
-- npm is the package manager. `package.json` `workspaces` declares only `apps/*`; the Gateway lives at `TinadecGateway/` and is not an npm workspace member — it is driven by the `dev:gateway`/`build`/`test` scripts via `cd TinadecGateway && bun run …`.
+- Bun is the package manager and script runner: `bun.lock` is the only lockfile and `bun install` installs every workspace. `package.json` `workspaces` covers `apps/*` **and** `TinadecGateway`, so the Gateway needs no separate install; `dev:gateway`/`build`/`test` drive it with `bun run --cwd TinadecGateway …`. Node remains only as Electron's runtime.
 - Root `.npmrc` sets `legacy-peer-deps=true` (vite-plugin-vue-mcp declares Vite ≤ 6 peer but works on Vite 7). Keep `react`/`react-dom`/`react-is` as explicit deps in `apps/desktop/package.json` — under legacy-peer-deps npm will not auto-install peer dependencies.
 - TypeScript is strict in both app packages. Desktop alias: `@/* -> src/*`.
 - Interface text lives only in `apps/desktop/src/locales/{zh-CN,zh-TW,en,ja,ru}.ts` (TinadecUI uses the same bundles); code references keys, never literal Chinese or English. All five files carry the same keys, so a new key goes into all five in the same change — `i18nParity.test.ts` fails otherwise. Details in `apps/desktop/AGENTS.md` CONVENTIONS. What the words may say — and what they must not — is `docs/ui-copy-spec.zh-CN.md`.
 - Gateway is ESM + `NodeNext`; Desktop is ESM + Vite/Vue + Tailwind.
-- The replacement Core is expected to target `net10.0` with nullable and implicit usings enabled unless the rebuild explicitly changes the documented platform decision.
+- Core and Tools target `net11.0` (SDK pinned by `global.json` to 11.0.100) with nullable and implicit usings enabled unless the rebuild explicitly changes the documented platform decision.
 - Rebuilt Core HTTP JSON must use `snake_case`; keep Desktop DTO mirrors synchronized from Core-owned contracts.
 - Contract-as-code pipeline: the Gateway external OpenAPI snapshot `TinadecGateway/tests/__snapshots__/openapi.external.json` is the frontend contract source of truth; `apps/desktop/src/generated/schema.d.ts` is generated from it via `npm run generate:client -w @tinadec/desktop` at the repository root (openapi-typescript@6, byte-deterministic) and must never be hand-edited. `npm run check:drift -w @tinadec/desktop` regenerates and fails on diff; these scripts belong to the Desktop workspace, not the root package. When Gateway/Core contracts change: update the snapshot (Gateway `bun test` rewrites it), regenerate the client, and commit both together. TinaChat also requires Gateway `bun run generate:tina-chat-contract` between the Core and external snapshot steps.
 - Canonical layers are the governance layer (`operation`) and execution layer (`execution`). Accept `planning` only while migrating old inputs; new Core APIs, event payloads, persisted versions, and Desktop-visible values must use `operation`.
@@ -883,23 +883,19 @@ Root `restore:dotnet`, `dev:core`, `build`, and `test` commands are now function
 # Restore .NET packages (both Core sub-solution and root solution)
 npm run restore:dotnet
 
-# Install npm dependencies (repo root). .npmrc sets legacy-peer-deps=true so
-# vite-plugin-vue-mcp installs cleanly on Vite 7 without manual flags.
-npm install
+# Install JS dependencies for every workspace (repo root). bun.lock is the only lockfile.
+bun install
 
 # Start all services (Core + Gateway + Desktop).
 # `predev` first runs `scripts/check-dependencies.mjs`: when a direct dependency of the root or
 # a workspace is missing from node_modules or installed at another version than
-# package-lock.json (a pull added or bumped one and `npm install` was not run), it names the
-# package and stops with "run npm install in the repository root" instead of letting Vite fail
-# on the first import. Read-only; `TINADEC_DEV_DEPS_CHECK=off` skips it.
-# It then runs `scripts/ensure-gateway-deps.mjs`: TinadecGateway is not an npm workspace, so
-# `npm install` never installs its dependencies. When node_modules is missing or bun.lock has
-# changed it runs `bun install` in TinadecGateway; otherwise it returns immediately (offline
-# safe). `TINADEC_DEV_GATEWAY_DEPS=off` skips it.
+# bun.lock (a pull added or bumped one and `bun install` was not run), it names the
+# package and stops instead of letting Vite fail on the first import. Read-only;
+# `TINADEC_DEV_DEPS_CHECK=off` skips it.
 # It then runs `scripts/dev-port-guard.mjs`, which reclaims ports
-# 48730/48731/5173/9222 from *this repo's own* leftover processes. Those orphans
-# are normal on Windows: the dev chain is concurrently → npm → powershell/bun →
+# 48730/48731/5173 from *this repo's own* leftover processes (9222 is Electron's
+# DevTools port: probed and reported, never killed). Those orphans
+# are normal on Windows: the dev chain is concurrently → bun → powershell/bun →
 # the real server, so closing the terminal (or one branch failing) can leave
 # `TinadecCore.Api.exe` / `bun --watch src/index.ts` / `vite` / `electron.exe`
 # alive; the next run then dies with Kestrel "address already in use".

@@ -17,7 +17,7 @@
 <p align="center">
   <a href="https://github.com/Tinadec/TinadecOffice/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tinadec/TinadecOffice?include_prereleases&logo=github&color=4c1"></a>
   <a href="#license"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0%20%2B%20MIT%20%2B%20AGPL--3.0-blue"></a>
-  <img alt=".NET" src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet">
+  <img alt=".NET" src="https://img.shields.io/badge/.NET-11-512BD4?logo=dotnet">
   <img alt="Vue" src="https://img.shields.io/badge/Vue-3.6-4FC08D?logo=vuedotjs&logoColor=white">
   <img alt="Gateway" src="https://img.shields.io/badge/Gateway-Elysia%20%2B%20Bun-000000?logo=bun&logoColor=white">
   <img alt="Platforms" src="https://img.shields.io/badge/Platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-2ea44f">
@@ -81,42 +81,58 @@ DmaEA (Dual-layer Modular Agent Architecture) separates **the agents that govern
   <img src="docs/diagrams/out/roadmap.svg" alt="Roadmap: shipped, building now, and next up" />
 </p>
 
-## Quick start
+## Build & install
 
-```powershell
-npm install
-npm run restore:dotnet
-npm run dev
+One Bun workspace covers `apps/*` and `TinadecGateway`: a single `bun install` installs every JS dependency and `bun.lock` is the only lockfile. .NET still restores through `dotnet` — there is no npm step any more.
+
+**Prerequisites**
+
+| Requirement | Version | Why |
+|------|------|------|
+| [Bun](https://bun.sh) | ≥ 1.2 | The only JS package manager and script runner; `npm install` misses the Gateway workspace |
+| .NET SDK | 11.0.100+ | Pinned by `global.json`; Core and Tools target `net11.0` |
+| Node.js | 20.19+ / 22.12+ | Electron's runtime and the `node --test` scripts |
+| Git | any | Source checkout and the governed git tools |
+| bubblewrap | Linux only | Sandbox backend, installed by `bun run setup:bwrap` |
+
+**Install and run**
+
+```bash
+bun install     # every workspace, one lockfile
+bun run dev     # Core + Gateway + Desktop together
 ```
 
+`predev` compiles TinadecTools, stages a pinned ripgrep, and reclaims ports 48730 / 48731 / 5173 from this repo's own leftovers (9222 is only probed, since it is Electron's DevTools port) before the stack starts.
+
 | Service | Address |
-|---------|---------|
+|------|------|
 | Desktop (Vite) | http://127.0.0.1:5173 |
 | Gateway API / Docs | http://127.0.0.1:48730/docs |
 | Core | http://127.0.0.1:48731 |
 
-For startup details and troubleshooting see [docs/startup.md](docs/startup.md).
+Startup details and troubleshooting live in [docs/startup.md](docs/startup.md).
 
 <details>
 <summary><b>Development commands</b></summary>
 
 ```bash
-npm run dev              # Core + Gateway + Desktop together
-npm run dev:core         # Core only (48731)
-npm run dev:gateway      # Gateway only (48730)
-npm run dev:desktop      # Desktop only (5173)
-npm run build            # workspaces + .NET solution
-npm test                 # tests
+bun run dev              # Core + Gateway + Desktop together
+bun run dev:core         # Core only (48731)
+bun run dev:gateway      # Gateway only (48730)
+bun run dev:desktop      # Desktop only (5173)
+bun run build            # workspaces + Gateway bundle + .NET solution
+bun test                 # scripts → workspaces → Gateway → solution
 ```
 
-Core-only build:
+`bun run build` restores on its own. For a Core-only loop, `scripts/dotnet.mjs` wraps `dotnet` in both shells — it clears the `Version` / `Ice-Version` variables that break MSBuild version parsing:
 
-```powershell
-Remove-Item Env:Version -ErrorAction SilentlyContinue
-dotnet restore TinadecCore/TinadecCore.slnx
-dotnet build TinadecCore/TinadecCore.slnx --no-restore
-dotnet test TinadecCore/TinadecCore.slnx --no-build
+```bash
+bun scripts/dotnet.mjs restore TinadecCore/TinadecCore.slnx
+bun scripts/dotnet.mjs build   TinadecCore/TinadecCore.slnx --no-restore
+bun scripts/dotnet.mjs test    TinadecCore/TinadecCore.slnx --no-build
 ```
+
+Desktop installers are built from the desktop workspace: `package:win`, `package:linux`, `package:mac`, `dist:win`, `verify:package`.
 
 </details>
 
@@ -124,7 +140,7 @@ dotnet test TinadecCore/TinadecCore.slnx --no-build
 
 ```
 TinadecOffice/
-├── TinadecCore/              # MAF + DmaEA agent-governance runtime (.NET 10)
+├── TinadecCore/              # MAF + DmaEA agent-governance runtime (.NET 11)
 ├── TinadecGateway/           # optional Elysia API facade / protocol adapter
 ├── apps/                     # TinadecApp clients (desktop / web / TinadecUI)
 ├── TinadecTools/             # TinadecTool: governed file / shell / git / MCP tools

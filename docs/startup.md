@@ -16,19 +16,19 @@ This document standardizes the local startup flow for Core, Gateway, and Desktop
 
 For normal development, start all three processes from the repo root:
 
-```powershell
-npm run dev
+```bash
+bun run dev
 ```
 
 This runs:
 
-```powershell
-npm run dev:core
-npm run dev:gateway
-npm run dev:desktop
+```bash
+bun run dev:core
+bun run dev:gateway
+bun run dev:desktop
 ```
 
-The root script already clears the local `Version` and `Ice-Version` environment variables for .NET. Those variables can otherwise break MSBuild version parsing on this machine.
+The `predev` chain builds `TinadecTools`, stages the pinned ripgrep, and reclaims leftover 48730 / 48731 / 5173 ports before the stack starts. `scripts/dotnet.mjs` also clears the local `Version` and `Ice-Version` environment variables for .NET; those variables can otherwise break MSBuild version parsing on this machine.
 
 ## Split Startup
 
@@ -36,23 +36,24 @@ Use split startup when you only need part of the stack or when restarting stale 
 
 Start Core:
 
-```powershell
-Remove-Item Env:Version -ErrorAction SilentlyContinue
-Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
-dotnet run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731
+```bash
+bun run dev:core
+# = bun scripts/dotnet.mjs run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731
 ```
+
+The wrapper clears `Version` / `Ice-Version` itself, so the PowerShell preamble is no longer needed.
 
 Start Gateway:
 
 ```powershell
 $env:TINADEC_GATEWAY_PORT = '48730'
-npm run dev:gateway   # = cd TinadecGateway && bun run dev (TinadecGateway is not an npm workspace member)
+bun run dev:gateway   # = bun run --cwd TinadecGateway dev; the Gateway is a workspace member of the root Bun install
 ```
 
 Start Desktop/Vite:
 
-```powershell
-npm run dev -w @tinadec/desktop
+```bash
+bun run dev:desktop   # = bun run --cwd apps/desktop dev
 ```
 
 If Vite is already running and only Core/Gateway changed, restart Core and Gateway, then refresh the browser or Electron window.
@@ -75,7 +76,7 @@ Start-Process -FilePath powershell `
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    "Set-Location '$repo'; Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731"
+    "Set-Location '$repo'; bun scripts/dotnet.mjs run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731"
   )
 
 Start-Process -FilePath powershell `
@@ -87,7 +88,7 @@ Start-Process -FilePath powershell `
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    "Set-Location '$repo'; `$env:TINADEC_GATEWAY_PORT='48730'; npm run dev:gateway"
+    "Set-Location '$repo'; `$env:TINADEC_GATEWAY_PORT='48730'; bun run dev:gateway"
   )
 ```
 
@@ -149,12 +150,18 @@ If Settings > Agents is empty:
 
 1. Verify Gateway is reachable at `http://127.0.0.1:48730/api/v1/health`.
 2. Verify Gateway can proxy agents with `http://127.0.0.1:48730/api/v1/agents`.
-3. If `/api/v1/agents` returns `404`, Gateway is stale. Restart `npm run dev:gateway`.
+3. If `/api/v1/agents` returns `404`, Gateway is stale. Restart `bun run dev:gateway`.
 4. If Gateway health returns `500`, Core is down or still building. Start or restart Core on port `48731`.
 5. If old names appear, re-install/upgrade the bundled Agent Pack; there is no `CoreStore` class in the current codebase.
 6. Refresh the Vite/Electron settings page after Core and Gateway are both healthy.
 
-If `dotnet build` fails with `NETSDK1018` and a `V7.24.42SP3` version string, clear these environment variables before running .NET:
+If `dotnet build` fails with `NETSDK1018` and a `V7.24.42SP3` version string, a stray `Version` / `Ice-Version` variable is confusing MSBuild. Run .NET through the wrapper, which strips both:
+
+```bash
+bun scripts/dotnet.mjs build TinadecCore/TinadecCore.slnx
+```
+
+Calling `dotnet` directly means clearing them first:
 
 ```powershell
 Remove-Item Env:Version -ErrorAction SilentlyContinue
@@ -167,22 +174,20 @@ If `dotnet build` cannot copy `TinadecCore.dll`, an old `TinadecCore` process is
 
 Run the normal test suite:
 
-```powershell
-npm test
+```bash
+bun test
 ```
 
 Run Core tests only:
 
-```powershell
-Remove-Item Env:Version -ErrorAction SilentlyContinue
-Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
-dotnet test TinadecCore/TinadecCore.slnx -v minimal
+```bash
+bun scripts/dotnet.mjs test TinadecCore/TinadecCore.slnx -v minimal
 ```
 
 Run frontend and Gateway tests/builds:
 
-```powershell
-npm run test --workspaces --if-present
-npm run build --workspaces --if-present
+```bash
+bun run --workspaces --if-present test
+bun run --workspaces --if-present build
 ```
 
