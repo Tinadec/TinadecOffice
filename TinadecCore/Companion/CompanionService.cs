@@ -17,6 +17,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
     private static readonly string[] SkillSourceKinds = ["manual", "pack"];
     private static readonly string[] ConnectionKinds = ["mcp", "server", "phone", "external_agent"];
     private static readonly string[] AuthorizationStates = ["configured", "authorized", "revoked"];
+    private static readonly string[] CompanionRoles = ["autonomous", "buddy"];
 
     private Guid TenantId => tenant.Current.TenantId;
 
@@ -50,6 +51,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             PersonaDocument = persona,
             ModelPurpose = NormalizePurpose(input.ModelPurpose, "chat"),
             Status = "active",
+            Role = NormalizeChoice(input.Role, "autonomous", CompanionRoles, "role"),
             Revision = 1,
             CreatedAt = now,
             UpdatedAt = now
@@ -95,6 +97,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             row.PersonaDocument = input.PersonaDocument;
         }
         if (input.ModelPurpose is not null) row.ModelPurpose = NormalizePurpose(input.ModelPurpose, row.ModelPurpose);
+        if (input.Role is not null) row.Role = NormalizeChoice(input.Role, row.Role, CompanionRoles, "role");
         if (input.Model is { } model)
         {
             // "Absent" and "clear" differ here: an empty string drops the pin and falls back to the
@@ -395,6 +398,9 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         long expectedRevision,
         bool mainSpecified,
         Guid? mainCompanionId,
+        bool buddySpecified,
+        Guid? buddyCompanionId,
+        int? recruitLimit,
         bool? autonomyPaused,
         CancellationToken cancellationToken = default)
     {
@@ -410,6 +416,13 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             if (target is null || target.Status != "active")
                 throw new CompanionException("companion_not_found", "The main companion must be an active companion of this tenant.", 400);
         }
+        if (buddySpecified && buddyCompanionId is { } buddyId)
+        {
+            var target = await db.Companions.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == buddyId && x.TenantId == tenantId, cancellationToken).ConfigureAwait(false);
+            if (target is null || target.Status != "active")
+                throw new CompanionException("companion_not_found", "The buddy companion must be an active companion of this tenant.", 400);
+        }
         var now = DateTimeOffset.UtcNow;
         if (row is null)
         {
@@ -417,6 +430,8 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             {
                 TenantId = tenantId,
                 MainCompanionId = mainSpecified ? mainCompanionId : null,
+                BuddyCompanionId = buddySpecified ? buddyCompanionId : null,
+                RecruitLimit = recruitLimit ?? 3,
                 AutonomyPaused = autonomyPaused ?? false,
                 Revision = 1,
                 UpdatedAt = now
@@ -426,11 +441,31 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         else
         {
             if (mainSpecified) row.MainCompanionId = mainCompanionId;
+            if (buddySpecified) row.BuddyCompanionId = buddyCompanionId;
+            if (recruitLimit is { } limit) row.RecruitLimit = Math.Clamp(limit, 0, 20);
             if (autonomyPaused is { } paused) row.AutonomyPaused = paused;
             row.Revision++;
             row.UpdatedAt = now;
         }
-        await SaveAsync(db, cancellationToken).ConfigureAwait(false);
+        // The settings feed event is an activity row like any other; the live endpoint maps this
+        // kind to `companion.settings` so a client can tell a designation change from chat traffic.
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "settings_changed",
+            Summary = "伙伴设置已更新",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                main_companion_id = row.MainCompanionId,
+                buddy_companion_id = row.BuddyCompanionId,
+                recruit_limit = row.RecruitLimit,
+                autonomy_paused = row.AutonomyPaused,
+                revision = row.Revision
+            }),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, token => SaveAsync(db, token), cancellationToken).ConfigureAwait(false);
         return CompanionContracts.ToJson(row);
     }
 
@@ -594,6 +629,219 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
     }
 
     private static string? TrimToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    // ── mandates ──
+
+    /// <summary>
+    /// Standing authorizations for this companion's autonomous actions. A row exists only once the
+    /// autonomy tick wanted to act: the proposal it recorded is what the user decides on, so an
+    /// empty list means the companion has not asked for anything yet, not that it cannot.
+    /// </summary>
+    public async Task<object> ListMandatesAsync(Guid companionId, CancellationToken cancellationToken = default)
+    {
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+        var rows = (await db.Mandates.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.CompanionId == companionId)
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderBy(x => x.Action, StringComparer.Ordinal)
+            .ToList();
+        return rows.Select(CompanionContracts.MandateJson).ToList();
+    }
+
+    /// <summary>
+    /// Approves or denies one standing authorization. Approving lets the next tick of that action
+    /// class run; denying keeps it a proposal until the user changes their mind. The decision is
+    /// recorded as an activity so the feed shows who allowed what, and when.
+    /// </summary>
+    public async Task<object?> DecideMandateAsync(
+        Guid companionId, Guid mandateId, long expectedRevision, string? decision, CancellationToken cancellationToken = default)
+    {
+        var status = decision?.Trim().ToLowerInvariant() switch
+        {
+            "approved" => "approved",
+            "denied" => "denied",
+            _ => throw Invalid("decision must be approved or denied.")
+        };
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.Mandates.SingleOrDefaultAsync(
+            x => x.Id == mandateId && x.TenantId == tenantId && x.CompanionId == companionId, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null) return null;
+        EnsureRevision(row.Revision, expectedRevision);
+
+        var now = DateTimeOffset.UtcNow;
+        row.Status = status;
+        row.DecidedAt = now;
+        row.UpdatedAt = now;
+        row.Revision++;
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = status == "approved" ? "autonomy_mandate_approved" : "autonomy_mandate_denied",
+            CompanionId = companionId,
+            Summary = status == "approved"
+                ? $"已授权伙伴执行 {row.Action}"
+                : $"已拒绝伙伴执行 {row.Action}",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { action = row.Action, decided = status }),
+            CreatedAt = now
+        });
+        await SaveAsync(db, cancellationToken).ConfigureAwait(false);
+        return CompanionContracts.MandateJson(row);
+    }
+
+    // ── recruitments ──
+
+    /// <summary>
+    /// Recruit proposals the team has raised. A proposal is only a request: no companion exists
+    /// until the user approves, and the per-tenant limit still has to have room.
+    /// </summary>
+    public async Task<object> ListRecruitmentsAsync(CancellationToken cancellationToken = default)
+    {
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = (await db.Recruitments.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderByDescending(x => x.CreatedAt)
+            .ThenByDescending(x => x.Id)
+            .ToList();
+        return rows.Select(CompanionContracts.RecruitmentJson).ToList();
+    }
+
+    /// <summary>
+    /// Approving creates the companion the proposal described. The limit is re-read inside the same
+    /// decision: a proposal recorded when there was room may have been overtaken by another one, and
+    /// creating past the ceiling would be the exact growth the limit exists to stop.
+    /// </summary>
+    public async Task<object?> DecideRecruitmentAsync(
+        Guid recruitmentId, long expectedRevision, string? decision, CancellationToken cancellationToken = default)
+    {
+        var status = decision?.Trim().ToLowerInvariant() switch
+        {
+            "approved" => "approved",
+            "denied" => "denied",
+            _ => throw Invalid("decision must be approved or denied.")
+        };
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.Recruitments.SingleOrDefaultAsync(
+            x => x.Id == recruitmentId && x.TenantId == tenantId, cancellationToken).ConfigureAwait(false);
+        if (row is null) return null;
+        EnsureRevision(row.Revision, expectedRevision);
+        if (row.Status != "proposed")
+            throw Conflict();
+
+        var now = DateTimeOffset.UtcNow;
+        Guid? createdId = null;
+        if (status == "approved")
+        {
+            var limit = await db.Settings.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .Select(x => (int?)x.RecruitLimit)
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? 3;
+            var recruited = await db.Companions.AsNoTracking()
+                .CountAsync(x => x.TenantId == tenantId && x.RecruitedByCompanionId != null && x.Status != "archived",
+                    cancellationToken).ConfigureAwait(false);
+            if (limit <= 0 || recruited >= limit)
+                throw new CompanionException("recruit_limit_reached", "The recruit limit leaves no room for another companion.", 409);
+
+            var created = new CompanionAgentRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Name = row.Name,
+                PersonaDocument = row.PersonaDocument,
+                ModelPurpose = "chat",
+                Status = "active",
+                Role = "autonomous",
+                RecruitedByCompanionId = row.ProposerId,
+                Revision = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.Companions.Add(created);
+            createdId = created.Id;
+        }
+
+        row.Status = status;
+        row.CreatedCompanionId = createdId;
+        row.DecidedAt = now;
+        row.UpdatedAt = now;
+        row.Revision++;
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = status == "approved" ? "autonomy_recruit_approved" : "autonomy_recruit_denied",
+            CompanionId = row.ProposerId,
+            Summary = status == "approved"
+                ? $"已批准招募新伙伴「{row.Name}」"
+                : $"已拒绝招募新伙伴「{row.Name}」",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "recruit", decided = status, recruitment_id = row.Id, created_companion_id = createdId
+            }),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, token => SaveAsync(db, token), cancellationToken).ConfigureAwait(false);
+        return CompanionContracts.RecruitmentJson(row);
+    }
+
+    // ── emotes ──
+
+    /// <summary>
+    /// Records that the user waved at or patted the companion. The row is what makes the gesture
+    /// real: it is durable, it reaches every surface through the activity feed, and the companion
+    /// sees it in its next turn's facts. Nothing is written into a conversation — an emote is not
+    /// something the companion said, and a fabricated line would put words in its mouth.
+    /// </summary>
+    public async Task<object> RecordEmoteAsync(Guid companionId, string? emote, CancellationToken cancellationToken = default)
+    {
+        var gesture = emote?.Trim().ToLowerInvariant() switch
+        {
+            "wave" => "wave",
+            "pat" => "pat",
+            _ => throw Invalid("emote must be wave or pat.")
+        };
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        // A click is cheap; a feed of forty identical waves is not. One row per gesture per minute
+        // is the honest resolution: the interaction happened, the log just does not repeat it.
+        //
+        // Seq is a tenant-monotonic long, so the newest row is one ordered read SQLite can actually
+        // translate. Ordering by CreatedAt would have to materialise the whole emote history, which
+        // grows with every click.
+        var recent = await db.Activities.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.CompanionId == companionId && x.Kind == "emote_received")
+            .OrderByDescending(x => x.Seq)
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (recent is not null && now - recent.CreatedAt < TimeSpan.FromMinutes(1)
+            && recent.PayloadJson is { } payload && payload.Contains($"\"{gesture}\"", StringComparison.Ordinal))
+        {
+            return CompanionContracts.ActivityJson(recent, null, null);
+        }
+
+        var row = new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "emote_received",
+            CompanionId = companionId,
+            Summary = gesture == "wave" ? "你向伙伴打了个招呼" : "你摸了摸伙伴的头",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { emote = gesture }),
+            CreatedAt = now
+        };
+        db.Activities.Add(row);
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+        return CompanionContracts.ActivityJson(row, null, null);
+    }
 
     private static CompanionException Invalid(string message) => new("invalid_request", message, 400);
     private static CompanionException Conflict() => new("companion_revision_conflict", "Revision conflict.", 412);

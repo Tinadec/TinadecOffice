@@ -52,6 +52,13 @@ public sealed class OidcSessionStore
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(30);
     private static readonly TimeSpan LoginLifetime = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// Backstop for a caller that starts logins without ever completing them. Far above any
+    /// real human concurrency; hitting it means the host is looping, so it is told to wait
+    /// rather than being handed an unbounded dictionary.
+    /// </summary>
+    private const int MaxPendingLogins = 256;
+
     private sealed record PendingLogin(string Nonce, DateTimeOffset ExpiresAt);
     private sealed record CompletedLogin(string SessionToken, DateTimeOffset ExpiresAt);
     /// <summary>
@@ -68,6 +75,7 @@ public sealed class OidcSessionStore
         DateTimeOffset ExpiresAt);
 
     private readonly ISecretStore? _secrets;
+    private readonly TimeProvider _clock;
     private readonly object _sync = new();
     private readonly SemaphoreSlim _persistGate = new(1, 1);
     private readonly Dictionary<string, PendingLogin> _pending = new(StringComparer.Ordinal);
@@ -79,7 +87,12 @@ public sealed class OidcSessionStore
     /// Null keeps the store memory-only, which is what tests and hosts without a writable
     /// secret store get: the flow still works, it just does not survive a restart.
     /// </param>
-    public OidcSessionStore(ISecretStore? secrets = null) => _secrets = secrets;
+    /// <param name="clock">Injected so expiry can be exercised without waiting ten minutes.</param>
+    public OidcSessionStore(ISecretStore? secrets = null, TimeProvider? clock = null)
+    {
+        _secrets = secrets;
+        _clock = clock ?? TimeProvider.System;
+    }
 
     /// <summary>
     /// Reads persisted sessions once. Every endpoint awaits this before touching the maps;
@@ -116,7 +129,7 @@ public sealed class OidcSessionStore
         }
         if (stored is null) return;
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _clock.GetUtcNow();
         lock (_sync)
         {
             foreach (var row in stored)
@@ -140,7 +153,12 @@ public sealed class OidcSessionStore
     {
         var state = RandomToken();
         var nonce = RandomToken();
-        lock (_sync) _pending[state] = new PendingLogin(nonce, DateTimeOffset.UtcNow + LoginLifetime);
+        lock (_sync)
+        {
+            SweepExpiredLocked(_clock.GetUtcNow());
+            if (_pending.Count >= MaxPendingLogins) throw new OidcLoginCapacityException();
+            _pending[state] = new PendingLogin(nonce, _clock.GetUtcNow() + LoginLifetime);
+        }
         return (state, nonce);
     }
 
@@ -148,10 +166,35 @@ public sealed class OidcSessionStore
     {
         lock (_sync)
         {
-            if (_pending.Remove(state, out var pending) && pending.ExpiresAt > DateTimeOffset.UtcNow)
-                return pending.Nonce;
-            return null;
+            var nonce = _pending.Remove(state, out var pending) && pending.ExpiresAt > _clock.GetUtcNow()
+                ? pending.Nonce
+                : null;
+            SweepExpiredLocked(_clock.GetUtcNow());
+            return nonce;
         }
+    }
+
+    /// <summary>
+    /// Caller holds <see cref="_sync"/>. Both maps are written only by the login flow, which a
+    /// human drives, so sweeping on every write covers each leak without a timer or a background
+    /// job whose lifetime would have to be managed for a DI singleton.
+    /// </summary>
+    private void SweepExpiredLocked(DateTimeOffset now)
+    {
+        foreach (var key in _pending.Where(entry => entry.Value.ExpiresAt <= now).Select(entry => entry.Key).ToList())
+            _pending.Remove(key);
+        foreach (var key in _completed.Where(entry => entry.Value.ExpiresAt <= now).Select(entry => entry.Key).ToList())
+            _completed.Remove(key);
+    }
+
+    internal int PendingLoginCount
+    {
+        get { lock (_sync) return _pending.Count; }
+    }
+
+    internal int CompletedLoginCount
+    {
+        get { lock (_sync) return _completed.Count; }
     }
 
     public async Task<string> CreateSessionAsync(OidcIdentity identity, OidcTokenSet tokens)
@@ -164,7 +207,7 @@ public sealed class OidcSessionStore
                 tokens.AccessToken,
                 tokens.RefreshToken,
                 tokens.ExpiresAt,
-                DateTimeOffset.UtcNow + SessionLifetime);
+                _clock.GetUtcNow() + SessionLifetime);
         }
         await PersistAsync().ConfigureAwait(false);
         return token;
@@ -178,7 +221,11 @@ public sealed class OidcSessionStore
     public void CompleteLogin(string state, string sessionToken)
     {
         if (string.IsNullOrWhiteSpace(state) || string.IsNullOrWhiteSpace(sessionToken)) return;
-        lock (_sync) _completed[state] = new CompletedLogin(sessionToken, DateTimeOffset.UtcNow + LoginLifetime);
+        lock (_sync)
+        {
+            SweepExpiredLocked(_clock.GetUtcNow());
+            _completed[state] = new CompletedLogin(sessionToken, _clock.GetUtcNow() + LoginLifetime);
+        }
     }
 
     /// <summary>One-time read: the first successful poll removes the entry to prevent replay.</summary>
@@ -188,7 +235,7 @@ public sealed class OidcSessionStore
         lock (_sync)
         {
             if (!_completed.Remove(state, out var completed)) return null;
-            if (completed.ExpiresAt <= DateTimeOffset.UtcNow) return null;
+            if (completed.ExpiresAt <= _clock.GetUtcNow()) return null;
             return completed.SessionToken;
         }
     }
@@ -202,7 +249,7 @@ public sealed class OidcSessionStore
         lock (_sync)
         {
             if (!_sessions.TryGetValue(token, out var session)) return null;
-            if (session.ExpiresAt <= DateTimeOffset.UtcNow)
+            if (session.ExpiresAt <= _clock.GetUtcNow())
             {
                 _sessions.Remove(token);
                 return null;
@@ -228,7 +275,7 @@ public sealed class OidcSessionStore
                     AccessToken = tokens.AccessToken,
                     RefreshToken = tokens.RefreshToken ?? session.RefreshToken,
                     AccessTokenExpiresAt = tokens.ExpiresAt,
-                    ExpiresAt = DateTimeOffset.UtcNow + SessionLifetime,
+                    ExpiresAt = _clock.GetUtcNow() + SessionLifetime,
                 };
                 changed = true;
             }
@@ -273,7 +320,7 @@ public sealed class OidcSessionStore
             OidcStoredSession[] snapshot;
             lock (_sync)
             {
-                var now = DateTimeOffset.UtcNow;
+                var now = _clock.GetUtcNow();
                 snapshot = _sessions
                     .Where(pair => pair.Value.ExpiresAt > now)
                     .Select(pair => new OidcStoredSession(
@@ -304,3 +351,10 @@ public sealed class OidcSessionStore
         Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
+
+/// <summary>
+/// Too many sign-in attempts are outstanding. The host maps this to 429 with Retry-After:
+/// it is a caller pacing problem, not a server fault.
+/// </summary>
+public sealed class OidcLoginCapacityException()
+    : Exception("Too many sign-in attempts are in progress. Try again shortly.");

@@ -24,6 +24,10 @@ const routes: RouteCase[] = [
   { method: 'GET', template: '/api/v1/companion-settings', status: 200 },
   { method: 'PATCH', template: '/api/v1/companion-settings', body: { main_companion_id: id, autonomy_paused: true, expected_revision: 3 }, status: 200 },
   { method: 'GET', template: '/api/v1/companion-connections', status: 200 },
+  // BYO Live2D registry: static prefix, import before the id route.
+  { method: 'GET', template: '/api/v1/companion-avatars', status: 200 },
+  { method: 'POST', template: '/api/v1/companion-avatars/import', body: { path: 'C:/models/nova' }, status: 200 },
+  { method: 'DELETE', template: '/api/v1/companion-avatars/{avatarId}', status: 204 },
   // Static companion path, deliberately before the companion-id routes in the implementation.
   { method: 'GET', template: '/api/v1/companions/activity', query: 'limit=5', status: 200 },
   { method: 'GET', template: '/api/v1/companions', query: 'include_archived=true', status: 200 },
@@ -32,6 +36,11 @@ const routes: RouteCase[] = [
   { method: 'PATCH', template: '/api/v1/companions/{companionId}', body: { name: 'Nova II', autonomy: { enabled: true, interval_minutes: 30, daily_action_budget: 4 } }, status: 200 },
   { method: 'POST', template: '/api/v1/companions/{companionId}/archive', status: 200 },
   { method: 'POST', template: '/api/v1/companions/{companionId}/autonomy/tick', status: 200 },
+  { method: 'POST', template: '/api/v1/companions/{companionId}/emote', body: { emote: 'wave' }, status: 200 },
+  { method: 'GET', template: '/api/v1/companions/{companionId}/mandates', status: 200 },
+  { method: 'POST', template: '/api/v1/companions/{companionId}/mandates/{mandateId}/decision', body: { decision: 'approved' }, status: 200 },
+  { method: 'GET', template: '/api/v1/companion-recruitments', status: 200 },
+  { method: 'POST', template: '/api/v1/companion-recruitments/{recruitmentId}/decision', body: { decision: 'approved' }, status: 200 },
   { method: 'GET', template: '/api/v1/companions/{companionId}/memories', query: 'q=shared&limit=12', status: 200 },
   { method: 'POST', template: '/api/v1/companions/{companionId}/memories', body: { content: 'Prefers short answers.', source_kind: 'user' }, status: 200 },
   { method: 'PATCH', template: '/api/v1/companions/{companionId}/memories/{memoryId}', body: { content: 'Prefers terse answers.' }, status: 200 },
@@ -54,6 +63,8 @@ const routes: RouteCase[] = [
   { method: 'POST', template: '/api/v1/companion-conversations/{conversationId}/messages', body: { body: 'Hello Nova', addressed_to: [id] }, status: 200 },
   { method: 'POST', template: '/api/v1/companion-conversations/{conversationId}/pause', body: { paused: true }, status: 200 },
   { method: 'GET', template: '/api/v1/companion-runs/{runId}', status: 200 },
+  // SSE: the route forwards the cursor and streams the body instead of buffering it.
+  { method: 'GET', template: '/api/v1/companion-events', query: 'after_seq=7', status: 200 },
 ];
 
 function materialize(route: RouteCase): string {
@@ -91,9 +102,9 @@ test('every companion operation forwards the exact path, query, JSON body and st
     assert.equal(call.body, body, `${route.method} ${url} rewrote the body`);
   }
   assert.equal(calls.length, routes.length);
-  // A contract-size pin: 21 paths / 32 operations. Shrinking the proxied surface fails here.
-  assert.equal(new Set(routes.map((route) => route.template)).size, 21);
-  assert.equal(routes.length, 32);
+  // A contract-size pin: 30 paths / 41 operations. Shrinking the proxied surface fails here.
+  assert.equal(new Set(routes.map((route) => route.template)).size, 30);
+  assert.equal(routes.length, 41);
 });
 
 test('If-Match and Idempotency-Key reach Core unchanged', { concurrency: false }, async () => {

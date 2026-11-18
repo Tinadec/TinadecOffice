@@ -11,6 +11,8 @@ import {
   type MarketInstallProposalDto,
   type McpInventoryDto,
   type McpServerDto,
+  type ToolSkillResource,
+  type ToolMcpResource,
 } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { useNotifications } from '@/composables/useNotifications'
@@ -38,6 +40,9 @@ const mcpInventory = ref<McpInventoryDto | null>(null)
 const acpAdapters = ref<AcpAdapterDto[]>([])
 const selectedCatalogId = ref('')
 const kindFilter = ref('all')
+/** A dedicated Skill/MCP page locks the catalog kind; the filter rail must not offer a way out. */
+const kindLock = ref<'skill' | 'mcp-server' | null>(null)
+const kindLocked = computed(() => kindLock.value !== null)
 const sourceFilter = ref('')
 const query = ref('')
 const busy = ref(false)
@@ -181,7 +186,7 @@ async function loadAll() {
     const [sourceListResult, installationList, inventory, adapters] = await Promise.all([
       api.listExtensionSources(),
       api.listMarketInstallations(),
-      api.listMcpServers(),
+      api.listMcpServers(targetProjectId.value ?? undefined),
       api.listAcpAdapters(),
     ])
     sources.value = sourceListResult.sources
@@ -437,14 +442,72 @@ const LEDGER_POLL_MAX_AGE_MS = 10 * 60 * 1000
 let ledgerTimer: ReturnType<typeof setInterval> | null = null
 let ledgerPollStartedAt = 0
 
+// Skills and MCP resources are read from disk/DB per call, so a file dropped into
+// `.tinadec/skills` or a resource saved elsewhere is already live for the next read. This poll is
+// what makes the market notice it without a page reload; it is a fingerprint, not an SSE subscription.
+const EXTENSION_POLL_INTERVAL_MS = 10_000
+let extensionTimer: ReturnType<typeof setInterval> | null = null
+let extensionFingerprint = ''
+
+function extensionFingerprintOf(skills: ToolSkillResource[], servers: ToolMcpResource[]): string {
+  const skillPart = skills
+    .map((row) => `${row.resource_id}:${row.revision}:${row.enabled}:${row.availability}:${row.content_hash}`)
+    .sort()
+    .join('|')
+  const serverPart = servers
+    .map((row) => `${row.resource_id}:${row.revision}:${row.enabled}`)
+    .sort()
+    .join('|')
+  return `${skillPart}::${serverPart}`
+}
+
+async function checkExtensions(): Promise<void> {
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+  try {
+    const projectId = targetProjectId.value ?? undefined
+    const [skills, servers] = await Promise.all([
+      api.listToolSkills(projectId),
+      api.listToolMcpResources(projectId),
+    ])
+    const next = extensionFingerprintOf(skills.skills, servers)
+    if (extensionFingerprint && next !== extensionFingerprint) {
+      await Promise.all([loadCatalog(), loadInstallations()])
+    }
+    extensionFingerprint = next
+  } catch {
+    // A failed background poll is not a page error; the explicit refresh buttons still report.
+  }
+}
+
+function startExtensionPoll(): void {
+  if (extensionTimer !== null) return
+  void checkExtensions()
+  extensionTimer = setInterval(() => { void checkExtensions() }, EXTENSION_POLL_INTERVAL_MS)
+}
+
+function stopExtensionPoll(): void {
+  if (extensionTimer !== null) clearInterval(extensionTimer)
+  extensionTimer = null
+}
+
 /** Called by the page, not by the cards: three cards mounting meant three reads, and a latch that
  *  swallowed them all meant a second visit to /market re-read nothing. */
 function start() {
+  startExtensionPoll()
   void loadAll()
+}
+
+/** Called by MarketPage when the route names a dedicated surface. Passing null restores `/market`. */
+function setKind(kind: 'skill' | 'mcp-server' | null) {
+  kindLock.value = kind
+  const next = kind ?? 'all'
+  if (kindFilter.value !== next) kindFilter.value = next
+  else if (kind) void loadCatalog()
 }
 
 function stop() {
   stopLedgerPoll()
+  stopExtensionPoll()
   ++catalogEpoch; ++ledgerEpoch
 }
 
@@ -458,6 +521,7 @@ export const marketController = {
   sources, supportedKinds, catalog, installations, acpAdapters,
   mcpInventory, mcpServers, mcpSource, mcpReadSucceeded, mcpReason, mcpConfigPath,
   selectedCatalogId, kindFilter, sourceFilter, query, busy, loading,
+  kindLock, kindLocked, setKind,
   proposal, activeProposal, proposalBusy, sourceForm,
   selectedItem, selectedInstallation, installationFor, installBlockerText, awaitingDecision, actionFinished, installationUsable, skillScope,
   targetProjectId, targetProject,

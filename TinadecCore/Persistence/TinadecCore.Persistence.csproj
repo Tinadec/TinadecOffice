@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <RootNamespace>TinadecCore.Persistence</RootNamespace>
     <Description>Shared database abstraction: EF Core LINQ surface with SQLite (default) and PostgreSQL providers.</Description>
@@ -9,6 +9,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Governance keeps its own duplicate-key compare-and-set around lease consumption and approval
+         minting. It has to ask the same "is this a lock conflict or a real duplicate?" question the
+         retry helper asks, so the predicate is shared rather than reimplemented and drifting. -->
+    <InternalsVisibleTo Include="TinadecCore.Governance" />
   </ItemGroup>
 
   <ItemGroup>

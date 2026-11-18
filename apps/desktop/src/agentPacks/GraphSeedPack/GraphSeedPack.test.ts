@@ -53,6 +53,15 @@ describe('GraphSeedPack', () => {
     // A conversation identity must carry the conversation capability or admission
     // refuses the run (conversation_identity_locked_mismatch).
     expect(meeting.capabilities).toContain('user.respond')
+    // M2: the workbench is agent-configurable. The conversation identity can inspect the
+    // live configuration and apply governed changes; load_skill is the second half of the
+    // skill index (the index carries only name + description). Every write tool is
+    // approval-gated in Core — holding the id is not holding the authority.
+    for (const tool of ['load_skill', 'mcp_list', 'mcp_search', 'mcp_invoke',
+      'tinadec_inspect', 'tinadec_agent_apply', 'tinadec_mode_apply', 'tinadec_mode_publish',
+      'tinadec_skill_apply', 'tinadec_mcp_apply']) {
+      expect(meeting.tool_scope, `meeting must hold ${tool}`).toContain(tool)
+    }
 
     // solo_master stays published for sessions frozen on it, but no mode may still point
     // a conversation node at it (they all converse through meeting now).
@@ -80,6 +89,9 @@ describe('GraphSeedPack', () => {
     expect(reviewer.layer).toBe('execution')
     expect(reviewer.tool_scope).toContain('git_diff')
     expect(reviewer.tool_scope).toContain('read_file')
+    // Reading a skill's instructions is reading; every reviewer that can read files can
+    // also load the skill body the index named.
+    expect(reviewer.tool_scope).toContain('load_skill')
     for (const tool of ['write_file', 'replace_lines', 'insert_line', 'delete_line', 'shell', 'git_commit', 'git_push', 'web_fetch', 'mcp_invoke']) {
       expect(reviewer.tool_scope, `reviewer must not hold ${tool}`).not.toContain(tool)
     }
@@ -445,8 +457,13 @@ describe('GraphSeedPack', () => {
     const effective = soloMaster.tool_scope.filter((tool) => switches[tool] !== false)
     // Reading the organization (who is here, what was said, the session graph, the evidence archive)
     // is reading; posting into it and closing reports are not, so those stay off in Plan.
-    expect(effective).toEqual(['ls', 'stat', 'read_file', 'file_search', 'git_status', 'git_diff', 'git_log', 'read_attachment', 'task_dispatch', 'task_wait', 'plan_update',
+    expect(effective).toEqual(['ls', 'stat', 'read_file', 'load_skill', 'file_search', 'git_status', 'git_diff', 'git_log', 'read_attachment', 'task_dispatch', 'task_wait', 'plan_update',
       'graph_view', 'org_directory', 'org_read', 'recall_evidence', 'environment_list'])
+    // The workbench write tools and MCP egress are switched off in Plan: planning must not
+    // reconfigure the workbench or reach the network.
+    for (const tool of ['mcp_list', 'mcp_search', 'mcp_invoke', 'tinadec_agent_apply', 'tinadec_mode_apply', 'tinadec_mode_publish', 'tinadec_skill_apply', 'tinadec_mcp_apply']) {
+      expect(switches[tool], `plan switches ${tool} off`).toBe(false)
+    }
     // No write grant either: even a tool that slipped through would be denied at the decision point.
     expect(binding.envelope!.resources!.read).toEqual([''])
     expect(binding.envelope!.resources!.write).toBeUndefined()

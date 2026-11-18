@@ -41,6 +41,16 @@ function statusKey(summary: CompanionSummary): 'idle' | 'thinking' | 'paused' | 
   return 'unknown'
 }
 
+/**
+ * A buddy is a different job from an autonomous partner: it sits in the sidebar and is the one
+ * companion the user talks to. The roster shows both, so the role has to be visible here.
+ */
+function roleLabel(summary: CompanionSummary): string {
+  return summary.role === 'buddy'
+    ? t('companion.center.roleBuddy')
+    : t('companion.center.roleAutonomous')
+}
+
 function statusLabel(summary: CompanionSummary): string {
   const key = statusKey(summary)
   if (key === 'idle') return t('companion.center.statusIdle')
@@ -153,7 +163,14 @@ async function toggleAutonomy(): Promise<void> {
       >
         <AgentPetAvatar class="companion-avatar" :pet-slug="summary.avatar ?? ''" :size="28" :alt="summary.name" />
         <span class="companion-row-body">
-          <span class="companion-row-name">{{ summary.name }}</span>
+          <span class="companion-row-name">
+            {{ summary.name }}
+            <span
+              class="companion-role-badge"
+              :class="`companion-role-${summary.role}`"
+              :data-testid="`companion-role-${summary.id}`"
+            >{{ roleLabel(summary) }}</span>
+          </span>
           <span class="companion-row-meta">
             <span class="companion-dot" :class="`companion-dot-${statusKey(summary)}`" aria-hidden="true" />
             {{ statusLabel(summary) }}
@@ -323,11 +340,31 @@ async function toggleAutonomy(): Promise<void> {
 }
 
 .companion-row-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   font-size: 12.5px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.companion-role-badge {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border-muted);
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.companion-role-buddy {
+  border-color: color-mix(in oklab, #58a6ff 50%, var(--border-muted));
+  color: #58a6ff;
 }
 
 .companion-row-meta {

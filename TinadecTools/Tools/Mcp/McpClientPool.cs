@@ -4,6 +4,7 @@ using System.Diagnostics;
 using TinadecTools.Runtime;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
+using Microsoft.Extensions.Logging.Abstractions;
 using TinadecTools.Runtime.Sandbox;
 
 namespace TinadecTools.Tools.Mcp;
@@ -175,6 +176,9 @@ internal sealed class McpClientPool : IAsyncDisposable
 
     private static Task<McpClient> CreateAsync(McpServerConfig config, CancellationToken cancellationToken)
     {
+        var transportName = (config.Transport ?? "").Trim().ToLowerInvariant();
+        if (transportName is "http" or "sse") return CreateHttpAsync(config, transportName, cancellationToken);
+
         if (ToolExecutionContext.Current is not null && (config.ProgramStatus is "not_installed" or "outdated" or "invalid" or "needs_reinstall"
             || Path.GetFileNameWithoutExtension(config.Command).ToLowerInvariant() is "npx" or "uvx"))
             throw new InvalidOperationException("This MCP resource is registered, but its pinned program has not been explicitly installed. Review and approve the program installation first; no dependency was downloaded.");
@@ -182,7 +186,6 @@ internal sealed class McpClientPool : IAsyncDisposable
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         if (config.Env is not null) foreach (var entry in config.Env) environment[entry.Key] = entry.Value;
         environment.Remove("TINADEC_HOST_CONTROL_TOKEN");
-        var governed = ToolExecutionContext.Current is { StorageRoot: { } };
         if (ToolExecutionContext.Current is { StorageRoot: { } root } context)
         {
             var variables = SandboxEnvironment.Build(null, null).ToDictionary(x => x.Key, x => (string?)x.Value,
@@ -214,6 +217,30 @@ internal sealed class McpClientPool : IAsyncDisposable
         return McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
     }
 
+    /// <summary>
+    /// HTTP and legacy SSE servers have no child process, no managed program and no environment.
+    /// Their credentials are header values resolved from Core's secret store into the frozen call.
+    /// </summary>
+    private static Task<McpClient> CreateHttpAsync(McpServerConfig config, string transportName, CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(config.Url, UriKind.Absolute, out var endpoint)
+            || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+            throw new InvalidOperationException("This MCP resource has no valid http(s) URL.");
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (config.Headers is not null)
+            foreach (var header in config.Headers)
+                if (header.Value is not null) headers[header.Key] = header.Value;
+        var options = new HttpClientTransportOptions
+        {
+            Name = string.IsNullOrWhiteSpace(config.Name) ? config.Id : config.Name,
+            Endpoint = endpoint,
+            TransportMode = transportName == "sse" ? HttpTransportMode.Sse : HttpTransportMode.StreamableHttp,
+            AdditionalHeaders = headers,
+            ConnectionTimeout = TimeSpan.FromSeconds(60),
+        };
+        return McpClient.CreateAsync(new HttpClientTransport(options, NullLoggerFactory.Instance), cancellationToken: cancellationToken);
+    }
+
     private static CancellationTokenSource CallDeadline(CancellationToken cancellationToken, int? timeoutMs)
     {
         var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -243,6 +270,8 @@ internal sealed class McpClientPool : IAsyncDisposable
             writer.WriteString("program_hash", config.ProgramHash);
             writer.WriteString("resource_id", config.ResourceId ?? config.Id);
             writer.WriteNumber("revision", config.Revision);
+            writer.WriteString("transport", config.Transport);
+            writer.WriteString("url", config.Url);
             writer.WriteString("command", config.Command);
             writer.WriteString("cwd", config.Cwd);
             writer.WriteStartArray("args");
@@ -252,6 +281,11 @@ internal sealed class McpClientPool : IAsyncDisposable
             if (config.Env is not null)
                 foreach (var variable in config.Env.OrderBy(pair => pair.Key, StringComparer.Ordinal))
                     writer.WriteString(variable.Key, variable.Value);
+            writer.WriteEndObject();
+            writer.WriteStartObject("headers");
+            if (config.Headers is not null)
+                foreach (var header in config.Headers.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                    writer.WriteString(header.Key, header.Value);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }

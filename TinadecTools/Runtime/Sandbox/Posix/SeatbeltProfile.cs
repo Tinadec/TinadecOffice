@@ -16,7 +16,8 @@ namespace TinadecTools.Runtime.Sandbox.Posix;
 internal static class SeatbeltProfile
 {
     internal static string Build(IReadOnlyList<string> writeTargets, IReadOnlyList<string>? protectedPaths = null,
-        IReadOnlyList<string>? readExceptions = null, string? protectedStorageRoot = null)
+        IReadOnlyList<string>? readExceptions = null, string? protectedStorageRoot = null,
+        IReadOnlyList<string>? writeDeniedPaths = null)
     {
         var sb = new StringBuilder();
         sb.Append("(version 1)\n");
@@ -27,11 +28,15 @@ internal static class SeatbeltProfile
             return sb.ToString();
 
         var protectedRoots = protectedPaths ?? [];
-        var writeProtected = protectedStorageRoot is null ? protectedRoots : protectedRoots.Append(protectedStorageRoot).ToArray();
+        // Write-denied paths join the write exclusion only, never protectedRoots: the read-deny
+        // block below is built from protectedRoots, and git inside the sandbox must still read
+        // its own config. Path expressions also cover files created after the sandbox starts.
+        var writeProtected = (protectedStorageRoot is null ? protectedRoots : protectedRoots.Append(protectedStorageRoot))
+            .Concat(writeDeniedPaths ?? []).ToArray();
         sb.Append("(allow file-write*\n  (require-all\n    (require-any\n");
         Clauses(writeTargets);
         sb.Append("    )\n");
-        if (writeProtected.Count > 0)
+        if (writeProtected.Length > 0)
         {
             sb.Append("    (require-not (require-any\n");
             ProtectedClauses(writeProtected, writeTargets);

@@ -43,6 +43,8 @@ export interface CommandHost {
   navigate(routeName: string): void
   /** Route name the surface is on, so a navigation command can hide itself. */
   routeName(): string | null
+  /** Open/close the current session's desktop partner window; no-op when no session is selected. */
+  toggleSessionPartner?(): void
 }
 
 export interface AppCommand {
@@ -107,6 +109,14 @@ export const appCommands: readonly AppCommand[] = [
     },
   },
   {
+    id: 'session.togglePartner',
+    group: 'session',
+    labelKey: 'composer.cmdTogglePartner',
+    hintKey: 'composer.cmdTogglePartnerHint',
+    keywordKeys: ['palette.keywordPartner'],
+    run: (host) => host.toggleSessionPartner?.(),
+  },
+  {
     id: 'run.stop',
     group: 'run',
     labelKey: 'composer.cmdStop',
@@ -148,6 +158,8 @@ export const appCommands: readonly AppCommand[] = [
   go('view.goGovernance', 'palette.goGovernance', 'governance-board'),
   go('view.goMemory', 'palette.goMemory', 'memory', ['palette.keywordMemory']),
   go('view.goMarket', 'palette.goMarket', 'market'),
+  go('view.goMarketSkills', 'market.kindSkill', 'marketSkills'),
+  go('view.goMarketMcp', 'market.kindMcpServer', 'marketMcp'),
   go('view.goSettings', 'palette.goSettings', 'settings', ['palette.keywordPreferences']),
 ]
 

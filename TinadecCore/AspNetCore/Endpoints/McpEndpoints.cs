@@ -33,21 +33,23 @@ public static class McpEndpoints
     public static IEndpointRouteBuilder MapMcpEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/mcp/servers", async (
+            Guid? project_id,
             IToolProvider provider,
             IConfiguration configuration,
             IToolConfigurationResolver settings,
             CancellationToken ct) =>
-            await ReadInventoryAsync(provider, configuration, settings, includeSchema: false, ct).ConfigureAwait(false))
+            await ReadInventoryAsync(provider, configuration, settings, includeSchema: false, project_id, ct).ConfigureAwait(false))
             .Produces<McpInventoryDto>(StatusCodes.Status200OK);
 
         app.MapGet("/api/v1/mcp/servers/{serverId}/tools", async (
             string serverId,
+            Guid? project_id,
             IToolProvider provider,
             IConfiguration configuration,
             IToolConfigurationResolver settings,
             CancellationToken ct) =>
         {
-            var inventory = await ReadInventoryAsync(provider, configuration, settings, includeSchema: true, ct)
+            var inventory = await ReadInventoryAsync(provider, configuration, settings, includeSchema: true, project_id, ct)
                 .ConfigureAwait(false);
 
             if (inventory.Source != McpReadSource.Provider)
@@ -91,6 +93,7 @@ public static class McpEndpoints
         IConfiguration configuration,
         IToolConfigurationResolver settings,
         bool includeSchema,
+        Guid? projectId,
         CancellationToken cancellationToken)
     {
         var workspaceRoot = configuration["TinadecTools:DefaultWorkspaceRoot"];
@@ -104,7 +107,7 @@ public static class McpEndpoints
                 workspaceRoot,
                 new ToolWireRequestDto
                 {
-                    ExecutionContext = await settings.MaterializeForCallAsync(await settings.ResolveAsync(null, null, cancellationToken), ["mcp_list"], cancellationToken),
+                    ExecutionContext = await settings.MaterializeForCallAsync(await settings.ResolveAsync(projectId, null, cancellationToken), ["mcp_list"], cancellationToken),
                     ToolId = McpInventoryToolId,
                     // No run owns an inventory read; the provider only echoes this back on
                     // wire events, and a listing call produces none.

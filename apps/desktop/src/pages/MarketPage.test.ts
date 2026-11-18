@@ -7,8 +7,11 @@ import MarketPage from './MarketPage.vue'
 const state = vi.hoisted(() => ({
   ready: Promise.resolve(), page: 'home', seen: [] as string[],
   start: vi.fn(), stop: vi.fn(), showPage: vi.fn((page: string) => { state.page = page }),
+  setKind: vi.fn(),
+  route: { meta: {} as Record<string, unknown> },
 }))
-vi.mock('@/controllers/MarketController', () => ({ marketController: { start: state.start, stop: state.stop } }))
+vi.mock('vue-router', () => ({ useRoute: () => state.route }))
+vi.mock('@/controllers/MarketController', () => ({ marketController: { start: state.start, stop: state.stop, setKind: state.setKind } }))
 vi.mock('@/lib/uiEngine', () => ({ useUiePage: () => ({ ready: state.ready, showPage: state.showPage }) }))
 vi.mock('@/components/AppHeader.vue', () => ({ default: defineComponent({ render: () => h('header') }) }))
 vi.mock('@tinadec/ui', () => ({
@@ -22,6 +25,7 @@ describe('Market route layout lifecycle', () => {
   afterEach(() => {
     wrapper?.unmount(); wrapper = undefined
     state.ready = Promise.resolve(); state.page = 'home'; state.seen = []
+    state.route = { meta: {} }
     vi.clearAllMocks()
   })
 
@@ -34,6 +38,16 @@ describe('Market route layout lifecycle', () => {
     expect(wrapper.emitted('ready')).toHaveLength(1)
     wrapper.unmount()
     expect(state.stop).toHaveBeenCalledOnce()
+  })
+
+  it('opens the Skill surface with its own UIE layout and a locked kind', async () => {
+    state.route = { meta: { uiePage: 'marketSkills', marketKind: 'skill' } }
+    wrapper = mount(MarketPage)
+    await flushPromises()
+    expect(state.seen).toEqual(['marketSkills'])
+    expect(state.showPage).toHaveBeenCalledWith('marketSkills')
+    expect(state.setKind).toHaveBeenCalledWith('skill')
+    expect(state.start).toHaveBeenCalledOnce()
   })
 
   it('waits for a slow persisted layout before creating cards or starting the controller', async () => {

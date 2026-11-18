@@ -33,6 +33,12 @@ const { onConnect } = useVueFlow()
 const selectedId = ref<string | null>(null)
 const selectedEdgeId = ref<string | null>(null)
 const laneWarning = ref('')
+const root = ref<HTMLElement | null>(null)
+
+/** Keyboard deletion must land on the canvas, not on a form field the user is typing in. */
+function focusCanvas() {
+  root.value?.focus({ preventScroll: true })
+}
 
 const opCount = computed(() => props.nodes.filter((n) => normalizeLane(n.lane) === 'operation').length)
 const exCount = computed(() => props.nodes.filter((n) => normalizeLane(n.lane) === 'execution').length)
@@ -90,12 +96,14 @@ function onNodeClick(e: { node: Node }) {
   const n = props.nodes.find((x) => x.id === e.node.id) ?? null
   emit('select-node', n)
   emit('select-edge', null)
+  focusCanvas()
 }
 function onPaneClick() {
   selectedId.value = null
   selectedEdgeId.value = null
   emit('select-node', null)
   emit('select-edge', null)
+  focusCanvas()
 }
 function onEdgeClick(e: { edge: Edge }) {
   selectedEdgeId.value = e.edge.id
@@ -103,6 +111,7 @@ function onEdgeClick(e: { edge: Edge }) {
   const ed = props.edges.find((x) => x.id === e.edge.id) ?? null
   emit('select-edge', ed)
   emit('select-node', null)
+  focusCanvas()
 }
 
 function hasCycle(nextEdges: AgentModeEdgeDto[]): boolean {
@@ -165,16 +174,42 @@ function deleteSelectedEdge() {
   selectedEdgeId.value = null
   emit('select-edge', null)
 }
+
+/** A node cannot be removed without its edges: Core rejects an edge with an unknown endpoint. */
+function deleteSelectedNode() {
+  if (!selectedId.value) return
+  const id = selectedId.value
+  emit('update:nodes', props.nodes.filter((n) => n.id !== id))
+  emit('update:edges', props.edges.filter((e) => e.source !== id && e.target !== id))
+  selectedId.value = null
+  emit('select-node', null)
+}
+
+/** Delete/Backspace removes whatever is selected; the canvas keeps VueFlow's own delete key off. */
+function deleteSelected() {
+  if (props.readonly) return
+  if (selectedId.value) deleteSelectedNode()
+  else if (selectedEdgeId.value) deleteSelectedEdge()
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Delete' && event.key !== 'Backspace') return
+  const target = event.target as HTMLElement | null
+  if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
+  if (!selectedId.value && !selectedEdgeId.value) return
+  event.preventDefault()
+  deleteSelected()
+}
 function updateEdgeLabel(val: string) {
   if (!selectedEdgeId.value) return
   emit('update:edges', props.edges.map((e) => e.id === selectedEdgeId.value ? { ...e, label: val || null } : e))
 }
 
-defineExpose({ deleteSelectedEdge, updateEdgeLabel, selectedEdgeId, laneWarning })
+defineExpose({ deleteSelected, deleteSelectedNode, deleteSelectedEdge, updateEdgeLabel, selectedEdgeId, selectedId, laneWarning })
 </script>
 
 <template>
-  <div class="agent-mode-canvas">
+  <div ref="root" class="agent-mode-canvas" tabindex="0" @keydown="onKeydown">
     <div class="lane-headers">
       <div class="lane-head op"><Workflow :size="13" />{{ t('workbench.operationLane') }}<em>{{ opCount }}</em></div>
       <div class="lane-head ex"><Cpu :size="13" />{{ t('workbench.executionLane') }}<em>{{ exCount }}</em></div>

@@ -50,7 +50,11 @@ internal sealed class McpServerRepository
 
     private static bool IsValid(McpServerConfig server)
     {
-        return !string.IsNullOrWhiteSpace(server.Id) && !string.IsNullOrWhiteSpace(server.Command);
+        if (string.IsNullOrWhiteSpace(server.Id)) return false;
+        var transport = (server.Transport ?? "").Trim().ToLowerInvariant();
+        if (transport is "" or "stdio") return !string.IsNullOrWhiteSpace(server.Command);
+        return transport is "http" or "sse" && Uri.TryCreate(server.Url, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 
     private static string ResolveConfigPath(string? configPath)

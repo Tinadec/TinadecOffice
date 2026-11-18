@@ -21,6 +21,19 @@ public static class CompanionEndpoints
         // The guid constraint keeps this distinct from GET/PATCH /companions/{companionId}.
         app.MapPost("/api/v1/companions/{companionId:guid}/autonomy/tick", TickAutonomy);
 
+        // Standing authorizations for autonomous actions: the tick records a proposal, the user
+        // approves or denies it here, and only an approved class of action may run unattended.
+        app.MapGet("/api/v1/companions/{companionId:guid}/mandates", ListMandates);
+        app.MapPost("/api/v1/companions/{companionId:guid}/mandates/{mandateId:guid}/decision", DecideMandate);
+
+        // A gesture at the companion's face. It records the interaction; it never writes a message.
+        app.MapPost("/api/v1/companions/{companionId:guid}/emote", RecordEmote);
+
+        // Recruit proposals: a companion asking for a long-lived helper. Approval is what creates
+        // it, and the tenant's recruit limit is re-checked at that moment.
+        app.MapGet("/api/v1/companion-recruitments", ListRecruitments);
+        app.MapPost("/api/v1/companion-recruitments/{recruitmentId:guid}/decision", DecideRecruitment);
+
         app.MapGet("/api/v1/companions/{companionId:guid}/memories", ListMemories);
         app.MapPost("/api/v1/companions/{companionId:guid}/memories", CreateMemory);
         app.MapPatch("/api/v1/companions/{companionId:guid}/memories/{memoryId:guid}", PatchMemory);
@@ -39,7 +52,15 @@ public static class CompanionEndpoints
         app.MapGet("/api/v1/companion-settings", GetSettings);
         app.MapPatch("/api/v1/companion-settings", PatchSettings);
 
+        // BYO Live2D models. Core does not bundle Cubism Core or any model; the user imports a
+        // directory and Core copies it into its own storage root. Import is static, so it is
+        // registered before the id route.
+        app.MapGet("/api/v1/companion-avatars", ListCompanionAvatars);
+        app.MapPost("/api/v1/companion-avatars/import", ImportCompanionAvatar);
+        app.MapDelete("/api/v1/companion-avatars/{avatarId:guid}", DeleteCompanionAvatar);
+
         app.MapCompanionConversationEndpoints();
+        app.MapCompanionEventEndpoints();
 
         return app;
     }
@@ -129,6 +150,57 @@ public static class CompanionEndpoints
         CompanionAutonomyService service,
         CancellationToken cancellationToken = default) =>
         Run(async () => Ok(await service.TickAsync(companionId, cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> RecordEmote(
+        Guid companionId,
+        CompanionEmoteRequest? input,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null) throw new CompanionException("invalid_request", "An emote body is required.", 400);
+            return Ok(await service.RecordEmoteAsync(companionId, input.Emote, cancellationToken).ConfigureAwait(false));
+        });
+
+    static Task<IResult> ListRecruitments(
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () => Ok(await service.ListRecruitmentsAsync(cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> DecideRecruitment(
+        Guid recruitmentId,
+        CompanionMandateDecisionRequest? input,
+        HttpRequest request,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null) throw new CompanionException("invalid_request", "A decision body is required.", 400);
+            var body = await service.DecideRecruitmentAsync(
+                recruitmentId, IfMatch(request), input.Decision, cancellationToken).ConfigureAwait(false);
+            return body is null ? NotFound() : Ok(body);
+        });
+
+    static Task<IResult> ListMandates(
+        Guid companionId,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () => Ok(await service.ListMandatesAsync(companionId, cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> DecideMandate(
+        Guid companionId,
+        Guid mandateId,
+        CompanionMandateDecisionRequest? input,
+        HttpRequest request,
+        CompanionService service,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null) throw new CompanionException("invalid_request", "A decision body is required.", 400);
+            var body = await service.DecideMandateAsync(
+                companionId, mandateId, IfMatch(request), input.Decision, cancellationToken).ConfigureAwait(false);
+            return body is null ? NotFound() : Ok(body);
+        });
 
     static Task<IResult> ListMemories(
         Guid companionId,
@@ -266,6 +338,34 @@ public static class CompanionEndpoints
         CancellationToken cancellationToken = default) =>
         Run(async () => Ok(await service.GetSettingsAsync(cancellationToken).ConfigureAwait(false)));
 
+    static Task<IResult> ListCompanionAvatars(
+        CompanionAvatarStore store,
+        CancellationToken cancellationToken = default) =>
+        Run(async () => Ok(await store.ListAsync(cancellationToken).ConfigureAwait(false)));
+
+    static Task<IResult> ImportCompanionAvatar(
+        CompanionAvatarImportRequest? input,
+        CompanionAvatarStore store,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            if (input is null || string.IsNullOrWhiteSpace(input.Path))
+                throw new CompanionException("avatar_path_required", "A model directory path is required.", 400);
+            return Ok(await store.ImportAsync(input.Path, cancellationToken).ConfigureAwait(false));
+        });
+
+    static Task<IResult> DeleteCompanionAvatar(
+        Guid avatarId,
+        CompanionAvatarStore store,
+        CancellationToken cancellationToken = default) =>
+        Run(async () =>
+        {
+            var deleted = await store.DeleteAsync(avatarId, cancellationToken).ConfigureAwait(false);
+            return deleted
+                ? Results.NoContent()
+                : Results.Json(new { code = "companion_avatar_not_found", message = "Companion avatar not found." }, statusCode: 404);
+        });
+
     static Task<IResult> PatchSettings(
         JsonElement input,
         HttpRequest request,
@@ -285,11 +385,24 @@ public static class CompanionEndpoints
                 mainCompanionId = parsed;
             }
 
+            var buddySpecified = input.TryGetProperty("buddy_companion_id", out var buddyElement);
+            Guid? buddyCompanionId = null;
+            if (buddySpecified && buddyElement.ValueKind != JsonValueKind.Null)
+            {
+                if (!buddyElement.TryGetGuid(out var parsedBuddy))
+                    throw new CompanionException("invalid_request", "buddy_companion_id must be a uuid.", 400);
+                buddyCompanionId = parsedBuddy;
+            }
+
+            int? recruitLimit = null;
+            if (input.TryGetProperty("recruit_limit", out var limitElement) && limitElement.TryGetInt32(out var parsedLimit))
+                recruitLimit = parsedLimit;
+
             bool? autonomyPaused = null;
             if (input.TryGetProperty("autonomy_paused", out var pausedElement) && pausedElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 autonomyPaused = pausedElement.GetBoolean();
 
-            var body = await service.PatchSettingsAsync(IfMatch(request), mainSpecified, mainCompanionId, autonomyPaused, cancellationToken).ConfigureAwait(false);
+            var body = await service.PatchSettingsAsync(IfMatch(request), mainSpecified, mainCompanionId, buddySpecified, buddyCompanionId, recruitLimit, autonomyPaused, cancellationToken).ConfigureAwait(false);
             return Ok(body);
         });
 }

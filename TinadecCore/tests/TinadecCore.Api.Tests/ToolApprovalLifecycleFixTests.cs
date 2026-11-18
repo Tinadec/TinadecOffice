@@ -120,6 +120,63 @@ public sealed class ToolApprovalLifecycleFixTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ApprovalConsumptionRetry_ConsumesTheApprovalExactlyOnce()
+    {
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("consume-retry");
+        var run = await InsertRunAsync(sessionId, "executing");
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, "consume:m:0:0");
+        Assert.NotNull(execution.ApprovalId);
+        await ApproveAsync(execution.ApprovalId!.Value);
+
+        // Attempt one of the consume transaction fails while its context is created; attempt two
+        // does the work. A retry that acted on the caller's stale read, or that reused the outer
+        // context's rolled-back transaction, would either consume twice or fail here instead.
+        var faults = new FaultOnLifecycleCreationFactory(
+            (await DbFactory().CreateDbContextAsync()).Database.GetConnectionString()!, failOnCreation: 2);
+        var coordinator = ActivatorUtilities.CreateInstance<ToolApprovalCoordinator>(_factory!.Services, faults);
+        var start = await coordinator.TryStartAsync(execution.Id);
+
+        Assert.Equal("running", start.Status);
+        Assert.Equal(3, faults.Creations);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var approval = await verify.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == execution.ApprovalId);
+        Assert.Equal("consumed", approval.Status);
+        Assert.Equal(execution.Id, approval.ConsumedByExecutionId);
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.Equal("running", row.Status);
+    }
+
+    private async Task ApproveAsync(Guid approvalId)
+    {
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var approval = await db.ApprovalRequests.SingleAsync(x => x.Id == approvalId);
+        approval.Status = "approved";
+        approval.Decision = "approved";
+        approval.DecidedAt = DateTimeOffset.UtcNow;
+        approval.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Fails one context creation with a real lock-conflict code, so the retry is exercised on the
+    /// same exception shape production sees (a bare SqliteException 5, not a DbUpdateException).
+    /// </summary>
+    private sealed class FaultOnLifecycleCreationFactory(string connectionString, int failOnCreation)
+        : IDbContextFactory<LifecycleDbContext>
+    {
+        public int Creations { get; private set; }
+
+        public LifecycleDbContext CreateDbContext()
+        {
+            if (++Creations == failOnCreation)
+                throw new Microsoft.Data.Sqlite.SqliteException("Injected write contention", 5);
+            return new LifecycleDbContext(new DbContextOptionsBuilder<LifecycleDbContext>().UseSqlite(connectionString).Options);
+        }
+
+        public Task<LifecycleDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
+    }
+
+    [Fact]
     public async Task ExpirySweep_WakesLiveRun_ExpiresUndrivableApproval_LeavesFreshApproval()
     {
         var (projectId, sessionId) = await CreateProjectAndSessionAsync("sweep");

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
+using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tools.Git;
 
@@ -67,6 +68,14 @@ internal static class GitConflictResolveTool
 
         var fullPath = GitCli.ResolveRepositoryRelativePath(repo, path);
         var absolutePath = System.IO.Path.GetFullPath(fullPath, repo);
+        // This tool writes the working tree directly instead of going through the file
+        // tools, so it asks the same boundary question they do. Defence in depth rather
+        // than a reachable hole: git itself refuses to index a path inside .git
+        // ("Ignoring path .git/..."), so ReadStageAsync above never reports a conflict
+        // there and the write is not reached today. The assertion keeps that property
+        // from depending on git's behaviour alone.
+        if (!WorkspacePathResolver.IsAllowed(absolutePath, writable: true))
+            return Failure("Path is not writable in this workspace.", path, strategy, conflictCount);
         if (resolvedText is null)
         {
             if (File.Exists(absolutePath)) File.Delete(absolutePath);

@@ -49,7 +49,9 @@ interface DesktopAppConfig {
   source: string
   managed: boolean
   close_to_tray?: boolean
+  launch_at_login?: boolean
   companion_mode_enabled?: boolean
+  companion_speak_replies?: boolean
   companion_capsule_style?: 'peek' | 'grip'
   companion_capsule_reveal?: number
 }
@@ -63,10 +65,16 @@ const enterPrefDraft = ref<DispatchPref>(getDispatchPref())
 /** desktop.toml `[window] close_to_tray`: closing the main window hides it to the tray. */
 const closeToTray = ref(false)
 const closeToTrayBusy = ref(false)
+/** desktop.toml `[window] launch_at_login`: start at sign-in, the other half of running unattended. */
+const launchAtLogin = ref(false)
+const launchAtLoginBusy = ref(false)
 
 /** desktop.toml `[companion] enabled`: the docked capsule that expands into a panel. */
 const companionMode = ref(false)
 const companionModeBusy = ref(false)
+/** Reads new companion replies aloud; off by default so a companion never starts talking unasked. */
+const speakReplies = ref(false)
+const speakRepliesBusy = ref(false)
 
 /**
  * desktop.toml `[companion] capsule_style`: whether the collapsed capsule shows the pet's head
@@ -99,7 +107,9 @@ async function loadAppConfig(): Promise<void> {
   appConfig.value = await window.tinadec.getAppConfig()
   gatewayUrlDraft.value = appConfig.value.gateway_url
   closeToTray.value = appConfig.value.close_to_tray === true
+  launchAtLogin.value = appConfig.value.launch_at_login === true
   companionMode.value = appConfig.value.companion_mode_enabled === true
+  speakReplies.value = appConfig.value.companion_speak_replies === true
   capsuleStyle.value = appConfig.value.companion_capsule_style ?? 'peek'
   capsuleReveal.value = appConfig.value.companion_capsule_reveal ?? 50
 }
@@ -120,6 +130,40 @@ async function setCloseToTray(enabled: boolean): Promise<void> {
     notify.error(error, { title: t('settings.closeToTraySaveFailed') })
   } finally {
     closeToTrayBusy.value = false
+  }
+}
+
+/**
+ * The stored flag and the OS login item are two records of one intent; the main process writes both
+ * and answers with the stored value, so this reads it back instead of trusting the toggle.
+ */
+async function setLaunchAtLogin(enabled: boolean): Promise<void> {
+  if (launchAtLoginBusy.value) return
+  const previous = launchAtLogin.value
+  launchAtLogin.value = enabled
+  launchAtLoginBusy.value = true
+  try {
+    launchAtLogin.value = (await window.tinadec.saveLaunchAtLogin(enabled)).launch_at_login === true
+  } catch (error) {
+    launchAtLogin.value = previous
+    notify.error(error, { title: t('settings.launchAtLoginSaveFailed') })
+  } finally {
+    launchAtLoginBusy.value = false
+  }
+}
+
+async function setSpeakReplies(enabled: boolean): Promise<void> {
+  if (speakRepliesBusy.value) return
+  const previous = speakReplies.value
+  speakReplies.value = enabled
+  speakRepliesBusy.value = true
+  try {
+    speakReplies.value = (await window.tinadec.saveCompanionSpeakReplies(enabled)).companion_speak_replies === true
+  } catch (error) {
+    speakReplies.value = previous
+    notify.error(error, { title: t('settings.speakRepliesSaveFailed') })
+  } finally {
+    speakRepliesBusy.value = false
   }
 }
 
@@ -334,15 +378,27 @@ function onFlowStyleKeydown(event: KeyboardEvent, index: number): void {
 }
 
 let disposeCloseToTray: (() => void) | undefined
+let disposeLaunchAtLogin: (() => void) | undefined
+let disposeSpeakReplies: (() => void) | undefined
 onMounted(() => {
   void loadAppConfig()
   disposeCloseToTray = window.tinadec.onCloseToTrayChanged(({ close_to_tray }) => {
     closeToTray.value = close_to_tray === true
   })
+  disposeLaunchAtLogin = window.tinadec.onLaunchAtLoginChanged(({ launch_at_login }) => {
+    launchAtLogin.value = launch_at_login === true
+  })
+  disposeSpeakReplies = window.tinadec.onCompanionSpeakRepliesChanged(({ speak_replies }) => {
+    speakReplies.value = speak_replies === true
+  })
 })
 onUnmounted(() => {
   disposeCloseToTray?.()
   disposeCloseToTray = undefined
+  disposeLaunchAtLogin?.()
+  disposeLaunchAtLogin = undefined
+  disposeSpeakReplies?.()
+  disposeSpeakReplies = undefined
 })
 
 // Re-exported for template type inference only.
@@ -553,6 +609,25 @@ void dismissConfirm
           />
         </div>
       </div>
+
+      <div class="gateway-config-field">
+        <div class="setting-switch-row">
+          <div>
+            <UiLabel>{{ t('settings.launchAtLogin') }}</UiLabel>
+            <div class="gateway-config-meta">
+              <span>{{ t('settings.launchAtLoginHint') }}</span>
+            </div>
+          </div>
+          <UiSwitch
+            id="launch-at-login"
+            :model-value="launchAtLogin"
+            :disabled="launchAtLoginBusy"
+            :aria-label="t('settings.launchAtLogin')"
+            data-testid="launch-at-login-switch"
+            @update:model-value="setLaunchAtLogin"
+          />
+        </div>
+      </div>
     </section>
 
     <section class="general-settings-group" aria-labelledby="companion-settings-title">
@@ -578,6 +653,25 @@ void dismissConfirm
             :aria-label="t('settings.companionModeEnable')"
             data-testid="companion-mode-switch"
             @update:model-value="setCompanionMode"
+          />
+        </div>
+      </div>
+
+      <div class="gateway-config-field">
+        <div class="setting-switch-row">
+          <div>
+            <UiLabel>{{ t('settings.speakReplies') }}</UiLabel>
+            <div class="gateway-config-meta">
+              <span>{{ t('settings.speakRepliesHint') }}</span>
+            </div>
+          </div>
+          <UiSwitch
+            id="companion-speak-replies"
+            :model-value="speakReplies"
+            :disabled="speakRepliesBusy"
+            :aria-label="t('settings.speakReplies')"
+            data-testid="companion-speak-replies-switch"
+            @update:model-value="setSpeakReplies"
           />
         </div>
       </div>

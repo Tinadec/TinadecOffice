@@ -23,6 +23,20 @@ public interface IToolProvider
     /// <summary>Returns the provider manifest for a running (or freshly started) workspace.</summary>
     Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Dispatches a control call to the Tools process that already owns this run, rather than
+    /// resolving a process from the request's context hash. Terminal stdin and kill must reach
+    /// the process that created the session; a context recomputed on the control path can hash
+    /// differently and land on a process that has never heard of it. Providers that own no
+    /// processes keep the ordinary resolution.
+    /// </summary>
+    Task<ToolWireResponseDto> CallForRunAsync(
+        string runId,
+        string workspaceRoot,
+        ToolWireRequestDto request,
+        CancellationToken cancellationToken = default)
+        => CallAsync(workspaceRoot, request, null, cancellationToken);
+
     /// <summary>Stops provider resources. In-flight calls fail with a structured process_exit result.</summary>
     Task ShutdownAsync(CancellationToken cancellationToken = default);
 }

@@ -59,6 +59,15 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
         services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
+        services.AddSingleton<CompanionChatBridge>();
+        // The companion's management tools (list/read/dispatch/create workspace) are composed here
+        // because the Companion module may not reference Lifecycle, Memory or DmaEA; the module
+        // only declares the port and its four tool declarations.
+        services.AddSingleton<ICompanionWorkGateway, CompanionWorkGateway>();
+        // Startup reconciliation: without this the bridge was a tested dead end and a companion
+        // never became a TinaChat participant on a real host.
+        services.AddSingleton<CompanionParticipantReconciler>();
+        services.AddHostedService(sp => sp.GetRequiredService<CompanionParticipantReconciler>());
         services.AddSingleton<IExecutorMessageWakeSink, ExecutorMessageWakeSink>();
         // Governance reports use one runtime action port. The adapter checks the
         // target run's tenant/workspace/session before it reaches run control.
@@ -76,6 +85,9 @@ public static class TinadecCoreServiceCollectionExtensions
         // The session as a graph (runs, instances, tasks, leases, organization members): composed here
         // because only the host reads across those modules. Serves graph_view and the topology endpoint.
         services.AddSingleton<ISessionTopology, SessionTopologyService>();
+        // The tinadec_* workbench tools: Tools only knows the port, Runtime owns the
+        // implementation because configuration, skills, MCP and market all meet here.
+        services.AddSingleton<ITinadecConfigToolGateway, TinadecConfigToolGateway>();
         // TinaChat turns are owed by durable rows, not by this process: one singleton scheduler drains them.
         services.AddSingleton<TinaChatWakeService>();
         services.AddHostedService(sp => sp.GetRequiredService<TinaChatWakeService>());

@@ -22,6 +22,9 @@ const selectedModeId = ref('')
 const modeQuery = ref('')
 const modeNodes = ref<AgentModeNodeDto[]>([])
 const modeEdges = ref<AgentModeEdgeDto[]>([])
+/** The layout the mode returned. Saving merges the live node positions into it so the
+ *  editor stops writing an empty object over whatever the mode already had. */
+const modeCanvasLayout = ref<Record<string, unknown>>({})
 const modeEtag = ref<string | null>(null)
 const runtimePolicyKind = ref<'none' | AgentModeRuntimePolicy['kind']>('none')
 const runtimePolicyFeatures = ref<string[]>([])
@@ -216,6 +219,7 @@ async function selectMode(id: string) {
       target: e.target != null ? String(e.target) : String(e.target_node_key ?? ''),
       label: (e.label as string | undefined) ?? undefined,
     })) as AgentModeEdgeDto[]
+    modeCanvasLayout.value = (m.canvas_layout as Record<string, unknown> | null | undefined) ?? {}
     modeEtag.value = m.revision != null ? String(m.revision) : null
     applyRuntimePolicy(m.runtime_policy)
     // Fold the managed/status facts back onto the list row so the read-only notice
@@ -235,6 +239,7 @@ async function selectMode(id: string) {
     if (selectedModeId.value !== id) return
     modeNodes.value = []
     modeEdges.value = []
+    modeCanvasLayout.value = {}
     modeEtag.value = null
     applyRuntimePolicy(null)
     notify.error(error, { title: t('agentCenter.loadModesFailed') })
@@ -247,6 +252,7 @@ consumeRequest(pendingModeId, async (modeId) => {
   selectedModeId.value = modeId
   modeNodes.value = []
   modeEdges.value = []
+  modeCanvasLayout.value = {}
   modeEtag.value = null
   applyRuntimePolicy(null)
   if (!modes.value.some((mode) => mode.id === modeId)) await loadModes()
@@ -255,6 +261,7 @@ consumeRequest(pendingModeId, async (modeId) => {
     selectedModeId.value = ''
     modeNodes.value = []
     modeEdges.value = []
+    modeCanvasLayout.value = {}
     modeEtag.value = null
     applyRuntimePolicy(null)
     notify.error(t('app.loadFailedMessage'), { title: t('agentCenter.loadModesFailed'), key: 'search-navigation' })
@@ -284,8 +291,9 @@ async function createMode() {
 }
 
 function toCoreTopology(nodes: AgentModeNodeDto[], edges: AgentModeEdgeDto[]) {
-  // Core UpsertModeTopology speaks node_key/agent_definition_id/layer and
-  // source_node_key/target_node_key — map the canvas shape back before saving.
+  // Core's write contract is key-first: node_key/agent_definition_id/layer and
+  // edge_key/source_node_key/target_node_key. Both keys are the identity the upsert
+  // deletes by — omitting edge_key made every save mint a new edge beside the old one.
   return {
     nodes: nodes.map((n) => ({
       node_key: n.node_key ?? n.id,
@@ -296,11 +304,19 @@ function toCoreTopology(nodes: AgentModeNodeDto[], edges: AgentModeEdgeDto[]) {
       model_strategy_override: n.model_strategy_override ?? null,
     })),
     edges: edges.map((e) => ({
+      edge_key: e.id,
       source_node_key: e.source,
       target_node_key: e.target,
       ...(e.label ? { condition: { label: e.label } } : {}),
     })),
   }
+}
+
+/** The mode's own layout with the canvas' live positions on top — never an empty object. */
+function currentCanvasLayout(nodes: AgentModeNodeDto[]) {
+  const positions: Record<string, { x: number; y: number }> = {}
+  for (const node of nodes) positions[node.node_key ?? node.id] = node.position
+  return { ...modeCanvasLayout.value, positions }
 }
 
 async function saveModeDraft() {
@@ -311,7 +327,7 @@ async function saveModeDraft() {
   }
   modeBusy.value = true
   try {
-    await api.updateAgentModeDraft(selectedModeId.value, { ...toCoreTopology(modeNodes.value, modeEdges.value), runtime_policy: runtimePolicy.value, canvas_layout: {} }, modeEtag.value)
+    await api.updateAgentModeDraft(selectedModeId.value, { ...toCoreTopology(modeNodes.value, modeEdges.value), runtime_policy: runtimePolicy.value, canvas_layout: currentCanvasLayout(modeNodes.value) }, modeEtag.value)
     notify.success({ message: t('agentCenter.modeDraftSaved') })
     await loadModes()
   } catch (e) {
@@ -349,7 +365,7 @@ async function cloneSelectedMode() {
       description: source.description ?? null,
       ...toCoreTopology(modeNodes.value, modeEdges.value),
       runtime_policy: runtimePolicy.value,
-      canvas_layout: {}
+      canvas_layout: currentCanvasLayout(modeNodes.value)
     })
     await loadModes()
     await selectMode(m.id)
@@ -456,6 +472,16 @@ function saveEdgeLabel() {
 function deleteEdge() {
   if (!selectedEdge.value || selectedModeReadOnly.value) return
   modeEdges.value = modeEdges.value.filter((e) => e.id !== selectedEdge.value!.id)
+  selectedEdge.value = null
+}
+
+/** Deleting a node has to drop the edges that touched it: Core refuses a dangling edge. */
+function deleteNode() {
+  if (!selectedModeNode.value || selectedModeReadOnly.value) return
+  const id = selectedModeNode.value.id
+  modeNodes.value = modeNodes.value.filter((n) => n.id !== id)
+  modeEdges.value = modeEdges.value.filter((e) => e.source !== id && e.target !== id)
+  selectedModeNode.value = null
   selectedEdge.value = null
 }
 
@@ -665,6 +691,9 @@ defineExpose({ loadModes })
           </UiButton>
         </div>
         <div class="ac-sheet-actions">
+          <UiButton size="sm" variant="ghost" class="provider-delete-btn" :disabled="selectedModeReadOnly" @click="deleteNode">
+            <Trash2 :size="14" />{{ t('settings.deleteAction') }}
+          </UiButton>
           <UiButton size="sm" variant="outline" @click="selectedModeNode = null">{{ t('settings.cancel') }}</UiButton>
           <UiButton size="sm" :disabled="selectedModeReadOnly" @click="applyNodeOverride">{{ t('settings.applyAction') }}</UiButton>
         </div>

@@ -1414,6 +1414,17 @@
         },
         "type": "object"
       },
+      "CompanionAvatarImportRequest": {
+        "properties": {
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CompanionConnectionCreateRequest": {
         "properties": {
           "authorization": {
@@ -1535,7 +1546,24 @@
               "string"
             ]
           },
+          "role": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "tagline": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CompanionEmoteRequest": {
+        "properties": {
+          "emote": {
             "type": [
               "null",
               "string"
@@ -1557,6 +1585,17 @@
             "type": [
               "null",
               "boolean"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CompanionMandateDecisionRequest": {
+        "properties": {
+          "decision": {
+            "type": [
+              "null",
+              "string"
             ]
           }
         },
@@ -1668,6 +1707,12 @@
             ]
           },
           "persona_document": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "role": {
             "type": [
               "null",
               "string"
@@ -2867,6 +2912,75 @@
       },
       "JsonElement": {},
       "JsonNode": {},
+      "ManagedMcpProgramPreviewDto": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "manager": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "package_root": {
+            "type": "string"
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "preview_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "program_status": {
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resource_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "server_arguments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "project_id",
+          "action",
+          "expected_revision",
+          "manager",
+          "package",
+          "version",
+          "package_root",
+          "plan_hash",
+          "program_status",
+          "server_arguments",
+          "preview_id"
+        ],
+        "type": "object"
+      },
       "MarketCatalogEntryDto": {
         "properties": {
           "catalog_id": {
@@ -3438,6 +3552,15 @@
               "object"
             ]
           },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -3469,9 +3592,18 @@
               "string"
             ]
           },
+          "transport": {
+            "type": "string"
+          },
           "updated_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "url": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
         "type": "object"
@@ -3532,6 +3664,15 @@
               "object"
             ]
           },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -3540,6 +3681,15 @@
           },
           "project_id": {
             "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "transport": {
+            "type": "string"
+          },
+          "url": {
             "type": [
               "null",
               "string"
@@ -6308,6 +6458,13 @@
           "can_interpret_intent": {
             "type": "boolean"
           },
+          "companion_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "description": {
             "type": [
               "null",
@@ -6364,6 +6521,7 @@
           "job_title",
           "description",
           "agent_definition_id",
+          "companion_id",
           "receive_human_messages",
           "can_interpret_intent",
           "discoverable",
@@ -6431,6 +6589,13 @@
           "can_interpret_intent": {
             "default": false,
             "type": "boolean"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "description": {
             "type": [
@@ -6994,6 +7159,24 @@
               "object"
             ]
           },
+          "header_secret_references": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -7034,6 +7217,15 @@
             "type": [
               "null",
               "object"
+            ]
+          },
+          "transport": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "null",
+              "string"
             ]
           }
         },
@@ -7432,6 +7624,17 @@
               "string"
             ]
           },
+          "rank": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "read_only": {
+            "type": "boolean"
+          },
           "reason": {
             "type": [
               "null",
@@ -7468,7 +7671,16 @@
           "scope": {
             "type": "string"
           },
+          "shadowed_by": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "source": {
+            "type": "string"
+          },
+          "source_kind": {
             "type": "string"
           },
           "user_action_id": {
@@ -7482,6 +7694,12 @@
             "type": "boolean"
           },
           "version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "when_to_use": {
             "type": [
               "null",
               "string"
@@ -7501,6 +7719,9 @@
           "name": {
             "type": "string"
           },
+          "resource_base": {
+            "type": "string"
+          },
           "resource_id": {
             "format": "uuid",
             "type": "string"
@@ -7518,6 +7739,15 @@
           },
           "skill_path": {
             "type": "string"
+          },
+          "source_kind": {
+            "type": "string"
+          },
+          "when_to_use": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
         "type": "object"
@@ -7883,6 +8113,184 @@
         },
         "type": "object"
       },
+      "UserToolActionResult": {
+        "properties": {
+          "action_approval_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "audit_reference": {
+            "type": "string"
+          },
+          "authorization_decision_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "compensation_guidance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error_category": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mutates_workspace": {
+            "type": "boolean"
+          },
+          "non_reversible": {
+            "type": "boolean"
+          },
+          "permission_request_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "principal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recovered_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_decision": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "requires_approval": {
+            "type": "boolean"
+          },
+          "result_json": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "risk": {
+            "type": "string"
+          },
+          "snapshot_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "snapshot_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "snapshot_override": {
+            "type": "boolean"
+          },
+          "snapshot_override_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "audit_reference",
+          "tenant_id",
+          "workspace_id",
+          "project_id",
+          "principal_id",
+          "tool_id",
+          "status",
+          "risk",
+          "mutates_workspace",
+          "requires_approval",
+          "permission_request_id",
+          "authorization_decision_id",
+          "action_approval_id",
+          "snapshot_id",
+          "snapshot_hash",
+          "snapshot_override",
+          "snapshot_override_reason",
+          "non_reversible",
+          "compensation_guidance",
+          "recovery_decision",
+          "recovery_reason",
+          "recovered_at",
+          "result_json",
+          "error_category",
+          "message",
+          "created_at",
+          "updated_at",
+          "completed_at"
+        ],
+        "type": "object"
+      },
       "UserToolActionSnapshotOverrideRequestDto": {
         "properties": {
           "reason": {
@@ -8106,7 +8514,7 @@
     "title": "TinadecCore.Api | v1",
     "version": "1.0.0"
   },
-  "openapi": "3.1.1",
+  "openapi": "3.2.0",
   "paths": {
     "/api/v1/acp/adapters": {
       "get": {
@@ -9769,6 +10177,69 @@
         ]
       }
     },
+    "/api/v1/companion-avatars": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/import": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionAvatarImportRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/{avatarId}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "avatarId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
     "/api/v1/companion-connections": {
       "get": {
         "responses": {
@@ -10043,6 +10514,95 @@
         },
         "tags": [
           "CompanionConversationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companion-events": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "afterSeq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-recruitments": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companion-recruitments/{recruitmentId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recruitmentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionMandateDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
         ]
       }
     },
@@ -10482,6 +11042,116 @@
         },
         "tags": [
           "CompanionConversationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/emote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionEmoteRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates/{mandateId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mandateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CompanionMandateDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "CompanionEndpoints"
         ]
       }
     },
@@ -11185,26 +11855,9 @@
           },
           {
             "in": "query",
-            "name": "afterSeq",
+            "name": "cursor",
             "schema": {
-              "format": "int64",
-              "pattern": "^-?(?:0|[1-9]\\d*)$",
-              "type": [
-                "integer",
-                "string"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "after_seq",
-            "schema": {
-              "format": "int64",
-              "pattern": "^-?(?:0|[1-9]\\d*)$",
-              "type": [
-                "integer",
-                "string"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -12241,6 +12894,16 @@
     },
     "/api/v1/mcp/servers": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -12266,6 +12929,14 @@
             "name": "serverId",
             "required": true,
             "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -16736,6 +17407,136 @@
         ]
       }
     },
+    "/api/v1/tools/mcp/servers/{resourceId}/install": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tools/mcp/servers/{resourceId}/install-preview": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedMcpProgramPreviewDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/tools/mcp/servers/{resourceId}/test": {
       "post": {
         "parameters": [
@@ -17216,6 +18017,28 @@
         ]
       }
     },
+    "/api/v1/tools/skills/diagnostics": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Tool Skills"
+        ]
+      }
+    },
     "/api/v1/tools/skills/import": {
       "post": {
         "requestBody": {
@@ -17451,6 +18274,75 @@
               }
             },
             "description": "Precondition Required"
+          }
+        },
+        "tags": [
+          "Tool Skills"
+        ]
+      }
+    },
+    "/api/v1/tools/skills/{resourceId}/copy-to-project": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillResourceDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [
@@ -18135,60 +19027,63 @@
   },
   "servers": [
     {
-      "url": "http://localhost/"
+      "url": "http://localhost"
     }
   ],
   "tags": [
     {
-      "name": "TinadecCore.Api"
-    },
-    {
-      "name": "Attachments"
-    },
-    {
-      "name": "CorrectionEndpoints"
-    },
-    {
       "name": "AgentConfigurationEndpoints"
-    },
-    {
-      "name": "CompanionEndpoints"
-    },
-    {
-      "name": "CompanionConversationEndpoints"
-    },
-    {
-      "name": "ModelAgentControlEndpoints"
     },
     {
       "name": "AgentPacks"
     },
     {
-      "name": "InteractionsEndpoints"
+      "name": "ApprovalRules"
     },
     {
-      "name": "ToolExecutions"
+      "name": "Attachments"
     },
     {
       "name": "AuthEndpoints"
     },
     {
-      "name": "Tool Skills"
+      "name": "CompanionConversationEndpoints"
     },
     {
-      "name": "Market"
+      "name": "CompanionEndpoints"
     },
     {
-      "name": "TinaChat"
+      "name": "Companions"
     },
     {
-      "name": "Organization"
+      "name": "CorrectionEndpoints"
     },
     {
       "name": "Environments"
     },
     {
-      "name": "ApprovalRules"
+      "name": "InteractionsEndpoints"
+    },
+    {
+      "name": "Market"
+    },
+    {
+      "name": "ModelAgentControlEndpoints"
+    },
+    {
+      "name": "Organization"
+    },
+    {
+      "name": "TinaChat"
+    },
+    {
+      "name": "TinadecCore.Api"
+    },
+    {
+      "name": "Tool Skills"
+    },
+    {
+      "name": "ToolExecutions"
     }
   ]
 }

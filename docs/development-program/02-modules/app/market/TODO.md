@@ -66,3 +66,4 @@
 
 - [docs/market-route-stability-2026-10-05.zh-CN.md](../../../../market-route-stability-2026-10-05.zh-CN.md)：验证与诚实边界；只作来源，不继承完成勾选
 
+**2026-11-11 补充**：`/market/skills` 与 `/market/mcp` 已作为独立 UIE 页面接入（各自 preset/repair/路由/侧栏入口），市场按 revision 指纹每 10s 热刷新。APP-MARKET-101 的真实来源闭环仍未开始；分页与 ACP 列表未补。证据见[扩展层报告](../../../../../.tinadec_dev/reports/2026-11-11-extension-layer.zh-CN.md)。

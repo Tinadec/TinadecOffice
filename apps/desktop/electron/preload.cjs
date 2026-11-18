@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   discoverServices: () => ipcRenderer.invoke('tinadec:discover-services'),
   restartApp: () => ipcRenderer.invoke('tinadec:restart'),
   selectWorkspaceFolders: (title) => ipcRenderer.invoke('tinadec:select-workspace-folders', title),
+  selectCompanionAvatarDirectory: (title) => ipcRenderer.invoke('tinadec:select-companion-avatar-directory', title),
   importWorkspaceFiles: (input) => ipcRenderer.invoke('tinadec:import-workspace-files', input),
   // Synchronous by necessity: the absolute path of a dropped file is only reachable during the
   // drop handler, and a Promise could not be awaited before the browser clears the FileList.
@@ -51,6 +52,20 @@ contextBridge.exposeInMainWorld('tinadec', {
     const handler = (_event, value) => callback(value);
     ipcRenderer.on('tinadec:close-to-tray-changed', handler);
     return () => ipcRenderer.removeListener('tinadec:close-to-tray-changed', handler);
+  },
+  /** Start the app at sign-in; pairs with close-to-tray for running unattended. */
+  saveLaunchAtLogin: (enabled) => ipcRenderer.invoke('tinadec:launch-at-login-save', enabled),
+  /** Read new companion replies aloud with the platform voice. */
+  saveCompanionSpeakReplies: (enabled) => ipcRenderer.invoke('tinadec:companion-speak-replies-save', enabled),
+  onCompanionSpeakRepliesChanged: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('tinadec:companion-speak-replies-changed', handler);
+    return () => ipcRenderer.removeListener('tinadec:companion-speak-replies-changed', handler);
+  },
+  onLaunchAtLoginChanged: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('tinadec:launch-at-login-changed', handler);
+    return () => ipcRenderer.removeListener('tinadec:launch-at-login-changed', handler);
   },
   /** Lets the main process draw the tray menu in the interface language this window is showing. */
   setInterfaceLocale: (locale) => ipcRenderer.send('tinadec:interface-locale', locale),
@@ -114,7 +129,22 @@ contextBridge.exposeInMainWorld('tinadec', {
       return () => ipcRenderer.removeListener('tinadec:pet-avatars-changed', handler);
     },
   },
-  
+
+  // --- Per-session desktop partner windows (the work session's main agent embodied) ---
+  sessionPartner: {
+    toggle: (sessionId, storageId) => ipcRenderer.invoke('tinadec:session-partner-toggle', sessionId, storageId),
+    isActive: (sessionId) => ipcRenderer.invoke('tinadec:session-partner-active', sessionId),
+    // Called by the partner window: surface approvals through the main-process proxy and jump back.
+    agentRequest: (payload) => ipcRenderer.invoke('tinadec:pet-agent-api', payload),
+    focus: () => ipcRenderer.invoke('tinadec:session-partner-focus'),
+    // Called by the main window: a partner window asked to return to its session.
+    onFocusSession: (callback) => {
+      const handler = (_event, sessionId) => callback(sessionId);
+      ipcRenderer.on('tinadec:focus-session', handler);
+      return () => ipcRenderer.removeListener('tinadec:focus-session', handler);
+    },
+  },
+
   // --- Background File Selection API ---
   selectBackgroundFile: (type, text) => ipcRenderer.invoke('tinadec:select-background-file', type, text),
 

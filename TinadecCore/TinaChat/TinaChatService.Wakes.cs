@@ -35,7 +35,7 @@ public sealed partial class TinaChatService
             var standing = recipient.OrganizationId is { } organization
                 && conversation.OrganizationId == organization
                 && recipient.OrgRole == OrganizationRoles.Governance;
-            if (recipient.Id == sender.Id || recipient.Kind != "agent" || recipient.Status != "active"
+            if (recipient.Id == sender.Id || recipient.Kind is not ("agent" or "companion") || recipient.Status != "active"
                 || !(recipient.CanInterpretIntent || standing || recipient.OrgRole == OrganizationRoles.Executor)) continue;
             var audience = audiences.FirstOrDefault(x => x.ParticipantId == recipient.Id);
             if (audience is null) continue;

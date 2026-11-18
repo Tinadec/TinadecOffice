@@ -477,6 +477,7 @@ run 创建时必须持久化以下引用和哈希：
 - 聚合终态与对应终态事件在同一事务、CAS 或 outbox 边界提交，不能出现状态已完成但事件丢失。
 - checkpoint 记录 `applied_through_seq`；恢复时先核对既有 tool receipt，再决定重试、补偿或升级人工判断。
 - 客户端先加载 snapshot，再从其 cursor 之后重放事件，最后跟随实时流；按 `run_id + seq` 去重。
+- 事件序号按 run 分配，所以 live feed 的续传游标是**每 run 一条水位的向量**，不是单个数字：`/api/v1/events` 接受 `cursor=`（或 `Last-Event-ID` 头），格式为 `<run GUID N>:<sequence>`，多条用 `,` 分隔。事件帧的 `id:` 只带它推进的那一条；心跳帧的 `id:` 带该 session 全部 run 的完整向量，`data` 同时给出 `after_seq`（仅作信号）与 `cursor`。客户端必须把标量增量与心跳全量合并成水位映射后再续传，只保留最后一个 `id` 会丢掉其它 run 的位置并从零重放。无法解析的游标返回 400 `INVALID_EVENT_CURSOR`，客户端收到 400 必须丢弃游标回到全量重放，不能带同一个坏游标无限重连。旧的纯数字 `afterSeq` / `after_seq` 查询参数已移除，不保留兼容别名。
 - 当前契约的消费者可以忽略不影响自身的未知加法字段和事件 kind；这不是对旧客户端的兼容承诺。字段或事件语义发生变化时，直接更新 `/api/v1`、schema、测试、客户端生成物和本文。
 
 lane 维度的投影（§6.4.1）遵循同一条加法字段规则：`orchestration` / `replay` 快照新增的 `lanes` 数组与节点 `lane_key` 对旧消费者透明；checkpoint 缺失时 lanes 为空或退化为隐式 `main`，不构成状态机漂移。

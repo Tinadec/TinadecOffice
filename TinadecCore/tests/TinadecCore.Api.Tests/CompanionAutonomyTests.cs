@@ -19,6 +19,207 @@ namespace TinadecCore.Api.Tests;
 /// </summary>
 public sealed class CompanionAutonomyTests
 {
+    /// <summary>
+    /// The autonomy gate is observe-first: a class of action runs unattended only after the user
+    /// approves a standing authorization for it. Until then the tick records what it wanted to do
+    /// and writes nothing to the user's conversations.
+    /// </summary>
+    [Fact]
+    public async Task FirstTick_RecordsAProposal_WithoutActing_AndDenialSticks()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, daily_action_budget = 6 })).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+        factory.Chat.Reply = SendMessageDecision(conversationId, "这条消息在授权之前不应出现。");
+
+        var proposal = await TickAsync(client, companionId);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+
+        // Nothing reached the conversation, and the proposal is visible in the feed.
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companion-conversations/{conversationId}/messages"))!);
+        Assert.Contains(await ActivityAsync(client), row => row.GetProperty("kind").GetString() == "autonomy_proposed");
+
+        var mandates = (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!;
+        var mandate = Assert.Single(mandates);
+        Assert.Equal("send_message", mandate.GetProperty("action").GetString());
+        Assert.Equal("proposed", mandate.GetProperty("status").GetString());
+        Assert.Equal(conversationId, mandate.GetProperty("proposal").GetProperty("conversation_id").GetGuid());
+
+        // Denying is a decision, not a pause: later ticks skip instead of re-asking every interval.
+        using (var deny = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/v1/companions/{companionId}/mandates/{mandate.GetProperty("id").GetGuid()}/decision")
+               { Content = JsonContent.Create(new { decision = "denied" }) })
+        {
+            deny.Headers.TryAddWithoutValidation("If-Match", $"\"{mandate.GetProperty("revision").GetInt64()}\"");
+            using var denied = await client.SendAsync(deny);
+            Assert.Equal(HttpStatusCode.OK, denied.StatusCode);
+            Assert.Equal("denied", (await denied.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        }
+
+        var afterDenial = await TickAsync(client, companionId);
+        Assert.False(afterDenial.GetProperty("acted").GetBoolean());
+        Assert.Equal("mandate_denied", afterDenial.GetProperty("reason").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companion-conversations/{conversationId}/messages"))!);
+
+        // A proposal is not an action: asking twice must not have burned the daily budget.
+        var budgeted = Assert.Single((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!,
+            row => row.GetProperty("action").GetString() == "send_message");
+        Assert.Equal("denied", budgeted.GetProperty("status").GetString());
+    }
+
+    /// <summary>One standing answer per action class: a second proposal updates the row, never stacks.</summary>
+    [Fact]
+    public async Task RepeatedProposals_UpdateTheSameMandate()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, interval_minutes = 5 })).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+
+        factory.Chat.Reply = SendMessageDecision(conversationId, "第一版提案。");
+        await TickAsync(client, companionId);
+        factory.Chat.Reply = SendMessageDecision(conversationId, "第二版提案。");
+        await TickAsync(client, companionId);
+
+        var mandates = (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!;
+        var mandate = Assert.Single(mandates);
+        Assert.Equal("第二版提案。", mandate.GetProperty("proposal").GetProperty("body").GetString());
+        Assert.True(mandate.GetProperty("revision").GetInt64() > 1);
+    }
+
+    /// <summary>A companion with no autonomy switched on never asks for anything.</summary>
+    [Fact]
+    public async Task DisabledCompanion_WritesNoMandate()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(client, "A")).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+        factory.Chat.Reply = SendMessageDecision(conversationId, "不应出现。");
+
+        await TickAsync(client, companionId);
+
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates"))!);
+    }
+
+    /// <summary>
+    /// Recruiting grows the user's autonomous team, so it is double-gated: the proposal is recorded,
+    /// and only an approval (by a user, under the tenant's limit) creates a companion. The proposer
+    /// can never create one itself.
+    /// </summary>
+    [Fact]
+    public async Task Recruit_ProposesWithoutCreating_AndApprovalCreatesOneWithinTheLimit()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var proposerId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, daily_action_budget = 6 })).GetProperty("id").GetGuid();
+        await PrivateConversationAsync(client, proposerId);
+        factory.Chat.Reply = RecruitDecision("数据助手", "负责整理每周数据。", "每周都要做同样的整理。");
+
+        var tick = await TickAsync(client, proposerId);
+        Assert.False(tick.GetProperty("acted").GetBoolean());
+        Assert.Equal("recruit", tick.GetProperty("action").GetString());
+        Assert.Equal("awaiting_recruit_approval", tick.GetProperty("reason").GetString());
+
+        // Nothing was created; the proposal is the only trace.
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companions"))!);
+        var recruitment = Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-recruitments"))!);
+        Assert.Equal("proposed", recruitment.GetProperty("status").GetString());
+        Assert.Equal("数据助手", recruitment.GetProperty("name").GetString());
+
+        // A second proposal while one is pending is the same question, not a second option.
+        var again = await TickAsync(client, proposerId);
+        Assert.Equal("duplicate_proposal", again.GetProperty("reason").GetString());
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-recruitments"))!);
+
+        using (var approve = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/v1/companion-recruitments/{recruitment.GetProperty("id").GetGuid()}/decision")
+               { Content = JsonContent.Create(new { decision = "approved" }) })
+        {
+            approve.Headers.TryAddWithoutValidation("If-Match", $"\"{recruitment.GetProperty("revision").GetInt64()}\"");
+            using var response = await client.SendAsync(approve);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("approved", body.GetProperty("status").GetString());
+            Assert.NotEqual(Guid.Empty, body.GetProperty("created_companion_id").GetGuid());
+        }
+
+        var companions = (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companions"))!;
+        Assert.Equal(2, companions.Length);
+        var created = Assert.Single(companions, row => row.GetProperty("name").GetString() == "数据助手");
+        Assert.Equal("autonomous", created.GetProperty("role").GetString());
+    }
+
+    [Fact]
+    public async Task Recruit_IsRefusedAtTheTenantLimit_AndWhenDisabled()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var proposerId = (await CreateCompanionAsync(
+            client, "A", new { enabled = true, daily_action_budget = 6 })).GetProperty("id").GetGuid();
+        await PrivateConversationAsync(client, proposerId);
+
+        // Zero means recruiting is off: the tick reports it instead of recording a proposal nobody
+        // could ever approve.
+        using (var off = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
+               { Content = JsonContent.Create(new { recruit_limit = 0 }) })
+        {
+            off.Headers.TryAddWithoutValidation("If-Match", "\"0\"");
+            Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(off)).StatusCode);
+        }
+        factory.Chat.Reply = RecruitDecision("数据助手", null, "重复性工作。");
+        var disabled = await TickAsync(client, proposerId);
+        Assert.Equal("recruit_disabled", disabled.GetProperty("reason").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-recruitments"))!);
+    }
+
+    /// <summary>
+    /// A gesture is recorded, not spoken: it must reach the feed and must not write a message into
+    /// any conversation. Repeating it inside a minute does not stack a second row.
+    /// </summary>
+    [Fact]
+    public async Task Emote_RecordsAnActivity_WithoutWritingAMessage()
+    {
+        using var factory = new AutonomyFactory();
+        using var client = factory.CreateClient();
+        var companionId = (await CreateCompanionAsync(client, "A")).GetProperty("id").GetGuid();
+        var conversationId = await PrivateConversationAsync(client, companionId);
+
+        using (var wave = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "wave" }))
+        {
+            Assert.Equal(HttpStatusCode.OK, wave.StatusCode);
+            var body = await wave.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("emote_received", body.GetProperty("kind").GetString());
+            Assert.Equal("wave", body.GetProperty("payload").GetProperty("emote").GetString());
+        }
+
+        // The gesture reached the feed and never became a message the companion "said".
+        Assert.Contains(await ActivityAsync(client), row => row.GetProperty("kind").GetString() == "emote_received");
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companion-conversations/{conversationId}/messages"))!);
+
+        // The same gesture inside a minute is one row, not a click log.
+        using (var again = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "wave" }))
+            Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Single(await ActivityAsync(client), row => row.GetProperty("kind").GetString() == "emote_received");
+
+        // A different gesture is a different row.
+        using (var pat = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "pat" }))
+            Assert.Equal(HttpStatusCode.OK, pat.StatusCode);
+        Assert.Equal(2, (await ActivityAsync(client)).Count(row => row.GetProperty("kind").GetString() == "emote_received"));
+
+        // Anything outside the two gestures is refused rather than recorded as an unknown verb.
+        using var bogus = await client.PostAsJsonAsync($"/api/v1/companions/{companionId}/emote", new { emote = "dance" });
+        Assert.Equal(HttpStatusCode.BadRequest, bogus.StatusCode);
+    }
+
+    private static string RecruitDecision(string name, string? persona, string? rationale) =>
+        JsonSerializer.Serialize(new { action = "recruit", name, persona_document = persona, rationale });
+
     private sealed class AutonomyFactory : IsolatedApiFactory
     {
         private readonly string _root = ApiTestStorage.CreateRoot("companion-autonomy");
@@ -126,12 +327,31 @@ public sealed class CompanionAutonomyTests
 
     private static string SendMessageDecision(Guid conversationId, string body) =>
         JsonSerializer.Serialize(new { action = "send_message", conversation_id = conversationId, body });
-
     private static string CreateGroupDecision(string title, params Guid[] companionIds) =>
         JsonSerializer.Serialize(new { action = "create_group", title, companion_ids = companionIds });
 
     private static string InviteDecision(Guid conversationId, Guid companionId) =>
         JsonSerializer.Serialize(new { action = "invite", conversation_id = conversationId, companion_id = companionId, share_history = false });
+
+    /// <summary>
+    /// Approves the standing authorization the first tick proposed. Autonomy is observe-first: the
+    /// action class runs unattended only after the user has said yes to it once.
+    /// </summary>
+    private static async Task ApproveMandateAsync(HttpClient client, Guid companionId, string action)
+    {
+        var mandates = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/companions/{companionId}/mandates");
+        Assert.NotNull(mandates);
+        var row = Assert.Single(mandates!, m => m.GetProperty("action").GetString() == action);
+        Assert.Equal("proposed", row.GetProperty("status").GetString());
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/companions/{companionId}/mandates/{row.GetProperty("id").GetGuid()}/decision")
+        { Content = JsonContent.Create(new { decision = "approved" }) };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{row.GetProperty("revision").GetInt64()}\"");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("approved",
+            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+    }
 
     private static List<Guid> CompanionMemberIds(JsonElement conversation) =>
         conversation.GetProperty("members").EnumerateArray()
@@ -175,6 +395,12 @@ public sealed class CompanionAutonomyTests
             client, "A", new { enabled = true, daily_action_budget = 1 })).GetProperty("id").GetGuid();
         var conversationId = await PrivateConversationAsync(client, companionId);
         factory.Chat.Reply = SendMessageDecision(conversationId, "我先整理一下今天的安排。");
+
+        // Observe first: the first tick records what it would send and stops.
+        var proposal = await TickAsync(client, companionId);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        await ApproveMandateAsync(client, companionId, "send_message");
 
         var first = await TickAsync(client, companionId);
 
@@ -232,7 +458,9 @@ public sealed class CompanionAutonomyTests
         var globallyPaused = await TickAsync(client, companionId);
         Assert.False(globallyPaused.GetProperty("acted").GetBoolean());
         Assert.Equal("autonomy_paused", globallyPaused.GetProperty("reason").GetString());
-        Assert.Empty(await ActivityAsync(client));
+        // The settings write itself is a feed event (companion.settings); the paused tick must still
+        // leave no autonomy trace of its own.
+        Assert.Empty((await ActivityAsync(client)).Where(row => row.GetProperty("kind").GetString() != "settings_changed"));
         Assert.Empty(factory.Chat.Calls);
     }
 
@@ -265,6 +493,14 @@ public sealed class CompanionAutonomyTests
         var acting = (await CreateCompanionAsync(client, "A", new { enabled = true })).GetProperty("id").GetGuid();
         var peer = (await CreateCompanionAsync(client, "B")).GetProperty("id").GetGuid();
         factory.Chat.Reply = CreateGroupDecision("自主讨论", peer);
+
+        // Observe first: a standing authorization for this class of action is asked for once.
+        var proposal = await TickAsync(client, acting);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companion-conversations"))!);
+        await ApproveMandateAsync(client, acting, "create_group");
+        factory.Chat.Calls.Clear();
 
         var first = await TickAsync(client, acting);
 
@@ -311,6 +547,12 @@ public sealed class CompanionAutonomyTests
         Assert.Equal(3, group.GetProperty("members").GetArrayLength());
         factory.Chat.Reply = InviteDecision(groupId, invitee);
 
+        // Observe first: inviting is its own action class and needs its own authorization.
+        var proposal = await TickAsync(client, acting);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        await ApproveMandateAsync(client, acting, "invite");
+
         var first = await TickAsync(client, acting);
 
         Assert.True(first.GetProperty("acted").GetBoolean());
@@ -345,6 +587,11 @@ public sealed class CompanionAutonomyTests
         var conversationId = await PrivateConversationAsync(client, companionId);
         factory.Chat.Reply = SendMessageDecision(conversationId, "同一句话只应出现一次。");
 
+        var proposal = await TickAsync(client, companionId);
+        Assert.False(proposal.GetProperty("acted").GetBoolean());
+        Assert.Equal("awaiting_mandate", proposal.GetProperty("reason").GetString());
+        await ApproveMandateAsync(client, companionId, "send_message");
+
         var first = await TickAsync(client, companionId);
         Assert.True(first.GetProperty("acted").GetBoolean());
         Assert.Equal("autonomy_message_sent", first.GetProperty("activity").GetProperty("kind").GetString());
@@ -374,6 +621,36 @@ public sealed class CompanionAutonomyTests
         Assert.Empty(await ActivityAsync(client));
         Assert.Equal(0, await CountAsync(factory, db => db.Conversations.CountAsync()));
         Assert.Empty(factory.Chat.Calls);
+    }
+
+    /// <summary>
+    /// Backoff is the cost bound on autonomy: a companion that keeps producing nothing to do must
+    /// wait progressively longer instead of calling the model on a fixed cadence forever, and one
+    /// real action resets the wait. The interval is a pure function of the skip streak — testing
+    /// it through aged database timestamps cannot distinguish a tie in CreatedAt from a real
+    /// backoff, so it is asserted directly.
+    /// </summary>
+    [Fact]
+    public void RepeatedSkips_BackOffTheInterval_AndARealActionResetsIt()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(10), CompanionAutonomyService.BackedOffInterval(10, 0));
+        Assert.Equal(TimeSpan.FromMinutes(20), CompanionAutonomyService.BackedOffInterval(10, 1));
+        Assert.Equal(TimeSpan.FromMinutes(40), CompanionAutonomyService.BackedOffInterval(10, 2));
+        Assert.Equal(TimeSpan.FromMinutes(80), CompanionAutonomyService.BackedOffInterval(10, 3));
+        // Capped: a companion that has skipped a hundred times still waits a bounded time.
+        Assert.Equal(TimeSpan.FromMinutes(80), CompanionAutonomyService.BackedOffInterval(10, 99));
+        // The configured interval is honored, and never falls below one minute.
+        Assert.Equal(TimeSpan.FromMinutes(15), CompanionAutonomyService.BackedOffInterval(15, 0));
+        Assert.Equal(TimeSpan.FromMinutes(8), CompanionAutonomyService.BackedOffInterval(0, 3));
+    }
+
+    [Fact]
+    public void TrailingSkips_StopsAtTheFirstRealAction()
+    {
+        // The newest rows come first. A real action anywhere in the middle ends the streak.
+        Assert.Equal(0, CompanionAutonomyService.TrailingSkips(new[] { "autonomy_message_sent", "autonomy_proposed" }));
+        Assert.Equal(2, CompanionAutonomyService.TrailingSkips(new[] { "autonomy_skipped", "autonomy_skipped", "autonomy_message_sent" }));
+        Assert.Equal(0, CompanionAutonomyService.TrailingSkips(Array.Empty<string>()));
     }
 
     [Fact]
@@ -435,6 +712,27 @@ public sealed class CompanionAutonomyTests
             Assert.Equal(HttpStatusCode.OK, projectedResponse.StatusCode);
             Assert.Equal(companionId,
                 (await projectedResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid());
+
+            // The rest of the companion family is pinned too. These never matched
+            // StartsWithSegments("/api/v1/companions") and a value prefix is the only thing that
+            // covers them: companion-settings, companion-conversations, companion-runs,
+            // companion-connections and companion-events. A project header would otherwise split
+            // the companion domain across project stores.
+            //
+            // The write makes the assertion meaningful: a scope that is not pinned would answer
+            // from an empty project store and report its defaults, not the row that was just set.
+            using (var write = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
+                   { Content = JsonContent.Create(new { autonomy_paused = true }) })
+            {
+                write.Headers.Add("If-Match", "\"0\"");
+                (await client.SendAsync(write)).EnsureSuccessStatusCode();
+            }
+            using var settings = new HttpRequestMessage(HttpMethod.Get, "/api/v1/companion-settings");
+            settings.Headers.Add("X-Tinadec-Storage-Id", storageId);
+            using var settingsResponse = await client.SendAsync(settings);
+            Assert.Equal(HttpStatusCode.OK, settingsResponse.StatusCode);
+            Assert.True((await settingsResponse.Content.ReadFromJsonAsync<JsonElement>())
+                .GetProperty("autonomy_paused").GetBoolean());
 
             // Control: the middleware still honors the header for work-domain routes, so the
             // companion result above is the companion rule, not a globally ignored header.

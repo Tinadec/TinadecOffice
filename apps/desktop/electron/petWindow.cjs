@@ -34,16 +34,20 @@ function clampBounds(bounds = {}, offset = 0) {
   };
 }
 
-function petWindowUrl(instanceId) {
-  const hash = `/pet?instanceId=${encodeURIComponent(instanceId)}`;
+function petWindowUrl(instanceId, sessionId = null) {
+  const session = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
+  const hash = `/pet?instanceId=${encodeURIComponent(instanceId)}${session}`;
   if (isDev) return `${process.env.VITE_DEV_SERVER_URL}?splash=0#${hash}`;
   return appBundleUrl({ hash, query: { splash: '0' } });
 }
 
-async function createPetWindow(petId) {
+async function createPetWindow(petId, { sessionKey = null, storageId = null } = {}) {
   if (!petId) throw new Error('A downloaded pet id is required');
   for (const [instanceId, entry] of petWindows) {
-    if (entry.petId === petId && !entry.window.isDestroyed()) {
+    // Decorative pets dedup by petId (one window per pet); session partners dedup by sessionKey
+    // (one window per session), so two sessions can embody the same pet in separate windows.
+    const match = sessionKey ? entry.sessionKey === sessionKey : entry.petId === petId;
+    if (match && !entry.window.isDestroyed()) {
       entry.window.show();
       entry.window.focus();
       return { instanceId, windowId: entry.window.id };
@@ -84,7 +88,7 @@ async function createPetWindow(petId) {
 
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');
   attachExternalLinkGuards(win.webContents);
-  const entry = { window: win, petId, scale, saveTimer: null };
+  const entry = { window: win, petId, sessionKey, storageId, scale, saveTimer: null };
   petWindows.set(instanceId, entry);
   const saveBounds = () => {
     clearTimeout(entry.saveTimer);
@@ -100,7 +104,7 @@ async function createPetWindow(petId) {
   });
   win.once('ready-to-show', () => win.show());
 
-  const target = petWindowUrl(instanceId);
+  const target = petWindowUrl(instanceId, sessionKey);
   await win.loadURL(target);
 
   return { instanceId, windowId: win.id };
@@ -176,6 +180,54 @@ async function closeCurrentPetWindow(sender) {
   return pet;
 }
 
+function sessionPartnerEntry(sessionId) {
+  for (const entry of petWindows.values()) {
+    if (entry.sessionKey === sessionId && !entry.window.isDestroyed()) return entry;
+  }
+  return null;
+}
+
+function isSessionPartnerActive(sessionId) {
+  return Boolean(sessionId) && sessionPartnerEntry(sessionId) !== null;
+}
+
+// The approval proxy must only answer a window that really is a session partner (not a decorative
+// pet, not the main window). The sessionKey is set at creation and never from renderer input.
+function isSessionPartnerWindowSender(sender) {
+  const entry = entryForSender(sender);
+  return Boolean(entry && entry.sessionKey);
+}
+
+function getSessionPartnerSessionId(sender) {
+  const entry = entryForSender(sender);
+  return entry && entry.sessionKey ? entry.sessionKey : null;
+}
+
+/**
+ * The storage scope the window was opened in. A project session lives in that project's store;
+ * a proxy read that omits this header lands in the user store, where the session does not exist,
+ * so every read the window makes would quietly come back empty.
+ */
+function getSessionPartnerStorageId(sender) {
+  const entry = entryForSender(sender);
+  return entry && entry.storageId ? entry.storageId : 'user';
+}
+
+// One window per session: toggling off closes that session's window, toggling on creates it.
+// Closing a session partner does not disable the underlying pet (it may still be a decorative
+// pet elsewhere), so this closes the window directly rather than via setEnabled.
+async function toggleSessionPartnerWindow(sessionId, petId, storageId = 'user') {
+  if (!sessionId) return { active: false };
+  const existing = sessionPartnerEntry(sessionId);
+  if (existing) {
+    existing.window.close();
+    return { active: false };
+  }
+  if (!petId) return { active: false, error: 'no_pet' };
+  await createPetWindow(petId, { sessionKey: sessionId, storageId });
+  return { active: true };
+}
+
 module.exports = {
   createPetWindow,
   closePetWindow,
@@ -187,4 +239,9 @@ module.exports = {
   listPetWindows,
   setCurrentPetWindowBounds,
   setCurrentPetWindowClickThrough,
+  isSessionPartnerActive,
+  toggleSessionPartnerWindow,
+  isSessionPartnerWindowSender,
+  getSessionPartnerSessionId,
+  getSessionPartnerStorageId,
 };

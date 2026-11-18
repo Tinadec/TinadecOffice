@@ -75,6 +75,41 @@ public static class CoreVirtualToolPolicy
     public const string ReadAttachmentToolId = "read_attachment";
 
     /// <summary>
+    /// Loads a skill body by name from the run's frozen skill catalog. The index names each skill and
+    /// its description only; this tool is the progressive-disclosure half, and it also works for
+    /// built-in skills that have no readable file on disk.
+    /// </summary>
+    public const string LoadSkillToolId = "load_skill";
+    public static bool IsLoadSkill(string? toolId) => string.Equals(toolId, LoadSkillToolId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The workbench-configuration group: inspect the live agent/mode/skill/MCP/market
+    /// configuration, then apply a governed change to it. They run inside Core (no child
+    /// process), the read-only inspection needs no approval, and every write is
+    /// high-risk and approval-gated. The ids are the model-facing contract; removing or
+    /// renaming one is a breaking change for the seed pack's tool scopes.
+    /// </summary>
+    public const string TinadecInspectToolId = "tinadec_inspect";
+    public const string TinadecAgentApplyToolId = "tinadec_agent_apply";
+    public const string TinadecModeApplyToolId = "tinadec_mode_apply";
+    public const string TinadecModePublishToolId = "tinadec_mode_publish";
+    public const string TinadecSkillApplyToolId = "tinadec_skill_apply";
+    public const string TinadecMcpApplyToolId = "tinadec_mcp_apply";
+
+    public static readonly IReadOnlyList<string> TinadecConfigToolIds =
+    [
+        TinadecInspectToolId, TinadecAgentApplyToolId, TinadecModeApplyToolId,
+        TinadecModePublishToolId, TinadecSkillApplyToolId, TinadecMcpApplyToolId,
+    ];
+
+    public static bool IsTinadecConfig(string? toolId) =>
+        toolId is not null && TinadecConfigToolIds.Contains(toolId, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Read-only inspection: the one tool in the group that never needs approval.</summary>
+    public static bool IsTinadecInspect(string? toolId) =>
+        string.Equals(toolId, TinadecInspectToolId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// A nullable project id cannot travel on the wire, so a projectless call
     /// carries <see cref="Guid.Empty"/> as its project sentinel.
     /// </summary>
@@ -246,7 +281,8 @@ public static class CoreVirtualToolPolicy
         IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTaskWait(toolId) || IsPlanUpdate(toolId) || IsSpecPropose(toolId)
         || IsCorrectionTrace(toolId) || IsReadAttachment(toolId)
         || IsTinaChat(toolId) || IsOrganization(toolId) || IsGraphView(toolId) || IsRecallEvidence(toolId) || IsEnvironment(toolId)
-        || IsExploration(toolId) || IsPlanLedger(toolId) || IsTraceSearch(toolId) || IsRunDossier(toolId);
+        || IsExploration(toolId) || IsPlanLedger(toolId) || IsTraceSearch(toolId) || IsRunDossier(toolId)
+        || IsLoadSkill(toolId) || IsTinadecConfig(toolId);
 
     /// <summary>
     /// True when a call-time gate may demand that the tool appear in the TinadecTools child-process

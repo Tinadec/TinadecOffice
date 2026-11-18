@@ -13,7 +13,7 @@ on:
       - 'TinadecGateway/**'
       - 'TinadecTools/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - 'scripts/*bubblewrap*'
       - '.github/workflows/desktop-release.yml'
       - '.github/workflows/create-version.yml'
@@ -31,7 +31,7 @@ on:
       - 'TinadecGateway/**'
       - 'TinadecTools/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - 'scripts/*bubblewrap*'
       - '.github/workflows/desktop-release.yml'
       - '.github/workflows/create-version.yml'
@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.300
+          dotnet-version: 11.0.100
           cache: false
 
       - uses: oven-sh/setup-bun@v2
@@ -117,11 +117,7 @@ jobs:
             throw "Desktop version $packageVersion does not match tag $env:GITHUB_REF_NAME"
           }
 
-      - name: Install Node.js workspace dependencies
-        run: npm ci
-
-      - name: Install Gateway dependencies
-        working-directory: TinadecGateway
+      - name: Install all workspace dependencies (bun.lock covers apps/* and TinadecGateway)
         run: bun install --frozen-lockfile
 
       - name: Build reviewed Linux Bubblewrap
@@ -129,16 +125,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config libcap-dev
-          npm run setup:bwrap
+          bun run setup:bwrap
 
       - name: Test reviewed Bubblewrap staging
         run: node --test scripts/bubblewrap-pin.test.mjs
 
       - name: Test Desktop
-        run: npm test -w @tinadec/desktop
+        run: bun run --cwd apps/desktop test
 
       - name: Typecheck Desktop
-        run: npm run typecheck -w @tinadec/desktop
+        run: bun run --cwd apps/desktop typecheck
 
       - name: Test Gateway
         working-directory: TinadecGateway
@@ -163,17 +159,17 @@ jobs:
           NODE_OPTIONS: ${{ matrix.nodeOptions }}
         # The stager resolves the target from the runner itself, so no leg can stage a runtime for
         # another platform; the leg name is what the runner is, not what someone typed.
-        run: npm run ${{ matrix.packageScript }} -w @tinadec/desktop
+        run: bun run --cwd apps/desktop ${{ matrix.packageScript }}
 
       - name: Verify package output
         if: matrix.label == 'win-x64'
-        run: npm run verify:package -w @tinadec/desktop
+        run: bun run --cwd apps/desktop verify:package
 
       # The installer is the deliverable, and nothing here can install it: read the archive the way
       # a package manager would and check that the launcher, the binary and the icon name each other.
       - name: Check the Linux package contents
         if: matrix.label == 'linux-x64'
-        run: npm run check:deb -w @tinadec/desktop
+        run: bun run --cwd apps/desktop check:deb
 
       # Electron needs an X server and its shared libraries on a headless runner; without the
       # packages the app dies before it binds a port, and the smoke's own message would be a
@@ -192,7 +188,7 @@ jobs:
         # followed by SIGSEGV before it binds a port.
         run: >-
           xvfb-run -a --server-args="-screen 0 1280x1024x24 -ac"
-          npm run smoke:packaged:posix -w @tinadec/desktop
+          bun run --cwd apps/desktop smoke:packaged:posix
 
       # The .deb is what ships, and so far only `ar`/`tar` had ever read it. Let the package manager
       # resolve its Depends and lay it under /opt, then run that file: a deb whose dependency list
@@ -211,22 +207,22 @@ jobs:
         if: matrix.label == 'linux-x64'
         run: >-
           xvfb-run -a --server-args="-screen 0 1280x1024x24 -ac"
-          npm run smoke:packaged:posix -w @tinadec/desktop --
+          bun run --cwd apps/desktop smoke:packaged:posix --
           --executable=/opt/TinadecOffice/TinadecOffice --label="linux-x64 installed"
 
       # The macOS smoke mounts the .dmg and runs the binary inside it, so this step is the evidence
       # that the shipped artifact — not just the directory that fed the packager — starts.
       - name: Smoke test the packaged application (macOS)
         if: matrix.label == 'osx-arm64'
-        run: npm run smoke:packaged:posix -w @tinadec/desktop
+        run: bun run --cwd apps/desktop smoke:packaged:posix
 
       - name: Smoke test unpacked application
         if: matrix.label == 'win-x64'
-        run: npm run smoke:packaged -w @tinadec/desktop
+        run: bun run --cwd apps/desktop smoke:packaged
 
       - name: Smoke test installed application
         if: matrix.label == 'win-x64'
-        run: npm run smoke:installed -w @tinadec/desktop
+        run: bun run --cwd apps/desktop smoke:installed
 
       # Every leg packs its own channel: staging is native-only, so the Windows leg has never seen a
       # Linux runtime and the Linux leg cannot read a zip. The merged catalog is the release job's job.

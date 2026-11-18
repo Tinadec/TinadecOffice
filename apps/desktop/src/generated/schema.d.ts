@@ -197,6 +197,18 @@ export interface paths {
      */
     post: operations["postApiV1CodeToolsByToolIdExecute"];
   };
+  "/api/v1/companion-avatars": {
+    /** List imported Live2D models */
+    get: operations["getApiV1Companion-avatars"];
+  };
+  "/api/v1/companion-avatars/import": {
+    /** Import a model directory (Core copies it into its own storage root) */
+    post: operations["postApiV1Companion-avatarsImport"];
+  };
+  "/api/v1/companion-avatars/{avatarId}": {
+    /** Delete an imported model and its copied directory */
+    delete: operations["deleteApiV1Companion-avatarsByAvatarId"];
+  };
   "/api/v1/companion-connections": {
     /** List every companion connection binding with its owner name */
     get: operations["getApiV1Companion-connections"];
@@ -226,6 +238,18 @@ export interface paths {
   "/api/v1/companion-conversations/{conversationId}/pause": {
     /** Pause or resume a conversation */
     post: operations["postApiV1Companion-conversationsByConversationIdPause"];
+  };
+  "/api/v1/companion-events": {
+    /** Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat) */
+    get: operations["getApiV1Companion-events"];
+  };
+  "/api/v1/companion-recruitments": {
+    /** Recruit proposals raised by companions */
+    get: operations["getApiV1Companion-recruitments"];
+  };
+  "/api/v1/companion-recruitments/{recruitmentId}/decision": {
+    /** Approve (creates the companion) or deny a recruit proposal (If-Match revision) */
+    post: operations["postApiV1Companion-recruitmentsByRecruitmentIdDecision"];
   };
   "/api/v1/companion-runs/{runId}": {
     /** Poll one companion run */
@@ -278,6 +302,18 @@ export interface paths {
     get: operations["getApiV1CompanionsByCompanionIdConversations"];
     /** Ensure a private chat or create a group */
     post: operations["postApiV1CompanionsByCompanionIdConversations"];
+  };
+  "/api/v1/companions/{companionId}/emote": {
+    /** Record a gesture at the companion (activity only, never a message) */
+    post: operations["postApiV1CompanionsByCompanionIdEmote"];
+  };
+  "/api/v1/companions/{companionId}/mandates": {
+    /** List standing autonomy authorizations */
+    get: operations["getApiV1CompanionsByCompanionIdMandates"];
+  };
+  "/api/v1/companions/{companionId}/mandates/{mandateId}/decision": {
+    /** Approve or deny one standing authorization (If-Match revision) */
+    post: operations["postApiV1CompanionsByCompanionIdMandatesByMandateIdDecision"];
   };
   "/api/v1/companions/{companionId}/memories": {
     /** List or search private memories (q, limit) */
@@ -1517,6 +1553,7 @@ export interface components {
       payload?: {
         [key: string]: unknown;
       } | null;
+      seq?: number;
       summary?: string | null;
       [key: string]: unknown;
     };
@@ -1536,6 +1573,37 @@ export interface components {
       conversation: components["schemas"]["CompanionConversation"] | null;
       message: components["schemas"]["CompanionMessage"] | null;
       reason: string | null;
+      [key: string]: unknown;
+    };
+    CompanionAvatar: {
+      capabilities: components["schemas"]["CompanionCapabilities"];
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "live2d";
+      name: string;
+      source_path: string;
+      [key: string]: unknown;
+    };
+    CompanionAvatarList: components["schemas"]["CompanionAvatar"][];
+    CompanionCapabilities: {
+      expressions: string[];
+      groups: {
+        [key: string]: string[];
+      };
+      hit_areas: string[];
+      motions: {
+        [key: string]: string[];
+      };
+      parameters: {
+        [key: string]: {
+          default: number;
+          max: number;
+          min: number;
+        };
+      };
       [key: string]: unknown;
     };
     CompanionConnection: {
@@ -1624,6 +1692,8 @@ export interface components {
       name: string;
       persona_document?: string | null;
       revision: number;
+      /** @enum {string} */
+      role: "autonomous" | "buddy";
       skill_count: number;
       /** @enum {string} */
       status: "active" | "archived" | "paused";
@@ -1633,6 +1703,28 @@ export interface components {
       [key: string]: unknown;
     };
     CompanionList: components["schemas"]["CompanionSummary"][];
+    CompanionMandate: {
+      action: string;
+      /** Format: uuid */
+      companion_id: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      decided_at?: string | null;
+      /** Format: uuid */
+      id: string;
+      proposal?: {
+        [key: string]: unknown;
+      } | null;
+      revision: number;
+      /** @enum {string} */
+      status: "proposed" | "approved" | "denied";
+      summary?: string | null;
+      /** Format: date-time */
+      updated_at: string;
+      [key: string]: unknown;
+    };
+    CompanionMandateList: components["schemas"]["CompanionMandate"][];
     CompanionMember: {
       /** Format: uuid */
       companion_id?: string | null;
@@ -1686,6 +1778,28 @@ export interface components {
       [key: string]: unknown;
     };
     CompanionMessageList: components["schemas"]["CompanionMessage"][];
+    CompanionRecruitment: {
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      created_companion_id?: string | null;
+      /** Format: date-time */
+      decided_at?: string | null;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      persona_document?: string | null;
+      /** Format: uuid */
+      proposer_id: string;
+      rationale?: string | null;
+      revision: number;
+      /** @enum {string} */
+      status: "proposed" | "approved" | "denied";
+      /** Format: date-time */
+      updated_at: string;
+      [key: string]: unknown;
+    };
+    CompanionRecruitmentList: components["schemas"]["CompanionRecruitment"][];
     CompanionRun: {
       /** Format: uuid */
       companion_id: string;
@@ -1729,7 +1843,10 @@ export interface components {
     CompanionSettings: {
       autonomy_paused: boolean;
       /** Format: uuid */
+      buddy_companion_id: string | null;
+      /** Format: uuid */
       main_companion_id: string | null;
+      recruit_limit: number;
       revision: number;
       [key: string]: unknown;
     };
@@ -1773,6 +1890,8 @@ export interface components {
       model_purpose: string;
       name: string;
       revision: number;
+      /** @enum {string} */
+      role: "autonomous" | "buddy";
       skill_count: number;
       /** @enum {string} */
       status: "active" | "archived" | "paused";
@@ -2875,6 +2994,8 @@ export interface components {
       /** Format: uuid */
       agent_definition_id: string | null;
       can_interpret_intent: boolean;
+      /** Format: uuid */
+      companion_id: string | null;
       description: string | null;
       discoverable: boolean;
       display_name: string;
@@ -2905,6 +3026,8 @@ export interface components {
       agent_definition_id?: string | null;
       /** @default false */
       can_interpret_intent?: boolean;
+      /** Format: uuid */
+      companion_id?: string | null;
       description?: string | null;
       /** @default true */
       discoverable?: boolean;
@@ -4054,6 +4177,42 @@ export interface operations {
       };
     };
   };
+  /** List imported Live2D models */
+  "getApiV1Companion-avatars": {
+    responses: {
+      /** @description List imported Live2D models */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionAvatarList"];
+        };
+      };
+    };
+  };
+  /** Import a model directory (Core copies it into its own storage root) */
+  "postApiV1Companion-avatarsImport": {
+    responses: {
+      /** @description Import a model directory (Core copies it into its own storage root) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionAvatar"];
+        };
+      };
+    };
+  };
+  /** Delete an imported model and its copied directory */
+  "deleteApiV1Companion-avatarsByAvatarId": {
+    parameters: {
+      path: {
+        avatarId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
   /** List every companion connection binding with its owner name */
   "getApiV1Companion-connections": {
     responses: {
@@ -4169,6 +4328,44 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat) */
+  "getApiV1Companion-events": {
+    responses: {
+      /** @description Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat) */
+      200: {
+        content: {
+          "text/event-stream": string;
+        };
+      };
+    };
+  };
+  /** Recruit proposals raised by companions */
+  "getApiV1Companion-recruitments": {
+    responses: {
+      /** @description Recruit proposals raised by companions */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionRecruitmentList"];
+        };
+      };
+    };
+  };
+  /** Approve (creates the companion) or deny a recruit proposal (If-Match revision) */
+  "postApiV1Companion-recruitmentsByRecruitmentIdDecision": {
+    parameters: {
+      path: {
+        recruitmentId: string;
+      };
+    };
+    responses: {
+      /** @description Approve (creates the companion) or deny a recruit proposal (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionRecruitment"];
         };
       };
     };
@@ -4400,6 +4597,55 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["CompanionConversation"];
+        };
+      };
+    };
+  };
+  /** Record a gesture at the companion (activity only, never a message) */
+  postApiV1CompanionsByCompanionIdEmote: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Record a gesture at the companion (activity only, never a message) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionActivity"];
+        };
+      };
+    };
+  };
+  /** List standing autonomy authorizations */
+  getApiV1CompanionsByCompanionIdMandates: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List standing autonomy authorizations */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMandateList"];
+        };
+      };
+    };
+  };
+  /** Approve or deny one standing authorization (If-Match revision) */
+  postApiV1CompanionsByCompanionIdMandatesByMandateIdDecision: {
+    parameters: {
+      path: {
+        companionId: string;
+        mandateId: string;
+      };
+    };
+    responses: {
+      /** @description Approve or deny one standing authorization (If-Match revision) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionMandate"];
         };
       };
     };

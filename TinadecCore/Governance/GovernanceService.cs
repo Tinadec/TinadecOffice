@@ -168,38 +168,41 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var rulesJson = CapabilityRuleMatcher.SerializeRules(rules);
         var rulesHash = CapabilityRuleMatcher.HashRules(rules);
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var bundle = await FindPolicyBundleAsync(db, command.PolicyBundleId, scope, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Policy bundle was not found.");
-        if (bundle.Status != "active") throw new InvalidOperationException("Only an active policy bundle can be published.");
-        var nextVersion = await db.PolicyVersions
-            .Where(x => x.PolicyBundleId == bundle.Id)
-            .MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) is { } current
-            ? current + 1
-            : 1;
-        var version = new PolicyVersionRecord
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            Id = Guid.NewGuid(),
-            TenantId = bundle.TenantId,
-            ScopeKind = bundle.ScopeKind,
-            ScopeId = bundle.ScopeId,
-            PolicyBundleId = bundle.Id,
-            Version = nextVersion,
-            RulesJson = rulesJson,
-            ContentHash = rulesHash,
-            Status = "published",
-            CreatedByPrincipalId = scope.PrincipalId,
-            CreatedAt = now
-        };
-        db.PolicyVersions.Add(version);
-        bundle.CurrentVersionId = version.Id;
-        bundle.Revision++;
-        bundle.UpdatedAt = now;
-        bundle.UpdatedByPrincipalId = scope.PrincipalId;
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return ToSnapshot(version);
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var bundle = await FindPolicyBundleAsync(db, command.PolicyBundleId, scope, ct).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Policy bundle was not found.");
+            if (bundle.Status != "active") throw new InvalidOperationException("Only an active policy bundle can be published.");
+            var nextVersion = await db.PolicyVersions
+                .Where(x => x.PolicyBundleId == bundle.Id)
+                .MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) is { } current
+                ? current + 1
+                : 1;
+            var version = new PolicyVersionRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = bundle.TenantId,
+                ScopeKind = bundle.ScopeKind,
+                ScopeId = bundle.ScopeId,
+                PolicyBundleId = bundle.Id,
+                Version = nextVersion,
+                RulesJson = rulesJson,
+                ContentHash = rulesHash,
+                Status = "published",
+                CreatedByPrincipalId = scope.PrincipalId,
+                CreatedAt = now
+            };
+            db.PolicyVersions.Add(version);
+            bundle.CurrentVersionId = version.Id;
+            bundle.Revision++;
+            bundle.UpdatedAt = now;
+            bundle.UpdatedByPrincipalId = scope.PrincipalId;
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return ToSnapshot(version);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<CapabilityGrantSnapshot> GrantCapabilityAsync(
@@ -216,41 +219,44 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var now = UtcNow;
         ValidateExpiry(now, command.ExpiresAt);
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
-        CapabilityGrantRecord? parent = null;
-        if (command.ParentGrantId is { } parentGrantId)
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            parent = await db.CapabilityGrants.SingleOrDefaultAsync(x =>
-                x.Id == parentGrantId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
-                cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("Parent capability grant is outside the current scope or does not exist.");
-            ValidateParentGrant(parent, command, claim, now);
-            var reserved = await ReserveGrantUsesAsync(db, parent.Id, command.MaxUses, now, cancellationToken).ConfigureAwait(false);
-            if (!reserved) throw new InvalidOperationException("Parent capability grant is expired, revoked, or exhausted.");
-        }
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
 
-        var grant = NewGrant(
-            scope,
-            command.SubjectPrincipalId,
-            command.SubjectAgentInstanceId,
-            claim,
-            command.RunId,
-            command.TaskId,
-            command.ParentGrantId,
-            sourceDelegationId: null,
-            transferable: command.Transferable && (parent?.Transferable ?? true),
-            command.MaxUses,
-            now,
-            command.ExpiresAt,
-            scope.PrincipalId,
-            issuedByAgentInstanceId: null,
-            command.Reason);
-        db.CapabilityGrants.Add(grant);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return ToSnapshot(grant);
+            CapabilityGrantRecord? parent = null;
+            if (command.ParentGrantId is { } parentGrantId)
+            {
+                parent = await db.CapabilityGrants.SingleOrDefaultAsync(x =>
+                    x.Id == parentGrantId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                    ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("Parent capability grant is outside the current scope or does not exist.");
+                ValidateParentGrant(parent, command, claim, now);
+                var reserved = await ReserveGrantUsesAsync(db, parent.Id, command.MaxUses, now, ct).ConfigureAwait(false);
+                if (!reserved) throw new InvalidOperationException("Parent capability grant is expired, revoked, or exhausted.");
+            }
+
+            var grant = NewGrant(
+                scope,
+                command.SubjectPrincipalId,
+                command.SubjectAgentInstanceId,
+                claim,
+                command.RunId,
+                command.TaskId,
+                command.ParentGrantId,
+                sourceDelegationId: null,
+                transferable: command.Transferable && (parent?.Transferable ?? true),
+                command.MaxUses,
+                now,
+                command.ExpiresAt,
+                scope.PrincipalId,
+                issuedByAgentInstanceId: null,
+                command.Reason);
+            db.CapabilityGrants.Add(grant);
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return ToSnapshot(grant);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ApprovalDelegationSnapshot> CreateApprovalDelegationAsync(
@@ -951,27 +957,28 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         return request is null ? null : await LoadResolutionAsync(db, request, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<PermissionRequestSnapshot>> ListPermissionRequestsAsync(
+    public Task<IReadOnlyList<PermissionRequestSnapshot>> ListPermissionRequestsAsync(
         string? status = null,
         Guid? runId = null,
         Guid? taskId = null,
-        CancellationToken cancellationToken = default)
-    {
-        var scope = _tenantAccessor.Current;
-        var normalizedStatus = string.IsNullOrWhiteSpace(status) ? null : status.Trim().ToLowerInvariant();
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var query = db.PermissionRequests.AsNoTracking().Where(x =>
-            x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
-        if (normalizedStatus is not null) query = query.Where(x => x.Status == normalizedStatus);
-        if (runId is not null) query = query.Where(x => x.RunId == runId);
-        if (taskId is not null) query = query.Where(x => x.TaskId == taskId);
-        // SQLite cannot translate DateTimeOffset ordering. Keep filtering
-        // server-side and apply the bounded deterministic order in memory.
-        var rows = await query.ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
-        if (rows.Length > 200) rows = rows[..200];
-        return rows.Select(ToSnapshot).ToArray();
-    }
+        CancellationToken cancellationToken = default) =>
+        SqliteTransientRetry.ReadAsync(async token =>
+        {
+            var scope = _tenantAccessor.Current;
+            var normalizedStatus = string.IsNullOrWhiteSpace(status) ? null : status.Trim().ToLowerInvariant();
+            await using var db = await _dbFactory.CreateDbContextAsync(token).ConfigureAwait(false);
+            var query = db.PermissionRequests.AsNoTracking().Where(x =>
+                x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
+            if (normalizedStatus is not null) query = query.Where(x => x.Status == normalizedStatus);
+            if (runId is not null) query = query.Where(x => x.RunId == runId);
+            if (taskId is not null) query = query.Where(x => x.TaskId == taskId);
+            // SQLite cannot translate DateTimeOffset ordering. Keep filtering
+            // server-side and apply the bounded deterministic order in memory.
+            var rows = await query.ToArrayAsync(token).ConfigureAwait(false);
+            Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
+            if (rows.Length > 200) rows = rows[..200];
+            return (IReadOnlyList<PermissionRequestSnapshot>)rows.Select(ToSnapshot).ToArray();
+        }, cancellationToken);
 
     private async Task<LeaseConsumptionResult> ConsumeLeaseAsync(
         LeaseConsumptionCommand command,
@@ -996,166 +1003,172 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var scope = _tenantAccessor.Current;
         var now = UtcNow;
         var nowUnix = now.ToUnixTimeMilliseconds();
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var priorReceipt = await db.LeaseConsumptions.AsNoTracking().SingleOrDefaultAsync(x =>
-            x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
-            && x.CapabilityLeaseId == command.CapabilityLeaseId && x.IdempotencyKey == idempotencyKey,
-            cancellationToken).ConfigureAwait(false);
-        if (priorReceipt is not null)
+        // One retried unit: the pre-read, the receipt CAS and the consumption all have to see the
+        // same snapshot, so the delegate rebuilds its context and re-reads instead of resuming from
+        // the values a failed attempt had already computed.
+        return await SqliteTransientRetry.WriteInTransactionAsync(async _ =>
         {
-            if (!FixedTimeEquals(priorReceipt.InputHash, inputHash))
-                throw new InvalidOperationException("Lease-consumption idempotency key was reused with different input.");
-            if (priorReceipt.AuthorizationDecisionId is not { } priorDecisionId)
-                throw new InvalidOperationException("A prior lease consumption is incomplete and cannot be replayed.");
-            var priorDecision = await db.AuthorizationDecisions.AsNoTracking().SingleAsync(x =>
-                x.Id == priorDecisionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var priorReceipt = await db.LeaseConsumptions.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.CapabilityLeaseId == command.CapabilityLeaseId && x.IdempotencyKey == idempotencyKey,
                 cancellationToken).ConfigureAwait(false);
-            var priorLease = await db.CapabilityLeases.AsNoTracking().SingleOrDefaultAsync(x =>
+            if (priorReceipt is not null)
+            {
+                if (!FixedTimeEquals(priorReceipt.InputHash, inputHash))
+                    throw new InvalidOperationException("Lease-consumption idempotency key was reused with different input.");
+                if (priorReceipt.AuthorizationDecisionId is not { } priorDecisionId)
+                    throw new InvalidOperationException("A prior lease consumption is incomplete and cannot be replayed.");
+                var priorDecision = await db.AuthorizationDecisions.AsNoTracking().SingleAsync(x =>
+                    x.Id == priorDecisionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                    cancellationToken).ConfigureAwait(false);
+                var priorLease = await db.CapabilityLeases.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.Id == command.CapabilityLeaseId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                    cancellationToken).ConfigureAwait(false);
+                return new LeaseConsumptionResult(priorDecision.Outcome == GovernanceOutcomes.Allowed,
+                    priorDecision.ReasonCode, priorLease is null ? null : ToSnapshot(priorLease), ToSnapshot(priorDecision));
+            }
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var receipt = new LeaseConsumptionRecord
+            {
+                Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+                CapabilityLeaseId = command.CapabilityLeaseId, IdempotencyKey = idempotencyKey,
+                InputHash = inputHash, Status = "pending", CreatedAt = now, UpdatedAt = now
+            };
+            db.LeaseConsumptions.Add(receipt);
+            var lease = await db.CapabilityLeases.AsNoTracking().SingleOrDefaultAsync(x =>
                 x.Id == command.CapabilityLeaseId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
                 cancellationToken).ConfigureAwait(false);
-            return new LeaseConsumptionResult(priorDecision.Outcome == GovernanceOutcomes.Allowed,
-                priorDecision.ReasonCode, priorLease is null ? null : ToSnapshot(priorLease), ToSnapshot(priorDecision));
-        }
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var receipt = new LeaseConsumptionRecord
-        {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
-            CapabilityLeaseId = command.CapabilityLeaseId, IdempotencyKey = idempotencyKey,
-            InputHash = inputHash, Status = "pending", CreatedAt = now, UpdatedAt = now
-        };
-        db.LeaseConsumptions.Add(receipt);
-        var lease = await db.CapabilityLeases.AsNoTracking().SingleOrDefaultAsync(x =>
-            x.Id == command.CapabilityLeaseId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
-            cancellationToken).ConfigureAwait(false);
-        PermissionRequestRecord? leaseRequest = null;
-        if (lease?.PermissionRequestId is { } permissionRequestId)
-        {
-            leaseRequest = await db.PermissionRequests.AsNoTracking().SingleOrDefaultAsync(x =>
-                x.Id == permissionRequestId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
-                cancellationToken).ConfigureAwait(false);
-        }
-        var leaseFailure = ValidateLease(lease, command.SubjectPrincipalId, command.SubjectAgentInstanceId,
-            claim, command.RunId, command.TaskId, now);
-        if (leaseFailure is null && lease is not null)
-        {
-            var protectedNonce = await _nonceMaterials.GetAsync(lease.NonceSecretReference, cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(protectedNonce))
+            PermissionRequestRecord? leaseRequest = null;
+            if (lease?.PermissionRequestId is { } permissionRequestId)
             {
-                await db.CapabilityLeases.Where(x => x.Id == lease.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
-                    .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "revoked")
-                        .SetProperty(x => x.RevokedAt, now).SetProperty(x => x.RevokeReason, "nonce_material_unavailable"), cancellationToken).ConfigureAwait(false);
-                leaseFailure = ("lease_nonce_unavailable", "The protected lease nonce material is unavailable.");
+                leaseRequest = await db.PermissionRequests.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.Id == permissionRequestId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                    cancellationToken).ConfigureAwait(false);
             }
-        }
-        if (leaseFailure is null && requireNonce)
-        {
-            leaseFailure = nonceHash is null
-                ? ("lease_nonce_required", "The capability lease nonce is required.")
-                : !FixedTimeEquals(lease!.NonceHash, nonceHash)
-                    ? ("lease_nonce_mismatch", "The lease nonce does not match.")
-                    : null;
-        }
+            var leaseFailure = ValidateLease(lease, command.SubjectPrincipalId, command.SubjectAgentInstanceId,
+                claim, command.RunId, command.TaskId, now);
+            if (leaseFailure is null && lease is not null)
+            {
+                var protectedNonce = await _nonceMaterials.GetAsync(lease.NonceSecretReference, cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(protectedNonce))
+                {
+                    await db.CapabilityLeases.Where(x => x.Id == lease.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+                        .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "revoked")
+                            .SetProperty(x => x.RevokedAt, now).SetProperty(x => x.RevokeReason, "nonce_material_unavailable"), cancellationToken).ConfigureAwait(false);
+                    leaseFailure = ("lease_nonce_unavailable", "The protected lease nonce material is unavailable.");
+                }
+            }
+            if (leaseFailure is null && requireNonce)
+            {
+                leaseFailure = nonceHash is null
+                    ? ("lease_nonce_required", "The capability lease nonce is required.")
+                    : !FixedTimeEquals(lease!.NonceHash, nonceHash)
+                        ? ("lease_nonce_mismatch", "The lease nonce does not match.")
+                        : null;
+            }
 
-        if (leaseFailure is null)
-        {
-            var sourceGrant = await db.CapabilityGrants.AsNoTracking().SingleOrDefaultAsync(x =>
-                x.Id == lease!.CapabilityGrantId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
-                cancellationToken).ConfigureAwait(false);
-            if (sourceGrant is null || sourceGrant.Status == "revoked")
-                leaseFailure = ("source_grant_revoked", "The capability lease source grant was revoked or removed.");
-        }
+            if (leaseFailure is null)
+            {
+                var sourceGrant = await db.CapabilityGrants.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.Id == lease!.CapabilityGrantId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                    cancellationToken).ConfigureAwait(false);
+                if (sourceGrant is null || sourceGrant.Status == "revoked")
+                    leaseFailure = ("source_grant_revoked", "The capability lease source grant was revoked or removed.");
+            }
 
-        if (leaseFailure is null)
-        {
-            // A lease is always issued for a permission request in the new
-            // governance path. Re-evaluate the exact persisted boundaries rather
-            // than loading the current policy set, otherwise publishing a policy
-            // after approval could retroactively change an admitted action.
-            var frozenBoundaries = leaseRequest is null
-                ? []
-                : CapabilityRuleMatcher.DeserializeBoundaries(leaseRequest.BoundariesJson);
-            var boundaryResult = EvaluateBoundaries(frozenBoundaries, claim);
-            if (leaseRequest is null)
-                boundaryResult = new BoundaryEvaluation(false, "permission_request_missing", "The capability lease has no persisted permission request boundary.", string.Empty);
-            if (!boundaryResult.Allowed) leaseFailure = (boundaryResult.ReasonCode, boundaryResult.Reason);
-        }
+            if (leaseFailure is null)
+            {
+                // A lease is always issued for a permission request in the new
+                // governance path. Re-evaluate the exact persisted boundaries rather
+                // than loading the current policy set, otherwise publishing a policy
+                // after approval could retroactively change an admitted action.
+                var frozenBoundaries = leaseRequest is null
+                    ? []
+                    : CapabilityRuleMatcher.DeserializeBoundaries(leaseRequest.BoundariesJson);
+                var boundaryResult = EvaluateBoundaries(frozenBoundaries, claim);
+                if (leaseRequest is null)
+                    boundaryResult = new BoundaryEvaluation(false, "permission_request_missing", "The capability lease has no persisted permission request boundary.", string.Empty);
+                if (!boundaryResult.Allowed) leaseFailure = (boundaryResult.ReasonCode, boundaryResult.Reason);
+            }
 
-        if (leaseFailure is not null)
-        {
-            var denied = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
-                GovernanceOutcomes.Denied, leaseFailure.Value.Code, leaseFailure.Value.Reason, "lease",
-                lease?.PolicySnapshotHash ?? string.Empty, command.RunId, command.TaskId,
-                capabilityLeaseId: lease?.Id, capabilityGrantId: lease?.CapabilityGrantId);
-            denied.IdempotencyKey = idempotencyKey;
-            denied.EvaluationInputHash = inputHash;
-            db.AuthorizationDecisions.Add(denied);
-            receipt.AuthorizationDecisionId = denied.Id;
+            if (leaseFailure is not null)
+            {
+                var denied = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
+                    GovernanceOutcomes.Denied, leaseFailure.Value.Code, leaseFailure.Value.Reason, "lease",
+                    lease?.PolicySnapshotHash ?? string.Empty, command.RunId, command.TaskId,
+                    capabilityLeaseId: lease?.Id, capabilityGrantId: lease?.CapabilityGrantId);
+                denied.IdempotencyKey = idempotencyKey;
+                denied.EvaluationInputHash = inputHash;
+                db.AuthorizationDecisions.Add(denied);
+                receipt.AuthorizationDecisionId = denied.Id;
+                receipt.Status = "completed";
+                receipt.UpdatedAt = now;
+                try
+                {
+                    await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (DbUpdateException ex) when (!SqliteTransientRetry.IsTransientWrite(ex))
+                {
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    return await ReadLeaseConsumptionAsync(scope, command.CapabilityLeaseId, idempotencyKey, cancellationToken).ConfigureAwait(false);
+                }
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return new LeaseConsumptionResult(false, denied.ReasonCode, lease is null ? null : ToSnapshot(lease), ToSnapshot(denied));
+            }
+
+            var activeLease = lease!;
+            var affected = await db.CapabilityLeases
+                .Where(x => x.Id == activeLease.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                    && x.Status == "active" && x.StartsAtUnixMilliseconds <= nowUnix && x.ExpiresAtUnixMilliseconds > nowUnix
+                    && x.UseCount < x.MaxUses)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.UseCount, x => x.UseCount + 1)
+                    .SetProperty(x => x.Revision, x => x.Revision + 1)
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+            if (affected != 1)
+            {
+                var raced = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
+                    GovernanceOutcomes.Denied, "lease_unavailable", "The capability lease was consumed or revoked concurrently.",
+                    "lease", activeLease.PolicySnapshotHash, command.RunId, command.TaskId,
+                    capabilityLeaseId: activeLease.Id, capabilityGrantId: activeLease.CapabilityGrantId);
+                raced.IdempotencyKey = idempotencyKey;
+                raced.EvaluationInputHash = inputHash;
+                db.AuthorizationDecisions.Add(raced);
+                receipt.AuthorizationDecisionId = raced.Id;
+                receipt.Status = "completed";
+                receipt.UpdatedAt = now;
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return new LeaseConsumptionResult(false, raced.ReasonCode, ToSnapshot(activeLease), ToSnapshot(raced));
+            }
+
+            await db.CapabilityLeases
+                .Where(x => x.Id == activeLease.Id && x.UseCount >= x.MaxUses)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, "exhausted"), cancellationToken).ConfigureAwait(false);
+            var consumedLease = await db.CapabilityLeases.AsNoTracking().SingleAsync(x => x.Id == activeLease.Id, cancellationToken).ConfigureAwait(false);
+            var allowed = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
+                GovernanceOutcomes.Allowed, "lease_consumed", "The capability lease was consumed.", "lease",
+                consumedLease.PolicySnapshotHash, command.RunId, command.TaskId,
+                capabilityLeaseId: consumedLease.Id, capabilityGrantId: consumedLease.CapabilityGrantId);
+            allowed.IdempotencyKey = idempotencyKey;
+            allowed.EvaluationInputHash = inputHash;
+            db.AuthorizationDecisions.Add(allowed);
+            receipt.AuthorizationDecisionId = allowed.Id;
             receipt.Status = "completed";
             receipt.UpdatedAt = now;
             try
             {
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (DbUpdateException)
+            catch (DbUpdateException ex) when (!SqliteTransientRetry.IsTransientWrite(ex))
             {
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 return await ReadLeaseConsumptionAsync(scope, command.CapabilityLeaseId, idempotencyKey, cancellationToken).ConfigureAwait(false);
             }
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new LeaseConsumptionResult(false, denied.ReasonCode, lease is null ? null : ToSnapshot(lease), ToSnapshot(denied));
-        }
-
-        var activeLease = lease!;
-        var affected = await db.CapabilityLeases
-            .Where(x => x.Id == activeLease.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
-                && x.Status == "active" && x.StartsAtUnixMilliseconds <= nowUnix && x.ExpiresAtUnixMilliseconds > nowUnix
-                && x.UseCount < x.MaxUses)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(x => x.UseCount, x => x.UseCount + 1)
-                .SetProperty(x => x.Revision, x => x.Revision + 1)
-                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        if (affected != 1)
-        {
-            var raced = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
-                GovernanceOutcomes.Denied, "lease_unavailable", "The capability lease was consumed or revoked concurrently.",
-                "lease", activeLease.PolicySnapshotHash, command.RunId, command.TaskId,
-                capabilityLeaseId: activeLease.Id, capabilityGrantId: activeLease.CapabilityGrantId);
-            raced.IdempotencyKey = idempotencyKey;
-            raced.EvaluationInputHash = inputHash;
-            db.AuthorizationDecisions.Add(raced);
-            receipt.AuthorizationDecisionId = raced.Id;
-            receipt.Status = "completed";
-            receipt.UpdatedAt = now;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new LeaseConsumptionResult(false, raced.ReasonCode, ToSnapshot(activeLease), ToSnapshot(raced));
-        }
-
-        await db.CapabilityLeases
-            .Where(x => x.Id == activeLease.Id && x.UseCount >= x.MaxUses)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, "exhausted"), cancellationToken).ConfigureAwait(false);
-        var consumedLease = await db.CapabilityLeases.AsNoTracking().SingleAsync(x => x.Id == activeLease.Id, cancellationToken).ConfigureAwait(false);
-        var allowed = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
-            GovernanceOutcomes.Allowed, "lease_consumed", "The capability lease was consumed.", "lease",
-            consumedLease.PolicySnapshotHash, command.RunId, command.TaskId,
-            capabilityLeaseId: consumedLease.Id, capabilityGrantId: consumedLease.CapabilityGrantId);
-        allowed.IdempotencyKey = idempotencyKey;
-        allowed.EvaluationInputHash = inputHash;
-        db.AuthorizationDecisions.Add(allowed);
-        receipt.AuthorizationDecisionId = allowed.Id;
-        receipt.Status = "completed";
-        receipt.UpdatedAt = now;
-        try
-        {
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (DbUpdateException)
-        {
-            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            return await ReadLeaseConsumptionAsync(scope, command.CapabilityLeaseId, idempotencyKey, cancellationToken).ConfigureAwait(false);
-        }
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new LeaseConsumptionResult(true, allowed.ReasonCode, ToSnapshot(consumedLease), ToSnapshot(allowed));
+            return new LeaseConsumptionResult(true, allowed.ReasonCode, ToSnapshot(consumedLease), ToSnapshot(allowed));
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<LeaseConsumptionResult> ReadLeaseConsumptionAsync(
@@ -1209,32 +1222,35 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var normalizedReason = CapabilityRuleMatcher.Required(reason, nameof(reason), 4096);
         var scope = _tenantAccessor.Current;
         var now = UtcNow;
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var bundle = await db.PolicyBundles.SingleOrDefaultAsync(x =>
-            x.Id == policyBundleId && x.TenantId == scope.TenantId
-            && ((x.ScopeKind == "tenant" && x.ScopeId == scope.TenantId)
-                || (x.ScopeKind == "workspace" && x.ScopeId == scope.WorkspaceId)), cancellationToken)
-            .ConfigureAwait(false);
-        if (bundle is null || bundle.Status == "archived")
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return false;
-        }
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var bundle = await db.PolicyBundles.SingleOrDefaultAsync(x =>
+                x.Id == policyBundleId && x.TenantId == scope.TenantId
+                && ((x.ScopeKind == "tenant" && x.ScopeId == scope.TenantId)
+                    || (x.ScopeKind == "workspace" && x.ScopeId == scope.WorkspaceId)), ct)
+                .ConfigureAwait(false);
+            if (bundle is null || bundle.Status == "archived")
+            {
+                await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                return false;
+            }
 
-        bundle.Status = "archived";
-        bundle.Revision++;
-        bundle.UpdatedAt = now;
-        bundle.UpdatedByPrincipalId = scope.PrincipalId;
-        bundle.ArchivedAt = now;
-        var currentVersion = await db.PolicyVersions.SingleOrDefaultAsync(x =>
-            x.Id == bundle.CurrentVersionId && x.TenantId == scope.TenantId, cancellationToken)
-            .ConfigureAwait(false);
-        if (currentVersion is not null) currentVersion.Status = "archived";
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        _ = normalizedReason; // The reason is accepted for audit/API compatibility; the bundle row has no reason column.
-        return true;
+            bundle.Status = "archived";
+            bundle.Revision++;
+            bundle.UpdatedAt = now;
+            bundle.UpdatedByPrincipalId = scope.PrincipalId;
+            bundle.ArchivedAt = now;
+            var currentVersion = await db.PolicyVersions.SingleOrDefaultAsync(x =>
+                x.Id == bundle.CurrentVersionId && x.TenantId == scope.TenantId, ct)
+                .ConfigureAwait(false);
+            if (currentVersion is not null) currentVersion.Status = "archived";
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            _ = normalizedReason; // The reason is accepted for audit/API compatibility; the bundle row has no reason column.
+            return true;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private DateTimeOffset UtcNow => _timeProvider.GetUtcNow();
@@ -1762,14 +1778,18 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         string policyHash)
     {
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var leaseId = Guid.NewGuid();
         return (new CapabilityLeaseRecord
         {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+            Id = leaseId, TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
             SubjectPrincipalId = grant.SubjectPrincipalId, SubjectAgentInstanceId = leaseSubjectAgentInstanceId,
             CapabilityGrantId = grant.Id, PermissionRequestId = permissionRequestId,
             Capability = claim.Capability, Action = claim.Action, Resource = claim.Resource,
             RunId = runId, TaskId = taskId, NonceHash = CapabilityRuleMatcher.HashNonce(nonce),
-            NonceSecretReference = $"lease_nonce_{scope.TenantId:N}_{Guid.NewGuid():N}", Nonce = nonce,
+            // The reference is derived from this lease's own id, never from a fresh Guid: the
+            // secret store overwrites the file for a repeated reference, so a stable name is what
+            // makes a retried transaction leave one file instead of an orphan per attempt.
+            NonceSecretReference = $"lease_nonce_{scope.TenantId:N}_{leaseId:N}", Nonce = nonce,
             PolicySnapshotHash = policyHash, Status = "active", MaxUses = maxUses, UseCount = 0, Revision = 1,
             StartsAt = now, ExpiresAt = expiresAt, StartsAtUnixMilliseconds = now.ToUnixTimeMilliseconds(),
             ExpiresAtUnixMilliseconds = expiresAt.ToUnixTimeMilliseconds(), CreatedAt = now, UpdatedAt = now

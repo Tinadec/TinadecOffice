@@ -17,7 +17,7 @@
 <p align="center">
   <a href="https://github.com/Tinadec/TinadecOffice/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tinadec/TinadecOffice?include_prereleases&logo=github&color=4c1"></a>
   <a href="#许可证"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0%20%2B%20MIT%20%2B%20AGPL--3.0-blue"></a>
-  <img alt=".NET" src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet">
+  <img alt=".NET" src="https://img.shields.io/badge/.NET-11-512BD4?logo=dotnet">
   <img alt="Vue" src="https://img.shields.io/badge/Vue-3.6-4FC08D?logo=vuedotjs&logoColor=white">
   <img alt="Gateway" src="https://img.shields.io/badge/Gateway-Elysia%20%2B%20Bun-000000?logo=bun&logoColor=white">
   <img alt="Platforms" src="https://img.shields.io/badge/Platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-2ea44f">
@@ -81,13 +81,28 @@ DmaEA（双层模块化智能体架构）把**治理团队的智能体**和**干
   <img src="docs/diagrams/out/roadmap.svg" alt="路线图：已发布、正在构建、接下来" />
 </p>
 
-## 快速开始
+## 编译与安装
 
-```powershell
-npm install
-npm run restore:dotnet
-npm run dev
+一个 Bun workspace 覆盖 `apps/*` 与 `TinadecGateway`：`bun install` 一次装完所有 JS 依赖，`bun.lock` 是唯一锁文件；.NET 仍由 `dotnet` 还原，仓库里不再有 npm 步骤。
+
+**环境要求**
+
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| [Bun](https://bun.sh) | ≥ 1.2 | 唯一的 JS 包管理器与脚本调度器；`npm install` 装不到 Gateway workspace |
+| .NET SDK | 11.0.100+ | 由 `global.json` 固定；Core 与 Tools 目标框架为 `net11.0` |
+| Node.js | 20.19+ / 22.12+ | Electron 运行时与 `node --test` 脚本 |
+| Git | 任意 | 获取源码与受治理的 git 工具 |
+| bubblewrap | 仅 Linux | 沙箱后端，由 `bun run setup:bwrap` 安装 |
+
+**安装与启动**
+
+```bash
+bun install     # 全部 workspace，一份锁文件
+bun run dev     # Core + Gateway + Desktop 一起启动
 ```
+
+`predev` 会先编译 TinadecTools、投放固定版本的 ripgrep，并回收本仓遗留的 48730 / 48731 / 5173 端口（9222 是 Electron 调试口，只探测不清理），再启动整套服务。
 
 | 服务 | 地址 |
 |------|------|
@@ -101,22 +116,23 @@ npm run dev
 <summary><b>常用开发命令</b></summary>
 
 ```bash
-npm run dev              # 同时启动 Core + Gateway + Desktop
-npm run dev:core         # 仅 Core（48731）
-npm run dev:gateway      # 仅 Gateway（48730）
-npm run dev:desktop      # 仅 Desktop（5173）
-npm run build            # 构建工作区与 .NET 解决方案
-npm test                 # 运行测试
+bun run dev              # 同时启动 Core + Gateway + Desktop
+bun run dev:core         # 仅 Core（48731）
+bun run dev:gateway      # 仅 Gateway（48730）
+bun run dev:desktop      # 仅 Desktop（5173）
+bun run build            # 工作区 + Gateway 打包 + .NET 解决方案
+bun test                 # 脚本 → 工作区 → Gateway → 解决方案
 ```
 
-仅构建 Core：
+`bun run build` 自带还原。只跑 Core 时用 `scripts/dotnet.mjs`，它在两种 shell 下都能用，并会自动清掉破坏 MSBuild 版本解析的 `Version` / `Ice-Version`：
 
-```powershell
-Remove-Item Env:Version -ErrorAction SilentlyContinue
-dotnet restore TinadecCore/TinadecCore.slnx
-dotnet build TinadecCore/TinadecCore.slnx --no-restore
-dotnet test TinadecCore/TinadecCore.slnx --no-build
+```bash
+bun scripts/dotnet.mjs restore TinadecCore/TinadecCore.slnx
+bun scripts/dotnet.mjs build   TinadecCore/TinadecCore.slnx --no-restore
+bun scripts/dotnet.mjs test    TinadecCore/TinadecCore.slnx --no-build
 ```
+
+桌面安装包在 desktop workspace 内构建：`package:win`、`package:linux`、`package:mac`、`dist:win`、`verify:package`。
 
 </details>
 
@@ -124,7 +140,7 @@ dotnet test TinadecCore/TinadecCore.slnx --no-build
 
 ```
 TinadecOffice/
-├── TinadecCore/              # MAF + DmaEA 智能体治理运行时（.NET 10）
+├── TinadecCore/              # MAF + DmaEA 智能体治理运行时（.NET 11）
 ├── TinadecGateway/           # 可选 Elysia API 门面 / 协议适配
 ├── apps/                     # TinadecApp 客户端（desktop / web / TinadecUI）
 ├── TinadecTools/             # TinadecTool：受治理的文件 / shell / git / MCP 工具
@@ -151,6 +167,26 @@ TinadecOffice/
 - **飞书群** —— [点击加入](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=7a3k9813-07f8-4e13-b00c-d9d1c07d539b)
 - **Discord** —— [discord.gg/EcKYQfbG72](https://discord.gg/EcKYQfbG72)
 - **X (Twitter)** —— [@tinadecoffice](https://x.com/tinadecoffice)
+
+## 贡献与 CLA
+
+欢迎贡献！提交 Pull Request 之前，请先阅读[贡献指南](CONTRIBUTING.zh-CN.md)
+并签署我们的[贡献者许可协议（CLA）](CLA.zh-CN.md)（[English](CLA.md)）。
+
+签署 CLA 即向项目方授予**永久、不可撤销、全球范围内**的权利，可对您的贡献
+进行使用、修改、再许可与商业化开发——包括在本项目于开源与闭源之间切换时
+继续使用。贡献者在自己的 Pull Request 上评论以下语句即可签署：
+
+> I have read the CLA Document and I hereby sign the CLA
+
+正式的 CLA v1 签署台账是
+[Discussion #67](https://github.com/Tinadec/TinadecOffice/discussions/67)。
+在该 Discussion 中发布页面写明的确切中文授权语句，即可把您的 GitHub 账号与
+CLA v1 绑定，之后本仓库的所有贡献均受该协议覆盖。按 PR 评论签署的旧流程仍
+保留。
+
+[CLA Assistant 工作流](.github/workflows/cla.yml)会在每个 Pull Request 上
+强制执行此要求。
 
 ## 团队
 

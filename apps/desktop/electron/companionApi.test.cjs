@@ -102,6 +102,37 @@ test('allows the documented query keys and forwards them verbatim', async () => 
   assert.equal(calls[1].url, `${BASE}/api/v1/companions?include_archived=true`);
 });
 
+test('allows the three companion-avatar routes and still refuses DELETE elsewhere', async () => {
+  const { bridge, calls } = makeBridge();
+  const list = await bridge({ sender: COMPANION }, { method: 'GET', path: '/api/v1/companion-avatars' });
+  assert.equal(list.status, 200);
+  const imported = await bridge({ sender: COMPANION }, {
+    method: 'POST',
+    path: '/api/v1/companion-avatars/import',
+    body: { path: 'C:/models/haru' },
+  });
+  assert.equal(imported.status, 200);
+  assert.equal(calls[1].init.body, '{"path":"C:/models/haru"}');
+  const removed = await bridge({ sender: COMPANION }, {
+    method: 'DELETE',
+    path: `/api/v1/companion-avatars/${COMPANION_ID}`,
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(calls.length, 3);
+
+  // DELETE became an allowed method only for the avatar route above; companions and malformed
+  // avatar ids must stay outside the whitelist.
+  for (const payload of [
+    { method: 'DELETE', path: `/api/v1/companions/${COMPANION_ID}` },
+    { method: 'DELETE', path: '/api/v1/companion-avatars/not-a-guid' },
+    { method: 'DELETE', path: '/api/v1/companion-avatars/import' },
+  ]) {
+    const result = await bridge({ sender: COMPANION }, payload);
+    assert.equal(result.status, 400, `${payload.method} ${payload.path} must be refused`);
+  }
+  assert.equal(calls.length, 3);
+});
+
 test('passes upstream status and JSON through, including refusals', async () => {
   const { bridge } = makeBridge({
     fetchImpl: async () => upstream(412, '{"code":"companion_revision_conflict","message":"stale"}'),
@@ -125,6 +156,17 @@ test('reports a non-JSON upstream body as an invalid_upstream_response', async (
   const { bridge } = makeBridge({ fetchImpl: async () => upstream(200, 'not json') });
   const result = await bridge({ sender: COMPANION }, { method: 'GET', path: '/api/v1/companions' });
   assert.deepEqual(result, { status: 200, body: { code: 'invalid_upstream_response' } });
+});
+
+test('never proxies the companion journal stream: the main window owns that subscription', async () => {
+  const { bridge, calls } = makeBridge();
+  // The satellite is not a trusted host, and this proxy is a request/response channel. Relaying a
+  // long-lived SSE body through it would be a second subscription to the same journal, so the
+  // route must stay refused even though the path is a real Core endpoint.
+  const result = await bridge({ sender: COMPANION }, { method: 'GET', path: '/api/v1/companion-events?after_seq=12' });
+  assert.equal(result.status, 400);
+  assert.equal(result.body.code, 'invalid_request');
+  assert.equal(calls.length, 0);
 });
 
 test('sends write bodies as JSON and rejects bodies over 64 KiB', async () => {

@@ -121,7 +121,7 @@ public sealed class CompanionConversationService(
             PayloadJson = JsonSerializer.Serialize(new { title = resolvedTitle, companion_ids = ids }),
             CreatedAt = now
         });
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
         return new CompanionConversationOutcome(
             await BuildConversationAsync(db, tenantId, row, cancellationToken).ConfigureAwait(false), row.Id, resolvedTitle);
     }
@@ -329,7 +329,7 @@ public sealed class CompanionConversationService(
                 PayloadJson = JsonSerializer.Serialize(new { companion_id = companionId, companion_name = invited.Name, title }),
                 CreatedAt = now
             });
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
             return new CompanionConversationOutcome(
                 await BuildConversationAsync(db, tenantId, group, cancellationToken).ConfigureAwait(false), group.Id, title);
         }
@@ -354,7 +354,7 @@ public sealed class CompanionConversationService(
             PayloadJson = JsonSerializer.Serialize(new { companion_id = companionId, companion_name = invited.Name, title = conversation.Title }),
             CreatedAt = now
         });
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
         return new CompanionConversationOutcome(
             await BuildConversationAsync(db, tenantId, conversation, cancellationToken).ConfigureAwait(false),
             conversation.Id, conversation.Title);
@@ -391,7 +391,7 @@ public sealed class CompanionConversationService(
                 PayloadJson = JsonSerializer.Serialize(new { companion_id = companionId, companion_name = name, title = conversation.Title }),
                 CreatedAt = now
             });
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
         }
         return await BuildConversationAsync(db, tenantId, conversation, cancellationToken).ConfigureAwait(false);
     }
@@ -419,7 +419,7 @@ public sealed class CompanionConversationService(
                 PayloadJson = JsonSerializer.Serialize(new { paused, title = conversation.Title }),
                 CreatedAt = now
             });
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
         }
         return await BuildConversationAsync(db, tenantId, conversation, cancellationToken).ConfigureAwait(false);
     }
@@ -563,6 +563,10 @@ public sealed class CompanionConversationService(
             });
         }
         foreach (var run in runs) db.Runs.Add(run);
+        // The effect is written in the same transaction as the run it serves: a host that dies
+        // between these two writes would otherwise leave a run nobody can pick up. EnqueueAsync
+        // below only wakes the loop; it no longer creates the row.
+        foreach (var run in runs) db.Effects.Add(CompanionRuntime.NewEffect(run));
         conversation.LastMessageAt = now;
         db.Activities.Add(new CompanionActivityRecord
         {
@@ -585,7 +589,8 @@ public sealed class CompanionConversationService(
 
         try
         {
-            await CompanionMessages.SaveAsync(db, message, tenantId, conversationId, cancellationToken).ConfigureAwait(false);
+            await CompanionActivities.SaveAsync(db, tenantId,
+                token => CompanionMessages.SaveAsync(db, message, tenantId, conversationId, token), cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {

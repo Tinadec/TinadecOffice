@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.300
+          dotnet-version: 11.0.100
 
       - name: Restore
         run: dotnet restore TinadecCore/TinadecCore.slnx
@@ -68,7 +68,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.300
+          dotnet-version: 11.0.100
 
       - name: Push packages
         if: env.NUGET_API_KEY != ''

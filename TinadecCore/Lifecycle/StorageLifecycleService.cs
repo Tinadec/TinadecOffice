@@ -468,14 +468,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 RelativeFilePath = Path.Combine("events", runId + ".events.jsonl"), ByteOffset = location.Offset,
                 ByteLength = location.Length, Timestamp = timestamp, IdempotencyKey = idempotencyKey
             };
-            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            db.EventIndex.Add(index);
-            run.LastEventSequence = sequence;
-            run.LastEventAt = timestamp;
-            run.UpdatedAt = timestamp;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return index;
+            // Only the transaction is retried. AppendLineAsync above already wrote the journal
+            // line, so re-running it would leave an orphan line for reconcile to skip; the index
+            // record and its sequence are stable, and the run head is set by a keyed update
+            // rather than through the pre-read's tracked entity.
+            return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            {
+                await using var txDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                await using var transaction = await txDb.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                txDb.EventIndex.Add(index);
+                await txDb.Runs.Where(x => x.Id == runId).ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.LastEventSequence, sequence)
+                    .SetProperty(x => x.LastEventAt, timestamp)
+                    .SetProperty(x => x.UpdatedAt, timestamp), ct).ConfigureAwait(false);
+                await txDb.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return index;
+            }, cancellationToken).ConfigureAwait(false);
         }
         finally { gate.Release(); }
     }
@@ -488,6 +497,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<EventEnvelope>> ReplayEventsAsync(Guid? sessionId, long afterSequence, CancellationToken cancellationToken = default,
         IReadOnlyCollection<string>? eventTypes = null)
     {
+        var rows = await SqliteTransientRetry.ReadAsync(token => ReplayRowsAsync(sessionId, afterSequence, eventTypes, token), cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<EventIndexRecord>> ReplayRowsAsync(Guid? sessionId, long afterSequence,
+        IReadOnlyCollection<string>? eventTypes, CancellationToken cancellationToken)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var query = db.EventIndex.AsNoTracking().Where(x => x.Sequence > afterSequence);
         if (sessionId is { } id)
@@ -497,8 +513,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
         }
         if (eventTypes?.ToArray() is { } types) query = query.Where(x => types.Contains(x.EventType));
-        var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+        return await query.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -508,6 +523,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<EventEnvelope>> ReplayRunEventsAsync(Guid sessionId, Guid runId, CancellationToken cancellationToken = default,
         IReadOnlyCollection<string>? eventTypes = null)
     {
+        var rows = await SqliteTransientRetry.ReadAsync(token => ReplayRunRowsAsync(sessionId, runId, eventTypes, token), cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<EventIndexRecord>> ReplayRunRowsAsync(Guid sessionId, Guid runId,
+        IReadOnlyCollection<string>? eventTypes, CancellationToken cancellationToken)
+    {
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null) return [];
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -515,8 +537,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             .Where(x => x.SessionId == sessionId && x.RunId == runId
                 && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
         if (eventTypes?.ToArray() is { } types) query = query.Where(x => types.Contains(x.EventType));
-        var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+        return await query.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -536,6 +557,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<EventEnvelope>> FollowEventsAsync(Guid? sessionId, IDictionary<Guid, long> watermarks, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(watermarks);
+        // The caller's watermarks advance only after the whole read succeeds. A retry that began
+        // from a half-advanced map would skip the rows the failed attempt had already read, and
+        // the subscriber would never see them. Materialising stays outside the retry: it reads
+        // the journal, not the database, so it cannot raise a transient SQLite error.
+        var advanced = new Dictionary<Guid, long>();
+        var rows = await SqliteTransientRetry.ReadAsync(async token =>
+        {
+            advanced.Clear();
+            return await FollowRowsAsync(sessionId, watermarks, advanced, token).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
+        foreach (var (runId, sequence) in advanced) watermarks[runId] = sequence;
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<EventIndexRecord>> FollowRowsAsync(Guid? sessionId, IDictionary<Guid, long> watermarks,
+        IDictionary<Guid, long> advanced, CancellationToken cancellationToken)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var runs = db.Runs.AsNoTracking();
         if (sessionId is { } id)
@@ -556,10 +594,10 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 .Select(x => new EventIndexRecord { RunId = x.RunId, Sequence = x.Sequence, Timestamp = x.Timestamp, ByteOffset = x.ByteOffset, ByteLength = x.ByteLength })
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (fresh.Count == 0) continue;
-            watermarks[head.Id] = fresh.Max(x => x.Sequence);
+            advanced[head.Id] = fresh.Max(x => x.Sequence);
             rows.AddRange(fresh);
         }
-        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+        return rows;
     }
 
     private async Task<List<EventEnvelope>> MaterializeAsync(List<EventIndexRecord> rows, CancellationToken cancellationToken)
@@ -729,52 +767,59 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         var stored = await _contentStore.PutAsync(new ContentWriteRequest(
             run.TenantId, run.WorkspaceId, "run_configuration", "application/json", body), cancellationToken).ConfigureAwait(false);
         var now = DateTimeOffset.UtcNow;
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var frozen = await db.Runs.Where(x => x.Id == runId && x.FrozenConfigurationReference == null)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(x => x.FrozenConfigurationReference, stored.Value)
-                .SetProperty(x => x.FrozenConfigurationHash, stored.Sha256)
-                .SetProperty(x => x.FrozenConfigurationLength, stored.Length)
-                .SetProperty(x => x.FrozenConfigurationSchemaVersion, schemaVersion)
-                .SetProperty(x => x.FrozenConfigurationAt, now)
-                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        if (frozen == 1)
+        // The blob is already stored and its reference is stable, so only the transaction is
+        // retried. The compare-and-set on FrozenConfigurationReference makes a retry after an
+        // ambiguous commit fall through to the winner path instead of freezing twice.
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            foreach (var binding in bindings
-                .Where(item => !string.IsNullOrWhiteSpace(item.ConfigurationKind))
-                .GroupBy(item => new { Kind = item.ConfigurationKind.Trim().ToLowerInvariant(), item.ConfigurationVersionId }))
+            await using var txDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await txDb.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var frozen = await txDb.Runs.Where(x => x.Id == runId && x.FrozenConfigurationReference == null)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.FrozenConfigurationReference, stored.Value)
+                    .SetProperty(x => x.FrozenConfigurationHash, stored.Sha256)
+                    .SetProperty(x => x.FrozenConfigurationLength, stored.Length)
+                    .SetProperty(x => x.FrozenConfigurationSchemaVersion, schemaVersion)
+                    .SetProperty(x => x.FrozenConfigurationAt, now)
+                    .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
+            if (frozen == 1)
             {
-                var item = binding.First();
-                var exists = await db.RunConfigurationBindings.AnyAsync(x => x.RunId == runId
-                    && x.ConfigurationKind == binding.Key.Kind
-                    && x.ConfigurationVersionId == item.ConfigurationVersionId, cancellationToken).ConfigureAwait(false);
-                if (exists) continue;
-                db.RunConfigurationBindings.Add(new RunConfigurationBindingRecord
+                foreach (var binding in bindings
+                    .Where(item => !string.IsNullOrWhiteSpace(item.ConfigurationKind))
+                    .GroupBy(item => new { Kind = item.ConfigurationKind.Trim().ToLowerInvariant(), item.ConfigurationVersionId }))
                 {
-                    RunId = runId,
-                    TenantId = run.TenantId,
-                    ConfigurationKind = binding.Key.Kind,
-                    ConfigurationId = item.ConfigurationId,
-                    ConfigurationVersionId = item.ConfigurationVersionId,
-                    ManifestHash = item.ManifestHash ?? string.Empty,
-                    BoundAt = now
-                });
+                    var item = binding.First();
+                    var exists = await txDb.RunConfigurationBindings.AnyAsync(x => x.RunId == runId
+                        && x.ConfigurationKind == binding.Key.Kind
+                        && x.ConfigurationVersionId == item.ConfigurationVersionId, ct).ConfigureAwait(false);
+                    if (exists) continue;
+                    txDb.RunConfigurationBindings.Add(new RunConfigurationBindingRecord
+                    {
+                        RunId = runId,
+                        TenantId = run.TenantId,
+                        ConfigurationKind = binding.Key.Kind,
+                        ConfigurationId = item.ConfigurationId,
+                        ConfigurationVersionId = item.ConfigurationVersionId,
+                        ManifestHash = item.ManifestHash ?? string.Empty,
+                        BoundAt = now
+                    });
+                }
+                await txDb.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return new FrozenRunConfiguration(run.Id.ToString(), schemaVersion, configuration.Content,
+                    stored.Value, stored.Sha256, stored.Length, now, bindings.ToArray());
             }
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new FrozenRunConfiguration(run.Id.ToString(), schemaVersion, configuration.Content,
-                stored.Value, stored.Sha256, stored.Length, now, bindings.ToArray());
-        }
 
-        await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-        await using var winnerDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var winner = await winnerDb.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Run was not found.");
-        if (!string.Equals(winner.FrozenConfigurationHash, requestedHash, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("The run already has a different frozen configuration.");
-        }
-        return await ReadFrozenConfigurationAsync(winner, cancellationToken).ConfigureAwait(false);
+            await transaction.RollbackAsync(ct).ConfigureAwait(false);
+            await using var winnerDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var winner = await winnerDb.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, ct).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Run was not found.");
+            if (!string.Equals(winner.FrozenConfigurationHash, requestedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("The run already has a different frozen configuration.");
+            }
+            return await ReadFrozenConfigurationAsync(winner, ct).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<FrozenRunConfiguration?> GetFrozenRunConfigurationAsync(Guid runId, CancellationToken cancellationToken = default)
@@ -828,41 +873,46 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             AppliedThroughEventSequence = appliedThroughEventSequence, CreatedAt = now
         };
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var runUpdate = db.Runs.Where(x => x.Id == runId && x.CheckpointRevision == checkpoint.ExpectedRevision);
-        if (expectedRunStatus is not null) runUpdate = runUpdate.Where(x => x.Status == expectedRunStatus);
-        if (checkpoint.RequireCompletionUnclaimed) runUpdate = runUpdate.Where(x => x.CompletedAt == null);
-        if (!string.IsNullOrWhiteSpace(checkpoint.ExpectedLeaseOwner))
-            runUpdate = runUpdate.Where(x => x.LeaseOwner == checkpoint.ExpectedLeaseOwner);
-        if (checkpoint.ExpectedRecoveryCount is not null)
-            runUpdate = runUpdate.Where(x => x.RecoveryCount == checkpoint.ExpectedRecoveryCount.Value);
-        var updated = await runUpdate
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(x => x.CurrentCheckpointId, record.Id)
-                .SetProperty(x => x.CheckpointRevision, record.Revision)
-                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        if (updated == 1)
+        // The content reference and the row id are produced above, outside the transaction, so a
+        // retry reuses the same stored blob and the same identity instead of writing a second one.
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            db.RunCheckpoints.Add(record);
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new RunCheckpoint(record.Id, runId.ToString(), record.Revision, record.Phase, checkpoint.Content,
-                record.ContentReference, record.ContentHash, record.ContentLength, record.AppliedThroughEventSequence, record.IdempotencyKey, record.CreatedAt);
-        }
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var runUpdate = db.Runs.Where(x => x.Id == runId && x.CheckpointRevision == checkpoint.ExpectedRevision);
+            if (expectedRunStatus is not null) runUpdate = runUpdate.Where(x => x.Status == expectedRunStatus);
+            if (checkpoint.RequireCompletionUnclaimed) runUpdate = runUpdate.Where(x => x.CompletedAt == null);
+            if (!string.IsNullOrWhiteSpace(checkpoint.ExpectedLeaseOwner))
+                runUpdate = runUpdate.Where(x => x.LeaseOwner == checkpoint.ExpectedLeaseOwner);
+            if (checkpoint.ExpectedRecoveryCount is not null)
+                runUpdate = runUpdate.Where(x => x.RecoveryCount == checkpoint.ExpectedRecoveryCount.Value);
+            var updated = await runUpdate
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.CurrentCheckpointId, record.Id)
+                    .SetProperty(x => x.CheckpointRevision, record.Revision)
+                    .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
+            if (updated == 1)
+            {
+                db.RunCheckpoints.Add(record);
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return new RunCheckpoint(record.Id, runId.ToString(), record.Revision, record.Phase, checkpoint.Content,
+                    record.ContentReference, record.ContentHash, record.ContentLength, record.AppliedThroughEventSequence, record.IdempotencyKey, record.CreatedAt);
+            }
 
-        await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-        await using var conflictDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var winner = await conflictDb.RunCheckpoints.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.RunId == runId && x.IdempotencyKey == key, cancellationToken).ConfigureAwait(false);
-        if (winner is not null)
-        {
-            return await ReadMatchingCheckpointAsync(winner, runId, checkpoint, phase, requestedHash, appliedThroughEventSequence, cancellationToken).ConfigureAwait(false);
-        }
-        var actualRevision = await conflictDb.Runs.AsNoTracking().Where(x => x.Id == runId)
-            .Select(x => (long?)x.CheckpointRevision).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-        if (actualRevision is null) throw new KeyNotFoundException("Run was not found.");
-        throw new RunCheckpointConflictException(runId.ToString(), checkpoint.ExpectedRevision, actualRevision.Value);
+            await transaction.RollbackAsync(ct).ConfigureAwait(false);
+            await using var conflictDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var winner = await conflictDb.RunCheckpoints.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RunId == runId && x.IdempotencyKey == key, ct).ConfigureAwait(false);
+            if (winner is not null)
+            {
+                return await ReadMatchingCheckpointAsync(winner, runId, checkpoint, phase, requestedHash, appliedThroughEventSequence, ct).ConfigureAwait(false);
+            }
+            var actualRevision = await conflictDb.Runs.AsNoTracking().Where(x => x.Id == runId)
+                .Select(x => (long?)x.CheckpointRevision).SingleOrDefaultAsync(ct).ConfigureAwait(false);
+            if (actualRevision is null) throw new KeyNotFoundException("Run was not found.");
+            throw new RunCheckpointConflictException(runId.ToString(), checkpoint.ExpectedRevision, actualRevision.Value);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<RunCheckpoint?> GetCurrentRunCheckpointAsync(Guid runId, CancellationToken cancellationToken = default)
@@ -1108,18 +1158,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<DurableRunStreamChunk>> ReplayRunStreamAsync(Guid runId, Guid? turnId, long afterSequence, CancellationToken cancellationToken = default)
     {
         if (afterSequence < 0) throw new ArgumentOutOfRangeException(nameof(afterSequence));
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
-        if (run is null) throw new KeyNotFoundException("Run was not found.");
-        var query = db.RunStream.AsNoTracking().Where(x => x.RunId == runId && x.Sequence > afterSequence);
-        if (turnId is { } selectedTurn) query = query.Where(x => x.TurnId == selectedTurn);
-        var records = await query.OrderBy(x => x.Sequence).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var records = await SqliteTransientRetry.ReadAsync(token => ReplayRunStreamRowsAsync(runId, turnId, afterSequence, token), cancellationToken).ConfigureAwait(false);
         var chunks = new List<DurableRunStreamChunk>(records.Count);
         foreach (var record in records)
         {
             chunks.Add(await ReadRunStreamChunkAsync(record, cancellationToken).ConfigureAwait(false));
         }
         return chunks;
+    }
+
+    private async Task<List<RunStreamRecord>> ReplayRunStreamRowsAsync(Guid runId, Guid? turnId, long afterSequence, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
+        if (run is null) throw new KeyNotFoundException("Run was not found.");
+        var query = db.RunStream.AsNoTracking().Where(x => x.RunId == runId && x.Sequence > afterSequence);
+        if (turnId is { } selectedTurn) query = query.Where(x => x.TurnId == selectedTurn);
+        return await query.OrderBy(x => x.Sequence).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ToolExecutionRecord> StartToolExecutionAsync(ToolExecutionStart start, CancellationToken cancellationToken = default)
@@ -1207,8 +1262,19 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         // line (measured 3,247 trips / ~55 s mounting one real project scope, which the first page
         // load waits behind). The set keeps the original global event_id test exactly: an event
         // already indexed under a different run stays a skip, not a duplicate-key insert.
-        var known = (await db.EventIndex.AsNoTracking().Select(x => x.EventId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false)).ToHashSet();
+        //
+        // The sequence set is the other half of the same hazard. AppendEventAsync fsyncs the
+        // journal line before it opens the index transaction, so a SQLITE_BUSY at commit leaves
+        // the line behind with no row and no advance of the run's counter. The next append reuses
+        // that sequence under a new event_id, and an event_id-only test then re-indexes the orphan
+        // into UNIQUE(run_id, sequence) — which fails the whole scope mount, so one transient lock
+        // turns into a project the user cannot open. The indexed row is authoritative: the run's
+        // counter advanced for it.
+        var indexed = await db.EventIndex.AsNoTracking()
+            .Select(x => new { x.EventId, x.RunId, x.Sequence })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var known = indexed.Select(x => x.EventId).ToHashSet();
+        var indexedSequences = indexed.Select(x => (x.RunId, x.Sequence)).ToHashSet();
         // A line can reach the journal while its index row and the run's sequence counter do
         // not (the host stopped between the two writes). Re-indexing the line without moving the
         // counter left the run one append away from a duplicate (run_id, sequence) key, and left
@@ -1233,7 +1299,11 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 {
                     var record = JsonSerializer.Deserialize<EventFileRecord>(bytes.AsSpan(offset, newline - offset), JsonOptions)
                         ?? throw new JsonException("Event record was empty.");
-                    if (known.Add(record.EventId))
+                    var isNewEvent = known.Add(record.EventId);
+                    var isNewSequence = indexedSequences.Add((record.RunId, record.Sequence));
+                    if (isNewEvent && !isNewSequence)
+                        _diagnostics.Add($"Ignoring orphaned JSONL record for run {record.RunId} at byte {offset}: sequence {record.Sequence} is already indexed under another event.");
+                    if (isNewEvent && isNewSequence)
                     {
                         db.EventIndex.Add(new EventIndexRecord { EventId = record.EventId, TenantId = run.TenantId, WorkspaceId = run.WorkspaceId, RunId = record.RunId, SessionId = record.SessionId, ProjectId = record.ProjectId, EventType = record.EventType, Severity = record.Severity, Sequence = record.Sequence, TaskId = record.TaskId, ApprovalId = record.ApprovalId, ToolId = record.ToolId, Summary = record.Summary, SchemaVersion = record.Version, PayloadHash = Convert.ToHexString(SHA256.HashData(bytes.AsSpan(offset, newline - offset))).ToLowerInvariant(), RelativeFilePath = Path.Combine("events", run.Id + ".events.jsonl"), ByteOffset = offset, ByteLength = length, Timestamp = record.Timestamp });
                         if (record.RunId == run.Id && record.Sequence > Math.Max(run.LastEventSequence, recoveredHeads.GetValueOrDefault(run.Id)))
@@ -1284,8 +1354,23 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             var type = property.ClrType == typeof(long) || property.ClrType == typeof(long?)
                 ? "INTEGER NULL"
                 : "TEXT NULL";
-            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"runs\" ADD COLUMN \"{column}\" {type}", cancellationToken).ConfigureAwait(false);
+#pragma warning disable EF1002 // column/type are model-metadata or literal SQL identifiers
+            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"runs\" ADD COLUMN \"{EnsureSqliteIdentifier(column)}\" {type}", cancellationToken).ConfigureAwait(false);
+#pragma warning restore EF1002
         }
+    }
+
+    // SQLite identifiers cannot be bound parameters, so ADD COLUMN interpolates them.
+    // Names come from EF model metadata or a hard-coded allow-list; this check is the
+    // tripwire that keeps an unexpected character out of the interpolated DDL.
+    private static string EnsureSqliteIdentifier(string? name)
+    {
+        if (string.IsNullOrEmpty(name)
+            || name.Any(static c => !(char.IsLetterOrDigit(c) || c == '_')))
+        {
+            throw new InvalidOperationException($"Unsafe SQLite identifier: {name}");
+        }
+        return name;
     }
 
     // SQLite migrations are intentionally additive for local databases that may
@@ -1321,9 +1406,11 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         foreach (var (column, definition) in required)
         {
             if (existing.Contains(column)) continue;
+#pragma warning disable EF1002 // column is a hard-coded allow-list identifier, definition a literal
             await db.Database.ExecuteSqlRawAsync(
-                $"ALTER TABLE \"tool_executions\" ADD COLUMN \"{column}\" {definition}",
+                $"ALTER TABLE \"tool_executions\" ADD COLUMN \"{EnsureSqliteIdentifier(column)}\" {definition}",
                 cancellationToken).ConfigureAwait(false);
+#pragma warning restore EF1002
         }
     }
 

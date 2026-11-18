@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Companion;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Memory;
@@ -11,6 +12,7 @@ namespace TinadecCore.Runtime;
 internal sealed class TinaChatIdentityBoundary(
     IDbContextFactory<TenancyDbContext> tenants,
     IDbContextFactory<AgentConfigurationDbContext> agents,
+    IDbContextFactory<CompanionDbContext> companions,
     GlobalAgentConfiguration globalConfiguration) : ITinaChatIdentityBoundary
 {
     public Task<bool> IsWorkspaceMemberAsync(Guid tenantId, Guid workspaceId, Guid principalId, CancellationToken ct) =>
@@ -45,6 +47,14 @@ internal sealed class TinaChatIdentityBoundary(
         await using var db = await agents.CreateDbContextAsync(ct);
         return await db.AgentDefinitions.AnyAsync(x => x.Id == definitionId && x.TenantId == tenantId && x.WorkspaceId == workspaceId
             && x.Enabled && x.ArchivedAt == null, ct);
+    }
+
+    public async Task<bool> IsCompanionAvailableAsync(Guid tenantId, Guid workspaceId, Guid companionId, CancellationToken ct)
+    {
+        // Companions are tenant-scoped (the companion domain lives in the user scope); the workspace
+        // argument is part of the boundary contract but does not narrow a companion's existence.
+        await using var db = await companions.CreateDbContextAsync(ct);
+        return await db.Companions.AnyAsync(x => x.Id == companionId && x.TenantId == tenantId && x.Status != "archived", ct);
     }
 }
 

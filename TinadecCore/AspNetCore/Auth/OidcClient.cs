@@ -17,14 +17,31 @@ public sealed class OidcClient
 {
     private sealed record Discovery(string AuthorizationEndpoint, string TokenEndpoint, string UserinfoEndpoint, string JwksUri);
 
+    /// <summary>
+    /// A parsed JWKS entry. The set is cached instead of the JsonDocument so no pooled
+    /// buffer outlives the fetch and no concurrent verifier can see a disposed document.
+    /// </summary>
+    private sealed record JwksKey(string Kid, string? Kty, string? Crv, string? X, string? Y, string? N, string? E);
+
+    private static readonly TimeSpan DiscoveryTtl = TimeSpan.FromHours(1);
+    private static readonly TimeSpan JwksTtl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ForcedRefreshInterval = TimeSpan.FromSeconds(30);
+
     private readonly TinadecOidcOptions _options;
     private readonly HttpClient _http;
+    private readonly TimeProvider _clock;
+    private readonly SemaphoreSlim _metadataGate = new(1, 1);
     private Discovery? _discovery;
+    private DateTimeOffset _discoveryFetchedAt;
+    private IReadOnlyList<JwksKey>? _jwks;
+    private DateTimeOffset _jwksFetchedAt;
+    private DateTimeOffset _lastForcedRefresh;
 
-    public OidcClient(IOptions<TinadecOidcOptions> options, HttpClient http)
+    public OidcClient(IOptions<TinadecOidcOptions> options, HttpClient http, TimeProvider? clock = null)
     {
         _options = options.Value;
         _http = http;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public async Task<string> BuildAuthorizationUrlAsync(string state, string nonce, CancellationToken ct)
@@ -204,15 +221,72 @@ public sealed class OidcClient
 
     private async Task<Discovery> GetDiscoveryAsync(CancellationToken ct)
     {
-        if (_discovery is not null) return _discovery;
-        var url = _options.Authority.TrimEnd('/') + "/.well-known/openid-configuration";
-        using var doc = await GetJsonDocAsync(url, ct).ConfigureAwait(false);
-        _discovery = new Discovery(
-            Str(doc.RootElement, "authorization_endpoint") ?? throw new InvalidOperationException("OIDC discovery is missing authorization_endpoint."),
-            Str(doc.RootElement, "token_endpoint") ?? throw new InvalidOperationException("OIDC discovery is missing token_endpoint."),
-            Str(doc.RootElement, "userinfo_endpoint") ?? throw new InvalidOperationException("OIDC discovery is missing userinfo_endpoint."),
-            Str(doc.RootElement, "jwks_uri") ?? throw new InvalidOperationException("OIDC discovery is missing jwks_uri."));
-        return _discovery;
+        if (_discovery is { } cached && _clock.GetUtcNow() - _discoveryFetchedAt < DiscoveryTtl) return cached;
+        await _metadataGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_discovery is { } current && _clock.GetUtcNow() - _discoveryFetchedAt < DiscoveryTtl) return current;
+            var url = _options.Authority.TrimEnd('/') + "/.well-known/openid-configuration";
+            Discovery refreshed;
+            try
+            {
+                using var doc = await GetJsonDocAsync(url, ct).ConfigureAwait(false);
+                refreshed = new Discovery(
+                    Str(doc.RootElement, "authorization_endpoint") ?? throw new InvalidOperationException("OIDC discovery is missing authorization_endpoint."),
+                    Str(doc.RootElement, "token_endpoint") ?? throw new InvalidOperationException("OIDC discovery is missing token_endpoint."),
+                    Str(doc.RootElement, "userinfo_endpoint") ?? throw new InvalidOperationException("OIDC discovery is missing userinfo_endpoint."),
+                    Str(doc.RootElement, "jwks_uri") ?? throw new InvalidOperationException("OIDC discovery is missing jwks_uri."));
+            }
+            catch (Exception) when (_discovery is not null && !ct.IsCancellationRequested)
+            {
+                // An OP that is briefly unreachable must not log every signed-in user out:
+                // keep serving the last known endpoints until the next successful refresh.
+                return _discovery;
+            }
+            _discovery = refreshed;
+            _discoveryFetchedAt = _clock.GetUtcNow();
+            return refreshed;
+        }
+        finally
+        {
+            _metadataGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The cached key set, refreshed on TTL expiry or when a kid is missing. A missing kid
+    /// is how key rotation presents itself, so it forces one refresh — rate limited, or an
+    /// attacker could drive unlimited JWKS fetches with unknown kids.
+    /// </summary>
+    private async Task<IReadOnlyList<JwksKey>> GetJwksAsync(string jwksUri, bool forceRefresh, CancellationToken ct)
+    {
+        var now = _clock.GetUtcNow();
+        if (!forceRefresh && _jwks is { } cached && now - _jwksFetchedAt < JwksTtl) return cached;
+        await _metadataGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            now = _clock.GetUtcNow();
+            if (_jwks is { } current)
+            {
+                if (!forceRefresh && now - _jwksFetchedAt < JwksTtl) return current;
+                if (forceRefresh && now - _lastForcedRefresh < ForcedRefreshInterval) return current;
+            }
+            using var doc = await GetJsonDocAsync(jwksUri, ct).ConfigureAwait(false);
+            var keys = new List<JwksKey>();
+            if (doc.RootElement.TryGetProperty("keys", out var array) && array.ValueKind == JsonValueKind.Array)
+                foreach (var key in array.EnumerateArray())
+                    keys.Add(new JwksKey(
+                        Str(key, "kid") ?? string.Empty, Str(key, "kty"), Str(key, "crv"),
+                        Str(key, "x"), Str(key, "y"), Str(key, "n"), Str(key, "e")));
+            _jwks = keys;
+            _jwksFetchedAt = now;
+            if (forceRefresh) _lastForcedRefresh = now;
+            return keys;
+        }
+        finally
+        {
+            _metadataGate.Release();
+        }
     }
 
     private async Task<Dictionary<string, string>?> ValidateIdTokenAsync(string jwt, string expectedNonce, Discovery d, CancellationToken ct)
@@ -276,17 +350,18 @@ public sealed class OidcClient
 
     private async Task<bool> VerifySignatureAsync(string signedData, byte[] signature, string kid, string alg, string jwksUri, CancellationToken ct)
     {
-        using var doc = await GetJsonDocAsync(jwksUri, ct).ConfigureAwait(false);
-        if (!doc.RootElement.TryGetProperty("keys", out var keys)) return false;
+        var keys = await GetJwksAsync(jwksUri, forceRefresh: false, ct).ConfigureAwait(false);
+        if (!keys.Any(key => key.Kid == kid))
+            keys = await GetJwksAsync(jwksUri, forceRefresh: true, ct).ConfigureAwait(false);
         var data = Encoding.ASCII.GetBytes(signedData);
-        foreach (var key in keys.EnumerateArray())
+        foreach (var key in keys)
         {
-            if (Str(key, "kid") != kid) continue;
-            var kty = Str(key, "kty");
+            if (key.Kid != kid) continue;
+            var kty = key.Kty;
 
             if (kty == "EC" && alg.StartsWith("ES", StringComparison.Ordinal))
             {
-                var crv = Str(key, "crv");
+                var crv = key.Crv;
                 var curve = crv switch
                 {
                     "P-256" => ECCurve.NamedCurves.nistP256,
@@ -296,8 +371,8 @@ public sealed class OidcClient
                 };
                 if (curve is null) break;
                 var hash = crv switch { "P-256" => HashAlgorithmName.SHA256, "P-384" => HashAlgorithmName.SHA384, _ => HashAlgorithmName.SHA512 };
-                var x = Str(key, "x");
-                var y = Str(key, "y");
+                var x = key.X;
+                var y = key.Y;
                 if (string.IsNullOrWhiteSpace(x) || string.IsNullOrWhiteSpace(y)) continue;
                 using var ec = ECDsa.Create();
                 ec.ImportParameters(new ECParameters
@@ -311,8 +386,8 @@ public sealed class OidcClient
 
             if (kty == "RSA" && alg.StartsWith("RS", StringComparison.Ordinal))
             {
-                var n = Str(key, "n");
-                var e = Str(key, "e");
+                var n = key.N;
+                var e = key.E;
                 if (string.IsNullOrWhiteSpace(n) || string.IsNullOrWhiteSpace(e)) continue;
                 var hash = alg switch { "RS384" => HashAlgorithmName.SHA384, "RS512" => HashAlgorithmName.SHA512, _ => HashAlgorithmName.SHA256 };
                 using var rsa = RSA.Create();

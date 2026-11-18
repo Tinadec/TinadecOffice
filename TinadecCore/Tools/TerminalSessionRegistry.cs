@@ -19,7 +19,8 @@ public sealed record TerminalSessionRecord(
     string WorkspaceRoot,
     string Command,
     string Status,
-    DateTimeOffset StartedAt)
+    DateTimeOffset StartedAt,
+    ToolExecutionContextDto? ToolExecutionContext)
 {
     public DateTimeOffset? EndedAt { get; init; }
     public int? ExitCode { get; init; }
@@ -75,7 +76,8 @@ public sealed class TerminalSessionRegistry : ITerminalSessionRegistry
             existing.WorkspaceRoot,
             existing.Command,
             timedOut ? "timed_out" : exitCode == 0 ? "exited" : "failed",
-            existing.StartedAt)
+            existing.StartedAt,
+            existing.ToolExecutionContext)
         {
             EndedAt = DateTimeOffset.UtcNow,
             ExitCode = exitCode,

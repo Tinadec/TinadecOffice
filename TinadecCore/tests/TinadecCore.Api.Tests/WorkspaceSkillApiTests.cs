@@ -314,9 +314,9 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
         Assert.NotNull(shared);
         var revision = shared!.Value.GetProperty("revision").GetInt64();
         var catalog = _factory.Services.GetRequiredService<IToolSkillCatalog>();
-        var inherited = await catalog.ResolveAsync(projectId, null);
-        Assert.Single(inherited);
-        Assert.Equal("Project procedure.", inherited[0].Description);
+        var inherited = (await catalog.ResolveAsync(projectId, null)).Where(x => x.Name == "probe").ToArray();
+        var inheritedProbe = Assert.Single(inherited);
+        Assert.Equal("Project procedure.", inheritedProbe.Description);
         var explicitShared = Assert.Single(await catalog.ResolveAsync(projectId, [id]));
         Assert.Equal("Shared procedure.", explicitShared.Description);
         Assert.Equal("asset-body", await File.ReadAllTextAsync(Path.Combine(explicitShared.RootPath, "references", "example.txt")));
@@ -348,8 +348,10 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
         stale.Headers.TryAddWithoutValidation("If-Match", $"\"{revision}\"");
         Assert.Equal(HttpStatusCode.PreconditionFailed, (await client.SendAsync(stale)).StatusCode);
         var list = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tools/skills?project_id={projectId}");
-        Assert.Equal(2, list.GetProperty("skills").GetArrayLength());
-        var shadowed = list.GetProperty("skills").EnumerateArray().Single(x => x.GetProperty("scope").GetString() == "shared");
+        var listed = list.GetProperty("skills").EnumerateArray()
+            .Where(x => x.GetProperty("source_kind").GetString() != "builtin").ToArray();
+        Assert.Equal(2, listed.Length);
+        var shadowed = listed.Single(x => x.GetProperty("scope").GetString() == "shared");
         Assert.Contains("shadowed", shadowed.GetProperty("reason").GetString());
         Assert.Equal("shadowed", shadowed.GetProperty("reason_code").GetString());
 
@@ -468,7 +470,7 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
     [InlineData("stat", true, false, null)]
     [InlineData("read_file", false, false, null)]
     [InlineData("shell", true, false, null)]
-    [InlineData("*", false, true, "shell, command_run")]
+    [InlineData("*", false, true, "load_skill")]
     [InlineData("", true, true, null)]
     public async Task FrozenSkillIndexNamesOnlyEnabledBodyReaders(string tool, bool readEnabled, bool shellEnabled, string? expected)
     {
@@ -520,7 +522,7 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
             (".tinadec/skills/probe/references/guide.txt", "old-asset"));
         var resolver = _factory!.Services.GetRequiredService<IToolConfigurationResolver>();
         var first = await resolver.ResolveForRunAsync(projectId, []);
-        var original = Assert.Single(first.SharedContext.SkillResources);
+        var original = Assert.Single(first.SharedContext.SkillResources, x => x.Name == "probe");
         Assert.False(WorkspaceSkillDiscovery.IsContained(root, original.RootPath));
         Assert.Contains("old-body", await File.ReadAllTextAsync(original.SkillPath));
         var liveBody = Path.Combine(root, ".tinadec", "skills", "probe", "SKILL.md");
@@ -528,7 +530,7 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
         await File.WriteAllTextAsync(liveBody, Skill("probe", "Updated procedure.", "new-body"));
         await File.WriteAllTextAsync(liveAsset, "new-asset");
         var second = await resolver.ResolveForRunAsync(projectId, []);
-        var updated = Assert.Single(second.SharedContext.SkillResources);
+        var updated = Assert.Single(second.SharedContext.SkillResources, x => x.Name == "probe");
         Assert.NotEqual(original.RootPath, updated.RootPath);
         Assert.Contains("old-body", await File.ReadAllTextAsync(original.SkillPath));
         Assert.Equal("old-asset", await File.ReadAllTextAsync(Path.Combine(original.RootPath, "references", "guide.txt")));
@@ -546,9 +548,9 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
             (".tinadec/skills/probe/SKILL.md", Skill("probe", "Same procedure.")),
             (".tinadec/skills/probe/references/guide.txt", "first"));
         var catalog = _factory!.Services.GetRequiredService<IToolSkillCatalog>();
-        var first = Assert.Single((await catalog.CaptureAsync(projectId)).Skills);
+        var first = Assert.Single((await catalog.CaptureAsync(projectId)).Skills, x => x.Name == "probe");
         await File.WriteAllTextAsync(Path.Combine(root, ".tinadec", "skills", "probe", "references", "guide.txt"), "second");
-        var second = Assert.Single((await catalog.CaptureAsync(projectId)).Skills);
+        var second = Assert.Single((await catalog.CaptureAsync(projectId)).Skills, x => x.Name == "probe");
         Assert.NotEqual(first.RootPath, second.RootPath);
         Assert.NotEqual(first.ContentHash, second.ContentHash);
         Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(first.RootPath, "references", "guide.txt")));
@@ -561,7 +563,7 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
     /// durable order — permission envelope first, then the action's own approval — matching the
     /// market and approval-flow suites.
     /// </summary>
-    private async Task<JsonElement?> ApproveSkillAsync(Guid resourceId, Guid actionId)
+    private async Task<JsonElement?> ApproveSkillAsync(Guid resourceId, Guid actionId, Guid? projectId = null)
     {
         var client = _factory!.CreateClient();
         var queued = await client.GetFromJsonAsync<JsonElement>($"/api/v1/user/tool-actions/{actionId}");
@@ -582,7 +584,62 @@ public sealed class WorkspaceSkillApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, decided.StatusCode);
         var final = await client.GetFromJsonAsync<JsonElement>($"/api/v1/user/tool-actions/{actionId}");
         Assert.Equal("completed", final.GetProperty("status").GetString());
-        return await client.GetFromJsonAsync<JsonElement?>($"/api/v1/tools/skills/{resourceId}");
+        return await client.GetFromJsonAsync<JsonElement?>($"/api/v1/tools/skills/{resourceId}{(projectId is { } id ? $"?project_id={id}" : "")}");
+    }
+
+    [Fact]
+    public async Task BuiltinSkillsAreListedReadAndMarkedReadOnlyWithoutAWorkspaceFile()
+    {
+        var client = _factory!.CreateClient();
+        var direct = await _factory.Services.GetRequiredService<IToolSkillResourceService>().ListAsync(null, includeBuiltins: true);
+        Assert.Contains(direct.Skills, x => x.SourceKind == "builtin");
+        var list = await client.GetFromJsonAsync<JsonElement>("/api/v1/tools/skills");
+        var builtins = list.GetProperty("skills").EnumerateArray()
+            .Where(x => x.GetProperty("source_kind").GetString() == "builtin").ToArray();
+        Assert.Contains(builtins, x => x.GetProperty("name").GetString() == "tinadec-workbench");
+        Assert.Contains(builtins, x => x.GetProperty("name").GetString() == "tinadec-skill-authoring");
+        Assert.All(builtins, entry =>
+        {
+            Assert.True(entry.GetProperty("valid").GetBoolean());
+            Assert.True(entry.GetProperty("enabled").GetBoolean());
+            Assert.True(entry.GetProperty("read_only").GetBoolean());
+            Assert.StartsWith("tinadec://builtin/", entry.GetProperty("path").GetString());
+        });
+
+        var workbench = builtins.Single(x => x.GetProperty("name").GetString() == "tinadec-workbench");
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tools/skills/{workbench.GetProperty("resource_id").GetGuid()}");
+        Assert.Contains("tinadec_inspect", detail.GetProperty("content").GetString());
+        Assert.NotEmpty(detail.GetProperty("package_files").EnumerateArray());
+
+        var diagnostics = await client.GetFromJsonAsync<JsonElement>("/api/v1/tools/skills/diagnostics");
+        Assert.Contains(diagnostics.GetProperty("skills").EnumerateArray(),
+            item => item.GetProperty("source_kind").GetString() == "builtin");
+    }
+
+    [Fact]
+    public async Task BuiltinSkillCopyToProject_IsAGovernedFileActionThatBecomesAProjectSkill()
+    {
+        var (_, _, projectId) = await OpenWorkspaceAsync("builtin-copy");
+        var client = _factory!.CreateClient();
+        var catalog = await client.GetFromJsonAsync<JsonElement>("/api/v1/tools/skills");
+        var builtin = catalog.GetProperty("skills").EnumerateArray()
+            .Single(x => x.GetProperty("name").GetString() == "tinadec-workbench");
+        var resourceId = builtin.GetProperty("resource_id").GetGuid();
+
+        var response = await client.PostAsync($"/api/v1/tools/skills/{resourceId}/copy-to-project?project_id={projectId}", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var receipt = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("awaiting_user", receipt.GetProperty("action_status").GetString());
+        Assert.Equal("project", receipt.GetProperty("scope").GetString());
+        var actionId = receipt.GetProperty("user_action_id").GetGuid();
+        var projectResourceId = receipt.GetProperty("resource_id").GetGuid();
+
+        var copied = await ApproveSkillAsync(projectResourceId, actionId, projectId);
+        Assert.NotNull(copied);
+        Assert.Equal("tinadec-workbench", copied!.Value.GetProperty("name").GetString());
+        Assert.Equal("project", copied.Value.GetProperty("scope").GetString());
+        Assert.Contains("tinadec-workbench", await File.ReadAllTextAsync(
+            Path.Combine(_root, "builtin-copy-workspace", ".tinadec", "skills", "tinadec-workbench", "SKILL.md")));
     }
 
     private sealed class SkillFactory : IsolatedApiFactory

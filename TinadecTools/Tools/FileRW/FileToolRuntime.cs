@@ -154,12 +154,23 @@ internal sealed record WorkspaceRootSet(string WritableRoot, IReadOnlyList<strin
 
     public UnauthorizedAccessException OutsideWorkspace(string attempted, string resolved, bool writable)
     {
-        var sources = ToolExecutionContext.Current?.WorkspaceRoots.Select(root => root.Path).ToArray() ?? [WritableRoot];
+        // Mirrors IsAllowed: the writable root this process was started in is authorized even when
+        // the call envelope declares no source folders. Listing only WorkspaceRoots printed "()" in
+        // exactly that case, which hid the one folder the caller could actually use and sent
+        // diagnosis after the wrong thing.
+        var sources = ToolExecutionContext.Current?.WorkspaceRoots.Select(root => root.Path).ToArray() ?? [];
         var files = ToolExecutionContext.Current?.WorkspaceFiles.Select(file => file.Path).ToArray() ?? [];
-        var allowed = $"the authorized source folders ({string.Join(", ", sources.Select(root => $"'{root}'"))})";
+        var allowed = $"the writable root ('{WritableRoot}')";
+        if (sources.Length > 0) allowed += $" or authorized source folders ({string.Join(", ", sources.Select(root => $"'{root}'"))})";
         if (files.Length > 0) allowed += $" or exact files ({string.Join(", ", files.Select(file => $"'{file}'"))})";
         if (!writable && ReadOnlyRoots.Count > 0)
             allowed += $" or a read-only root ({string.Join(", ", ReadOnlyRoots.Select(root => $"'{root}'"))})";
+        // Named separately because a path can sit inside the writable root and still be refused
+        // there: a protected storage root wins over the writable root, and without this the message
+        // reported a root that visibly contains the path.
+        var forbidden = WorkspaceStoragePolicy.ForbiddenRoots(WritableRoot);
+        if (forbidden.Count > 0)
+            allowed += $"; refused inside protected storage ({string.Join(", ", forbidden.Select(root => $"'{root}'"))})";
         return new UnauthorizedAccessException(
             $"Path '{attempted}' (resolved to '{resolved}') is outside the allowed workspace. "
             + $"Only paths inside {allowed} may be {(writable ? "written" : "read")}. "

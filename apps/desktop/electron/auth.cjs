@@ -26,6 +26,24 @@ let identity = null;
 let activeLogin = null;
 let restored = false;
 let validation = null;
+let hostControlToken = null;
+
+/**
+ * Every /auth/* route except the browser's callback now requires the private host credential.
+ * The token is injected rather than read from the environment: hostControl.cjs generates one
+ * itself when no startup token was supplied, so the environment often does not carry it.
+ */
+function configureAuth({ hostControlToken: token }) {
+  if (typeof token !== 'string' || token.length < 40) throw new Error('A private host credential is required.');
+  hostControlToken = token;
+}
+
+// Throws instead of sending an unauthenticated request: a missing credential is a wiring bug,
+// and a silent fallback would turn it into a 403 that looks like a server problem.
+function authHeaders(extra = {}) {
+  if (!hostControlToken) throw new Error('Auth requires the trusted host credential.');
+  return { ...extra, 'x-tinadec-host-control': hostControlToken };
+}
 
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -113,7 +131,7 @@ async function revalidateRestoredSession() {
   if (!token) return;
   for (let attempt = 0; attempt < VALIDATION_ATTEMPTS; attempt += 1) {
     try {
-      const res = await fetch(`${gatewayUrl()}/auth/me`, { headers: { 'x-tinadec-session': token } });
+      const res = await fetch(`${gatewayUrl()}/auth/me`, { headers: authHeaders({ 'x-tinadec-session': token }) });
       if (sessionToken !== token) return;
       if (res.ok) {
         const me = await res.json();
@@ -164,7 +182,7 @@ function openLogin() {
 
   activeLogin = (async () => {
     try {
-      const beginRes = await fetch(`${gatewayUrl()}/auth/begin`);
+      const beginRes = await fetch(`${gatewayUrl()}/auth/begin`, { headers: authHeaders() });
       if (!beginRes.ok) throw new Error(`/auth/begin -> ${beginRes.status}`);
       const begin = await beginRes.json();
       const state = String(begin.state ?? '');
@@ -177,7 +195,7 @@ function openLogin() {
       if (!token) return null;
 
       sessionToken = token;
-      const meRes = await fetch(`${gatewayUrl()}/auth/me`, { headers: { 'x-tinadec-session': token } });
+      const meRes = await fetch(`${gatewayUrl()}/auth/me`, { headers: authHeaders({ 'x-tinadec-session': token }) });
       if (!meRes.ok) throw new Error(`/auth/me -> ${meRes.status}`);
       const me = await meRes.json();
       identity = normalizeIdentity(me);
@@ -203,7 +221,7 @@ function pollForSession(state) {
   return new Promise((resolve) => {
     const tick = async () => {
       try {
-        const res = await fetch(`${gatewayUrl()}/auth/check?state=${encodeURIComponent(state)}`);
+        const res = await fetch(`${gatewayUrl()}/auth/check?state=${encodeURIComponent(state)}`, { headers: authHeaders() });
         if (res.ok) {
           const body = await res.json();
           if (body.status === 'complete' && typeof body.session === 'string') {
@@ -237,7 +255,7 @@ async function updateProfile({ nickname, avatarUrl } = {}) {
 
   const res = await fetch(`${gatewayUrl()}/auth/profile`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json', 'x-tinadec-session': sessionToken },
+    headers: authHeaders({ 'content-type': 'application/json', 'x-tinadec-session': sessionToken }),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -258,7 +276,7 @@ async function logout() {
   clearStoredSession();
   if (token) {
     try {
-      await fetch(`${gatewayUrl()}/auth/logout`, { method: 'POST', headers: { 'x-tinadec-session': token } });
+      await fetch(`${gatewayUrl()}/auth/logout`, { method: 'POST', headers: authHeaders({ 'x-tinadec-session': token }) });
     } catch (error) {
       console.warn('[auth] logout revoke failed:', error.message);
     }
@@ -273,6 +291,7 @@ function __resetForTests() {
   activeLogin = null;
   restored = false;
   validation = null;
+  hostControlToken = null;
 }
 
 function __validationForTests() {
@@ -280,6 +299,7 @@ function __validationForTests() {
 }
 
 module.exports = {
+  configureAuth,
   openLogin,
   logout,
   getAuthState,

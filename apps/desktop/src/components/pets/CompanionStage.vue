@@ -12,21 +12,30 @@
  * and duration. Nothing about the animation is re-derived here.
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
+import { planAvatar, type AvatarKind } from '@/pets/avatarKind'
 import { PET_STATES, petFrameAt, parsePetSprite, type PetState } from '@/pets/petRuntime'
 
 const props = withDefaults(defineProps<{
   petSlug: string
+  /** Which renderer this avatar needs; sprite is the only one this build can draw. */
+  avatarKind?: AvatarKind
   /** Which row of the atlas to play. */
   state?: PetState
   /** Rendered height of one frame in px; the width follows the 192:208 aspect. */
   height?: number
   alt?: string
 }>(), {
+  avatarKind: 'sprite',
   state: 'idle',
   height: 160,
   alt: '',
 })
+
+const { t } = useI18n()
+const plan = computed(() => planAvatar(props.avatarKind, props.petSlug))
+const live2d = computed(() => (plan.value.kind === 'live2d' ? plan.value : null))
 
 const { urlForSlug } = useAgentAvatars()
 const url = computed(() => urlForSlug(props.petSlug))
@@ -44,9 +53,11 @@ let raf = 0
 let startedAt = 0
 
 /** Measure the atlas once per URL; a missing sprite degrades to nothing rather than a broken box. */
-watch(url, (next) => {
+watch([url, () => props.avatarKind] as const, ([next, kind]) => {
   layout.value = null
-  if (!next) return
+  // A Live2D avatar has no sprite to measure, and loading one would be the exact fallback the
+  // seam exists to prevent.
+  if (kind === 'live2d' || !next) return
   const image = new Image()
   probe = image
   image.onload = () => {
@@ -125,11 +136,21 @@ const style = computed(() => {
   <div
     class="companion-stage"
     :class="`companion-stage--${state}`"
+    :style="live2d ? { height: `${height}px` } : undefined"
     role="img"
     :aria-label="alt"
     data-testid="companion-stage"
   >
-    <div v-if="Object.keys(style).length" class="companion-stage-pet" :style="style" />
+    <!-- The model was imported and its capabilities are readable, but this build has no Live2D
+         renderer; saying so is the honest state, drawing a sprite here would be a lie. -->
+    <div
+      v-if="live2d"
+      class="companion-stage-live2d"
+      data-testid="companion-stage-live2d-unavailable"
+    >
+      {{ t('settings.companions.live2d.unavailableShort') }}
+    </div>
+    <div v-else-if="Object.keys(style).length" class="companion-stage-pet" :style="style" />
   </div>
 </template>
 
@@ -152,6 +173,22 @@ const style = computed(() => {
   image-rendering: pixelated;
   transform-origin: bottom center;
   filter: drop-shadow(0 6px 10px rgb(0 0 0 / 28%));
+}
+
+/* Compact and non-interactive: the full explanation lives in settings, the stage only admits
+   that this avatar cannot be drawn here. */
+.companion-stage-live2d {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 150px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-input, rgb(0 0 0 / 10%));
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--text-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -95,6 +95,19 @@ public sealed class CompanionAutonomyService(
         if (decision is null)
             return await SkipAsync(companion, "none", "invalid_decision", null, cancellationToken).ConfigureAwait(false);
 
+        if (decision.Action == "recruit")
+            return await ProposeRecruitAsync(companion, decision, cancellationToken).ConfigureAwait(false);
+
+        if (decision.Action is not "none")
+        {
+            // Observe before auto: an autonomous partner does not touch the user's conversations
+            // until the user has approved that class of action. The first time it wants to do
+            // something it records the proposal and stops here; approving the mandate lets the
+            // next one run.
+            var gate = await MandateGateAsync(companion, decision, cancellationToken).ConfigureAwait(false);
+            if (gate is not null) return gate;
+        }
+
         return decision.Action switch
         {
             "none" => Refused(null),
@@ -104,6 +117,196 @@ public sealed class CompanionAutonomyService(
             _ => await SkipAsync(companion, "none", "invalid_decision", null, cancellationToken).ConfigureAwait(false)
         };
     }
+
+    /// <summary>
+    /// Returns a refusal when the action is not authorized, and null when the tick may proceed.
+    /// A missing mandate is recorded as a proposal: the decision is what the user reads before
+    /// saying yes, so it is kept on the row rather than left in an activity feed nobody approves
+    /// from. A denied mandate is final until the user changes their mind — re-proposing the same
+    /// class on every tick would turn a "no" into a nag.
+    /// </summary>
+    private async Task<object?> MandateGateAsync(
+        CompanionAgentRecord companion, Decision decision, CancellationToken cancellationToken)
+    {
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var mandate = await db.Mandates
+            .SingleOrDefaultAsync(x => x.TenantId == tenantId && x.CompanionId == companion.Id
+                && x.Action == decision.Action, cancellationToken).ConfigureAwait(false);
+
+        if (mandate?.Status == "approved") return null;
+        if (mandate?.Status == "denied")
+            return await SkipAsync(companion, decision.Action, "mandate_denied", decision.ConversationId, cancellationToken).ConfigureAwait(false);
+
+        var proposal = JsonSerializer.Serialize(new
+        {
+            action = decision.Action,
+            conversation_id = decision.ConversationId,
+            companion_id = decision.CompanionId,
+            companion_ids = decision.CompanionIds,
+            title = decision.Title,
+            body = decision.Body is { Length: > 200 } body ? body[..200] : decision.Body
+        }, SnakeCase);
+        var summary = Truncate(DescribeProposal(companion, decision), MaxActivitySummary);
+        var now = DateTimeOffset.UtcNow;
+        var mandateId = mandate?.Id ?? Guid.NewGuid();
+
+        if (mandate is null)
+        {
+            db.Mandates.Add(new CompanionMandateRecord
+            {
+                Id = mandateId,
+                TenantId = tenantId,
+                CompanionId = companion.Id,
+                Action = decision.Action,
+                Status = "proposed",
+                ProposalJson = proposal,
+                Summary = summary,
+                Revision = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+        else
+        {
+            // Still proposed: the newest intent is what the user should be asked about.
+            mandate.ProposalJson = proposal;
+            mandate.Summary = summary;
+            mandate.Revision++;
+            mandate.UpdatedAt = now;
+        }
+
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "autonomy_proposed",
+            CompanionId = companion.Id,
+            ConversationId = decision.ConversationId,
+            Summary = summary,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                autonomous = true,
+                action = decision.Action,
+                // So the centre can approve straight from the feed row instead of looking it up.
+                mandate_id = mandateId,
+                revision = mandate is null ? 1 : mandate.Revision,
+                conversation_id = decision.ConversationId,
+                proposal = ParseJsonElement(proposal)
+            }, SnakeCase),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+
+        return new
+        {
+            acted = false,
+            action = decision.Action,
+            reason = "awaiting_mandate",
+            activity = (object?)null,
+            conversation = (object?)null,
+            message = (object?)null
+        };
+    }
+
+    /// <summary>
+    /// Recruiting grows the user's autonomous team, so it never happens on the model's say-so: the
+    /// proposal is recorded, the per-tenant limit and the user's answer both have to agree, and
+    /// only an approved proposal creates a companion. A repeated proposal is refused rather than
+    /// stacked — the same question asked twice is a nag, not a second option.
+    /// </summary>
+    private async Task<object> ProposeRecruitAsync(
+        CompanionAgentRecord companion, Decision decision, CancellationToken cancellationToken)
+    {
+        var tenantId = TenantId;
+        var name = decision.RecruitName?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Length > 128)
+            return await SkipAsync(companion, "recruit", "invalid_decision", null, cancellationToken).ConfigureAwait(false);
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var limit = await db.Settings.AsNoTracking()
+            .Where(x => x.TenantId == tenantId)
+            .Select(x => (int?)x.RecruitLimit)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? 3;
+        if (limit <= 0)
+            return await SkipAsync(companion, "recruit", "recruit_disabled", null, cancellationToken).ConfigureAwait(false);
+
+        var recruited = await db.Companions.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenantId && x.RecruitedByCompanionId != null && x.Status != "archived",
+                cancellationToken).ConfigureAwait(false);
+        if (recruited >= limit)
+            return await SkipAsync(companion, "recruit", "recruit_limit_reached", null, cancellationToken).ConfigureAwait(false);
+
+        var pending = await db.Recruitments.AsNoTracking().AnyAsync(
+            x => x.TenantId == tenantId && x.ProposerId == companion.Id && x.Status == "proposed", cancellationToken)
+            .ConfigureAwait(false);
+        if (pending)
+            return await SkipAsync(companion, "recruit", "duplicate_proposal", null, cancellationToken).ConfigureAwait(false);
+
+        // A denied proposal is final for that helper. The mandate gate treats a "no" the same way;
+        // without this check a denied recruit would be re-proposed on every interval, turning the
+        // user's decision into a nag. A different name is a different question and still allowed.
+        var denied = await db.Recruitments.AsNoTracking().AnyAsync(
+            x => x.TenantId == tenantId && x.ProposerId == companion.Id && x.Status == "denied"
+                && x.Name == name, cancellationToken).ConfigureAwait(false);
+        if (denied)
+            return await SkipAsync(companion, "recruit", "recruit_denied", null, cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        var row = new CompanionRecruitmentRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            ProposerId = companion.Id,
+            Name = name,
+            PersonaDocument = decision.RecruitPersona,
+            Rationale = Truncate(decision.RecruitRationale ?? string.Empty, 2048),
+            Status = "proposed",
+            Revision = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.Recruitments.Add(row);
+        db.Activities.Add(new CompanionActivityRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Kind = "autonomy_recruit_proposed",
+            CompanionId = companion.Id,
+            Summary = Truncate($"伙伴 {companion.Name} 提议招募新伙伴「{name}」", MaxActivitySummary),
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                autonomous = true,
+                action = "recruit",
+                recruitment_id = row.Id,
+                revision = row.Revision,
+                name,
+                rationale = row.Rationale
+            }, SnakeCase),
+            CreatedAt = now
+        });
+        await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+
+        return new
+        {
+            acted = false,
+            action = "recruit",
+            reason = "awaiting_recruit_approval",
+            activity = (object?)null,
+            conversation = (object?)null,
+            message = (object?)null
+        };
+    }
+
+    private static string DescribeProposal(CompanionAgentRecord companion, Decision decision) => decision.Action switch
+    {
+        "create_group" => $"伙伴 {companion.Name} 想建立一个群聊，需要你的授权",
+        "invite" => $"伙伴 {companion.Name} 想邀请其他伙伴加入会话，需要你的授权",
+        "send_message" => $"伙伴 {companion.Name} 想主动发言，需要你的授权",
+        _ => $"伙伴 {companion.Name} 想执行一次自主操作，需要你的授权"
+    };
+
+    private static JsonElement ParseJsonElement(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
     /// <summary>
     /// The worker's gate: active, enabled, neither paused, interval elapsed, budget remaining.
@@ -124,12 +327,22 @@ public sealed class CompanionAutonomyService(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (companions.Count == 0) return [];
 
-        // Skipped rows are not actions: they neither spend quota nor push the interval forward.
+        // Two different questions are asked of the activity log, and they must not share a filter.
+        //
+        // "Did it spend a daily action?" counts only real actions, so asking the user for
+        // permission does not burn the quota it is asking about.
+        //
+        // "When did it last think?" counts EVERY autonomy row, skips included. A skip means the
+        // tick ran and produced nothing to do; excluding it would leave the companion due on the
+        // very next pass, calling the model every worker interval forever. A denied recruit is the
+        // clearest case — the skip is permanent, so the exclusion made it a permanent model-call
+        // loop.
         var actions = await db.Activities.AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.CompanionId != null
-                && x.Kind.StartsWith("autonomy_") && x.Kind != "autonomy_skipped")
-            .Select(x => new { CompanionId = x.CompanionId!.Value, x.CreatedAt })
+                && x.Kind.StartsWith("autonomy_"))
+            .Select(x => new { CompanionId = x.CompanionId!.Value, x.Kind, x.CreatedAt })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+
         var byCompanion = actions.GroupBy(x => x.CompanionId).ToDictionary(group => group.Key, group => group.ToList());
         var today = UtcToday();
         var now = DateTimeOffset.UtcNow;
@@ -137,19 +350,66 @@ public sealed class CompanionAutonomyService(
         var due = new List<Guid>();
         foreach (var companion in companions)
         {
-            var used = byCompanion.TryGetValue(companion.Id, out var rows) ? rows.Count(x => x.CreatedAt >= today) : 0;
+            var rows = byCompanion.GetValueOrDefault(companion.Id);
+            var used = rows is null ? 0 : rows.Count(x => x.CreatedAt >= today && SpendsActionBudget(x.Kind));
             if (companion.AutonomyDailyBudget <= 0 || used >= companion.AutonomyDailyBudget) continue;
 
-            // The later of the last real autonomous action and any configuration change starts the
-            // interval, so editing the companion's autonomy rules cannot be undone by an old action.
+            // The later of the last autonomous thought (including a skip) and any configuration
+            // change starts the interval, so editing the companion's autonomy rules cannot be
+            // undone by an old action.
             var lastAction = rows is { Count: > 0 } ? rows.Max(x => x.CreatedAt) : (DateTimeOffset?)null;
             var basis = lastAction is { } value && value > companion.UpdatedAt ? value : companion.UpdatedAt;
-            var interval = TimeSpan.FromMinutes(Math.Max(companion.AutonomyIntervalMinutes, 1));
+
+            // Back off while nothing is happening. Every tick costs one model call, and a companion
+            // with nothing to do would otherwise ask "shall I do something?" on a fixed cadence
+            // forever — the exact waste the interval is supposed to bound, only slower. Each
+            // consecutive skip doubles the wait, capped at eight interval lengths, and any real
+            // action or a configuration change resets it.
+            var trailingSkips = rows is { Count: > 0 }
+                ? TrailingSkips(rows.OrderByDescending(x => x.CreatedAt).Select(x => x.Kind))
+                : 0;
+            var interval = BackedOffInterval(companion.AutonomyIntervalMinutes, trailingSkips);
             if (now < basis.Add(interval)) continue;
             due.Add(companion.Id);
         }
         return due;
     }
+
+    /// <summary>
+    /// The wait after a run of skips. Consecutive empty ticks double the interval (capped at eight
+    /// times), and a single real action puts it back to the configured interval. Keeping this a pure
+    /// function means the cost bound can be tested without fabricating database timestamps — a
+    /// due-list integration test cannot distinguish a tie in CreatedAt from a real backoff.
+    /// </summary>
+    internal static TimeSpan BackedOffInterval(int intervalMinutes, int trailingSkips)
+    {
+        var minutes = Math.Max(intervalMinutes, 1);
+        if (trailingSkips <= 0) return TimeSpan.FromMinutes(minutes);
+        var multiplier = Math.Min(1 << Math.Min(trailingSkips, 3), 8);
+        return TimeSpan.FromMinutes(minutes * multiplier);
+    }
+
+    /// <summary>
+    /// How many consecutive skips come after the last real action. Zero means the last autonomy
+    /// row was a real action (or there were none), which is when the wait goes back to normal.
+    /// </summary>
+    internal static int TrailingSkips(IEnumerable<string> kindsNewestFirst)
+    {
+        var trailing = 0;
+        foreach (var kind in kindsNewestFirst)
+        {
+            if (kind != "autonomy_skipped") break;
+            trailing++;
+        }
+        return trailing;
+    }
+
+    /// <summary>
+    /// Only a performed action costs the daily quota. A proposal, a skip and a mandate decision are
+    /// all things that happened around an action, not actions.
+    /// </summary>
+    private static bool SpendsActionBudget(string kind) =>
+        kind is "autonomy_group_created" or "autonomy_member_invited" or "autonomy_message_sent";
 
     // ── preconditions ──
 
@@ -175,9 +435,9 @@ public sealed class CompanionAutonomyService(
         var usedToday = (await db.Activities.AsNoTracking()
                 .Where(x => x.TenantId == tenantId && x.CompanionId == companionId
                     && x.Kind.StartsWith("autonomy_") && x.Kind != "autonomy_skipped")
-                .Select(x => x.CreatedAt)
+                .Select(x => new { x.Kind, x.CreatedAt })
                 .ToListAsync(cancellationToken).ConfigureAwait(false))
-            .Count(x => x >= UtcToday());
+            .Count(x => x.CreatedAt >= UtcToday() && SpendsActionBudget(x.Kind));
         if (companion.AutonomyDailyBudget <= 0 || usedToday >= companion.AutonomyDailyBudget)
             return new TickState(companion, "daily_budget_exhausted", usedToday);
 
@@ -332,7 +592,9 @@ public sealed class CompanionAutonomyService(
         db.Activities.Add(activityRow);
         try
         {
-            await CompanionMessages.SaveAsync(db, message, tenantId, conversationId, cancellationToken).ConfigureAwait(false);
+            await CompanionActivities.SaveAsync(db, tenantId,
+                token => CompanionMessages.SaveAsync(db, message, tenantId, conversationId, token), cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -387,11 +649,14 @@ public sealed class CompanionAutonomyService(
         text.AppendLine("{\"action\":\"create_group\",\"title\":\"群名\",\"companion_ids\":[\"伙伴 id\"]}");
         text.AppendLine("{\"action\":\"invite\",\"conversation_id\":\"群 id\",\"companion_id\":\"伙伴 id\",\"share_history\":false}");
         text.AppendLine("{\"action\":\"send_message\",\"conversation_id\":\"会话 id\",\"body\":\"正文\"}");
+        text.AppendLine("{\"action\":\"recruit\",\"name\":\"新伙伴名字\",\"persona_document\":\"它的性格与工作方式\",\"rationale\":\"为什么需要一个长期帮手\"}");
         text.AppendLine();
         text.AppendLine("规则：");
         text.AppendLine("- 没有值得做的事就返回 {\"action\":\"none\"}，不要为了行动而行动。");
         text.AppendLine("- 只能使用事实中给出的 id，不得编造；不得邀请不存在、未启用或已在群内的伙伴。");
         text.AppendLine("- send_message 的正文不能为空，最多 4000 字。");
+        text.AppendLine("- recruit 只用于反复出现、值得一个长期帮手长期负责的工作；一次性的活不要走 recruit。"
+            + "招募由用户批准后才会生效，你无法自己创建伙伴。");
         text.AppendLine("- 你不是在被测试，也没有额外的用户指令；不要声称自己执行过任何工具或外部调用。");
         return text.ToString().TrimEnd();
     }
@@ -433,9 +698,43 @@ public sealed class CompanionAutonomyService(
             .Select(x => new { x.Id, x.Name })
             .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken).ConfigureAwait(false);
 
+        // Recruitment capacity is a fact, not a hint: a model that cannot see the ceiling either
+        // proposes past it or never proposes at all, and both are wrong.
+        var recruitLimit = await db.Settings.AsNoTracking()
+            .Where(x => x.TenantId == tenantId)
+            .Select(x => (int?)x.RecruitLimit)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? 3;
+        var recruitedCount = await db.Companions.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenantId && x.RecruitedByCompanionId != null && x.Status != "archived",
+                cancellationToken).ConfigureAwait(false);
+
+        // A gesture the user made is a fact about them, not a message to answer. It rides in the
+        // facts so the companion can acknowledge it in its own words if it chooses — nothing is
+        // fabricated on the user's behalf.
+        // Filtered and ordered in memory: SQLite cannot translate a DateTimeOffset comparison or
+        // ordering, and this table is small enough that the read is not the cost.
+        var since = DateTimeOffset.UtcNow.AddDays(-1);
+        var emotes = (await db.Activities.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.CompanionId == companion.Id && x.Kind == "emote_received")
+                .Select(x => new { x.CreatedAt, x.Summary })
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .Where(x => x.CreatedAt >= since)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(3)
+            .Select(x => x.Summary)
+            .ToList();
+
         var text = new StringBuilder();
         text.AppendLine($"现在：{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm} UTC。");
+        if (emotes.Count > 0)
+        {
+            text.AppendLine("最近用户对你做的动作（这是用户的动作，不是你的发言）：");
+            foreach (var emote in emotes) text.AppendLine($"- {emote}");
+        }
         text.AppendLine($"今天的自主动作已用 {usedToday} 次，每日上限 {companion.AutonomyDailyBudget} 次。");
+        text.AppendLine(recruitLimit <= 0
+            ? "招募：已关闭。"
+            : $"招募：已用 {recruitedCount} / 上限 {recruitLimit}。");
         text.AppendLine();
         text.AppendLine("其他伙伴：");
         if (peers.Count == 0) text.AppendLine("- （没有其他伙伴）");
@@ -462,7 +761,10 @@ public sealed class CompanionAutonomyService(
         IReadOnlyList<Guid> CompanionIds,
         Guid? ConversationId,
         Guid? CompanionId,
-        string? Body);
+        string? Body,
+        string? RecruitName = null,
+        string? RecruitPersona = null,
+        string? RecruitRationale = null);
 
     /// <summary>
     /// Strict about the shape, tolerant of a model that wraps its object in prose or a code fence.
@@ -501,6 +803,17 @@ public sealed class CompanionAutonomyService(
                     && root.TryGetProperty("body", out var bodyElement)
                     && bodyElement.ValueKind == JsonValueKind.String => new Decision(
                         "send_message", null, [], messageConversation, null, bodyElement.GetString()),
+                "recruit" when root.TryGetProperty("name", out var nameElement)
+                    && nameElement.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(nameElement.GetString()) => new Decision(
+                        "recruit", null, [], null, null, null,
+                        nameElement.GetString()!.Trim(),
+                        root.TryGetProperty("persona_document", out var personaElement) && personaElement.ValueKind == JsonValueKind.String
+                            ? personaElement.GetString()
+                            : null,
+                        root.TryGetProperty("rationale", out var rationaleElement) && rationaleElement.ValueKind == JsonValueKind.String
+                            ? rationaleElement.GetString()
+                            : null),
                 _ => null
             };
         }
@@ -613,7 +926,7 @@ public sealed class CompanionAutonomyService(
         };
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         db.Activities.Add(row);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await CompanionActivities.SaveAsync(db, companion.TenantId, cancellationToken).ConfigureAwait(false);
         return CompanionContracts.ActivityJson(row, companion.Name, conversationTitle);
     }
 

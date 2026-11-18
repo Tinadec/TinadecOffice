@@ -19,9 +19,12 @@ public sealed class McpServerConfig
     [JsonPropertyName("program_status")] public string ProgramStatus { get; set; } = "external";
     [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
     [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+    [JsonPropertyName("transport")] public string Transport { get; set; } = "stdio";
+    [JsonPropertyName("url")] public string? Url { get; set; }
     [JsonPropertyName("command")] public string Command { get; set; } = string.Empty;
     [JsonPropertyName("args")] public List<string> Args { get; set; } = new();
     [JsonPropertyName("env")] public Dictionary<string, string?>? Env { get; set; }
+    [JsonPropertyName("headers")] public Dictionary<string, string?>? Headers { get; set; }
     [JsonPropertyName("cwd")] public string? Cwd { get; set; }
 }
 

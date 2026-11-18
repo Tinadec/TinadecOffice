@@ -33,15 +33,20 @@ function stubElectron(request) {
   }
 }
 
+const TEST_HOST_TOKEN = 'h'.repeat(64)
+
 /** The module keeps per-process state, so every test loads a fresh copy with electron stubbed. */
-function loadAuth() {
+function loadAuth({ configure = true } = {}) {
   Module._load = function (request, parent, isMain) {
     const stub = stubElectron(request)
     return stub ?? originalLoad.call(this, request, parent, isMain)
   }
   try {
     delete require.cache[require.resolve('./auth.cjs')]
-    return require('./auth.cjs')
+    const auth = require('./auth.cjs')
+    // Every /auth/* route except the browser callback now needs the private host credential.
+    if (configure) auth.configureAuth({ hostControlToken: TEST_HOST_TOKEN })
+    return auth
   } finally {
     Module._load = originalLoad
   }
@@ -170,4 +175,72 @@ test('without an OS keyring the session is not written in plaintext', async () =
 
   assert.equal(auth.getAuthState().loggedIn, true)
   await assert.rejects(() => fs.stat(sessionPath()), /ENOENT/)
+})
+
+// ── the private host credential on every /auth/* call ──────────────────────────
+//
+// Core's host gate now covers /auth/*, so a call without the header is a 403. The header is
+// asserted per call site rather than once: a shared helper that one site forgets to use is
+// exactly the regression this pins.
+
+function recordingFetch() {
+  const calls = []
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), headers: options.headers ?? {}, method: options.method ?? 'GET' })
+    if (String(url).endsWith('/auth/begin')) return jsonResponse({ state: 'state-1', authorize_url: 'https://logto.example/authorize' })
+    if (String(url).includes('/auth/check')) return jsonResponse({ status: 'complete', session: 'token-h' })
+    if (String(url).endsWith('/auth/me')) return jsonResponse({ subject: 'sub-h', nickname: 'Ada', avatar_url: null, email: null })
+    if (String(url).endsWith('/auth/profile')) return jsonResponse({ subject: 'sub-h', nickname: 'Ada II', avatar_url: null, email: null })
+    if (String(url).endsWith('/auth/logout')) return jsonResponse({ ok: true })
+    throw new Error(`unexpected ${url}`)
+  }
+  return calls
+}
+
+test('every auth call site carries the injected host credential', async () => {
+  const calls = recordingFetch()
+
+  // Login first: a restored identity makes openLogin return early without touching /auth/begin.
+  const auth = loadAuth()
+  await auth.openLogin()                            // /auth/begin, /auth/check, /auth/me
+  await auth.updateProfile({ nickname: 'Ada II' })  // /auth/profile
+  await auth.logout()                               // /auth/logout
+
+  await writeStoredSession('token-h', { sub: 'sub-h', nickname: 'Ada', avatar_url: null, email: null })
+  const restored = loadAuth()
+  restored.getAuthState()
+  await restored.__validationForTests()             // /auth/me (restore)
+
+  const paths = calls.map((call) => new URL(call.url).pathname)
+  for (const expected of ['/auth/me', '/auth/begin', '/auth/check', '/auth/profile', '/auth/logout']) {
+    assert.ok(paths.includes(expected), `expected a call to ${expected}, got ${paths.join(', ')}`)
+  }
+  assert.ok(calls.length >= 6, `expected at least six calls, got ${calls.length}`)
+  for (const call of calls) {
+    assert.equal(call.headers['x-tinadec-host-control'], TEST_HOST_TOKEN, `${call.url} sent no host credential`)
+  }
+})
+
+test('an unconfigured module refuses to send an unauthenticated request', async () => {
+  const calls = recordingFetch()
+  const auth = loadAuth({ configure: false })
+
+  // openLogin swallows failures and resolves null, so the observable is "no request went out".
+  assert.equal(await auth.openLogin(), null)
+  assert.equal(calls.length, 0, 'a request went out without the credential')
+})
+
+test('configureAuth rejects a credential that is too short to be the real one', () => {
+  const auth = loadAuth({ configure: false })
+  assert.throws(() => auth.configureAuth({ hostControlToken: 'short' }), /private host credential/)
+  assert.throws(() => auth.configureAuth({}), /private host credential/)
+})
+
+test('__resetForTests clears the credential too', async () => {
+  const calls = recordingFetch()
+  const auth = loadAuth()
+  auth.__resetForTests()
+
+  assert.equal(await auth.openLogin(), null)
+  assert.equal(calls.length, 0)
 })

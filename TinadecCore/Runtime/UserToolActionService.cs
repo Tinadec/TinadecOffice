@@ -155,25 +155,27 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         return await AuthorizeAndMaybeRunAsync(action, descriptor, project, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<UserToolActionResult?> GetAsync(Guid actionId, CancellationToken cancellationToken = default)
-    {
-        var action = await FindAsync(actionId, cancellationToken).ConfigureAwait(false);
-        return action is null ? null : await ToResultAsync(action, cancellationToken).ConfigureAwait(false);
-    }
+    public Task<UserToolActionResult?> GetAsync(Guid actionId, CancellationToken cancellationToken = default) =>
+        SqliteTransientRetry.ReadAsync(async token =>
+        {
+            var action = await FindAsync(actionId, token).ConfigureAwait(false);
+            return action is null ? null : await ToResultAsync(action, token).ConfigureAwait(false);
+        }, cancellationToken);
 
-    public async Task<IReadOnlyList<UserToolActionResult>> ListAsync(string? status = null, CancellationToken cancellationToken = default)
-    {
-        var scope = _tenant.Current;
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var query = db.UserToolActions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
-        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status.Trim().ToLowerInvariant());
-        var rows = await query.ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
-        if (rows.Length > 200) rows = rows[..200];
-        var results = new List<UserToolActionResult>(rows.Length);
-        foreach (var row in rows) results.Add(await ToResultAsync(row, cancellationToken).ConfigureAwait(false));
-        return results;
-    }
+    public Task<IReadOnlyList<UserToolActionResult>> ListAsync(string? status = null, CancellationToken cancellationToken = default) =>
+        SqliteTransientRetry.ReadAsync(async token =>
+        {
+            var scope = _tenant.Current;
+            await using var db = await _dbFactory.CreateDbContextAsync(token).ConfigureAwait(false);
+            var query = db.UserToolActions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
+            if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status.Trim().ToLowerInvariant());
+            var rows = await query.ToArrayAsync(token).ConfigureAwait(false);
+            Array.Sort(rows, static (left, right) => right.CreatedAt.CompareTo(left.CreatedAt));
+            if (rows.Length > 200) rows = rows[..200];
+            var results = new List<UserToolActionResult>(rows.Length);
+            foreach (var row in rows) results.Add(await ToResultAsync(row, token).ConfigureAwait(false));
+            return (IReadOnlyList<UserToolActionResult>)results;
+        }, cancellationToken);
 
     public async Task<UserToolActionResult> ResumeAsync(Guid actionId, CancellationToken cancellationToken = default)
     {
@@ -543,11 +545,18 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         {
             if (_contextLifecycle is not null) await _contextLifecycle.ReleaseAsync($"user-action:{action.Id:N}", CancellationToken.None).ConfigureAwait(false);
         }
-        if (!response.IsSuccess)
+        // A tool that rejects its own target reports that inside its result payload rather than on the
+        // wire: ToolHandlerBase sets IsSuccess whenever the handler did not throw. Recording such a
+        // call as completed would durably tell the user a mutating action succeeded when nothing was
+        // written, so the payload's own success flag decides too.
+        var payloadFailure = false;
+        string? payloadError = null;
+        if (response.IsSuccess) payloadFailure = TryReadPayloadFailure(response.Result, out payloadError);
+        if (!response.IsSuccess || payloadFailure)
         {
             action.Status = "failed";
             action.ErrorCategory = "tool_error";
-            action.SafeErrorMessage = SafeMessage(response.Error);
+            action.SafeErrorMessage = SafeMessage(payloadFailure ? payloadError : response.Error);
             action.CompletedAt = DateTimeOffset.UtcNow;
             action.UpdatedAt = action.CompletedAt.Value;
             await SaveAsync(action, cancellationToken).ConfigureAwait(false);
@@ -586,12 +595,16 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or UnauthorizedAccessException)
         {
         }
+        var approvalId = Guid.NewGuid();
         var row = new ApprovalRequestRecord
         {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = action.ProjectId,
+            Id = approvalId, TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = action.ProjectId,
             UserToolActionId = action.Id, Kind = "user_tool", ToolId = action.ToolId, Risk = action.Risk,
             RequestHash = action.ParametersHash, NonceHash = ToolParametersHash.Compute(nonce),
-            NonceSecretReference = $"approval_nonce_{scope.TenantId:N}_{Guid.NewGuid():N}", ParametersReference = action.ParametersReference,
+            // Derived from this row's id, not a fresh Guid: the secret store overwrites on a
+            // repeated reference, so a stable name keeps a retried transaction from leaving one
+            // orphan file per attempt.
+            NonceSecretReference = $"approval_nonce_{scope.TenantId:N}_{approvalId:N}", ParametersReference = action.ParametersReference,
             ArgumentsDigest = argumentsDigest,
             Summary = $"User requested '{action.ToolId}'.", Status = "pending", ExpiresAt = now.AddMinutes(30),
             RequestedByPrincipalId = scope.PrincipalId, CreatedAt = now, UpdatedAt = now, Nonce = nonce
@@ -1059,6 +1072,20 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
     { if (project.TenantId != scope.TenantId || project.WorkspaceId != scope.WorkspaceId) throw new UnauthorizedAccessException("Project is outside the current tenant/workspace."); }
     private static bool FixedEquals(string? left, string? right) => !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(left), Encoding.UTF8.GetBytes(right));
     private static string SafeMessage(string? message) => string.IsNullOrWhiteSpace(message) ? "User tool action failed." : message.Trim()[..Math.Min(message.Trim().Length, 4096)];
+
+    /// <summary>
+    /// Reads the payload-level failure flag a tool sets when it declined the work it was asked to do
+    /// (for example write_file refusing a target outside its authorized roots). Absent, non-boolean
+    /// or true means the tool did not report a failure, so the wire result stands.
+    /// </summary>
+    private static bool TryReadPayloadFailure(JsonElement? result, out string? message)
+    {
+        message = null;
+        if (result is not { ValueKind: JsonValueKind.Object } payload) return false;
+        if (!payload.TryGetProperty("success", out var success) || success.ValueKind is not JsonValueKind.False) return false;
+        if (payload.TryGetProperty("error", out var error) && error.ValueKind is JsonValueKind.String) message = error.GetString();
+        return true;
+    }
 
     private sealed record TrustedTool(int ProtocolVersion, string ManifestHash, ToolManifestEntryDto Descriptor);
     private sealed record FrozenToolValidation(ToolManifestEntryDto? Descriptor, (string Code, string Message)? Error)

@@ -40,6 +40,7 @@ function hostWith(state: HostState = {}): CommandHost & { calls: string[] } {
     newSession: record('newSession') as () => void,
     navigate: record('navigate') as (routeName: string) => void,
     routeName: () => state.route ?? null,
+    toggleSessionPartner: record('toggleSessionPartner') as () => void,
   }
 }
 
@@ -101,6 +102,12 @@ describe('command behaviour', () => {
     const host = hostWith()
     commandById('session.new').run(host, '')
     expect(host.calls).toEqual(['setDraft("")', 'newSession()'])
+  })
+
+  it('toggles the session partner through the host', () => {
+    const host = hostWith()
+    commandById('session.togglePartner').run(host, '')
+    expect(host.calls).toEqual(['toggleSessionPartner()'])
   })
 
   it('sends the parsed argument with the dispatch mode the command names', () => {

@@ -74,6 +74,22 @@ test('SSE cursor proxy and CORS retain scope headers', async () => {
   assert.match(response.headers.get('access-control-expose-headers') ?? '', /server-timing/);
 });
 
+test('a composite event cursor travels as cursor, never as the retired scalar afterSeq', async () => {
+  const runA = 'a'.repeat(32); const runB = 'b'.repeat(32);
+  const vector = `${runA}:5,${runB}:1`;
+  let upstream = '';
+  let headers: Headers | undefined;
+  globalThis.fetch = (async (input, init) => {
+    upstream = String(input); headers = new Headers(init?.headers);
+    return new Response('event: message\ndata: {}\n\n', { headers: { 'content-type': 'text/event-stream' } });
+  }) as typeof fetch;
+  await app.handle(new Request(`http://gateway.local/api/v1/events?session_id=s&cursor=${encodeURIComponent(vector)}`));
+  const url = new URL(upstream);
+  assert.equal(url.searchParams.get('cursor'), vector);
+  assert.equal(url.searchParams.get('afterSeq'), null);
+  assert.equal(headers?.get('last-event-id'), vector);
+});
+
 test('Gateway forwards supplied host credentials for JSON, bytes and SSE but never signs anonymous requests', async () => {
   const previous = process.env.TINADEC_HOST_CONTROL_TOKEN;
   process.env.TINADEC_HOST_CONTROL_TOKEN = 'private-gateway-env-must-not-sign-anonymous';

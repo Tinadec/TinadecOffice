@@ -45,9 +45,11 @@ function loadAppConfig(configFile, env = process.env, options = {}) {
   const debugStudioEnabled = readDebugStudioEnabled(stored);
   const preferences = { debug_studio_enabled: debugStudioEnabled,
     close_to_tray: readCloseToTray(stored) ?? options.defaultCloseToTray ?? false,
+    launch_at_login: readLaunchAtLogin(stored),
     companion_mode_enabled: readCompanionModeEnabled(stored),
     companion_capsule_style: readCompanionCapsuleStyle(stored),
-    companion_capsule_reveal: readCompanionCapsuleReveal(stored) };
+    companion_capsule_reveal: readCompanionCapsuleReveal(stored),
+    companion_speak_replies: readCompanionSpeakReplies(stored) };
   const managedUrl = env.TINADEC_GATEWAY_URL?.trim();
   if (managedUrl) {
     return { gateway_url: normalizeGatewayUrl(managedUrl), source: 'environment', managed: true, path: configFile,
@@ -82,17 +84,30 @@ function readDebugStudioEnabled(document) {
 }
 
 /** The window preferences table; a missing table or key leaves the decision to the caller. */
-function readCloseToTray(document) {
+function readWindowBoolean(document, key) {
   const windowTable = document.window;
   if (windowTable !== undefined && (!windowTable || typeof windowTable !== 'object'
       || Array.isArray(windowTable) || windowTable instanceof Date)) {
     throw new Error('desktop.toml window must be a table.');
   }
-  const value = windowTable?.close_to_tray;
+  const value = windowTable?.[key];
   if (value !== undefined && typeof value !== 'boolean') {
-    throw new Error('desktop.toml window.close_to_tray must be a boolean.');
+    throw new Error(`desktop.toml window.${key} must be a boolean.`);
   }
   return value;
+}
+
+function readCloseToTray(document) {
+  return readWindowBoolean(document, 'close_to_tray');
+}
+
+/**
+ * Start the app when the user signs in. This is the other half of running unattended: closing the
+ * window keeps the process alive, and this brings it back after a reboot. It is a separate switch
+ * on purpose — a user may want one without the other.
+ */
+function readLaunchAtLogin(document) {
+  return readWindowBoolean(document, 'launch_at_login') ?? false;
 }
 
 /** The `[companion]` table, validated once for every key read out of it. */
@@ -138,6 +153,18 @@ function readCompanionCapsuleStyle(document) {
  * than refusing to start the app. A non-integer is a type error and does throw, like every other
  * numeric key here.
  */
+/**
+ * Read companion replies aloud. Off by default: a companion that starts talking is a surprise,
+ * and the platform voices differ enough that the user should choose it.
+ */
+function readCompanionSpeakReplies(document) {
+  const value = readCompanionTable(document)?.speak_replies;
+  if (value !== undefined && typeof value !== 'boolean') {
+    throw new Error('desktop.toml companion.speak_replies must be a boolean.');
+  }
+  return value ?? false;
+}
+
 function readCompanionCapsuleReveal(document) {
   const value = readCompanionTable(document)?.capsule_reveal;
   if (value === undefined) return DEFAULT_CAPSULE_REVEAL;
@@ -239,6 +266,18 @@ function saveCloseToTray(configFile, enabled, env = process.env) {
   return loadAppConfig(configFile, env);
 }
 
+/** Starts the app when the user signs in; the other half of running unattended. */
+function saveLaunchAtLogin(configFile, enabled, env = process.env) {
+  if (typeof enabled !== 'boolean') throw new Error('Launch at login must be a boolean.');
+  const source = readDocumentSource(configFile);
+  const document = parse(source);
+  readLaunchAtLogin(document);
+  document.window ??= Object.create(null);
+  document.window.launch_at_login = enabled;
+  writeDocumentSource(configFile, tableScalarDocumentSource(source, document, 'window', 'launch_at_login'));
+  return loadAppConfig(configFile, env);
+}
+
 /** Turning this on shows the companion capsule docked to a screen edge. */
 function saveCompanionMode(configFile, enabled, env = process.env) {
   if (typeof enabled !== 'boolean') throw new Error('Companion mode enabled must be a boolean.');
@@ -255,6 +294,18 @@ function saveCompanionMode(configFile, enabled, env = process.env) {
  * Persist how much of the peeking pet stays on screen. Like the style, the value is validated
  * before anything is written, so desktop.toml can never hold a step the window cannot park at.
  */
+/** Turning this on reads new companion replies aloud with the platform voice. */
+function saveCompanionSpeakReplies(configFile, enabled, env = process.env) {
+  if (typeof enabled !== 'boolean') throw new Error('Companion speak replies must be a boolean.');
+  const source = readDocumentSource(configFile);
+  const document = parse(source);
+  readCompanionSpeakReplies(document);
+  document.companion ??= Object.create(null);
+  document.companion.speak_replies = enabled;
+  writeDocumentSource(configFile, tableScalarDocumentSource(source, document, 'companion', 'speak_replies'));
+  return loadAppConfig(configFile, env);
+}
+
 function saveCompanionCapsuleReveal(configFile, reveal, env = process.env) {
   if (typeof reveal !== 'number' || !Number.isInteger(reveal)) {
     throw new Error('Companion capsule reveal must be an integer.');
@@ -331,7 +382,9 @@ module.exports = {
   resetGatewayUrl,
   saveGatewayUrl,
   saveCloseToTray,
+  saveLaunchAtLogin,
   saveCompanionCapsuleReveal,
+  saveCompanionSpeakReplies,
   saveCompanionCapsuleStyle,
   saveCompanionMode,
   saveDebugStudioEnabled,

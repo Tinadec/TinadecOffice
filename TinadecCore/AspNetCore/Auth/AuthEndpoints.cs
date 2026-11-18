@@ -5,10 +5,13 @@ namespace TinadecCore.AspNetCore.Auth;
 
 /// <summary>
 /// The Logto login surface mounted under <c>/auth/*</c>. These routes sit outside
-/// <c>/api/v1</c> on purpose: the host-control middleware never touches them, so
-/// the login window can complete the OIDC dance before any session exists. The
-/// session token arrives over <c>X-Tinadec-Session</c>, which only the Electron
-/// main process injects.
+/// <c>/api/v1</c> because the login window completes the OIDC dance before any session
+/// exists — but they are still inside the host-control gate. That gate checks the host
+/// credential, which the Desktop main process holds from launch, not the session token
+/// that only exists after login. <c>/auth/callback</c> is the one exemption: the system
+/// browser makes that request and cannot carry a private header, so it validates a
+/// single-use state instead. The session token arrives over <c>X-Tinadec-Session</c>,
+/// which only the Electron main process injects.
 /// </summary>
 public static class AuthEndpoints
 {
@@ -29,21 +32,39 @@ public static class AuthEndpoints
         return app;
     }
 
-    private static async Task<IResult> BeginAsync(OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
+    private static async Task<IResult> BeginAsync(HttpContext context, OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
     {
         if (!options.Value.Enabled)
             return Results.Json(new { code = "oidc_not_configured", message = "Logto OIDC login is not configured on this host." }, statusCode: 503);
-        var (state, nonce) = store.BeginLogin();
-        var url = await client.BuildAuthorizationUrlAsync(state, nonce, ct).ConfigureAwait(false);
-        return Results.Json(new { authorizeUrl = url, state });
+        (string State, string Nonce) login;
+        try
+        {
+            login = store.BeginLogin();
+        }
+        catch (OidcLoginCapacityException ex)
+        {
+            context.Response.Headers.RetryAfter = "60";
+            return Results.Json(new { code = "too_many_logins", message = ex.Message }, statusCode: 429);
+        }
+        var url = await client.BuildAuthorizationUrlAsync(login.State, login.Nonce, ct).ConfigureAwait(false);
+        return Results.Json(new { authorizeUrl = url, state = login.State });
     }
 
-    private static async Task<IResult> LoginAsync(OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
+    private static async Task<IResult> LoginAsync(HttpContext context, OidcClient client, OidcSessionStore store, IOptions<TinadecOidcOptions> options, CancellationToken ct)
     {
         if (!options.Value.Enabled)
             return Results.Json(new { code = "oidc_not_configured", message = "Logto OIDC login is not configured on this host." }, statusCode: 503);
-        var (state, nonce) = store.BeginLogin();
-        var url = await client.BuildAuthorizationUrlAsync(state, nonce, ct).ConfigureAwait(false);
+        (string State, string Nonce) login;
+        try
+        {
+            login = store.BeginLogin();
+        }
+        catch (OidcLoginCapacityException ex)
+        {
+            context.Response.Headers.RetryAfter = "60";
+            return Results.Json(new { code = "too_many_logins", message = ex.Message }, statusCode: 429);
+        }
+        var url = await client.BuildAuthorizationUrlAsync(login.State, login.Nonce, ct).ConfigureAwait(false);
         return Results.Redirect(url);
     }
 

@@ -1020,6 +1020,9 @@
             "nullable": true,
             "type": "object"
           },
+          "seq": {
+            "type": "integer"
+          },
           "summary": {
             "nullable": true,
             "type": "string"
@@ -1119,6 +1122,115 @@
           "activity",
           "conversation",
           "message"
+        ],
+        "type": "object"
+      },
+      "CompanionAvatar": {
+        "additionalProperties": true,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/CompanionCapabilities"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "live2d"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "source_path",
+          "capabilities",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "CompanionAvatarList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionAvatar"
+        },
+        "type": "array"
+      },
+      "CompanionCapabilities": {
+        "additionalProperties": true,
+        "properties": {
+          "expressions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "groups": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "hit_areas": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "motions": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                },
+                "min": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "min",
+                "max",
+                "default"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "motions",
+          "expressions",
+          "parameters",
+          "hit_areas",
+          "groups"
         ],
         "type": "object"
       },
@@ -1406,6 +1518,13 @@
           "revision": {
             "type": "integer"
           },
+          "role": {
+            "enum": [
+              "autonomous",
+              "buddy"
+            ],
+            "type": "string"
+          },
           "skill_count": {
             "type": "integer"
           },
@@ -1432,6 +1551,7 @@
           "tagline",
           "avatar",
           "status",
+          "role",
           "model_purpose",
           "model_provider_id",
           "model",
@@ -1452,6 +1572,71 @@
       "CompanionList": {
         "items": {
           "$ref": "#/components/schemas/CompanionSummary"
+        },
+        "type": "array"
+      },
+      "CompanionMandate": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "proposal": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "denied"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "action",
+          "status",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CompanionMandateList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionMandate"
         },
         "type": "array"
       },
@@ -1616,6 +1801,75 @@
         },
         "type": "array"
       },
+      "CompanionRecruitment": {
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "persona_document": {
+            "nullable": true,
+            "type": "string"
+          },
+          "proposer_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "rationale": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "denied"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "proposer_id",
+          "name",
+          "status",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CompanionRecruitmentList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionRecruitment"
+        },
+        "type": "array"
+      },
       "CompanionRun": {
         "additionalProperties": true,
         "properties": {
@@ -1759,10 +2013,18 @@
           "autonomy_paused": {
             "type": "boolean"
           },
+          "buddy_companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "main_companion_id": {
             "format": "uuid",
             "nullable": true,
             "type": "string"
+          },
+          "recruit_limit": {
+            "type": "integer"
           },
           "revision": {
             "type": "integer"
@@ -1770,6 +2032,8 @@
         },
         "required": [
           "main_companion_id",
+          "buddy_companion_id",
+          "recruit_limit",
           "autonomy_paused",
           "revision"
         ],
@@ -1896,6 +2160,13 @@
           "revision": {
             "type": "integer"
           },
+          "role": {
+            "enum": [
+              "autonomous",
+              "buddy"
+            ],
+            "type": "string"
+          },
           "skill_count": {
             "type": "integer"
           },
@@ -1922,6 +2193,7 @@
           "tagline",
           "avatar",
           "status",
+          "role",
           "model_purpose",
           "model_provider_id",
           "model",
@@ -2531,6 +2803,64 @@
           "predicate",
           "required_criteria",
           "facts_hash"
+        ],
+        "type": "object"
+      },
+      "ManagedMcpProgramPreview": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "manager": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "package_root": {
+            "type": "string"
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "preview_id": {
+            "type": "string"
+          },
+          "program_status": {
+            "type": "string"
+          },
+          "project_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "server_arguments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "action",
+          "expected_revision",
+          "manager",
+          "package",
+          "version",
+          "package_root",
+          "plan_hash",
+          "program_status",
+          "preview_id"
         ],
         "type": "object"
       },
@@ -6474,6 +6804,11 @@
           "can_interpret_intent": {
             "type": "boolean"
           },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "description": {
             "nullable": true,
             "type": "string"
@@ -6534,6 +6869,7 @@
           "job_title",
           "description",
           "agent_definition_id",
+          "companion_id",
           "receive_human_messages",
           "can_interpret_intent",
           "discoverable",
@@ -6607,6 +6943,11 @@
           "can_interpret_intent": {
             "default": false,
             "type": "boolean"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
           },
           "description": {
             "nullable": true,
@@ -6935,6 +7276,14 @@
             "nullable": true,
             "type": "object"
           },
+          "headers": {
+            "additionalProperties": {
+              "nullable": true,
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "object"
+          },
           "id": {
             "type": "string"
           },
@@ -6955,8 +7304,20 @@
           "revision": {
             "type": "integer"
           },
+          "transport": {
+            "enum": [
+              "stdio",
+              "http",
+              "sse"
+            ],
+            "type": "string"
+          },
           "updated_at": {
             "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "nullable": true,
             "type": "string"
           }
         },
@@ -6965,6 +7326,7 @@
           "id",
           "name",
           "enabled",
+          "transport",
           "command",
           "args",
           "env",
@@ -7310,6 +7672,32 @@
           "skills",
           "diagnostics",
           "source"
+        ],
+        "type": "object"
+      },
+      "ToolSkillDiagnostics": {
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "skills",
+          "diagnostics"
         ],
         "type": "object"
       },
@@ -9149,6 +9537,72 @@
         ]
       }
     },
+    "/api/v1/companion-avatars": {
+      "get": {
+        "operationId": "getApiV1Companion-avatars",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionAvatarList"
+                }
+              }
+            },
+            "description": "List imported Live2D models"
+          }
+        },
+        "summary": "List imported Live2D models",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/import": {
+      "post": {
+        "operationId": "postApiV1Companion-avatarsImport",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionAvatar"
+                }
+              }
+            },
+            "description": "Import a model directory (Core copies it into its own storage root)"
+          }
+        },
+        "summary": "Import a model directory (Core copies it into its own storage root)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/{avatarId}": {
+      "delete": {
+        "operationId": "deleteApiV1Companion-avatarsByAvatarId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "avatarId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete an imported model and its copied directory",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
     "/api/v1/companion-connections": {
       "get": {
         "operationId": "getApiV1Companion-connections",
@@ -9378,6 +9832,79 @@
           }
         },
         "summary": "Pause or resume a conversation",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-events": {
+      "get": {
+        "operationId": "getApiV1Companion-events",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat)"
+          }
+        },
+        "summary": "Companion activity SSE (companion.activity | companion.run | companion.settings, 15s heartbeat)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-recruitments": {
+      "get": {
+        "operationId": "getApiV1Companion-recruitments",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionRecruitmentList"
+                }
+              }
+            },
+            "description": "Recruit proposals raised by companions"
+          }
+        },
+        "summary": "Recruit proposals raised by companions",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-recruitments/{recruitmentId}/decision": {
+      "post": {
+        "operationId": "postApiV1Companion-recruitmentsByRecruitmentIdDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recruitmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionRecruitment"
+                }
+              }
+            },
+            "description": "Approve (creates the companion) or deny a recruit proposal (If-Match revision)"
+          }
+        },
+        "summary": "Approve (creates the companion) or deny a recruit proposal (If-Match revision)",
         "tags": [
           "Companions"
         ]
@@ -9821,6 +10348,107 @@
           }
         },
         "summary": "Ensure a private chat or create a group",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/emote": {
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdEmote",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionActivity"
+                }
+              }
+            },
+            "description": "Record a gesture at the companion (activity only, never a message)"
+          }
+        },
+        "summary": "Record a gesture at the companion (activity only, never a message)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdMandates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMandateList"
+                }
+              }
+            },
+            "description": "List standing autonomy authorizations"
+          }
+        },
+        "summary": "List standing autonomy authorizations",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/mandates/{mandateId}/decision": {
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdMandatesByMandateIdDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mandateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionMandate"
+                }
+              }
+            },
+            "description": "Approve or deny one standing authorization (If-Match revision)"
+          }
+        },
+        "summary": "Approve or deny one standing authorization (If-Match revision)",
         "tags": [
           "Companions"
         ]
@@ -16549,6 +17177,61 @@
         ]
       }
     },
+    "/api/v1/tools/mcp/servers/{resourceId}/install": {
+      "post": {
+        "operationId": "postApiV1ToolsMcpServersByResourceIdInstall",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST mcp/servers/:resourceId/install",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/mcp/servers/{resourceId}/install-preview": {
+      "post": {
+        "operationId": "postApiV1ToolsMcpServersByResourceIdInstall-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedMcpProgramPreview"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST mcp/servers/:resourceId/install-preview",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tools/mcp/servers/{resourceId}/test": {
       "post": {
         "operationId": "postApiV1ToolsMcpServersByResourceIdTest",
@@ -16859,6 +17542,27 @@
         ]
       }
     },
+    "/api/v1/tools/skills/diagnostics": {
+      "get": {
+        "operationId": "getApiV1ToolsSkillsDiagnostics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillDiagnostics"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "GET skills/diagnostics",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tools/skills/import": {
       "post": {
         "operationId": "postApiV1ToolsSkillsImport",
@@ -16993,6 +17697,37 @@
           }
         },
         "summary": "PUT skills/:resourceId",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/skills/{resourceId}/copy-to-project": {
+      "post": {
+        "operationId": "postApiV1ToolsSkillsByResourceIdCopy-to-project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillResource"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST skills/:resourceId/copy-to-project",
         "tags": [
           "Tools"
         ]

@@ -114,6 +114,31 @@ public sealed class StorageBoundaryTests
         Assert.Equal(WorkspaceRootSet.Normalize(workspace), ToolExecutionContext.Current!.WorkingDirectory);
     }
 
+    // The classification has to tell two similar-looking layouts apart, and getting the
+    // containment direction backwards passes every check that only looks at one of them:
+    // a project folder inside the storage root is project content, while the storage root
+    // inside a project folder keeps its managed entries internal. Only the first direction
+    // was tested when the nested-project fix landed, so widening it to the second shipped
+    // green and opened data/state/logs/packages/worktrees for writing.
+    [Fact]
+    public void AProjectInsideTheStorageRootStaysWritableWhileManagedEntriesStayInternal()
+    {
+        using var workspace = new WorkspaceTestDirectory();
+        var storage = Path.Combine(workspace.Path, ".tinadec");
+        var project = Path.Combine(storage, "nested-project");
+        Directory.CreateDirectory(Path.Combine(project, "src"));
+        using var scope = ToolExecutionContext.Enter(Context(storage));
+        var source = Path.Combine(project, "src", "Program.cs");
+        Assert.True(WorkspaceStoragePolicy.CanAccess(project, source, writable: true, explicitReadRoots: []));
+        foreach (var category in WorkspaceStoragePolicy.InternalDirectories)
+        {
+            var managed = Path.Combine(storage, category, "private.txt");
+            Assert.False(WorkspaceStoragePolicy.CanAccess(project, managed, writable: true, explicitReadRoots: []));
+        }
+        // The ordinary layout: the writable root contains the storage root rather than sitting in it.
+        Assert.False(WorkspaceStoragePolicy.CanAccess(workspace.Path, Path.Combine(storage, "data", "facts.db"), writable: true, explicitReadRoots: []));
+    }
+
     [Fact]
     public void WindowsIdentitySeparatesScopesAndPrivilegeTiers()
     {

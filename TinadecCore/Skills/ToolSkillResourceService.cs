@@ -21,7 +21,9 @@ public sealed class ToolSkillResourceService(
     IToolProvider provider) : IToolSkillResourceService, IToolSkillCatalog
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> PackageWrites = new(StringComparer.Ordinal);
-    public async Task<ToolSkillListDto> ListAsync(Guid? projectId, CancellationToken cancellationToken = default)
+    public Task<ToolSkillListDto> ListAsync(Guid? projectId, CancellationToken cancellationToken = default) =>
+        ListAsync(projectId, includeBuiltins: false, cancellationToken);
+    public async Task<ToolSkillListDto> ListAsync(Guid? projectId, bool includeBuiltins, CancellationToken cancellationToken = default)
     {
         var scope = tenants.Current;
         var project = await Project(projectId, cancellationToken);
@@ -29,27 +31,79 @@ public sealed class ToolSkillResourceService(
         var rows = await db.SharedSkills.AsNoTracking().Where(x => x.TenantId == scope.TenantId
             && x.WorkspaceId == scope.WorkspaceId && x.DeletedAt == null).ToArrayAsync(cancellationToken);
         var found = rows.Select(Shared).ToList();
-        var knownPaths = found.Select(x => x.Path).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var knownPaths = found.Select(x => x.Path).ToHashSet(pathComparison);
         var liveSourcesAreProjectSources = project is not null && string.Equals(
             WorkspacePathSpelling.Canonical(Path.Combine(project.RootPath, WorkspaceSkillPolicy.SkillRoots[0])),
             WorkspacePathSpelling.Canonical(storage.Locations.Skills),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
         if (!liveSourcesAreProjectSources)
             foreach (var entry in WorkspaceSkillDiscovery.Discover(storage.Locations.Root, ["skills"]))
-                if (!knownPaths.Contains(entry.FullPath)) found.Add(SharedSource(entry));
+                if (knownPaths.Add(entry.FullPath)) found.Add(SharedSource(entry));
         if (project is not null)
-            found.AddRange(WorkspaceSkillDiscovery.Discover(project.RootPath).Where(x => !knownPaths.Contains(x.FullPath)).Select(x => ProjectDto(project, x)));
-        var projectNames = found.Where(x => x.Scope == "project").Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
-        found = found.Select(x => x.Scope == "shared" && projectNames.Contains(x.Name) && x.Reason is null
-            ? x with { Reason = "shadowed by a project skill with the same name for inherited bindings", ReasonCode = "shadowed" } : x).ToList();
+            foreach (var entry in WorkspaceSkillDiscovery.Discover(project.RootPath))
+                if (knownPaths.Add(entry.FullPath)) found.Add(ProjectDto(project, entry));
+
+        // Compatibility roots are read-only and weaker than the canonical roots. They exist so a
+        // repository that already keeps skills under .agents/skills does not need a migration.
+        var userRoot = Path.GetFullPath(StorageScopePaths.UserRoot());
+        if (project is not null) AddExternal(Path.GetFullPath(project.RootPath), "compat", 400, readOnly: true, [".agents/skills"]);
+        AddExternal(userRoot, "user", 300, readOnly: true, ["skills"]);
+        AddExternal(userRoot, "compat", 500, readOnly: true, [".agents/skills"]);
+
+        // Built-ins are embedded and always available; every other root can shadow them by name.
+        if (includeBuiltins)
+            foreach (var builtin in BuiltinSkillCatalog.All) found.Add(Builtin(builtin));
+
+        found = MarkShadowed(found);
         return new(found.OrderBy(x => x.Name, StringComparer.Ordinal).ThenBy(x => x.Scope).ToArray(),
             found.Where(x => !x.Valid).Select(x => $"{x.Path}: {x.Reason}").ToArray());
+
+        void AddExternal(string rootPath, string sourceKind, int rank, bool readOnly, string[] relativeRoots)
+        {
+            if (!Directory.Exists(rootPath)) return;
+            foreach (var entry in WorkspaceSkillDiscovery.Discover(rootPath, relativeRoots))
+                if (knownPaths.Add(entry.FullPath))
+                    found.Add(ExternalSource(entry, sourceKind, rank, readOnly));
+        }
+    }
+
+    /// <summary>
+    /// One name has one winner. Lower <see cref="ToolSkillResourceDto.Rank"/> wins; the losers stay
+    /// visible with <c>shadowed_by</c> so an author who edits the wrong copy can see why nothing
+    /// changed. Invalid entries are names nobody can win with, so they are never collapsed away.
+    /// </summary>
+    private static List<ToolSkillResourceDto> MarkShadowed(List<ToolSkillResourceDto> entries)
+    {
+        var winners = entries.Where(x => x.Valid && x.Name.Length > 0)
+            .GroupBy(x => x.Name, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Rank)
+                .ThenBy(x => x.Scope == "project" ? 0 : 1)
+                .ThenBy(x => x.Scope == "shared" ? 0 : 1)
+                .First(), StringComparer.Ordinal);
+        return entries.Select(entry =>
+        {
+            if (!entry.Valid || entry.Name.Length == 0) return entry;
+            if (!winners.TryGetValue(entry.Name, out var winner) || ReferenceEquals(winner, entry)) return entry;
+            return entry with
+            {
+                ShadowedBy = $"{winner.SourceKind}:{winner.Path}",
+                Reason = $"shadowed by {winner.SourceKind} skill at {winner.Path}",
+                ReasonCode = "shadowed",
+                Availability = "shadowed",
+            };
+        }).ToList();
     }
 
     public async Task<ToolSkillResourceDto?> GetAsync(Guid resourceId, Guid? projectId, CancellationToken cancellationToken = default)
     {
-        var resource = (await ListAsync(projectId, cancellationToken)).Skills.FirstOrDefault(x => x.ResourceId == resourceId);
+        var resource = (await ListAsync(projectId, true, cancellationToken)).Skills.FirstOrDefault(x => x.ResourceId == resourceId);
         if (resource is null) return null;
+        if (resource.SourceKind == "builtin")
+        {
+            var builtin = BuiltinSkillCatalog.Find(resourceId);
+            return builtin is null ? null : Builtin(builtin);
+        }
         if (!resource.Valid && resource.ContentHash.Length == 0) return resource;
         var root = resource.Scope == "project" ? (await Project(projectId, cancellationToken))!.RootPath : Path.GetDirectoryName(resource.Path)!;
         var entry = WorkspaceSkillDiscovery.Read(root, resource.Path);
@@ -69,6 +123,19 @@ public sealed class ToolSkillResourceService(
             throw new ToolSettingsException("invalid_skill_asset", "A relative package path is required.");
         var resource = await GetAsync(resourceId, projectId, cancellationToken);
         if (resource is null) return null;
+        if (resource.SourceKind == "builtin")
+        {
+            var builtin = BuiltinSkillCatalog.Find(resourceId);
+            var file = builtin?.Files.FirstOrDefault(x => string.Equals(x.Path, relativePath.Replace('\\', '/'), StringComparison.Ordinal));
+            if (file is null) return null;
+            string? text = null;
+            try { text = new UTF8Encoding(false, true).GetString(file.Bytes); } catch (DecoderFallbackException) { }
+            return new ToolSkillFileDto
+            {
+                Path = file.Path, ContentHash = file.ContentHash, SizeBytes = file.Bytes.LongLength,
+                Content = text, Base64 = Convert.ToBase64String(file.Bytes),
+            };
+        }
         var packageRoot = Path.GetDirectoryName(resource.Path)!;
         ValidateAsset(relativePath, allowSkillFile: true);
         var path = Path.GetFullPath(Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
@@ -84,7 +151,7 @@ public sealed class ToolSkillResourceService(
 
     public async Task<IReadOnlyList<ToolSkillSnapshotDto>> ResolveAsync(Guid? projectId, IReadOnlyList<Guid>? resourceIds, CancellationToken cancellationToken = default)
     {
-        var catalog = (await ListAsync(projectId, cancellationToken)).Skills;
+        var catalog = (await ListAsync(projectId, true, cancellationToken)).Skills;
         IEnumerable<ToolSkillResourceDto> selected;
         if (resourceIds is not null)
         {
@@ -101,7 +168,7 @@ public sealed class ToolSkillResourceService(
         else
         {
             var projectNames = catalog.Where(x => x.Scope == "project").Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
-            selected = catalog.Where(x => x.Valid && x.Enabled && (x.Scope == "project" || !projectNames.Contains(x.Name)));
+            selected = catalog.Where(x => x.Valid && x.Enabled && x.ShadowedBy is null && (x.Scope == "project" || !projectNames.Contains(x.Name)));
         }
         return selected.Select(x => new ToolSkillSnapshotDto
         {
@@ -118,10 +185,24 @@ public sealed class ToolSkillResourceService(
 
     private async Task<ToolSkillCatalogSnapshot> CaptureSelectedCoreAsync(Guid? projectId, IReadOnlyCollection<Guid>? resourceIds, CancellationToken cancellationToken)
     {
-        var resources = (await ListAsync(projectId, cancellationToken)).Skills;
+        var resources = (await ListAsync(projectId, true, cancellationToken)).Skills;
         var snapshots = new List<ToolSkillSnapshotDto>();
-        foreach (var resource in resources.Where(x => x.Valid && x.Enabled && (resourceIds is null || resourceIds.Contains(x.ResourceId))))
+        foreach (var resource in resources.Where(x => x.Valid && x.Enabled
+            && (resourceIds is null ? x.ShadowedBy is null : resourceIds.Contains(x.ResourceId))))
         {
+            if (resource.SourceKind == "builtin")
+            {
+                var builtin = BuiltinSkillCatalog.Find(resource.ResourceId);
+                if (builtin is not null)
+                    snapshots.Add(new ToolSkillSnapshotDto
+                    {
+                        ResourceId = builtin.ResourceId, Name = builtin.Name, Description = builtin.Description,
+                        RootPath = "", SkillPath = $"tinadec://builtin/{builtin.Name}/SKILL.md",
+                        Revision = builtin.Revision, ContentHash = builtin.ContentHash,
+                        SourceKind = "builtin", ResourceBase = $"tinadec://builtin/{builtin.Name}",
+                    });
+                continue;
+            }
             var root = Path.GetDirectoryName(resource.Path)!;
             var hash = resource.ContentHash;
             {
@@ -136,6 +217,7 @@ public sealed class ToolSkillResourceService(
             {
                 ResourceId = resource.ResourceId, Name = resource.Name, Description = resource.Description,
                 RootPath = root, SkillPath = Path.Combine(root, "SKILL.md"), Revision = resource.Revision, ContentHash = hash,
+                SourceKind = resource.SourceKind, ResourceBase = root,
             });
         }
         return new ToolSkillCatalogSnapshot(resources, snapshots);
@@ -152,6 +234,7 @@ public sealed class ToolSkillResourceService(
         projectId ??= input.ProjectId;
         var existing = resourceId is { } id ? await GetAsync(id, projectId, cancellationToken) : null;
         if (resourceId is not null && existing is null) throw new ToolSettingsException("skill_not_found", "Skill resource not found.", 404);
+        if (existing?.ReadOnly == true) throw new ToolSettingsException("read_only_skill", "Built-in and compatibility skills are read-only. Copy the package into the project or user library to edit it.", 409);
         if ((existing?.Revision ?? 0) != expectedRevision) throw Conflict();
         var isProject = existing?.Scope == "project" || existing is null && input.Scope == "project";
         if (isProject || existing?.Scope == "project") return await SaveAsync(resourceId, projectId, input, expectedRevision, cancellationToken);
@@ -244,6 +327,7 @@ public sealed class ToolSkillResourceService(
         projectId ??= input.ProjectId;
         var existing = resourceId is { } id ? await GetAsync(id, projectId, cancellationToken) : null;
         if (resourceId is not null && existing is null) throw new ToolSettingsException("skill_not_found", "Skill resource not found.", 404);
+        if (existing?.ReadOnly == true) throw new ToolSettingsException("read_only_skill", "Built-in and compatibility skills are read-only. Copy the package into the project or user library to edit it.", 409);
         if ((existing?.Revision ?? 0) != expectedRevision) throw Conflict();
         var name = existing?.Name ?? input.Name ?? "";
         if (!WorkspaceSkillPolicy.ValidateName(name, out var reason)) throw new ToolSettingsException("invalid_skill", reason);
@@ -375,6 +459,7 @@ public sealed class ToolSkillResourceService(
     {
         var resource = await GetAsync(resourceId, projectId, cancellationToken) ?? throw new ToolSettingsException("skill_not_found", "Skill resource not found.", 404);
         if (resource.Revision != expectedRevision) throw Conflict();
+        if (resource.ReadOnly) throw new ToolSettingsException("read_only_skill", "Built-in and compatibility skills are read-only.", 409);
         if (resource.Scope == "project") throw new ToolSettingsException("project_skill_delete_requires_file_tools", "Remove project skills with governed project file tools, or disable the skill here.");
         var scope = tenants.Current;
         await using var db = await database.CreateDbContextAsync(cancellationToken);
@@ -395,10 +480,41 @@ public sealed class ToolSkillResourceService(
         if (Directory.Exists(removed)) Directory.Delete(removed, true);
     }
 
+    public async Task<ToolSkillResourceDto> RequestCopyToProjectAsync(Guid resourceId, Guid projectId, CancellationToken cancellationToken = default)
+    {
+        var builtin = BuiltinSkillCatalog.Find(resourceId) ?? throw new ToolSettingsException("skill_not_found", "Built-in skill not found.", 404);
+        var project = await Project(projectId, cancellationToken) ?? throw new ToolSettingsException("project_required", "A project is required.");
+        var path = WorkspaceSkillPolicy.AbsolutePathFor(project.RootPath, builtin.Name);
+        if (!WorkspaceSkillDiscovery.IsContained(project.RootPath, path)) throw new ToolSettingsException("skill_path_escape", "Skill path or parent link escapes the project.");
+        if (Directory.Exists(Path.GetDirectoryName(path))) throw new ToolSettingsException("skill_exists", "A project skill already uses this name.", 409);
+        var files = builtin.Files.Where(x => !string.Equals(x.Path, "SKILL.md", StringComparison.Ordinal))
+            .ToDictionary(x => x.Path, x => Convert.ToBase64String(x.Bytes), StringComparer.Ordinal);
+        var parameters = new
+        {
+            name = builtin.Name,
+            content = builtin.Content,
+            files,
+            expected_file_hashes = files.Keys.Append("SKILL.md").ToDictionary(x => x, _ => (string?)null),
+            package_root = Path.GetDirectoryName(path),
+        };
+        var action = await services.GetRequiredService<IUserToolActionService>().CreateAsync(
+            new UserToolActionRequest(project.ProjectId, "skill_project_package", JsonSerializer.Serialize(parameters)), cancellationToken);
+        var relative = Path.GetRelativePath(project.RootPath, path).Replace('\\', '/');
+        return new ToolSkillResourceDto
+        {
+            ResourceId = ProjectId(project, relative), Scope = "project", ProjectId = project.ProjectId, Name = builtin.Name,
+            Description = builtin.Description, Path = path, Enabled = true, Valid = true, Content = builtin.Content,
+            Reason = "pending governed file action", ReasonCode = "pending_file_action", Availability = "pending",
+            SourceKind = "project", Rank = 100, UserActionId = action.Id, ActionStatus = action.Status,
+            PackageFiles = builtin.Files.Select(x => new ToolSkillPackageFileDto { Path = x.Path, ContentHash = x.ContentHash, SizeBytes = x.Bytes.LongLength }).ToArray(),
+        };
+    }
+
     public async Task<ToolSkillResourceDto> RequestDeleteAsync(Guid resourceId, Guid? projectId, long expectedRevision, CancellationToken cancellationToken = default)
     {
         var resource = await GetAsync(resourceId, projectId, cancellationToken) ?? throw new ToolSettingsException("skill_not_found", "Skill resource not found.", 404);
         if (resource.Revision != expectedRevision) throw Conflict();
+        if (resource.ReadOnly) throw new ToolSettingsException("read_only_skill", "Built-in and compatibility skills are read-only.", 409);
         if (resource.Scope == "project")
         {
             var project = await Project(projectId, cancellationToken) ?? throw new ToolSettingsException("project_required", "A project is required.");
@@ -416,6 +532,36 @@ public sealed class ToolSkillResourceService(
         return resource with { UserActionId = action.Id, ActionStatus = action.Status };
     }
 
+    private static ToolSkillResourceDto Builtin(BuiltinSkillPackage package) => new()
+    {
+        ResourceId = package.ResourceId, Scope = "shared", Name = package.Name, Description = package.Description,
+        Enabled = true, Valid = true, Path = $"tinadec://builtin/{package.Name}/SKILL.md",
+        Revision = package.Revision, ContentHash = package.ContentHash, PackageHash = package.ContentHash,
+        PackageReference = $"builtin:{package.Version}", Source = "builtin", SourceKind = "builtin", Rank = 900,
+        ReadOnly = true, Availability = "available", Content = package.Content,
+        PackageFiles = package.Files.Select(x => new ToolSkillPackageFileDto
+        {
+            Path = x.Path, ContentHash = x.ContentHash, SizeBytes = x.Bytes.LongLength,
+        }).ToArray(),
+    };
+
+    private ToolSkillResourceDto ExternalSource(WorkspaceSkillDiscovery.Entry entry, string sourceKind, int rank, bool readOnly)
+    {
+        var seed = $"{tenants.Current.TenantId:N}/{tenants.Current.WorkspaceId:N}/{sourceKind}/{entry.RelativePath}";
+        var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(seed)).AsSpan(0, 16));
+        var root = Path.GetDirectoryName(entry.FullPath)!;
+        var hash = entry.Valid ? ActualPackageHash(root) : entry.ContentHash;
+        return new()
+        {
+            ResourceId = id, Scope = "shared", Name = entry.Name, Description = entry.Description,
+            Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode,
+            ReasonData = entry.ReasonData, Path = entry.FullPath, Revision = Revision(hash), ContentHash = hash,
+            PackageHash = hash, Availability = entry.Valid ? entry.Enabled ? "available" : "disabled" : "invalid",
+            Source = sourceKind, SourceKind = sourceKind, Rank = rank, ReadOnly = readOnly,
+            PackageFiles = entry.Valid ? PackageFiles(root) : [],
+        };
+    }
+
     private ToolSkillResourceDto Shared(SharedSkillResourceRecord row)
     {
         var root = Path.Combine(storage.Locations.Skills, row.Name);
@@ -427,7 +573,7 @@ public sealed class ToolSkillResourceService(
             ReasonCode = entry.Valid && !row.Enabled ? "disabled" : entry.ReasonCode, ReasonData = entry.Valid && !row.Enabled ? null : entry.ReasonData,
             Path = entry.FullPath, Revision = string.Equals(actualHash, row.ContentHash, StringComparison.Ordinal) ? row.Revision : Revision(actualHash), ContentHash = actualHash, PackageHash = actualHash,
             PackageReference = row.PackageReference, Source = row.Source, Version = row.Version, Commit = row.Commit,
-            Availability = entry.Valid ? row.Enabled ? "available" : "disabled" : "invalid", PackageFiles = packageFiles };
+            SourceKind = "scope", Rank = 200, Availability = entry.Valid ? row.Enabled ? "available" : "disabled" : "invalid", PackageFiles = packageFiles };
     }
 
     private ToolSkillResourceDto SharedSource(WorkspaceSkillDiscovery.Entry entry)
@@ -440,6 +586,7 @@ public sealed class ToolSkillResourceService(
             Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData, Path = entry.FullPath,
             Revision = Revision(hash), ContentHash = hash, PackageHash = hash,
             Availability = entry.Valid ? entry.Enabled ? "available" : "disabled" : "invalid", Source = "source",
+            SourceKind = "scope", Rank = 200,
             PackageFiles = entry.Valid ? PackageFiles(root) : [] };
     }
 
@@ -486,6 +633,7 @@ public sealed class ToolSkillResourceService(
             Description = entry.Description, Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData,
             Path = entry.FullPath, ContentHash = entry.ContentHash, Revision = Revision(packageHash), PackageHash = packageHash, PackageFiles = packageFiles,
             Availability = !entry.Valid ? "invalid" : entry.Enabled ? "available" : "disabled", Source = "project",
+            SourceKind = "project", Rank = 100,
         };
     }
     private static Guid ProjectId(ProjectReference project, string relative) => new(SHA256.HashData(Encoding.UTF8.GetBytes(

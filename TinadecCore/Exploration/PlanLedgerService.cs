@@ -121,26 +121,29 @@ public sealed class PlanLedgerService(IDbContextFactory<ExplorationDbContext> fa
         var drafts = NormalizeDrafts(intents);
         var now = DateTimeOffset.UtcNow;
 
-        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await LedgerRows(db, scope).ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (rows.Count + drafts.Count > MaxLedgerIntents)
-            throw new ArgumentException($"The plan ledger would exceed {MaxLedgerIntents} intents.", nameof(intents));
-
-        foreach (var row in rows.Where(row =>
-                     SameStatus(row, PlanIntentStatuses.Pending) || SameStatus(row, PlanIntentStatuses.Running)))
+        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
         {
-            row.Status = PlanIntentStatuses.Abandoned;
-            row.Note = "Replaced by a replan.";
-            row.UpdatedAtUnixMs = now.ToUnixTimeMilliseconds();
-            row.UpdatedAt = now;
-        }
+            await using var db = await factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var rows = await LedgerRows(db, scope).ToListAsync(ct).ConfigureAwait(false);
+            if (rows.Count + drafts.Count > MaxLedgerIntents)
+                throw new ArgumentException($"The plan ledger would exceed {MaxLedgerIntents} intents.", nameof(intents));
 
-        var appended = BuildRows(scope, drafts, NextOrdinal(rows.Select(row => row.SourceKey)));
-        db.Nodes.AddRange(appended);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return appended.Select(ToIntent).ToArray();
+            foreach (var row in rows.Where(row =>
+                         SameStatus(row, PlanIntentStatuses.Pending) || SameStatus(row, PlanIntentStatuses.Running)))
+            {
+                row.Status = PlanIntentStatuses.Abandoned;
+                row.Note = "Replaced by a replan.";
+                row.UpdatedAtUnixMs = now.ToUnixTimeMilliseconds();
+                row.UpdatedAt = now;
+            }
+
+            var appended = BuildRows(scope, drafts, NextOrdinal(rows.Select(row => row.SourceKey)));
+            db.Nodes.AddRange(appended);
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return (IReadOnlyList<PlanIntent>)appended.Select(ToIntent).ToArray();
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<PlanIntent> TransitionAsync(

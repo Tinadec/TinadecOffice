@@ -15,7 +15,13 @@ export class ScopedEventSource {
   readyState = 0
   private abort: AbortController | null = null
   private closed = false
-  private cursor = ''
+  /**
+   * Per-run resume positions. Event frames carry only the run they advance, heartbeats carry the
+   * whole vector; merging both is what lets a reconnect resume exactly. Keeping just the last id
+   * would lose every other run's position and replay those runs from zero.
+   */
+  private watermarks = new Map<string, string>()
+  private lastFrameId = ''
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   constructor(url: string, private readonly storageId: string, private readonly fetchImpl: typeof fetch = fetch,
     private readonly idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS) {
@@ -33,13 +39,32 @@ export class ScopedEventSource {
       const separator = line.indexOf(':'); const key = separator < 0 ? line : line.slice(0, separator)
       const value = separator < 0 ? '' : line.slice(separator + 1).replace(/^ /, '')
       if (key === 'event') type = value || 'message'
-      else if (key === 'id') this.cursor = value
+      else if (key === 'id') { this.lastFrameId = value; this.applyCursor(value) }
       else if (key === 'data') data.push(value)
     }
     if (!data.length) return
-    const event = new MessageEvent(type, { data: data.join('\n'), lastEventId: this.cursor })
+    const event = new MessageEvent(type, { data: data.join('\n'), lastEventId: this.lastFrameId })
     if (type === 'message') this.onmessage?.(event)
     this.dispatchEvent(event)
+  }
+  private applyCursor(value: string) {
+    if (!value) return
+    if (value.includes(',')) {
+      this.watermarks.clear()
+      for (const segment of value.split(',')) this.applyPair(segment)
+      return
+    }
+    this.applyPair(value)
+  }
+  private applyPair(segment: string) {
+    const separator = segment.lastIndexOf(':')
+    if (separator <= 0) return
+    const run = segment.slice(0, separator); const sequence = segment.slice(separator + 1)
+    if (!/^[0-9a-f]{32}$/.test(run) || !/^\d+$/.test(sequence)) return
+    this.watermarks.set(run, sequence)
+  }
+  private encodeWatermarks() {
+    return [...this.watermarks.entries()].map(([run, sequence]) => `${run}:${sequence}`).join(',')
   }
   private async connect() {
     if (this.closed) return
@@ -53,11 +78,15 @@ export class ScopedEventSource {
       // reconnect catch below then swallowed forever. Keep the injected function, but
       // invoke it unbound so both the browser implementation and test doubles work.
       const fetchImpl = this.fetchImpl
+      const cursor = this.encodeWatermarks()
       const response = await fetchImpl(this.url, { signal: request.signal, headers: {
         accept: 'text/event-stream', 'x-tinadec-storage-id': this.storageId,
-        ...(this.cursor ? { 'last-event-id': this.cursor } : {}),
+        ...(cursor ? { 'last-event-id': cursor } : {}),
       } })
       if (this.closed || request.signal.aborted) { await response.body?.cancel(); return }
+      // A rejected cursor must be dropped, not resent: retrying with the same unreadable value
+      // would loop on 400 forever. Falling back to a full replay is the pre-cursor behaviour.
+      if (response.status === 400) this.watermarks.clear()
       if (!response.ok || !response.body) throw new Error(`Event stream returned ${response.status}`)
       this.readyState = 1
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''

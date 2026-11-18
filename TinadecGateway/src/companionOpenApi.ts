@@ -24,6 +24,7 @@ const companionIdentityProperties = {
   tagline: nullableString,
   avatar: nullableString,
   status: { type: 'string', enum: ['active', 'archived', 'paused'] },
+  role: { type: 'string', enum: ['autonomous', 'buddy'] },
   model_purpose: { type: 'string' },
   // The pinned provider model; null means "resolve the tenant's route purpose". `model` is the
   // model name on that provider instance (itself may be null for CLI runtimes that pick their own).
@@ -221,6 +222,8 @@ const companionActivity = {
   additionalProperties: true,
   properties: {
     id: uuid,
+    // Tenant-monotonic position in the feed; the SSE `id:` and ?after_seq both use it.
+    seq: { type: 'integer' },
     kind: { type: 'string' },
     companion_id: nullableUuid,
     companion_name: nullableString,
@@ -234,15 +237,57 @@ const companionActivity = {
   required: ['id', 'kind', 'created_at'],
 };
 
+const companionMandate = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    companion_id: uuid,
+    // create_group | invite | send_message
+    action: { type: 'string' },
+    // proposed | approved | denied — only approved lets that action run unattended.
+    status: { type: 'string', enum: ['proposed', 'approved', 'denied'] },
+    summary: nullableString,
+    proposal: { type: 'object', additionalProperties: true, nullable: true },
+    revision: { type: 'integer' },
+    created_at: timestamp,
+    updated_at: timestamp,
+    decided_at: { type: 'string', format: 'date-time', nullable: true },
+  },
+  required: ['id', 'companion_id', 'action', 'status', 'revision', 'created_at', 'updated_at'],
+};
+
+const companionRecruitment = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    proposer_id: uuid,
+    name: { type: 'string' },
+    persona_document: { type: 'string', nullable: true },
+    rationale: { type: 'string', nullable: true },
+    // proposed | approved | denied — approving is what creates the companion.
+    status: { type: 'string', enum: ['proposed', 'approved', 'denied'] },
+    created_companion_id: nullableUuid,
+    revision: { type: 'integer' },
+    created_at: timestamp,
+    updated_at: timestamp,
+    decided_at: { type: 'string', format: 'date-time', nullable: true },
+  },
+  required: ['id', 'proposer_id', 'name', 'status', 'revision', 'created_at', 'updated_at'],
+};
+
 const companionSettings = {
   type: 'object',
   additionalProperties: true,
   properties: {
     main_companion_id: nullableUuid,
+    buddy_companion_id: nullableUuid,
+    recruit_limit: { type: 'integer' },
     autonomy_paused: { type: 'boolean' },
     revision: { type: 'integer' },
   },
-  required: ['main_companion_id', 'autonomy_paused', 'revision'],
+  required: ['main_companion_id', 'buddy_companion_id', 'recruit_limit', 'autonomy_paused', 'revision'],
 };
 
 const companionSendMessageResult = {
@@ -281,7 +326,59 @@ const companionAutonomyTickResult = {
   required: ['acted', 'action', 'reason', 'activity', 'conversation', 'message'],
 };
 
+// What model3.json declared at import time. Core leaves a section empty when the model does not
+// declare it; the schema mirrors that (no invented defaults).
+const companionCapabilities = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    motions: {
+      type: 'object',
+      additionalProperties: { type: 'array', items: { type: 'string' } },
+    },
+    expressions: { type: 'array', items: { type: 'string' } },
+    parameters: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          min: { type: 'number' },
+          max: { type: 'number' },
+          default: { type: 'number' },
+        },
+        required: ['min', 'max', 'default'],
+      },
+    },
+    hit_areas: { type: 'array', items: { type: 'string' } },
+    groups: {
+      type: 'object',
+      additionalProperties: { type: 'array', items: { type: 'string' } },
+    },
+  },
+  required: ['motions', 'expressions', 'parameters', 'hit_areas', 'groups'],
+};
+
+// A user-imported Live2D model. `source_path` is relative to Core's storage root: the Gateway and
+// clients never see (or need) an absolute path on the Core host.
+const companionAvatar = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    name: { type: 'string' },
+    kind: { type: 'string', enum: ['live2d'] },
+    source_path: { type: 'string' },
+    capabilities: ref('CompanionCapabilities'),
+    created_at: timestamp,
+  },
+  required: ['id', 'name', 'kind', 'source_path', 'capabilities', 'created_at'],
+};
+
 export const companionOpenApiSchemas = {
+  CompanionCapabilities: companionCapabilities,
+  CompanionAvatar: companionAvatar,
+  CompanionAvatarList: { type: 'array', items: ref('CompanionAvatar') },
   CompanionSummary: companionSummary,
   CompanionDetail: companionDetail,
   CompanionAutonomy: companionAutonomy,
@@ -297,6 +394,10 @@ export const companionOpenApiSchemas = {
   CompanionSettings: companionSettings,
   CompanionSendMessageResult: companionSendMessageResult,
   CompanionAutonomyTickResult: companionAutonomyTickResult,
+  CompanionMandate: companionMandate,
+  CompanionMandateList: { type: 'array', items: ref('CompanionMandate') },
+  CompanionRecruitment: companionRecruitment,
+  CompanionRecruitmentList: { type: 'array', items: ref('CompanionRecruitment') },
   CompanionList: { type: 'array', items: ref('CompanionSummary') },
   CompanionMemoryList: { type: 'array', items: ref('CompanionMemory') },
   CompanionSkillList: { type: 'array', items: ref('CompanionSkill') },

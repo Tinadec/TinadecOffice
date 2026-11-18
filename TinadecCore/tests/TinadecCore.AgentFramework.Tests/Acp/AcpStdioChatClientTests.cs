@@ -166,7 +166,11 @@ public sealed class AcpStdioChatClientTests : IDisposable
         Assert.Equal(1, pool.Count);
         Assert.Equal(2, pool.Latest.Prompts);
         Assert.Equal(scratch, host.ScratchDirectoryFor(provider));
-        Assert.StartsWith(Path.GetFullPath(Path.Combine(_contentRoot, "data", "harness-workspaces")), scratch, StringComparison.Ordinal);
+        // The scratch root lives under Temp: StoragePaths.HarnessWorkspace moved it off
+        // "acp-sessions" so harness scratch files stay out of the backed-up data tree. Ask
+        // StoragePaths for the root rather than pinning a location the product may move again.
+        var paths = new StoragePaths(_contentRoot, Options.Create(new TinadecPersistenceOptions { DataRoot = "data" }));
+        Assert.StartsWith(Path.GetFullPath(paths.Locations.Temp), scratch, StringComparison.Ordinal);
         await host.DisposeAsync();
     }
 

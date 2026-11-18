@@ -1,7 +1,18 @@
 import i18n from '@/i18n'
 import type { components } from '@/generated/schema'
+import {
+  COMPANION_EVENT_CHANNEL,
+  COMPANION_EVENT_TYPES,
+  isCompanionEventBroadcast,
+  type CompanionEventBroadcast,
+  type CompanionEventNotice,
+  type CompanionEventPayload,
+  type CompanionEventType,
+  type CompanionHeartbeatPayload,
+} from '@/events/companionEventTypes'
 import { ApiError, apiErrorMessage } from './apiError'
 import { assertHostAccess } from './hostAccess'
+import { ScopedEventSource } from './scopedEventSource'
 
 /**
  * Companion domain client (spec: add-companion-mode, Task 5).
@@ -38,6 +49,41 @@ export interface CompanionAutonomyInput {
   daily_action_budget?: number
 }
 
+/**
+ * A standing authorization for one class of autonomous action. `proposed` is a question the user
+ * has not answered yet; only `approved` lets that action run unattended.
+ */
+/**
+ * A companion asking for a long-lived helper. Approving is what creates it, and only within the
+ * tenant's recruit limit — the proposer can never create a companion itself.
+ */
+export interface CompanionRecruitment {
+  id: string
+  proposer_id: string
+  name: string
+  persona_document: string | null
+  rationale: string | null
+  status: 'proposed' | 'approved' | 'denied'
+  created_companion_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface CompanionMandate {
+  id: string
+  companion_id: string
+  action: string
+  status: 'proposed' | 'approved' | 'denied'
+  summary: string | null
+  proposal: Record<string, unknown> | null
+  revision: number
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
 export interface CompanionCreateInput {
   name?: string
   tagline?: string | null
@@ -46,6 +92,7 @@ export interface CompanionCreateInput {
   model_purpose?: string
   /** "<providerInstanceId>|<model>"; empty clears the pin back to the route purpose. */
   model?: string | null
+  role?: 'autonomous' | 'buddy'
   autonomy?: CompanionAutonomyInput | null
 }
 
@@ -107,7 +154,32 @@ export interface CompanionMessagePostInput {
 
 export interface CompanionSettingsPatchInput {
   main_companion_id?: string | null
+  buddy_companion_id?: string | null
+  /** How many companions other companions may recruit; 0 turns recruiting off. */
+  recruit_limit?: number
   autonomy_paused?: boolean
+}
+
+/**
+ * Capabilities parsed from a Live2D `model3.json`. Sections the file does not declare stay empty;
+ * nothing here is inferred or synthesized.
+ */
+export interface CompanionAvatarCapabilities {
+  motions: Record<string, string[]>
+  expressions: string[]
+  parameters: Record<string, { min: number; max: number; default: number }>
+  hit_areas: string[]
+  groups: Record<string, string[]>
+}
+
+/** One imported Live2D model, owned by Core's storage after import. */
+export interface CompanionAvatar {
+  id: string
+  name: string
+  kind: 'live2d'
+  source_path: string
+  capabilities: CompanionAvatarCapabilities
+  created_at: string
 }
 
 const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
@@ -163,6 +235,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const companionApi = {
   gatewayUrl,
+  /**
+   * Imported Live2D models. Import copies the directory into Core's own storage, so the returned
+   * `source_path` is the stored copy rather than the folder the user picked.
+   */
+  listCompanionAvatars: () => request<CompanionAvatar[]>('/api/v1/companion-avatars'),
+  importCompanionAvatar: (input: { path: string }) =>
+    request<CompanionAvatar>('/api/v1/companion-avatars/import', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  deleteCompanionAvatar: (id: string) =>
+    request<void>(`/api/v1/companion-avatars/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   listCompanions: (includeArchived?: boolean) =>
     request<CompanionSummary[]>(`/api/v1/companions${query({ include_archived: includeArchived })}`),
   getCompanion: (id: string) => request<CompanionDetail>(`/api/v1/companions/${encodeURIComponent(id)}`),
@@ -280,6 +363,220 @@ export const companionApi = {
     }),
   tickAutonomy: (id: string) =>
     request<CompanionAutonomyTickResult>(`/api/v1/companions/${encodeURIComponent(id)}/autonomy/tick`, { method: 'POST' }),
+  /** Records a gesture at the companion; it never writes a message into any conversation. */
+  recordEmote: (id: string, emote: 'wave' | 'pat') =>
+    request<CompanionActivity>(`/api/v1/companions/${encodeURIComponent(id)}/emote`, {
+      method: 'POST', body: JSON.stringify({ emote }),
+    }),
+  listMandates: (id: string) =>
+    request<CompanionMandate[]>(`/api/v1/companions/${encodeURIComponent(id)}/mandates`),
+  decideMandate: (id: string, mandateId: string, revision: number, decision: 'approved' | 'denied') =>
+    request<CompanionMandate>(`/api/v1/companions/${encodeURIComponent(id)}/mandates/${encodeURIComponent(mandateId)}/decision`, {
+      method: 'POST', headers: ifMatch(revision), body: JSON.stringify({ decision }),
+    }),
+  listRecruitments: () => request<CompanionRecruitment[]>('/api/v1/companion-recruitments'),
+  decideRecruitment: (recruitmentId: string, revision: number, decision: 'approved' | 'denied') =>
+    request<CompanionRecruitment>(`/api/v1/companion-recruitments/${encodeURIComponent(recruitmentId)}/decision`, {
+      method: 'POST', headers: ifMatch(revision), body: JSON.stringify({ decision }),
+    }),
+}
+
+// ── Live feed ────────────────────────────────────────────────────────
+
+/**
+ * Whether this renderer can hold `GET /api/v1/companion-events` open.
+ *
+ * The transport itself is fetch-based (`ScopedEventSource`), but a test environment that exposes
+ * no `EventSource` also has no Gateway behind it: the desktop suites run under happy-dom, and the
+ * absence is what lets them exercise the polling fallback instead of hanging on a stream that can
+ * never deliver a frame. Probing `fetch` would be dishonest there — Node has one, and it would
+ * claim a live feed the page cannot actually use.
+ */
+export function companionStreamSupported(): boolean {
+  return typeof EventSource !== 'undefined'
+}
+
+export interface CompanionFeedHandlers {
+  /** One durable journal row, already projected to the event name Core sent it under. */
+  onNotice: (notice: CompanionEventNotice) => void
+  /** The first heartbeat of a connection: everything up to this cursor has been replayed. */
+  onHeartbeat?: (cursor: number) => void
+  onError?: () => void
+}
+
+export interface CompanionFeedHandle {
+  /** Where the stream stands; pass it back as `afterSeq` to resume without replaying the journal. */
+  readonly cursor: number
+  close(): void
+}
+
+function parseEventPayload(text: string): CompanionEventPayload | null {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? parsed as CompanionEventPayload : null
+  } catch {
+    // A malformed frame is one dropped row, not a broken feed: the fallback refresh still runs.
+    return null
+  }
+}
+
+function noticeOf(type: CompanionEventType, payload: CompanionEventPayload, cursor: number): CompanionEventNotice {
+  const seq = typeof payload.seq === 'number' && Number.isFinite(payload.seq) ? payload.seq : cursor
+  const runId = payload.payload && typeof payload.payload.run_id === 'string' ? payload.payload.run_id : null
+  return {
+    type,
+    seq,
+    kind: typeof payload.kind === 'string' ? payload.kind : null,
+    companionId: typeof payload.companion_id === 'string' ? payload.companion_id : null,
+    conversationId: typeof payload.conversation_id === 'string' ? payload.conversation_id : null,
+    runId,
+  }
+}
+
+/**
+ * Subscribe to the companion journal from `afterSeq`. The server replays what the cursor missed and
+ * then follows, so a reconnect resumes exactly where the previous subscription stopped.
+ *
+ * No storage header value is invented here: Core pins every `/api/v1/companion*` route to the user
+ * scope, so `user` is the only honest identity this stream can carry.
+ */
+export function connectCompanionEvents(
+  handlers: CompanionFeedHandlers,
+  afterSeq = 0,
+): CompanionFeedHandle {
+  let cursor = afterSeq
+  const source = new ScopedEventSource(
+    `${gatewayUrl}/api/v1/companion-events${query({ after_seq: cursor || undefined })}`,
+    'user',
+  )
+  const handle = (message: MessageEvent<string>) => {
+    const type = message.type as CompanionEventType
+    if (!(COMPANION_EVENT_TYPES as readonly string[]).includes(type)) return
+    const payload = parseEventPayload(message.data)
+    if (!payload) return
+    const notice = noticeOf(type, payload, cursor)
+    cursor = Math.max(cursor, notice.seq)
+    handlers.onNotice(notice)
+  }
+  for (const type of COMPANION_EVENT_TYPES) source.addEventListener(type, handle as EventListener)
+  source.addEventListener('heartbeat', ((message: MessageEvent<string>) => {
+    const payload = parseEventPayload(message.data) as CompanionHeartbeatPayload | null
+    if (typeof payload?.after_seq === 'number' && Number.isFinite(payload.after_seq)) {
+      cursor = Math.max(cursor, payload.after_seq)
+    }
+    handlers.onHeartbeat?.(cursor)
+  }) as EventListener)
+  source.onerror = () => handlers.onError?.()
+  return {
+    get cursor() { return cursor },
+    close: () => source.close(),
+  }
+}
+
+/**
+ * Relay a notice to the other renderers of this app (the satellite companion window). It is not a
+ * second subscription: the trusted main window holds the one stream, and this channel carries the
+ * already-parsed notice so a window that cannot reach the Gateway still updates on the event.
+ */
+export function broadcastCompanionNotice(notice: CompanionEventNotice): void {
+  if (typeof BroadcastChannel === 'undefined') return
+  try {
+    relayChannel().postMessage({ type: 'notice', notice } satisfies CompanionEventBroadcast)
+  } catch {
+    // A closed or full channel must not break the stream that produced the notice.
+  }
+}
+
+let relay: BroadcastChannel | null = null
+
+function relayChannel(): BroadcastChannel {
+  relay ??= new BroadcastChannel(COMPANION_EVENT_CHANNEL)
+  return relay
+}
+
+/**
+ * One stream per renderer, however many surfaces need it.
+ *
+ * The centre and the buddy panel both want the same journal; opening one subscription each would
+ * multiply the connection and parse every frame twice (the same duplication `sessionEventBus`
+ * exists to prevent). The satellite cannot open one at all — it is not a trusted host — so it
+ * listens on the relay channel instead, and the trusted window is the only subscriber.
+ *
+ * The connection is closed while the document is hidden and resumed from the last cursor when it
+ * comes back: a background window has nothing to draw, and the cursor makes the resume exact
+ * rather than a replay of everything that happened overnight. In the main window that also pauses
+ * the relay to the satellite, which then falls back to its own low-frequency read — an honest
+ * degradation, and the reason that fallback must never be removed.
+ */
+const feedHandlers = new Set<(notice: CompanionEventNotice) => void>()
+let feedSource: CompanionFeedHandle | null = null
+let feedCursor = 0
+let feedVisibilityBound = false
+
+function onFeedVisibility(): void {
+  if (typeof document === 'undefined') return
+  if (document.visibilityState === 'hidden') closeFeed()
+  else openFeed()
+}
+
+function openFeed(): void {
+  if (feedSource || feedHandlers.size === 0 || !companionStreamSupported()) return
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+  feedSource = connectCompanionEvents({
+    onNotice: (notice) => {
+      feedCursor = Math.max(feedCursor, notice.seq)
+      broadcastCompanionNotice(notice)
+      for (const handler of [...feedHandlers]) {
+        try { handler(notice) } catch { /* One consumer must not take the shared feed down. */ }
+      }
+    },
+    onHeartbeat: (cursor) => { feedCursor = Math.max(feedCursor, cursor) },
+    // `ScopedEventSource` reconnects on its own from the cursor it captured; nothing to do here
+    // but keep the last good cursor, which it already sends as `last-event-id`.
+    onError: () => {},
+  }, feedCursor)
+}
+
+function closeFeed(): void {
+  feedSource?.close()
+  feedSource = null
+}
+
+/** Receive every companion notice for as long as the returned unsubscribe is held. */
+export function subscribeCompanionFeed(handler: (notice: CompanionEventNotice) => void): () => void {
+  feedHandlers.add(handler)
+  if (!feedVisibilityBound && typeof document !== 'undefined') {
+    feedVisibilityBound = true
+    document.addEventListener('visibilitychange', onFeedVisibility)
+  }
+  openFeed()
+  return () => {
+    feedHandlers.delete(handler)
+    if (feedHandlers.size > 0) return
+    closeFeed()
+    if (feedVisibilityBound && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onFeedVisibility)
+      feedVisibilityBound = false
+    }
+  }
+}
+
+/**
+ * Listen for relayed notices. Returns a no-op unsubscribe where BroadcastChannel does not exist
+ * (the happy-dom test environment), which is exactly the case the polling fallback covers.
+ */
+export function subscribeCompanionEventRelay(handler: (notice: CompanionEventNotice) => void): () => void {
+  if (typeof BroadcastChannel === 'undefined') return () => {}
+  const relay = new BroadcastChannel(COMPANION_EVENT_CHANNEL)
+  const listener = (event: MessageEvent<unknown>) => {
+    if (!isCompanionEventBroadcast(event.data)) return
+    try { handler(event.data.notice) } catch { /* One listener must not take the relay down. */ }
+  }
+  relay.addEventListener('message', listener as EventListener)
+  return () => {
+    relay.removeEventListener('message', listener as EventListener)
+    relay.close()
+  }
 }
 
 type CompanionBridgeMethod = 'GET' | 'POST' | 'PATCH'
@@ -346,4 +643,6 @@ export const companionBridge = {
   getSettings: () => bridged<CompanionSettings>('GET', '/api/v1/companion-settings'),
   tickAutonomy: (id: string) =>
     bridged<CompanionAutonomyTickResult>('POST', `/api/v1/companions/${encodeURIComponent(id)}/autonomy/tick`),
+  recordEmote: (id: string, emote: 'wave' | 'pat') =>
+    bridged<CompanionActivity>('POST', `/api/v1/companions/${encodeURIComponent(id)}/emote`, { emote }),
 }

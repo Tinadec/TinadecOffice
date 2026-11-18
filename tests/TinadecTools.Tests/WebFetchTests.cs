@@ -111,6 +111,33 @@ public sealed class WebFetchTests
     public void BlockReason_AllowsPublicUnicast(string literal) =>
         Assert.Null(WebFetchGuard.BlockReason(IPAddress.Parse(literal)));
 
+    // ::127.0.0.1 is IPv4-compatible, not v4-mapped: its non-zero bytes are at 12 and 15, so
+    // the mapped check never fired and the address was allowed. The reason is asserted, not
+    // just non-null, so a catch-all refusal cannot pass for the wrong cause.
+    [Theory]
+    [InlineData("::127.0.0.1", "loopback")]
+    [InlineData("::10.0.0.1", "private")]
+    [InlineData("::192.168.0.1", "private")]
+    [InlineData("::169.254.1.1", "link-local")]
+    [InlineData("::8.8.8.8", "IPv4-compatible IPv6")]
+    [InlineData("::1", "loopback")]
+    [InlineData("::", "unspecified")]
+    [InlineData("::ffff:127.0.0.1", "loopback")]
+    public void BlockReason_NamesTheReasonForEmbeddedIPv4Forms(string literal, string reason) =>
+        Assert.Equal(reason, WebFetchGuard.BlockReason(IPAddress.Parse(literal)));
+
+    [Fact]
+    public void BlockReason_LeavesPublicIPv6Alone() =>
+        Assert.Null(WebFetchGuard.BlockReason(IPAddress.Parse("2001:4860:4860::8888")));
+
+    // The check compares four bytes, so it covers all of 64:ff9b::/32. Narrowing it to the
+    // RFC 6052 well-known /96 would let the second shape through; this pins the wider reading.
+    [Theory]
+    [InlineData("64:ff9b::8.8.8.8")]
+    [InlineData("64:ff9b:1::1")]
+    public void BlockReason_Nat64CoversTheWhole32(string literal) =>
+        Assert.Equal("NAT64", WebFetchGuard.BlockReason(IPAddress.Parse(literal)));
+
     [Fact]
     public async Task ResolveAsync_RefusesWhenEveryAnswerIsInternal()
     {

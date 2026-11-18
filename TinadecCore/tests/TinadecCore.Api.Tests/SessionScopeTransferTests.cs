@@ -239,6 +239,11 @@ public sealed class SessionScopeTransferTests : IDisposable
             services.AddDbContextFactory<AgentControlDbContext>(o => o.UseSqlite(connection)); services.AddDbContextFactory<AgentGraphDbContext>(o => o.UseSqlite(connection));
             services.AddDbContextFactory<GovernanceDbContext>(o => o.UseSqlite(connection)); services.AddDbContextFactory<TinaChatDbContext>(o => o.UseSqlite(connection));
             services.AddDbContextFactory<AgentConfigurationDbContext>(o => o.UseSqlite(connection));
+            // A real scope provider registers this from AddTinadecCore, and the target rebind
+            // resolves it to pick the destination project's default mode. Without it the transfer
+            // stops at "copying" with "No service for type GlobalAgentConfiguration", which is what
+            // this fixture used to do.
+            services.AddSingleton<GlobalAgentConfiguration>();
             var provider = services.BuildServiceProvider();
             await InitializeAsync<MemoryDbContext>(provider); await InitializeAsync<LifecycleDbContext>(provider); await InitializeAsync<AgentControlDbContext>(provider);
             await InitializeAsync<AgentGraphDbContext>(provider); await InitializeAsync<GovernanceDbContext>(provider); await InitializeAsync<TinaChatDbContext>(provider); await InitializeAsync<AgentConfigurationDbContext>(provider);

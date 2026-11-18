@@ -41,7 +41,7 @@ for (const level of ['log', 'info', 'warn', 'error']) {
     try { hostLogSink.write('electron', `${new Date().toISOString()} ${level} ${require('node:util').format(...values)}\n`); } catch { /* stderr remains available if disk writes fail */ }
   };
 }
-const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCompanionCapsuleStyle, saveCompanionCapsuleReveal, saveCloseToTray } = require('./appConfig.cjs');
+const { loadAppConfig, resetGatewayUrl, saveGatewayUrl, saveUserStorageRoot, saveDebugStudioEnabled, saveCompanionMode, saveCompanionCapsuleStyle, saveCompanionCapsuleReveal, saveCloseToTray, saveLaunchAtLogin, saveCompanionSpeakReplies } = require('./appConfig.cjs');
 const { discoverServices } = require('./serviceDiscovery.cjs');
 const { ensureLocalServices, stopLocalServices, canonicalLocalGatewayUrl } = require('./serviceManager.cjs');
 const { createHostControl } = require('./hostControl.cjs');
@@ -55,6 +55,8 @@ let shuttingDown = false;
 let mainWindow = null;
 let trayController = null;
 let closeToTrayPreference = false;
+/** Whether the companion window reads replies aloud; mirrored here so a save answers with it. */
+let companionSpeakReplies = false;
 const hostControl = createHostControl({ startupToken: process.env.TINADEC_HOST_CONTROL_TOKEN, isTrustedHost: () => trustedHostReady });
 // The development orchestrator can share a launch credential; keep it out of later renderer/terminal children.
 delete process.env.TINADEC_HOST_CONTROL_TOKEN;
@@ -66,7 +68,9 @@ initializeTrustedHostRequests({
 });
 const layoutStore = require('./layoutStore.cjs');
 const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
-const { openLogin, logout, getAuthState, updateProfile } = require('./auth.cjs');
+const { configureAuth, openLogin, logout, getAuthState, updateProfile } = require('./auth.cjs');
+// Before any auth call: restoreSession is lazy (getAuthState triggers it), so nothing has run yet.
+configureAuth({ hostControlToken: hostControl.serviceToken });
 const {
   createPanelWindow,
   closePanelWindow,
@@ -95,9 +99,15 @@ const {
   listPetWindows,
   setCurrentPetWindowBounds,
   setCurrentPetWindowClickThrough,
+  isSessionPartnerActive,
+  toggleSessionPartnerWindow,
+  isSessionPartnerWindowSender,
+  getSessionPartnerSessionId,
+  getSessionPartnerStorageId,
 } = require('./petWindow.cjs');
 const companionWindow = require('./companionWindow.cjs');
 const { createCompanionApiBridge } = require('./companionApi.cjs');
+const { createPetAgentApiBridge } = require('./petAgentApi.cjs');
 const {
   downloadPet,
   ensureBuiltinPets,
@@ -224,6 +234,39 @@ function applyCloseToTray(enabled) {
   return config;
 }
 
+/**
+ * Persist the preference and tell the OS. The stored value and the login item are two records of
+ * the same intent; the OS call is what actually makes it happen after a reboot, and a dev run has
+ * no business registering a login item at all.
+ */
+function applyLaunchAtLogin(enabled) {
+  const config = saveLaunchAtLogin(appConfigFile(), enabled);
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: config.launch_at_login });
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('tinadec:launch-at-login-changed', { launch_at_login: config.launch_at_login });
+    }
+  }
+  return config;
+}
+
+/**
+ * Persist the voice switch and tell every window. The companion window is the one that speaks, but
+ * Settings is where the switch lives, so both need the new value.
+ */
+function applyCompanionSpeakReplies(enabled) {
+  const config = saveCompanionSpeakReplies(appConfigFile(), enabled);
+  companionSpeakReplies = config.companion_speak_replies;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('tinadec:companion-speak-replies-changed', { speak_replies: companionSpeakReplies });
+    }
+  }
+  return config;
+}
+
 /** The one way back to the app: reuse the hidden window, recreate it if it was really closed. */
 async function showMainWindow() {
   const existing = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
@@ -313,6 +356,9 @@ async function createWindow() {
 
 ipcMain.handle('tinadec:select-workspace-folders', async (event, title) => {
   return require('./workspaceFolders.cjs').selectWorkspaceFolders(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender, dialog }, title);
+});
+ipcMain.handle('tinadec:select-companion-avatar-directory', async (event, title) => {
+  return require('./companionAvatars.cjs').selectCompanionAvatarDirectory(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender, dialog }, title);
 });
 ipcMain.handle('tinadec:import-workspace-files', async (event, input) => {
   return require('./workspaceImport.cjs').importWorkspaceFiles(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender }, input);
@@ -438,6 +484,22 @@ ipcMain.handle('tinadec:close-to-tray-save', (event, enabled) => {
   }
   applyCloseToTray(enabled);
   // Answer with the same shape `tinadec:app-config` returns, so one snapshot type covers both.
+  return appConfigSnapshot();
+});
+
+ipcMain.handle('tinadec:companion-speak-replies-save', (event, enabled) => {
+  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) {
+    throw new Error('Window preferences require the trusted main host page.');
+  }
+  applyCompanionSpeakReplies(enabled);
+  return appConfigSnapshot();
+});
+
+ipcMain.handle('tinadec:launch-at-login-save', (event, enabled) => {
+  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) {
+    throw new Error('Window preferences require the trusted main host page.');
+  }
+  applyLaunchAtLogin(enabled);
   return appConfigSnapshot();
 });
 
@@ -577,6 +639,52 @@ function broadcastAvatarPetsChanged() {
 
 // --- Local pet window IPC ---
 ipcMain.handle('tinadec:pet-create', async (_event, petId) => createPetWindow(petId));
+ipcMain.handle('tinadec:session-partner-toggle', async (event, sessionId, storageId) => {
+  if (!isTrustedHostSender(event) || typeof sessionId !== 'string' || !sessionId) return { active: false };
+  // The scope is decided by the trusted renderer, which owns the session→store registry; the
+  // partner window itself can never observe it. Absent means the user store, which is where a
+  // projectless session lives anyway.
+  const scope = typeof storageId === 'string' && storageId ? storageId : 'user';
+  if (isSessionPartnerActive(sessionId)) return toggleSessionPartnerWindow(sessionId, null);
+  const pets = await listDownloaded();
+  const slug = pets.find((pet) => pet.enabled)?.slug ?? pets[0]?.slug ?? null;
+  return toggleSessionPartnerWindow(sessionId, slug, scope);
+});
+ipcMain.handle('tinadec:session-partner-active', async (event, sessionId) => {
+  if (!isTrustedHostSender(event)) return false;
+  return isSessionPartnerActive(sessionId);
+});
+ipcMain.handle('tinadec:pet-agent-api', async (event, payload) => {
+  if (!isSessionPartnerWindowSender(event.sender)) {
+    throw new Error('Pet agent API IPC is only available to a session partner window.');
+  }
+  if (!trustedHostReady) return { status: 503, body: { code: 'host_not_ready' } };
+  const baseUrl = canonicalLocalGatewayUrl(process.env.TINADEC_RESOLVED_GATEWAY_URL);
+  if (!baseUrl) return { status: 503, body: { code: 'host_not_ready' } };
+  const bridge = createPetAgentApiBridge({
+    baseUrl,
+    token: hostControl.serviceToken,
+    isSessionPartnerWindowSender,
+    // Pins the session reads to this window's own session; a partner window cannot read another
+    // session's chat or run list through the proxy.
+    sessionIdForSender: getSessionPartnerSessionId,
+    // The window was opened with the scope its session lives in; reads without it would resolve
+    // in the user store and find nothing for a project session.
+    storageIdForSender: getSessionPartnerStorageId,
+  });
+  return bridge(event, payload);
+});
+ipcMain.handle('tinadec:session-partner-focus', async (event) => {
+  const sessionId = getSessionPartnerSessionId(event.sender);
+  if (!sessionId) return false;
+  const main = getMainWindow();
+  if (!main || main.isDestroyed()) return false;
+  if (main.isMinimized()) main.restore();
+  main.show();
+  main.focus();
+  main.webContents.send('tinadec:focus-session', sessionId);
+  return true;
+});
 ipcMain.handle('tinadec:pet-close', async (_event, instanceId) => closePetWindow(instanceId));
 ipcMain.handle('tinadec:pet-list', async () => listPetWindows());
 ipcMain.handle('tinadec:pet-window-pet', async (_event, instanceId) => getPetWindowPet(instanceId));
@@ -844,22 +952,31 @@ app.whenReady().then(async () => {
 
   let gatewayUrl;
   let storedCloseToTray;
+  let storedLaunchAtLogin;
   let storedCompanionMode;
   let storedCapsuleStyle;
   let storedCapsuleReveal;
+  let storedSpeakReplies;
   try {
     const config = readDesktopConfig();
     gatewayUrl = config.gateway_url;
     storedCloseToTray = config.close_to_tray;
+    storedLaunchAtLogin = config.launch_at_login;
     storedCompanionMode = config.companion_mode_enabled;
     storedCapsuleStyle = config.companion_capsule_style;
     storedCapsuleReveal = config.companion_capsule_reveal;
+    storedSpeakReplies = config.companion_speak_replies;
   }
   catch (error) {
     dialog.showErrorBox('TinadecOffice', `无法读取 TOML 配置 / Cannot read the TOML configuration\n${appConfigFile()}\n${error.message}`);
     app.quit(); return;
   }
   closeToTrayPreference = storedCloseToTray;
+  companionSpeakReplies = Boolean(storedSpeakReplies);
+  // The stored flag is the intent; the OS login item is what carries it across a reboot. Reconcile
+  // on every start so a flag edited outside the app (or an OS that dropped the item) does not leave
+  // the two disagreeing.
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: Boolean(storedLaunchAtLogin) });
   process.env.TINADEC_RESOLVED_GATEWAY_URL = gatewayUrl;
   const managed = Boolean(canonicalLocalGatewayUrl(gatewayUrl));
   let localServicesInitialized = false;

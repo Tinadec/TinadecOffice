@@ -78,12 +78,20 @@ public sealed class ToolConfigurationResolver(IToolSettingsStore settings, IMcpR
                 var resources = admitted.Skills;
                 if (skillBindings is not null && skillBindings.Any(id => !resources.Resources.Any(x => x.ResourceId == id && x.Valid))) throw new ToolSettingsException("invalid_skill_binding", "A Skill binding is missing, invalid or outside the selected project.");
                 var projectNames = resources.Resources.Where(x => x.Scope == "project").Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
-                var ids = resources.Resources.Where(x => x.Valid && x.Enabled && (skillBindings is not null ? skillBindings.Contains(x.ResourceId) : x.Scope == "project" || !projectNames.Contains(x.Name))).Select(x => x.ResourceId).ToHashSet();
+                var ids = resources.Resources.Where(x => x.Valid && x.Enabled && (skillBindings is not null ? skillBindings.Contains(x.ResourceId) : x.ShadowedBy is null && (x.Scope == "project" || !projectNames.Contains(x.Name)))).Select(x => x.ResourceId).ToHashSet();
                 skills = resources.Skills.Where(x => ids.Contains(x.ResourceId)).ToArray();
             }
             else if (catalog is not null) skills = await catalog.ResolveAsync(projectId, skillBindings, ct);
         }
-        var roots = skills.Select(s => new ToolReadRootDto { ResourceId = s.ResourceId, Path = s.RootPath }).ToArray();
+        // A builtin skill ships inside the tool host, so it has no filesystem root to grant:
+        // ToolSkillResourceService reports RootPath as an empty string for it. Emitting that
+        // verbatim sends read_roots[].path="" and the tool host rejects the entire execution
+        // context ("read_roots paths must be absolute"), which fails every call in the project
+        // rather than just that skill. Only a real, absolute root becomes a read root.
+        var roots = skills
+            .Where(s => !string.IsNullOrWhiteSpace(s.RootPath) && Path.IsPathFullyQualified(s.RootPath))
+            .Select(s => new ToolReadRootDto { ResourceId = s.ResourceId, Path = s.RootPath })
+            .ToArray();
         if (admitted is null && services.GetService<IManagedMcpProgramService>() is { } programs)
         {
             var resolvedServers = new List<ToolMcpServerSnapshotDto>();
@@ -141,13 +149,13 @@ public sealed class ToolConfigurationResolver(IToolSettingsStore settings, IMcpR
         var skills = new ToolSkillCatalogSnapshot([], []);
         if (services.GetService<IToolSkillCatalog>() is { } catalog && services.GetService<IToolSkillResourceService>() is { } resourceService)
         {
-            var resources = (await resourceService.ListAsync(projectId, ct)).Skills;
+            var resources = (await resourceService.ListAsync(projectId, includeBuiltins: true, ct)).Skills;
             var projectNames = resources.Where(x => x.Scope == "project").Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
             var selected = new HashSet<Guid>();
             foreach (var effective in effectiveSettings.Where(x => x.GetProperty("skills").GetProperty("enabled").GetBoolean()))
             {
                 var bindings = Bindings(effective, "skills", "resource_ids");
-                foreach (var resource in resources.Where(x => x.Valid && x.Enabled && (bindings is not null ? bindings.Contains(x.ResourceId) : x.Scope == "project" || !projectNames.Contains(x.Name))))
+                foreach (var resource in resources.Where(x => x.Valid && x.Enabled && (bindings is not null ? bindings.Contains(x.ResourceId) : x.ShadowedBy is null && (x.Scope == "project" || !projectNames.Contains(x.Name)))))
                     selected.Add(resource.ResourceId);
             }
             skills = await catalog.CaptureSelectedAsync(projectId, selected, ct);
@@ -167,9 +175,13 @@ public sealed class ToolConfigurationResolver(IToolSettingsStore settings, IMcpR
         foreach (var server in frozen.McpServers)
         {
             var env = new Dictionary<string,string?>();
+            var headers = new Dictionary<string,string?>();
             if (toolId is null || toolId.StartsWith("mcp_", StringComparison.OrdinalIgnoreCase))
+            {
                 foreach (var secret in server.SecretReferences ?? new Dictionary<string,string>()) env[secret.Key] = await secrets.GetAsync(secret.Value, cancellationToken) ?? throw new ToolSettingsException("mcp_secret_unavailable", "An MCP resource secret is unavailable.", 503);
-            servers.Add(new() { ResourceId = server.ResourceId, Id = server.Id, Name = server.Name, Command = server.Command, Args = server.Args, Env = env, Cwd = server.Cwd, Revision = server.Revision, ConfigurationHash = server.ConfigurationHash, ProgramRoot = server.ProgramRoot, ProgramHash = server.ProgramHash, ProgramStatus = server.ProgramStatus });
+                foreach (var header in server.HeaderSecretReferences ?? new Dictionary<string,string>()) headers[header.Key] = await secrets.GetAsync(header.Value, cancellationToken) ?? throw new ToolSettingsException("mcp_secret_unavailable", "An MCP header secret is unavailable.", 503);
+            }
+            servers.Add(new() { ResourceId = server.ResourceId, Id = server.Id, Name = server.Name, Transport = server.Transport, Url = server.Url, Command = server.Command, Args = server.Args, Env = env, Headers = headers, HeaderSecretReferences = server.HeaderSecretReferences, Cwd = server.Cwd, Revision = server.Revision, ConfigurationHash = server.ConfigurationHash, ProgramRoot = server.ProgramRoot, ProgramHash = server.ProgramHash, ProgramStatus = server.ProgramStatus });
         }
         return new()
         {

@@ -80,3 +80,5 @@ mock pass-through 测试存在，实际配置、外部进程生命周期与调�
 - [x] 完成任务列出的实现范围及条件保存、冻结配置和资源隔离回归。
 - [x] 取得真实 Windows Core/Desktop/Tools 证据；PostgreSQL 及 Linux/macOS 边界单独记录。
 - [x] 同步模块说明、API/客户端及共享实施报告，不将专项完成扩大为整体模块验收。
+
+**2026-11-11 补充**：`mcp_*` 已授予 `meeting`/`solo_master`，`npx`/`uvx` 安装入口与项目级 MCP 清单已接；运行上下文新增 `mcp_servers` 提示。HTTP/SSE 传输已实现（`202611110001_McpTransport` + `HttpClientTransport`），真实第三方 server 仍未验收；证据见[扩展层报告](../../../../../.tinadec_dev/reports/2026-11-11-extension-layer.zh-CN.md)。

@@ -1,9 +1,17 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-10-29
-**Last Updated By:** 伙伴中心四卡改造（共享快照 / 选中联动）与页级预设版本 `presetRevision`。
-**Last Verified Commit:** a33b959d + 工作空间卡片本轮工作树
+**Last Updated:** 2026-11-11
+**Last Updated By:** Skill / MCP 市场三页接入 UIE（`marketSkills` / `marketMcp`）。
+**Last Verified Commit:** fa671c5c + 本轮工作树
 **Branch:** main
+
+### 2026-11-11 Skill / MCP 市场三页共用一套 UIE 卡片
+
+`/market`、`/market/skills`、`/market/mcp` 是三个**独立页面 id**（`market` / `marketSkills` / `marketMcp`），不是同一布局里记住一个筛选值。三页共用 `marketFilter` / `marketCatalog` / `marketDetail` 三张 descriptor，预设由 `buildMarketSurface(ctx, pageId)` 生成；`repair.ts` 的 `isValidPageId`、`defaultEdgeInset` 和「空市场快照回退预设」三处都必须同时认这三个 id，否则冷启动会掉回 Home 布局或空白画布。
+
+**Kind 锁定属于页面，不属于卡片**：`MarketController.setKind('skill' | 'mcp-server' | null)` 同时写 `kindLock` 和 `kindFilter`；`MarketFilterCard` 在锁定时隐藏 kind 列表，只保留搜索、源管理和「去工具设置管理已安装」。不要在卡片里再各存一份筛选状态——三张卡共享同一个 controller。
+
+**安装依赖不再是死状态**：`ToolResourcesPanel` 对 `npx` / `uvx` 服务器显示「安装依赖」，走 `POST /tools/mcp/servers/{id}/install-preview` → `/install`，队列仍是受治理的 `mcp_program_update`；注册服务器和安装程序是两件事，不要把按钮放到保存对话框里冒充同一动作。
 
 ### 2026-10-29 伙伴中心四卡改造 + 页级预设版本
 
@@ -146,7 +154,7 @@ The feature/right column supports **dock splits** — recursive binary split tre
 - **Persistence** (`engine/persistence/`) is part of the Engine module. `layerStore.ts` stays DOM-free; the Electron adapter currently lives in `persistence/types.ts` and reads `window.tinadec.layout`, then writes through main-process `layoutStore.cjs` → `userData/uie-layout.json`. Do not describe that adapter as DOM-free.
 - All layout mutations go through `commandBus.dispatch({ command, source, expectedRevision })`; `ai` source is reserved/rejected.
 - Persistence format is versioned; a breaking snapshot-shape change bumps `snapshot.version` and is handled in `repairLayout`. No legacy-format migration shims are kept (the old PanelType migration was removed 2026-09-27).
-- Vapor: Home UIE's 19 rendering/card SFCs and the three Market cards currently use classic templates; MarketPage is classic too. Do not restore these boundaries without real-renderer verification. Other opted-in primitives stay registered in `apps/desktop/src/vapor/`; keep the registry consistent when adding/renaming components.
+- Vapor: Home UIE's 19 rendering/card SFCs and the three Market cards currently use classic templates; MarketPage is a `UieCanvas` shell with three authored page ids. Do not restore these boundaries without real-renderer verification. Other opted-in primitives stay registered in `apps/desktop/src/vapor/`; keep the registry consistent when adding/renaming components.
 - **Card context injections are reactive contracts.** `UieCardHost` provides `uie:instanceId` (stable value), `uie:cardState` (stable object identity) and `uie:active` (a `ComputedRef`). A Vapor SFC's setup runs once, so providing `props.x` directly freezes it at mount time — which is what made a card mounted behind the active tab report itself hidden forever. Consumers read `uie:active` through `inject<MaybeRefOrGetter<boolean>>` + `toValue`, which also tolerates a host that supplies a plain boolean.
 - Card and tab text comes from the Desktop locale bundles (`uie.*`, titles via `useCardTitle()`); components and engine carry no literal interface text.
 

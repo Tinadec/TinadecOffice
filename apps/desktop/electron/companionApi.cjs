@@ -15,6 +15,15 @@ const { randomUUID } = require('node:crypto');
 
 const GUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
+/**
+ * `GET /api/v1/companion-events` is deliberately NOT on this list.
+ *
+ * The satellite window does not subscribe to the companion journal: it is not a trusted host, this
+ * proxy is a request/response channel with a 15s timeout, and holding a long-lived body open here
+ * would duplicate a stream the trusted main window already owns. The main window subscribes once
+ * and relays each parsed notice to the satellite over a BroadcastChannel, so adding the route here
+ * would buy a second subscription, a second credential path and no new fact.
+ */
 const routes = [
   { method: 'GET', pattern: `^/api/v1/companions$` },
   { method: 'GET', pattern: `^/api/v1/companions/activity$` },
@@ -22,6 +31,9 @@ const routes = [
   { method: 'GET', pattern: `^/api/v1/companions/${GUID}/conversations$` },
   { method: 'POST', pattern: `^/api/v1/companions/${GUID}/conversations$` },
   { method: 'POST', pattern: `^/api/v1/companions/${GUID}/autonomy/tick$` },
+  // A gesture at the companion's face. It records the interaction only; the route cannot write a
+  // message, so the satellite window still cannot put words in the companion's mouth.
+  { method: 'POST', pattern: `^/api/v1/companions/${GUID}/emote$` },
   { method: 'GET', pattern: `^/api/v1/companion-conversations/${GUID}$` },
   { method: 'POST', pattern: `^/api/v1/companion-conversations/${GUID}/members$` },
   { method: 'GET', pattern: `^/api/v1/companion-conversations/${GUID}/messages$` },
@@ -30,10 +42,15 @@ const routes = [
   { method: 'GET', pattern: `^/api/v1/companion-runs/${GUID}$` },
   { method: 'GET', pattern: `^/api/v1/companion-settings$` },
   { method: 'PATCH', pattern: `^/api/v1/companion-settings$` },
+  // Imported Live2D models. The satellite may read/import/remove them; rendering is not part of
+  // this build, and the settings page imports through the trusted main window anyway.
+  { method: 'GET', pattern: `^/api/v1/companion-avatars$` },
+  { method: 'POST', pattern: `^/api/v1/companion-avatars/import$` },
+  { method: 'DELETE', pattern: `^/api/v1/companion-avatars/${GUID}$` },
 ].map(route => ({ method: route.method, pattern: new RegExp(route.pattern, 'i') }));
 
 const allowedQueryKeys = new Set(['limit', 'after_seq', 'include_archived', 'q']);
-const allowedMethods = new Set(['GET', 'POST', 'PATCH']);
+const allowedMethods = new Set(['GET', 'POST', 'PATCH', 'DELETE']);
 const maxQueryLength = 1024;
 
 function isAllowedRoute(method, pathname) {

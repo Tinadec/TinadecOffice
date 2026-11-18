@@ -52,9 +52,14 @@ public sealed class McpResourceWriteDto
     public string Id { get; init; } = string.Empty;
     public string Name { get; init; } = string.Empty;
     public bool Enabled { get; init; } = true;
+    /// <summary><c>stdio</c> (default), <c>http</c> (Streamable HTTP) or <c>sse</c>.</summary>
+    public string Transport { get; init; } = "stdio";
+    public string? Url { get; init; }
     public string Command { get; init; } = string.Empty;
     public IReadOnlyList<string> Args { get; init; } = [];
     public IReadOnlyDictionary<string, string?>? Env { get; init; }
+    /// <summary>Header name → value. A value of <c>********</c> preserves the stored secret.</summary>
+    public IReadOnlyDictionary<string, string?>? Headers { get; init; }
     public string? Cwd { get; init; }
 }
 
@@ -65,9 +70,12 @@ public sealed class McpResourceDto
     public string Id { get; init; } = string.Empty;
     public string Name { get; init; } = string.Empty;
     public bool Enabled { get; init; }
+    public string Transport { get; init; } = "stdio";
+    public string? Url { get; init; }
     public string Command { get; init; } = string.Empty;
     public IReadOnlyList<string> Args { get; init; } = [];
     public IReadOnlyDictionary<string, string?>? Env { get; init; }
+    public IReadOnlyDictionary<string, string?>? Headers { get; init; }
     public string? Cwd { get; init; }
     public long Revision { get; init; }
     public string ConfigurationHash { get; init; } = string.Empty;
@@ -80,11 +88,15 @@ public sealed class ToolMcpServerSnapshotDto
     [JsonPropertyName("resource_id")] public Guid ResourceId { get; init; }
     [JsonPropertyName("id")] public string Id { get; init; } = string.Empty;
     [JsonPropertyName("name")] public string Name { get; init; } = string.Empty;
+    [JsonPropertyName("transport")] public string Transport { get; init; } = "stdio";
+    [JsonPropertyName("url")] public string? Url { get; init; }
     [JsonPropertyName("command")] public string Command { get; init; } = string.Empty;
     [JsonPropertyName("args")] public IReadOnlyList<string> Args { get; init; } = [];
     // Versioned secret references are stored in the run freeze; plaintext is resolved only for the wire call.
     [JsonPropertyName("env")] public IReadOnlyDictionary<string, string?>? Env { get; init; }
+    [JsonPropertyName("headers")] public IReadOnlyDictionary<string, string?>? Headers { get; init; }
     [JsonPropertyName("secret_references")] public IReadOnlyDictionary<string, string>? SecretReferences { get; init; }
+    [JsonPropertyName("header_secret_references")] public IReadOnlyDictionary<string, string>? HeaderSecretReferences { get; init; }
     [JsonPropertyName("cwd")] public string? Cwd { get; init; }
     [JsonPropertyName("revision")] public long Revision { get; init; }
     [JsonPropertyName("configuration_hash")] public string ConfigurationHash { get; init; } = string.Empty;
@@ -108,6 +120,12 @@ public sealed class ToolSkillSnapshotDto
     public string SkillPath { get; init; } = string.Empty;
     public long Revision { get; init; }
     public string ContentHash { get; init; } = string.Empty;
+    /// <summary>builtin / user / project / compat / scope — the root the body was resolved from.</summary>
+    public string SourceKind { get; init; } = "scope";
+    /// <summary>Where relative resources resolve from. Empty for an on-disk package; a
+    /// <c>tinadec://builtin/&lt;name&gt;</c> URI for an embedded package.</summary>
+    public string ResourceBase { get; init; } = string.Empty;
+    public string? WhenToUse { get; init; }
 }
 
 public sealed class ToolResourceDiagnosticDto

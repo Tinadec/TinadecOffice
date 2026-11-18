@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <RootNamespace>TinadecCore.Companion</RootNamespace>
     <Description>Companion domain: independent companion identities, memories, skill/connection bindings and settings.</Description>
@@ -14,7 +14,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
   <ItemGroup>

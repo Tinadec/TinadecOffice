@@ -9,12 +9,14 @@ import CompanionStage from '@/components/pets/CompanionStage.vue'
 import { PET_STATES, type PetState } from '@/pets/petRuntime'
 import {
   companionBridge,
+  subscribeCompanionEventRelay,
   type CompanionConversation,
   type CompanionMessage,
   type CompanionRun,
   type CompanionSettings,
   type CompanionSummary,
 } from '@/lib/companionApi'
+import type { CompanionEventNotice } from '@/events/companionEventTypes'
 
 // The main process owns the window's shape; this page only renders what it reports and sends
 // gestures. Never flip `expanded` locally — a stale local copy would disagree with the real
@@ -38,8 +40,31 @@ const capsuleStyle = computed<'peek' | 'grip'>(() => state.value?.capsuleStyle ?
 const SWIPE_EXPAND_PX = 26
 const AXIS_LOCK_PX = 4
 const CLICK_SUPPRESS_MS = 350
-const POLL_INTERVAL_MS = 800
-const POLL_TIMEOUT_MS = 90_000
+/**
+ * The live journal arrives through the relay channel, so a fixed 800ms poll is no longer how this
+ * window learns about a reply. What remains is a low-frequency guard read: the relay pauses
+ * whenever the main window is hidden (it has nothing to draw, so it closes its stream), and a
+ * silent stream must not leave this window showing a stale "thinking" row forever.
+ */
+const GUARD_INTERVAL_MS = 20_000
+/** Where events cannot reach this window (no BroadcastChannel), polling is the only mechanism. */
+const EVENTLESS_POLL_MS = 800
+
+/**
+ * How long polling may continue before it gives up on a run that never settles.
+ *
+ * Two very different cadences share this page, so one deadline cannot serve both. The 800ms
+ * eventless poll needs a short leash: it is the only thing that ever stops there. The relay
+ * guard runs every 20s and already stops itself the moment every tracked run is terminal, so
+ * the eventless leash would cut a legitimate long run off a minute in — a slow model call, or
+ * CompanionRuntime's retry backoff, easily outlives 90s — and the window would then sit on a
+ * stale "thinking" row with nothing left to wake it. The guard therefore gets a bound that only
+ * catches a genuinely stuck run.
+ */
+const EVENTLESS_POLL_TIMEOUT_MS = 90_000
+const GUARD_POLL_TIMEOUT_MS = 30 * 60_000
+/** A run transition writes more than one row; one reread covers the burst. */
+const NOTICE_DEBOUNCE_MS = 120
 const SELECTED_COMPANION_KEY = 'tinadec.companion.selected'
 
 interface DragStart {
@@ -221,6 +246,19 @@ let loadToken = 0
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let pollStartedAt = 0
 let polling = false
+/** Relay notices arrive in bursts; one catch-up per burst is enough. */
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
+let unsubscribeRelay: (() => void) | null = null
+/**
+ * Whether this window hears the journal. The satellite is not a trusted host, so it never holds
+ * the stream itself: the main window subscribes and relays each notice over a BroadcastChannel.
+ * Both halves are required — no channel means nothing can reach this renderer, and no EventSource
+ * anywhere in the app means no renderer can subscribe in the first place (the happy-dom test
+ * environment). Either absence degrades this window to the timer poll.
+ */
+function relayAvailable(): boolean {
+  return typeof BroadcastChannel !== 'undefined' && typeof EventSource !== 'undefined'
+}
 
 const activeCompanion = computed(() => companions.value.find((item) => item.id === selectedCompanionId.value) ?? null)
 const draft = computed({
@@ -264,9 +302,11 @@ const observedStageState = computed<PetState>(() => {
 })
 
 /**
- * A local interaction, not a message: clicking the companion's face makes it wave for one cycle.
- * Nothing is sent anywhere — the companion domain has no emote endpoint, and inventing a fake one
- * would be worse than a visual acknowledgement that claims nothing.
+ * Clicking the companion's face makes it wave for one cycle and records the gesture on the server.
+ *
+ * The record is the point: it is durable, it reaches the activity feed, and the companion sees it
+ * in its next turn. What it must never do is become a message — a fabricated line would put words
+ * in the companion's mouth, so the emote endpoint writes an activity row and nothing else.
  */
 const impulse = ref<PetState | null>(null)
 const greeting = ref(false)
@@ -294,19 +334,30 @@ function playImpulse(next: PetState, note = ''): void {
 
 function greet(): void {
   playImpulse('waving')
+  void recordEmote('wave')
 }
 
 /**
- * Double-clicking the panel's blank space pats the companion.
+ * Best effort, deliberately silent: a gesture that failed to record is still a gesture the user
+ * made, and an error toast over a wave would be louder than the thing it reports.
+ */
+function recordEmote(emote: 'wave' | 'pat'): void {
+  const companionId = selectedCompanionId.value
+  if (!companionId) return
+  void companionBridge.recordEmote(companionId, emote).catch(() => {})
+}
+
+/**
+ * Double-clicking the panel's blank space pats the companion; the gesture is recorded like a wave.
  *
- * Local for the same reason greeting is: the companion domain has no emote endpoint, and a
- * fabricated line in the transcript would be a lie about who said it. A double-click that lands on
- * text, a control or the invite sheet is selection, not affection, so it is ignored.
+ * A double-click that lands on text, a control or the invite sheet is selection, not affection, so
+ * it is ignored.
  */
 function pat(event: MouseEvent): void {
   const target = event.target as HTMLElement | null
   if (target?.closest('.companion-msg, button, a, input, textarea, select, .companion-invite')) return
   playImpulse('jumping', t('companion.pat'))
+  void recordEmote('pat')
 }
 
 /**
@@ -447,14 +498,48 @@ function conversationLabel(conversation: CompanionConversation): string {
   return t('companion.chat.privateLabel')
 }
 
-function mergeMessages(incoming: CompanionMessage[]): void {
+/**
+ * Merge a batch into the transcript.
+ *
+ * `speak` is false for the initial load of a conversation: every historical message is "new" to
+ * an empty list, so reading aloud there would replay the whole chat the moment the window opens.
+ * Only messages that arrive after that first load are spoken.
+ */
+function mergeMessages(incoming: CompanionMessage[], speak = true): void {
   if (incoming.length === 0) return
   const ordered = new Map(messages.value.map((message) => [message.id, message]))
+  const fresh: CompanionMessage[] = []
   for (const message of incoming) {
+    if (!ordered.has(message.id)) fresh.push(message)
     ordered.set(message.id, message)
     lastSeq = Math.max(lastSeq, message.seq)
   }
   messages.value = [...ordered.values()].sort((left, right) => left.seq - right.seq)
+  if (speak) speakFresh(fresh)
+}
+
+/**
+ * Optional voice: read a new companion reply aloud with the platform voice.
+ *
+ * Only messages that arrived after the first load are spoken — reading the whole transcript back
+ * on open would be a wall of speech the user did not ask for. The switch lives in Settings and
+ * arrives through the main process; nothing here guesses at it.
+ */
+const speakReplies = ref(false)
+let disposeSpeakSetting: (() => void) | undefined
+
+function speakFresh(fresh: CompanionMessage[]): void {
+  if (!speakReplies.value) return
+  if (typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') return
+  const latest = fresh.filter((message) => message.author_kind === 'companion').at(-1)
+  const body = latest?.body?.trim()
+  if (!body) return
+  try {
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(body))
+  } catch {
+    // A host without a speech engine is not an error worth surfacing: the reply is still on screen.
+  }
 }
 
 function scrollToBottom(): void {
@@ -472,7 +557,8 @@ async function loadMessagesFor(conversationId: string, token: number): Promise<v
     if (token !== loadToken) return
     messages.value = []
     lastSeq = 0
-    mergeMessages(list ?? [])
+    // The whole transcript is "new" to an empty list; reading it aloud would replay the chat.
+    mergeMessages(list ?? [], false)
     scrollToBottom()
   } catch (error) {
     if (token !== loadToken) return
@@ -663,12 +749,40 @@ async function catchUp(conversationId: string): Promise<void> {
   }
 }
 
+/**
+ * A journal row the main window relayed to this one. The row names the conversation it belongs
+ * to, so a notice about another chat costs nothing here.
+ */
+function onCompanionNotice(notice: CompanionEventNotice): void {
+  // Settings rows name no conversation and change nothing in this transcript.
+  if (notice.type === 'companion.settings') return
+  if (notice.conversationId && notice.conversationId !== activeConversation.value?.id) return
+  if (isHidden()) return
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => {
+    noticeTimer = undefined
+    const conversation = activeConversation.value
+    if (!conversation) return
+    // The reply itself is a message row; a run transition is only a status change. Both are
+    // answered by the same catch-up because it rereads messages *and* the tracked runs. The guard
+    // timer is released only once *every* tracked run has settled — stopping it when one of two
+    // runs finishes would leave the other's status to the next unrelated event.
+    void catchUp(conversation.id).then(() => {
+      if (trackedRunIds.value.length > 0 && trackedRunIds.value.every((id) => isTerminal(runs.value[id]))) {
+        stopPolling()
+      }
+    })
+  }, NOTICE_DEBOUNCE_MS)
+}
+
 function schedulePoll(): void {
   if (pollTimer) clearTimeout(pollTimer)
+  // Events carry the turn; the timer only has to be fast enough where they cannot reach us.
+  const interval = relayAvailable() ? GUARD_INTERVAL_MS : EVENTLESS_POLL_MS
   pollTimer = setTimeout(() => {
     pollTimer = undefined
     void pollTick()
-  }, POLL_INTERVAL_MS)
+  }, interval)
 }
 
 async function pollTick(): Promise<void> {
@@ -677,7 +791,7 @@ async function pollTick(): Promise<void> {
     clearTimeout(pollTimer)
     pollTimer = undefined
   }
-  if (Date.now() - pollStartedAt > POLL_TIMEOUT_MS) {
+  if (Date.now() - pollStartedAt > (relayAvailable() ? GUARD_POLL_TIMEOUT_MS : EVENTLESS_POLL_TIMEOUT_MS)) {
     stopPolling()
     return
   }
@@ -713,6 +827,11 @@ function stopPolling(): void {
 }
 
 function onVisibilityChange(): void {
+  // Notices that arrived while hidden were dropped on purpose; one catch-up covers them all.
+  if (!isHidden()) {
+    const conversation = activeConversation.value
+    if (conversation) void catchUp(conversation.id)
+  }
   if (!polling) return
   if (isHidden()) {
     if (pollTimer) {
@@ -778,6 +897,16 @@ onMounted(async () => {
   // Subscribe before reading: a state change that lands during the read must win over the
   // snapshot, so the initial value is only applied while nothing has arrived yet.
   disposeState = window.tinadec.companion.onStateChanged(applyState)
+  // The main window holds the one companion stream and relays each row here; this window never
+  // reaches the Gateway's SSE itself (it is not a trusted host). See companionApi's relay note.
+  unsubscribeRelay = subscribeCompanionEventRelay(onCompanionNotice)
+  // The voice switch lives in Settings; read it once and follow later changes.
+  void window.tinadec.getAppConfig?.()
+    .then((config) => { speakReplies.value = config.companion_speak_replies === true })
+    .catch(() => {})
+  disposeSpeakSetting = window.tinadec.onCompanionSpeakRepliesChanged?.(({ speak_replies }) => {
+    speakReplies.value = speak_replies === true
+  })
   try {
     const initial = await window.tinadec.companion.getState()
     if (!state.value) applyState(initial)
@@ -792,6 +921,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportResize)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   clearTimeout(impulseTimer)
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = undefined
+  unsubscribeRelay?.()
+  unsubscribeRelay = null
+  disposeSpeakSetting?.()
+  disposeSpeakSetting = undefined
+  if (typeof window !== 'undefined' && typeof window.speechSynthesis !== 'undefined') {
+    try { window.speechSynthesis.cancel() } catch { /* nothing was speaking */ }
+  }
   stopPolling()
   disposeState?.()
   disposeState = undefined

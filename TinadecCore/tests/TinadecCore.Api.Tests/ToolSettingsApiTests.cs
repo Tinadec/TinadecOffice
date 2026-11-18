@@ -57,6 +57,34 @@ public sealed class ToolSettingsApiTests : IAsyncLifetime
         Assert.Equal(TimeSpan.FromSeconds(50), budget);
     }
 
+    /// <summary>
+    /// git.allow_hooks is the deliberate trade for the hook escape chain: off by default an
+    /// agent-initiated git command runs no repository hook; on, the user's pre-commit,
+    /// commit-msg and pre-push hooks run again — outside the command sandbox, with the host's
+    /// ambient environment. The setting must exist, default to false, stay boolean and survive
+    /// a merge, or the tool-side suppression loses its only opt-out.
+    /// </summary>
+    [Fact]
+    public void GitAllowHooks_DefaultsOffIsBooleanAndSurvivesMerge()
+    {
+        Assert.False(ToolSettingsSchema.Defaults.GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+
+        var property = ToolSettingsSchema.Schema().GetProperty("properties").GetProperty("git")
+            .GetProperty("properties").GetProperty("allow_hooks");
+        Assert.Equal("boolean", property.GetProperty("type").GetString());
+        Assert.False(property.GetProperty("default").GetBoolean());
+        Assert.Contains("outside the command sandbox", property.GetProperty("description").GetString()!, StringComparison.Ordinal);
+
+        Assert.False(ToolSettingsSchema.Validate(JsonSerializer.SerializeToElement(new { git = new { allow_hooks = false } }))
+            .GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+        Assert.True(ToolSettingsSchema.Validate(JsonSerializer.SerializeToElement(new { git = new { allow_hooks = true } }))
+            .GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+        Assert.Throws<ToolSettingsException>(() => ToolSettingsSchema.Validate(JsonSerializer.SerializeToElement(new { git = new { allow_hooks = "yes" } })));
+
+        var merged = ToolSettingsSchema.Merge(ToolSettingsSchema.Defaults, JsonSerializer.SerializeToElement(new { git = new { allow_hooks = true } }));
+        Assert.True(merged.GetProperty("git").GetProperty("allow_hooks").GetBoolean());
+    }
+
     [Fact]
     public void DeleteFileRespectsWriteCategorySettingsAndCannotLoseItsMutationClassification()
     {
@@ -121,6 +149,38 @@ public sealed class ToolSettingsApiTests : IAsyncLifetime
         var dbFactory = _factory.Services.GetRequiredService<IDbContextFactory<ToolsSettingsDbContext>>();
         await using var db = await dbFactory.CreateDbContextAsync();
         Assert.DoesNotContain("credential-version", (await db.McpResources.SingleAsync()).SecretReferencesJson);
+    }
+
+    [Fact]
+    public async Task McpHttpTransport_RequiresUrlAndKeepsHeaderSecretsOutOfSnapshots()
+    {
+        var client = _factory.CreateClient();
+        Assert.Equal(HttpStatusCode.BadRequest, (await CreateMcpAsync(client, new { id = "bad-http", transport = "http", args = Array.Empty<string>() })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await CreateMcpAsync(client, new { id = "bad-scheme", transport = "http", url = "ftp://example.test/mcp", args = Array.Empty<string>() })).StatusCode);
+
+        var created = await CreateMcpAsync(client, new
+        {
+            id = "remote-http", name = "Remote HTTP", transport = "http", url = "https://example.test/mcp",
+            args = Array.Empty<string>(), headers = new Dictionary<string, string> { ["Authorization"] = "Bearer credential-one" },
+        });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var dto = await created.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("http", dto.GetProperty("transport").GetString());
+        Assert.Equal("https://example.test/mcp", dto.GetProperty("url").GetString());
+        Assert.Equal("********", dto.GetProperty("headers").GetProperty("Authorization").GetString());
+
+        var resolver = _factory.Services.GetRequiredService<IToolConfigurationResolver>();
+        var snapshot = await resolver.ResolveAsync(null);
+        var server = Assert.Single(snapshot.McpServers);
+        Assert.Equal("http", server.Transport);
+        Assert.Null(server.Headers);
+        Assert.NotNull(server.HeaderSecretReferences);
+        var materialized = await resolver.MaterializeForCallAsync(snapshot, ["mcp_invoke"]);
+        Assert.Equal("Bearer credential-one", Assert.Single(materialized.McpServers).Headers!["Authorization"]);
+
+        var dbFactory = _factory.Services.GetRequiredService<IDbContextFactory<ToolsSettingsDbContext>>();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        Assert.DoesNotContain("credential-one", (await db.McpResources.SingleAsync()).HeaderReferencesJson);
     }
 
     [Fact]

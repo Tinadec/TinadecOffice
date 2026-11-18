@@ -23,8 +23,16 @@ public static class StorageScopeHttpExtensions
         // Every mounted API request is a host operation. Directory restrictions alone
         // cannot stop an Agent shell from calling loopback HTTP to read protected data,
         // approve its own tool action or mutate another registered project's facts.
-        if (context.Request.Path.StartsWithSegments("/api/v1")
-            && !(HttpMethods.IsGet(context.Request.Method) && context.Request.Path is var publicPath
+        //
+        // /auth/* is inside the same gate. Its routes return a login state and resolve an
+        // identity, and any local web page could otherwise read them cross-origin. Only the
+        // browser's callback is exempt: it is the one request the system browser makes, so it
+        // cannot carry a private header, and it validates a single-use state of its own.
+        var requestPath = context.Request.Path;
+        var isAuth = requestPath.StartsWithSegments("/auth");
+        var authExempt = isAuth && HttpMethods.IsGet(context.Request.Method) && requestPath == "/auth/callback";
+        if ((requestPath.StartsWithSegments("/api/v1") || (isAuth && !authExempt))
+            && !(HttpMethods.IsGet(context.Request.Method) && requestPath is var publicPath
                 && (publicPath == "/api/v1/health" || publicPath == "/api/v1/host-challenge")))
         {
             var expected = Environment.GetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN");
@@ -43,8 +51,16 @@ public static class StorageScopeHttpExtensions
         // Companions are one user-level application domain too: their identity, memories
         // and conversations must never be split into a per-project store by a storage
         // header, so every /api/v1/companions and /api/v1/companion-* route stays on "user".
-        var companionPath = context.Request.Path.StartsWithSegments("/api/v1/companions")
-            || context.Request.Path.StartsWithSegments("/api/v1/companion-");
+        //
+        // The companion family needs a value prefix, not StartsWithSegments: segment matching
+        // compares whole segments, so "/api/v1/companion-" never matches "companion-settings",
+        // "companion-conversations", "companion-runs", "companion-connections" or
+        // "companion-events". With that check the pin silently did nothing for every route in
+        // the family except /companions itself, and a client that sent a project scope split
+        // the companion domain across project stores.
+        var path = context.Request.Path.Value ?? string.Empty;
+        var companionPath = path.StartsWith("/api/v1/companions", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/v1/companion-", StringComparison.OrdinalIgnoreCase);
         var id = context.Request.Path.StartsWithSegments("/api/v1/agent-packs") || companionPath
             ? "user"
             : ids.Count == 0 ? "user" : ids.ToString();

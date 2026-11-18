@@ -215,6 +215,10 @@ public static class DbContextSchemaBootstrapper
         {
             await db.Database.ExecuteSqlRawAsync("ALTER TABLE capability_leases DROP COLUMN IF EXISTS nonce", cancellationToken).ConfigureAwait(false);
         }
+        // The generic NOT NULL sweep that runs next reads through the same catalog, so it has to
+        // see the table as it is now; otherwise it drops "nonce" a second time and the whole
+        // bootstrap fails with "no such column: \"nonce\"".
+        catalog.Forget();
     }
 
     /// <summary>
@@ -249,7 +253,7 @@ public static class DbContextSchemaBootstrapper
                 if (mapped.Contains(column)) continue;
                 var notNull = await IsNotNullColumnAsync(db, catalog, tableName, column, isSqlite, cancellationToken).ConfigureAwait(false);
                 if (!notNull) continue; // nullable legacy columns are inert; keep them
-                await DropLegacyColumnAsync(db, tableName, column, isSqlite, cancellationToken).ConfigureAwait(false);
+                await DropLegacyColumnAsync(db, catalog, tableName, column, isSqlite, cancellationToken).ConfigureAwait(false);
                 actualColumns.Remove(column);
             }
         }
@@ -268,7 +272,7 @@ public static class DbContextSchemaBootstrapper
         return pgNullable.Count > 0 && string.Equals(pgNullable[0], "NO", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task DropLegacyColumnAsync(DbContext db, string tableName, string columnName, bool isSqlite, CancellationToken cancellationToken)
+    private static async Task DropLegacyColumnAsync(DbContext db, SqliteColumnCatalog catalog, string tableName, string columnName, bool isSqlite, CancellationToken cancellationToken)
     {
         if (isSqlite)
         {
@@ -292,6 +296,7 @@ public static class DbContextSchemaBootstrapper
         {
             await db.Database.ExecuteSqlRawAsync($"ALTER TABLE {tableName} DROP COLUMN IF EXISTS {columnName}", cancellationToken).ConfigureAwait(false);
         }
+        catalog.Forget();
     }
 
     /// <summary>Returns the column names of an existing table, or <c>null</c> when the table does not exist.</summary>
@@ -376,6 +381,19 @@ public static class DbContextSchemaBootstrapper
             if (!isSqlite) throw new InvalidOperationException("The SQLite column catalog is only valid for a SQLite database.");
             await EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
             return _tables.TryGetValue(tableName, out var columns) && columns.TryGetValue(columnName, out var notNull) ? notNull : null;
+        }
+
+        /// <summary>
+        /// Invalidates the memoized catalog after a statement changed a table's shape, so the next
+        /// read reloads it from the database. Reconciliation is otherwise read-only, but it does
+        /// drop legacy columns, and a later pass that still saw a dropped column issued a second
+        /// DROP COLUMN for it and failed the whole bootstrap with SQLite's "no such column".
+        /// </summary>
+        public void Forget()
+        {
+            if (!isSqlite) return;
+            _tables.Clear();
+            _loaded = null;
         }
     }
 }

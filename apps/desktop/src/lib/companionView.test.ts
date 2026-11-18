@@ -79,6 +79,10 @@ describe('companion feed projection', () => {
     expect(counts.get('c-a')).toBe(2)
     expect(counts.has('c-b')).toBe(false)
     expect(needsAttention(activity({ created_at: '2026-10-01T00:00:00Z', kind: 'message_sent' }))).toBe(false)
+    // A proposed autonomous action is waiting on the user: leaving it unanswered freezes the
+    // partner, so it belongs in the attention filter rather than reading as idle chatter.
+    expect(needsAttention(activity({ created_at: '2026-10-01T00:00:00Z', kind: 'autonomy_proposed' }))).toBe(true)
+    expect(needsAttention(activity({ created_at: '2026-10-01T00:00:00Z', kind: 'autonomy_skipped' }))).toBe(false)
     expect(isAutonomous(activity({ created_at: '2026-10-01T00:00:00Z', kind: 'autonomy_group_created' }))).toBe(true)
   })
 })

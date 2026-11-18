@@ -161,6 +161,8 @@ public sealed class ChatParticipant
     public string? JobTitle { get; set; }
     public string? Description { get; set; }
     public Guid? AgentDefinitionId { get; set; }
+    /// <summary>Set for kind=companion: the Companion-domain identity this participant embodies. Null for human/agent.</summary>
+    public Guid? CompanionId { get; set; }
     public bool ReceiveHumanMessages { get; set; }
     public bool CanInterpretIntent { get; set; }
     public bool Discoverable { get; set; } = true;

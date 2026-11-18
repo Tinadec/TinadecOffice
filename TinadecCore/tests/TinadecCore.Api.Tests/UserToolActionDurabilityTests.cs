@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -93,6 +94,11 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
             .DecideAsync(waiting!.ActionApprovalId!.Value, "approved", "approve");
         await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
         {
+            // Same invariant on the user-tool approval row: the nonce reference names the row it
+            // belongs to, so a retried mint overwrites one file instead of orphaning each attempt.
+            var row = await db.ApprovalRequests.Where(x => x.Id == waiting.ActionApprovalId)
+                .Select(x => new { x.Id, x.NonceSecretReference }).SingleAsync();
+            Assert.EndsWith($"_{row.Id:N}", row.NonceSecretReference);
             await db.ApprovalRequests.Where(x => x.Id == waiting.ActionApprovalId)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Risk, "critical"));
         }
@@ -209,6 +215,10 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
         await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<GovernanceDbContext>>().CreateDbContextAsync())
         {
             var secretReference = await db.CapabilityLeases.Where(x => x.Id == lease.Id).Select(x => x.NonceSecretReference).SingleAsync();
+            // The reference must name this lease, not a fresh Guid: the secret store overwrites on
+            // a repeated reference, so a stable name is what keeps a retried mint from leaving one
+            // orphan file per attempt. Reverting to Guid.NewGuid() here turns this red.
+            Assert.EndsWith($"_{lease.Id:N}", secretReference);
             await _factory.Services.GetRequiredService<INonceMaterialStore>().DeleteAsync(secretReference);
         }
 
@@ -401,6 +411,61 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
         var action = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("awaiting_user", action.GetProperty("status").GetString());
         return (action.GetProperty("id").GetGuid(), action.GetProperty("permission_request_id").GetGuid());
+    }
+
+    [Fact]
+    public async Task ALeaseConsumptionRetryConsumesTheLeaseExactlyOnce()
+    {
+        var client = _factory!.CreateClient();
+        var (_, permissionId) = await CreateActionAsync(client, "lease-consumption-retry");
+        var authorization = _factory.Services.GetRequiredService<IAuthorizationService>();
+        var resolution = await authorization.DecidePermissionAsync(new PermissionDecisionCommand(permissionId, true, null, null, "approve"));
+        var lease = Assert.IsType<CapabilityLeaseSnapshot>(resolution.Lease);
+        var inner = _factory.Services.GetRequiredService<IDbContextFactory<GovernanceDbContext>>();
+        string connectionString;
+        string nonceReference;
+        await using (var probe = await inner.CreateDbContextAsync())
+        {
+            connectionString = probe.Database.GetConnectionString()!;
+            // The reference is a stored column, not part of the public snapshot.
+            nonceReference = await probe.CapabilityLeases.Where(x => x.Id == lease.Id).Select(x => x.NonceSecretReference).SingleAsync();
+        }
+        var nonce = await _factory.Services.GetRequiredService<INonceMaterialStore>().GetAsync(nonceReference);
+        Assert.False(string.IsNullOrWhiteSpace(nonce));
+
+        // Attempt one fails while its context is created; attempt two does the work. A retry that
+        // re-read a stale snapshot would consume the lease twice, which the counter assertions catch.
+        var faults = new FaultOnGovernanceCreationFactory(connectionString, failOnCreation: 1);
+        var governance = ActivatorUtilities.CreateInstance<GovernanceService>(_factory.Services, faults);
+        var consumed = await governance.TryConsumeLeaseAsync(new LeaseConsumptionCommand(
+            lease.Id, nonce, lease.SubjectPrincipalId, lease.SubjectAgentInstanceId,
+            lease.Claim, lease.RunId, lease.TaskId, "lease-consumption-retry"));
+
+        Assert.True(consumed.Consumed);
+        Assert.Equal(2, faults.Creations);
+        await using var db = await inner.CreateDbContextAsync();
+        var receipts = await db.LeaseConsumptions.CountAsync(x => x.CapabilityLeaseId == lease.Id);
+        var consumptionDecisions = await db.AuthorizationDecisions
+            .CountAsync(x => x.CapabilityLeaseId == lease.Id && x.ReasonCode == "lease_consumed");
+        var useCount = await db.CapabilityLeases.Where(x => x.Id == lease.Id).Select(x => x.UseCount).SingleAsync();
+        // One receipt, one consumption decision (the approval decision carries the same lease id and
+        // is not part of the retried unit), and one increment of the counter the CAS advances.
+        Assert.Equal(1, receipts);
+        Assert.Equal(1, consumptionDecisions);
+        Assert.Equal(1, useCount);
+    }
+
+    private sealed class FaultOnGovernanceCreationFactory(string connectionString, int failOnCreation) : IDbContextFactory<GovernanceDbContext>
+    {
+        public int Creations { get; private set; }
+
+        public GovernanceDbContext CreateDbContext()
+        {
+            if (++Creations == failOnCreation) throw new SqliteException("Injected write contention", 5);
+            return new GovernanceDbContext(new DbContextOptionsBuilder<GovernanceDbContext>().UseSqlite(connectionString).Options);
+        }
+
+        public Task<GovernanceDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
     }
 
     private sealed class Factory : IsolatedApiFactory

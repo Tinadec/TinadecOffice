@@ -63,6 +63,11 @@ export function installPreviewShimIfNeeded(): void {
       return Promise.resolve({ close_to_tray: enabled })
     },
     onCloseToTrayChanged: () => noop,
+    // A browser tab has no login item either; the preference is only remembered locally.
+    saveLaunchAtLogin: (enabled: boolean) => Promise.resolve({ launch_at_login: enabled }),
+    onLaunchAtLoginChanged: () => noop,
+    saveCompanionSpeakReplies: (enabled: boolean) => Promise.resolve({ companion_speak_replies: enabled }),
+    onCompanionSpeakRepliesChanged: () => noop,
     saveCompanionMode: (enabled: boolean) => {
       localStorage.setItem(previewCompanionModeKey, String(enabled))
       return Promise.resolve({ companion_mode_enabled: enabled })
@@ -85,6 +90,7 @@ export function installPreviewShimIfNeeded(): void {
     resetGatewayUrl: () => rejectNotAvailable('preview'),
     restartApp: () => { window.location.reload(); return Promise.resolve() },
     selectWorkspaceFolders: () => rejectNotAvailable(hostStatus.error.message),
+    selectCompanionAvatarDirectory: () => rejectNotAvailable(hostStatus.error.message),
     // A browser tab cannot read a dropped file's real path and has no main process to copy with.
     // The shim mirrors the preload's declared surface so a preview never has to rely on every
     // consumer remembering optional chaining: an unresolved path is the empty string (the drop

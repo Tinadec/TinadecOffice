@@ -18,7 +18,7 @@ builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 if (userScope is not null) builder.Logging.AddProvider(new ScopeDiagnosticLoggerProvider(userScope));
-if (builder.Configuration.GetValue<bool>("Logging:EventLog:Enabled"))
+if (OperatingSystem.IsWindows() && builder.Configuration.GetValue<bool>("Logging:EventLog:Enabled"))
 {
     builder.Logging.AddEventLog();
 }

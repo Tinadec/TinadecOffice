@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
@@ -156,6 +157,15 @@ internal sealed class ContextProvider : IContextProvider
         if (skillEvidence is not null)
         {
             candidates.Add(skillEvidence);
+        }
+
+        // MCP configuration names the servers; the tool names behind them are deliberately not
+        // enumerated at admission (that would handshake every server before the first token). The
+        // model learns them with mcp_search, which is the same generic surface it must call anyway.
+        var mcpEvidence = BuildMcpServerEvidence(request);
+        if (mcpEvidence is not null)
+        {
+            candidates.Add(mcpEvidence);
         }
 
         // A compaction summary heads the raw history: it is the session's compressed view of
@@ -500,6 +510,45 @@ internal sealed class ContextProvider : IContextProvider
     private readonly object _skillLock = new();
 
     /// <summary>
+    /// Names the MCP servers this run froze, without handshaking any of them. The model does not
+    /// get one tool per server; it gets the generic mcp_list/mcp_search/mcp_invoke surface, and this
+    /// block is what tells it those tools have something to search.
+    /// </summary>
+    private ContextEvidence? BuildMcpServerEvidence(ContextBuildRequest request)
+    {
+        if (request.ToolExecutionContext is not { } frozen || frozen.McpServers.Count == 0) return null;
+        if (frozen.Settings.ValueKind == System.Text.Json.JsonValueKind.Object
+            && frozen.Settings.TryGetProperty("mcp", out var mcp)
+            && mcp.ValueKind == System.Text.Json.JsonValueKind.Object
+            && mcp.TryGetProperty("enabled", out var enabled)
+            && enabled.ValueKind == System.Text.Json.JsonValueKind.False) return null;
+        var allowed = request.AllowedToolIds ?? frozen.AllowedToolIds;
+        var toolSet = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
+        bool Available(string id) => (toolSet.Contains("*") || toolSet.Contains(id)) && ToolEnabled(frozen.Settings, id);
+        if (!Available("mcp_search") && !Available("mcp_list")) return null;
+
+        var servers = frozen.McpServers.Take(40).ToArray();
+        var text = new StringBuilder()
+            .AppendLine("MCP servers configured for this run. The server list is configuration, not a tool list: call mcp_search to find a tool by name or description, then mcp_invoke to call it (approval required). mcp_list shows what the host can currently reach.");
+        foreach (var server in servers)
+            text.AppendLine($"- {server.Name} ({server.Id})");
+        if (frozen.McpServers.Count > servers.Length)
+            text.AppendLine($"- and {frozen.McpServers.Count - servers.Length} more servers are configured but not listed here.");
+        var content = text.ToString().TrimEnd();
+        return new ContextEvidence
+        {
+            Source = "mcp_servers",
+            Content = content,
+            EstimatedTokens = EstimateTokens(content),
+            Metadata = new Dictionary<string, string>
+            {
+                ["server_count"] = servers.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["server_omitted"] = Math.Max(0, frozen.McpServers.Count - servers.Length).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            },
+        };
+    }
+
+    /// <summary>
     /// The workspace's own skill index, from the frozen root only, for the same reason instructions
     /// are read from there and nowhere else. Only the name and description of each skill are shown;
     /// the body is the model's to open, which is what keeps a repository with twenty skills from
@@ -526,7 +575,9 @@ internal sealed class ContextProvider : IContextProvider
             if (budget <= 0 || maximum <= 0) return null;
             var selected = frozen.SkillResources.Take(maximum).ToArray();
             var text = WorkspaceSkillPolicy.Frame(selected.Select(x => new WorkspaceSkillPolicy.Skill(x.Name, x.Description,
-                request.Workspace is { } currentWorkspace && WorkspaceSkillDiscovery.IsContained(currentWorkspace.RootPath, x.SkillPath)
+                x.SourceKind == "builtin" || x.SkillPath.StartsWith("tinadec://", StringComparison.OrdinalIgnoreCase)
+                    ? x.SkillPath
+                    : request.Workspace is { } currentWorkspace && WorkspaceSkillDiscovery.IsContained(currentWorkspace.RootPath, x.SkillPath)
                     ? Path.GetRelativePath(currentWorkspace.RootPath, x.SkillPath).Replace('\\', '/')
                     : x.SkillPath.Replace('\\', '/'))).ToArray(), [],
                 budget, Math.Max(0, frozen.SkillResources.Count - selected.Length));
@@ -573,7 +624,7 @@ internal sealed class ContextProvider : IContextProvider
     private static bool CanReadSkillBody(IReadOnlyList<string> allowed, System.Text.Json.JsonElement settings)
     {
         var toolSet = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
-        return new[] { "read_file", "shell", "command_run" }.Any(id =>
+        return new[] { "load_skill", "read_file", "shell", "command_run" }.Any(id =>
             (toolSet.Contains("*") || toolSet.Contains(id)) && ToolEnabled(settings, id));
     }
 
@@ -585,6 +636,9 @@ internal sealed class ContextProvider : IContextProvider
         bool Available(string id) => (toolSet.Contains("*") || toolSet.Contains(id)) && ToolEnabled(settings, id);
         var readers = new[] { "read_file", "shell", "command_run" }.Where(Available).ToArray();
         var listing = new[] { "ls", "stat" }.Where(Available).ToArray();
+        if (Available("load_skill"))
+            text = text.Replace("When a task matches one, open its file with a file tool and follow it before improvising.",
+                "When a task matches one, call load_skill with its exact name and follow the returned body before improvising.", StringComparison.Ordinal);
         var sentence = readers.Length == 0
             ? "This run grants no body-reading tool; do not claim to have read or followed a skill from its description alone."
             : $"When a task matches one, open its file using an enabled body reader ({string.Join(", ", readers)}) and follow it before improvising.";

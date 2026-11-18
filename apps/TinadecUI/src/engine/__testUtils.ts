@@ -55,6 +55,9 @@ export function makeRegistry(): CardRegistry {
   reg.register(makeCard('companionFeed', { singleton: true }))
   reg.register(makeCard('companionGroups', { singleton: true }))
   reg.register(makeCard('companionConnections', { singleton: true }))
+  reg.register(makeCard('companionBuddy', { singleton: true, movable: false, closable: false }))
+  reg.register(makeCard('companionSupervision', { singleton: true }))
+  reg.register(makeCard('companionProfile', { singleton: true }))
   return reg
 }
 

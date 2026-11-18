@@ -724,7 +724,7 @@ public sealed partial class StorageApiTests : IAsyncLifetime
         await lifecycle.AppendEventAsync(run.Id, "run.started", new { source = "sse-test" }, "Run started");
 
         using var followCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/events?session_id={sessionId}&after_seq=0");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/events?session_id={sessionId}");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, followCts.Token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
@@ -732,7 +732,7 @@ public sealed partial class StorageApiTests : IAsyncLifetime
         await using var stream = await response.Content.ReadAsStreamAsync(followCts.Token);
         using var reader = new StreamReader(stream);
         var replayed = await ReadSseFrameAsync(reader, followCts.Token);
-        Assert.Contains("id: 1", replayed);
+        Assert.Contains($"id: {run.Id:N}:1", replayed);
         Assert.Contains("event: run.started", replayed);
         var replayedData = replayed.Split('\n').Single(line => line.StartsWith("data: ", StringComparison.Ordinal))[6..];
         using (var document = JsonDocument.Parse(replayedData))
@@ -743,11 +743,12 @@ public sealed partial class StorageApiTests : IAsyncLifetime
 
         var heartbeat = await ReadSseFrameAsync(reader, followCts.Token);
         Assert.Contains("event: heartbeat", heartbeat);
-        Assert.Contains("data: {\"after_seq\":1}", heartbeat);
+        Assert.Contains($"id: {run.Id:N}:1", heartbeat);
+        Assert.Contains($"data: {{\"after_seq\":1,\"cursor\":\"{run.Id:N}:1\"}}", heartbeat);
 
         await lifecycle.AppendEventAsync(run.Id, "task.assigned", new { source = "sse-test" }, "Task assigned");
         var followed = await ReadSseFrameAsync(reader, followCts.Token);
-        Assert.Contains("id: 2", followed);
+        Assert.Contains($"id: {run.Id:N}:2", followed);
         Assert.Contains("event: task.assigned", followed);
 
         // A second run restarts its local event sequence at one. The active session
@@ -756,7 +757,7 @@ public sealed partial class StorageApiTests : IAsyncLifetime
         var secondRun = await lifecycle.StartRunAsync(sessionId, secondMessage.GetProperty("id").GetGuid());
         await lifecycle.AppendEventAsync(secondRun.Id, "run.started", new { source = "sse-test" }, "Second run started");
         var secondRunEvent = await ReadSseFrameAsync(reader, followCts.Token);
-        Assert.Contains("id: 1", secondRunEvent);
+        Assert.Contains($"id: {secondRun.Id:N}:1", secondRunEvent);
         Assert.Contains("event: run.started", secondRunEvent);
         var secondRunData = secondRunEvent.Split('\n').Single(line => line.StartsWith("data: ", StringComparison.Ordinal))[6..];
         using (var document = JsonDocument.Parse(secondRunData))
@@ -764,6 +765,65 @@ public sealed partial class StorageApiTests : IAsyncLifetime
             Assert.Equal(secondRun.Id, document.RootElement.GetProperty("run_id").GetGuid());
         }
         followCts.Cancel();
+    }
+
+    /// <summary>
+    /// The bug this pins: a scalar Last-Event-ID was used as a global floor, so reconnecting
+    /// after run A reached sequence 2 silently dropped run B's sequence 1 — a new run's first
+    /// events never reached the panel. The cursor is a per-run vector, so B is still pending.
+    /// </summary>
+    [Fact]
+    public async Task EventsSse_ReconnectingWithRunAsCursor_StillDeliversRunBsFirstEvent()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Cursor test", path = Path.Combine(_root, "workspace-cursor") })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Cursor session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+
+        var firstMessage = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Cursor trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var runA = await lifecycle.StartRunAsync(sessionId, firstMessage.GetProperty("id").GetGuid());
+        await lifecycle.AppendEventAsync(runA.Id, "run.started", new { source = "cursor-test" }, "Run A started");
+        await lifecycle.AppendEventAsync(runA.Id, "task.assigned", new { source = "cursor-test" }, "Run A task");
+        var secondMessage = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Second cursor trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var runB = await lifecycle.StartRunAsync(sessionId, secondMessage.GetProperty("id").GetGuid());
+        await lifecycle.AppendEventAsync(runB.Id, "run.started", new { source = "cursor-test" }, "Run B started");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/events?session_id={sessionId}");
+        request.Headers.TryAddWithoutValidation("Last-Event-ID", $"{runA.Id:N}:2");
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+        using var reader = new StreamReader(stream);
+        var frame = await ReadSseFrameAsync(reader, cts.Token);
+        Assert.Contains($"id: {runB.Id:N}:1", frame);
+        Assert.DoesNotContain($"id: {runA.Id:N}:", frame);
+
+        // The heartbeat must carry both runs, or a client that reconnects again would lose B.
+        var heartbeat = await ReadSseFrameAsync(reader, cts.Token);
+        Assert.Contains($"{runA.Id:N}:2", heartbeat);
+        Assert.Contains($"{runB.Id:N}:1", heartbeat);
+        cts.Cancel();
+    }
+
+    [Theory]
+    [InlineData("5")]
+    [InlineData("garbage")]
+    [InlineData("not-a-guid:1")]
+    public async Task EventsSse_AnUnparseableCursorIsRejectedRatherThanIgnored(string cursor)
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Bad cursor", path = Path.Combine(_root, $"workspace-bad-cursor-{Math.Abs(cursor.GetHashCode())}") })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Bad cursor session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        using var response = await client.GetAsync($"/api/v1/events?session_id={sessionId}&cursor={Uri.EscapeDataString(cursor)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("INVALID_EVENT_CURSOR", body.GetProperty("code").GetString());
     }
 
     [Fact]

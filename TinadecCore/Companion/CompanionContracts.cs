@@ -9,6 +9,15 @@ namespace TinadecCore.Companion;
 /// </summary>
 public sealed record CompanionAutonomyRequest(bool? Enabled = null, bool? Paused = null, int? IntervalMinutes = null, int? DailyActionBudget = null);
 
+/// <summary>One answer to one standing authorization: approved lets that action class run unattended.</summary>
+public sealed record CompanionMandateDecisionRequest(string? Decision = null);
+
+/// <summary>
+/// A gesture the user made at the companion's face. It records the interaction; it is not a
+/// message and never becomes one — the companion is told about it, it does not say anything back.
+/// </summary>
+public sealed record CompanionEmoteRequest(string? Emote = null);
+
 public sealed record CompanionCreateRequest(
     string? Name = null,
     string? Tagline = null,
@@ -16,6 +25,7 @@ public sealed record CompanionCreateRequest(
     string? PersonaDocument = null,
     string? ModelPurpose = null,
     string? Model = null,
+    string? Role = null,
     CompanionAutonomyRequest? Autonomy = null);
 
 public sealed record CompanionPatchRequest(
@@ -28,6 +38,7 @@ public sealed record CompanionPatchRequest(
     // otherwise "<providerInstanceId>|<model>" pins one model, exactly what the detail returns.
     // The separator is a pipe because model names themselves contain slashes.
     string? Model = null,
+    string? Role = null,
     CompanionAutonomyRequest? Autonomy = null);
 
 public sealed record CompanionMemoryCreateRequest(
@@ -66,6 +77,12 @@ public sealed record CompanionMessagePostRequest(string? Body = null, IReadOnlyL
 public sealed record CompanionPauseRequest(bool? Paused = null);
 
 /// <summary>
+/// A directory the user picked on their own disk. Core copies it into its storage root, so this
+/// path is only read during import and never stored.
+/// </summary>
+public sealed record CompanionAvatarImportRequest(string? Path = null);
+
+/// <summary>
 /// A companion-domain refusal. Endpoints translate it verbatim: the code is part of the
 /// contract (companion_not_found / companion_revision_conflict / ...), never a generic
 /// conflict, and the status is the one the caller can branch on.
@@ -93,6 +110,7 @@ internal static class CompanionContracts
         tagline = row.Tagline,
         avatar = row.AvatarKey,
         status = row.Status,
+        role = NormalizeRole(row.Role),
         model_purpose = row.ModelPurpose,
         model_provider_id = row.ModelProviderId,
         model = row.ModelName,
@@ -115,6 +133,7 @@ internal static class CompanionContracts
         tagline = row.Tagline,
         avatar = row.AvatarKey,
         status = row.Status,
+        role = NormalizeRole(row.Role),
         model_purpose = row.ModelPurpose,
         model_provider_id = row.ModelProviderId,
         model = row.ModelName,
@@ -144,6 +163,11 @@ internal static class CompanionContracts
         counts.HasRunningRun ? "thinking"
         : row.Status == "paused" || row.AutonomyPaused || counts.AutonomyPausedGlobally ? "paused"
         : "idle";
+
+    // Rows created before the role column carry the schema bootstrap's empty default; they are
+    // autonomous partners, never an unknown third role.
+    internal static string NormalizeRole(string? role) =>
+        string.IsNullOrEmpty(role) ? "autonomous" : role;
 
     internal static object ToJson(CompanionMemoryRecord row) => new
     {
@@ -193,6 +217,9 @@ internal static class CompanionContracts
     internal static Dictionary<string, object?> ToJson(CompanionSettingsRecord? row) => new()
     {
         ["main_companion_id"] = row?.MainCompanionId,
+        ["buddy_companion_id"] = row?.BuddyCompanionId,
+        // How many companions other companions may recruit; 0 turns recruiting off.
+        ["recruit_limit"] = row?.RecruitLimit ?? 3,
         ["autonomy_paused"] = row?.AutonomyPaused ?? false,
         ["revision"] = row?.Revision ?? 0
     };
@@ -267,6 +294,7 @@ internal static class CompanionContracts
     internal static object ActivityJson(CompanionActivityRecord row, string? companionName, string? conversationTitle) => new
     {
         id = row.Id,
+        seq = row.Seq,
         kind = row.Kind,
         companion_id = row.CompanionId,
         companion_name = companionName,
@@ -276,6 +304,35 @@ internal static class CompanionContracts
         detail = row.Detail,
         payload = ParseJson(row.PayloadJson),
         created_at = row.CreatedAt
+    };
+
+    internal static object RecruitmentJson(CompanionRecruitmentRecord row) => new
+    {
+        id = row.Id,
+        proposer_id = row.ProposerId,
+        name = row.Name,
+        persona_document = row.PersonaDocument,
+        rationale = row.Rationale,
+        status = row.Status,
+        created_companion_id = row.CreatedCompanionId,
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt,
+        decided_at = row.DecidedAt
+    };
+
+    internal static object MandateJson(CompanionMandateRecord row) => new
+    {
+        id = row.Id,
+        companion_id = row.CompanionId,
+        action = row.Action,
+        status = row.Status,
+        summary = row.Summary,
+        proposal = ParseJson(row.ProposalJson),
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt,
+        decided_at = row.DecidedAt
     };
 
     internal static object ConnectionOverviewJson(CompanionConnectionBindingRecord row, string? companionName) => new

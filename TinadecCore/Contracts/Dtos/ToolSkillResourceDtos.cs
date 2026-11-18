@@ -24,6 +24,17 @@ public sealed record ToolSkillResourceDto
     public string? Version { get; init; }
     public string? Commit { get; init; }
     public string Availability { get; init; } = "available";
+    /// <summary>Which loader root produced this entry: <c>builtin</c>, <c>user</c>, <c>project</c>,
+    /// <c>compat</c> or <c>scope</c>. <see cref="Scope"/> stays the write-model scope (shared/project)
+    /// so existing clients and governed writes keep their meaning.</summary>
+    public string SourceKind { get; init; } = "scope";
+    /// <summary>Lower wins a duplicate name across roots.</summary>
+    public int Rank { get; init; } = 100;
+    /// <summary>When another root wins the same name, the order reason (empty when this entry wins).</summary>
+    public string? ShadowedBy { get; init; }
+    /// <summary>Built-ins and compatibility roots are served read-only.</summary>
+    public bool ReadOnly { get; init; }
+    public string? WhenToUse { get; init; }
     public IReadOnlyList<ToolSkillPackageFileDto> PackageFiles { get; init; } = [];
     public string? Content { get; init; }
     public string? FileHash { get; init; }

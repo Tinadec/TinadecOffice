@@ -22,7 +22,7 @@
 
 **`src/runSessionLookup.ts`** shares the run→session orchestration query between `task-nodes` and `context-versions` (2 s TTL, 256 entries, delete-before-set so a re-read does not pin an entry to the eviction head). Both routes 404 first on a run-scoped read, then pay the same orchestration round trip; without sharing, one panel refresh pays it twice. Failures normalize to `null` — the caller is already walking a fallback chain.
 
-Boundary: SSE and byte proxies (`proxySse`, `proxyRaw` and the attachment/download paths) return their own `Response`, so `set.headers` does not merge into them and they carry no `Server-Timing`. Fixing that means changing how Elysia merges headers on a returned `Response`; it is a separate item, not done. Evidence and readings: `.tinadec_dev/reports/2026-10-25-settings-cold-start.zh-CN.md`.
+Boundary: SSE and byte proxies (`proxySse`, `proxyRaw` and the attachment/download paths) return their own `Response`. **`set.headers` does merge into it** — Elysia 1.4.29 runs `mergeHeaders` over the returned response (`dist/adapter/utils.js:274-277`); only an empty `set.headers` takes the `mapCompactResponse` fast path (`adapter/utils.js:140`, `compose.js:350`). The earlier note here claimed the opposite, which is wrong and matters: it is why a browser can read a cross-origin `/auth/begin` body. `/auth/*` now gets no CORS headers at all (per path, not by narrowing `ALLOWED_ORIGINS`, which the renderer still needs). `Server-Timing` on those proxies is still not emitted. Evidence and readings: `.tinadec_dev/reports/2026-10-25-settings-cold-start.zh-CN.md`.
 
 ## 2026-10-13 Tool execution preview proxy (APP-HOME-108 P0)
 

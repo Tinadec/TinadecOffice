@@ -175,6 +175,11 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
             Directory.CreateDirectory(temporary);
             aclManager.AllowWriteException(temporary);
         }
+        // Last, because AllowWriteException removes every explicit deny ACE on the path it
+        // targets: a deny applied earlier could be stripped by a later exception. DenyWrite
+        // carries no read or execute bit, so git inside the sandbox still reads its config.
+        foreach (var path in permissions.WriteDeniedPaths)
+            if (Directory.Exists(path) || File.Exists(path)) aclManager.DenyWrite(path);
     }
 
     private static async Task<SandboxRunnerResponse> ExecuteViaRunnerSubprocess(
