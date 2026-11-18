@@ -34,7 +34,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'open-doc': [ref: DocumentRef] }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const PARSE_INTERVAL_MS = 80
 /** What `blocks` parses: the newest content, or the newest one that is old enough to parse. */
@@ -248,17 +248,14 @@ function calloutBlock(quote: Element): MarkdownBlock | null {
   }
 }
 
-const blocks = computed<MarkdownBlock[]>(() => {
-  // Late reference verifications bump this counter; reading it here re-parses the reply
-  // exactly once per settled batch instead of once per streaming delta.
-  void props.docRefsVersion
-  const raw = marked.parse(parsedContent.value, {
+/** Parse one markdown document into blocks: sanitize the whole fragment first so reference
+ * links, footnotes and nested Markdown retain their meaning, then add only trusted wrappers. */
+function computeBlocks(content: string): MarkdownBlock[] {
+  const raw = marked.parse(content, {
     breaks: true,
     gfm: true,
     async: false,
   }) as string
-  // Sanitize the complete document first so reference links, footnotes and nested
-  // Markdown retain their meaning. Only trusted wrappers are added afterwards.
   const fragment = DOMPurify.sanitize(raw, { RETURN_DOM_FRAGMENT: true })
   applyHeadingAnchors(fragment, t('chat.markdownAnchor'))
   localizeFootnotes(fragment)
@@ -290,6 +287,60 @@ const blocks = computed<MarkdownBlock[]>(() => {
     blocks.push({ kind: island ? 'island' : 'prose', html: outerHtml(node) })
   }
   return blocks
+}
+
+/**
+ * Where the still-growing tail of a streaming reply begins. Everything before it is closed
+ * blocks that will not change as more text arrives, so it can be parsed once and cached. The
+ * tail is the last open fence (if the stream ends inside one) or the last paragraph after the
+ * final blank line outside any fence. Splitting here can transiently differ from a whole-document
+ * parse for structures that span the boundary (a footnote defined across it, a heading id shared
+ * with the prefix); the settled full parse below is the correctness backstop and fixes all of it.
+ */
+function streamingSplit(content: string): number {
+  let inFence = false
+  let fenceChar = ''
+  let fenceStart = 0
+  let lastBoundary = 0
+  let offset = 0
+  const lines = content.split('\n')
+  for (const line of lines) {
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+    if (fence) {
+      const char = fence[1]![0]!
+      if (!inFence) { inFence = true; fenceChar = char; fenceStart = offset }
+      else if (char === fenceChar) inFence = false
+    }
+    if (!inFence && line.trim() === '') lastBoundary = offset + line.length + 1
+    offset += line.length + 1
+  }
+  return inFence ? fenceStart : Math.min(lastBoundary, content.length)
+}
+
+let streamCache: { prefix: string; docRefsVersion: number | undefined; locale: string; blocks: MarkdownBlock[] } | null = null
+
+const blocks = computed<MarkdownBlock[]>(() => {
+  // Late reference verifications bump this counter; reading it here re-parses the reply
+  // exactly once per settled batch instead of once per streaming delta.
+  void props.docRefsVersion
+  const content = parsedContent.value
+  if (props.streaming) {
+    const split = streamingSplit(content)
+    const prefix = content.slice(0, split)
+    const tail = content.slice(split)
+    let prefixBlocks: MarkdownBlock[]
+    if (streamCache && streamCache.prefix === prefix && streamCache.docRefsVersion === props.docRefsVersion && streamCache.locale === locale.value) {
+      prefixBlocks = streamCache.blocks
+    } else {
+      prefixBlocks = computeBlocks(prefix)
+      streamCache = { prefix, docRefsVersion: props.docRefsVersion, locale: locale.value, blocks: prefixBlocks }
+    }
+    // Only the open tail is re-parsed each cadence; the closed prefix keeps its block objects
+    // (and thus its DOM and table focus) while the reply grows.
+    return tail ? [...prefixBlocks, ...computeBlocks(tail)] : prefixBlocks
+  }
+  streamCache = null
+  return computeBlocks(content)
 })
 
 const bodyRef = ref<HTMLElement | null>(null)

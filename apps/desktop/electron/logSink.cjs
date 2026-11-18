@@ -3,6 +3,12 @@ const path = require('node:path');
 const { parse } = require('smol-toml');
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
+// The total-budget check walks the whole log tree (readdir + stat per file). Running it on
+// every stdout chunk blocked the main process event loop in proportion to log volume. Check
+// it instead after ~1 MiB appended or 5 s, whichever comes first; per-file rotation below is
+// still enforced on every write. `budgetCheckBytes <= 0` forces a check per write (tests).
+const BUDGET_CHECK_BYTES = 1024 * 1024;
+const BUDGET_CHECK_MS = 5000;
 
 /** One host sink for Electron and both child streams, bounded across all its files. */
 function loggingBudget(file) {
@@ -20,9 +26,13 @@ function createLogSink(directory, options = {}) {
   const configured = loggingBudget(configurationFile);
   const maxFileBytes = options.maxFileBytes ?? configured.maxFileBytes;
   const maxTotalBytes = options.maxTotalBytes ?? configured.maxTotalBytes;
+  const budgetCheckBytes = options.budgetCheckBytes ?? BUDGET_CHECK_BYTES;
+  const budgetCheckMs = options.budgetCheckMs ?? BUDGET_CHECK_MS;
   if (maxFileBytes <= 0 || maxTotalBytes < maxFileBytes) throw new Error('Invalid host log budget.');
   fs.mkdirSync(directory, { recursive: true });
   let sequence = 0;
+  let bytesSinceBudget = 0;
+  let lastBudgetAt = Date.now();
   function enforceBudget() {
     const entries = [];
     function visit(root) {
@@ -51,6 +61,7 @@ function createLogSink(directory, options = {}) {
     if (!['electron', 'core', 'gateway'].includes(label)) throw new Error('Unknown host log stream.');
     const file = path.join(directory, `${label}.log`);
     let remaining = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+    let appended = 0;
     while (remaining.length) {
       let size = fs.existsSync(file) ? fs.statSync(file).size : 0;
       if (size >= maxFileBytes) {
@@ -58,9 +69,16 @@ function createLogSink(directory, options = {}) {
       }
       const chunk = remaining.subarray(0, maxFileBytes - size);
       fs.appendFileSync(file, chunk, { mode: 0o600 });
+      appended += chunk.length;
       remaining = remaining.subarray(chunk.length);
     }
-    enforceBudget();
+    bytesSinceBudget += appended;
+    const now = Date.now();
+    if (budgetCheckBytes <= 0 || bytesSinceBudget >= budgetCheckBytes || now - lastBudgetAt >= budgetCheckMs) {
+      enforceBudget();
+      bytesSinceBudget = 0;
+      lastBudgetAt = now;
+    }
   }
   return { write, enforceBudget };
 }

@@ -3,7 +3,7 @@ import { ApiError, errorCategoryMessage } from '@/lib/apiError'
 import { useHostAccess } from '@/lib/hostAccess'
 import { readSessionRoster } from '@/lib/sessionRoster'
 import { toErrorState } from '@/composables/useErrorState'
-import { computed, effectScope, ref, watch, type Ref } from 'vue'
+import { computed, effectScope, ref, shallowRef, watch, type Ref } from 'vue'
 import { revealWorkspace } from '@/composables/useWorkspaceList'
 import {
   api,
@@ -73,7 +73,9 @@ const lastSessionByView: Record<SessionView, string | null> = { flat: null, spac
 const messages = ref<MessageDto[]>([])
 const approvals = ref<ApprovalDto[]>([])
 const approvalRules = ref<ApprovalRuleDto[]>([])
-const events = ref<EventEnvelope[]>([])
+// Replaced wholesale on every event (never mutated in place), so a shallow ref avoids
+// deep-converting up to 80 envelopes with payloads on each of thousands of replay frames.
+const events = shallowRef<EventEnvelope[]>([])
 const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
 const modelSettings = ref<ModelSettingsDto | null>(null)
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)

@@ -93,7 +93,6 @@ function latest(entries: readonly FeedEntry[], kind: 'plan' | 'reasoning'): Plan
 }
 
 const statusStep = computed<StatusStep>(() => {
-  void props.revision
   if (props.activity.correction) {
     const trace = props.activity.correction
     const pending = trace.openQuestions.find((question) => question.blocking && !question.answeredAt)
@@ -141,7 +140,6 @@ const statusStep = computed<StatusStep>(() => {
 const statusIcon = computed(() => statusIcons[statusStep.value.kind])
 
 const summary = computed(() => {
-  void props.revision
   const tools = props.activity.entries.filter((entry): entry is ToolEntry => entry.kind === 'tool')
   const files = new Set(tools.filter((entry) => entrySentence(entry).quiet === 'read').map((entry) => entry.resourcePath ?? entry.id)).size
   const commands = tools.filter((entry) => entrySentence(entry).verb === 'run').length

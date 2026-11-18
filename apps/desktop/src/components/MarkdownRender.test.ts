@@ -2,6 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import DOMPurify from 'dompurify'
 import MarkdownRender from './MarkdownRender.vue'
 import UiIslandCard from './ui/island-card.vue'
 
@@ -325,5 +326,63 @@ describe('Markdown document references', () => {
     await wrapper.setProps({ docRefsVersion: 1 })
     expect(wrapper.find('.markdown-doc-ref').exists()).toBe(true)
     wrapper.unmount()
+  })
+})
+
+describe('Streaming tail cache', () => {
+  it('caches closed blocks while the tail streams, and matches the settled parse', async () => {
+    vi.useFakeTimers()
+    try {
+      const closed = '# 标题\n\n第一段正文。\n\n```js\nconst a = 1;\n```\n\n'
+      const wrapper = render(closed + '尾巴开始', { streaming: true })
+      await wrapper.vm.$nextTick()
+      const heading = wrapper.get('h1').element
+      const code = wrapper.get('pre code').element
+      for (const tail of ['尾巴开始 更长', '尾巴开始 更长 **加粗**', '尾巴开始 更长 **加粗** 收尾']) {
+        await wrapper.setProps({ content: closed + tail })
+        vi.advanceTimersByTime(80)
+        await wrapper.vm.$nextTick()
+        expect(wrapper.get('h1').element).toBe(heading)
+        expect(wrapper.get('pre code').element).toBe(code)
+      }
+      expect(wrapper.get('.markdown-prose strong').text()).toBe('加粗')
+      const streamingText = wrapper.get('.markdown-body').text()
+      await wrapper.setProps({ streaming: false })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.get('.markdown-body').text()).toBe(streamingText)
+      wrapper.unmount()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('sanitizes the streaming tail just like the settled document', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = render('前文\n\n<script>alert(1)</script>尾巴', { streaming: true })
+      vi.advanceTimersByTime(80)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('script').exists()).toBe(false)
+      expect(wrapper.text()).toContain('尾巴')
+      wrapper.unmount()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('re-parses only the open tail, not the closed prefix, while streaming', async () => {
+    vi.useFakeTimers()
+    const sanitizeSpy = vi.spyOn(DOMPurify, 'sanitize')
+    try {
+      const closed = '# 标题\n\n正文。\n\n'
+      const wrapper = render(closed + '尾', { streaming: true })
+      await wrapper.vm.$nextTick()
+      sanitizeSpy.mockClear()
+      await wrapper.setProps({ content: closed + '尾巴更长一段' })
+      vi.advanceTimersByTime(80)
+      await wrapper.vm.$nextTick()
+      // The cache serves the closed prefix; only the tail is parsed and sanitized again.
+      // Reverting to a whole-document parse feeds the heading back in and turns this red.
+      const lastInput = String(sanitizeSpy.mock.calls.at(-1)?.[0] ?? '')
+      expect(lastInput).not.toContain('标题')
+      expect(lastInput).toContain('尾巴更长一段')
+      wrapper.unmount()
+    } finally { sanitizeSpy.mockRestore(); vi.useRealTimers() }
   })
 })
