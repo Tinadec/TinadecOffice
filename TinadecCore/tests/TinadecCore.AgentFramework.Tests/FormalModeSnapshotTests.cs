@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -70,11 +71,36 @@ public sealed class FormalModeSnapshotTests
     /// The complement, and the one that matters for legacy data: a mode published before the field
     /// existed must read back as "no declared tier" so inference still runs and the run does not
     /// fail admission over a field it never declared.
+    ///
+    /// The fixture now OMITS the key by default, which is the shape both publish paths produce
+    /// (<c>AgentTopologyService.cs:656</c>, <c>AgentPackService.cs:1155</c>). That makes this a
+    /// test of the production shape rather than of a JSON <c>null</c>, which production never
+    /// emits. <see cref="ResolveRoster_TreatsAnExplicitNullTierAsUndeclared"/> covers the null
+    /// shape separately, because a hand-edited or externally-authored snapshot can contain one.
     /// </summary>
     [Fact]
     public async Task ResolveRoster_WithoutADeclaredTier_LeavesItNullSoInferenceRuns()
     {
         await using var fixture = await FormalModeFixture.CreateAsync();
+
+        var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterAsync(fixture.SessionId);
+
+        Assert.NotNull(roster);
+        Assert.Null(roster.OrchestrationTier);
+        Assert.False(roster.HasExplicitOrchestrationTier);
+    }
+
+    /// <summary>
+    /// A snapshot that carries <c>"orchestration_tier": null</c> explicitly must read the same as
+    /// one that omits the key. Production never writes this shape, but a snapshot authored by
+    /// hand, imported from a pack, or produced by an older writer can, and the reader must not
+    /// throw or invent a tier for it.
+    /// </summary>
+    [Fact]
+    public async Task ResolveRoster_TreatsAnExplicitNullTierAsUndeclared()
+    {
+        await using var fixture = await FormalModeFixture.CreateAsync(orchestrationTier: null, writeNullTier: true);
 
         var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
             .ResolveRosterAsync(fixture.SessionId);
@@ -189,7 +215,8 @@ public sealed class FormalModeSnapshotTests
             bool tamperAgentHash = false,
             bool structuredInvestigation = false,
             string? instructions = null,
-            string? orchestrationTier = null)
+            string? orchestrationTier = null,
+            bool writeNullTier = false)
         {
             var root = Path.Combine(Path.GetTempPath(), "tinadec-formal-mode-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -274,7 +301,7 @@ public sealed class FormalModeSnapshotTests
                         CreatedByPrincipalId = scope.PrincipalId,
                         UpdatedByPrincipalId = scope.PrincipalId
                     });
-                    var modeBody = JsonSerializer.Serialize(new
+                    string modeBody = JsonSerializer.Serialize(new
                     {
                         schema = "tinadec.mode_version/v1",
                         mode = new { id = modeId, slug = "mode", display_name = "Mode" },
@@ -319,10 +346,10 @@ public sealed class FormalModeSnapshotTests
                         edges = Array.Empty<object>(),
                         canvas_layout = (object?)null,
                         instructions,
-                        // Serialized as JSON null when unset. `ReadOrchestrationTier` only accepts
-                        // ValueKind.String, so null reads back as "no declared tier" — the same
-                        // answer the publish paths produce by omitting the key entirely.
-                        orchestration_tier = orchestrationTier,
+                        // NOTE: `orchestration_tier` is deliberately NOT written here. Both publish
+                        // paths (AgentTopologyService.cs:656, AgentPackService.cs:1155) omit the key
+                        // when a mode declares no tier, so the fixture must produce the production
+                        // shape by default. It is added below only when a test asks for it.
                         runtime_policy = structuredInvestigation
                             ? new
                             {
@@ -340,6 +367,16 @@ public sealed class FormalModeSnapshotTests
                             }
                             : null
                     });
+                    // Added to the body after serialization so the default shape is "key absent",
+                    // which is what both publish paths actually produce. `writeNullTier` opts into
+                    // the explicit-null shape instead, which production never emits but an
+                    // imported or hand-edited snapshot can contain.
+                    if (orchestrationTier is not null || writeNullTier)
+                    {
+                        var withTier = JsonNode.Parse(modeBody)!.AsObject();
+                        withTier["orchestration_tier"] = orchestrationTier;
+                        modeBody = withTier.ToJsonString();
+                    }
                     db.ModeVersions.Add(new ModeVersionRecord
                     {
                         Id = modeVersionId,
