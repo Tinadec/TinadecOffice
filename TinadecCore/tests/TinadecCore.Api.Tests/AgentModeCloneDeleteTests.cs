@@ -184,7 +184,10 @@ public sealed class AgentModeCloneDeleteTests : IAsyncLifetime
         using var publish = await client.PostAsync($"/api/v1/agent-modes/{modeId}/publish", null);
         Assert.True(publish.IsSuccessStatusCode,
             $"publish failed: {publish.StatusCode} {await publish.Content.ReadAsStringAsync()} | {_factory.LastFailure()}");
-        var versionId = (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/agent-modes/{modeId}/versions"))![0].GetProperty("id").GetGuid();
+        var versionsAfterPublish = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/agent-modes/{modeId}/versions");
+        Assert.True(versionsAfterPublish is { Length: > 0 },
+            $"publish reported success but produced no version row: {publish.StatusCode} {await publish.Content.ReadAsStringAsync()}");
+        var versionId = versionsAfterPublish![0].GetProperty("id").GetGuid();
 
         // Point the workspace defaults at the mode so the clear-on-delete path is exercised.
         using var defaults = await client.PutAsJsonAsync("/api/v1/workspace-defaults/draft", new
@@ -196,24 +199,36 @@ public sealed class AgentModeCloneDeleteTests : IAsyncLifetime
 
         using var delete = await client.DeleteAsync($"/api/v1/agent-modes/{modeId}");
         var deleteBody = await delete.Content.ReadAsStringAsync();
-        Assert.True(delete.StatusCode == HttpStatusCode.OK, $"delete failed: {delete.StatusCode} {deleteBody}");
+        Assert.True(delete.StatusCode == HttpStatusCode.OK, $"delete failed: {delete.StatusCode} {deleteBody} | {_factory.LastFailure()}");
         var result = JsonDocument.Parse(deleteBody).RootElement;
-        Assert.Equal(modeId, result.GetProperty("id").GetGuid());
-        Assert.True(result.GetProperty("deleted").GetBoolean());
+        Assert.True(result.TryGetProperty("id", out var deletedId), $"delete body has no 'id': {deleteBody}");
+        Assert.Equal(modeId, deletedId.GetGuid());
+        Assert.True(result.TryGetProperty("deleted", out var deletedFlag) && deletedFlag.GetBoolean(),
+            $"delete body must carry deleted=true: {deleteBody}");
 
         // Gone from the read path.
         using var reread = await client.GetAsync($"/api/v1/agent-modes/{modeId}");
-        Assert.Equal(HttpStatusCode.NotFound, reread.StatusCode);
+        Assert.True(reread.StatusCode == HttpStatusCode.NotFound,
+            $"a deleted mode must read back 404, got {reread.StatusCode}: {await reread.Content.ReadAsStringAsync()}");
 
         // Version history survives: a run binding that names it must still resolve to a row.
+        // No EF relationship exists between AgentModeRecord and ModeVersionRecord (the model is
+        // deliberately flat), so deleting the mode cannot cascade into the version rows.
         var versions = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/agent-modes/{modeId}/versions");
         Assert.NotNull(versions);
-        Assert.Single(versions!);
+        Assert.True(versions!.Length == 1,
+            $"deleting the mode must keep its single historical version row, found {versions.Length}");
 
-        // Workspace defaults no longer point at the deleted mode.
+        // Workspace defaults no longer point at the deleted mode. Asserted as "absent OR null":
+        // a cleared nullable column may project as JSON null or be omitted by the DTO, and both
+        // mean the same thing to a reader.
         var cleared = await client.GetFromJsonAsync<JsonElement>("/api/v1/workspace-defaults");
-        Assert.Equal(JsonValueKind.Null, cleared.GetProperty("default_agent_mode_id").ValueKind);
-        Assert.Equal(JsonValueKind.Null, cleared.GetProperty("default_mode_version_id").ValueKind);
+        Assert.True(cleared.ValueKind == JsonValueKind.Object,
+            $"GET /workspace-defaults must return the row object, got {cleared.ValueKind}");
+        Assert.False(cleared.TryGetProperty("default_agent_mode_id", out var clearedModeId) && clearedModeId.ValueKind != JsonValueKind.Null,
+            $"default_agent_mode_id must be cleared after deleting the mode, got {cleared.GetRawText()}");
+        Assert.False(cleared.TryGetProperty("default_mode_version_id", out var clearedVersionId) && clearedVersionId.ValueKind != JsonValueKind.Null,
+            $"default_mode_version_id must be cleared after deleting the mode, got {cleared.GetRawText()}");
     }
 
     /// <summary>Deleting a draft is the historical behaviour and must keep working.</summary>

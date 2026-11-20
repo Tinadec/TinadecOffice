@@ -63,7 +63,12 @@ public sealed class AgentPackModeProjectionTests : IAsyncLifetime
         Assert.Equal("leader", nodeBinding.GetProperty("node_key").GetString());
         Assert.False(nodeBinding.GetProperty("tool_switches").GetProperty("*").GetBoolean());
         Assert.Equal(2, nodeBinding.GetProperty("envelope").GetProperty("spawn").GetProperty("max_depth").GetInt32());
-        var agentBinding = bindings.EnumerateArray().Single(binding => binding.TryGetProperty("agent_ref", out _));
+        // The node-less binding is the one WITHOUT `node_key`, not merely the one with `agent_ref`:
+        // `AgentPackModeBindingDto` declares both properties as optional on the same type, so a
+        // node-keyed binding carries `agent_ref` too and `Single(b => b.TryGetProperty("agent_ref"))`
+        // matches both. This predicate and the one above partition the array exactly.
+        var agentBinding = bindings.EnumerateArray()
+            .Single(binding => !binding.TryGetProperty("node_key", out _) && binding.TryGetProperty("agent_ref", out _));
         // The stored document keeps the manifest's own spelling (`agent:<resource_key>`),
         // which is what the desktop's teamShape.ts strips before matching a slug.
         Assert.Equal("agent:worker.stage", agentBinding.GetProperty("agent_ref").GetString());
@@ -126,6 +131,10 @@ public sealed class AgentPackModeProjectionTests : IAsyncLifetime
 
     private static async Task InstallPackAsync(HttpClient client, bool includeGraphDocuments = true)
     {
+        // The envelope is a JsonObject, not a string: passing the SERIALIZED TEXT to
+        // PostAsJsonAsync makes System.Text.Json write it as one JSON string literal, so the
+        // body arrives as `"{\"manifest\":…}"` and the server rejects it at `$` with
+        // "The JSON value could not be converted to AgentPackEnvelopeDto".
         var envelope = BuildEnvelope(includeGraphDocuments);
         using var previewResponse = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
         var previewBody = await previewResponse.Content.ReadAsStringAsync();
@@ -135,10 +144,12 @@ public sealed class AgentPackModeProjectionTests : IAsyncLifetime
 
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/agent-packs/{PackId}")
         {
+            // Deep-clone so the request content owns its own nodes instead of aliasing the
+            // tree the preview call already serialized.
             Content = JsonContent.Create(new
             {
                 preview_id = preview.GetProperty("preview_id").GetGuid(),
-                envelope = JsonDocument.Parse(envelope).RootElement
+                envelope = envelope.DeepClone()
             })
         };
         request.Headers.TryAddWithoutValidation("Idempotency-Key", "mode-projection-install");
@@ -153,7 +164,7 @@ public sealed class AgentPackModeProjectionTests : IAsyncLifetime
     /// projection used to lose. <paramref name="includeGraphDocuments"/> turns them off to
     /// prove the absent case grows no keys.
     /// </summary>
-    private static string BuildEnvelope(bool includeGraphDocuments)
+    private static JsonObject BuildEnvelope(bool includeGraphDocuments)
     {
         var capabilities = new[] { "agent_pack_lifecycle", "versioned_agent_configuration", "frozen_agent_version_binding" };
         var leaderNode = new JsonObject
@@ -322,15 +333,15 @@ public sealed class AgentPackModeProjectionTests : IAsyncLifetime
         };
         var roundTripped = JsonSerializer.Deserialize<TinadecCore.Contracts.Dtos.AgentPackManifestDto>(manifestElement.GetRawText(), serverOptions);
         var digest = Convert.ToHexString(SHA256.HashData(Canonicalize(JsonSerializer.SerializeToElement(roundTripped, serverOptions)))).ToLowerInvariant();
-        // Built as a JsonNode tree and serialized ONCE. Serializing an anonymous object whose
-        // `manifest` member is a JsonObject emitted it as an escaped JSON *string*, which is
-        // what made the envelope un-deserializable at byte ~4345/5621.
-        var envelope = new JsonObject
+        // Built as ONE JsonNode tree. A JsonObject nested inside an anonymous object
+        // serializes as an escaped JSON *string*, which is what made the envelope
+        // un-deserializable at `$` — and the caller must receive the NODE, not its text,
+        // or PostAsJsonAsync writes a string literal instead of an object.
+        return new JsonObject
         {
             ["manifest"] = manifest,
             ["integrity"] = new JsonObject { ["algorithm"] = "sha256", ["digest"] = digest },
         };
-        return envelope.ToJsonString();
     }
 
     private static byte[] Canonicalize(JsonElement value)

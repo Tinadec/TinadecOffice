@@ -2265,8 +2265,16 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
     private static string Sha256(string value) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    private static JsonElement ParseJson(string? json) =>
-        string.IsNullOrWhiteSpace(json) ? default : JsonSerializer.Deserialize<JsonElement>(json);
+    /// <summary>
+    /// A stored JSON column as an element, or <c>null</c> when the column is empty.
+    /// Returning <c>default(JsonElement)</c> here would be a trap: its ValueKind is
+    /// <c>Undefined</c>, and serializing an Undefined element throws
+    /// <c>InvalidOperationException</c> — so a perfectly legal agent with no
+    /// model_strategy could not be snapshotted at all. A JSON <c>null</c> is the honest
+    /// projection of "this column is empty".
+    /// </summary>
+    private static JsonElement? ParseJson(string? json) =>
+        string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<JsonElement>(json);
 
     private static JsonElement? Element(string? json)
     {
