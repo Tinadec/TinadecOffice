@@ -1,46 +1,53 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw } from '@lucide/vue'
+import { useRouter } from 'vue-router'
+import { Activity, ArrowUpRight, RefreshCw } from '@lucide/vue'
 import { UiButton } from '@/components/ui'
 import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'
+import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
+import GovernanceRolesPanel from '@/components/agentCenter/GovernanceRolesPanel.vue'
 import TeamsTab from './TeamsTab.vue'
 import TomlDocumentPanel from './TomlDocumentPanel.vue'
 import WorkspaceDefaultsPanel from './WorkspaceDefaultsPanel.vue'
-import type { AgentModeDto, AgentViewDto } from '@/api'
+import type { AgentModeDto, AgentViewDto, PromptPipelineDto } from '@/api'
 
-export type AgentCenterTabKey =
-  | 'teams' | 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime' | 'advanced'
+export type AgentCenterTabKey = 'teams' | 'modes' | 'agents' | 'prompts' | 'advanced'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   tab: AgentCenterTabKey
   agents: AgentViewDto[]
   modes: AgentModeDto[]
+  promptPipelines?: PromptPipelineDto[]
+  manifestToolIds?: string[]
   canAccessBackend: boolean
   loading: boolean
-}>()
+}>(), {
+  promptPipelines: () => [],
+  manifestToolIds: () => [],
+})
 
 const emit = defineEmits<{
   'update:tab': [tab: AgentCenterTabKey]
   changed: []
-  'clone-pack': []
+  'clone-pack': [slug?: string]
   'refresh-legacy': [tab: AgentCenterTabKey]
   'open-graph': [id: string]
 }>()
 
 const { t } = useI18n()
+const router = useRouter()
 const teamsTabRef = ref<InstanceType<typeof TeamsTab> | null>(null)
 const defaultsRef = ref<InstanceType<typeof WorkspaceDefaultsPanel> | null>(null)
+const evolutionRef = ref<InstanceType<typeof AgentEvolutionPanel> | null>(null)
 const tomlRef = ref<InstanceType<typeof TomlDocumentPanel> | null>(null)
 
 const tabs = computed(() => [
   { key: 'teams' as const, label: t('settings.agentTeams') },
-  { key: 'agents' as const, label: t('settings.agents') },
   { key: 'modes' as const, label: t('settings.agentModes') },
+  { key: 'agents' as const, label: t('settings.agents') },
   { key: 'prompts' as const, label: t('settings.promptEngineering') },
-  { key: 'evolution' as const, label: t('settings.agentEvolution') },
-  { key: 'runtime' as const, label: t('settings.runtimeInstances') },
-  { key: 'advanced' as const, label: t('settings.advanced') },
+  { key: 'advanced' as const, label: t('settings.agentAdvancedTab') },
 ])
 
 function refresh() {
@@ -49,7 +56,9 @@ function refresh() {
     emit('changed')
   } else if (props.tab === 'advanced') {
     void defaultsRef.value?.load()
+    void evolutionRef.value?.loadProposals()
     void tomlRef.value?.reload()
+    emit('changed')
   } else {
     emit('refresh-legacy', props.tab)
   }
@@ -73,8 +82,6 @@ defineExpose({ refresh })
       </div>
     </div>
 
-    <AgentPacksPanel @clone="emit('clone-pack')" @uninstalled="emit('changed')" />
-
     <div class="ac-subtabs" role="tablist" data-testid="agent-center-subtabs">
       <button
         v-for="item in tabs"
@@ -88,28 +95,74 @@ defineExpose({ refresh })
       </button>
     </div>
 
-    <template v-if="tab === 'teams'">
-      <TeamsTab
-        ref="teamsTabRef"
-        :modes="modes"
-        :agents="agents"
-        :can-access-backend="canAccessBackend"
-        :loading="loading"
+    <div v-show="tab === 'agents'" class="agent-center-packs-slot">
+      <AgentPacksPanel
+        @clone="emit('clone-pack', $event)"
         @changed="emit('changed')"
-        @open-graph="emit('open-graph', $event)"
+        @uninstalled="emit('changed')"
       />
-    </template>
-    <template v-else-if="tab === 'advanced'">
-      <div class="agent-advanced">
-        <WorkspaceDefaultsPanel ref="defaultsRef" :agents="agents" :modes="modes" />
-        <TomlDocumentPanel ref="tomlRef" />
-        <div class="agent-advanced-links">
-          <p>{{ t('settings.agentAdvancedHint') }}</p>
-          <UiButton variant="outline" size="sm" @click="emit('update:tab', 'evolution')">{{ t('settings.agentEvolution') }}</UiButton>
-          <UiButton variant="outline" size="sm" @click="emit('update:tab', 'runtime')">{{ t('settings.runtimeInstances') }}</UiButton>
-        </div>
+    </div>
+
+    <Transition name="center-stage-fade" mode="out-in">
+      <div :key="tab" class="agent-center-stage-pane">
+        <template v-if="tab === 'teams'">
+          <TeamsTab
+            ref="teamsTabRef"
+            :modes="modes"
+            :agents="agents"
+            :can-access-backend="canAccessBackend"
+            :loading="loading"
+            @changed="emit('changed')"
+            @open-graph="emit('open-graph', $event)"
+          />
+        </template>
+        <template v-else-if="tab === 'advanced'">
+          <div class="agent-advanced">
+            <div class="agent-advanced-links">
+              <div class="agent-advanced-link-copy">
+                <Activity :size="15" />
+                <p>{{ t('settings.agentGovernanceLiveHint') }}</p>
+              </div>
+              <UiButton variant="outline" size="sm" data-testid="open-governance-runtime-link" @click="router.push('/governance')">
+                <span>{{ t('settings.openGovernanceRuntime') }}</span>
+                <ArrowUpRight :size="14" />
+              </UiButton>
+            </div>
+            <WorkspaceDefaultsPanel
+              ref="defaultsRef"
+              :agents="agents"
+              :modes="modes"
+              :pipelines="promptPipelines"
+              @changed="emit('changed')"
+              @focus-toml="tomlRef?.selectDocument($event)"
+            />
+            <GovernanceRolesPanel :manifest-tool-ids="manifestToolIds" :agents="agents" />
+            <AgentEvolutionPanel ref="evolutionRef" @changed="emit('changed')" />
+            <TomlDocumentPanel ref="tomlRef" @changed="defaultsRef?.load()" />
+          </div>
+        </template>
+        <slot v-else :name="tab" />
       </div>
-    </template>
-    <slot v-else :name="tab" />
+    </Transition>
   </div>
 </template>
+
+<style scoped>
+.agent-center-packs-slot {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-center-stage-pane {
+  min-width: 0;
+}
+
+.agent-advanced-link-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  color: var(--text-secondary);
+}
+</style>

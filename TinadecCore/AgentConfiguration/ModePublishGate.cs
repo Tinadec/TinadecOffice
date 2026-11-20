@@ -131,12 +131,17 @@ public static class ModePublishGate
                 $"mode '{modeKey}' binding '{nodeKey}' spawn.{key}={requested} exceeds the runtime ceiling {ceiling}; envelopes may only narrow.");
     }
 
-    private static bool IsSwitchedOff(JsonElement? switches, string toolId) =>
-        switches is { } switchValue
-        && switchValue.ValueKind == JsonValueKind.Object
-        && switchValue.TryGetProperty(toolId, out var state)
-        && (state.ValueKind == JsonValueKind.False
-            || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase)));
+    internal static bool IsSwitchedOff(JsonElement? switches, string toolId)
+    {
+        if (switches is not { ValueKind: JsonValueKind.Object } switchValue) return false;
+        if (switchValue.TryGetProperty(toolId, out var state))
+            return IsFalseState(state);
+        return switchValue.TryGetProperty("*", out var wildcardState) && IsFalseState(wildcardState);
+    }
+
+    private static bool IsFalseState(JsonElement state) =>
+        state.ValueKind == JsonValueKind.False
+        || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase));
 
     private static IReadOnlyList<string> StringArray(JsonElement element, string modeKey, string nodeKey, string field)
     {

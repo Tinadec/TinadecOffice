@@ -71,6 +71,14 @@ public sealed record FormalModeRoster(
     string RuntimeProfileId)
 {
     public Guid AgentModeId { get; init; }
+    public string? ModeSlug { get; init; }
+    public string? ModeDisplayName { get; init; }
+
+    /// <summary>
+    /// Optional explicit orchestration tier (<c>solo_dispatch | free_form | self_dispatch | deterministic</c>)
+    /// declared on the published mode. Null means derive from graph topology and conversation tools.
+    /// </summary>
+    public string? OrchestrationTier { get; init; }
 
     // DmaEA graph orchestration: the declared communication topology, conversation
     // resolution and spawnable-template declarations resolved from the frozen mode

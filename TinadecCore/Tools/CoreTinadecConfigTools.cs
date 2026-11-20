@@ -8,51 +8,65 @@ namespace TinadecCore.Tools;
 /// Manifest metadata for the <c>tinadec_*</c> workbench-configuration tools. This class
 /// knows ids, descriptions and schemas only — never a service — so it can sit in the
 /// Tools module while the execution lives behind <see cref="ITinadecConfigToolGateway"/>
-/// in Runtime.
+/// in Runtime (and is exposed directly over the loopback MCP server in AspNetCore).
 ///
-/// Policy shape: <c>tinadec_inspect</c> is read-only (no approval, low risk, safe to
-/// retry). Every write is high risk, approval-gated and NOT workspace-mutating — these
-/// tools change Core configuration, not the user's files, so the pre-write workspace
-/// snapshot and the file-path guards do not apply, but the human approval gate does.
-/// A retried write is unsafe: the same call may already have created a version.
+/// Policy shape: under the user-approved self-config policy, all <c>tinadec_*</c> tools
+/// execute with <see cref="ToolManifestEntryDto.RequiresApproval"/> = <c>false</c>. Writes
+/// still enforce input validation, optimistic revision checks, pack-managed immutability,
+/// secret redaction, and version snapshots, and never mutate user workspace files.
 /// </summary>
-internal static class CoreTinadecConfigTools
+public static class CoreTinadecConfigTools
 {
+    public static IReadOnlyList<ToolManifestEntryDto> AllManifestEntries() =>
+        CoreVirtualToolPolicy.TinadecConfigToolIds.Select(ManifestEntry).ToArray();
+
     public static ToolManifestEntryDto ManifestEntry(string toolId) => toolId switch
     {
         CoreVirtualToolPolicy.TinadecInspectToolId => Entry(
             CoreVirtualToolPolicy.TinadecInspectToolId,
-            "Read the live workbench configuration before changing it: agents, modes, one mode's graph, "
-            + "the authoring catalog, skills, MCP servers, or the market. Results are sanitized (no secrets) "
-            + "and list at most 50 rows. Call this first whenever the user asks to inspect or change agents, "
-            + "modes, skills or MCP.",
+            "Read live workbench configuration before changing it: agents, one full agent detail, modes, "
+            + "one mode's graph, the authoring catalog, sanitized models & model_profiles, prompt fragments "
+            + "& pipelines, one full prompt_pipeline graph, skills, MCP servers, or the market. Results are "
+            + "sanitized (no secrets) and list tools cap rows at 50.",
             InspectSchema, requiresApproval: false, risk: "low", retrySafety: "safe", confirmation: []),
         CoreVirtualToolPolicy.TinadecAgentApplyToolId => Entry(
             CoreVirtualToolPolicy.TinadecAgentApplyToolId,
-            "Create, clone or update a CUSTOM agent definition. Pack-managed (built-in) agents are read-only: "
-            + "clone one to get an editable draft. Changes land on a draft and only reach new runs after publish.",
-            AgentSchema, requiresApproval: true, risk: "high", retrySafety: "unsafe", confirmation: ["action"]),
+            "Create, clone, update, or publish a CUSTOM agent definition (including base_prompt_pipeline_id, "
+            + "source_kind/provenance, model_binding, and per-agent Skill/MCP tool_settings). Pack-managed agents "
+            + "are read-only: clone one to customize it. Agent runtime creations/clones default to "
+            + "source_kind='agent_generated' with provenance recorded.",
+            AgentSchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
         CoreVirtualToolPolicy.TinadecModeApplyToolId => Entry(
             CoreVirtualToolPolicy.TinadecModeApplyToolId,
-            "Create, clone, upsert or delete a DRAFT agent mode and its topology. Nodes and edges absent from the "
-            + "submitted arrays are deleted, every edge must carry its own edge_key, and the graph is validated "
-            + "before saving. Returns the saved graph plus structured diagnostics when validation fails.",
-            ModeSchema, requiresApproval: true, risk: "high", retrySafety: "unsafe", confirmation: ["action"]),
+            "Create, clone, upsert, or delete a DRAFT agent mode and its topology (resolving mode_id by GUID or "
+            + "slug, accepting instructions, bindings, orchestration_tier, runtime_policy, nodes[], edges[]). "
+            + "Nodes/edges absent from submitted arrays are deleted and every edge must carry edge_key.",
+            ModeSchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
         CoreVirtualToolPolicy.TinadecModePublishToolId => Entry(
             CoreVirtualToolPolicy.TinadecModePublishToolId,
-            "Publish a draft mode: freezes agent/prompt versions and every node's effective tools, validates the "
-            + "graph and returns topology_hash, version, revision and warnings. Pack-managed modes must be cloned first.",
-            PublishSchema, requiresApproval: true, risk: "high", retrySafety: "unsafe", confirmation: ["mode_id"]),
+            "Publish a draft mode (mode_id accepts GUID or slug): freezes agent/prompt versions and effective "
+            + "tools, validates topology, and returns topology_hash, version, revision, and warnings.",
+            PublishSchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
         CoreVirtualToolPolicy.TinadecSkillApplyToolId => Entry(
             CoreVirtualToolPolicy.TinadecSkillApplyToolId,
-            "Install, import, enable, disable or remove a Skill resource. Writes stay governed (they are queued "
-            + "as approval-required actions), never return skill content in bulk, and built-in skills are read-only.",
-            SkillSchema, requiresApproval: true, risk: "high", retrySafety: "unsafe", confirmation: ["action"]),
+            "Install, import, enable, disable, or remove a Skill resource. Preserves validation and optimistic "
+            + "revision checks, never returns skill content in bulk, and keeps built-in skills read-only.",
+            SkillSchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
         CoreVirtualToolPolicy.TinadecMcpApplyToolId => Entry(
             CoreVirtualToolPolicy.TinadecMcpApplyToolId,
-            "Upsert, test or remove a Core-managed MCP server registration. Environment values come back masked; "
-            + "sending a masked value back means 'keep the stored secret'. Test reports connection status only.",
-            McpSchema, requiresApproval: true, risk: "high", retrySafety: "unsafe", confirmation: ["action"]),
+            "Upsert, test, or remove a Core-managed MCP server registration. Environment values come back masked; "
+            + "sending a masked value back keeps the stored secret. Test reports connection status only.",
+            McpSchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
+        CoreVirtualToolPolicy.TinadecPromptApplyToolId => Entry(
+            CoreVirtualToolPolicy.TinadecPromptApplyToolId,
+            "Create, update, clone, publish, or rollback Core prompt fragments and prompt pipelines. Preserves "
+            + "graph validation, optimistic revision checks, and version history; built-in records must be cloned first.",
+            PromptApplySchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
+        CoreVirtualToolPolicy.TinadecModelProfileApplyToolId => Entry(
+            CoreVirtualToolPolicy.TinadecModelProfileApplyToolId,
+            "Inspect or update per-model model_profiles (specialties, tier, notes, context_window, cost_tier) "
+            + "on an enabled model provider without touching API keys or secret references.",
+            ModelProfileApplySchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
         _ => throw new InvalidOperationException($"No tinadec configuration tool named '{toolId}'."),
     };
 
@@ -77,30 +91,33 @@ internal static class CoreTinadecConfigTools
 
     private const string InspectSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"modes\",\"mode\",\"catalog\",\"skills\",\"mcp\",\"market\"],\"description\":\"What to read. 'mode' needs mode_id; 'catalog' lists the agents and prompt pipelines a mode can be built from.\"}," +
-        "\"mode_id\":{\"type\":\"string\",\"description\":\"Mode id, required for target=mode.\"}," +
+        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"agent\",\"modes\",\"mode\",\"catalog\",\"models\",\"prompts\",\"prompt_pipeline\",\"skills\",\"mcp\",\"market\"],\"description\":\"What to read. 'agent' needs agent_id (GUID or slug); 'mode' needs mode_id (GUID or slug); 'prompt_pipeline' needs pipeline_id (GUID or slug); 'models' lists sanitized enabled providers, routes, health, and model_profiles; 'prompts' lists fragments and pipelines.\"}," +
+        "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug, required for target=agent.\"}," +
+        "\"mode_id\":{\"type\":\"string\",\"description\":\"Mode id (GUID) or slug, required for target=mode.\"}," +
+        "\"pipeline_id\":{\"type\":\"string\",\"description\":\"Prompt pipeline id (GUID) or slug, required for target=prompt_pipeline.\"}," +
         "\"query\":{\"type\":\"string\",\"description\":\"Optional literal filter matched against names, slugs and descriptions.\"}," +
         "\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":50,\"description\":\"Rows to return; defaults to 20 and is capped at 50.\"}" +
         "},\"required\":[\"target\"],\"additionalProperties\":false}";
 
     private const string AgentSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"action\":{\"type\":\"string\",\"enum\":[\"clone\",\"create\",\"update\"]}," +
-        "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id: the source for clone, the target for update.\"}," +
-        "\"payload\":{\"type\":\"object\",\"description\":\"Write fields: display_name, slug, layer (operation|execution), role, capabilities[], tool_scope[], system_prompt, description, model_strategy, enabled.\"}" +
+        "\"action\":{\"type\":\"string\",\"enum\":[\"clone\",\"create\",\"update\",\"publish\"]}," +
+        "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug: source for clone, target for update/publish.\"}," +
+        "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Optional optimistic revision from inspect; stale values fail with conflict.\"}," +
+        "\"payload\":{\"type\":\"object\",\"description\":\"Write fields: display_name, slug, layer (operation|execution), role, capabilities[], tool_scope[], system_prompt, description, model_strategy, enabled, base_prompt_pipeline_id, source_kind, provenance { created_by_agent_id, created_by_run_id, reason }, model_binding { provider_id, model_id, strategy, tier, notes }, tool_settings { mcp_server_ids[], skill_resource_ids[] }.\"}" +
         "},\"required\":[\"action\"],\"additionalProperties\":false}";
 
     private const string ModeSchema =
         "{\"type\":\"object\",\"properties\":{" +
         "\"action\":{\"type\":\"string\",\"enum\":[\"clone\",\"create\",\"upsert\",\"delete\"]}," +
-        "\"mode_id\":{\"type\":\"string\",\"description\":\"Target mode: source for clone, target for upsert/delete.\"}," +
+        "\"mode_id\":{\"type\":\"string\",\"description\":\"Target mode (GUID or slug): source for clone, target for upsert/delete.\"}," +
         "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"The revision tinadec_inspect returned; a stale value is refused with a conflict.\"}," +
-        "\"payload\":{\"type\":\"object\",\"description\":\"display_name, description, runtime_policy, canvas_layout, nodes[], edges[]. Nodes need node_key + agent_definition_id + layer; edges need edge_key + source_node_key + target_node_key.\"}" +
+        "\"payload\":{\"type\":\"object\",\"description\":\"display_name, slug, description, instructions, orchestration_tier (solo_dispatch|free_form|self_dispatch|deterministic), bindings, runtime_policy, canvas_layout, nodes[], edges[]. Nodes need node_key + agent_definition_id + layer; edges need edge_key + source_node_key + target_node_key.\"}" +
         "},\"required\":[\"action\"],\"additionalProperties\":false}";
 
     private const string PublishSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"mode_id\":{\"type\":\"string\"}," +
+        "\"mode_id\":{\"type\":\"string\",\"description\":\"Mode id (GUID) or slug to publish.\"}," +
         "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0}" +
         "},\"required\":[\"mode_id\"],\"additionalProperties\":false}";
 
@@ -117,5 +134,25 @@ internal static class CoreTinadecConfigTools
         "\"action\":{\"type\":\"string\",\"enum\":[\"upsert\",\"test\",\"remove\"]}," +
         "\"resource_id\":{\"type\":\"string\",\"description\":\"Existing MCP resource id; required for test/remove and for updating one.\"}," +
         "\"input\":{\"type\":\"object\",\"description\":\"upsert: id, name, command, args[], env{}, cwd, enabled, project_id, expected_revision. Masked env values keep the stored secret.\"}" +
+        "},\"required\":[\"action\"],\"additionalProperties\":false}";
+
+    private const string PromptApplySchema =
+        "{\"type\":\"object\",\"properties\":{" +
+        "\"target\":{\"type\":\"string\",\"enum\":[\"fragment\",\"pipeline\"],\"description\":\"Whether to mutate a prompt fragment or a prompt pipeline.\"}," +
+        "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"update\",\"clone\",\"publish\",\"rollback\"]}," +
+        "\"fragment_id\":{\"type\":\"string\",\"description\":\"Prompt fragment id (GUID) or key for target=fragment.\"}," +
+        "\"pipeline_id\":{\"type\":\"string\",\"description\":\"Prompt pipeline id (GUID) or slug for target=pipeline.\"}," +
+        "\"version_id\":{\"type\":\"string\",\"description\":\"Target version id or version number for rollback.\"}," +
+        "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Optimistic revision check when updating or publishing.\"}," +
+        "\"payload\":{\"type\":\"object\",\"description\":\"Fragment fields: key, title, scope (global|mode|agent), category, target_agent_id, content, priority, enabled, new_key, target_version. Pipeline fields: display_name, slug, description, agent_definition_id, graph { nodes[], edges[], canvas_layout }, nodes[], edges[], notes.\"}" +
+        "},\"required\":[\"target\",\"action\"],\"additionalProperties\":false}";
+
+    private const string ModelProfileApplySchema =
+        "{\"type\":\"object\",\"properties\":{" +
+        "\"action\":{\"type\":\"string\",\"enum\":[\"inspect\",\"update\"]}," +
+        "\"provider_id\":{\"type\":\"string\",\"description\":\"Enabled model provider id (GUID) or name.\"}," +
+        "\"model_id\":{\"type\":\"string\",\"description\":\"Model id on that provider.\"}," +
+        "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Optional optimistic revision of the provider configuration.\"}," +
+        "\"payload\":{\"type\":\"object\",\"description\":\"Profile metadata for update: specialties (string[]), tier (fast|balanced|deep), notes (string), context_window (integer > 0), cost_tier (low|medium|high). Never accepts or returns secrets.\"}" +
         "},\"required\":[\"action\"],\"additionalProperties\":false}";
 }

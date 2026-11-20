@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentModeTopologyDto, AgentViewDto } from '@/api'
-import { buildTeamTopology, classifyTeamShape, cloneModeTopology } from './teamShape'
+import { buildTeamTopology, classifyTeamShape, cloneModeTopology, defaultMemberScope } from './teamShape'
 
 function agent(id: string, slug: string, layer: 'operation' | 'execution', tools: string[] = []): AgentViewDto {
   return {
@@ -216,5 +216,106 @@ describe('team shape', () => {
     expect(cloned.nodes[0].relationship).toEqual({ duty: 'own it', agent_types: ['search'] })
     expect(cloned.edges[0].condition).toEqual({ label: 'handoff' })
     expect(cloned.bindings).toEqual([{ node_key: 'l', tool_switches: { '*': false } }, { agent_ref: 'search' }])
+  })
+
+  it('persists display_name, description, orchestration_tier and valid complete relationship objects', () => {
+    const topology = buildTeamTopology({
+      style: 'pipeline',
+      leaderId: leader.id,
+      memberIds: [search.id, engineering.id],
+      displayName: '  Release Flow  ',
+      description: '  Ship safely  ',
+    }, agents)
+
+    expect(topology.display_name).toBe('Release Flow')
+    expect(topology.description).toBe('Ship safely')
+    expect(topology.orchestration_tier).toBe('deterministic')
+
+    for (const node of topology.nodes) {
+      const rel = node.relationship as Record<string, unknown>
+      expect(typeof rel.duty).toBe('string')
+      expect(rel.inputs_outputs && typeof rel.inputs_outputs === 'object' && !Array.isArray(rel.inputs_outputs)).toBe(true)
+      expect(Array.isArray(rel.allowed_dispatch_targets)).toBe(true)
+      expect(Array.isArray(rel.success_criteria)).toBe(true)
+      expect(Array.isArray(rel.agent_types)).toBe(true)
+    }
+  })
+
+  it('recognizes tool_scope write tools and wildcard in defaultMemberScope', () => {
+    expect(defaultMemberScope({ tool_scope: '*' })).toEqual({ read: true, write: true })
+    expect(defaultMemberScope({ tool_scope: ['read_file', 'write_file'] })).toEqual({ read: true, write: true })
+    expect(defaultMemberScope({ tool_scope: ['read_file', 'file_search'] })).toEqual({ read: true, write: false })
+  })
+
+  it('losslessly preserves runtime_policy, canvas_layout, model_strategy_override, and unknown bindings on team update', () => {
+    const existing = detail({
+      orchestration_tier: 'self_dispatch',
+      runtime_policy: { kind: 'structured_investigation', version: 1, features: ['evidence_gate'] },
+      canvas_layout: { zoom: 0.9, viewport: { x: 10, y: 20 } },
+      nodes: [
+        {
+          id: 'leader',
+          node_key: 'leader',
+          agent_id: leader.id,
+          agent_definition_id: leader.id,
+          lane: 'operation',
+          position: { x: 140, y: 60 },
+          config: { conversation: true, customFlag: 1 },
+          model_strategy_override: { kind: 'route', route_purpose: 'reasoning' },
+          relationship: { duty: 'Custom duty', agent_types: ['search'], subscriptions: ['lease_conflict'] },
+        },
+        {
+          id: 'member-1',
+          node_key: 'member-1',
+          agent_id: search.id,
+          agent_definition_id: search.id,
+          lane: 'execution',
+          position: { x: 200, y: 300 },
+          model_strategy_override: { kind: 'fixed', provider_instance_id: 'p1', model: 'm1' },
+        },
+      ],
+      edges: [{ id: 'e1', source: 'leader', target: 'member-1', condition: { label: 'custom-handoff' } }],
+      bindings: [
+        { node_key: 'leader', tool_switches: { '*': false }, duty_description_ref: 'custom://leader', envelope: { custom: true } },
+        { node_key: 'member-1', duty_description_ref: 'custom://member-1', envelope: { resources: { read: [''] }, lease: 'ro' } },
+        { node_key: 'audit-hook', tool_switches: { read_file: true } },
+      ],
+    })
+
+    const updated = buildTeamTopology({
+      style: 'pipeline',
+      leaderId: leader.id,
+      memberIds: [search.id, engineering.id],
+      displayName: 'Updated Pipeline',
+      existingDetail: existing,
+    }, agents)
+
+    expect(updated.orchestration_tier).toBe('self_dispatch')
+    expect(updated.runtime_policy).toEqual(existing.runtime_policy)
+    expect(updated.canvas_layout).toEqual(existing.canvas_layout)
+    expect(updated.nodes[0].model_strategy_override).toEqual({ kind: 'route', route_purpose: 'reasoning' })
+    expect(updated.nodes[0].config).toEqual({ conversation: true, customFlag: 1 })
+    expect((updated.nodes[0].relationship as Record<string, unknown>).subscriptions).toEqual(['lease_conflict'])
+    expect(updated.nodes[1].model_strategy_override).toEqual({ kind: 'fixed', provider_instance_id: 'p1', model: 'm1' })
+    expect(updated.edges[0].condition).toEqual({ label: 'custom-handoff' })
+    expect(updated.bindings?.find(b => b.node_key === 'leader')?.duty_description_ref).toBe('custom://leader')
+    expect(updated.bindings?.find(b => b.node_key === 'leader')?.envelope).toMatchObject({ custom: true })
+    expect(updated.bindings?.find(b => b.node_key === 'member-1')?.envelope).toMatchObject({ lease: 'ro', resources: { read: [''] } })
+    expect(updated.bindings?.find(b => b.node_key === 'audit-hook')).toEqual({ node_key: 'audit-hook', tool_switches: { read_file: true } })
+  })
+
+  it('strips wildcard tool switch-off when switching back to solo style', () => {
+    const existing = detail({
+      bindings: [{ node_key: 'node-leader', tool_switches: { '*': false, custom_tool: true } }],
+    })
+    const solo = buildTeamTopology({
+      style: 'solo',
+      leaderId: leader.id,
+      memberIds: [],
+      displayName: 'Solo',
+      existingDetail: existing,
+    }, agents)
+    expect(solo.orchestration_tier).toBe('solo_dispatch')
+    expect(solo.bindings?.[0].tool_switches).toEqual({ custom_tool: true })
   })
 })

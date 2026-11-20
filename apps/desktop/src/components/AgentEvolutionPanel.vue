@@ -12,9 +12,14 @@ import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel, UiSelectField, UiSheet, UiSkeleton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
+import { pickLocalized } from '@/lib/packI18n'
 
-const { t } = useI18n()
+const emit = defineEmits<{ changed: [] }>()
+
+const { t, locale } = useI18n()
 const { notify, status, confirm, dismissByKey } = useNotifications()
+const { canAccessBackend } = useHostAccess()
 
 const proposals = ref<AgentEvolutionProposalDto[]>([])
 const agentModes = ref<AgentModeDto[]>([])
@@ -29,7 +34,7 @@ const generateLookback = ref('200')
 // Promote form state
 const promoteForm = ref<PromoteAgentCandidateInput>({
   agent_id: '',
-  mode: 'plan',
+  mode: '',
   model_route_purpose: 'chat',
   allowed_tools: [],
   capabilities: [],
@@ -50,8 +55,25 @@ const sortedProposals = computed(() =>
   [...proposals.value].sort((a, b) => b.confidence - a.confidence)
 )
 
+const promoteModeOptions = computed(() =>
+  agentModes.value
+    .filter((mode) => mode.status !== 'archived')
+    .map((mode) => {
+      const name = pickLocalized(mode.i18n, locale.value, 'display_name', mode.display_name) ?? mode.display_name
+      const desc = pickLocalized(mode.i18n, locale.value, 'description', mode.description ?? mode.summary)
+      return {
+        value: mode.id,
+        label: desc ? `${name} · ${desc}` : name,
+      }
+    }),
+)
+
+function isOperationLayer(layer: string): boolean {
+  return layer === 'planning' || layer === 'operation'
+}
+
 function agentLayerLabel(layer: string): string {
-  if (layer === 'planning') return t('settings.agentLayerPlanning')
+  if (isOperationLayer(layer)) return t('settings.agentLayerPlanning')
   if (layer === 'execution') return t('settings.agentLayerExecution')
   if (layer === 'evolution') return t('settings.agentLayerEvolution')
   return layer
@@ -81,16 +103,17 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
 }
 
 async function loadProposals() {
+  if (!canAccessBackend.value) return
   loading.value = true
   try {
     const [proposalList, modes] = await Promise.all([
       api.listEvolutionProposals(),
       api.listAgentModes()
     ])
-    proposals.value = proposalList
-    agentModes.value = modes
-    if (!selectedProposalId.value && proposalList.length > 0) {
-      selectedProposalId.value = proposalList[0].id
+    proposals.value = Array.isArray(proposalList) ? proposalList : []
+    agentModes.value = Array.isArray(modes) ? modes : []
+    if (!selectedProposalId.value && proposals.value.length > 0) {
+      selectedProposalId.value = proposals.value[0].id
     }
     dismissByKey('evolution')
   } catch (err) {
@@ -107,6 +130,7 @@ async function loadProposals() {
 }
 
 async function generateProposals() {
+  if (!canAccessBackend.value) return
   busy.value = true
   try {
     const params: { session_id?: string; lookback_event_count?: number } = {}
@@ -114,11 +138,11 @@ async function generateProposals() {
     const lookback = Number(generateLookback.value)
     if (lookback > 0) params.lookback_event_count = lookback
     const generated = await api.generateEvolutionProposals(params)
-    proposals.value = generated
-    if (generated.length > 0) {
-      selectedProposalId.value = generated[0].id
+    proposals.value = Array.isArray(generated) ? generated : []
+    if (proposals.value.length > 0) {
+      selectedProposalId.value = proposals.value[0].id
     }
-    notify.success({ message: t('agentCenter.evolution.generateSuccess', { count: generated.length }), source: 'evolution' })
+    notify.success({ message: t('agentCenter.evolution.generateSuccess', { count: proposals.value.length }), source: 'evolution' })
   } catch (err) {
     notify.error(err, { title: t('agentCenter.evolution.generateFailed'), source: 'evolution' })
   } finally {
@@ -126,14 +150,24 @@ async function generateProposals() {
   }
 }
 
+function defaultPromoteModeId(layer: string): string {
+  const activeModes = agentModes.value.filter((mode) => mode.status !== 'archived')
+  const preferredSlugs = isOperationLayer(layer)
+    ? ['plan', 'team', 'review', 'spec', 'free_director']
+    : ['solo', 'fixed_pipeline', 'vibe_graph']
+  const match = activeModes.find((mode) => mode.slug && preferredSlugs.includes(mode.slug))
+  return match?.id ?? activeModes[0]?.id ?? agentModes.value[0]?.id ?? ''
+}
+
 function openPromotePanel(proposal: AgentEvolutionProposalDto) {
   showPromotePanel.value = proposal.id
   // Pre-fill form with proposal suggestions
   const baseAgentId = `agent_${proposal.agent_type}_${Date.now().toString(36)}`
+  const isOp = isOperationLayer(proposal.layer)
   promoteForm.value = {
     agent_id: baseAgentId,
-    mode: proposal.layer === 'planning' ? 'plan' : 'execute',
-    model_route_purpose: proposal.layer === 'planning' ? 'planner' : 'chat',
+    mode: defaultPromoteModeId(proposal.layer),
+    model_route_purpose: isOp ? 'planner' : 'chat',
     allowed_tools: [],
     capabilities: [],
     system_prompt: null
@@ -173,12 +207,13 @@ function removePromoteCapability(cap: string) {
 }
 
 async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
-  if (!promoteForm.value.agent_id.trim()) return
+  if (!canAccessBackend.value || !promoteForm.value.agent_id.trim()) return
   busy.value = true
   try {
     await api.promoteAgentCandidate(proposal.id, promoteForm.value)
     await loadProposals()
     showPromotePanel.value = ''
+    emit('changed')
     notify.success({ title: t('agentCenter.evolution.promoteTitle'), message: t('agentCenter.evolution.promoteSuccess'), source: 'evolution' })
   } catch (err) {
     notify.error(err, { title: t('agentCenter.evolution.promoteFailed', { name: proposal.name }), source: 'evolution' })
@@ -188,6 +223,7 @@ async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
 }
 
 async function rejectCandidate(proposal: AgentEvolutionProposalDto) {
+  if (!canAccessBackend.value) return
   const reason = rejectReason.value.trim() || undefined
   if (!await confirm({
     title: t('agentCenter.evolution.rejectTitle'),
@@ -210,7 +246,11 @@ async function rejectCandidate(proposal: AgentEvolutionProposalDto) {
 }
 
 onMounted(() => {
-  void loadProposals()
+  if (canAccessBackend.value) void loadProposals()
+})
+
+watch(canAccessBackend, (ready) => {
+  if (ready) void loadProposals()
 })
 
 defineExpose({ loadProposals })
@@ -242,7 +282,7 @@ defineExpose({ loadProposals })
               <UiLabel>{{ t('agentCenter.evolution.lookbackEvents') }}</UiLabel>
               <UiInput v-model.number="generateLookback" type="number" placeholder="200" />
             </div>
-            <UiButton :disabled="busy" @click="generateProposals">
+            <UiButton :disabled="!canAccessBackend || busy" @click="generateProposals">
               <Dna :size="14" />
               <span>{{ t('agentCenter.evolution.generateAction') }}</span>
             </UiButton>
@@ -265,7 +305,7 @@ defineExpose({ loadProposals })
         >
           <div class="evolution-proposal-head">
             <div class="evolution-proposal-icon" :class="proposal.layer">
-              <component :is="proposal.layer === 'planning' ? Workflow : Cpu" :size="16" />
+              <component :is="isOperationLayer(proposal.layer) ? Workflow : Cpu" :size="16" />
             </div>
             <div class="evolution-proposal-main">
               <strong>{{ proposal.name }}</strong>
@@ -287,7 +327,7 @@ defineExpose({ loadProposals })
         <template #content>
           <div class="evolution-detail-head">
             <div class="evolution-proposal-icon" :class="selectedProposal.layer">
-              <component :is="selectedProposal.layer === 'planning' ? Workflow : Cpu" :size="20" />
+              <component :is="isOperationLayer(selectedProposal.layer) ? Workflow : Cpu" :size="20" />
             </div>
             <div>
               <h3>{{ selectedProposal.name }}</h3>
@@ -304,12 +344,12 @@ defineExpose({ loadProposals })
           </div>
 
           <div v-if="selectedProposal.status === 'proposed' || selectedProposal.status === 'evaluating'" class="evolution-detail-actions">
-            <UiButton :disabled="busy" @click="openPromotePanel(selectedProposal)">
+            <UiButton :disabled="!canAccessBackend || busy" @click="openPromotePanel(selectedProposal)">
               <Check :size="14" />
               <span>{{ t('agentCenter.evolution.promote') }}</span>
             </UiButton>
             <UiInput v-model="rejectReason" :placeholder="t('agentCenter.evolution.rejectPlaceholder')" size="sm" />
-            <UiButton variant="ghost" :disabled="busy" @click="rejectCandidate(selectedProposal)">
+            <UiButton variant="ghost" :disabled="!canAccessBackend || busy" @click="rejectCandidate(selectedProposal)">
               <ThumbsDown :size="14" />
               <span>{{ t('agentCenter.evolution.reject') }}</span>
             </UiButton>
@@ -332,7 +372,7 @@ defineExpose({ loadProposals })
             <UiLabel>{{ t('agentCenter.evolution.fieldMode') }}</UiLabel>
             <UiSelectField
               v-model="promoteForm.mode"
-              :options="agentModes.map((mode) => ({ value: mode.id, label: `${mode.display_name} · ${mode.summary}` }))"
+              :options="promoteModeOptions"
             />
           </div>
           <div class="evolution-form-field">
@@ -381,7 +421,7 @@ defineExpose({ loadProposals })
 
         <div class="ac-sheet-actions">
           <UiButton variant="outline" @click="closePromotePanel">{{ t('settings.cancel') }}</UiButton>
-          <UiButton :disabled="busy || !promoteForm.agent_id.trim()" @click="promoteCandidate(selectedProposal!)">
+          <UiButton :disabled="!canAccessBackend || busy || !promoteForm.agent_id.trim()" @click="promoteCandidate(selectedProposal!)">
             <Check :size="14" />
             <span>{{ t('agentCenter.evolution.promoteConfirm') }}</span>
           </UiButton>

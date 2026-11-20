@@ -147,6 +147,17 @@ describe('UiSelectField', () => {
     dialog.remove()
   })
 
+  it('keeps the listbox inside an open role="dialog" container (e.g. reka-ui DialogContent)', async () => {
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.append(dialog)
+    const wrapper = mount(UiSelectField, { attachTo: dialog, props: { value: 'queued', options } })
+    await wrapper.get('.ui-select-trigger').trigger('click')
+    expect(dialog.querySelector('.ui-select-menu')).not.toBeNull()
+    wrapper.unmount()
+    dialog.remove()
+  })
+
   it('dismisses a floating listbox if its anchor moves with scrolling or resizing', async () => {
     const wrapper = mount(UiSelectField, { attachTo: document.body, props: { value: 'queued', options } })
     await wrapper.get('.ui-select-trigger').trigger('click')

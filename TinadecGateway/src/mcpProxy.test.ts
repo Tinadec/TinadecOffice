@@ -109,11 +109,11 @@ test('the external contract declares only the MCP reads Core implements', async 
   assert.deepEqual(mcpPaths, [
     '/api/v1/mcp/servers',
     '/api/v1/mcp/servers/{serverId}/tools',
+    '/api/v1/mcp/tinadec',
   ]);
-  // Both are typed at the envelope: `source` is the field a client must branch on, and an untyped
-  // 200 is how the desktop DTOs kept drifting from what Core sends.
+  // Both read routes and the loopback self-config MCP endpoint keep a typed 200 in the external contract.
   for (const path of mcpPaths) {
-    const ok = doc.paths[path]!.get as { responses?: Record<string, { content?: unknown }> };
-    assert.ok(ok.responses?.['200']?.content, `${path} must keep a typed 200 in the external contract`);
+    const op = (doc.paths[path]!.get ?? doc.paths[path]!.post) as { responses?: Record<string, { content?: unknown }> };
+    assert.ok(op?.responses?.['200']?.content, `${path} must keep a typed 200 in the external contract`);
   }
 });

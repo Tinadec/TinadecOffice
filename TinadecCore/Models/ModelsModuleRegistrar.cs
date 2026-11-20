@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -7,6 +8,7 @@ using OpenAI;
 using System.ClientModel;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.Models.Harness;
 using TinadecCore.Models.Harness.Acp;
 using TinadecCore.Models.Harness.Headless;
@@ -30,6 +32,7 @@ public sealed class ModelsModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IModelProvider>(sp => sp.GetRequiredService<ModelProvider>());
         builder.Services.AddSingleton<IChatResolver>(sp => sp.GetRequiredService<ModelProvider>());
         builder.Services.AddSingleton<IEmbeddingProvider, EmbeddingProvider>();
+        builder.Services.AddSingleton<IModelProfileCatalogService, ModelProfileCatalogService>();
         // Everything a chat route can turn into a live client: the protocol-aware factory, the two local
         // harness transports, the binary resolver, and the terminal host. This lives here rather than in
         // DmaEA because reaching a model is the model interface's job, and DmaEA references only
@@ -368,5 +371,278 @@ internal sealed class EmbeddingProvider : IEmbeddingProvider
         public string? ApiKey { get; set; }
         public string? ModelId { get; set; }
         public string? Error { get; set; }
+    }
+}
+
+internal sealed class ModelProfileCatalogService : IModelProfileCatalogService
+{
+    private readonly IDbContextFactory<ModelControlDbContext> _dbFactory;
+    private readonly IContentStore _content;
+    private readonly ISecretStore _secrets;
+    private readonly ITenantContextAccessor _tenant;
+
+    public ModelProfileCatalogService(
+        IDbContextFactory<ModelControlDbContext> dbFactory,
+        IContentStore content,
+        ISecretStore secrets,
+        ITenantContextAccessor tenant)
+    {
+        _dbFactory = dbFactory;
+        _content = content;
+        _secrets = secrets;
+        _tenant = tenant;
+    }
+
+    public async Task<SanitizedModelCatalogDto> GetSanitizedCatalogAsync(
+        bool includeDisabled = false,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        var providerRows = await db.Providers.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId
+                && x.WorkspaceId == scope.WorkspaceId
+                && x.DeletedAt == null
+                && (includeDisabled || x.Enabled))
+            .OrderBy(x => x.DisplayName)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var versionIds = providerRows.Select(x => x.CurrentVersionId).Distinct().ToArray();
+        var versions = versionIds.Length == 0
+            ? new Dictionary<Guid, ModelProviderVersionRecord>()
+            : await db.ProviderVersions.AsNoTracking()
+                .Where(x => versionIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, cancellationToken).ConfigureAwait(false);
+
+        var providers = new List<SanitizedProviderCatalogItemDto>(providerRows.Count);
+        foreach (var row in providerRows)
+        {
+            var cfg = versions.TryGetValue(row.CurrentVersionId, out var version)
+                ? await ReadConfigAsync(version.ContentReference, cancellationToken).ConfigureAwait(false)
+                : new Dictionary<string, JsonElement>();
+
+            JsonElement Value(string key) => cfg.TryGetValue(key, out var v) ? v : default;
+            string? String(string key) => Value(key).ValueKind == JsonValueKind.String ? Value(key).GetString() : null;
+            string[] ArrayStrings(string key) => Value(key).ValueKind == JsonValueKind.Array
+                ? Value(key).EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray()
+                : [];
+
+            var protocol = HarnessCatalog.ResolveProtocol(String("protocol"), row.Driver, String("channel"));
+            var hasApiKey = !string.IsNullOrWhiteSpace(row.SecretReference)
+                && await _secrets.ExistsAsync(row.SecretReference, cancellationToken).ConfigureAwait(false);
+
+            IReadOnlyDictionary<string, ModelParameters> rawParameters;
+            try
+            {
+                rawParameters = ModelParameters.ReadMap(Value("model_parameters"));
+            }
+            catch (ArgumentException)
+            {
+                rawParameters = new Dictionary<string, ModelParameters>(StringComparer.Ordinal);
+            }
+
+            var parameterSnapshots = rawParameters.ToDictionary(
+                pair => pair.Key,
+                pair => new ModelParametersSnapshotDto
+                {
+                    ReasoningEffort = pair.Value.ReasoningEffort,
+                    Temperature = pair.Value.Temperature,
+                    TopP = pair.Value.TopP,
+                    MaxOutputTokens = pair.Value.MaxOutputTokens
+                },
+                StringComparer.Ordinal);
+
+            IReadOnlyDictionary<string, ModelProfileDto> profiles;
+            try
+            {
+                profiles = ModelProfile.ReadMap(Value("model_profiles"));
+            }
+            catch (ArgumentException)
+            {
+                profiles = new Dictionary<string, ModelProfileDto>(StringComparer.Ordinal);
+            }
+
+            providers.Add(new SanitizedProviderCatalogItemDto
+            {
+                Id = row.Id,
+                Driver = row.Driver,
+                Protocol = protocol,
+                Channel = String("channel"),
+                DisplayName = row.DisplayName,
+                ConnectionKind = row.ConnectionKind,
+                DefaultModel = String("model"),
+                Models = ArrayStrings("models"),
+                Capabilities = ArrayStrings("capabilities"),
+                HasApiKey = hasApiKey,
+                Enabled = row.Enabled,
+                Revision = row.Revision,
+                ModelProfiles = profiles,
+                ModelParameters = parameterSnapshots
+            });
+        }
+
+        var routeRows = await db.Routes.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.DeletedAt == null)
+            .OrderBy(x => x.Purpose)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var routeVersionIds = routeRows.Select(x => x.CurrentVersionId).Distinct().ToArray();
+        var routeVersions = routeVersionIds.Length == 0
+            ? new Dictionary<Guid, ModelRouteVersionRecord>()
+            : await db.RouteVersions.AsNoTracking()
+                .Where(x => routeVersionIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, cancellationToken).ConfigureAwait(false);
+        var candidateRows = routeVersionIds.Length == 0
+            ? []
+            : await db.RouteCandidates.AsNoTracking()
+                .Where(x => routeVersionIds.Contains(x.RouteVersionId))
+                .OrderBy(x => x.Position)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var candidatesByVersion = candidateRows.GroupBy(x => x.RouteVersionId).ToDictionary(g => g.Key, g => g.ToArray());
+
+        var routes = new List<SanitizedModelRouteDto>(routeRows.Count);
+        foreach (var route in routeRows)
+        {
+            if (!routeVersions.TryGetValue(route.CurrentVersionId, out var version)) continue;
+            var candidates = candidatesByVersion.TryGetValue(version.Id, out var list) ? list : [];
+            routes.Add(new SanitizedModelRouteDto
+            {
+                Id = route.Id,
+                Purpose = route.Purpose,
+                Version = version.Version,
+                Revision = route.Revision,
+                Candidates = candidates.OrderBy(c => c.Position).Select(c => new SanitizedModelRouteCandidateDto
+                {
+                    Position = c.Position,
+                    ProviderInstanceId = c.ProviderInstanceId,
+                    Model = c.Model
+                }).ToArray()
+            });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var healthRows = await db.Health.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .OrderBy(x => x.ProviderInstanceId)
+            .ThenBy(x => x.Model)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var health = healthRows.Select(h => new SanitizedModelHealthDto
+        {
+            ProviderInstanceId = h.ProviderInstanceId,
+            Model = h.Model,
+            ConsecutiveFailures = h.ConsecutiveFailures,
+            IsCooling = ModelHealthPolicy.IsCooling(h.CoolingUntil, now),
+            CoolingUntil = h.CoolingUntil,
+            LastCategory = h.LastCategory,
+            UpdatedAt = h.UpdatedAt
+        }).ToArray();
+
+        return new SanitizedModelCatalogDto
+        {
+            Providers = providers,
+            Routes = routes,
+            Health = health
+        };
+    }
+
+    public async Task<ModelProfileUpdateResultDto> UpdateModelProfileAsync(
+        Guid providerId,
+        string modelId,
+        ModelProfileDto? profile,
+        long? expectedRevision = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(modelId) || modelId != modelId.Trim() || modelId.Length > 256)
+            throw new ModelProfileException(400, "invalid_model_profile", "modelId must be a non-empty trimmed string of at most 256 characters.");
+
+        var normalizedProfile = profile is null ? null : ModelProfile.Normalize(profile);
+        var scope = _tenant.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        var row = await db.Providers.SingleOrDefaultAsync(
+            x => x.Id == providerId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.DeletedAt == null,
+            cancellationToken).ConfigureAwait(false);
+        if (row is null)
+            throw new ModelProfileException(404, "not_found", $"Model provider '{providerId}' was not found.");
+
+        if (expectedRevision is { } expected && row.Revision != expected)
+            throw new ModelProfileException(412, "revision_conflict", $"Model provider revision conflict: expected {expected}, actual {row.Revision}.");
+
+        var currentVersion = await db.ProviderVersions.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == row.CurrentVersionId, cancellationToken).ConfigureAwait(false);
+        var config = currentVersion is null
+            ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+            : await ReadConfigAsync(currentVersion.ContentReference, cancellationToken).ConfigureAwait(false);
+
+        config.Remove("api_key");
+        config.Remove("clear_api_key");
+
+        var existingProfiles = config.TryGetValue("model_profiles", out var profilesEl)
+            ? new Dictionary<string, ModelProfileDto>(ModelProfile.ReadMap(profilesEl), StringComparer.Ordinal)
+            : new Dictionary<string, ModelProfileDto>(StringComparer.Ordinal);
+
+        if (normalizedProfile is null)
+            existingProfiles.Remove(modelId);
+        else
+            existingProfiles[modelId] = normalizedProfile;
+
+        if (existingProfiles.Count == 0)
+            config.Remove("model_profiles");
+        else
+            config["model_profiles"] = JsonSerializer.SerializeToElement(existingProfiles);
+
+        var serialized = JsonSerializer.Serialize(config);
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(serialized));
+        var stored = await _content.PutAsync(
+            new ContentWriteRequest(scope.TenantId, scope.WorkspaceId, "model-config", "application/json", stream),
+            cancellationToken).ConfigureAwait(false);
+
+        var maxVersion = await db.ProviderVersions
+            .Where(v => v.ProviderId == row.Id)
+            .MaxAsync(v => (int?)v.Version, cancellationToken).ConfigureAwait(false) ?? 0;
+
+        var now = DateTimeOffset.UtcNow;
+        var version = new ModelProviderVersionRecord
+        {
+            Id = Guid.NewGuid(),
+            ProviderId = row.Id,
+            Version = maxVersion + 1,
+            ContentReference = stored.Value,
+            ContentHash = stored.Sha256,
+            ContentLength = stored.Length,
+            CreatedByPrincipalId = scope.PrincipalId,
+            CreatedAt = now
+        };
+        row.Revision++;
+        row.CurrentVersionId = version.Id;
+        row.UpdatedByPrincipalId = scope.PrincipalId;
+        row.UpdatedAt = now;
+        db.ProviderVersions.Add(version);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return new ModelProfileUpdateResultDto
+        {
+            ProviderInstanceId = row.Id,
+            Model = modelId,
+            Profile = normalizedProfile,
+            ModelProfiles = existingProfiles,
+            Revision = row.Revision,
+            UpdatedAt = row.UpdatedAt
+        };
+    }
+
+    private async Task<Dictionary<string, JsonElement>> ReadConfigAsync(string reference, CancellationToken cancellationToken)
+    {
+        await using var stream = await _content.OpenReadAsync(
+            new ContentReference(reference, "", 0, "application/json"),
+            cancellationToken).ConfigureAwait(false);
+        using var reader = new StreamReader(stream);
+        var json = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(json)
+            ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+            : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)
+              ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
     }
 }

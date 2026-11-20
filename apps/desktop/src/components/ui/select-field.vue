@@ -51,7 +51,7 @@ const menuId = `ui-select-menu-${useId()}`
 const trigger = ref<HTMLButtonElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const portalTarget = ref<HTMLElement | 'body'>('body')
-let ownerDialog: HTMLDialogElement | null = null
+let ownerDialog: HTMLElement | null = null
 const placement = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
 const activeIndex = ref(0)
 const controlDisabled = computed(() => props.disabled === true)
@@ -87,9 +87,11 @@ function placeMenu(): void {
 
 function openMenu(): void {
   if (props.disabled) return
-  ownerDialog = trigger.value?.closest<HTMLDialogElement>('dialog[open]') ?? null
+  ownerDialog = trigger.value?.closest<HTMLElement>('dialog[open], [role="dialog"]') ?? null
   portalTarget.value = ownerDialog ?? 'body'
-  ownerDialog?.addEventListener('close', onDialogClose, { once: true })
+  if (ownerDialog instanceof HTMLDialogElement) {
+    ownerDialog.addEventListener('close', onDialogClose, { once: true })
+  }
   open.value = true
   const selected = props.options.findIndex((option) => option.value === currentValue.value && !option.disabled)
   activeIndex.value = selected >= 0 ? selected : enabledIndexes()[0] ?? 0
@@ -102,7 +104,9 @@ function openMenu(): void {
 function closeMenu(restoreFocus = false): void {
   if (!open.value) return
   open.value = false
-  ownerDialog?.removeEventListener('close', onDialogClose)
+  if (ownerDialog instanceof HTMLDialogElement) {
+    ownerDialog.removeEventListener('close', onDialogClose)
+  }
   ownerDialog = null
   if (restoreFocus) trigger.value?.focus()
 }

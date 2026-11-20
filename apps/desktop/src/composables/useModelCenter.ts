@@ -10,11 +10,15 @@ import {
   type ModelCenterOverviewDto,
   type ModelCenterSnapshotDto,
   type ModelCenterSnapshotPartDto,
+  type ModelCostTier,
+  type ModelProfileDto,
+  type ModelProfileTier,
   type ModelProviderInstanceDto,
   type ModelProviderTemplateDto,
   type ModelReadinessReceiptDto,
   type ModelReferenceDto,
   type ModelRouteDto,
+  type ModelSpecialty,
   type RuntimeReadinessReceiptDto,
   type SaveModelProviderInstanceInput,
 } from '@/api'
@@ -24,6 +28,71 @@ import { aggregateModelCenterOverview, providersFromOverview } from '@/runtimeCe
 import { useNotifications } from './useNotifications'
 import { useRecoverableRead, type ReadContext } from './useRecoverableRead'
 import { toErrorState, type ErrorState } from './useErrorState'
+
+export const MODEL_PROFILE_SPECIALTIES = [
+  'coding',
+  'architecture',
+  'research',
+  'review',
+  'writing',
+  'vision',
+  'tool_calling',
+  'fast_qa',
+  'long_context',
+] as const satisfies readonly ModelSpecialty[]
+
+export const MODEL_PROFILE_TIERS: readonly ModelProfileTier[] = ['fast', 'balanced', 'deep']
+export const MODEL_PROFILE_COST_TIERS: readonly ModelCostTier[] = ['low', 'medium', 'high']
+
+/**
+ * Non-destructive default ability suggestions inferred from common model families.
+ * Never persisted automatically; only offered as an editable starting point.
+ */
+export function suggestModelProfile(modelId: string): ModelProfileDto {
+  const id = modelId.trim().toLowerCase()
+  if (!id) {
+    return { specialties: ['coding', 'research', 'tool_calling'], tier: 'balanced', notes: '' }
+  }
+  if (/(^|[-_/:])(o1|o3|o4|opus|deepseek-r1|r1|reasoner|qwq|thinking)([-_/:]|$)/.test(id)) {
+    const specialties: ModelSpecialty[] = ['architecture', 'coding', 'review', 'research']
+    if (/(opus|claude|gpt-5|o3|o4)/.test(id)) specialties.push('tool_calling')
+    if (/(claude|opus)/.test(id)) specialties.push('writing', 'long_context')
+    return { specialties, tier: 'deep', notes: '' }
+  }
+  if (/(mini|flash|haiku|lite|nano|instant|turbo|8b|7b|3b)/.test(id)) {
+    const specialties: ModelSpecialty[] = ['fast_qa', 'tool_calling', 'coding']
+    if (/(gemini|4o|flash)/.test(id)) specialties.push('vision', 'long_context')
+    return { specialties, tier: 'fast', notes: '' }
+  }
+  if (/(coder|codex|starcoder|devstral|swe)/.test(id)) {
+    return { specialties: ['coding', 'review', 'tool_calling'], tier: 'balanced', notes: '' }
+  }
+  if (/(claude|sonnet)/.test(id)) {
+    return {
+      specialties: ['coding', 'architecture', 'review', 'writing', 'vision', 'tool_calling', 'long_context'],
+      tier: 'balanced',
+      notes: '',
+    }
+  }
+  if (/(gemini)/.test(id)) {
+    return {
+      specialties: ['research', 'vision', 'long_context', 'coding', 'tool_calling'],
+      tier: 'balanced',
+      notes: '',
+    }
+  }
+  if (/(gpt-5|gpt-4o|4o)/.test(id)) {
+    return {
+      specialties: ['coding', 'research', 'writing', 'vision', 'tool_calling'],
+      tier: /(gpt-5)/.test(id) ? 'deep' : 'balanced',
+      notes: '',
+    }
+  }
+  if (/(vision|\bvl\b)/.test(id)) {
+    return { specialties: ['vision', 'research', 'fast_qa'], tier: 'balanced', notes: '' }
+  }
+  return { specialties: ['coding', 'research', 'tool_calling'], tier: 'balanced', notes: '' }
+}
 
 export interface UseModelCenterOptions {
   /**
@@ -181,7 +250,11 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
     // "set default model" If-Match token; leaving it unassigned made every
     // route write send no precondition (Core 428).
     routes.value = routeRows
-    const instances = providersFromOverview(overview)
+    const rawById = new Map(providerRows.map((row) => [row.id, row]))
+    const instances = providersFromOverview(overview).map((instance) => ({
+      ...instance,
+      model_profiles: instance.model_profiles ?? rawById.get(instance.id)?.model_profiles,
+    }))
     providers.value = instances
     modelReadiness.value = overview.readiness.model ?? null
     modelCatalogReadiness.value = overview.readiness.catalog ?? null
@@ -218,20 +291,21 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
     return (modelCenterOverview.value?.models ?? []).filter((model) => model.provider_instance_id === providerId)
   }
 
-  async function setDefaultChatModel(providerInstanceId: string, modelId: string) {
+  async function setDefaultChatModel(providerInstanceId: string, modelId: string | null, displayName?: string) {
     modelCenterBusy.value = true
     try {
       // “设为默认模型”= 把该模型放到 chat 路由首位。Keep the existing
       // candidates as fallbacks: a single-candidate overwrite silently deleted a
       // failover chain the user had configured.
+      const resolvedModel = modelId?.trim() ? modelId.trim() : null
       const chatRoute = routes.value.find((route: { purpose: string }) => route.purpose === 'chat')
       const existing = (chatRoute?.candidates ?? [])
-        .filter(candidate => !(candidate.provider_instance_id === providerInstanceId && candidate.model === modelId))
+        .filter(candidate => !(candidate.provider_instance_id === providerInstanceId && (candidate.model ?? null) === resolvedModel))
         .map(candidate => ({ provider_instance_id: candidate.provider_instance_id, model: candidate.model }))
-      await api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerInstanceId, model: modelId }, ...existing] },
+      await api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerInstanceId, model: resolvedModel }, ...existing] },
         undefined,
         chatRoute?.revision != null ? { expected_revision: chatRoute.revision } : undefined)
-      notify.success(t('settings.defaultModelSet', { model: modelId }))
+      notify.success(t('settings.defaultModelSet', { model: resolvedModel ?? displayName ?? providerInstanceId }))
       await loadModelCenter()
     } catch (error) {
       notify.error(error instanceof Error ? error : new Error(String(error)))
@@ -433,6 +507,66 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
     }
   }
 
+  async function saveModelProfile(
+    provider: ModelProviderInstanceDto,
+    modelId: string,
+    profile: ModelProfileDto | null,
+    expectedRevision?: number | null,
+  ): Promise<boolean> {
+    modelCenterBusy.value = true
+    try {
+      const nextProfiles: Record<string, ModelProfileDto> = { ...(provider.model_profiles ?? {}) }
+      if (profile === null) {
+        delete nextProfiles[modelId]
+      } else {
+        const trimmedNotes = profile.notes?.trim() ?? ''
+        nextProfiles[modelId] = {
+          specialties: Array.from(new Set(profile.specialties.map((s) => s.trim()).filter(Boolean))),
+          tier: profile.tier,
+          notes: trimmedNotes ? trimmedNotes.slice(0, 500) : null,
+          ...(profile.context_window && Number.isFinite(profile.context_window) && profile.context_window > 0
+            ? { context_window: Math.round(profile.context_window) }
+            : {}),
+          ...(profile.cost_tier ? { cost_tier: profile.cost_tier } : {}),
+        }
+      }
+      const payload: SaveModelProviderInstanceInput = {
+        id: provider.id,
+        driver: provider.driver,
+        protocol: provider.protocol ?? null,
+        display_name: provider.display_name,
+        connection_kind: provider.connection_kind,
+        base_url: provider.base_url ?? null,
+        model: provider.model ?? null,
+        models: provider.models,
+        binary_path: provider.binary_path ?? null,
+        home_path: provider.home_path ?? null,
+        server_url: provider.server_url ?? null,
+        launch_args: provider.launch_args ?? null,
+        capabilities: provider.capabilities,
+        enabled: provider.enabled,
+        model_profiles: nextProfiles,
+      }
+      await api.saveModelProvider(provider.id, payload, {
+        expected_revision: expectedRevision ?? provider.revision ?? undefined,
+      })
+      await loadModelCenter()
+      await notifyModelsChanged()
+      notify.success(t(profile === null ? 'settings.modelProfileCleared' : 'settings.modelProfileSaved', { model: modelId }))
+      return true
+    } catch (error) {
+      if (isModelWriteConflict(error)) {
+        notify.warning({ message: t('settings.configStaleReloading') })
+        await loadModelCenter()
+      } else {
+        notify.error(error, { title: modelId })
+      }
+      return false
+    } finally {
+      modelCenterBusy.value = false
+    }
+  }
+
   async function saveRouteCandidates(
     purpose: string,
     candidates: Array<{ provider_instance_id: string; model: string | null }>,
@@ -540,6 +674,7 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
     saveProviderModels,
     removeModel,
     saveProviderInstance,
+    saveModelProfile,
     saveRouteCandidates,
     fetchModelReferences,
     cliDiscoveryCandidates,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Info, Search, Shield } from '@lucide/vue'
+import { Check, Copy, Info, RefreshCw, Search, Shield } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel, UiSheet } from '@/components/ui'
 import { api as baseApi, type AgentRuntimeInstanceDto, type AgentRuntimePolicyDto } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
@@ -10,19 +10,39 @@ import { generatedApi as baseGeneratedApi } from '@/generated/client'
 const generatedApi = scopedApi(baseGeneratedApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
 import { useStatusLabels } from '@/lib/statusLabels'
+import { useHostAccess } from '@/lib/hostAccess'
+
+const props = withDefaults(defineProps<{
+  showCeilings?: boolean
+  enableAutoRefresh?: boolean
+}>(), {
+  showCeilings: true,
+  enableAutoRefresh: true,
+})
+
+const emit = defineEmits<{
+  'count-changed': [count: number]
+}>()
 
 const { t } = useI18n()
 const { instanceStatusLabel } = useStatusLabels()
 const { notify } = useNotifications()
+const { canAccessBackend } = useHostAccess()
+
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'released', 'stopped'])
 
 const runtimeInstances = ref<AgentRuntimeInstanceDto[]>([])
 const runtimeLoaded = ref(false)
+const runtimeLoading = ref(false)
 const runtimeSessionFilter = ref('')
 const runtimeStatusFilter = ref('all')
 const runtimePage = ref(1)
 const runtimePageSize = ref(10)
-const runtimeTimer: ReturnType<typeof setInterval> | null = null
+const autoRefresh = ref(props.enableAutoRefresh)
+let runtimeTimer: ReturnType<typeof setInterval> | null = null
+let runtimeLoadInFlight = false
 const runtimeControlBusy = ref<string | null>(null)
+const copiedKey = ref<string | null>(null)
 const showReassignSheet = ref(false)
 const reassignForm = ref({ session_id: '', interaction_id: '', target_run_id: '' })
 
@@ -37,13 +57,10 @@ const runtimePolicy = ref<AgentRuntimePolicyDto | null>(null)
 const runtimePolicyLoaded = ref(false)
 const runtimePolicyFailed = ref(false)
 
-// `help` is optional: a label that already names its unit needs no restating tooltip, and an
-// undefined title binding simply drops the attribute.
 interface PolicyRow { key: string; label: string; value: string; help?: string; changed: boolean }
 
 const runtimePolicyRows = computed<PolicyRow[]>(() => {
   const policy = runtimePolicy.value
-  // The proxy-based API doubles answer `{}`; anything that is not the full shape is "no data".
   if (!policy?.spawn || !policy?.scheduling || !policy?.supervision || !policy?.context || !policy?.tools) return []
   const deviations = new Set(policy.deviations ?? [])
   const disabled = t('settings.runtimeCeilings.disabled')
@@ -67,6 +84,8 @@ const runtimePolicyRows = computed<PolicyRow[]>(() => {
 })
 
 async function loadRuntimePolicy() {
+  if (!props.showCeilings || !canAccessBackend.value) return
+  if (typeof api.getAgentRuntimePolicy !== 'function') return
   try {
     runtimePolicy.value = await api.getAgentRuntimePolicy()
     runtimePolicyFailed.value = false
@@ -84,7 +103,7 @@ const filteredRuntimeInstances = computed(() => {
   const st = runtimeStatusFilter.value
   return runtimeInstances.value.filter((r) => {
     if (st !== 'all' && String(r.status) !== st) return false
-    if (qs && !String(r.session_id ?? r.run_id ?? '').toLowerCase().includes(qs)) return false
+    if (qs && !`${r.session_id ?? ''} ${r.run_id ?? ''} ${r.agent_name ?? ''} ${r.agent_id ?? ''} ${r.id}`.toLowerCase().includes(qs)) return false
     return true
   })
 })
@@ -97,6 +116,10 @@ const pagedRuntimeInstances = computed(() => {
 watch([runtimeSessionFilter, runtimeStatusFilter], () => { runtimePage.value = 1 })
 watch(filteredRuntimeInstances, () => { if (runtimePage.value > runtimeTotalPages.value) runtimePage.value = runtimeTotalPages.value })
 
+function isTerminalStatus(status?: string | null): boolean {
+  return TERMINAL_STATUSES.has(String(status ?? '').trim().toLowerCase())
+}
+
 function readinessVariant(status?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   const s = String(status ?? '')
   if (['running', 'completed'].includes(s)) return 'default'
@@ -105,16 +128,26 @@ function readinessVariant(status?: string): 'default' | 'secondary' | 'destructi
   return 'secondary'
 }
 
-async function loadRuntimeInstances() {
-  // Both halves are independent reads: a policy failure must not blank the instance list,
-  // and the ceilings are worth showing even when the list query fails.
-  void loadRuntimePolicy()
-  try {
-    runtimeInstances.value = await api.listRuntimeInstances()
+async function loadRuntimeInstances(background = false) {
+  if (!canAccessBackend.value || runtimeLoadInFlight) return
+  if (typeof api.listRuntimeInstances !== 'function') {
     runtimeLoaded.value = true
+    return
+  }
+  runtimeLoadInFlight = true
+  if (!background) runtimeLoading.value = true
+  if (props.showCeilings) void loadRuntimePolicy()
+  try {
+    const list = await api.listRuntimeInstances()
+    runtimeInstances.value = Array.isArray(list) ? list : []
+    runtimeLoaded.value = true
+    emit('count-changed', runtimeInstances.value.length)
   } catch (e) {
     runtimeLoaded.value = true
-    notify.error(e, { title: t('agentCenter.runtimeLoadFailed') })
+    if (!background) notify.error(e, { title: t('agentCenter.runtimeLoadFailed') })
+  } finally {
+    runtimeLoadInFlight = false
+    if (!background) runtimeLoading.value = false
   }
 }
 
@@ -132,9 +165,26 @@ async function controlInstance(runId: string, action: 'pause' | 'resume' | 'canc
   }
 }
 
-function openReassignForm(targetRunId: string) {
-  reassignForm.value = { session_id: '', interaction_id: '', target_run_id: targetRunId }
+function openReassignForm(inst: AgentRuntimeInstanceDto) {
+  reassignForm.value = {
+    session_id: inst.session_id ?? '',
+    interaction_id: '',
+    target_run_id: inst.run_id,
+  }
   showReassignSheet.value = true
+}
+
+async function copyId(value: string, key: string) {
+  if (!value) return
+  try {
+    await navigator.clipboard?.writeText(value)
+    copiedKey.value = key
+    window.setTimeout(() => {
+      if (copiedKey.value === key) copiedKey.value = null
+    }, 1500)
+  } catch {
+    /* clipboard may be unavailable in headless tests */
+  }
 }
 
 async function submitReassign() {
@@ -153,24 +203,71 @@ async function submitReassign() {
   }
 }
 
-onBeforeUnmount(() => { if (runtimeTimer) clearInterval(runtimeTimer) })
+function stopTimer() {
+  if (runtimeTimer) {
+    clearInterval(runtimeTimer)
+    runtimeTimer = null
+  }
+}
+
+function syncTimer() {
+  stopTimer()
+  if (!props.enableAutoRefresh || !autoRefresh.value) return
+  runtimeTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    void loadRuntimeInstances(true)
+  }, 12_000)
+}
+
+watch(autoRefresh, syncTimer)
+watch(() => props.enableAutoRefresh, (next) => {
+  autoRefresh.value = next
+  syncTimer()
+})
+
+onMounted(() => {
+  if (canAccessBackend.value) void loadRuntimeInstances()
+  syncTimer()
+})
+
+watch(canAccessBackend, (ready) => {
+  if (ready) void loadRuntimeInstances()
+})
+
+onBeforeUnmount(stopTimer)
 
 defineExpose({ loadRuntimeInstances })
 </script>
 
 <template>
-  <section class="center-resource-section agent-runtime-panel">
+  <section class="center-resource-section agent-runtime-panel" data-testid="runtime-instances-panel">
     <div class="center-resource-heading">
       <div>
         <h3>{{ t('settings.runtimeInstances') }}</h3>
         <p>{{ t('settings.runtimePanelHint') }}</p>
       </div>
-      <UiBadge variant="outline">{{ runtimeInstances.length }}</UiBadge>
+      <div class="ac-runtime-heading-actions">
+        <UiBadge variant="outline">{{ runtimeInstances.length }}</UiBadge>
+        <button
+          v-if="enableAutoRefresh"
+          type="button"
+          class="ac-auto-refresh-toggle"
+          :class="{ active: autoRefresh }"
+          :aria-pressed="autoRefresh"
+          @click="autoRefresh = !autoRefresh"
+        >
+          {{ t('settings.autoRefresh') }}
+        </button>
+        <UiButton size="xs" variant="outline" :disabled="runtimeLoading || !canAccessBackend" @click="void loadRuntimeInstances()">
+          <RefreshCw :size="12" />
+          <span>{{ t('settings.refresh') }}</span>
+        </UiButton>
+      </div>
     </div>
 
     <!-- Policy ceilings: the numbers that can stop a legitimate run. Read-only here because
          runtime.toml stays the editing authority; a changed value is marked, not clipped. -->
-    <div class="ac-policy-card">
+    <div v-if="showCeilings" class="ac-policy-card">
       <div class="ac-policy-head">
         <Shield :size="14" />
         <strong>{{ t('settings.runtimeCeilings.title') }}</strong>
@@ -214,6 +311,29 @@ defineExpose({ loadRuntimeInstances })
           <strong>{{ inst.agent_name ?? inst.agent_id ?? inst.id.slice(0, 8) }}</strong>
           <UiBadge :variant="readinessVariant(inst.status)">{{ instanceStatusLabel(inst.status) }}</UiBadge>
           <span class="ac-instance-ids">{{ t('settings.instanceIds', { run: inst.run_id.slice(0, 8), session: String(inst.session_id ?? '—').slice(0, 8) }) }}</span>
+          <button
+            type="button"
+            class="ac-copy-id-btn"
+            :title="t('settings.copyRunId')"
+            :aria-label="t('settings.copyRunId')"
+            @click="void copyId(inst.run_id, `run:${inst.id}`)"
+          >
+            <Check v-if="copiedKey === `run:${inst.id}`" :size="11" />
+            <Copy v-else :size="11" />
+            <span>{{ copiedKey === `run:${inst.id}` ? t('common.copied') : 'run' }}</span>
+          </button>
+          <button
+            v-if="inst.session_id"
+            type="button"
+            class="ac-copy-id-btn"
+            :title="t('settings.copySessionId')"
+            :aria-label="t('settings.copySessionId')"
+            @click="void copyId(inst.session_id, `sess:${inst.id}`)"
+          >
+            <Check v-if="copiedKey === `sess:${inst.id}`" :size="11" />
+            <Copy v-else :size="11" />
+            <span>{{ copiedKey === `sess:${inst.id}` ? t('common.copied') : 'session' }}</span>
+          </button>
         </div>
         <div v-if="inst.source_definition || inst.frozen_version || inst.recent_actual_model" class="ac-instance-evidence">
           <span v-if="inst.source_definition">
@@ -230,10 +350,25 @@ defineExpose({ loadRuntimeInstances })
           </span>
         </div>
         <div class="ac-instance-actions">
-          <UiButton size="xs" variant="outline" :disabled="runtimeControlBusy === `${inst.run_id}:pause`" @click="controlInstance(inst.run_id, 'pause')">{{ t('agentCenter.runtimeInfo.actionPause') }}</UiButton>
-          <UiButton size="xs" variant="outline" :disabled="runtimeControlBusy === `${inst.run_id}:resume`" @click="controlInstance(inst.run_id, 'resume')">{{ t('agentCenter.runtimeInfo.actionResume') }}</UiButton>
-          <UiButton size="xs" variant="outline" :disabled="runtimeControlBusy === `${inst.run_id}:cancel`" @click="controlInstance(inst.run_id, 'cancel')">{{ t('agentCenter.runtimeInfo.actionCancel') }}</UiButton>
-          <UiButton size="xs" variant="ghost" @click="openReassignForm(inst.run_id)">{{ t('agentCenter.runtimeInfo.actionSteer') }}</UiButton>
+          <UiButton
+            size="xs"
+            variant="outline"
+            :disabled="isTerminalStatus(inst.status) || String(inst.status).toLowerCase() === 'paused' || runtimeControlBusy === `${inst.run_id}:pause`"
+            @click="controlInstance(inst.run_id, 'pause')"
+          >{{ t('agentCenter.runtimeInfo.actionPause') }}</UiButton>
+          <UiButton
+            size="xs"
+            variant="outline"
+            :disabled="isTerminalStatus(inst.status) || runtimeControlBusy === `${inst.run_id}:resume`"
+            @click="controlInstance(inst.run_id, 'resume')"
+          >{{ t('agentCenter.runtimeInfo.actionResume') }}</UiButton>
+          <UiButton
+            size="xs"
+            variant="outline"
+            :disabled="isTerminalStatus(inst.status) || runtimeControlBusy === `${inst.run_id}:cancel`"
+            @click="controlInstance(inst.run_id, 'cancel')"
+          >{{ t('agentCenter.runtimeInfo.actionCancel') }}</UiButton>
+          <UiButton size="xs" variant="ghost" @click="openReassignForm(inst)">{{ t('agentCenter.runtimeInfo.actionSteer') }}</UiButton>
         </div>
       </div>
 
@@ -264,6 +399,43 @@ defineExpose({ loadRuntimeInstances })
 .agent-runtime-panel {
   display: grid;
   gap: 12px;
+}
+.ac-runtime-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ac-auto-refresh-toggle {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-chrome);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ac-auto-refresh-toggle.active {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-raised));
+}
+.ac-copy-id-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-chrome);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.ac-copy-id-btn:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
 }
 .ac-policy-card {
   border: 1px solid var(--border-muted);

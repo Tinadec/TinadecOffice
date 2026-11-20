@@ -99,7 +99,10 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             root = toolContext?.WorkingDirectory ?? root;
             if (!Directory.Exists(root)) throw new DirectoryNotFoundException("The run's frozen primary folder is unavailable.");
         }
-        if (project is not null && !CoreVirtualToolPolicy.IsSpecPropose(request.ToolId) && !IsResourceAllowed(authorization.AllowedResources)
+        if (project is not null
+            && !CoreVirtualToolPolicy.IsSpecPropose(request.ToolId)
+            && !CoreVirtualToolPolicy.IsTinadecConfig(request.ToolId)
+            && !IsResourceAllowed(authorization.AllowedResources)
             && !(request.ToolId is "read_file" or "ls" or "stat" && toolContext?.ReadRoots.Count > 0))
             throw new UnauthorizedAccessException("Agent instance holds no workspace or selected Skill resource grant.");
         if (toolContext is not null && !ToolSettingsSchema.IsEnabled(toolContext.Settings, request.ToolId))

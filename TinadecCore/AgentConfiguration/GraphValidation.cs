@@ -36,6 +36,26 @@ internal static class GraphValidation
     /// <summary>Per-node relationship description file cap (S11).</summary>
     public const int MaxRelationshipBytes = 16 * 1024;
 
+    public static readonly IReadOnlyList<string> ValidOrchestrationTiers =
+    [
+        "solo_dispatch",
+        "free_form",
+        "self_dispatch",
+        "deterministic"
+    ];
+
+    internal static string? NormalizeOrchestrationTier(string? tier)
+    {
+        if (string.IsNullOrWhiteSpace(tier)) return null;
+        var normalized = tier.Trim().ToLowerInvariant();
+        if (string.Equals(normalized, "solo", StringComparison.Ordinal))
+            return "solo_dispatch";
+        if (ValidOrchestrationTiers.Contains(normalized, StringComparer.Ordinal))
+            return normalized;
+        Invalid($"orchestration_tier '{tier}' is not supported; expected one of: {string.Join(", ", ValidOrchestrationTiers)} (or alias 'solo').");
+        return null;
+    }
+
     internal sealed record AgentRef(string Key, string Slug, string Layer, IReadOnlyList<string> Capabilities);
 
     internal sealed record NodeRef(string NodeKey, string AgentKey, string Layer, string? Label, JsonElement Config, JsonElement? Relationship);
@@ -89,25 +109,45 @@ internal static class GraphValidation
     }
 
     /// <summary>
-    /// Relationship description file (five fields: duty / inputs_outputs /
-    /// allowed_dispatch_targets / success_criteria / agent_types), capped at
-    /// <see cref="MaxRelationshipBytes"/>. Present-but-incomplete is rejected: the
-    /// file is compiled into the role prompt and drives dispatch validation, so a
-    /// partial file would silently narrow semantics.
-    ///
-    /// An optional sixth field, <c>subscriptions</c>, lists the facts the role wakes on. It is
-    /// checked here, at publish, against <see cref="GovernanceTopics"/>: a misspelled topic would
-    /// otherwise publish cleanly and the role would simply never wake, which is the most
-    /// confusing way for wiring to fail.
+    /// Relationship description file (optional fields: duty / inputs_outputs /
+    /// allowed_dispatch_targets / success_criteria / agent_types / subscriptions),
+    /// capped at <see cref="MaxRelationshipBytes"/>. Individual fields are optional so
+    /// lightweight authored graphs can declare only what they need, while each present
+    /// field is type-checked and <c>subscriptions</c> is validated against
+    /// <see cref="GovernanceTopics"/>.
     /// </summary>
     internal static void ValidateRelationship(string modeKey, string nodeKey, JsonElement relationship)
     {
-        foreach (var field in new[] { "duty", "inputs_outputs", "allowed_dispatch_targets", "success_criteria", "agent_types" })
+        if (relationship.TryGetProperty("duty", out var duty) && duty.ValueKind != JsonValueKind.Null)
         {
-            if (!relationship.TryGetProperty(field, out _))
-                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file is missing the '{field}' field.");
+            if (duty.ValueKind != JsonValueKind.String)
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'duty' must be a string.");
         }
-        if (relationship.TryGetProperty("subscriptions", out var subscriptions))
+        if (relationship.TryGetProperty("inputs_outputs", out var io) && io.ValueKind != JsonValueKind.Null)
+        {
+            if (io.ValueKind is not (JsonValueKind.String or JsonValueKind.Object or JsonValueKind.Array))
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'inputs_outputs' must be a string, object, or string array.");
+            if (io.ValueKind == JsonValueKind.Array && io.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'inputs_outputs' array must contain strings only.");
+        }
+        if (relationship.TryGetProperty("success_criteria", out var criteria) && criteria.ValueKind != JsonValueKind.Null)
+        {
+            if (criteria.ValueKind is not (JsonValueKind.String or JsonValueKind.Array))
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'success_criteria' must be a string or string array.");
+            if (criteria.ValueKind == JsonValueKind.Array && criteria.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'success_criteria' array must contain strings only.");
+        }
+        if (relationship.TryGetProperty("allowed_dispatch_targets", out var targets) && targets.ValueKind != JsonValueKind.Null)
+        {
+            if (targets.ValueKind != JsonValueKind.Array || targets.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'allowed_dispatch_targets' must be an array of strings.");
+        }
+        if (relationship.TryGetProperty("agent_types", out var agentTypes) && agentTypes.ValueKind != JsonValueKind.Null)
+        {
+            if (agentTypes.ValueKind != JsonValueKind.Array || agentTypes.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'agent_types' must be an array of strings.");
+        }
+        if (relationship.TryGetProperty("subscriptions", out var subscriptions) && subscriptions.ValueKind != JsonValueKind.Null)
         {
             if (subscriptions.ValueKind != JsonValueKind.Array)
                 Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'subscriptions' must be an array of topic names.");

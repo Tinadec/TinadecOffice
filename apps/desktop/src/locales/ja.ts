@@ -1,3 +1,4 @@
+// Japanese interface text for every window and TinadecUI; same keys as en.ts. Code refers to keys, never to the text.
 export default {
   toolsSettings: {
     skillPackageTooMany: "スキルパッケージのファイル数が {max} を超えています。",
@@ -18,7 +19,7 @@ export default {
       minItems: "{value} 件以上必要です。",
       maxItems: "最大 {value} 件までです。",
       required: "必須のプロパティがありません。",
-      unknownProperty: "不明なプロパティです。"
+      unknownProperty: "不明なプロパティです。",
     },
     allResources: "利用可能なすべてのリソース",
     agentSettingsLink: "このエージェントのツール設定を開く",
@@ -37,13 +38,13 @@ export default {
       skills_missing: "スキルリソースが存在しないか、このプロジェクトでは表示されません。",
       skills_invalid: "スキルリソースが無効です。",
       skills_disabled: "このスキルリソースは無効になっています。",
-      mcp_program: "MCP サーバーのプログラムは{status}です。サーバーを登録してもプログラムはインストールされません。別途のインストール操作を確認して承認してください。"
+      mcp_program: "MCP サーバーのプログラムは{status}です。サーバーを登録してもプログラムはインストールされません。別途のインストール操作を確認して承認してください。",
     },
     programStatus: {
       not_installed: "未インストール",
       outdated: "古いバージョン",
       invalid: "無効",
-      needs_reinstall: "再インストールが必要"
+      needs_reinstall: "再インストールが必要",
     },
     connectionDisabledHint: "テストする前にこのリソースを有効にしてください。",
     connectionStatus: {
@@ -52,12 +53,12 @@ export default {
       error: "エラー",
       unavailable: "利用不可",
       unknown: "不明",
-      not_reported: "ツールホストから報告されていません"
+      not_reported: "ツールホストから報告されていません",
     },
     capabilityReason: {
       not_found: "設定または解決されたパスに実行ファイルが見つかりません。",
       not_in_path: "PATH に実行ファイルが見つかりません。",
-      unsupported_platform: "このプラットフォームには対応していません。"
+      unsupported_platform: "このプラットフォームには対応していません。",
     },
     skillReason: {
       shadowed: "同じ名前のプロジェクトスキルが、継承されたバインディングで優先されます。",
@@ -76,7 +77,7 @@ export default {
       name_invalid: "名前に使えるのは小文字、数字、単独のハイフンのみで、ハイフンで始めたり終えたりすることはできません。",
       description_missing: "frontmatter に description がありません。",
       description_too_long: "説明が {max} 文字を超えています。",
-      name_directory_mismatch: "名前「{name}」が、そのフォルダー「{directory}」と一致しません。"
+      name_directory_mismatch: "名前「{name}」が、そのフォルダー「{directory}」と一致しません。",
     },
     sourceUndeclared: "ソース未宣言",
     usedBy: "使用しているエージェント：{agents}",
@@ -110,7 +111,7 @@ export default {
       web: "Web",
       mcp: "MCP",
       skills: "スキル",
-      advanced: "詳細"
+      advanced: "詳細",
     },
     agent: "設定対象",
     project: "プロジェクトのリソースコンテキスト",
@@ -185,7 +186,7 @@ export default {
     invalid: "無効",
     pendingApproval: "承認待ち",
     skillQueuedShared: "共有スキル操作の状態：{status}。ツール操作 {id} のその後の処理は Core の承認状態に従います。",
-    packageReview: "送信前に確認してください：対象 {scope}、ファイル {count} 個、ダイジェストは送信時に Core が計算します。"
+    packageReview: "送信前に確認してください：対象 {scope}、ファイル {count} 個、ダイジェストは送信時に Core が計算します。",
   },
   space: {
     sessionUnsupported: "スペースのセッションを作成できません。サービスがまだセッション種別の分離に対応していません。サービスを更新してから再試行してください。",
@@ -229,7 +230,7 @@ export default {
       result: "目標の結果",
       tool: "ツールのアクティビティ",
       git: "プロジェクトのリソース",
-      approval: "承認"
+      approval: "承認",
     },
     cluster: {
       routeBlocked: "カードがこの接続線を遮っています。この目標を整理すると表示されます。",
@@ -272,7 +273,7 @@ export default {
       source: "ソース",
       noRelations: "読み込まれた依存関係はありません。",
       terminal: "エージェントのターミナル",
-      hideTerminal: "ターミナルパネルを隠す"
+      hideTerminal: "ターミナルパネルを隠す",
     },
     status: {
       running: "実行中",
@@ -289,8 +290,8 @@ export default {
       approved: "承認済み",
       rejected: "却下",
       blocked: "ブロック中",
-      idle: "準備完了"
-    }
+      idle: "準備完了",
+    },
   },
   errors: {
     invalidServerResponse: "サーバーから無効な応答がありました：{text}",
@@ -519,7 +520,7 @@ export default {
       harness_channel_unsupported: "このツールはそのチャネルを提供していません。",
       harness_protocol_unsupported: "このツールはそのプロトコルに対応していません。",
       tool_execution_not_found: "ツール呼び出しが見つかりません。",
-      internal_error: "バックエンドで予期しないエラーが発生しました。"
+      internal_error: "バックエンドで予期しないエラーが発生しました。",
     },
     category: {
       config: "モデルまたはワークスペースの設定が不完全です。",
@@ -572,7 +573,7 @@ export default {
       recovery_marked_failed: "復旧中に失敗としてマークされました。",
       explicit_deny: "許可ルールによってこの呼び出しは拒否されています。",
       boundary_not_allowed: "この呼び出しを許可するルールがありません。",
-      missing_authorization_boundary: "この呼び出しには許可ルールが設定されていません。"
+      missing_authorization_boundary: "この呼び出しには許可ルールが設定されていません。",
     },
     workspaceNotRegistered: "選択したワークスペースは TinadecCore に登録されていません。",
     actions: {
@@ -582,8 +583,8 @@ export default {
       openStorageSettings: "ストレージ設定",
       openToolSettings: "ツール設定",
       unregisterWorkspace: "登録解除",
-      chooseFolder: "フォルダーを選択"
-    }
+      chooseFolder: "フォルダーを選択",
+    },
   },
   app: {
     name: "TinadecOffice",
@@ -636,7 +637,7 @@ export default {
       preview: "プレビュー",
       settings: "設定",
       storage: "ストレージ",
-      tools: "ツール"
+      tools: "ツール",
     },
     fromOtherWindow: "別のウィンドウから",
     operationCompleted: "操作が完了しました",
@@ -650,12 +651,12 @@ export default {
     backendNotConnected: "バックエンドに接続されていません",
     backendNotConnectedMessage: "30 秒以内に Core/Gateway に接続できませんでした。一部の機能が使えない可能性があります。",
     backendDisconnected: "バックエンドとの接続が切れました",
-    backendDisconnectedMessage: "Core/Gateway との接続が切れました。サービスが利用可能になったら再試行してください。"
+    backendDisconnectedMessage: "Core/Gateway との接続が切れました。サービスが利用可能になったら再試行してください。",
   },
   nav: {
     chat: "チャット",
     projects: "プロジェクト",
-    settings: "設定"
+    settings: "設定",
   },
   sidebar: {
     showAll: "すべて表示",
@@ -693,8 +694,8 @@ export default {
     recentConversations: "最近の会話",
     projectConversations: "プロジェクト会話",
     recentActivity: "最近のアクティビティ",
-    allActivity: "すべてのアクティビティ",
-    projectActivity: "プロジェクトのアクティビティ",
+    allActivity: 'すべてのアクティビティ',
+    projectActivity: 'プロジェクトのアクティビティ',
     activityEmpty: "アクティビティはまだありません",
     activityState: {
       awaiting: "あなたの対応待ち",
@@ -703,15 +704,15 @@ export default {
       failed: "エラー",
       cancelled: "キャンセル済み",
       unknown: "状態不明",
-      idle: "タスクなし"
+      idle: "タスクなし",
     },
-    tokenUsage: "直近{days}日間のトークン使用量",
-    tokenUsageSummary: "直近{days}日間で合計{tokens}トークン",
-    tokenUsageSummaryTruncated: "直近{days}日間で少なくとも{tokens}トークン",
-    tokenUsageTruncated: "直近{count}件の呼び出しのみ集計",
-    tokenUsageDay: "{date} · {tokens}トークン",
-    tokenUsageDayEmpty: "{date} · 記録なし",
-    tokenUsageUnreported: "これらの呼び出しはトークン使用量を報告していません",
+    tokenUsage: '直近{days}日間のトークン使用量',
+    tokenUsageSummary: '直近{days}日間で合計{tokens}トークン',
+    tokenUsageSummaryTruncated: '直近{days}日間で少なくとも{tokens}トークン',
+    tokenUsageTruncated: '直近{count}件の呼び出しのみ集計',
+    tokenUsageDay: '{date} · {tokens}トークン',
+    tokenUsageDayEmpty: '{date} · 記録なし',
+    tokenUsageUnreported: 'これらの呼び出しはトークン使用量を報告していません',
     editWorkspace: "ワークスペースを編集",
     moveUp: "上へ移動",
     moveDown: "下へ移動",
@@ -733,7 +734,7 @@ export default {
     trashSessionConfirmMessage: "「{name}」をごみ箱に移動しますか？設定で復元または完全に削除できます。",
     migrateSession: "プロジェクトへ移動",
     migrationTarget: "移動先のプロジェクト",
-    migrationExplanation: "待機中のメッセージは先に実行するかキャンセルしてください。現在の実行が終わった後に会話と参照内容が移動し、以降の実行では移動先プロジェクトの公開済み既定モードが使われます。"
+    migrationExplanation: "待機中のメッセージは先に実行するかキャンセルしてください。現在の実行が終わった後に会話と参照内容が移動し、以降の実行では移動先プロジェクトの公開済み既定モードが使われます。",
   },
   tinaChat: {
     refresh: "更新",
@@ -796,7 +797,7 @@ export default {
     policySaved: "メッセージポリシーを更新しました",
     policyUnavailable: "このワークスペースのメッセージポリシーを読み取れませんでした。",
     revisionStale: "この会話が別の場所で変更されました。再読み込みしてもう一度お試しください",
-    actionFailed: "操作に失敗しました"
+    actionFailed: "操作に失敗しました",
   },
   organization: {
     title: "組織",
@@ -815,7 +816,7 @@ export default {
       reports: "レポート",
       evidence: "証拠",
       environments: "環境",
-      topology: "トポロジー"
+      topology: "トポロジー",
     },
     environments: {
       hint: "このワークスペースに登録されたテスト・クラウド・リモート・ローカル・ターミナルの環境です。エージェントは environment_acquire で取得し、使い終わったら返却します。各スロットは同時に 1 つの実行だけに属し、実行が終わると返却されます。",
@@ -841,8 +842,8 @@ export default {
         cloud: "クラウド",
         remote: "リモート",
         terminal: "ターミナル",
-        test: "テスト"
-      }
+        test: "テスト",
+      },
     },
     evidenceSearch: {
       placeholder: "探すもの：キーワード、パス、search#1 のようなハンドル、または文章",
@@ -852,19 +853,19 @@ export default {
       noHits: "一致する証拠はありません。",
       mode: {
         hybrid: "意味 + キーワード",
-        keyword: "キーワード"
+        keyword: "キーワード",
       },
       kinds: {
         task_result: "タスクの結果",
         report: "レポート",
         member_turn: "メンバーの結論",
-        summary: "要約"
+        summary: "要約",
       },
       matchedBy: {
         semantic: "意味で一致",
         keyword: "キーワードで一致",
-        both: "意味とキーワードの両方で一致"
-      }
+        both: "意味とキーワードの両方で一致",
+      },
     },
     role: {
       human: "ユーザー",
@@ -872,7 +873,7 @@ export default {
       governance: "ガバナンス",
       executor: "実行者",
       host: "システム",
-      other: "その他"
+      other: "その他",
     },
     online: "オンライン",
     offline: "オフライン",
@@ -894,7 +895,7 @@ export default {
       board: "掲示板",
       plan: "計画ルーム",
       adhoc: "臨時ルーム",
-      other: "その他"
+      other: "その他",
     },
     roomMeta: "メンバー {members} 人 · メッセージ {messages} 件",
     joined: "参加中",
@@ -907,7 +908,7 @@ export default {
     noMessages: "このルームにはまだメッセージがありません",
     messageKind: {
       report: "レポート",
-      notice: "お知らせ"
+      notice: "お知らせ",
     },
     confidential: "機密",
     notMember: "このルームのメンバーではないため、閲覧のみできます",
@@ -921,20 +922,20 @@ export default {
     severity: {
       info: "情報",
       warning: "警告",
-      blocking: "ブロッキング"
+      blocking: "ブロッキング",
     },
     reportKind: {
       conflict: "競合",
       risk: "リスク",
       drift: "逸脱",
       budget: "予算",
-      progress: "進捗"
+      progress: "進捗",
     },
     reportStatus: {
       open: "未処理",
       acted: "対応済み",
       dismissed: "却下",
-      superseded: "置き換え済み"
+      superseded: "置き換え済み",
     },
     subject: "対象",
     subjectKind: {
@@ -943,7 +944,7 @@ export default {
       lease: "リース",
       approval: "承認",
       member: "メンバー",
-      path: "パス"
+      path: "パス",
     },
     subjectState: {
       lease_active: "保持中",
@@ -951,7 +952,7 @@ export default {
       path_held: "保持中",
       path_free: "空き",
       member_online: "オンライン",
-      member_offline: "オフライン"
+      member_offline: "オフライン",
     },
     subjectUnknown: "現在の状態は不明です",
     proposed: "提案",
@@ -965,7 +966,7 @@ export default {
       resume_run: "実行を再開",
       stop_run: "実行を停止",
       assign_environment: "環境を割り当てる",
-      ask_user: "ユーザーに確認"
+      ask_user: "ユーザーに確認",
     },
     evidence: "証拠",
     notePlaceholder: "メモ（任意）",
@@ -986,7 +987,7 @@ export default {
       handle: "ハンドル",
       task: "タスク",
       status: "状態",
-      writeScope: "書き込み範囲"
+      writeScope: "書き込み範囲",
     },
     noTasks: "この実行にはまだタスクがありません",
     tasksTruncated: "タスク一覧は省略されています",
@@ -1018,8 +1019,8 @@ export default {
       created: "作成済み",
       blocked: "ブロック中",
       waiting: "待機中",
-      proposed: "提案済み"
-    }
+      proposed: "提案済み",
+    },
   },
   chat: {
     title: "Tinadec セッション",
@@ -1056,7 +1057,7 @@ export default {
       tip: "ヒント",
       important: "重要",
       warning: "警告",
-      caution: "注意"
+      caution: "注意",
     },
     copy: "メッセージをコピー",
     copied: "コピーしました",
@@ -1081,7 +1082,7 @@ export default {
     jumpToLatest: "最新へ移動",
     thinking: "考え中",
     usingTools: "ツールを使用中",
-    waitingForApproval: "承認待ち"
+    waitingForApproval: "承認待ち",
   },
   context: {
     approval: "承認",
@@ -1108,12 +1109,12 @@ export default {
     companionGroupsDesc: "メンバーと最近のメッセージを読み取り専用で確認",
     companionConnections: "接続",
     companionConnectionsDesc: "コンパニオンごとの承認・実行状態・最終確認時刻",
-    companionBuddy: "相棒との会話",
-    companionBuddyDesc: "唯一の相棒との会話。上にはあなたの対応待ちが並びます。",
-    companionSupervision: "セッションパートナーの監視",
-    companionSupervisionDesc: "どのセッションパートナーが対応待ち・実行中・完了かを示します。",
-    companionProfile: "人格とモデル",
-    companionProfileDesc: "選択したコンパニオンの人格と応答モデルを編集します。",
+    companionBuddy: '相棒との会話',
+    companionBuddyDesc: '唯一の相棒との会話。上にはあなたの対応待ちが並びます。',
+    companionSupervision: 'セッションパートナーの監視',
+    companionSupervisionDesc: 'どのセッションパートナーが対応待ち・実行中・完了かを示します。',
+    companionProfile: '人格とモデル',
+    companionProfileDesc: '選択したコンパニオンの人格と応答モデルを編集します。',
     gitWidgetPrimary: "メインフォルダー",
     gitWidgetPrimaryOnly: "ワークスペースのメインフォルダーのみを表示し、他のルートは合算しません。",
     gitWidgetNoProject: "ワークスペースを選択すると Git の状態が表示されます",
@@ -1348,7 +1349,7 @@ export default {
       forceDeleteBranch: "ブランチ {branch} を強制削除",
       renameBranch: "現在のブランチの名前を {name} に変更",
       createWorktree: "{branch} のワークツリー {path} を作成",
-      removeWorktree: "ワークツリー {path} を削除"
+      removeWorktree: "ワークツリー {path} を削除",
     },
     gitWorkspaceRequired: "プロジェクトのワークスペースが必要です。",
     gitNoDiffText: "表示できる差分の内容はありません。",
@@ -1427,7 +1428,7 @@ export default {
       Configuration: "設定",
       Security: "セキュリティ",
       API: "API",
-      Size: "規模"
+      Size: "規模",
     },
     gitRisk: {
       conflict: "{path} に未解決のマージ競合があります",
@@ -1446,7 +1447,7 @@ export default {
       summary: "{n} 個のファイルを更新しました（{concerns}）。",
       concernCount: "潜在的な懸念 {n} 件",
       localExplanation: "ローカルのルールで生成しました。AI 分析は利用できません。",
-      aiExplanation: "AI が生成したリスク評価です。"
+      aiExplanation: "AI が生成したリスク評価です。",
     },
     gitAiGenerate: "AI でコミットメッセージを生成",
     gitAiGenerating: "AI が生成中...",
@@ -1467,13 +1468,13 @@ export default {
     gitConvSubjectTooLong: "コミットの件名が 72 文字の上限を超えています",
     gitConvSubjectWarn: "コミットの件名が推奨の 50 文字を超えています",
     gitConvInvalidType: "コミットの種類が Conventional Commits の仕様に合っていません",
-    gitConvBodyTooLong: "本文の一部の行が推奨の 72 文字を超えています"
+    gitConvBodyTooLong: "本文の一部の行が推奨の 72 文字を超えています",
   },
   settings: {
     codeFont: "コードフォント",
     codeFontHint: "コードブロック、コマンド、パス、差分、ターミナルで使う等幅フォントです。最初の 4 つはアプリに同梱されています。システムフォントがない場合は JetBrains Mono が使われます。",
     codeFontSystem: "システムの等幅フォント",
-    codeFontSystemBadge: "システム",
+    codeFontSystemBadge: "システム", codeFontSampleWord: "コード",
     modelScope: {
       follows: "ワークスペース「{name}」はこのモデル設定を使用しています。ここでモデルを追加・変更・削除すると、その会話にすぐ反映されます。",
       ownCopy: "ワークスペース「{name}」は独自のモデル設定を使用しており、ここでの編集は反映されません。",
@@ -1486,11 +1487,11 @@ export default {
       followConfirm: "この設定を使う",
       followed: "「{name}」はこのモデル設定を使うようになりました",
       detached: "「{name}」は独自のモデル設定を使うようになりました",
-      switchFailed: "ワークスペースのモデル設定を切り替えられませんでした"
+      switchFailed: "ワークスペースのモデル設定を切り替えられませんでした",
     },
     modelParameters: "モデルのパラメーター",
     modelParametersFor: "{model} のパラメーター",
-    modelParametersHint: "このプロバイダーとモデルを使う新しい実行に適用されます。空欄の項目は既存のランタイムまたはモデルの既定値を使います。対応する値はモデルによって異なります。",
+    modelParametersHint: "このプロバイダーとモデルを使う新しい実行に適用されます。空欄は既定値を使用し、対応パラメーターはモデルにより異なります。",
     modelReasoningEffort: "推論の強度",
     modelDefaultParameter: "既定値を使う",
     modelTemperature: "温度",
@@ -1499,7 +1500,7 @@ export default {
     modelImageInput: "画像入力を受け付ける",
     modelImageMaxBytes: "画像 1 枚の上限（バイト）",
     modelImageMaxCount: "1 ターンあたりの最大画像数",
-    modelImageConfigured: "このプロバイダーの画像設定を使用し、モデル単位で上書きできます。",
+    modelImageConfigured: "このプロバイダーの画像入力設定を継承し、モデルごとに上書きできます。",
     modelImageAcpSnapshot: "読み取り専用：直近の ACP initialize 接続スナップショットです。",
     modelImageUnsupported: "このチャネルは画像入力に対応していません（読み取り専用）。",
     modelImageBudgetInvalid: "画像 1 枚は 1–32 MiB、1 ターンは 1–8 枚にしてください。",
@@ -1519,12 +1520,9 @@ export default {
       low: "低",
       medium: "中",
       high: "高",
-      xhigh: "最大"
+      xhigh: "最大",
     },
-    reasoningScale: {
-      faster: "より速く",
-      smarter: "より賢く"
-    },
+    reasoningScale: { faster: "より速く", smarter: "より賢く" },
     title: "設定",
     back: "戻る",
     personal: "個人",
@@ -1563,7 +1561,7 @@ export default {
     personalRolesPreview: "選択した役割",
     personalRoleSeparator: "·",
     personalRolesCustomLabel: "カスタムの役割",
-    personalRolesCustomPlaceholder: "役割を入力",
+    personalRolesCustomPlaceholder: "カスタムの役割を入力",
     personalRolesCustomMeta: "24 文字まで。空欄の場合は「その他」と表示されます。",
     personalRolesSave: "役割を保存",
     personalRolesSaved: "仕事の役割を保存しました。",
@@ -1599,7 +1597,7 @@ export default {
     personalShareClose: "閉じる",
     general: "一般",
     storage: "ストレージと設定",
-    userConfigurationSource: "ユーザーの既定設定 · user。プロジェクトモジュールの TOML は「ストレージと設定」でプロジェクトを選んで編集し、プロジェクトのツールとリソースは「ツール」でプロジェクトを選んで管理します。",
+    userConfigurationSource: "ユーザーレベルの設定（user）を編集中です。プロジェクトの TOML は「ストレージと設定」、プロジェクトのツールとリソースは「ツール」で対象プロジェクトを選択してください。",
     generalSubtitle: "このデスクトップアプリが TinadecOffice のサービスに接続する方法を設定します。",
     gatewayConnection: "Gateway 接続",
     gatewayConnectionHint: "デスクトップアプリの API とイベントの通信はすべてこの Gateway エンドポイントを使います。",
@@ -1613,26 +1611,11 @@ export default {
     conversationFlow: "会話の流れ",
     conversationFlowHint: "1 回の作業のうち、ステップと詳細をどこまで会話に残すかを選びます。回答・承認・失敗理由は変わりません。",
     conversationFlowPresets: {
-      minimal: {
-        label: "最小",
-        summary: "要約 1 行だけを残し、ツールとサブエージェントの過程はすべて畳みます。"
-      },
-      concise: {
-        label: "簡潔",
-        summary: "直近のステップを残し、それ以前は 1 行に畳みます。"
-      },
-      balanced: {
-        label: "標準",
-        summary: "各ステップを 1 行ずつ表示し、読み取りや検索も 1 行になります。"
-      },
-      detailed: {
-        label: "詳細",
-        summary: "サブエージェントはタスク・所要時間・結果を 1 行で示し、その場で展開できます。"
-      },
-      rich: {
-        label: "豊富",
-        summary: "すべてのステップを残し、実行中のサブエージェントは自動で展開されます。"
-      }
+      minimal: { label: "最小", summary: "要約 1 行だけを残し、ツールとサブエージェントの過程はすべて畳みます。" },
+      concise: { label: "簡潔", summary: "直近のステップを残し、それ以前は 1 行に畳みます。" },
+      balanced: { label: "標準", summary: "各ステップを 1 行ずつ表示し、読み取りや検索も 1 行になります。" },
+      detailed: { label: "詳細", summary: "サブエージェントはタスク・所要時間・結果を 1 行で示し、その場で展開できます。" },
+      rich: { label: "豊富", summary: "すべてのステップを残し、実行中のサブエージェントは自動で展開されます。" },
     },
     defaultModeTopology: "既定のモードトポロジー",
     defaultModeTopologyHint: "セッションでのやり取りを振り分けるときに使う、既定のエージェントモードトポロジーのバージョンです。",
@@ -1648,7 +1631,7 @@ export default {
     serviceDiscoveryHint: "このマシンで動作している TinadecOffice のバックエンドサービスを自動でスキャンするので、アドレスを入力する必要はありません。",
     scanServices: "サービスをスキャン",
     scanningServices: "スキャン中…",
-    serviceDiscoveryIdleHint: "「サービスをスキャン」をクリックすると接続できるバックエンドが一覧表示されます。下でアドレスを手動入力することもできます。",
+    serviceDiscoveryIdleHint: "スキャンせずに下の欄へアドレスを直接入力することもできます。",
     serviceDiscoveryEmpty: "動作中の Gateway または Core サービスは見つかりませんでした。アドレスは手動で入力できます。",
     serviceDiscoveryFailed: "サービスのスキャンに失敗しました。もう一度お試しください。",
     serviceDiscoverySelected: "選択したサービスのアドレスを入力しました。保存して再起動すると適用されます。",
@@ -1658,7 +1641,7 @@ export default {
     serviceCoreUnreachable: "Core オフライン",
     serviceMode: {
       local: "ローカル",
-      cloud: "クラウド"
+      cloud: "クラウド",
     },
     serviceCurrent: "現在の接続",
     serviceCoreDirectHint: "Core への直接接続の候補は参考表示のみです。ツールの通信には Gateway が必要です。",
@@ -1686,7 +1669,7 @@ export default {
     promptEngineering: "プロンプトエンジニアリング",
     agentModes: "モードトポロジー",
     runtimeInstances: "実行中のインスタンス",
-    agentModesHint: "2 レーンのトポロジー編成：ドラッグでの接続、ノードの上書き、バージョン管理。公開するとセッションに割り当てられます。",
+    agentModesHint: "2 層モードのトポロジー編成：ドラッグ接続、ノード上書き、バージョン公開。",
     runtimePolicy: "実行ポリシー",
     runtimePolicyNone: "通常モード",
     runtimePolicyStructuredInvestigation: "構造化された原因調査",
@@ -1696,8 +1679,8 @@ export default {
     runtimePolicyDependenciesHint: "依存関係: {pairs}",
     runtimePolicySettings: "実行ポリシー設定 (JSON)",
     runtimePolicySettingsInvalid: "実行ポリシー設定は有効な JSON オブジェクトである必要があります。",
-    promptsPanelHint: "パイプラインキャンバスとフラグメントライブラリの統合ビュー：バージョン、効果のシグナル、トークンの見積もり。",
-    runtimePanelHint: "実行中のエージェントインスタンスを監視：一時停止・再開・キャンセルと待機列の振り直し。",
+    promptsPanelHint: "パイプラインキャンバスとフラグメントライブラリを切り替え、バージョン・効果・トークン見積もりを確認します。",
+    runtimePanelHint: "実行中のエージェントインスタンスを監視し、一時停止・再開・キャンセル・キュー再割り当てを行います。",
     runtimeCeilings: {
       title: "実行ポリシーの上限",
       hint: "これらの値は、正当なタスクが途中で止められるかどうかを決めます。runtime.toml にのみ存在し、ここでは読み取り専用で表示します。",
@@ -1723,7 +1706,7 @@ export default {
       runBudget: "run 累積トークン fuse",
       runBudgetHint: "1 回の run の累積トークン fuse。無効時は重複呼び出しや連続エラーで停止します。",
       toolCalls: "ツール呼び出し fuse",
-      toolCallsHint: "1 タスクで許可されるツール呼び出しの総数。通常のタスクは到達しません。"
+      toolCallsHint: "1 タスクで許可されるツール呼び出しの総数。通常のタスクは到達しません。",
     },
     fragmentCountLabel: "フラグメント",
     pipelineCountLabel: "パイプライン",
@@ -1777,12 +1760,9 @@ export default {
     reassignConfirm: "振り直しを確定",
     reassignDone: "振り直しを適用しました",
     reassignFailed: "振り直しに失敗しました",
-    reassignFieldsRequired: "Session / Interaction / Target Run はすべて必須です",
+    reassignFieldsRequired: "セッション ID・インタラクション ID・対象実行 ID はすべて必須です",
     prevPage: "前へ",
     nextPage: "次へ",
-    promptEngineeringMigrated: "統合プロンプトエンジニアリングビューは準備中です。パイプラインキャンバスとフラグメントライブラリはここに統合されます。",
-    agentModesMigrated: "モードトポロジーエディターは準備中です。2 レーンのキャンバスとバージョン管理はここで提供されます。",
-    runtimeInstancesMigrated: "実行インスタンスの監視は準備中です。インスタンス一覧と実行の制御はここで提供されます。",
     toolLayer: "ツール",
     appearance: "外観",
     companions: {
@@ -1838,7 +1818,7 @@ export default {
       tagline: "キャッチコピー",
       avatar: "アバター",
       avatarHint: "一覧と会話に表示される短いテキストまたは絵文字。",
-      avatarLive2dNote: "このアバターはインポートした Live2D モデルです。アプリにレンダラーは同梱されていないため、まだ表示されません（紐付けのみ記録します）。",
+      avatarLive2dNote: 'このアバターはインポートした Live2D モデルです。アプリにレンダラーは同梱されていないため、まだ表示されません（紐付けのみ記録します）。',
       avatarDefault: "既定のアバター",
       model: "モデル",
       modelDefault: "既定のチャットルートに従う",
@@ -1866,7 +1846,7 @@ export default {
         motionCount: "モーション {count} 件",
         expressionCount: "表情 {count} 件",
         rendererNote: "レンダラーはアプリに同梱されていません。モデルのインポートと能力の読み取りのみで、表示は行われません。表示するには Cubism Core をご自身で用意してください。",
-        unavailableShort: "Live2D は未対応"
+        unavailableShort: "Live2D は未対応",
       },
       memory: {
         title: "プライベート記憶",
@@ -1896,7 +1876,7 @@ export default {
         created: "作成 {time}",
         loadFailed: "記憶を読み込めませんでした",
         saveFailed: "記憶を保存できませんでした",
-        deleteFailed: "記憶を削除できませんでした"
+        deleteFailed: "記憶を削除できませんでした",
       },
       skill: {
         title: "スキル",
@@ -1925,7 +1905,7 @@ export default {
         neverLoaded: "未読み込み",
         loadFailed: "スキルを読み込めませんでした",
         saveFailed: "スキルを保存できませんでした",
-        deleteFailed: "スキルを削除できませんでした"
+        deleteFailed: "スキルを削除できませんでした",
       },
       connection: {
         title: "接続",
@@ -1963,7 +1943,7 @@ export default {
         deleteConfirm: "削除",
         loadFailed: "接続を読み込めませんでした",
         saveFailed: "接続を保存できませんでした",
-        deleteFailed: "接続を削除できませんでした"
+        deleteFailed: "接続を削除できませんでした",
       },
       autonomy: {
         title: "自律ルール",
@@ -1997,10 +1977,10 @@ export default {
           duplicate_group: "同じグループはすでに作成済みです",
           duplicate_member: "そのメンバーはすでにグループに参加しています",
           conversation_paused: "この会話の自動返信は一時停止中です",
-          duplicate_message: "そのメッセージはすでに送信済みです"
+          duplicate_message: "そのメッセージはすでに送信済みです",
         },
-        saveFailed: "自律ルールを保存できませんでした"
-      }
+        saveFailed: "自律ルールを保存できませんでした",
+      },
     },
     pets: "コンパニオンアバター",
     petdexCatalog: "Petdex カタログ",
@@ -2009,16 +1989,16 @@ export default {
     loadingPets: "ペットを読み込み中",
     noPetsFound: "一致するペットはありません",
     noDownloadedPets: "ダウンロードしたペットはありません",
-    builtinPetBadge: "内蔵",
-    builtinPetHint: "アプリに同梱された代替イメージです。削除できません",
-    agentAvatarSection: "イメージ",
-    agentAvatarHint: "ランダムでは派遣ごとに変わります。固定すると、このエージェントは毎回同じペットを使います。",
-    agentAvatarRandom: "ランダム",
-    agentAvatarEmpty: "利用できるペット素材がありません。代わりに予備のイメージを表示します。",
-    agentAvatarSaveFailed: "イメージを保存できませんでした",
+builtinPetBadge: "内蔵",
+builtinPetHint: "アプリに同梱された代替イメージです。削除できません",
+agentAvatarSection: "イメージ",
+agentAvatarHint: "ランダムでは派遣ごとに変わります。固定すると、このエージェントは毎回同じペットを使います。",
+agentAvatarRandom: "ランダム",
+agentAvatarEmpty: "利用できるペット素材がありません。代わりに予備のイメージを表示します。",
+agentAvatarSaveFailed: "イメージを保存できませんでした",
     petDownloaded: "ダウンロード済み",
     petKind: {
-      pet: "ペット"
+      pet: "ペット",
     },
     petEnabled: "有効",
     downloadPet: "ダウンロード",
@@ -2041,7 +2021,7 @@ export default {
     windowAndTray: "ウィンドウとトレイ",
     windowAndTrayHint: "メインウィンドウを閉じた後もバックグラウンドで実行を続けるかを設定します。",
     closeToTray: "ウィンドウを閉じても実行を続ける",
-    closeToTrayHint: "メインウィンドウを閉じるとシステムトレイに移動し、実行中の Agent タスクは継続します。トレイアイコンをクリックすると再表示、右クリックで終了できます。",
+    closeToTrayHint: "メインウィンドウを閉じるとシステムトレイに最小化され、バックグラウンドのタスクは継続します。トレイアイコンから再表示できます。",
     closeToTraySaveFailed: "ウィンドウ設定を保存できませんでした",
     launchAtLogin: "サインイン時に起動",
     launchAtLoginHint: "サインイン時に TinadecOffice を起動します。「ウィンドウを閉じても実行を続ける」と組み合わせると、ウィンドウを閉じている間もコンパニオンが待機できます。",
@@ -2066,7 +2046,7 @@ export default {
     apiDocs: "API ドキュメント",
     about: "このアプリについて",
     archiveTrash: "アーカイブとごみ箱",
-    archiveTrashSubtitle: "アーカイブまたは削除したプロジェクトと会話を管理します：復元または完全に削除。",
+    archiveTrashSubtitle: "アーカイブ済み・ゴミ箱内のプロジェクトとセッションを復元または完全削除します。",
     archivedGroup: "アーカイブ済み",
     trashGroup: "ごみ箱",
     projectsGroup: "プロジェクト",
@@ -2081,12 +2061,9 @@ export default {
     sessionInProject: "プロジェクト：{name}",
     loadArchiveFailed: "アーカイブとごみ箱を読み込めませんでした",
     modelCenter: "モデルセンター",
-    modelCenterSubtitle: "プロバイダー、API・ローカル接続、モデル、CLI、ACP ランタイムのソースを管理します。",
+    modelCenterSubtitle: "モデルプロバイダー、利用可能なモデル、ルート、CLI / TUI / ACP ランタイムを管理します。",
     agentCenter: "エージェントセンター",
-    openWorkbench: "ワークベンチ全体を開く",
-    agentCenterSubtitle: "有効なランタイムのソースを確認し、Core に組み込まれたエージェント、モード、進化の候補を設定します。",
-    toolLayerTitle: "ツール",
-    toolLayerSubtitle: "Core のハーネスが管理する Code ツールスイートと Codex の基本ツールを確認します。",
+    agentCenterSubtitle: "パック、カスタム定義、自律生成を含むエージェント・実行モード・プロンプト・進化候補を管理します。",
     toolLayerReadiness: "ツール層の準備状況",
     executionAgents: "実行エージェント",
     humanCheckpoints: "人によるチェックポイント",
@@ -2107,7 +2084,6 @@ export default {
     futureCount: "今後",
     codeToolSuite: "Code ツールスイート",
     projectTemplates: "プロジェクトテンプレート",
-    codexPrimitiveTools: "Codex 基本ツール",
     toolDiscovery: "ツールの検索",
     toolDiscoveryPlaceholder: "ツール、機能、ソース、リスクを検索",
     allSources: "すべてのソース",
@@ -2130,23 +2106,23 @@ export default {
     modelProviderManagement: "プロバイダーの管理",
     modelProviderManagementHint: "インスタンス、認証情報、有効化の状態は Core に保存されます",
     modelCatalogScope: "モデルカタログの範囲",
-    configuredModelsOnly: "プロバイダーの既定値とルートの上書き",
+    configuredModelsOnly: "設定済みモデル一覧",
     liveDiscovery: "モデルのライブ検出",
     writable: "書き込み可",
     readOnly: "読み取り専用",
     available: "利用可能",
     unavailable: "利用不可",
-    pendingCore: "Core の対応待ち",
+    pendingCore: "無効",
     previewOnly: "プレビューのみ",
     agentProfilesWritable: "エージェントのプロファイル",
     agentProfilesWritableHint: "モード、ツール、プロンプトを保存できます",
     runtimePreviewOnly: "モデル戦略",
-    runtimePreviewOnlyHint: "継承・固定・CLI・ACP は下書き→公開を経て不変のバージョンとして公開されます",
+    runtimePreviewOnlyHint: "継承ルート・固定モデル・CLI / ACP バインディングを不変バージョンとして保存・公開できます",
     agentModelStrategyPublished: "{name} のモデル戦略を公開しました",
     agentStrategyVersioned: "ランタイムのソースの上書き",
-    agentStrategyVersionedHint: "このエージェントのユーザー単位の上書きとして保存されます。パックで管理されているエージェントにも適用され、いつでも「既定に従う」に戻せます",
+    agentStrategyVersionedHint: "このエージェントのユーザー単位の上書きとして保存されます（管理対象エージェントにも有効）。いつでも「ルートを継承」に戻せます",
     agentConflictTitle: "設定が別の場所で変更されました",
-    agentConflictMessage: "このエージェントの設定は別のセッションで変更されました（412）。強制的に上書きすると、最新のリビジョンに今回の変更を適用し直します。再読み込みするとローカルの編集は破棄されます。",
+    agentConflictMessage: "このエージェント設定は他で更新されています。強制上書きは現在の編集を適用し、再読み込みはローカルの編集を破棄します。",
     agentConflictOverwrite: "強制的に上書き",
     agentConflictRefresh: "最新を再読み込み",
     agentStatusPublished: "公開済み · v{version}",
@@ -2157,7 +2133,7 @@ export default {
     agentStatus: "状態",
     agentSourceCustom: "カスタム",
     agentSourcePack: "パック",
-    agentSourceBootstrap: "組み込み",
+    agentSourceBootstrap: "初期定義",
     agentSourceMissing: "参照が見つかりません",
     agentSourceManaged: "管理対象（読み取り専用）",
     agentModeUsageSection: "モードでの使用箇所",
@@ -2179,7 +2155,7 @@ export default {
     agentVersionArchived: "過去",
     noVersionsPublished: "公開されたバージョンはまだありません",
     activeAgents: "有効なエージェント",
-    agentLayerCounts: "計画 {planning} · 実行 {execution}",
+    agentLayerCounts: "ガバナンス {planning} · 実行 {execution}",
     previewBadge: "プレビュー",
     agentProfiles: "エージェントのプロファイル",
     centerOverview: "概要",
@@ -2199,34 +2175,34 @@ export default {
     supplierCliSummary: "エージェントのタスク全体をコマンドラインのランタイムに任せます。",
     supplierAcpSummary: "ACP アダプターを通じて外部のエージェントランタイムに接続します。",
     noSuppliers: "Core はプロバイダーのカタログを返していません",
-    configuredModelsHint: "表示されるのはプロバイダーの既定モデルと既存のルートの上書きだけで、モデルのライブ検出ではありません。",
+    configuredModelsHint: "設定済みプロバイダーの既定モデル、モデル一覧、ルート上書きを表示します。",
     configuredOnly: "設定済みのみ",
     modelSourceProviderDefault: "プロバイダーの既定",
     modelSourceRouteOverride: "ルートの上書き",
-    modelSourceProviderModels: "プロバイダーの一覧",
+    modelSourceProviderModels: "プロバイダー一覧",
     refreshModels: "モデルを更新",
     addModel: "モデルを追加",
     addModelTitle: "モデルを追加",
     removeModel: "モデルを削除",
     noProviderModels: "このプロバイダーにはまだモデルが追加されていません。",
     fetchModels: "モデルを取得",
-    fetchModelsFromProvider: "プロバイダーからモデルを検出",
+    fetchModelsFromProvider: "プロバイダーからモデルを取得",
     fetchingModels: "取得中…",
-    fetchModelsEmpty: "プロバイダーはモデルを返しませんでした。",
+    fetchModelsEmpty: "プロバイダーからモデルが返されませんでした。",
     manualModel: "モデル名を手動で入力",
     modelNamePlaceholder: "例：gpt-4o-mini",
     modelSearchPlaceholder: "モデルを絞り込む…",
     modelFilterEmpty: "この絞り込みに一致するモデルはありません。",
     modelCatalogSearch: "モデルまたはプロバイダーを検索",
     modelAdded: "追加済み",
-    modelDiscoveryUnsupported: "Core はまだモデルのライブ検出に対応していません",
+    modelDiscoveryUnsupported: "モデルの追加・更新は現在利用できません",
     discoveredNewModels: "新しいモデルが {count} 件見つかり、選択済みにしました",
     noNewModels: "新しいモデルは見つかりませんでした",
     mergeDiscoveredTitle: "検出したモデルを統合",
-    confirmMergeDiscovered: "まだ保存されていない新しいモデルが {count} 件見つかりました。確認すると、このプロバイダーに書き込みます：",
+    confirmMergeDiscovered: "{count} 件の新しいモデルが見つかりました。確認してこのプロバイダーに追加します：",
     confirmSave: "保存",
     noConfiguredModels: "設定済みのモデルはありません。まず API またはローカル接続を作成してください。",
-    cliRuntimeHint: "1 回だけ実行するハーネスと、opencode 独自のローカルサーバーです。Core はそのチャネル用に検証済みの引数でプログラムを起動するため、保存するパスは実際の実行ファイルである必要があります。",
+    cliRuntimeHint: "単発実行の CLI ハーネスおよび OpenCode ローカル HTTP サーバーです。実在する実行ファイルを指定してください。",
     discoverCli: "自動検出",
     discoveringCli: "スキャン中…",
     cliDiscoveryTitle: "ローカル CLI の自動検出",
@@ -2238,7 +2214,7 @@ export default {
     notDetected: "未検出",
     pathNotConfigured: "実行ファイルの絶対パスが設定されていません",
     workspaceNotConfigured: "実際の作業ディレクトリが設定されていません",
-    noCliRuntimes: "CLI ランタイムはありません。プロバイダーのカタログから作成してください。",
+    noCliRuntimes: "CLI ランタイムがありません。上の「自動検出」またはプロバイダー追加から登録してください。",
     acpRuntimeHint: "ハーネスプロセスとの常駐 stdio セッションです。接続時に実際のハンドシェイクで検証し、セッションはターンをまたいでコンテキストを保持します。",
     centerCli: "CLI / serve",
     centerTui: "TUI",
@@ -2253,19 +2229,19 @@ export default {
     channelReason: {
       headless_frame_unverified: "このビルドはまだ {harness} のヘッドレス応答を取得できていないため、このチャネルでは操作できません。",
       terminal_host_unsupported: "このプラットフォームには {harness} の TUI に対応したターミナルホストがありません。",
-      protocol_unsupported: "このビルドにはまだこのチャネルのクライアントがありません。"
+      protocol_unsupported: "このビルドにはまだこのチャネルのクライアントがありません。",
     },
     probeNote: {
       start_failed: "{command} を起動できませんでした。",
       probe_timeout: "{name} が {timeout_ms} ミリ秒以内に {command} に応答しなかったため、インストールされているかどうか分かりません。",
       exit_code: "{name} は {command} の実行中に終了コード {exit_code} で終了しました。",
-      probe_failed: "{name} を調べられませんでした：{error}"
+      probe_failed: "{name} を調べられませんでした：{error}",
     },
     harnessProviderInstance: "プロバイダーのインスタンス",
     protocolUnknown: "プロトコルの記録なし",
     tuiRuntimeHint: "実際のターミナルでホストされる全画面のハーネスです。Tinadec は管理されたターンを 1 回送信し、安定した画面のテキストを回答として取り込めます。",
     noTuiRuntimes: "ターミナルチャネルに設定されたハーネスはありません。",
-    tuiBackendUnavailable: "TUI のターンは登録済みの PTY ホストを使い、一定時間画面が静止したかで安定を判断します。常駐する対話型ターミナルの観察はモデルのルーティングとは別のままです。",
+    tuiBackendUnavailable: "TUI のターンは管理された端末内で実行され、画面出力が落ち着いた後に結果を取得します。対話型ターミナルとは独立しています。",
     acpPermissionWarning: "ハーネスは自身のモデルで回答し、プロジェクトではなく管理された一時ディレクトリで自身のツールを実行します。このビルドではハーネスからの権限リクエストはすべて拒否として応答されます。「ファイルシステムにアクセスしない」と宣言しても、そのディレクトリ内への書き込みは止められません。",
     manageInMarketplace: "マーケットで管理",
     legacyProvider: "旧形式のプロバイダーアダプター",
@@ -2385,7 +2361,7 @@ export default {
     pickFromScreen: "画面から色を取得",
     version: "バージョン",
     versionCode: "Code",
-    planningLayer: "計画層",
+    planningLayer: "ガバナンス層",
     executionLayer: "実行層",
     enableAgent: "エージェントを有効化",
     disableAgent: "エージェントを無効化",
@@ -2393,7 +2369,7 @@ export default {
     closeConfig: "設定を閉じる",
     openAgentConfig: "エージェントの設定を開く",
     pleaseOpenAgentConfig: "エージェントの設定を開いてください",
-    builtInAgent: "Core に組み込み",
+    builtInAgent: "管理対象（読み取り専用）",
     defaultEnabled: "既定で有効",
     agentConfiguration: "エージェントの設定",
     agentEnabled: "このエージェントを有効にする",
@@ -2422,14 +2398,14 @@ export default {
     setDefaultModel: "既定のモデルに設定",
     defaultChatModel: "既定のチャット",
     defaultChatNone: "既定のチャットモデルが未設定です",
-    defaultChatChange: "変更",
+    defaultChatChange: "ルートを管理",
     defaultModelSet: "既定のモデルを {model} に設定しました",
     runtimeBindingSaved: "{name} のランタイムのソースを更新しました",
     runtimeBindingUnsupported: "Core はまだエージェントごとのランタイムの割り当てに対応していません",
     routePurpose: "ルートの用途",
     routeProvider: "モデルのインスタンス",
     routeModel: "モデル名",
-    saveRoute: "モデルの設定を保存",
+    saveRoute: "ルートを保存",
     centerRoutes: "ルート",
     centerRoutesHint: "順序付きの候補チェーンです。解決時は順に試し、1 回の保存で不変の新しいバージョンを公開します。",
     routeNoCandidates: "候補はありません",
@@ -2461,17 +2437,23 @@ export default {
     agentModePlanFirst: "計画を先に",
     agentModeParallel: "並列",
     agentModeSafeResearch: "安全な調査",
-    agentModeBalancedHint: "既定の 2 層編成：計画レーン 1 本と実行レーン 2 本。",
+    agentModeBalancedHint: "既定の 2 層編成：ガバナンス層が調整と検証を行い、実行層がタスクを進めます。",
     agentModePlanFirstHint: "実行を始める前に、ミーティングエージェントと監督エージェントがタスクグラフを作成します。",
     agentModeParallelHint: "依存関係と予算が許す場合に実行ワーカーを追加します。",
     agentModeSafeResearchHint: "読み取り専用の探索。書き込み、コマンド、ネットワーク、ACP には厳格な承認が必要です。",
     policyBalanced: "バランス型ポリシー",
     policyStrict: "厳格なポリシー",
     policyPerformance: "パフォーマンス優先",
-    agentLayerPlanning: "計画層",
+    agentLayerPlanning: "ガバナンス層",
     agentLayerExecution: "実行層",
     agentLayerEvolution: "進化層",
     agentTypeMeeting: "ミーティングエージェント",
+    agentTypeSessionCoordinator: "対話コーディネーター",
+    agentTypeTaskExecutor: "タスク実行者",
+    agentTypeGovernanceReviewer: "ガバナンス審査",
+    agentTypeExplorationPlanner: "探索プランナー",
+    agentTypeSoloMaster: "ソロマスター",
+    agentTypeArtexDirector: "探索ディレクター",
     agentTypeContextCompressor: "コンテキスト圧縮エージェント",
     agentTypePromptContextEngineer: "プロンプトコンテキストエンジニア",
     agentTypeEvolver: "進化エージェント",
@@ -2488,15 +2470,6 @@ export default {
     agentTypeDesigner: "デザインエージェント",
     agentTypeReviewExecutor: "レビュー実行エージェント",
     agentTypeToolPackager: "MCP パッケージャー",
-    gitManagerSubtitle: "Git の状態、プッシュの準備状況、ユーザー向けの引き継ぎメモを専門に扱う実行層のサブエージェントです。",
-    gitManagerConfigure: "Git エージェントを設定",
-    gitManagerApprovalTitle: "プッシュのポリシー",
-    gitManagerApprovalBody: "コミット、プッシュ、マージ、リベース、履歴の書き換えには、Core が承認したツール呼び出しが必要です。",
-    gitManagerRouteTitle: "Git ルート",
-    gitManagerHandoffTitle: "引き継ぎメモ",
-    gitManagerHandoffName: "差分とブランチの説明",
-    gitManagerHandoffBody: "リポジトリの状態、影響範囲、残るリスク、プッシュの準備ができているものをまとめます。",
-    gitManagerCapabilitiesTitle: "Git の機能",
     noAgents: "エージェントはありません",
     noAgentsHint: "Core は設定可能なエージェントのプロファイルを返していません。",
     topologyView: "トポロジー表示",
@@ -2514,20 +2487,20 @@ export default {
     agentDescription: "説明",
     agentDescriptionPlaceholder: "このエージェントの役割を説明してください...",
     agentTools: "ツールの割り当て",
-    agentToolsHint: "クリックして、このエージェントが使えるツールを切り替えます。",
+    agentToolsHint: "このエージェントが使用できるツールを切り替えます。",
     agentCapabilities: "機能タグ",
     agentCapabilitiesHint: "このエージェントの機能タグを追加・削除します。",
     newCapabilityPlaceholder: "新しい機能...",
     addCapability: "追加",
     agentSystemPrompt: "システムプロンプト",
     agentSystemPromptHint: "このエージェントの既定のシステムプロンプトを上書きします。空欄の場合は既定値を使います。",
-    agentSystemPromptOverrideHint: "このエージェント専用の上書きフラグメントとして保存されます。空欄の場合は既定値を使います。",
+    agentSystemPromptOverrideHint: "このエージェントのシステムプロンプト上書きとして保存されます。空欄時は既定を使用します。",
     agentSystemPromptPlaceholder: "カスタムのシステムプロンプトを入力...",
     saveAgent: "設定を保存",
     cloneAgent: "カスタムとして複製",
     agentConflict: "設定が別の場所で変更されました。更新してから再試行してください",
-    agentBuiltInConflict: "組み込みのエージェントは読み取り専用です。先に複製してください",
-    agentRevision: "リビジョン {revision}",
+    agentBuiltInConflict: "管理対象エージェントは読み取り専用です。先に複製して編集してください",
+    agentRevision: "v{revision}",
     promptViewLabel: "プロンプトの表示",
     fragmentEnabledFilter: "有効状態で絞り込む",
     builtinBadge: "組み込み",
@@ -2553,7 +2526,7 @@ export default {
     backgroundPickerUnavailable: "背景ファイルを選択できません",
     backgroundPickFailed: "背景ファイルを選択できませんでした",
     modelReadinessUnavailable: "モデルの準備状況レシートを取得できないため、設定のみを表示しています。",
-    builtInCloneHint: "組み込みのエージェントは読み取り専用です。複製するとツール、機能、プロンプトをカスタマイズできます",
+    builtInCloneHint: "管理対象エージェントは読み取り専用です。複製するとツール・機能・プロンプトを編集できます",
     selectReadOnlyTools: "読み取り専用ツールを選択",
     clearSelection: "選択を解除",
     toolSearchPlaceholder: "ツール名、ID、リスクで検索",
@@ -2578,11 +2551,11 @@ export default {
     showApiKey: "キーを表示",
     hideApiKey: "キーを隠す",
     apiKeyKeepHint: "空欄のままにすると保存済みのキーを使います。ここにキーは表示されません。",
-    providerNextStep: "このプロバイダーにはまだモデルがありません。追加すると応答できるようになります。",
+    providerNextStep: "このプロバイダーにはモデルがありません。追加すると会話に利用できます。",
     providerListLabel: "プロバイダー一覧",
     backToProviderList: "プロバイダー一覧に戻る",
-    providerModelsHint: "このプロバイダーのモデル。既定のチャットはいずれかを使用します。",
-    noProviderSelected: "プロバイダーを選択すると接続とモデルを表示します。",
+    providerModelsHint: "このプロバイダーのモデルです。既定のチャットやルートに設定できます。",
+    noProviderSelected: "プロバイダーを選択すると設定とモデルを表示します。",
     locateProvider: "プロバイダーで表示",
     providerReferencesAffected: "{count} 件の保存済み参照から使用されています：{summary}",
     providerNoReferences: "そのモデルを参照するエージェント・モード・ルートはまだありません。",
@@ -2637,12 +2610,9 @@ export default {
     reset: "リセット",
     resetBackground: "背景をリセット",
     globalMaterial: "全体の素材効果",
-    globalMaterialHint: "サイドバー、チャットエリア、コンテキストパネルを含むすべてのパネルの素材効果を統一して設定します",
-    panelStyles: "パネルのスタイル",
-    panelStylesHint: "各パネルの不透明度と視覚効果をカスタマイズします",
+    globalMaterialHint: "サイドバー、会話エリア、サイドパネルの素材効果をまとめて設定します。",
     sidebar: "サイドバー",
     chatPanel: "チャットパネル",
-    contextPanel: "コンテキストパネル",
     effectOpaque: "不透明",
     effectTranslucent: "半透明",
     effectBlur: "ぼかし効果",
@@ -2652,7 +2622,7 @@ export default {
     bgPreviewHtml: "HTML の内容を入力",
     bgImageFormats: "対応形式：JPG、PNG、GIF、WebP",
     bgVideoFormats: "対応形式：MP4、WebM",
-    bgHtmlHint: "HTML の内容は背景として描画され、操作はできません",
+    bgHtmlHint: "HTML の内容は操作不可の背景レイヤーとして表示されます。",
     bgPerformanceWarning: "複雑な背景はパフォーマンスに影響することがあります",
     moduleLoading: "設定を読み込み中…",
     moduleError: "このセクションを読み込めませんでした。",
@@ -2803,7 +2773,7 @@ export default {
     agentDraftDiscard: "下書きを破棄",
     agentDraftTooLarge: "下書きが大きすぎるためローカルに保存できません。先にサーバーへ保存してください",
     centerConnections: "接続",
-    centerAdvanced: "詳細"
+    centerAdvanced: "詳細",
   },
   providers: {
     openaiCompatible: "OpenAI 互換",
@@ -2865,7 +2835,7 @@ export default {
     zcode: "ZCode",
     zcodeSummary: "ZCode エージェント。ACP には非対応で、1 回実行またはターミナルセッションのみ",
     custom: "カスタムプロバイダー",
-    customSummary: "カスタムの OpenAI 互換エンドポイント"
+    customSummary: "カスタムの OpenAI 互換エンドポイント",
   },
   accentColors: {
     blue: "ブルー",
@@ -2876,7 +2846,7 @@ export default {
     red: "レッド",
     cyan: "シアン",
     yellow: "イエロー",
-    dynamic: "背景から"
+    dynamic: "背景から",
   },
   market: {
     action: {
@@ -2886,14 +2856,14 @@ export default {
       installPreview: "インストールのプレビュー",
       queueInstall: "インストールの待機列への追加",
       refreshSource: "ソースの更新",
-      uninstallPreview: "アンインストールのプレビュー"
+      uninstallPreview: "アンインストールのプレビュー",
     },
     defaultSourceName: "MCP レジストリ",
     sourceAdded: "ソースを追加しました。",
     sourceNoAnswer: "ソースが応答しませんでした（{outcome}）。",
     sourceOutcome: {
       blocked: "アドレスポリシーによってこのソースへのアクセスがブロックされました。",
-      unavailable: "今回はこのソースを読み取れませんでした。カタログは以前のままです。"
+      unavailable: "今回はこのソースを読み取れませんでした。カタログは以前のままです。",
     },
     sourceStale: "前回の更新に失敗したため、以下のエントリは以前のデータです：{error}",
     installBlocker: {
@@ -2909,7 +2879,7 @@ export default {
       detail_too_large: "このエントリのパッケージの説明は、Core が保存できるサイズを超えています。",
       detail_missing: "このエントリには詳細が保存されていません。",
       detail_unreadable: "このエントリに保存された詳細を読み取れませんでした。",
-      not_installable: "このエントリはこのビルドではインストールできません。"
+      not_installable: "このエントリはこのビルドではインストールできません。",
     },
     refreshedTruncated: "{pages} ページから {rows} 件のエントリを更新しました。リストはこれより長くなっています。",
     refreshed: "{rows} 件のエントリを更新しました（拒否 {refused} 件、削除 {removed} 件、インストール済みのため保持 {retained} 件）。",
@@ -2988,7 +2958,7 @@ export default {
     packageCommit: "固定コミット",
     packageHash: "パッケージのダイジェスト",
     packageFiles: "パッケージのファイル",
-    scope: "スコープ"
+    scope: "スコープ",
   },
   approval: {
     runCommandSummary: "コマンドを実行：{command}",
@@ -2997,14 +2967,14 @@ export default {
     kind: {
       tool: "ツール呼び出し",
       user_tool: "あなたのツール操作",
-      permission: "権限リクエスト"
+      permission: "権限リクエスト",
     },
     specConfirmation: "仕様の確認",
     specConfirmationHint: "ドキュメント全体を読んでください。この判断は下のドキュメントにのみ適用され、後の段階ではそれぞれ確認が必要です。",
     summaryCode: {
       user_requested: "{tool} の実行をリクエストしました。",
       retry_after_unknown: "{tool} を再試行：前回の実行の結果が不明です。",
-      permission_request: "{tool} の実行には許可が必要です。"
+      permission_request: "{tool} の実行には許可が必要です。",
     },
     specRequirements: "要件",
     specDesign: "設計",
@@ -3051,9 +3021,9 @@ export default {
         rejected: "却下",
         escalated: "あなたに戻す",
         skipped: "確認なし",
-        superseded: "あなたの判断で置き換え"
-      }
-    }
+        superseded: "あなたの判断で置き換え",
+      },
+    },
   },
   doctor: {
     title: "診断",
@@ -3063,7 +3033,7 @@ export default {
     counts: {
       ready: "準備完了",
       warning: "警告",
-      blocked: "ブロック中"
+      blocked: "ブロック中",
     },
     status: {
       ok: "正常",
@@ -3077,7 +3047,7 @@ export default {
       error: "エラー",
       rejected: "却下",
       missing: "なし",
-      blocked: "ブロック中"
+      blocked: "ブロック中",
     },
     reason: {
       database_ready: "データベースに接続できます。",
@@ -3125,7 +3095,7 @@ export default {
       tools_handshake_failed: "ツールプログラムが正しく応答しませんでした。",
       manifest_ready: "ツール一覧のフィンガープリントを利用できます。",
       manifest_hash_missing: "ツール一覧にフィンガープリントがないため、その変更を検出できません。",
-      manifest_unavailable: "ツールプログラムを利用できないため、ツール一覧は不明です。"
+      manifest_unavailable: "ツールプログラムを利用できないため、ツール一覧は不明です。",
     },
     action: {
       database_unavailable: "データベースの接続設定を確認して、Core を再起動してください。",
@@ -3161,7 +3131,7 @@ export default {
       probe_failed: "{base_url} のエンドポイントが利用できるか確認して再試行してください。詳細は Core のログにあります。",
       tools_not_built: "npm run dev:tools を実行してください（npm run dev は先に自動でビルドします）。",
       tools_handshake_failed: "ツールプログラムをビルドし直して、Core を再起動してください。",
-      manifest_unavailable: "先にツールプログラムを利用できるようにしてください。"
+      manifest_unavailable: "先にツールプログラムを利用できるようにしてください。",
     },
     item: {
       database: "データベース",
@@ -3173,8 +3143,8 @@ export default {
       model_route: "モデルルート",
       model_probe: "モデルの接続性",
       tool_provider: "ツールプロバイダー",
-      manifest_hash: "ツールマニフェスト"
-    }
+      manifest_hash: "ツールマニフェスト",
+    },
   },
   debugStudio: {
     preview: {
@@ -3200,7 +3170,7 @@ export default {
         toolCalls: "ツール呼び出し",
         events: "イベント",
         agents: "エージェント",
-        tools: "ツール"
+        tools: "ツール",
       },
       noOrchestration: "このシナリオにはオーケストレーションの実行がありません。「データあり」または「エージェント作業中」に切り替えると表示されます。",
       noGitDiff: "このシナリオには Git の差分がありません。「Git の変更」に切り替えると表示されます。",
@@ -3220,7 +3190,7 @@ export default {
         code: "コードエディター（実際の CodePage）",
         settings: "設定（実際の SettingsPage）",
         allTabs: "すべてのタブを利用可能",
-        market: "拡張機能マーケット（実際の MarketPage · UIE エンジンは分離）"
+        market: "拡張機能マーケット（実際の MarketPage · UIE エンジンは分離）",
       },
       items: {
         ChatPanel: "チャットパネル",
@@ -3237,50 +3207,50 @@ export default {
         ToolStatsDashboard: "ツール統計ダッシュボード",
         DiffViewer: "差分ビューアー",
         CommitMessageEditor: "コミットメッセージエディター",
-        FileTreePanel: "ファイルツリーパネル"
+        FileTreePanel: "ファイルツリーパネル",
       },
       scenario: {
         populated: {
           label: "データあり",
-          description: "既定の豊富なデータ状態：プロジェクト、セッション、メッセージ、オーケストレーション、ツール呼び出しなど。"
+          description: "既定の豊富なデータ状態：プロジェクト、セッション、メッセージ、オーケストレーション、ツール呼び出しなど。",
         },
         empty: {
           label: "空",
-          description: "プロジェクト、セッション、メッセージがない状態。空の状態の UI を確認します。"
+          description: "プロジェクト、セッション、メッセージがない状態。空の状態の UI を確認します。",
         },
         loading: {
           label: "読み込み中",
-          description: "データを読み込み中です。すべてのコレクションは空で、コンポーネントはスケルトンや読み込み表示を出す必要があります。"
+          description: "データを読み込み中です。すべてのコレクションは空で、コンポーネントはスケルトンや読み込み表示を出す必要があります。",
         },
         busy: {
           label: "エージェント作業中",
-          description: "オーケストレーションの実行が進行中で、ツール呼び出しの実行と保留中の承認があります。"
+          description: "オーケストレーションの実行が進行中で、ツール呼び出しの実行と保留中の承認があります。",
         },
         approvalPending: {
           label: "承認待ち",
-          description: "git / shell / code にわたる 3 件の承認待ち。承認の UI を確認します。"
+          description: "git / shell / code にわたる 3 件の承認待ち。承認の UI を確認します。",
         },
         error: {
           label: "エラー状態",
-          description: "Doctor がエラーを報告し、準備状況がブロックされています。エラー状態の UI を確認します。"
+          description: "Doctor がエラーを報告し、準備状況がブロックされています。エラー状態の UI を確認します。",
         },
         agentWorking: {
           label: "エージェント稼働中",
-          description: "複数の step_results がスタブ状態のオーケストレーション実行で、エージェントのアクティビティバナーを表示します。"
+          description: "複数の step_results がスタブ状態のオーケストレーション実行で、エージェントのアクティビティバナーを表示します。",
         },
         manyMessages: {
           label: "大量のメッセージ",
-          description: "長い Markdown を含む 20 件以上のメッセージ。リストのスクロールと描画の性能を確認します。"
+          description: "長い Markdown を含む 20 件以上のメッセージ。リストのスクロールと描画の性能を確認します。",
         },
         gitChanges: {
           label: "Git の変更",
-          description: "Git の差分プレビューには 3 つのセクション（ワークツリー / ステージ / ブランチ比較）と複数の変更ファイルがあります。"
+          description: "Git の差分プレビューには 3 つのセクション（ワークツリー / ステージ / ブランチ比較）と複数の変更ファイルがあります。",
         },
         toolFailures: {
           label: "ツールの失敗",
-          description: "複数のツール呼び出しが失敗しています。失敗時の UI とエラー表示を確認します。"
-        }
-      }
+          description: "複数のツール呼び出しが失敗しています。失敗時の UI とエラー表示を確認します。",
+        },
+      },
     },
     tabPreview: "プレビュー",
     simulation: {
@@ -3293,7 +3263,7 @@ export default {
       approved: "シミュレーションの承認：承認済み",
       rejectedApproval: "シミュレーションの承認：却下",
       decisionRejected: "承認の判断は拒否されました",
-      decisionFailed: "承認の判断に失敗しました"
+      decisionFailed: "承認の判断に失敗しました",
     },
     requestFailed: {
       injectMessage: "メッセージを挿入できませんでした：{error}",
@@ -3308,7 +3278,7 @@ export default {
       fetchDiagnostics: "診断を取得できませんでした：{error}",
       fetchProcessInfo: "プロセス情報を取得できませんでした：{error}",
       fetchTraces: "トレースを取得できませんでした：{error}",
-      fetchTraceDetail: "トレースの詳細を取得できませんでした：{error}"
+      fetchTraceDetail: "トレースの詳細を取得できませんでした：{error}",
     },
     title: "エージェントデバッグスタジオ",
     tabTimeline: "タイムライン",
@@ -3369,7 +3339,7 @@ export default {
     errors: "{count} 件のエラー",
     loadingGraph: "エージェントグラフを読み込み中...",
     graphLoadFailed: "Gateway からエージェントのディレクトリを読み込めませんでした。",
-    graphDirectoryNote: "層ごとのエージェントのディレクトリ — 実行のトポロジーは各実行のオーケストレーションタブにあります"
+    graphDirectoryNote: "層ごとのエージェントのディレクトリ — 実行のトポロジーは各実行のオーケストレーションタブにあります",
   },
   permission: {
     selectLabel: "ツールの承認方法",
@@ -3385,7 +3355,7 @@ export default {
     delegateBoth: "両方が承認",
     delegateConversationHint: "あなたの目標を把握しているコーディネーターが承認します。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。",
     delegateReviewerHint: "レビュアーが独立したコンテキストで承認します（見るのは操作と事実だけで、会話は見ません）。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。",
-    delegateBothHint: "レビュアーとコーディネーターの両方が承認した場合にのみ実行し、どちらかが却下すれば拒否されます。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。"
+    delegateBothHint: "レビュアーとコーディネーターの両方が承認した場合にのみ実行し、どちらかが却下すれば拒否されます。シェル、プッシュ、削除、コミットなどの高リスクの操作は引き続きあなたが判断します。",
   },
   agent: {
     agent: "エージェント",
@@ -3396,7 +3366,7 @@ export default {
     error: "エラー",
     idle: "待機中",
     noActivity: "エージェントのアクティビティはありません",
-    planningLayer: "計画層のエージェント",
+    planningLayer: "ガバナンス層のエージェント",
     executionLayer: "実行層のエージェント",
     waitingAssignment: "エージェントの割り当てを待っています...",
     taskPlan: "タスク計画",
@@ -3434,7 +3404,7 @@ export default {
     supervisionCorrect: "修正",
     supervisionCancel: "キャンセル",
     supervisionCorrectionPrompt: "修正内容を入力してください。送信すると実行は計画し直されます。",
-    supervisionDecisionFailed: "監督の判断に失敗しました"
+    supervisionDecisionFailed: "監督の判断に失敗しました",
   },
   terminal: {
     agentBadge: "エージェント",
@@ -3454,7 +3424,7 @@ export default {
       cwd: "（作業ディレクトリ：{cwd}）",
       exited: "[プロセスは終了コード {code} で終了しました]",
       terminated: "[セッションは終了しました]",
-      inputLost: "[入力は届きませんでした]"
+      inputLost: "[入力は届きませんでした]",
     },
     call: {
       notReady: "ターミナルのセッションはまだ準備できていません。しばらくしてから再試行してください",
@@ -3466,11 +3436,11 @@ export default {
       resume: "再開",
       pause: "一時停止",
       stop: "停止",
-      openInPanel: "パネルで開く"
+      openInPanel: "パネルで開く",
     },
     shellName: {
       cmd: "コマンド プロンプト",
-      default: "既定のシェル"
+      default: "既定のシェル",
     },
     defaultTitle: "ターミナル",
     defaultShell: "既定のシェル",
@@ -3478,18 +3448,18 @@ export default {
     exited: "終了",
     notAvailable: "ターミナルを利用できません",
     notAvailableHint: "統合ターミナルには Electron のデスクトップアプリが必要です。ブラウザーや Web プレビューでは利用できません。",
-    shortcutHint: "Ctrl+Shift+T 新規 · Ctrl+W 閉じる · Ctrl+Tab 切り替え"
+    shortcutHint: "Ctrl+Shift+T 新規 · Ctrl+W 閉じる · Ctrl+Tab 切り替え",
   },
   orchestrationPanel: {
     conversationNode: "会話担当",
     tier: {
       deterministic: "deterministic · 固定のトポロジー",
       self_dispatch: "self_dispatch · 接続に沿って自分で振り分け",
-      free_form: "free_form · 自由な構成"
+      free_form: "free_form · 自由な構成",
     },
     layer: {
-      operation: "運用層",
-      execution: "実行層"
+      operation: "ガバナンス層",
+      execution: "実行層",
     },
     stepResults: "ステップの結果",
     noStepResults: "ステップの結果はありません。",
@@ -3504,7 +3474,7 @@ export default {
     tabs: {
       timeline: "タイムライン",
       catalog: "カタログ",
-      stats: "統計"
+      stats: "統計",
     },
     refreshTools: "ツールを更新",
     refreshToolsHint: "ツールカタログを更新",
@@ -3534,7 +3504,7 @@ export default {
     groupTokens: "{name}{via} · {tokens} トークン{partial} · {calls}",
     unreported: "（未報告 {count} 件）",
     flows: "{count} 件のフロー",
-    identity: "· 会話担当"
+    identity: "· 会話担当",
   },
   toolPanel: {
     filters: {
@@ -3542,7 +3512,7 @@ export default {
       success: "成功",
       failed: "失敗",
       approval: "承認",
-      running: "実行中"
+      running: "実行中",
     },
     newest: "新しい順",
     oldest: "古い順",
@@ -3570,7 +3540,7 @@ export default {
       completedWithFailure: "{tool} は終了しましたが、失敗を報告しました。",
       failed: "{tool} が失敗しました。",
       failedWith: "{tool} が失敗しました：{reason}",
-      outcome_unknown: "{tool} の結果は不明です。"
+      outcome_unknown: "{tool} の結果は不明です。",
     },
     catalog: {
       search: "名前、機能、領域でツールを検索…",
@@ -3592,7 +3562,7 @@ export default {
       capabilities: "機能",
       required: "必要",
       notRequired: "不要",
-      execute: "実行"
+      execute: "実行",
     },
     stats: {
       overview: "概要",
@@ -3609,15 +3579,15 @@ export default {
       blocked: "ブロック中",
       topTools: "よく使うツール",
       bySource: "ソース別",
-      empty: "このセッションにはまだツールの実行データがありません。"
-    }
+      empty: "このセッションにはまだツールの実行データがありません。",
+    },
   },
   taskGraph: {
     empty: "タスクを送信するとオーケストレーションの計画が作成されます。",
-    escalated: "エスカレーション済み"
+    escalated: "エスカレーション済み",
   },
   eventsPanel: {
-    empty: "この会話にはまだイベントがありません。"
+    empty: "この会話にはまだイベントがありません。",
   },
   governance: {
     preAuthorizeHint: "1 回の実行で特定のツールを無人で使える回数を限定して許可します。呼び出しのたびにバインディングの確認は行われます。",
@@ -3630,29 +3600,29 @@ export default {
       auditReference: "監査の参照",
       snapshot: "スナップショット ID",
       lastReason: "前回の復旧理由",
-      message: "メッセージ"
+      message: "メッセージ",
     },
     snapshotKind: {
       filesystem: "ファイルのコピー",
-      git: "Git"
+      git: "Git",
     },
     snapshotStatus: {
       created: "作成済み",
       conflict: "競合あり",
       restored: "復元済み",
-      restored_with_conflicts: "復元済み（競合あり）"
+      restored_with_conflicts: "復元済み（競合あり）",
     },
     fileChange: {
       added: "追加",
       deleted: "削除",
       modified: "変更",
-      unchanged: "変更なし"
+      unchanged: "変更なし",
     },
     snapshotFacts: {
       files: "ファイル数",
       workspaceHash: "ワークスペースのハッシュ",
       contentHash: "内容のハッシュ",
-      createdAt: "作成日時"
+      createdAt: "作成日時",
     },
     riskMeta: "リスク：{risk}",
     actionApprovals: "操作の承認",
@@ -3694,7 +3664,7 @@ export default {
     snapshotsTitle: "ワークスペースのスナップショット",
     supervision: "監督のレビュー",
     supervisionEmpty: "監督の指摘はまだありません。",
-    undoFile: "このファイルを元に戻す"
+    undoFile: "このファイルを元に戻す",
   },
   canvas: {
     unbound: "未割り当て",
@@ -3726,8 +3696,8 @@ export default {
       backflow: "execution から operation へは接続できません",
       "no-conversation": "会話アイデンティティのノードがありません",
       "multi-conversation": "会話アイデンティティは 1 つだけです",
-      "conversation-layer": "会話アイデンティティは operation レイヤーに必要です"
-    }
+      "conversation-layer": "会話アイデンティティは operation レイヤーに必要です",
+    },
   },
   workbench: {
     title: "ワークベンチ",
@@ -3740,7 +3710,7 @@ export default {
       mode: "モード {value}",
       config: "設定 {value}",
       revision: "リビジョン {value}",
-      manifest: "マニフェスト {value}"
+      manifest: "マニフェスト {value}",
     },
     facts: {
       layer: "層",
@@ -3749,7 +3719,7 @@ export default {
       depth: "派生の深さ",
       parent: "親インスタンス",
       task: "タスク",
-      capabilities: "機能"
+      capabilities: "機能",
     },
     counts: "ノード {nodes} 個 · 指摘 {findings} 件 · コンテキストのバージョン {versions} 個",
     findings: "監督の指摘",
@@ -3761,7 +3731,7 @@ export default {
     executionLane: "実行層",
     laneEmpty: "この実行にはまだエージェントのインスタンスがありません。",
     lineageEdge: "派生関係",
-    operationLane: "運用層"
+    operationLane: "運用層",
   },
   documents: {
     tree: "ファイル",
@@ -3772,7 +3742,7 @@ export default {
     hideTree: "フォルダーを隠す",
     noWorkspace: "プロジェクトが選択されていないため、ワークスペースのファイルを読み込めません。",
     loadingEditor: "エディタを読み込み中…",
-    editorFailed: "エディタを読み込めませんでした"
+    editorFailed: "エディタを読み込めませんでした",
   },
   docReader: {
     tabs: "開いているドキュメント",
@@ -3796,12 +3766,12 @@ export default {
     tooLargeTitle: "ファイルが大きすぎます",
     tooLargeDetail: "ファイルサイズは {size} です。サイドパネルには表示しません。",
     closeTab: "ドキュメントを閉じる",
-    truncated: "先頭 {count} 行のみ表示しています"
+    truncated: "先頭 {count} 行のみ表示しています",
   },
   codeEditor: {
     emptyTitle: "編集するファイルを選んでください",
     emptyHint: "左側はこのワークスペースのフォルダー構造です。保存には承認が必要です。",
-    closeFile: "このファイルを閉じる"
+    closeFile: "このファイルを閉じる",
   },
   code: {
     selectProject: "プロジェクトを選択…",
@@ -3832,16 +3802,16 @@ export default {
       saveShortcut: "保存（Ctrl+S）",
       noChanges: "変更はありません",
       save: "保存",
-      close: "エディターを閉じる"
+      close: "エディターを閉じる",
     },
     tabMode: {
       view: "表示",
-      edit: "編集"
+      edit: "編集",
     },
     viewer: {
       reload: "再読み込み",
       editFile: "ファイルを編集",
-      edit: "編集"
+      edit: "編集",
     },
     tree: {
       loadFailed: "ディレクトリを読み込めませんでした",
@@ -3862,7 +3832,7 @@ export default {
       empty: "ディレクトリは空です。",
       open: "開く",
       rename: "名前を変更（承認が必要）",
-      delete: "削除（承認が必要）"
+      delete: "削除（承認が必要）",
     },
     patch: {
       title: "差分：{path}",
@@ -3875,7 +3845,7 @@ export default {
       rejected: "パッチの承認は却下されました。",
       apply: "パッチを適用",
       noChanges: "プレビューする変更はありません。",
-      loading: "差分を読み込み中…"
+      loading: "差分を読み込み中…",
     },
     search: {
       files: "ファイル",
@@ -3887,8 +3857,8 @@ export default {
       searching: "検索中…",
       noResults: "結果は見つかりませんでした。",
       hint: "検索する内容を入力して Enter を押してください。",
-      truncated: "最初の一致のみを表示しています。条件を絞り込むと範囲を狭められます。"
-    }
+      truncated: "最初の一致のみを表示しています。条件を絞り込むと範囲を狭められます。",
+    },
   },
   userAction: {
     status: {
@@ -3904,8 +3874,8 @@ export default {
       failed: "{operation} に失敗しました。",
       failedDetail: "{operation} に失敗しました：{detail}",
       other: "{operation}：{status}。",
-      otherDetail: "{operation}：{detail}"
-    }
+      otherDetail: "{operation}：{detail}",
+    },
   },
   hostBanner: {
     previewTitle: "UI プレビュー",
@@ -3923,7 +3893,7 @@ export default {
     restarting: "再起動中…",
     checking: "デスクトップホストを再検証しています…",
     retry: "ホストへの接続を再試行",
-    retrying: "再試行中…"
+    retrying: "再試行中…",
   },
   uie: {
     move: "移動",
@@ -3969,8 +3939,8 @@ export default {
       debugMetrics: "メトリクス",
       debugDiagnostics: "診断",
       debugPreview: "プレビュー",
-      debugSimulator: "シミュレーター"
-    }
+      debugSimulator: "シミュレーター",
+    },
   },
   buddy: {
     title: "相棒",
@@ -3984,7 +3954,7 @@ export default {
     retry: "再試行",
     you: "あなた",
     systemAuthor: "システム",
-    thinking: "思考中…"
+    thinking: "思考中…",
   },
   host: {
     previewReason: "UI プレビューはユーザーデータに接続していません。ワークスペース、ストレージ、リソースのインストールはデスクトップアプリで行ってください。",
@@ -3997,7 +3967,7 @@ export default {
     connectionStopped: "ホストは終了処理中です。",
     bridgeUnavailable: "デスクトップホストの状態インターフェースを利用できません。接続を再試行してください。",
     connectionCheckFailed: "ホストとの接続を確認できませんでした。デスクトップホストを再試行してください。",
-    previewShim: "UI プレビュー：ワークスペース、ストレージ、インストールの操作はデスクトップアプリで行ってください。"
+    previewShim: "UI プレビュー：ワークスペース、ストレージ、インストールの操作はデスクトップアプリで行ってください。",
   },
   workspaceRoots: {
     title: "ワークスペース",
@@ -4058,8 +4028,8 @@ export default {
       duplicate: "同じ名前が同じドロップに複数あります",
       exists: "同名ファイルが既にあり、上書きしていません",
       copy_failed: "コピーに失敗しました",
-      unresolved: "実際のパスを取得できません"
-    }
+      unresolved: "実際のパスを取得できません",
+    },
   },
   workspaceEditor: {
     editTitle: "ワークスペースを編集",
@@ -4094,7 +4064,7 @@ export default {
     save: "保存",
     create: "ワークスペースを作成",
     duplicateFolder: "このフォルダーはすでに追加されています：{path}",
-    tooManyFolders: "ソースフォルダーは最大 {max} 個まで追加できます。"
+    tooManyFolders: "ソースフォルダーは最大 {max} 個まで追加できます。",
   },
   home: {
     untitledProject: "プロジェクト",
@@ -4117,7 +4087,7 @@ export default {
       sendMessage: "メッセージの送信",
       steerMessage: "方向転換メッセージの送信",
       stopRun: "実行の停止",
-      unregisterWorkspace: "ワークスペースの登録解除"
+      unregisterWorkspace: "ワークスペースの登録解除",
     },
     loadFailed: "読み込みに失敗しました",
     workspacesLoadFailed: "ワークスペースを読み込めませんでした",
@@ -4142,7 +4112,7 @@ export default {
       recheck: "移動をもう一度確認",
       accepted: "セッションの移動を受け付けました。",
       queued: "このセッションには受け付け済みの待機中のメッセージがまだあります。移動する前に、待機列を実行するかキャンセルしてください。",
-      failed: "セッションの移動に失敗しました"
+      failed: "セッションの移動に失敗しました",
     },
     attachmentSessionPreparing: "添付ファイル用のセッションを準備しています。しばらくしてから再度送信してください。",
     attachmentUploading: "添付ファイルをアップロード中です。しばらくしてから再度送信してください。",
@@ -4150,7 +4120,7 @@ export default {
     stream: {
       httpFailed: "実行のストリームを開けませんでした（HTTP {status}）",
       noBody: "実行のストリームがデータを返しませんでした",
-      closedEarly: "実行が終わる前にストリームが閉じました。再接続しています"
+      closedEarly: "実行が終わる前にストリームが閉じました。再接続しています",
     },
     sendError: {
       modeUnavailable: "会話モードを利用できません。入力欄の左下でモードを選び直してください。",
@@ -4158,7 +4128,7 @@ export default {
       modelNotConfigured: "モデルが設定されていません。設定でモデルを選んでから再試行してください。",
       forbidden: "権限がありません",
       recovering: "復旧中です。しばらくしてから再試行してください",
-      offline: "ネットワークが切断されています"
+      offline: "ネットワークが切断されています",
     },
     editBlockedByDraft: "入力欄に未送信のテキストがあります。以前のメッセージを編集する前に、送信するか消去してください。",
     editBlockedByRun: "このメッセージは実行で使用中です。履歴を書き換えるには、先に実行を停止してください。",
@@ -4167,7 +4137,7 @@ export default {
     toolNeedsApproval: "ツールに承認が必要です",
     toolCompleted: "ツールが完了しました",
     sessionLoadFailed: "セッションを読み込めませんでした",
-    sessionRecoverFailed: "セッションを復旧できませんでした"
+    sessionRecoverFailed: "セッションを復旧できませんでした",
   },
   activity: {
     roles: {
@@ -4185,7 +4155,7 @@ export default {
       file_finder: "ファイルの検索",
       git_manager: "Git の管理",
       code_writer: "コードの作成",
-      designer: "デザインエージェント"
+      designer: "デザインエージェント",
     },
     banner: {
       thinking: "考え中",
@@ -4195,9 +4165,9 @@ export default {
       error: "エラー",
       idle: "待機中",
       elapsed: "経過時間 {time}",
-      planningAgents: "計画層のエージェント",
+      planningAgents: "ガバナンス層のエージェント",
       executionAgents: "実行層のエージェント",
-      waitingAssignment: "エージェントの割り当てを待っています…"
+      waitingAssignment: "エージェントの割り当てを待っています…",
     },
     agent: {
       active: "実行中",
@@ -4205,8 +4175,8 @@ export default {
       completed: "完了",
       error: "エラー",
       idle: "アイドル",
-      planningLayer: "計画層",
-      executionLayer: "実行層"
+      planningLayer: "ガバナンス層",
+      executionLayer: "実行層",
     },
     agentFallback: "エージェント",
     coordinator: "コーディネーター",
@@ -4277,7 +4247,7 @@ export default {
     shellAwaitingApproval: "シェルのコマンドが承認待ちです：{command}",
     messageCreated: "新しいメッセージが作成されました",
     workerInterrupted: "{who} は中断され、新しい指示で作業を続けています",
-    runInterrupted: "実行が中断されました。新しい指示で現在のステップをやり直しています"
+    runInterrupted: "実行が中断されました。新しい指示で現在のステップをやり直しています",
   },
   storage: {
     unsavedDraft: "未保存の下書き",
@@ -4305,12 +4275,12 @@ export default {
       logs: "ログ",
       cache: "キャッシュ",
       temp: "一時ファイル",
-      worktrees: "ワークツリー"
+      worktrees: "ワークツリー",
     },
     hostSource: {
       default: "既定",
       desktop: "デスクトップ設定",
-      environment: "環境変数"
+      environment: "環境変数",
     },
     expires: "有効期限",
     cleanupPreview: "クリーンアップのプレビュー",
@@ -4341,7 +4311,7 @@ export default {
       configuration_unique_filter_unsupported: "この一意インデックスのフィルターには対応していません：{detail}",
       runtime_configuration_missing: "ランタイムの設定ドキュメントが必要です。",
       runtime_configuration_invalid: "ランタイムの設定が無効です：{detail}",
-      tool_configuration_invalid: "ツールの設定が無効です：{detail}"
+      tool_configuration_invalid: "ツールの設定が無効です：{detail}",
     },
     secretReference: "シークレットの参照",
     postgresReference: "PostgreSQL の接続の参照",
@@ -4363,8 +4333,8 @@ export default {
     title: "ストレージと設定",
     closingCancelled: "閉じる処理をキャンセルしました。プロジェクトの接続を再開しました。",
     closingWait: "プロジェクトの実行と接続が終わるのを待っています。",
-    readingScope: "ストレージ使用量を集計しています（キャッシュにファイルが多いと時間がかかります）…",
-    statsPartial: "ファイルが多く集計を打ち切りました（実際はこれ以上）",
+    readingScope: 'ストレージ使用量を集計しています（キャッシュにファイルが多いと時間がかかります）…',
+    statsPartial: 'ファイルが多く集計を打ち切りました（実際はこれ以上）',
     closeScope: "スコープを閉じる",
     closeMessage: "スコープへの接続を閉じ、設定とデータはすべて残します。閉じる処理は現在の実行とリクエストが終わるのを待ちます。このプロジェクトを表示している他のウィンドウを閉じると、ライブ接続が解放されます。",
     unregister: "登録解除",
@@ -4394,7 +4364,7 @@ export default {
     discardDraft: "下書きを破棄",
     unsavedMessage: "移動すると現在の下書きは破棄されます。",
     unsavedTitle: "未保存の TOML 設定",
-    trustedWindowRequired: "この変更には信頼されたメインウィンドウのホストが必要です。リモートや Web のクライアントには、明示的に信頼されたホストの認証情報が必要です。"
+    trustedWindowRequired: "この変更には信頼されたメインウィンドウのホストが必要です。リモートや Web のクライアントには、明示的に信頼されたホストの認証情報が必要です。",
   },
   companion: {
     expand: "コンパニオンパネルを開く",
@@ -4448,7 +4418,7 @@ export default {
       groupLabel: "グループチャット",
       groupSubtitle: "{title} · {members}",
       companionPicker: "コンパニオン",
-      conversationPicker: "会話"
+      conversationPicker: "会話",
     },
     center: {
       loading: "コンパニオンのデータを読み込み中…",
@@ -4575,8 +4545,8 @@ export default {
       connectionRuntimeUnknown: "未検出",
       connectionRuntimeOnline: "オンライン",
       connectionCheckedAt: "{time} に確認",
-      connectionNeverChecked: "未確認"
-    }
+      connectionNeverChecked: "未確認",
+    },
   },
   desktopPet: {
     window: "ペットのウィンドウ",
@@ -4587,7 +4557,7 @@ export default {
     approvalTitle: "承認が必要です",
     approve: "承認",
     reject: "拒否",
-    returnToSession: "セッションに戻る"
+    returnToSession: "セッションに戻る",
   },
   library: {
     title: "ライブラリ",
@@ -4598,14 +4568,14 @@ export default {
       cards: "カード",
       feedback: "フィードバック",
       data: "データ表示",
-      layout: "レイアウト"
+      layout: "レイアウト",
     },
     variants: {
       default: "既定",
       secondary: "セカンダリ",
       ghost: "ゴースト",
       outline: "アウトライン",
-      destructive: "破壊的"
+      destructive: "破壊的",
     },
     buttons: {
       variants: "バリエーション",
@@ -4614,7 +4584,7 @@ export default {
       small: "小",
       large: "大",
       disabled: "無効",
-      loading: "読み込み中"
+      loading: "読み込み中",
     },
     inputs: {
       text: "テキスト入力",
@@ -4622,19 +4592,19 @@ export default {
       value: "値：{value}",
       switch: "スイッチ",
       on: "オン",
-      off: "オフ"
+      off: "オフ",
     },
     cards: {
       title: "既定のカード",
       description: "タイトルと説明のあるカード",
       body: "本文スロットの内容。外枠には {header}/{footer} スロットを使います。",
       action: "操作",
-      badges: "バッジ"
+      badges: "バッジ",
     },
     feedback: {
       notes: "メモ",
       notesBody: "通知はアイランドホスト（App.vue）で表示され、{call} で表示できます。はみ出さないよう、ここでは描画しません。",
-      icons: "アイコン"
+      icons: "アイコン",
     },
     data: {
       table: "表",
@@ -4643,13 +4613,13 @@ export default {
       status: "状態",
       owner: "所有者",
       active: "有効",
-      draft: "下書き"
+      draft: "下書き",
     },
     layout: {
       uie: "ホームとマーケットは {canvas} + {column} を使います。ライブラリは独立したスクロールレイアウトを使います。",
       shell: "シェル",
-      shellBody: "シェル：{shell} は {header} とスクロールする内容を含む縦方向の flex です。パネル：TinadecUI の 3 カラムエンジン。"
-    }
+      shellBody: "シェル：{shell} は {header} とスクロールする内容を含む縦方向の flex です。パネル：TinadecUI の 3 カラムエンジン。",
+    },
   },
   statusLabels: {
     run: {
@@ -4671,7 +4641,7 @@ export default {
       gate_review: "ゲートレビュー",
       finalizing: "仕上げ中",
       done: "完了",
-      blocked: "ブロック中"
+      blocked: "ブロック中",
     },
     tool: {
       completed: "完了",
@@ -4681,20 +4651,20 @@ export default {
       waiting_approval: "承認待ち",
       blocked: "ブロック中",
       requested: "リクエスト済み",
-      outcome_unknown: "結果不明"
+      outcome_unknown: "結果不明",
     },
     risk: {
       low: "低リスク",
       medium: "中リスク",
       high: "高リスク",
       elevated: "やや高いリスク",
-      critical: "重大なリスク"
+      critical: "重大なリスク",
     },
     severity: {
       info: "情報",
       warning: "警告",
       error: "エラー",
-      blocking: "ブロッキング"
+      blocking: "ブロッキング",
     },
     userAction: {
       requested: "送信済み",
@@ -4706,7 +4676,7 @@ export default {
       completed: "完了",
       failed: "失敗",
       blocked: "ブロック中",
-      outcome_unknown: "結果不明"
+      outcome_unknown: "結果不明",
     },
     availability: {
       available: "利用可能",
@@ -4714,12 +4684,12 @@ export default {
       unavailable: "利用不可",
       invalid: "不正",
       pending: "処理中",
-      unknown: "不明"
+      unknown: "不明",
     },
     instance: {
       created: "作成済み",
       running: "実行中",
-      released: "解放済み"
+      released: "解放済み",
     },
     approval: {
       pending: "承認待ち",
@@ -4728,8 +4698,8 @@ export default {
       expired: "期限切れ",
       consumed: "使用済み",
       cancelled: "キャンセル済み",
-      revoked: "取り消し済み"
-    }
+      revoked: "取り消し済み",
+    },
   },
   aboutPage: {
     developerTools: "開発者ツール",
@@ -4780,8 +4750,8 @@ export default {
       reviewTerminal: "テストエージェント · ターミナルのコマンド",
       reviewPassed: "自動レビューに合格",
       reviewSsh: "テストエージェント · SSH の確認",
-      reviewWaiting: "あなたの判断待ち"
-    }
+      reviewWaiting: "あなたの判断待ち",
+    },
   },
   agentPack: {
     name: "GraphSeedPack",
@@ -4800,7 +4770,7 @@ export default {
       conflict: "競合",
       owner_required: "ワークスペースのオーナーが必要",
       deferred: "後回し",
-      error: "確認に失敗しました"
+      error: "確認に失敗しました",
     },
     checkAction: "確認してインストール",
     installAction: "インストール",
@@ -4853,21 +4823,12 @@ export default {
     uninstallFailed: "エージェントパックのアンインストールに失敗しました",
     toggleFailed: "エージェントパックの状態を変更できませんでした",
     adoptFailed: "ワークスペースの既定に設定できませんでした",
-    bundledVersion: "同梱バージョン {version}"
+    bundledVersion: "同梱バージョン {version}",
   },
   agentCenter: {
     createMode: "新しいモード",
     tabs: {
-      topology: "トポロジー"
-    },
-    diagnostics: {
-      title: "ガバナンスとハーネスのツール",
-      manifestTitle: "ハーネスのツールマニフェスト",
-      manifestDesc: "承認ゲート付きで {count} 個のツールが登録されています",
-      layerRules: "層のガバナンスルール",
-      layerRulesDesc: "運用層はワークフローと監督を調整し、実行層はタスクを計画してツールを実行します。",
-      conflictDetection: "競合の検出",
-      conflictDetectionDesc: "公開時はリビジョンの同時実行トークンと ETag ヘッダーで上書きを防ぎます。"
+      topology: "トポロジー",
     },
     filter: {
       searchAgents: "エージェントの名前、種類、説明で検索...",
@@ -4876,14 +4837,14 @@ export default {
       searchProposals: "進化の提案を検索...",
       searchInstances: "実行中のインスタンスを検索...",
       allLayers: "すべての層",
-      operationLayer: "運用層",
+      operationLayer: "ガバナンス層",
       executionLayer: "実行層",
       allStatuses: "すべての状態",
       draft: "下書き",
       published: "公開済み",
       archived: "アーカイブ済み",
       active: "有効",
-      resultCount: "{total} 件中 {visible} 件を表示"
+      resultCount: "{total} 件中 {visible} 件を表示",
     },
     agentForm: {
       createTitle: "新しいエージェント定義",
@@ -4910,10 +4871,10 @@ export default {
       delete: "削除",
       saveSuccess: "エージェントの定義を保存しました",
       publishSuccess: "エージェントを公開しました",
-      deleteSuccess: "エージェントを削除しました"
+      deleteSuccess: "エージェントを削除しました",
     },
     evolution: {
-      panelHint: "観察したワークフローの実行から、再利用できる特化エージェントの候補を抽出します。",
+      panelHint: "実行履歴から再利用可能な特化エージェント候補を抽出し、審査後に正式なエージェントへ昇格します。",
       generateTitle: "セッションから候補を生成",
       generateHint: "過去のセッションの実行を選ぶと、再利用できる特化エージェントの定義を抽出します。",
       targetSession: "対象のセッション ID",
@@ -4953,7 +4914,7 @@ export default {
       fieldModelRoute: "モデルルートの用途",
       add: "追加",
       capabilityPlaceholder: "機能",
-      systemPromptPlaceholder: "カスタムのシステムプロンプトで上書き"
+      systemPromptPlaceholder: "カスタムのシステムプロンプトで上書き",
     },
     runtimeInfo: {
       statusRunning: "実行中",
@@ -4969,24 +4930,24 @@ export default {
       frozenVersion: "固定されたバージョン",
       recentModel: "最近のモデル",
       fallbackSummary: "候補の試行",
-      usedFallback: "フォールバックを使用"
+      usedFallback: "フォールバックを使用",
     },
     empty: {
       noAgents: "一致するエージェントが見つかりません",
       noAgentsHint: "キーワードを変える、絞り込みをリセットする、または新しいエージェントの定義を作成してみてください。",
       noModes: "実行のトポロジーが見つかりません",
-      noPrompts: "一致するプロンプトフラグメントが見つかりません"
+      noPrompts: "一致するプロンプトフラグメントが見つかりません",
     },
-    revisionShort: "リビジョン {revision}",
+    revisionShort: "v{revision}",
     newNodeLabel: "ノード {n}",
     facts: {
       modelStrategy: "モデル戦略",
-      route: "ルート"
+      route: "ルート",
     },
     governanceRoles: "ガバナンスの役割",
     governanceRolesMissing: "次のガバナンスの役割には、公開済みのエージェントが割り当てられていません：",
     defaultsActive: "有効なワークスペースの既定の割り当て",
-    stewardNoTools: "直接のツールはありません。これは設定ミスではなく設計によるものです。レビューとコミット計画の機能で作業し、実際の実行は承認されたユーザーやワーカーの操作で行われます。",
+    stewardNoTools: "このガバナンスロールは直接のツールを持たず、レビューと計画提出で機能します。実際の変更は承認された実行アクションで行われます。",
     effectiveTools: "有効なツール（マニフェストとの共通部分）· {count}",
     providerUnavailable: "エージェント定義のサービスを利用できないため、ガバナンスの役割を確認できません。",
     loadModesFailed: "モードのトポロジーを読み込めませんでした",
@@ -4996,7 +4957,7 @@ export default {
     modeSaveFailed: "モードを保存できませんでした",
     modePublished: "モードを公開しました",
     versionHistory: "バージョン履歴",
-    publishedReadOnlyHint: "このモードは公開済みのため読み取り専用で表示されます。編集するには複製してカスタムのコピーを作ってください。"
+    publishedReadOnlyHint: "このモードは公開済みのため読み取り専用で表示されます。編集するには複製してカスタムのコピーを作ってください。",
   },
   commandPanel: {
     kw: {
@@ -5013,13 +4974,13 @@ export default {
       runtime: "cli acp",
       agentModels: "agents executor エージェント 実行",
       image: "image picture 画像",
-      file: "file attachment ファイル 添付"
+      file: "file attachment ファイル 添付",
     },
     backHint: "検索が空のときに Backspace または Delete を押すと戻ります。",
     risk: {
       low: "低リスク",
       medium: "中リスク",
-      high: "高リスク"
+      high: "高リスク",
     },
     model: "モデル",
     modelHint: "あなたと会話するエージェントのモデルです。他のエージェントは 1 つ下の階層でそれぞれ設定します",
@@ -5057,7 +5018,7 @@ export default {
     nextTask: "設定はこの会話の次のタスクに適用されます。送信済みのタスクは元の設定のままです。",
     modelFooter: "各エージェント自身のモデルで、エージェントセンターと同じ設定です。個別に指定されていないエージェントは、モデルセンターで設定した既定のモデルに従います。",
     modelAgents: "他のエージェント",
-    modelAgentsHint: "実行者などの他のエージェントに個別のモデルを指定します"
+    modelAgentsHint: "実行者などの他のエージェントに個別のモデルを指定します",
   },
   composer: {
     agentModels: {
@@ -5073,19 +5034,19 @@ export default {
       inMode: "選択中のモードで使用",
       ownCount: "{count} 個が個別のモデルを使用",
       none: "他のエージェントはありません",
-      failed: "{agent} のモデルを保存できませんでした"
+      failed: "{agent} のモデルを保存できませんでした",
     },
     reasoning: {
       label: "推論の強度",
       hint: "{model} の推論の強度です。このモデルの次のタスクから適用されます",
-      failed: "推論の強度を保存できませんでした"
+      failed: "推論の強度を保存できませんでした",
     },
     modelSwitch: {
       hint: "既定のモデル：すべての会話で使われます。モデルセンターの「既定のモデルに設定」と同じです",
       none: "既定のモデルがありません",
       empty: "モデルはまだありません。モデルセンターで追加してください",
       manage: "モデルセンターで管理…",
-      failed: "既定のモデルを切り替えられませんでした"
+      failed: "既定のモデルを切り替えられませんでした",
     },
     pinnedModel: "固定：{model} · 既定を使う",
     pinnedModelUnavailable: "{model} は利用できません · 既定を使う",
@@ -5123,7 +5084,7 @@ export default {
     attachFailedUnknown: "アップロードに失敗しました",
     attachFailed: "アップロードに失敗しました（{code}）",
     attachNeedsSession: "最初のメッセージを送ってからファイルを添付してください",
-    removeAttachment: "{name} を削除"
+    removeAttachment: "{name} を削除",
   },
   palette: {
     kwProjectRow: "プロジェクト ワークスペース フォルダー project workspace folder",
@@ -5202,7 +5163,7 @@ export default {
     kwPets: "pets desktop pet widget ペット デスクトップペット ウィジェット",
     kwLanguage: "language english chinese japanese russian interface translation 言語 英語 中国語 日本語 ロシア語 インターフェース 翻訳",
     kwApiDocs: "api docs developer debug API ドキュメント 開発者 デバッグ",
-    kwAbout: "about version copyright update 情報 バージョン 著作権 更新"
+    kwAbout: "about version copyright update 情報 バージョン 著作権 更新",
   },
   memory: {
     title: "記憶のレビュー",
@@ -5230,7 +5191,7 @@ export default {
     status: {
       proposed: "提案中",
       promoted: "記憶済み",
-      rejected: "破棄済み"
+      rejected: "破棄済み",
     },
     kind: {
       fact: "事実",
@@ -5239,7 +5200,7 @@ export default {
       success_pattern: "うまくいったこと",
       failure_pattern: "うまくいかなかったこと",
       task_template: "タスクのテンプレート",
-      supervision_rule: "監督のルール"
+      supervision_rule: "監督のルール",
     },
     scopeLabel: "範囲",
     scope: {
@@ -5247,13 +5208,13 @@ export default {
       workspace: "ワークスペース",
       principal: "自分について",
       project: "プロジェクト",
-      agent: "エージェント"
-    }
+      agent: "エージェント",
+    },
   },
   web: {
     gatewayManaged: "Gateway の URL は Web のデプロイ側で管理されています。",
     petsUnavailable: "Web 版ではペットを利用できません。",
-    panelsUnavailable: "Web 版ではパネルのウィンドウを利用できません。"
+    panelsUnavailable: "Web 版ではパネルのウィンドウを利用できません。",
   },
   common: {
     copyName: "{name}（コピー）",
@@ -5277,7 +5238,7 @@ export default {
     loading: "読み込み中…",
     none: "なし",
     cancel: "キャンセル",
-    refresh: "更新"
+    refresh: "更新",
   },
   contextMenu: {
     label: "テキストの操作",
@@ -5288,7 +5249,7 @@ export default {
     copyLink: "リンクをコピー",
     openLink: "リンクを開く",
     clearTerminal: "ターミナルをクリア",
-    hint: "選択したテキストに適用されます"
+    hint: "選択したテキストに適用されます",
   },
   conversation: {
     listSeparator: "、",
@@ -5298,7 +5259,7 @@ export default {
       files: "{count} 個のファイル",
       searches: "{count} 回の検索",
       lists: "{count} 個のフォルダー",
-      thoughts: "{count} 件の思考"
+      thoughts: "{count} 件の思考",
     },
     duration: {
       underSecond: "<1 秒",
@@ -5306,18 +5267,18 @@ export default {
       minutes: "{m} 分",
       minutesSeconds: "{m} 分 {s} 秒",
       hours: "{h} 時間",
-      hoursMinutes: "{h} 時間 {m} 分"
+      hoursMinutes: "{h} 時間 {m} 分",
     },
     day: {
       today: "今日",
-      yesterday: "昨日"
+      yesterday: "昨日",
     },
     reasoning: {
       drafting: "下書き中…",
       planning: "計画中",
       thinking: "考え中",
       thoughtFor: "{duration} 考えました",
-      showAll: "すべて表示"
+      showAll: "すべて表示",
     },
     agents: {
       openInPanel: "パネルで開く",
@@ -5332,12 +5293,12 @@ export default {
         completed: "完了",
         failed: "失敗",
         blocked: "ブロック中",
-        cancelled: "キャンセル済み"
-      }
+        cancelled: "キャンセル済み",
+      },
     },
     wait: {
       waiting: "{names} を待っています",
-      resolved: "{names} から結果を受け取りました"
+      resolved: "{names} から結果を受け取りました",
     },
     plan: {
       updated: "計画を更新 · {done}/{total}",
@@ -5346,8 +5307,8 @@ export default {
       status: {
         pending: "未着手",
         in_progress: "進行中",
-        completed: "完了"
-      }
+        completed: "完了",
+      },
     },
     supervision: {
       revise: "監督が修正を求めました",
@@ -5368,52 +5329,21 @@ export default {
         option: {
           continue: "現在の証拠を保持し、不完全な結果を承認して終了します。",
           correct: "指示を追加し、終了前に再計画します。",
-          cancel: "この run を停止し、記録済みの証拠を保持します。"
-        }
-      }
+          cancel: "この run を停止し、記録済みの証拠を保持します。",
+        },
+      },
     },
     correction: {
-      phase: {
-        observe: "問題を特定中",
-        intervene: "修正を実行中",
-        converge: "結果を検証中",
-        backtrack: "調査を再開中"
-      },
-      status: {
-        investigating: "調査中",
-        blocked: "証拠不足",
-        awaiting_user: "あなたの確認待ち",
-        ready: "証拠が揃いました",
-        resolved: "解決済み",
-        reopened: "再開しました"
-      },
-      goal: "目標",
-      symptom: "症状",
-      doneWhen: "完了条件",
-      rootCause: "根本原因",
-      hypotheses: "仮説",
-      evidence: "証拠",
-      coverage: "完了カバレッジ",
-      interventions: "修正履歴",
-      questions: "未解決の質問",
-      empty: "まだ記録はありません",
-      coverageSummary: "変更 {modified} 件、検証済み {verified} 件",
-      waitingQuestion: "続行するには回答が必要です。",
-      questionTitle: "修正内容の確認",
-      answerPlaceholder: "観察や選択を追加…",
-      answerAction: "回答して続行",
-      feedbackPrompt: "この修正の実際の結果は？",
-      stillReproduces: "まだ再現する",
-      resolvedAction: "解決した",
-      reopened: "調査を再開しました",
-      resolved: "解決済みとして記録しました",
-      answerFailed: "回答を送信できませんでした",
-      feedbackFailed: "フィードバックを送信できませんでした",
-      hypothesisStatus: {
-        testing: "検証中",
-        confirmed: "確認済み",
-        rejected: "却下"
-      }
+      phase: { observe: "問題を特定中", intervene: "修正を実行中", converge: "結果を検証中", backtrack: "調査を再開中" },
+      status: { investigating: "調査中", blocked: "証拠不足", awaiting_user: "あなたの確認待ち", ready: "証拠が揃いました", resolved: "解決済み", reopened: "再開しました" },
+      goal: "目標", symptom: "症状", doneWhen: "完了条件", rootCause: "根本原因",
+      hypotheses: "仮説", evidence: "証拠", coverage: "完了カバレッジ", interventions: "修正履歴", questions: "未解決の質問",
+      empty: "まだ記録はありません", coverageSummary: "変更 {modified} 件、検証済み {verified} 件",
+      waitingQuestion: "続行するには回答が必要です。", questionTitle: "修正内容の確認",
+      answerPlaceholder: "観察や選択を追加…", answerAction: "回答して続行",
+      feedbackPrompt: "この修正の実際の結果は？", stillReproduces: "まだ再現する", resolvedAction: "解決した",
+      reopened: "調査を再開しました", resolved: "解決済みとして記録しました", answerFailed: "回答を送信できませんでした", feedbackFailed: "フィードバックを送信できませんでした",
+      hypothesisStatus: { testing: "検証中", confirmed: "確認済み", rejected: "却下" },
     },
     marker: {
       compacted: "コンテキストを圧縮しました",
@@ -5426,7 +5356,7 @@ export default {
       run_failed: "停止しました：{reason}",
       run_failed_unknown: "エラーで停止しました",
       run_cancelled: "停止しました",
-      worker_interrupted: "エージェントが中断されました"
+      worker_interrupted: "エージェントが中断されました",
     },
     approval: {
       title: "承認が必要です",
@@ -5441,7 +5371,7 @@ export default {
       allowPrefix: "{prefix} で始まるコマンドを常に許可",
       approveShortcut: "承認（⌘/Ctrl+Enter）",
       rejectShortcut: "却下（⌘/Ctrl+Backspace）",
-      failed: "判断を適用できませんでした"
+      failed: "判断を適用できませんでした",
     },
     turn: {
       workedFor: "{duration} 作業しました",
@@ -5454,12 +5384,7 @@ export default {
       retryHint: "このメッセージを入力欄に戻す",
       newTurns: "新着 {count} 件",
       foldedEarlier: "前の {count} ステップ",
-      awaiting: {
-        awaiting_user: "あなたの判断待ち",
-        awaiting_approval: "あなたの承認待ち",
-        awaiting_delegate: "あなたの委任待ち",
-        generic: "あなたの操作待ち"
-      }
+      awaiting: { awaiting_user: "あなたの判断待ち", awaiting_approval: "あなたの承認待ち", awaiting_delegate: "あなたの委任待ち", generic: "あなたの操作待ち" },
     },
     tool: {
       terminalTitle: "エージェントのターミナル",
@@ -5476,63 +5401,63 @@ export default {
         withheld: "結果は表示されません",
         withheldSensitive: "非表示：このファイルには認証情報が含まれている可能性があります",
         exitCode: "終了コード {code}",
-        timedOut: "タイムアウトしました"
+        timedOut: "タイムアウトしました",
       },
       read: {
         active: "{subject} を読み取り中",
         done: "{subject} を読み取りました",
-        failed: "{subject} を読み取れませんでした"
+        failed: "{subject} を読み取れませんでした",
       },
       list: {
         active: "{subject} を一覧表示中",
         done: "{subject} を一覧表示しました",
-        failed: "{subject} を一覧表示できませんでした"
+        failed: "{subject} を一覧表示できませんでした",
       },
       search: {
         active: "{subject} を検索中",
         done: "{subject} を検索しました",
-        failed: "検索に失敗しました：{subject}"
+        failed: "検索に失敗しました：{subject}",
       },
       edit: {
         active: "{subject} を編集中",
         done: "{subject} を編集しました",
-        failed: "{subject} を編集できませんでした"
+        failed: "{subject} を編集できませんでした",
       },
       run: {
         active: "{subject} を実行中",
         done: "{subject} を実行しました",
-        failed: "失敗しました：{subject}"
+        failed: "失敗しました：{subject}",
       },
       git: {
         active: "{subject} を実行中",
         done: "{subject} を実行しました",
-        failed: "失敗しました：{subject}"
+        failed: "失敗しました：{subject}",
       },
       mcp: {
         active: "{subject} を呼び出し中",
         done: "{subject} を呼び出しました",
-        failed: "呼び出しに失敗しました：{subject}"
+        failed: "呼び出しに失敗しました：{subject}",
       },
       fetch: {
         active: "{subject} を取得中",
         done: "{subject} を取得しました",
-        failed: "{subject} を取得できませんでした"
+        failed: "{subject} を取得できませんでした",
       },
       browse: {
         active: "{subject} を閲覧中",
         done: "{subject} を閲覧しました",
-        failed: "{subject} を閲覧できませんでした"
+        failed: "{subject} を閲覧できませんでした",
       },
       workspace: {
         active: "ワークスペース {subject} を作成中",
         done: "ワークスペース {subject} を作成しました",
-        failed: "ワークスペース {subject} を作成できませんでした"
+        failed: "ワークスペース {subject} を作成できませんでした",
       },
       other: {
         active: "{subject} を使用中",
         done: "{subject} を使用しました",
-        failed: "{subject} が失敗しました"
-      }
-    }
-  }
-};
+        failed: "{subject} が失敗しました",
+      },
+    },
+  },
+}

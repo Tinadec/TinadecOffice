@@ -2,12 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { approvalSummary } from '@/userToolAction'
-import { ShieldCheck, Gavel, Eye } from '@lucide/vue'
+import { Activity, ShieldCheck, Gavel, Eye } from '@lucide/vue'
 import { api, type ApprovalDto, type PermissionRequestDto, type SupervisionFindingDto } from '@/api'
 import { useUserActionStore } from '@/stores/userAction'
 import UserActionStatusBadge from '@/components/governance/UserActionStatusBadge.vue'
 import PreAuthorizationDialog from '@/components/governance/PreAuthorizationDialog.vue'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
+import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue'
 import { useStatusLabels } from '@/lib/statusLabels'
 
 /**
@@ -16,23 +17,38 @@ import { useStatusLabels } from '@/lib/statusLabels'
  * - ActionApproval: one concrete high-risk action
  * - Supervision: quality verdicts (read-only here)
  *
+ * Plus live Runtime Instances monitoring (migrated out of Settings so Settings
+ * stays configuration-only while /governance owns operational supervision).
+ *
  * Desktop never merges these facts; the board only renders Core projections.
  */
+type GovernanceBoardTab = 'decisions' | 'runtime'
+
+function initialBoardTab(): GovernanceBoardTab {
+  if (typeof window === 'undefined') return 'decisions'
+  const query = window.location.hash.split('?')[1] ?? window.location.search.slice(1)
+  const tab = new URLSearchParams(query).get('tab')
+  return tab === 'runtime' ? 'runtime' : 'decisions'
+}
+
 const { t, te } = useI18n()
 const { riskLabel, severityLabel } = useStatusLabels()
 const kindLabel = (kind: string) => (te(`approval.kind.${kind}`) ? t(`approval.kind.${kind}`) : kind)
 const userActionStore = useUserActionStore()
 
+const activeTab = ref<GovernanceBoardTab>(initialBoardTab())
 const approvals = ref<ApprovalDto[]>([])
 const permissions = ref<PermissionRequestDto[]>([])
 const findings = ref<SupervisionFindingDto[]>([])
+const runtimeCount = ref(0)
+const runtimePanelRef = ref<InstanceType<typeof RuntimeInstancesPanel> | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const deciding = ref<string | null>(null)
 const preAuthOpen = ref(false)
 
-// Lightweight board refresh: approvals/permissions change out-of-band (agent
-// runs mint new requests), so poll on an interval, pause while the page is
+// Lightweight board refresh: approvals/permissions/runtime instances change out-of-band
+// (agent runs mint new requests), so poll on an interval, pause while the page is
 // hidden, and never overlap an in-flight load. Background ticks leave the
 // Refresh button's loading state alone.
 const REFRESH_INTERVAL_MS = 12_000
@@ -43,6 +59,7 @@ const openApprovals = computed(() => approvals.value.filter((a) => a.status === 
 const openPermissions = computed(() =>
   permissions.value.filter((p) => p.status === 'pending' || p.status.startsWith('awaiting')),
 )
+const openDecisionsCount = computed(() => openApprovals.value.length + openPermissions.value.length)
 
 /** Project a permission-kind approval row into the permission column shape. */
 function permissionFromApprovalProjection(x: ApprovalDto): PermissionRequestDto {
@@ -69,9 +86,19 @@ async function loadAll(background = false): Promise<void> {
   if (!background) loading.value = true
   loadError.value = null
   try {
+    const hasRuntimeApi = typeof (api as { listRuntimeInstances?: unknown }).listRuntimeInstances === 'function'
+    const refreshRuntime = activeTab.value === 'runtime' && runtimePanelRef.value
+      ? runtimePanelRef.value.loadRuntimeInstances(background)
+      : hasRuntimeApi
+        ? api.listRuntimeInstances().then((list) => {
+            runtimeCount.value = Array.isArray(list) ? list.length : 0
+          }).catch(() => undefined)
+        : Promise.resolve()
+
     const [a, p] = await Promise.all([
       api.listApprovals(undefined, 'pending').catch(() => [] as ApprovalDto[]),
       api.listPermissionRequests().catch(() => [] as PermissionRequestDto[]),
+      refreshRuntime,
     ])
     // /approvals is a heterogeneous projection (docs/app-core-ui.md §4.5):
     // split by kind instead of treating pending as one merged gate.
@@ -142,9 +169,33 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <div class="approval-board__tabs" role="tablist" data-testid="governance-board-tabs">
+      <button
+        type="button"
+        role="tab"
+        class="approval-board__tab"
+        :class="{ active: activeTab === 'decisions' }"
+        :aria-selected="activeTab === 'decisions'"
+        @click="activeTab = 'decisions'"
+      >
+        {{ t('governance.tabDecisions') }} ({{ openDecisionsCount }})
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="approval-board__tab"
+        :class="{ active: activeTab === 'runtime' }"
+        :aria-selected="activeTab === 'runtime'"
+        @click="activeTab = 'runtime'"
+      >
+        <Activity class="size-3.5" />
+        <span>{{ t('settings.runtimeInstances') }} ({{ runtimeCount }})</span>
+      </button>
+    </div>
+
     <div v-if="loadError" class="approval-board__error">{{ loadError }}</div>
 
-    <div class="approval-board__columns">
+    <div v-if="activeTab === 'decisions'" class="approval-board__columns">
       <!-- Column 1: PermissionRequest -->
       <section class="approval-board__column" data-testid="column-permissions">
         <h2><ShieldCheck class="size-4" /> {{ t('governance.permissions') }} ({{ openPermissions.length }})</h2>
@@ -196,6 +247,19 @@ onUnmounted(() => {
       </section>
     </div>
 
+    <section
+      v-if="activeTab === 'runtime'"
+      class="approval-board__runtime"
+      data-testid="governance-runtime-section"
+    >
+      <RuntimeInstancesPanel
+        ref="runtimePanelRef"
+        :show-ceilings="false"
+        :enable-auto-refresh="false"
+        @count-changed="runtimeCount = $event"
+      />
+    </section>
+
     <PreAuthorizationDialog v-model:open="preAuthOpen" />
   </div>
 </template>
@@ -224,6 +288,40 @@ onUnmounted(() => {
 .approval-board__header-actions {
   display: flex;
   gap: 8px;
+}
+
+.approval-board__tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.approval-board__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.approval-board__tab.active {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-raised));
+}
+
+.approval-board__runtime {
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
 }
 
 .approval-board__error {

@@ -155,6 +155,8 @@ public sealed class AgentDirectoryItemDto
     public string Role { get; init; } = string.Empty;
     public string SourceKind { get; init; } = string.Empty;
     public string SourceKey { get; init; } = string.Empty;
+    public Guid? BasePromptPipelineId { get; init; }
+    public JsonElement? Provenance { get; init; }
     public bool Managed { get; init; }
     public bool Writable { get; init; }
     public bool Enabled { get; init; }

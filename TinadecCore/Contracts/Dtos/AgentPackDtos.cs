@@ -285,6 +285,10 @@ public sealed class AgentPackModeResourceDto
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ModeRuntimePolicyDto? RuntimePolicy { get; init; }
 
+    [JsonPropertyName("orchestration_tier")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OrchestrationTier { get; init; }
+
     [JsonPropertyName("canvas_layout")]
     public JsonElement CanvasLayout { get; init; }
 }

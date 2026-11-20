@@ -3,39 +3,24 @@ import {
   Archive,
   ArrowLeft,
   Bot,
-  Check,
-  Cpu,
   Database,
   FileText,
   Info,
   KeyRound,
-  LayoutGrid,
-  List,
-  Minus,
   MessagesSquare,
-  MoreHorizontal,
+  Minus,
   Palette,
-  PanelRight,
   PawPrint,
-  Plus,
-  RefreshCw,
-  Route,
-  Save,
-  Search,
   Settings2,
-  ShieldCheck,
-  Shuffle,
   Square,
   Terminal,
   UserRound,
   Workflow,
-  X
+  X,
 } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useStatusLabels } from '@/lib/statusLabels'
-import { useRouter } from 'vue-router'
 import AboutSection from '@/settings/sections/AboutSection.vue'
 import ArchiveTrashSection from '@/settings/sections/ArchiveTrashSection.vue'
 import GeneralSection from '@/settings/sections/GeneralSection.vue'
@@ -50,109 +35,88 @@ import TinaChatSection from '@/settings/sections/TinaChatSection.vue'
 import CompanionSection from '@/settings/sections/CompanionSection.vue'
 import {
   api as baseApi,
-  type AgentCandidateDto,
   type AgentCenterOverviewDto,
   type AgentDefinitionDto,
   type AgentDirectoryItemDto,
   type AgentModeDto,
   type AgentViewDto,
-  type AgentRuntimeSelectionKind,
-  type AgentVersionDto,
-  type PermissionRequestDto,
   type CenterDiagnosticDto,
   type HarnessManifestDto,
-  type ToolLayerReadinessReceiptDto,
+  type PermissionRequestDto,
+  type PromptPipelineDto,
   type ToolDescriptorDto,
-  type ToolSearchResultDto,
-  type AgentModeTopologyDto
 } from '../api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
-import {
-  bindingFromModelStrategy,
-  legacyRouteWarning,
-  modelOptionKey,
-  runtimeSourceSummary
-} from '../runtimeCenterView'
-import {
-  codeSuiteTools,
-  languageSupportFromTools,
-  manifestTools,
-  projectTemplatesFromResult,
-  sortedAgentLayers,
-  sortedRiskPolicies,
-  sortedToolSearchResults,
-  sortedToolProviders,
-  type ProjectTemplateSummary
-} from '../toolCatalog'
-import PetPreview from '@/components/PetPreview.vue'
-import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
+import { manifestTools } from '../toolCatalog'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
-import { UiButton, UiInput, UiBadge, UiLabel, UiSheet, UiSkeleton, UiSwitch, UiSelectField } from '@/components/ui'
-import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
-import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
+import { UiButton } from '@/components/ui'
 import AgentModesPanel from '@/settings/sections/AgentModesPanel.vue'
-import AgentCenterSection from '@/settings/agentCenter/AgentCenterSection.vue'
+import AgentCenterSection, { type AgentCenterTabKey } from '@/settings/agentCenter/AgentCenterSection.vue'
+import AgentsDirectoryPanel from '@/settings/agentCenter/AgentsDirectoryPanel.vue'
 import PromptEngineeringMerged from '@/settings/sections/PromptEngineeringMerged.vue'
-import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue'
-import { consumeRequest, pendingAgentId, pendingModeId, pendingPromptId, pendingToolId, pendingToolAgentId, requestToolAgent, pendingModelProviderId, pendingSettingsSection, pendingCompanionId, type CompanionSettingsTab } from '@/lib/pageRequests'
+import {
+  consumeRequest,
+  pendingAgentId,
+  pendingCompanionId,
+  pendingModeId,
+  pendingModelProviderId,
+  pendingPromptId,
+  pendingSettingsSection,
+  pendingToolAgentId,
+  pendingToolId,
+  type CompanionSettingsTab,
+} from '@/lib/pageRequests'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { createSettingsLeaveGuard } from './settingsNavigation'
 import { useNotifications } from '@/composables/useNotifications'
-import { useAgentAvatars } from '@/composables/useAgentAvatars'
 import { useHostAccess } from '@/lib/hostAccess'
 import { useRecoverableRead, type ReadContext } from '@/composables/useRecoverableRead'
 import { useModelCenter } from '@/composables/useModelCenter'
-import { centerDiagnosticLabel as centerDiagnosticText, providerStatusLabel } from '@/settings/modelCenterLabels'
+import { useAgentModesStore } from '@/composables/useAgentModesStore'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { isAbortError } from '@/lib/isAbortError'
 import { patchAgentCenterUi, readCenterUiState } from '@/settings/drafts/uiState'
 import { withoutRetiredModes } from '@/lib/retiredModes'
-import { clearDraft, markDraftStale, readDraft, writeDraft, type StoredDraft } from '@/settings/drafts/draftStore'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 
 type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'companionAvatar' | 'apiDocs' | 'about'
 
-type AgentCenterTab = 'teams' | 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime' | 'advanced'
+type AgentCenterTab = AgentCenterTabKey
 
 const agentCenterSectionRef = ref<InstanceType<typeof AgentCenterSection> | null>(null)
+const agentsPanelRef = ref<InstanceType<typeof AgentsDirectoryPanel> | null>(null)
 const modePanelRef = ref<InstanceType<typeof AgentModesPanel> | null>(null)
 const promptsPanelRef = ref<InstanceType<typeof PromptEngineeringMerged> | null>(null)
-const evolutionPanelRef = ref<InstanceType<typeof AgentEvolutionPanel> | null>(null)
+const agentModesStore = useAgentModesStore()
 
-/** Lazily refresh per-tab data when a tab becomes active. */
-function switchAgentCenterTab(tab: AgentCenterTab) {
+/** Switch Agent Center sub-tab while guarding unsaved mode/team edits. */
+async function switchAgentCenterTab(tab: AgentCenterTab) {
+  if (tab === agentCenterTab.value) return
+  if ((agentCenterTab.value === 'teams' || agentCenterTab.value === 'modes') && !(await agentModesStore.discardOrConfirm())) {
+    return
+  }
   agentCenterTab.value = tab
-  // RuntimeInstancesPanel does not self-load on mount; wait one tick for its ref.
-  if (tab === 'runtime') void nextTick(() => runtimePanelRef.value?.loadRuntimeInstances())
 }
 
 /** A team is opened in the deep graph editor by reusing the existing mode deep-link. */
-function openModeInGraph(id: string) {
+async function openModeInGraph(id: string) {
+  if (agentCenterTab.value !== 'modes' && !(await agentModesStore.discardOrConfirm())) return
   agentCenterTab.value = 'modes'
   pendingModeId.value = id
 }
 
 /** Single refresh entry for the whole Agent Center: reloads the active sub-tab. */
 function refreshAgentCenterTab(tab: AgentCenterTab = agentCenterTab.value) {
-  // Teams and Advanced are refreshed by AgentCenterSection itself; this path
-  // only serves the legacy tab panels mounted through slots.
   if (tab === 'modes') void modePanelRef.value?.loadModes()
   else if (tab === 'prompts') void promptsPanelRef.value?.refreshAll()
-  else if (tab === 'evolution') void evolutionPanelRef.value?.loadProposals()
-  else if (tab === 'runtime') void runtimePanelRef.value?.loadRuntimeInstances()
   else void loadAgentCenter()
 }
 
-const { t, te, locale } = useI18n()
-const { riskLabel } = useStatusLabels()
-const definitionStatusLabel = (status: string) => (te(`agentCenter.filter.${status}`) ? t(`agentCenter.filter.${status}`) : status)
-// Shared with the Model Center section so the Agent Center words the same catalog rows identically.
-const statusLabel = (status: string) => providerStatusLabel(t, status)
-const centerDiagnosticLabel = (diagnostic: CenterDiagnosticDto) => centerDiagnosticText(t, diagnostic)
+const { t } = useI18n()
 const { canAccessBackend } = useHostAccess()
 const router = useRouter()
-const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
+const { notify, status, dismissByKey } = useNotifications()
 
 // Background management moved to settings/sections/AppearanceSection.vue (D7.2)
 
@@ -196,11 +160,8 @@ async function closeWindow() {
   if (activeSection.value === 'storage' && storageRef.value && !await storageRef.value.canLeave()) return
   if (activeSection.value === 'tools' && toolCenterRef.value && !await toolCenterRef.value.canLeave()) return
   if (activeSection.value === 'model' && modelCenterRef.value && !await modelCenterRef.value.canLeave()) return
+  if (activeSection.value === 'agentCenter' && !await agentModesStore.discardOrConfirm()) return
   window.tinadec?.closeWindow?.()
-}
-
-function openExternal(url: string) {
-  window.open(url, '_blank')
 }
 
 const activeSection = ref<SettingsSection>('personal')
@@ -208,20 +169,12 @@ const toolCenterRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
 const storageRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
 const storedCenterUi = readCenterUiState()
 
-/**
- * The persisted view state already carries the target IA keys (`teams` /
- * `graph` / `advanced`). Until the navigation switch lands, map them onto the
- * tab that currently owns the same content so a restored value never selects a
- * stage that does not exist yet.
- */
 function initialAgentCenterTab(): AgentCenterTab {
   const tab = storedCenterUi.agentCenter.tab
   if (tab === 'teams') return 'teams'
   if (tab === 'modes' || tab === 'graph') return 'modes'
   if (tab === 'prompts') return 'prompts'
-  if (tab === 'advanced') return 'advanced'
-  if (tab === 'evolution') return 'evolution'
-  if (tab === 'runtime') return 'runtime'
+  if (tab === 'advanced' || tab === 'evolution' || tab === 'runtime') return 'advanced'
   return 'agents'
 }
 const agentCenterTab = ref<AgentCenterTab>(initialAgentCenterTab())
@@ -250,6 +203,7 @@ async function selectSettingsSection(section: SettingsSection) {
   if (section !== 'storage' && activeSection.value === 'storage' && storageRef.value && !await storageRef.value.canLeave()) return false
   if (section !== 'tools' && activeSection.value === 'tools' && toolCenterRef.value && !await toolCenterRef.value.canLeave()) return false
   if (section !== 'model' && activeSection.value === 'model' && modelCenterRef.value && !await modelCenterRef.value.canLeave()) return false
+  if (section !== 'agentCenter' && activeSection.value === 'agentCenter' && !await agentModesStore.discardOrConfirm()) return false
   // Mounting is the first read; `v-show` afterwards keeps the already-read section alive.
   if (section === 'companions') companionsMounted.value = true
   activeSection.value = section
@@ -261,10 +215,17 @@ const settingsExiting = ref(false)
 const SETTINGS_EXIT_DURATION_MS = 530
 
 onBeforeRouteLeave(createSettingsLeaveGuard({
-  isTools: () => activeSection.value === 'tools' || activeSection.value === 'storage' || activeSection.value === 'model',
-  canLeave: () => (activeSection.value === 'storage'
-    ? storageRef.value
-    : activeSection.value === 'model' ? modelCenterRef.value : toolCenterRef.value)?.canLeave() ?? Promise.resolve(true),
+  isTools: () =>
+    activeSection.value === 'tools'
+    || activeSection.value === 'storage'
+    || activeSection.value === 'model'
+    || activeSection.value === 'agentCenter',
+  canLeave: () => {
+    if (activeSection.value === 'agentCenter') return agentModesStore.discardOrConfirm()
+    return (activeSection.value === 'storage'
+      ? storageRef.value
+      : activeSection.value === 'model' ? modelCenterRef.value : toolCenterRef.value)?.canLeave() ?? Promise.resolve(true)
+  },
   isExiting: () => settingsExiting.value,
   markExiting: () => { settingsExiting.value = true },
   durationMs: SETTINGS_EXIT_DURATION_MS,
@@ -294,12 +255,9 @@ const agentCenterOverview = ref<AgentCenterOverviewDto | null>(null)
 const agentModes = ref<AgentModeDto[]>([])
 const agentDirectory = ref<AgentDirectoryItemDto[]>([])
 const agents = ref<AgentViewDto[]>([])
-const agentCandidates = ref<AgentCandidateDto[]>([])
 const availableTools = ref<ToolDescriptorDto[]>([])
 const harnessManifest = ref<HarnessManifestDto | null>(null)
-const toolLayerReadiness = ref<ToolLayerReadinessReceiptDto | null>(null)
-const toolSearchResults = ref<ToolSearchResultDto[]>([])
-const projectTemplates = ref<ProjectTemplateSummary[]>([])
+const promptPipelines = ref<PromptPipelineDto[]>([])
 const selectedAgentId = ref('')
 const configuringAgentId = ref('')
 const requestedAgentId = ref<string | null>(null)
@@ -309,104 +267,19 @@ onBeforeUnmount(() => {
   agentNavigationGeneration++
   providerNavigationGeneration++
   pendingProviderFocus.value = null
-  flushAgentDraft()
+  agentsPanelRef.value?.flushAgentDraft()
 })
-const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
-const agentRuntimeModelKey = ref('')
-const agentRuntimeRoutePurpose = ref('')
-const agentRuntimeModelQuery = ref('')
-const agentEditTools = ref<string[]>([])
-const agentEditCapabilities = ref<string[]>([])
-const agentEditSystemPrompt = ref('')
-const agentEditDescription = ref('')
-const agentEditRevision = ref<number | null>(null)
-const agentNewCapability = ref('')
-const agentToolQuery = ref('')
-const agentToolSourceFilter = ref('all')
-const agentToolRiskFilter = ref('all')
-const agentCloneBusy = ref(false)
-const agentQuery = ref('')
-const agentLayerFilter = ref<'all' | 'operation' | 'execution'>('all')
-const agentSourceFilter = ref('all')
-const agentStatusFilter = ref('all')
-const showCreateAgent = ref(false)
-const newAgentName = ref('')
-const newAgentSlug = ref('')
-const newAgentLayer = ref<'operation' | 'execution'>('operation')
-const newAgentRole = ref('')
-const newAgentBusy = ref(false)
-// Versioned profile surface: published version timeline + pending permission requests.
-const agentVersionHistory = ref<AgentVersionDto[]>([])
-const agentVersionHistoryError = ref<ErrorState | null>(null)
-const agentVersionsLoading = ref(false)
 const agentPermissionRequests = ref<PermissionRequestDto[]>([])
-const runtimePanelRef = ref<InstanceType<typeof RuntimeInstancesPanel> | null>(null)
-const pendingGovernanceCount = computed(() =>
-  agentPermissionRequests.value.filter((request) => ['pending', 'awaiting_delegate', 'awaiting_user', 'awaiting_approval'].includes(request.status)).length
-)
-const busy = ref(false)
 const agentDefinitionFailures = ref<Record<string, ErrorState>>({})
 /** Definitions already read for this render; anything else is fetched when its agent is opened. */
 const agentDefinitionLoadedIds = ref<Set<string>>(new Set())
 const agentDefinitionLoadingId = ref('')
 const agentReadDiagnostics = ref<Array<{ source: string; error: ErrorState }>>([])
-const agentRuntimeBusy = ref(false)
-
-/**
- * Agent avatars: the pet an agent wears. This is local cosmetic state, not part of the agent's
- * Core definition, so it stays editable even for built-in agents.
- */
-const {
-  pool: agentAvatarPool,
-  revision: agentAvatarRevision,
-  preferenceFor: agentAvatarPreferenceFor,
-  agentPreviewSlug,
-  setAgentPreference: setAgentAvatarPreference,
-} = useAgentAvatars()
-const agentAvatarBusy = ref(false)
-
-/**
- * Preferences are keyed by slug, never by id: a sub-agent in the feed only carries `agentSlug`,
- * and settings and the conversation must agree on which agent owns a face.
- */
-function agentAvatarKey(agent: AgentViewDto | null | undefined): string {
-  if (!agent) return ''
-  return agent.slug || agentDirectory.value.find((item) => item.id === agent.id)?.slug || agent.id
-}
-
-function agentAvatarSlug(agent: AgentViewDto | null | undefined): string {
-  // Touch the revision so a pool refresh (download/delete) re-renders every face.
-  void agentAvatarRevision.value
-  return agentPreviewSlug(agentAvatarKey(agent))
-}
-
-const configuringAvatarPreference = computed(() => (
-  configuringAgent.value ? agentAvatarPreferenceFor(agentAvatarKey(configuringAgent.value)) : { mode: 'random' as const }
-))
-
-async function chooseAgentAvatar(mode: 'random' | 'fixed', petSlug?: string) {
-  const agent = configuringAgent.value
-  if (!agent) return
-  agentAvatarBusy.value = true
-  try {
-    await setAgentAvatarPreference(agentAvatarKey(agent), mode === 'fixed' && petSlug
-      ? { mode: 'fixed', petSlug }
-      : { mode: 'random' })
-  } catch (error) {
-    notify.error(error, { title: t('settings.agentAvatarSaveFailed') })
-  } finally {
-    agentAvatarBusy.value = false
-  }
-}
 
 const agentViewMode = ref<'topology' | 'list'>(storedCenterUi.agentCenter.viewMode)
 watch([agentCenterTab, agentViewMode], () => {
   patchAgentCenterUi({ tab: agentCenterTab.value, viewMode: agentViewMode.value })
 }, { flush: 'post' })
-const toolDiscoveryQuery = ref('')
-const toolDiscoverySource = ref('all')
-const toolDiscoveryRisk = ref('all')
-const toolDiscoveryLoading = ref(false)
 
 const navItems = computed(() => [
   { key: 'personal' as const, icon: UserRound, label: t('settings.personal') },
@@ -424,184 +297,11 @@ const navItems = computed(() => [
   { key: 'about' as const, icon: Info, label: t('settings.about') },
 ])
 
-// Gateway/dispatch config moved to settings/sections/GeneralSection.vue (D7.2)
-const agentRuntimeBindings = computed(() =>
-  Object.fromEntries(agents.value.map((agent) => [agent.id, bindingFromModelStrategy(agent, agent.model_binding)]))
-)
-const topologyAgentLabels = computed(() => Object.fromEntries(
-  agents.value.map((agent) => [agent.id, agentTypeLabel(agent.agent_type)])
-))
-const topologyCandidateLabels = computed(() => Object.fromEntries(
-  agentCandidates.value.map((candidate) => [candidate.id, agentTypeLabel(candidate.agent_type)])
-))
-const configuringRuntimeBinding = computed(() => {
-  const agent = agents.value.find((item) => item.id === configuringAgentId.value)
-  return agent ? bindingFromModelStrategy(agent, agent.model_binding) : null
-})
-const configuringLegacyWarning = computed(() => legacyRouteWarning(configuringRuntimeBinding.value))
-const configuringDirectoryItem = computed(() =>
-  agentDirectory.value.find((item) => item.id === configuringAgentId.value) ?? null
-)
-
-function agentSourceKindLabel(kind: string): string {
-  if (kind === 'custom') return t('settings.agentSourceCustom')
-  if (kind === 'pack') return t('settings.agentSourcePack')
-  if (kind === 'bootstrap') return t('settings.agentSourceBootstrap')
-  if (kind === 'missing_reference') return t('settings.agentSourceMissing')
-  return kind
-}
-
-function agentSourceKindFor(agentId: string): string {
-  return agentDirectory.value.find((item) => item.id === agentId)?.source_kind ?? 'custom'
-}
-
-/** Summarize one effective preview (per mode:node) into a compact evidence line. */
-function agentPreviewLine(modeSlug: string, nodeKey: string, preview: { expected_selection?: { provider_instance_id?: string; model?: string | null } | null }): string {
-  const selection = preview.expected_selection
-  const target = selection
-    ? `${selection.provider_instance_id ?? '—'}${selection.model ? ` · ${selection.model}` : ''}`
-    : '—'
-  return `${modeSlug}:${nodeKey} → ${target}`
-}
-
-/**
- * 「模型来源」摘要。inherit 态也要有证据：Core 的 `effective_previews`
- * 已经解析出实际 provider+model，这里把它喂给 runtimeSourceSummary，
- * 免得「跟随默认」永远显示成「尚未解析」。
- */
-function agentRuntimeSummary(agentId: string | null | undefined): string {
-  if (!agentId) return ''
-  const item = agentDirectory.value.find((entry) => entry.id === agentId)
-  const binding = agentRuntimeBindings.value[agentId]
-  const resolveName = (providerInstanceId: string) => providers.value.find((provider) => provider.id === providerInstanceId)?.display_name ?? null
-  // fixed/route 绑定的摘要此前退化成裸 provider GUID：bindingFromRuntimeOverride 不填
-  // provider_display_name，而 runtimeSourceSummary 只在 inherit 分支用 providerName 回调。
-  // 在调用侧 hydrate display_name（不改带钉住测试的 runtimeCenterView.ts），让「指定模型」
-  // 保存后摘要立即显示人类可读的 provider 名，而不是看起来「没变化」的 GUID。
-  const hydrated = binding && !binding.provider_display_name && binding.provider_instance_id
-    ? { ...binding, provider_display_name: resolveName(binding.provider_instance_id) }
-    : binding
-  return runtimeSourceSummary(hydrated, item?.effective_previews ?? null, resolveName)
-}
-
-function agentInvocationLine(invocation: { provider_instance_id: string; model?: string | null; status: string; completed_at?: string | null }): string {
-  const model = invocation.model ? ` · ${invocation.model}` : ''
-  const time = invocation.completed_at ? ` · ${invocation.completed_at}` : ''
-  return `${invocation.provider_instance_id}${model} · ${invocation.status}${time}`
-}
 const runtimeModels = computed(() => agentCenterOverview.value?.runtime_sources.models ?? modelCenterOverview.value?.models ?? [])
 const runtimeCliOptions = computed(() => agentCenterOverview.value?.runtime_sources.cli_runtimes ?? modelCenterOverview.value?.cli_runtimes ?? [])
 const runtimeAcpOptions = computed(() => agentCenterOverview.value?.runtime_sources.acp_runtimes ?? modelCenterOverview.value?.acp_runtimes ?? [])
 const agentCenterDiagnostics = computed(() => agentCenterOverview.value?.diagnostics ?? [])
-const filteredRuntimeModels = computed(() => runtimeModels.value.filter((model) => runtimeQueryMatches(
-  agentRuntimeModelQuery.value,
-  model.model_id,
-  model.provider_display_name,
-  model.provider_instance_id,
-  model.status,
-  ...model.configuration_sources,
-  ...model.route_purposes
-)))
-
-const filteredRuntimeCliOptions = computed(() => runtimeCliOptions.value.filter((runtime) => runtimeQueryMatches(
-  agentRuntimeModelQuery.value,
-  runtime.display_name,
-  runtime.runtime_id,
-  runtime.driver,
-  runtime.status,
-  runtime.binary_path,
-  runtime.home_path
-)))
-const filteredRuntimeAcpOptions = computed(() => runtimeAcpOptions.value.filter((runtime) => runtimeQueryMatches(
-  agentRuntimeModelQuery.value,
-  runtime.display_name,
-  runtime.runtime_id,
-  runtime.source,
-  runtime.driver,
-  runtime.status,
-  runtime.command
-)))
-
-const selectedAgent = computed(() =>
-  agents.value.find((agent) => agent.id === selectedAgentId.value) ?? null
-)
-const configuringAgent = computed(() =>
-  agentDefinitionFailures.value[configuringAgentId.value] ? null
-    : agents.value.find((agent) => agent.id === configuringAgentId.value) ?? null
-)
-function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
-  const v = String(layer ?? '').trim().toLowerCase();
-  if (v === 'planning') return 'operation';
-  return v === 'execution' ? 'execution' : (v as 'operation' | 'execution');
-}
-const planningAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'operation'))
-const executionAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'execution'))
-const agentSourceOptions = computed(() =>
-  Array.from(new Set(agents.value.map(agent => agentSourceKindFor(agent.id)))).sort())
-function agentMatchesFilters(agent: AgentViewDto): boolean {
-  if (agentLayerFilter.value !== 'all' && normalizeAgentLayer(agent.layer) !== agentLayerFilter.value) return false
-  if (agentSourceFilter.value !== 'all' && agentSourceKindFor(agent.id) !== agentSourceFilter.value) return false
-  if (agentStatusFilter.value !== 'all' && (agent.status ?? '') !== agentStatusFilter.value) return false
-  const q = agentQuery.value.trim().toLowerCase()
-  if (!q) return true
-  return [agent.name, agent.slug, agent.description, agent.agent_type]
-    .some(value => String(value ?? '').toLowerCase().includes(q))
-}
-const filteredOperationAgents = computed(() => planningAgents.value.filter(agentMatchesFilters))
-const filteredExecutionAgents = computed(() => executionAgents.value.filter(agentMatchesFilters))
-const filteredAgentCount = computed(() => filteredOperationAgents.value.length + filteredExecutionAgents.value.length)
 const manifestToolList = computed(() => manifestTools(harnessManifest.value, availableTools.value))
-// ponytail: agent tool panel filters — reuse manifestTools, no new deps
-const filteredAgentTools = computed(() => {
-  const q = agentToolQuery.value.trim().toLowerCase()
-  return manifestToolList.value.filter((tool) => {
-    if (agentToolSourceFilter.value !== 'all' && tool.source !== agentToolSourceFilter.value) return false
-    if (agentToolRiskFilter.value !== 'all' && tool.risk !== agentToolRiskFilter.value) return false
-    if (!q) return true
-    return [tool.id, tool.display_name, tool.domain, tool.source, tool.risk].some((v) => v?.toLowerCase().includes(q))
-  })
-})
-const groupedAgentTools = computed(() => {
-  const groups = new Map<string, typeof manifestToolList.value>()
-  for (const tool of filteredAgentTools.value) {
-    const key = tool.source || 'unknown'
-    const list = groups.get(key) ?? []
-    list.push(tool)
-    groups.set(key, list)
-  }
-  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-})
-const agentToolSelectionSummary = computed(() => {
-  const total = manifestToolList.value.length
-  const selected = agentEditTools.value.length
-  const approval = manifestToolList.value.filter((t) => t.requires_approval && agentEditTools.value.includes(t.id)).length
-  return { total, selected, approval }
-})
-const manifestProviders = computed(() => sortedToolProviders(harnessManifest.value))
-const manifestAgentLayers = computed(() => sortedAgentLayers(harnessManifest.value))
-const manifestRiskPolicies = computed(() => sortedRiskPolicies(harnessManifest.value))
-const codeSuiteToolList = computed(() => codeSuiteTools(manifestToolList.value))
-const codexPrimitiveTools = computed(() => manifestToolList.value.filter((tool) => tool.source === 'codex-rust'))
-const supportedLanguages = computed(() => languageSupportFromTools(manifestToolList.value))
-const warningToolLayerTools = computed(() =>
-  (toolLayerReadiness.value?.tools ?? []).filter((tool) => tool.status !== 'ready')
-)
-const warningToolLayerAgents = computed(() =>
-  (toolLayerReadiness.value?.agent_scopes ?? []).filter((agent) => agent.status !== 'ready')
-)
-const toolSourceOptions = computed(() =>
-  Array.from(new Set(manifestToolList.value.map((tool) => tool.source))).sort()
-)
-const toolRiskOptions = computed(() =>
-  Array.from(new Set(manifestToolList.value.map((tool) => tool.risk))).sort()
-)
-const sortedToolDiscoveryResults = computed(() => sortedToolSearchResults(toolSearchResults.value))
-
-function runtimeQueryMatches(query: string, ...values: Array<string | null | undefined>) {
-  const normalized = query.trim().toLocaleLowerCase()
-  if (!normalized) return true
-  return values.some((value) => value?.toLocaleLowerCase().includes(normalized))
-}
 
 const agentCenterRead = useRecoverableRead(loadAgentCenterData, {
   lazy: true,
@@ -614,322 +314,131 @@ const agentCenterFailure = agentCenterRead.failure.error
 function loadAgentCenter(): Promise<void> {
   return agentCenterRead.refresh()
 }
-// The centers read lazily (see their `useRecoverableRead` options): entering a section is what
-// asks for its data the first time. `loaded` keeps this to once per mount — later section
-// switches must not re-fetch, and explicit refresh paths still go through load*/refresh.
+
+// Preload useModelCenter on agentCenter entry so model/route dropdowns are populated right away.
 watch(activeSection, section => {
   if (section === 'model' && !modelCenterLoaded.value) void loadModelCenter()
-  else if (section === 'agentCenter' && !agentCenterRead.loaded.value) void loadAgentCenter()
+  else if (section === 'agentCenter') {
+    if (!modelCenterLoaded.value) void loadModelCenter()
+    if (!agentCenterRead.loaded.value) void loadAgentCenter()
+  }
 }, { flush: 'post' })
+
+async function loadAgentPermissionRequests() {
+  try {
+    agentPermissionRequests.value = await api.listPermissionRequests()
+  } catch {
+    agentPermissionRequests.value = []
+  }
+}
+
 async function loadAgentCenterData(context: ReadContext) {
   const { signal, isCurrent } = context
-  // getAgentCenterOverview is a deleted 404 route (docs/app-core-ui.md §4.8).
-  // Load the versioned directory + full definitions directly; overview-only projections degrade.
-      const partial: Array<{ source: string; error: ErrorState }> = []
-      function preserve<T>(source: string, fallback: T): (error: unknown) => T {
-        return error => { if (isCurrent()) partial.push({ source, error: toErrorState(error) }); return fallback }
-      }
-      const [directory, modes, candidates, toolReadiness, packDetail] = await Promise.all([
-        api.listAgents({ signal }),
-        api.listAgentModes({ signal }).catch(preserve('agent-modes', agentModes.value)),
-        api.listAgentCandidates({ signal }).catch(preserve('agent-candidates', agentCandidates.value)),
-        api.getToolLayerReadiness({ signal }).catch(preserve('tool-layer-readiness', toolLayerReadiness.value)),
-        api.getAgentPack(graphSeedPackManifest.metadata.pack_id, { signal }).catch(() => null),
-      ])
-      if (!isCurrent()) return
-      const managedAgentIds = new Set(
-        (packDetail?.resources ?? [])
-          .filter((resource) => resource.kind === 'agent' && resource.logical_entity_id)
-          .map((resource) => resource.logical_entity_id!),
-      )
-      // The directory *is* the list: source, usage, preview and invocation evidence all ride
-      // on it, so the rail is painted from this read alone. A full definition (prompt, tools,
-      // capabilities) is the inspector's business and is read on demand — pulling every
-      // definition in waves of four before the first row could render was the whole cost.
-      const failures: Record<string, ErrorState> = {}
-      const preserveDraft = agentEditorBaseline !== '' && agentEditorSnapshot() !== agentEditorBaseline
-      // A dirty editor keeps the definition it was seeded from: dropping its provenance would
-      // unmount the very editor the user is typing in.
-      if (!preserveDraft) agentDefinitionLoadedIds.value = new Set()
-      agentDefinitionLoadingId.value = ''
-      const previousAgents = new Map(agents.value.map(agent => [agent.id, agent]))
-      if (preserveDraft && !directory.some(item => item.id === configuringAgentId.value)) {
-        failures[configuringAgentId.value] = toErrorState(new Error(t('settings.agentDraftSourceMissing')))
-        partial.push({ source: previousAgents.get(configuringAgentId.value)?.name ?? configuringAgentId.value, error: failures[configuringAgentId.value]! })
-      }
-      agentDefinitionFailures.value = failures
-      agentCenterOverview.value = null
-      agentModes.value = withoutRetiredModes(modes)
-      agentDirectory.value = directory
-      // Rows carry the directory projection plus whatever definition was already read for that
-      // agent; the inspector fills the rest in when it opens. Until then the card shows its
-      // source kind as the secondary line instead of an invented empty description.
-      agents.value = directory.map((item) => {
-        const previous = previousAgents.get(item.id)
-        return {
-          id: item.id,
-          slug: item.slug,
-          display_name: item.display_name,
-          name: item.display_name ?? item.slug,
-          layer: item.layer,
-          role: item.role,
-          agent_type: item.role,
-          mode: '',
-          description: previous?.description ?? '',
-          model_route_purpose: item.configured_strategy?.route_purpose ?? '',
-          allowed_tools: previous?.allowed_tools ?? [],
-          capabilities: previous?.capabilities ?? [],
-          system_prompt: previous?.system_prompt ?? null,
-          enabled: item.enabled,
-          is_built_in: item.managed || item.source_kind !== 'custom' || managedAgentIds.has(item.id),
-          model_strategy: item.configured_strategy as unknown as Record<string, unknown>,
-          // 用户级运行时绑定：这才是「在智能体中心设过的模型」。缺了它，保存成功后
-          // 重新 seed 会拿未变的定义策略把选择打回原样（症状：设置成功但立刻回弹）。
-          model_binding: item.model_binding ?? null,
-          status: item.status,
-          revision: item.revision,
-          version: item.version,
-          updated_at: item.updated_at ?? null,
-        }
-      })
-      agentCandidates.value = candidates
-      toolLayerReadiness.value = toolReadiness
-      const activeAgent = requestedAgentId.value
-        ? agents.value.find((agent) => agent.id === requestedAgentId.value)
-        : agents.value.find((agent) => agent.id === configuringAgentId.value)
-          ?? agents.value.find((agent) => agent.id === selectedAgentId.value)
-          ?? agents.value[0]
-      if (activeAgent && !preserveDraft) {
-        await openAgentConfigFromDirectory(activeAgent.id)
-      }
-      // Keep the definition failure this read just produced (if any) instead of replacing it.
-      const readSources = new Set(partial.map(item => item.source))
-      agentReadDiagnostics.value = [...partial, ...agentReadDiagnostics.value.filter(item => !readSources.has(item.source))]
-      // The directory is already on screen; auxiliary catalog reads only feed the inspector's
-      // tool picker, so they are settled in the background instead of holding up this read.
-      const auxiliary = Promise.all([
-        (async () => {
-          try {
-            const manifest = await api.getHarnessManifest({ signal })
-            if (!isCurrent()) return
-            harnessManifest.value = manifest
-            availableTools.value = manifest.tools
-          } catch (error) {
-            if (!isCurrent()) return
-            try {
-              const tools = await api.listTools({ signal })
-              if (!isCurrent()) return
-              harnessManifest.value = null
-              availableTools.value = tools
-            } catch (error) { preserve('tools', availableTools.value)(error) }
-          }
-        })(),
-        api.executeCodeTool('project_templates', {}, { signal }).then(result => {
-          if (isCurrent()) projectTemplates.value = projectTemplatesFromResult(result)
-        }).catch(preserve('project-templates', null)),
-      ])
-      // The rail is already painted and the inspector resolves on its own; these only feed
-      // secondary catalogs, so the read finishes here instead of waiting on them.
-      void auxiliary.then(() => {
+  const partial: Array<{ source: string; error: ErrorState }> = []
+  function preserve<T>(source: string, fallback: T): (error: unknown) => T {
+    return error => { if (isCurrent()) partial.push({ source, error: toErrorState(error) }); return fallback }
+  }
+  const [directory, modes, packDetail, pipelineList] = await Promise.all([
+    api.listAgents({ signal }),
+    api.listAgentModes({ signal }).catch(preserve('agent-modes', agentModes.value)),
+    api.getAgentPack(graphSeedPackManifest.metadata.pack_id, { signal }).catch(() => null),
+    api.listPromptPipelines({ signal }).catch(() => promptPipelines.value),
+  ])
+  if (!isCurrent()) return
+  const managedAgentIds = new Set(
+    (packDetail?.resources ?? [])
+      .filter((resource) => resource.kind === 'agent' && resource.logical_entity_id)
+      .map((resource) => resource.logical_entity_id!),
+  )
+  const failures: Record<string, ErrorState> = {}
+  const preserveDraft = Boolean(agentsPanelRef.value?.isEditorDirty())
+  if (!preserveDraft) agentDefinitionLoadedIds.value = new Set()
+  agentDefinitionLoadingId.value = ''
+  const previousAgents = new Map(agents.value.map(agent => [agent.id, agent]))
+  if (preserveDraft && !directory.some(item => item.id === configuringAgentId.value)) {
+    failures[configuringAgentId.value] = toErrorState(new Error(t('settings.agentDraftSourceMissing')))
+    partial.push({ source: previousAgents.get(configuringAgentId.value)?.name ?? configuringAgentId.value, error: failures[configuringAgentId.value]! })
+  }
+  agentDefinitionFailures.value = failures
+  agentCenterOverview.value = null
+  agentModes.value = withoutRetiredModes(modes)
+  agentDirectory.value = directory
+  promptPipelines.value = Array.isArray(pipelineList) ? pipelineList : []
+  agents.value = directory.map((item) => {
+    const previous = previousAgents.get(item.id)
+    const isManaged = item.managed || item.source_kind === 'pack' || item.source_kind === 'built_in' || managedAgentIds.has(item.id)
+    return {
+      id: item.id,
+      slug: item.slug,
+      display_name: item.display_name,
+      i18n: item.i18n ?? previous?.i18n ?? null,
+      name: item.display_name ?? item.slug,
+      layer: item.layer,
+      role: item.role,
+      source_kind: item.source_kind,
+      provenance: item.provenance ?? previous?.provenance ?? null,
+      base_prompt_pipeline_id: item.base_prompt_pipeline_id ?? previous?.base_prompt_pipeline_id ?? null,
+      agent_type: item.role,
+      mode: '',
+      description: previous?.description ?? '',
+      model_route_purpose: item.configured_strategy?.route_purpose ?? '',
+      allowed_tools: previous?.allowed_tools ?? [],
+      capabilities: previous?.capabilities ?? [],
+      system_prompt: previous?.system_prompt ?? null,
+      enabled: item.enabled,
+      is_built_in: isManaged,
+      model_strategy: item.configured_strategy as unknown as Record<string, unknown>,
+      model_binding: item.model_binding ?? null,
+      status: item.status,
+      revision: item.revision,
+      version: item.version,
+      updated_at: item.updated_at ?? null,
+    }
+  })
+  const activeAgent = requestedAgentId.value
+    ? agents.value.find((agent) => agent.id === requestedAgentId.value)
+    : agents.value.find((agent) => agent.id === configuringAgentId.value)
+      ?? agents.value.find((agent) => agent.id === selectedAgentId.value)
+      ?? agents.value[0]
+  if (activeAgent && !preserveDraft) {
+    await openAgentConfigFromDirectory(activeAgent.id)
+  }
+  const readSources = new Set(partial.map(item => item.source))
+  agentReadDiagnostics.value = [...partial, ...agentReadDiagnostics.value.filter(item => !readSources.has(item.source))]
+  void loadAgentPermissionRequests()
+  const auxiliary = Promise.all([
+    (async () => {
+      try {
+        const manifest = await api.getHarnessManifest({ signal })
         if (!isCurrent()) return
-        const known = new Set(partial.map(item => item.source))
-        agentReadDiagnostics.value = [...partial, ...agentReadDiagnostics.value.filter(item => !known.has(item.source))]
-      })
-      if (isCurrent()) void loadToolDiscovery(context)
-}
-
-async function loadToolDiscovery(context?: ReadContext) {
-  if (!canAccessBackend.value) return
-  toolDiscoveryLoading.value = true
-  try {
-    const results = await api.searchTools({
-      query: toolDiscoveryQuery.value.trim() || undefined,
-      source: toolDiscoverySource.value === 'all' ? undefined : toolDiscoverySource.value,
-      risk: toolDiscoveryRisk.value === 'all' ? undefined : toolDiscoveryRisk.value,
-      limit: 10
-    }, context ? { signal: context.signal } : undefined)
-    if (!context || context.isCurrent()) toolSearchResults.value = results
-  } catch (error) {
-    if (!context || context.isCurrent()) agentReadDiagnostics.value = [...agentReadDiagnostics.value,
-      { source: 'tool-search', error: toErrorState(error) }]
-  } finally {
-    if (!context || context.isCurrent()) toolDiscoveryLoading.value = false
-  }
-}
-
-function errorStatus(error: unknown): unknown {
-  return error && typeof error === 'object' ? (error as { status?: unknown }).status : undefined
-}
-
-function agentSaveErrorMessage(error: unknown): string {
-  const msg = error instanceof Error ? error.message : String(error)
-  if (isRevisionConflict(error)) return t('settings.agentConflict')
-  if (errorStatus(error) === 409 || msg.includes('409') || msg.toLowerCase().includes('built-in')) return t('settings.agentBuiltInConflict')
-  return msg
-}
-
-function isRevisionConflict(error: unknown): boolean {
-  const msg = error instanceof Error ? error.message : String(error)
-  return errorStatus(error) === 412 || errorStatus(error) === 428
-    || msg.includes('412') || msg.toLowerCase().includes('revision') || msg.includes('Precondition')
-}
-
-/** One versioned write attempt: update draft (If-Match revision) then publish a new immutable version. */
-async function writeAgentDraft(body: Partial<AgentDefinitionDto>, agentId: string, revision: number | null | undefined) {
-  const draft = await api.updateAgentDraft(agentId, body, revision != null ? String(revision) : null)
-  await api.publishAgent(agentId, draft.revision != null ? String(draft.revision) : null)
-}
-
-/** 412 resolution dialog: reload the latest state, or force-overwrite on a fresh revision. */
-async function resolveAgentConflict(agentId: string, body: Partial<AgentDefinitionDto>) {
-  const overwrite = await confirm({
-    title: t('settings.agentConflictTitle'),
-    message: t('settings.agentConflictMessage'),
-    confirmLabel: t('settings.agentConflictOverwrite'),
-    cancelLabel: t('settings.agentConflictRefresh')
+        harnessManifest.value = manifest
+        availableTools.value = manifest.tools
+      } catch {
+        if (!isCurrent()) return
+        try {
+          const tools = await api.listTools({ signal })
+          if (!isCurrent()) return
+          harnessManifest.value = null
+          availableTools.value = tools
+        } catch (error) { preserve('tools', availableTools.value)(error) }
+      }
+    })(),
+  ])
+  void auxiliary.then(() => {
+    if (!isCurrent()) return
+    const known = new Set(partial.map(item => item.source))
+    agentReadDiagnostics.value = [...partial, ...agentReadDiagnostics.value.filter(item => !known.has(item.source))]
   })
-  await loadAgentCenter()
-  if (!overwrite) return
-  const latest = agents.value.find((item) => item.id === agentId)
-  if (!latest) return
-  try {
-    await writeAgentDraft(body, latest.id, latest.revision)
-    await loadAgentCenter()
-    notify.success(latest.name)
-  } catch (retryError) {
-    notify.error(new Error(isRevisionConflict(retryError) ? t('settings.agentConflict') : agentSaveErrorMessage(retryError)), { title: latest.name })
-  }
 }
 
-/** Shared versioned write path; 412 revision conflicts open the conflict dialog instead of a generic toast. */
-async function publishAgentDraft(
-  agent: AgentViewDto,
-  body: Partial<AgentDefinitionDto>,
-  revision: number | null | undefined,
-  successTitle: string
-) {
-  try {
-    await writeAgentDraft(body, agent.id, revision)
-  } catch (error) {
-    if (!isRevisionConflict(error)) throw error
-    markDraftStale('user', 'agent', agent.id)
-    await resolveAgentConflict(agent.id, body)
-    return
-  }
-  settleAgentDraft(agent.id)
-  await loadAgentCenter()
-  notify.success(successTitle)
-}
-
-async function setAgentEnabled(agent: AgentViewDto, enabled: boolean) {
-  if (agent.is_built_in) {
-    status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
-    return
-  }
-  busy.value = true
-  try {
-    await publishAgentDraft(agent, { enabled }, agent.revision, agent.name)
-  } catch (error) {
-    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
-  } finally {
-    busy.value = false
-  }
-}
-
-function openCreateAgent() {
-  newAgentName.value = ''
-  newAgentSlug.value = ''
-  newAgentLayer.value = 'operation'
-  newAgentRole.value = ''
-  showCreateAgent.value = true
-}
-
-async function createAgent() {
-  const name = newAgentName.value.trim()
-  if (!name) return
-  newAgentBusy.value = true
-  try {
-    const created = await api.createAgentDraft({
-      slug: newAgentSlug.value.trim() || undefined,
-      display_name: name,
-      layer: newAgentLayer.value,
-      role: newAgentRole.value.trim() || (newAgentLayer.value === 'operation' ? 'session_coordinator' : 'code_writer'),
-      capabilities: [],
-      tool_scope: [],
-      enabled: true,
-    })
-    showCreateAgent.value = false
-    await loadAgentCenter()
-    const agent = agents.value.find(item => item.id === created.id)
-    if (agent) openAgentConfig(agent)
-    notify.success(name)
-  } catch (error) {
-    notify.error(error, { title: t('settings.newAgent') })
-  } finally {
-    newAgentBusy.value = false
-  }
-}
-
-async function archiveCurrentAgent() {
-  const agent = configuringAgent.value
-  if (!agent || agent.is_built_in) return
-  const confirmed = await confirm({
-    title: t('settings.archiveAgent'),
-    message: t('settings.archiveAgentConfirm', { name: agent.name }),
-    confirmLabel: t('settings.archiveAgent'),
-    cancelLabel: t('common.cancel'),
-  })
-  if (!confirmed) return
-  busy.value = true
-  try {
-    await api.archiveAgent(agent.id, agent.revision)
-    closeAgentConfig()
-    await loadAgentCenter()
-    notify.success(t('settings.agentArchived', { name: agent.name }))
-  } catch (error) {
-    notify.error(error, { title: t('settings.archiveAgent') })
-  } finally {
-    busy.value = false
-  }
-}
-
-async function cloneAgent() {
-  const agent = configuringAgent.value
-  if (!agent) return
-  agentCloneBusy.value = true
-  try {
-    const newName = t('common.copyName', { name: agent.name })
-    await api.createAgentDraft({
-      slug: `${agent.id}-copy-${Date.now()}`,
-      display_name: newName,
-      layer: agent.layer as AgentDefinitionDto['layer'],
-      role: agent.agent_type,
-      capabilities: agentEditCapabilities.value,
-      tool_scope: agentEditTools.value,
-      system_prompt: agentEditSystemPrompt.value || agent.system_prompt || null,
-      description: agentEditDescription.value || agent.description || null,
-      model_strategy: bindingFromModelStrategy(agent).selection_kind === 'inherit' ? { kind: 'inherit' } : undefined,
-      enabled: true
-    })
-    await loadAgentCenter()
-    const cloned = agents.value.find((a) => (a as AgentViewDto & { display_name?: string }).display_name === newName)
-      ?? agents.value.find((a) => a.name === newName)
-    if (cloned) openAgentConfig(cloned)
-    notify.success(newName)
-  } catch (error) {
-    notify.error(error, { title: t('settings.cloneAgent') })
-  } finally {
-    agentCloneBusy.value = false
-  }
-}
-
-async function openGraphSeedPackCloneFlow() {
-  agentCenterTab.value = 'agents'
+async function openGraphSeedPackCloneFlow(requestedSlug?: string) {
+  await switchAgentCenterTab('agents')
   if (!agents.value.some((agent) => agent.is_built_in)) await loadAgentCenter()
   const packSlugs = new Set(graphSeedPackManifest.resources.agents.map((agent) => agent.slug))
-  const managedAgent = agents.value.find((agent) =>
-    agent.is_built_in && packSlugs.has(agent.slug ?? agent.name),
-  )
+  const managedAgent = (requestedSlug
+    ? agents.value.find((agent) => agent.is_built_in && (agent.slug === requestedSlug || agent.name === requestedSlug))
+    : undefined)
+    ?? agents.value.find((agent) => agent.is_built_in && packSlugs.has(agent.slug ?? agent.name))
   if (!managedAgent) {
     status.warning({
       key: 'graph-seed-pack-clone',
@@ -938,194 +447,9 @@ async function openGraphSeedPackCloneFlow() {
     })
     return
   }
-  openAgentConfig(managedAgent)
+  await openAgentConfigFromDirectory(managedAgent.id)
 }
 
-async function saveAgent() {
-  const agent = configuringAgent.value
-  if (!agent) return
-  if (agent.is_built_in) {
-    status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
-    return
-  }
-  busy.value = true
-  try {
-    await publishAgentDraft(agent, {
-      display_name: agent.name,
-      layer: agent.layer,
-      role: agent.agent_type,
-      tool_scope: agentEditTools.value,
-      capabilities: agentEditCapabilities.value,
-      system_prompt: agentEditSystemPrompt.value || null,
-      description: agentEditDescription.value || null,
-      enabled: agent.enabled
-    }, agentEditRevision.value ?? agent.revision, agent.name)
-    // Re-sync edit state from the published agent
-    const updated = agents.value.find((a) => a.id === configuringAgentId.value)
-    if (updated) {
-      agentEditTools.value = [...(updated.allowed_tools ?? [])]
-      agentEditCapabilities.value = [...(updated.capabilities ?? [])]
-      agentEditSystemPrompt.value = updated.system_prompt ?? ''
-      agentEditDescription.value = updated.description ?? ''
-      agentEditRevision.value = updated.revision ?? null
-    }
-  } catch (error) {
-    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
-  } finally {
-    busy.value = false
-  }
-}
-
-function toggleAgentTool(toolId: string) {
-  const idx = agentEditTools.value.indexOf(toolId)
-  if (idx >= 0) {
-    agentEditTools.value.splice(idx, 1)
-  } else {
-    agentEditTools.value.push(toolId)
-  }
-}
-
-function removeAgentCapability(cap: string) {
-  const idx = agentEditCapabilities.value.indexOf(cap)
-  if (idx >= 0) {
-    agentEditCapabilities.value.splice(idx, 1)
-  }
-}
-
-function addAgentCapability() {
-  const cap = agentNewCapability.value.trim()
-  if (cap && !agentEditCapabilities.value.includes(cap)) {
-    agentEditCapabilities.value.push(cap)
-    agentNewCapability.value = ''
-  }
-}
-
-let agentEditorBaseline = ''
-function agentEditorSnapshot(): string {
-  return JSON.stringify([configuringAgentId.value, agentEditTools.value, agentEditCapabilities.value,
-    agentEditSystemPrompt.value, agentEditDescription.value, agentRuntimeSelection.value,
-    agentRuntimeModelKey.value, agentRuntimeRoutePurpose.value])
-}
-
-const agentDraftNotice = ref<{ status: 'dirty' | 'stale'; savedAt: number } | null>(null)
-let agentDraftTimer: ReturnType<typeof setTimeout> | null = null
-let applyingAgentDraft = false
-
-function agentDraftPayload(agent: AgentViewDto): Record<string, unknown> {
-  return {
-    display_name: agent.name,
-    layer: agent.layer,
-    role: agent.agent_type,
-    tool_scope: [...agentEditTools.value],
-    capabilities: [...agentEditCapabilities.value],
-    system_prompt: agentEditSystemPrompt.value || null,
-    description: agentEditDescription.value || null,
-    enabled: agent.enabled,
-    model_selection: agentRuntimeSelection.value,
-    model_key: agentRuntimeModelKey.value,
-    route_purpose: agentRuntimeRoutePurpose.value,
-  }
-}
-
-function applyAgentDraft(draft: StoredDraft) {
-  const payload = draft.payload
-  applyingAgentDraft = true
-  try {
-    if (Array.isArray(payload.tool_scope)) agentEditTools.value = payload.tool_scope.filter((item): item is string => typeof item === 'string')
-    if (Array.isArray(payload.capabilities)) agentEditCapabilities.value = payload.capabilities.filter((item): item is string => typeof item === 'string')
-    if (typeof payload.system_prompt === 'string' || payload.system_prompt === null) agentEditSystemPrompt.value = payload.system_prompt ?? ''
-    if (typeof payload.description === 'string' || payload.description === null) agentEditDescription.value = payload.description ?? ''
-    if (payload.model_selection === 'inherit' || payload.model_selection === 'route' || payload.model_selection === 'fixed_model') {
-      agentRuntimeSelection.value = payload.model_selection
-    }
-    if (typeof payload.model_key === 'string') agentRuntimeModelKey.value = payload.model_key
-    if (typeof payload.route_purpose === 'string') agentRuntimeRoutePurpose.value = payload.route_purpose
-  } finally {
-    applyingAgentDraft = false
-  }
-  agentDraftNotice.value = { status: draft.status, savedAt: draft.savedAt }
-}
-
-function restoreAgentDraft(agent: AgentViewDto) {
-  agentDraftNotice.value = null
-  const draft = readDraft('user', 'agent', agent.id)
-  if (!draft) return
-  const currentRevision = agent.revision ?? agentEditRevision.value
-  const baseRevision = draft.base.revision
-  // A draft based on another revision is not applied automatically: the user
-  // decides whether to load it over the newer definition or discard it.
-  if (baseRevision != null && currentRevision != null && baseRevision !== currentRevision) {
-    markDraftStale('user', 'agent', agent.id)
-    agentDraftNotice.value = { status: 'stale', savedAt: draft.savedAt }
-    return
-  }
-  if (draft.status === 'stale') {
-    agentDraftNotice.value = { status: 'stale', savedAt: draft.savedAt }
-    return
-  }
-  applyAgentDraft(draft)
-}
-
-function persistAgentDraft() {
-  const agent = configuringAgent.value
-  if (!agent || agent.is_built_in || applyingAgentDraft) return
-  if (agentEditorSnapshot() === agentEditorBaseline) return
-  const baseRevision = agentEditRevision.value ?? agent.revision ?? null
-  const now = Date.now()
-  const result = writeDraft('user', 'agent', agent.id, agentDraftPayload(agent), { revision: baseRevision, etag: null }, now)
-  if (result.ok) {
-    agentDraftNotice.value = { status: 'dirty', savedAt: now }
-  } else if (result.reason === 'too_large') {
-    status.warning({ key: 'agent-draft', source: 'agents', message: t('settings.agentDraftTooLarge') })
-  }
-}
-
-function scheduleAgentDraftSave() {
-  if (applyingAgentDraft) return
-  if (agentDraftTimer) clearTimeout(agentDraftTimer)
-  agentDraftTimer = setTimeout(() => {
-    agentDraftTimer = null
-    persistAgentDraft()
-  }, 400)
-}
-
-function flushAgentDraft() {
-  if (!agentDraftTimer) return
-  clearTimeout(agentDraftTimer)
-  agentDraftTimer = null
-  persistAgentDraft()
-}
-
-function dropAgentDraft() {
-  const agent = configuringAgent.value
-  if (agent) clearDraft('user', 'agent', agent.id)
-  agentDraftNotice.value = null
-}
-
-function loadAgentDraft() {
-  const agent = configuringAgent.value
-  if (!agent) return
-  const draft = readDraft('user', 'agent', agent.id)
-  if (!draft) { agentDraftNotice.value = null; return }
-  applyAgentDraft(draft)
-}
-
-function settleAgentDraft(agentId: string) {
-  clearDraft('user', 'agent', agentId)
-  if (configuringAgentId.value === agentId) agentDraftNotice.value = null
-}
-
-watch(
-  [agentEditTools, agentEditCapabilities, agentEditSystemPrompt, agentEditDescription,
-    agentRuntimeSelection, agentRuntimeModelKey, agentRuntimeRoutePurpose],
-  scheduleAgentDraftSave,
-  { deep: true, flush: 'post' },
-)
-/**
- * The one place a definition is read. The editor is seeded from the merge in
- * `mergeAgentDefinition`, and only then does the panel open — a failed read leaves the panel
- * closed with a retry, never an invented empty prompt/tool list.
- */
 async function ensureAgentDefinition(agentId: string): Promise<AgentViewDto | null> {
   if (agentDefinitionLoadedIds.value.has(agentId)) return agents.value.find((item) => item.id === agentId) ?? null
   if (agentDefinitionLoadingId.value === agentId) return null
@@ -1133,7 +457,6 @@ async function ensureAgentDefinition(agentId: string): Promise<AgentViewDto | nu
   try {
     const definition = await api.getAgent(agentId)
     const index = agents.value.findIndex((item) => item.id === agentId)
-    // The directory may have been replaced while this was out; a row that is gone stays gone.
     if (index < 0) return null
     agents.value = agents.value.map((item, position) => position === index ? mergeAgentDefinition(item, definition) : item)
     agentDefinitionLoadedIds.value = new Set([...agentDefinitionLoadedIds.value, agentId])
@@ -1151,12 +474,26 @@ async function ensureAgentDefinition(agentId: string): Promise<AgentViewDto | nu
   }
 }
 
-/** Application fields the directory cannot supply; the directory keeps ownership of the rest. */
 function mergeAgentDefinition(row: AgentViewDto, definition: AgentDefinitionDto): AgentViewDto {
+  const tools = definition.tool_scope === '*'
+    ? ['*']
+    : Array.isArray(definition.tool_scope)
+      ? definition.tool_scope
+      : Array.isArray(definition.allowed_tools)
+        ? definition.allowed_tools
+        : row.allowed_tools ?? []
   return {
     ...row,
+    display_name: definition.display_name ?? row.display_name,
+    name: definition.display_name ?? definition.name ?? row.name,
+    layer: definition.layer ?? row.layer,
+    role: definition.role ?? definition.agent_type ?? row.role,
+    agent_type: definition.role ?? definition.agent_type ?? row.agent_type,
+    source_kind: definition.source_kind ?? row.source_kind,
+    provenance: definition.provenance ?? row.provenance ?? null,
+    base_prompt_pipeline_id: definition.base_prompt_pipeline_id ?? row.base_prompt_pipeline_id ?? null,
     description: definition.description ?? row.description ?? '',
-    allowed_tools: Array.isArray(definition.tool_scope) ? definition.tool_scope as string[] : row.allowed_tools ?? [],
+    allowed_tools: tools,
     capabilities: definition.capabilities ?? row.capabilities ?? [],
     system_prompt: definition.system_prompt ?? null,
     revision: definition.revision ?? row.revision ?? null,
@@ -1165,240 +502,22 @@ function mergeAgentDefinition(row: AgentViewDto, definition: AgentDefinitionDto)
   }
 }
 
-/** Open an agent by id from the directory, reading its definition first when needed. */
+function handlePatchAgent(patched: AgentViewDto) {
+  const index = agents.value.findIndex((item) => item.id === patched.id)
+  if (index >= 0) {
+    agents.value = agents.value.map((item, idx) => (idx === index ? patched : item))
+  }
+}
+
 async function openAgentConfigFromDirectory(agentId: string): Promise<void> {
   selectedAgentId.value = agentId
   const loaded = await ensureAgentDefinition(agentId)
-  // A failed read leaves the failure (and its retry) in the inspector; never open an empty editor.
-  if (loaded) openAgentConfig(loaded)
-  else if (agentDefinitionFailures.value[agentId]) configuringAgentId.value = agentId
-}
-
-function openAgentConfig(agent: AgentViewDto) {
-  if (configuringAgentId.value && configuringAgentId.value !== agent.id) flushAgentDraft()
-  selectedAgentId.value = agent.id
-  if (agentDefinitionFailures.value[agent.id]) { configuringAgentId.value = agent.id; return }
-  // The rail is painted before any definition exists; opening one is what reads it.
-  if (!agentDefinitionLoadedIds.value.has(agent.id)) { void openAgentConfigFromDirectory(agent.id); return }
-  configuringAgentId.value = agent.id
-  agentEditTools.value = [...(agent.allowed_tools ?? [])]
-  agentEditCapabilities.value = [...(agent.capabilities ?? [])]
-  agentEditSystemPrompt.value = agent.system_prompt ?? ''
-  agentEditDescription.value = agent.description ?? ''
-  agentEditRevision.value = agent.revision ?? null
-  agentNewCapability.value = ''
-  agentToolQuery.value = ''
-  agentToolSourceFilter.value = 'all'
-  agentToolRiskFilter.value = 'all'
-  // 从运行时绑定 seed（而不是 agent 定义策略）：绑定写入不改定义，只读定义会回弹。
-  const binding = bindingFromModelStrategy(agent, agent.model_binding)
-  agentRuntimeSelection.value = binding?.selection_kind ?? 'inherit'
-  agentRuntimeModelKey.value = binding?.provider_instance_id
-    // CLI/ACP 运行时的 fixed 绑定没有 model：此时 key 就是裸 provider id
-    // （与 agentModelStrategy() 的 CLI/ACP 分支同一把钥匙）。
-    ? (binding.model_id ? modelOptionKey(binding.provider_instance_id, binding.model_id) : binding.provider_instance_id)
-    // 无绑定（跟随默认）时保持空选择，不再猜 runtimeModels[0]：列表首项是任意模型，
-    // 在 runtimeModels 尚未加载/为空时还会把刚保存的选择打回原样（问题 1 的回弹竞态）。
-    : ''
-  agentRuntimeRoutePurpose.value = binding?.route_purpose
-    || (agent as AgentViewDto & { model_route_purpose?: string }).model_route_purpose
-    || routes.value[0]?.purpose
-    || ''
-  agentRuntimeModelQuery.value = ''
-  restoreAgentDraft(agent)
-  agentEditorBaseline = agentEditorSnapshot()
-  void loadAgentVersionHistory(agent.id)
-  nextTick(() => {
-    if (!window.matchMedia('(max-width: 760px)').matches) return
-    const panel = document.querySelector('.agent-detail-panel')
-    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  })
-}
-
-/** Published version timeline for the configured agent (immutable snapshots). */
-async function loadAgentVersionHistory(agentId: string) {
-  agentVersionsLoading.value = true
-  agentVersionHistoryError.value = null
-  try {
-    const versions = await api.listAgentVersions(agentId)
-    if (configuringAgentId.value === agentId) agentVersionHistory.value = versions
-  } catch (error) {
-    // A failed read is not "no versions published": keep the rows we already
-    // have and surface the failure with its own retry.
-    if (configuringAgentId.value === agentId) agentVersionHistoryError.value = toErrorState(error)
-  } finally {
-    if (configuringAgentId.value === agentId) agentVersionsLoading.value = false
+  if (loaded) {
+    configuringAgentId.value = loaded.id
+    agentsPanelRef.value?.openAgentConfig(loaded)
+  } else if (agentDefinitionFailures.value[agentId]) {
+    configuringAgentId.value = agentId
   }
-}
-
-/** Pending governance requests surfaced in the inspector (approval visibility). */
-async function loadAgentPermissionRequests() {
-  try {
-    agentPermissionRequests.value = await api.listPermissionRequests()
-  } catch {
-    agentPermissionRequests.value = []
-  }
-}
-
-function closeAgentConfig() {
-  flushAgentDraft()
-  selectedAgentId.value = ''
-  configuringAgentId.value = ''
-}
-
-function openAgentConfigById(agentId: string) {
-  const agent = agents.value.find((item) => item.id === agentId)
-  if (agent) openAgentConfig(agent)
-}
-
-/** Build the Core model_strategy JSON from the current runtime-source selection. */
-function agentModelStrategy(): Record<string, unknown> | null {
-  if (agentRuntimeSelection.value === 'route') {
-    return agentRuntimeRoutePurpose.value ? { kind: 'route', route_purpose: agentRuntimeRoutePurpose.value } : null
-  }
-  if (agentRuntimeSelection.value === 'fixed_model') {
-    const selected = runtimeModels.value.find((model) =>
-      modelOptionKey(model.provider_instance_id, model.model_id) === agentRuntimeModelKey.value
-    )
-    if (selected) {
-      return { kind: 'fixed', provider_instance_id: selected.provider_instance_id, model: selected.model_id }
-    }
-    // CLI/ACP provider instances participate in `fixed` and may omit the model.
-    const runtime = [...runtimeCliOptions.value, ...runtimeAcpOptions.value]
-      .find((item) => item.provider_instance_id === agentRuntimeModelKey.value)
-    return runtime ? { kind: 'fixed', provider_instance_id: runtime.provider_instance_id, model: null } : null
-  }
-  return { kind: 'inherit' }
-}
-
-function agentStrategySaveable(): boolean {
-  return agentModelStrategy() !== null
-}
-
-/** Definition fields differ from the published row; a model save must not discard them. */
-function agentDefinitionDirty(agent: AgentViewDto): boolean {
-  const same = (a: string[] | null | undefined, b: string[] | null | undefined) =>
-    [...(a ?? [])].sort().join('\u0000') === [...(b ?? [])].sort().join('\u0000')
-  return !same(agentEditTools.value, agent.allowed_tools)
-    || !same(agentEditCapabilities.value, agent.capabilities)
-    || (agentEditSystemPrompt.value || '') !== (agent.system_prompt ?? '')
-    || (agentEditDescription.value || '') !== (agent.description ?? '')
-}
-
-async function saveAgentModelStrategy(agent: AgentViewDto) {
-  const strategy = agentModelStrategy()
-  if (!strategy) return
-  agentRuntimeBusy.value = true
-  if (agentDefinitionDirty(agent)) persistAgentDraft()
-  try {
-    // 运行时绑定（配置体验改造 A）：覆盖记录，pack 管理的智能体同样可写，
-    // 不再走 draft/publish，也就没有 412/409 managed_resource_read_only。
-    // 三档原样透传。此前 route 被静默降级成 inherit，用户选「按用途路由」保存后
-    // 会变成「跟随默认」——Core 现已支持 mode='route' + route_purpose。
-    // The endpoint replaces the whole binding: the tool-scope override goes back as it was, or
-    // saving a model would clear it.
-    const toolScope = agent.model_binding?.tool_scope_override
-    const saved = await api.putAgentRuntimeBinding(agent.id, {
-      mode: strategy.kind as 'inherit' | 'route' | 'fixed',
-      provider_instance_id: (strategy as { provider_instance_id?: string }).provider_instance_id ?? null,
-      model: (strategy as { model?: string | null }).model ?? null,
-      route_purpose: (strategy as { route_purpose?: string }).route_purpose ?? null,
-      ...(Array.isArray(toolScope) ? { tool_scope: toolScope } : {}),
-    })
-    // 定向 patch（问题 1 修复）：PUT 响应体已是权威的最新绑定（含 revision/updated_at），
-    // 直接写回 agents 那一行并据其重新 seed 选择，不再 loadAgentCenter() 全量重载——
-    // 后者会触发 ~30 个往返、无条件 openAgentConfig re-seed，并在 runtimeModels 尚未
-    // 加载时把选择打回列表首项（症状：设置成功但立刻回弹）。
-    const patched: AgentViewDto = { ...agent, model_binding: saved as unknown as AgentViewDto['model_binding'] }
-    const index = agents.value.findIndex((item) => item.id === agent.id)
-    if (index >= 0) agents.value[index] = patched
-    openAgentConfig(patched)
-    if (agentDefinitionDirty(patched)) persistAgentDraft()
-    else settleAgentDraft(agent.id)
-    notify.success(t('settings.runtimeBindingSaved', { name: agent.name }))
-  } catch (error) {
-    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
-  } finally {
-    agentRuntimeBusy.value = false
-  }
-}
-
-function agentTypeLabel(type: string) {
-  const map: Record<string, string> = {
-    // Layer 1 · Planning 主动智能体
-    meeting: t('settings.agentTypeMeeting'),
-    'context-compressor': t('settings.agentTypeContextCompressor'),
-    'prompt-context-engineer': t('settings.agentTypePromptContextEngineer'),
-    evolver: t('settings.agentTypeEvolver'),
-    'tool-assistant': t('settings.agentTypeToolAssistant'),
-    supervisor: t('settings.agentTypeSupervisor'),
-    'skill-learner': t('settings.agentTypeSkillLearner'),
-    // Layer 2 · Execution 被动执行类智能体
-    'task-planner': t('settings.agentTypeTaskPlanner'),
-    'test-multimodal': t('settings.agentTypeTestMultimodal'),
-    'code-explorer': t('settings.agentTypeCodeExplorer'),
-    'search-specialist': t('settings.agentTypeSearchSpecialist'),
-    'file-finder': t('settings.agentTypeFileFinder'),
-    'git-manager': t('settings.agentTypeGitManager'),
-    'code-writer': t('settings.agentTypeCodeWriter'),
-    designer: t('settings.agentTypeDesigner'),
-    'review-executor': t('settings.agentTypeReviewExecutor'),
-    'tool-packager': t('settings.agentTypeToolPackager'),
-    // Legacy types (kept for backward compatibility)
-    chair: t('settings.agentTypeMeeting'),
-    planner: t('settings.agentTypeTaskPlanner'),
-    'tool-manager': t('settings.agentTypeToolAssistant'),
-    'evolution-algorithm': t('settings.agentTypeEvolver'),
-    executor: t('settings.agentTypeCodeWriter'),
-    reviewer: t('settings.agentTypeSupervisor'),
-  }
-  return map[type] ?? type
-}
-
-function agentLayerLabel(layer: string) {
-  const map: Record<string, string> = {
-    planning: t('settings.agentLayerPlanning'),
-    execution: t('settings.agentLayerExecution'),
-    evolution: t('settings.agentLayerEvolution'),
-  }
-  return map[layer] ?? layer
-}
-
-function agentModeLabel(mode: string) {
-  const map: Record<string, string> = {
-    balanced: t('settings.agentModeBalanced'),
-    'plan-first': t('settings.agentModePlanFirst'),
-    parallel: t('settings.agentModeParallel'),
-    'safe-research': t('settings.agentModeSafeResearch'),
-    chat: t('settings.agentModeChat'),
-    plan: t('settings.agentModePlan'),
-    execute: t('settings.agentModeExecute'),
-    review: t('settings.agentModeReview'),
-  }
-  return map[mode] ?? mode
-}
-
-function agentModeSummary(mode: AgentModeDto) {
-  const map: Record<string, string> = {
-    balanced: t('settings.agentModeBalancedHint'),
-    'plan-first': t('settings.agentModePlanFirstHint'),
-    parallel: t('settings.agentModeParallelHint'),
-    'safe-research': t('settings.agentModeSafeResearchHint')
-  }
-  return map[mode.id] ?? mode.summary
-}
-
-function agentPolicyLabel(policy: string) {
-  const map: Record<string, string> = {
-    balanced: t('settings.policyBalanced'),
-    strict: t('settings.policyStrict'),
-    performance: t('settings.policyPerformance')
-  }
-  return map[policy] ?? policy
-}
-
-function candidateStatusLabel(status: string) {
-  return status === 'proposed' ? t('settings.candidateProposed') : status
 }
 
 // The spotlight hands deep-links over through the request channel: a section
@@ -1440,7 +559,7 @@ watch(modelCenterRef, (section) => {
 consumeRequest(pendingAgentId, async (agentId) => {
   const generation = ++agentNavigationGeneration
   if (!await selectSettingsSection('agentCenter')) return
-  switchAgentCenterTab('agents')
+  await switchAgentCenterTab('agents')
   agentViewMode.value = 'list'
   selectedAgentId.value = agentId
   configuringAgentId.value = agentId
@@ -1450,7 +569,7 @@ consumeRequest(pendingAgentId, async (agentId) => {
   const agent = agents.value.find((item) => item.id === agentId)
   requestedAgentId.value = null
   if (agent) {
-    openAgentConfig(agent)
+    await openAgentConfigFromDirectory(agent.id)
   } else {
     notify.error(t('app.loadFailedMessage'), { title: t('app.loadFailed'), key: 'search-navigation' })
   }
@@ -1459,12 +578,12 @@ consumeRequest(pendingAgentId, async (agentId) => {
 watch(pendingModeId, async (id) => {
   if (!id) return
   if (!await selectSettingsSection('agentCenter')) return
-  switchAgentCenterTab('modes')
+  await switchAgentCenterTab('modes')
 }, { immediate: true })
 watch(pendingPromptId, async (id) => {
   if (!id) return
   if (!await selectSettingsSection('agentCenter')) return
-  switchAgentCenterTab('prompts')
+  await switchAgentCenterTab('prompts')
 }, { immediate: true })
 watch(pendingToolId, (id) => {
   if (id) selectSettingsSection('tools')
@@ -1555,6 +674,8 @@ import '../settings/settings.css'
             :tab="agentCenterTab"
             :agents="agents"
             :modes="agentModes"
+            :prompt-pipelines="promptPipelines"
+            :manifest-tool-ids="manifestToolList.map(tool => tool.id)"
             :can-access-backend="canAccessBackend"
             :loading="agentCenterLoading"
             @update:tab="switchAgentCenterTab"
@@ -1564,732 +685,45 @@ import '../settings/settings.css'
             @open-graph="openModeInGraph"
           >
             <template #agents>
-
-          <div class="center-page agent-center-page">
-          <div class="ac-toolbar-row ac-agent-toolbar">
-            <div class="agent-view-toggle">
-              <button
-                :class="['agent-view-btn', { active: agentViewMode === 'topology' }]"
-                :title="t('settings.topologyView')"
-                :aria-label="t('settings.topologyView')"
-                :aria-pressed="agentViewMode === 'topology'"
-                @click="agentViewMode = 'topology'"
-              >
-                <LayoutGrid :size="15" />
-              </button>
-              <button
-                :class="['agent-view-btn', { active: agentViewMode === 'list' }]"
-                :title="t('settings.listView')"
-                :aria-label="t('settings.listView')"
-                :aria-pressed="agentViewMode === 'list'"
-                @click="agentViewMode = 'list'"
-              >
-                <List :size="15" />
-              </button>
-            </div>
-            <div class="agent-tool-search ac-agent-search">
-              <Search :size="14" />
-              <UiInput v-model="agentQuery" :placeholder="t('settings.agentSearchPlaceholder')" />
-            </div>
-            <UiSelectField
-              v-model="agentSourceFilter"
-              class="compact"
-              :aria-label="t('settings.agentFilterSource')"
-              :options="[
-                { value: 'all', label: t('settings.allSources') },
-                ...agentSourceOptions.map(source => ({ value: source, label: agentSourceKindLabel(source) })),
-              ]"
-            />
-            <UiSelectField
-              v-model="agentLayerFilter"
-              class="compact"
-              :aria-label="t('settings.agentFilterLayer')"
-              :options="[
-                { value: 'all', label: t('settings.agentFilterAllLayers') },
-                { value: 'operation', label: t('settings.agentLayerPlanning') },
-                { value: 'execution', label: t('settings.agentLayerExecution') },
-              ]"
-            />
-            <UiSelectField
-              v-model="agentStatusFilter"
-              class="compact"
-              :aria-label="t('settings.agentFilterStatus')"
-              :options="[
-                { value: 'all', label: t('settings.agentFilterAllStatuses') },
-                { value: 'draft', label: t('settings.teamDraft') },
-                { value: 'published', label: t('settings.teamStatusPublished') },
-                { value: 'archived', label: t('settings.teamArchived') },
-              ]"
-            />
-            <span class="ac-toolbar-readout">{{ filteredAgentCount }} / {{ agents.length }}</span>
-            <UiButton size="sm" :disabled="!canAccessBackend" @click="openCreateAgent">
-              <Plus :size="14" />
-              <span>{{ t('settings.newAgent') }}</span>
-            </UiButton>
-          </div>
-
-          <section class="center-overview-receipt agent-overview-receipt" :aria-label="t('settings.centerOverview')">
-            <div class="center-receipt-item ready">
-              <Settings2 :size="17" />
-              <div>
-                <strong :title="t('settings.agentProfilesWritable')">{{ t('settings.agentProfilesWritable') }}</strong>
-                <span :title="t('settings.agentProfilesWritableHint')">{{ t('settings.agentProfilesWritableHint') }}</span>
-              </div>
-              <UiBadge variant="default">{{ t('settings.writable') }}</UiBadge>
-            </div>
-            <div class="center-receipt-item preview">
-              <Workflow :size="17" />
-              <div>
-                <strong :title="t('settings.runtimePreviewOnly')">{{ t('settings.runtimePreviewOnly') }}</strong>
-                <span :title="t('settings.runtimePreviewOnlyHint')">{{ t('settings.runtimePreviewOnlyHint') }}</span>
-              </div>
-              <UiBadge variant="outline">{{ t('settings.previewBadge') }}</UiBadge>
-            </div>
-            <div class="center-receipt-item configured">
-              <Bot :size="17" />
-              <div>
-                <strong>{{ agents.filter(agent => agent.enabled).length }} / {{ agents.length }}</strong>
-                <span :title="t('settings.activeAgents')">{{ t('settings.activeAgents') }}</span>
-              </div>
-              <UiBadge variant="outline" :title="t('settings.agentLayerCounts', { planning: planningAgents.length, execution: executionAgents.length })">
-                {{ t('settings.agentLayerCounts', { planning: planningAgents.length, execution: executionAgents.length }) }}
-              </UiBadge>
-            </div>
-          </section>
-
-          <div v-if="agentCenterLoading && agents.length === 0" class="center-loading-state" aria-live="polite">
-            <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
-          </div>
-
-          <p v-else-if="agentCenterLoading" class="center-stale-status" role="status">
-            <RefreshCw :size="13" class="center-stale-spinner" aria-hidden="true" />
-            {{ t('settings.refreshing') }}
-          </p>
-
-          <div v-if="agentCenterFailure" class="center-message" role="alert" data-testid="agent-center-read-failure">
-            <Info :size="16" aria-hidden="true" />
-            <div class="center-message-content">
-              <strong>{{ t('settings.centerLoadFailed') }}</strong>
-              <span>{{ agentCenterFailure.message }}</span>
-              <span v-if="agentCenterFailure.code">{{ agentCenterFailure.code }}</span>
-              <pre v-if="agentCenterFailure.details">{{ agentCenterFailure.details }}</pre>
-            </div>
-            <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || !canAccessBackend" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
-
-          <details v-if="agentReadDiagnostics.length" class="center-message-content" data-testid="agent-center-partial-failure">
-            <summary>{{ t('settings.centerPartialLoadFailed') }}</summary>
-            <p v-for="diagnostic in agentReadDiagnostics" :key="diagnostic.source">
-              {{ diagnostic.source }}: {{ diagnostic.error.message }}
-              <span v-if="diagnostic.error.code"> · {{ diagnostic.error.code }}</span>
-              <pre v-if="diagnostic.error.details">{{ diagnostic.error.details }}</pre>
-            </p>
-          </details>
-
-          <div v-if="agentCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
-            <Info :size="16" />
-            <div class="center-message-content">
-              <strong>{{ t('settings.centerDiagnostics') }}</strong>
-              <ul>
-                <li v-for="diagnostic in agentCenterDiagnostics" :key="`${diagnostic.code}:${diagnostic.source ?? ''}:${diagnostic.route_purpose ?? ''}:${diagnostic.agent_ids?.join(',') ?? ''}:${diagnostic.status ?? ''}`">
-                  {{ centerDiagnosticLabel(diagnostic) }}
-                </li>
-              </ul>
-            </div>
-            <UiButton variant="outline" size="sm" :disabled="agentCenterLoading" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
-
-          <div v-if="canAccessBackend && agentCenterLoaded && !agentCenterFailure && !agentCenterLoading && agents.length === 0" class="center-empty-state center-empty-state-prominent">
-            <Bot :size="22" />
-            <div>
-              <strong>{{ t('settings.noAgents') }}</strong>
-              <span>{{ t('settings.noAgentsHint') }}</span>
-            </div>
-          </div>
-
-          <div v-if="agentViewMode === 'list'" class="agent-list-summary">
-            <PanelRight :size="16" />
-            <span>{{ selectedAgent ? agentTypeLabel(selectedAgent.agent_type) : t('settings.pleaseOpenAgentConfig') }}</span>
-            <UiButton v-if="selectedAgent" variant="outline" size="sm" @click="openAgentConfig(selectedAgent)">
-              <Settings2 :size="14" />
-              {{ t('settings.openAgentConfig') }}
-            </UiButton>
-          </div>
-
-          <div class="center-workbench agent-workbench" :class="`view-${agentViewMode}`">
-          <aside class="center-resource-rail" :aria-label="t('settings.centerResources')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerResources') }}</span>
-                <strong>{{ t('settings.agentProfiles') }}</strong>
-              </div>
-            </div>
-
-            <section class="agent-column compact">
-              <div class="model-section-header">
-                <h3>{{ t('settings.planningLayer') }}</h3>
-                <UiBadge variant="secondary">{{ filteredOperationAgents.length }}</UiBadge>
-              </div>
-              <article
-                v-for="agent in filteredOperationAgents"
-                :key="agent.id"
-                class="agent-card"
-                :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-              >
-                <button class="agent-card-select" @click="openAgentConfig(agent)">
-                  <div class="agent-card-icon pet">
-                    <AgentPetAvatar :pet-slug="agentAvatarSlug(agent)" :size="30" :alt="agent.name" />
-                  </div>
-                  <div class="agent-card-main">
-                    <strong>{{ agent.name || agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agent.description || agentSourceKindLabel(agentSourceKindFor(agent.id)) }}</span>
-                    <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
-                  </div>
-                  <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
-                    {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
-                  </UiBadge>
-                </button>
-                <button class="agent-card-more" :title="t('settings.openAgentConfig')" @click.stop="openAgentConfig(agent)">
-                  <MoreHorizontal :size="16" />
-                </button>
-              </article>
-            </section>
-
-            <section class="agent-column compact">
-              <div class="model-section-header">
-                <h3>{{ t('settings.executionLayer') }}</h3>
-                <UiBadge variant="secondary">{{ filteredExecutionAgents.length }}</UiBadge>
-              </div>
-              <article
-                v-for="agent in filteredExecutionAgents"
-                :key="agent.id"
-                class="agent-card"
-                :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-              >
-                <button class="agent-card-select" @click="openAgentConfig(agent)">
-                  <div class="agent-card-icon pet execution">
-                    <AgentPetAvatar :pet-slug="agentAvatarSlug(agent)" :size="30" :alt="agent.name" />
-                  </div>
-                  <div class="agent-card-main">
-                    <strong>{{ agent.name || agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agent.description || agentSourceKindLabel(agentSourceKindFor(agent.id)) }}</span>
-                    <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
-                  </div>
-                  <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
-                    {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
-                  </UiBadge>
-                </button>
-                <button class="agent-card-more" :title="t('settings.openAgentConfig')" @click.stop="openAgentConfig(agent)">
-                  <MoreHorizontal :size="16" />
-                </button>
-              </article>
-            </section>
-            <p v-if="!filteredOperationAgents.length && !filteredExecutionAgents.length" class="quiet">
-              {{ t('settings.noFilteredAgents') }}
-            </p>
-          </aside>
-
-          <main class="center-resource-stage">
-
-          <div v-if="agentViewMode === 'topology'" class="agent-topology-section">
-            <AgentTopologyCanvas
-              :agents="agents"
-              :candidates="agentCandidates"
-              :providers="providers"
-              :routes="routes"
-              :runtime-bindings="agentRuntimeBindings"
-              :selected-agent-id="selectedAgentId"
-              :agent-labels="topologyAgentLabels"
-              :candidate-labels="topologyCandidateLabels"
-              @select-agent="openAgentConfigById"
-              @configure-agent="openAgentConfigById"
-            />
-          </div>
-          </main>
-
-          <aside class="center-inspector agent-inspector" :aria-label="t('settings.centerInspector')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerInspector') }}</span>
-                <strong>{{ configuringAgent ? agentTypeLabel(configuringAgent.agent_type) : t('settings.agentConfiguration') }}</strong>
-              </div>
-              <PanelRight :size="16" />
-            </div>
-            <div v-if="agentDefinitionFailures[configuringAgentId]" class="center-message-content" role="alert" data-testid="agent-definition-read-failure">
-              <strong>{{ t('settings.agentDefinitionLoadFailed') }}</strong>
-              <p>{{ agentDefinitionFailures[configuringAgentId]?.message }}</p>
-              <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || !canAccessBackend" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
-            </div>
-            <div v-else-if="configuringAgent" class="agent-detail-panel">
-              <div v-if="agentDraftNotice" class="agent-draft-notice" :class="agentDraftNotice.status" role="status" data-testid="agent-draft-notice">
-                <Info :size="14" aria-hidden="true" />
-                <span>{{ agentDraftNotice.status === 'stale' ? t('settings.agentDraftStale') : t('settings.agentDraftRestored') }}</span>
-                <UiButton v-if="agentDraftNotice.status === 'stale'" variant="ghost" size="sm" @click="loadAgentDraft">{{ t('settings.agentDraftApply') }}</UiButton>
-                <UiButton variant="ghost" size="sm" @click="dropAgentDraft">{{ t('settings.agentDraftDiscard') }}</UiButton>
-              </div>
-              <div class="agent-detail-head">
-                <div class="agent-card-icon pet" :class="{ execution: configuringAgent.layer === 'execution' }">
-                  <AgentPetAvatar :pet-slug="agentAvatarSlug(configuringAgent)" :size="44" :alt="configuringAgent.name" />
-                </div>
-                <div>
-                  <h3>{{ configuringAgent.name }}</h3>
-                  <p>{{ agentTypeLabel(configuringAgent.agent_type) }} · {{ agentLayerLabel(configuringAgent.layer) }}</p>
-                </div>
-                <UiBadge :variant="configuringAgent.status === 'published' ? 'default' : 'secondary'" class="agent-status-badge">
-                  {{ configuringAgent.status === 'published' ? t('settings.agentStatusPublished', { version: configuringAgent.version ?? 1 }) : t('settings.agentStatusDraft') }}
-                </UiBadge>
-                <UiButton
-                  v-if="!configuringAgent.is_built_in"
-                  variant="ghost"
-                  size="icon"
-                  :title="t('settings.archiveAgent')"
-                  :aria-label="t('settings.archiveAgent')"
-                  :disabled="busy"
-                  @click="archiveCurrentAgent"
-                >
-                  <Archive :size="16" />
-                </UiButton>
-                <UiButton variant="ghost" size="icon" :title="t('settings.closeConfig')" @click="closeAgentConfig">
-                  <X :size="16" />
-                </UiButton>
-              </div>
-
-              <!-- 身份与状态 — 启用开关 + 标识 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentIdentitySection') }}</div>
-                <div class="agent-identity-grid">
-                  <div>
-                    <span>{{ t('settings.agentSlugLabel') }}</span>
-                    <strong>{{ (configuringAgent as AgentViewDto & { slug?: string }).slug ?? configuringAgent.id.slice(0, 8) }}</strong>
-                  </div>
-                  <div>
-                    <span>{{ t('settings.routePurpose') }}</span>
-                    <strong>{{ configuringRuntimeBinding?.route_purpose ?? configuringAgent.model_route_purpose ?? '—' }}</strong>
-                  </div>
-                </div>
-                <div class="agent-config-switch">
-                  <div>
-                    <strong>{{ t('settings.agentEnabled') }}</strong>
-                    <span>{{ configuringAgent.is_built_in ? t('settings.builtInAgent') : t('settings.agentEnabledHint') }}</span>
-                    <small v-if="configuringAgent.is_built_in" class="agent-builtin-label">{{ t('settings.builtInCloneHint') }}</small>
-                  </div>
-                  <UiSwitch
-                    :model-value="configuringAgent.enabled"
-                    :disabled="busy || configuringAgent.is_built_in"
-                    @update:model-value="setAgentEnabled(configuringAgent, $event)"
-                  />
-                </div>
-              </div>
-
-              <!-- 形象 — 这个智能体被派发时用的宠物；随机则每个实例各自一张脸 -->
-              <div class="agent-config-section" data-testid="agent-avatar-section">
-                <div class="agent-config-section-title">{{ t('settings.agentAvatarSection') }}</div>
-                <p class="agent-config-hint">{{ t('settings.agentAvatarHint') }}</p>
-                <div class="agent-avatar-choices" role="radiogroup" :aria-label="t('settings.agentAvatarSection')">
-                  <button
-                    type="button"
-                    role="radio"
-                    class="agent-avatar-choice"
-                    :class="{ active: configuringAvatarPreference.mode !== 'fixed' }"
-                    :aria-checked="configuringAvatarPreference.mode !== 'fixed'"
-                    :disabled="agentAvatarBusy"
-                    data-testid="agent-avatar-random"
-                    @click="chooseAgentAvatar('random')"
-                  >
-                    <span class="agent-avatar-choice-glyph"><Shuffle :size="18" /></span>
-                    <span class="agent-avatar-choice-name">{{ t('settings.agentAvatarRandom') }}</span>
-                  </button>
-                  <button
-                    v-for="pet in agentAvatarPool"
-                    :key="pet.slug"
-                    type="button"
-                    role="radio"
-                    class="agent-avatar-choice"
-                    :class="{ active: configuringAvatarPreference.mode === 'fixed' && configuringAvatarPreference.petSlug === pet.slug }"
-                    :aria-checked="configuringAvatarPreference.mode === 'fixed' && configuringAvatarPreference.petSlug === pet.slug"
-                    :disabled="agentAvatarBusy"
-                    :data-testid="`agent-avatar-${pet.slug}`"
-                    @click="chooseAgentAvatar('fixed', pet.slug)"
-                  >
-                    <AgentPetAvatar :pet-slug="pet.slug" :size="26" :alt="pet.displayName" />
-                    <span class="agent-avatar-choice-name">{{ pet.displayName }}</span>
-                  </button>
-                </div>
-                <p v-if="agentAvatarPool.length === 0" class="agent-config-hint">{{ t('settings.agentAvatarEmpty') }}</p>
-              </div>
-
-              <!-- 目录证据 — 来源 / Mode 使用位置 / 有效预览 / 最近调用 -->
-              <div v-if="configuringDirectoryItem" class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentModeUsageSection') }}</div>
-                <div class="agent-detail-grid">
-                  <div>
-                    <span>{{ t('settings.agentSourceLabel') }}</span>
-                    <strong>
-                      {{ agentSourceKindLabel(configuringDirectoryItem.source_kind) }}
-                      <template v-if="configuringDirectoryItem.managed"> · {{ t('settings.agentSourceManaged') }}</template>
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{{ t('settings.agentStatus') }}</span>
-                    <strong>{{ definitionStatusLabel(configuringDirectoryItem.status) }}</strong>
-                  </div>
-                </div>
-                <div v-if="(configuringDirectoryItem.mode_usages ?? []).length > 0" class="agent-mode-usage-list">
-                  <span v-for="usage in configuringDirectoryItem.mode_usages" :key="`${usage.mode_id}:${usage.node_key}`">
-                    {{ usage.mode_slug }} · {{ usage.node_key }}
-                  </span>
-                </div>
-                <p v-else class="agent-config-hint">{{ t('settings.agentNoModeUsage') }}</p>
-
-                <div class="agent-config-section-title secondary">{{ t('settings.agentEffectivePreviewSection') }}</div>
-                <div v-if="Object.keys(configuringDirectoryItem.effective_previews ?? {}).length > 0" class="agent-mode-usage-list">
-                  <span v-for="(preview, key) in configuringDirectoryItem.effective_previews" :key="key" :title="key">
-                    {{ agentPreviewLine(String(key).split(':')[0], String(key).split(':')[1] ?? '', preview) }}
-                  </span>
-                </div>
-                <p v-else class="agent-config-hint">{{ t('settings.agentNoEffectivePreview') }}</p>
-
-                <div class="agent-config-section-title secondary">{{ t('settings.agentRecentInvocationSection') }}</div>
-                <p v-if="configuringDirectoryItem.recent_invocation" class="agent-config-hint">
-                  {{ agentInvocationLine(configuringDirectoryItem.recent_invocation) }}
-                </p>
-                <p v-else class="agent-config-hint">{{ t('settings.agentNoRecentInvocation') }}</p>
-              </div>
-
-              <!-- 运行来源 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentRuntimeSource') }}</div>
-                <div class="agent-detail-grid">
-                  <div>
-                    <span>{{ t('settings.routePurpose') }}</span>
-                    <strong>{{ configuringRuntimeBinding?.route_purpose ?? configuringAgent.model_route_purpose }}</strong>
-                  </div>
-                  <div>
-                    <span>{{ t('settings.effectiveRuntime') }}</span>
-                    <strong>{{ agentRuntimeSummary(configuringAgentId) || t('settings.runtimeUnresolved') }}</strong>
-                  </div>
-                </div>
-
-                <div v-if="configuringLegacyWarning" class="runtime-binding-warning">
-                  <Info :size="16" />
-                  <div>
-                    <strong>{{ t('settings.sharedLegacyRoute', { purpose: configuringLegacyWarning.purpose }) }}</strong>
-                    <span>{{ t('settings.sharedLegacyRouteHint', { count: configuringLegacyWarning.agent_ids.length }) }}</span>
-                  </div>
-                </div>
-
-                <div class="runtime-source-grid">
-                  <button :class="{ active: agentRuntimeSelection === 'inherit' }" :aria-pressed="agentRuntimeSelection === 'inherit'" @click="agentRuntimeSelection = 'inherit'">
-                    <Workflow :size="16" />
-                    <strong>{{ t('settings.runtimeInherit') }}</strong>
-                    <span>{{ t('settings.runtimeInheritHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'route' }" :aria-pressed="agentRuntimeSelection === 'route'" @click="agentRuntimeSelection = 'route'">
-                    <Route :size="16" />
-                    <strong>{{ t('settings.runtimeRoute') }}</strong>
-                    <span>{{ t('settings.runtimeRouteHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'fixed_model' }" :aria-pressed="agentRuntimeSelection === 'fixed_model'" @click="agentRuntimeSelection = 'fixed_model'">
-                    <Cpu :size="16" />
-                    <strong>{{ t('settings.runtimeFixedModel') }}</strong>
-                    <span>{{ t('settings.runtimeFixedModelHint') }}</span>
-                  </button>
-                </div>
-
-                <div v-if="agentRuntimeSelection === 'inherit'" class="runtime-source-current">
-                  <ShieldCheck :size="16" />
-                  <span>{{ t('settings.runtimeInheritedCurrent', { source: agentRuntimeSummary(configuringAgentId) || t('settings.runtimeUnresolved') }) }}</span>
-                </div>
-                <div v-else-if="agentRuntimeSelection === 'route'" class="settings-field runtime-source-picker">
-                  <UiLabel>{{ t('settings.routePurpose') }}</UiLabel>
-                  <UiSelectField
-                    v-model="agentRuntimeRoutePurpose"
-                    :aria-label="t('settings.routePurpose')"
-                    :options="[
-                      { value: '', label: t('settings.routePurpose'), disabled: true },
-                      ...routes.map((route) => ({ value: route.purpose, label: `${route.purpose} · ${route.candidates.length}` })),
-                    ]"
-                  />
-                  <p v-if="routes.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                </div>
-                <div v-else class="settings-field runtime-source-picker">
-                  <UiLabel>{{ t('settings.runtimeFixedModel') }}</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeModelQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: t('settings.centerModels') })" />
-                  </div>
-                  <UiSelectField
-                    v-model="agentRuntimeModelKey"
-                    :aria-label="t('settings.selectModel')"
-                    :options="[
-                      { value: '', label: t('settings.selectModel'), disabled: true },
-                      ...filteredRuntimeModels.map((model) => ({ value: modelOptionKey(model.provider_instance_id, model.model_id), label: `${model.model_id} · ${model.provider_display_name ?? model.provider_instance_id} · ${statusLabel(model.status)}` })),
-                      ...filteredRuntimeCliOptions.map((runtime) => ({ value: runtime.provider_instance_id, label: `${runtime.display_name} · CLI · ${statusLabel(runtime.status)}` })),
-                      ...filteredRuntimeAcpOptions.map((runtime) => ({ value: runtime.provider_instance_id ?? runtime.runtime_id, label: `${runtime.display_name} · ACP · ${statusLabel(runtime.status)}` })),
-                    ]"
-                  />
-                  <p v-if="filteredRuntimeModels.length === 0 && filteredRuntimeCliOptions.length === 0 && filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                </div>
-
-                <div class="runtime-binding-readonly">
-                  <Info :size="16" />
-                  <div>
-                    <strong>{{ t('settings.agentStrategyVersioned') }}</strong>
-                    <span>{{ t('settings.agentStrategyVersionedHint') }}</span>
-                  </div>
-                </div>
-                <div class="modal-actions compact">
-                  <UiButton :disabled="agentRuntimeBusy || !agentStrategySaveable()" size="sm" @click="saveAgentModelStrategy(configuringAgent)">
-                    <Save :size="14" />
-                    <span>{{ t('settings.saveRuntimeBinding') }}</span>
-                  </UiButton>
-                </div>
-              </div>
-
-              <!-- 描述 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentDescription') }}</div>
-                <div class="settings-field">
-                  <textarea
-                    v-model="agentEditDescription"
-                    class="settings-textarea"
-                    rows="2"
-                    :disabled="configuringAgent.is_built_in"
-                    :placeholder="t('settings.agentDescriptionPlaceholder')"
-                  ></textarea>
-                </div>
-              </div>
-
-              <!-- 工具绑定 — 完整面板（分组/风险/审批） -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">
-                  {{ t('settings.agentToolsPermissions') }}
-                  <UiBadge variant="outline">{{ agentToolSelectionSummary.selected }}/{{ agentToolSelectionSummary.total }}</UiBadge>
-                  <UiBadge v-if="agentToolSelectionSummary.approval > 0" variant="secondary">{{ t('settings.approvalRequired') }} {{ agentToolSelectionSummary.approval }}</UiBadge>
-                </div>
-                <p class="agent-config-hint">{{ t('settings.agentToolsHint') }}</p>
-                <UiButton variant="outline" size="sm" @click="requestToolAgent(configuringAgent.id)">{{ t('toolsSettings.agentSettingsLink') }}</UiButton>
-                <div class="agent-tool-toolbar">
-                  <div class="agent-tool-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentToolQuery" :placeholder="t('settings.toolSearchPlaceholder')" />
-                  </div>
-                  <UiSelectField
-                    v-model="agentToolSourceFilter"
-                    class="compact"
-                    :aria-label="t('settings.allSources')"
-                    :options="[
-                      { value: 'all', label: t('settings.allSources') },
-                      ...toolSourceOptions.map((src) => ({ value: src, label: src })),
-                    ]"
-                  />
-                  <UiSelectField
-                    v-model="agentToolRiskFilter"
-                    class="compact"
-                    :aria-label="t('settings.allRisks')"
-                    :options="[
-                      { value: 'all', label: t('settings.allRisks') },
-                      ...toolRiskOptions.map((risk) => ({ value: risk, label: risk })),
-                    ]"
-                  />
-                </div>
-                <div v-if="configuringAgent.is_built_in" class="agent-builtin-hint">
-                  <Info :size="14" />
-                  <span>{{ t('settings.builtInCloneHint') }}</span>
-                </div>
-                <div v-for="[source, tools] in groupedAgentTools" :key="source" class="agent-tool-group">
-                  <div class="agent-tool-group-head">
-                    <strong>{{ source }}</strong>
-                    <UiBadge variant="outline">{{ tools.length }}</UiBadge>
-                  </div>
-                  <div class="agent-tool-grid">
-                    <button
-                      v-for="tool in tools"
-                      :key="tool.id"
-                      class="agent-tool-chip"
-                      :class="{
-                        active: agentEditTools.includes(tool.id),
-                        risky: tool.requires_approval
-                      }"
-                      :disabled="configuringAgent.is_built_in"
-                      :title="tool.display_name + ' · ' + riskLabel(tool.risk) + (tool.requires_approval ? ' · ' + t('settings.approvalRequired') : '')"
-                      @click="toggleAgentTool(tool.id)"
-                    >
-                      <span class="agent-tool-name">{{ tool.display_name }}</span>
-                      <span class="agent-tool-meta">
-                        <span class="agent-tool-risk" :class="tool.risk">{{ riskLabel(tool.risk) }}</span>
-                        <span v-if="tool.requires_approval" class="agent-tool-approval">⚑ {{ t('settings.approvalRequired') }}</span>
-                      </span>
-                      <span class="agent-tool-id">{{ tool.id }}</span>
-                    </button>
-                  </div>
-                </div>
-                <p v-if="groupedAgentTools.length === 0" class="quiet">{{ t('settings.noTools') }}</p>
-                <div class="agent-tool-bulk">
-                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = manifestToolList.filter(t => !t.requires_approval).map(t => t.id)">{{ t('settings.selectReadOnlyTools') }}</UiButton>
-                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = manifestToolList.map(t => t.id)">{{ t('settings.selectAllReadWrite') }}</UiButton>
-                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = manifestToolList.filter(t => !t.requires_approval).map(t => t.id), agentEditTools.push('*')">{{ t('settings.allowAllTools') }}</UiButton>
-                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = []">{{ t('settings.clearSelection') }}</UiButton>
-                </div>
-
-                <!-- 治理可见性：审批升级路径说明 + 待处理授权 -->
-                <div class="runtime-binding-readonly agent-governance-card">
-                  <ShieldCheck :size="16" />
-                  <div>
-                    <strong>{{ t('settings.agentGovernanceTitle') }}</strong>
-                    <span>{{ t('settings.agentGovernanceHint') }}</span>
-                  </div>
-                  <UiBadge :variant="pendingGovernanceCount > 0 ? 'default' : 'outline'">
-                    {{ t('settings.pendingGovernance', { count: pendingGovernanceCount }) }}
-                  </UiBadge>
-                </div>
-              </div>
-
-              <!-- 能力标签 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentCapabilities') }}</div>
-                <p class="agent-config-hint">{{ t('settings.agentCapabilitiesHint') }}</p>
-                <div class="agent-capability-list">
-                  <span v-for="cap in agentEditCapabilities" :key="cap" class="agent-cap-tag">
-                    {{ cap }}
-                    <button class="agent-cap-remove" :disabled="configuringAgent.is_built_in" @click="removeAgentCapability(cap)">×</button>
-                  </span>
-                </div>
-                <div class="agent-cap-add-row">
-                  <UiInput v-model="agentNewCapability" :disabled="configuringAgent.is_built_in" :placeholder="t('settings.newCapabilityPlaceholder')" @keydown.enter="addAgentCapability" />
-                  <UiButton variant="outline" size="sm" :disabled="configuringAgent.is_built_in || !agentNewCapability.trim()" @click="addAgentCapability">
-                    <Plus :size="14" />
-                    {{ t('settings.addCapability') }}
-                  </UiButton>
-                </div>
-              </div>
-
-              <!-- System Prompt -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentSystemPrompt') }}</div>
-                <p class="agent-config-hint">{{ t('settings.agentSystemPromptOverrideHint') }}</p>
-                <div class="settings-field">
-                  <textarea
-                    v-model="agentEditSystemPrompt"
-                    class="settings-textarea prompt-editor"
-                    rows="6"
-                    :disabled="configuringAgent.is_built_in"
-                    :placeholder="t('settings.agentSystemPromptPlaceholder')"
-                  ></textarea>
-                </div>
-              </div>
-
-              <!-- 版本历史 — 不可变发布快照 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">
-                  {{ t('settings.agentVersionHistory') }}
-                  <UiBadge variant="outline">{{ agentVersionHistory.length }}</UiBadge>
-                </div>
-                <p class="agent-config-hint">{{ t('settings.agentVersionHistoryHint') }}</p>
-                <div v-if="agentVersionsLoading" class="center-loading-state" aria-live="polite">
-                  <UiSkeleton v-for="index in 2" :key="index" class="center-loading-line agent-version-loading-line" />
-                </div>
-                <div v-else-if="agentVersionHistoryError" class="center-message" role="alert" data-testid="agent-version-read-failure">
-                  <Info :size="16" aria-hidden="true" />
-                  <div class="center-message-content">
-                    <strong>{{ t('settings.centerLoadFailed') }}</strong>
-                    <span>{{ agentVersionHistoryError.message }}</span>
-                  </div>
-                  <UiButton variant="outline" size="sm" @click="loadAgentVersionHistory(configuringAgent.id)">{{ t('settings.retry') }}</UiButton>
-                </div>
-                <div v-else-if="agentVersionHistory.length > 0" class="agent-version-list">
-                  <div v-for="version in [...agentVersionHistory].reverse()" :key="version.id" class="center-list-row agent-version-row" :class="{ latest: version.version === configuringAgent.version }">
-                    <strong>v{{ version.version }}</strong>
-                    <span class="agent-version-hash">{{ (version as AgentVersionDto & { content_hash?: string }).content_hash?.slice(0, 8) ?? '—' }}</span>
-                    <time>{{ new Date(version.created_at).toLocaleString(locale) }}</time>
-                    <UiBadge v-if="version.version === configuringAgent.version" variant="default">{{ t('settings.agentVersionCurrent') }}</UiBadge>
-                  </div>
-                </div>
-                <p v-else class="quiet">{{ t('settings.noVersionsPublished') }}</p>
-              </div>
-
-              <!-- 保存按钮 — 克隆后编辑 -->
-              <div class="agent-save-bar">
-                <UiButton v-if="configuringAgent.is_built_in" :disabled="agentCloneBusy" @click="cloneAgent">
-                  <Plus :size="14" />
-                  <span>{{ t('settings.cloneAgent') }}</span>
-                </UiButton>
-                <UiButton v-else :disabled="busy" @click="saveAgent">
-                  <Save :size="14" />
-                  <span>{{ t('settings.saveAgent') }}</span>
-                </UiButton>
-                <span v-if="!configuringAgent.is_built_in && agentEditRevision !== null" class="agent-revision-hint">{{ t('settings.agentRevision', { revision: agentEditRevision }) }}</span>
-                <span v-if="configuringAgent.is_built_in" class="agent-builtin-save-hint">{{ t('settings.builtInCloneHint') }}</span>
-              </div>
-            </div>
-            <div v-else-if="canAccessBackend && agentCenterLoaded && !agentCenterFailure" class="center-empty-state inspector-empty">
-              <PanelRight :size="20" />
-              <span>{{ agents.length > 0 ? t('settings.pleaseOpenAgentConfig') : t('settings.noAgents') }}</span>
-            </div>
-
-            <details class="center-diagnostics-panel agent-candidates-panel">
-              <summary>
-                <span>{{ t('settings.evolutionCandidates') }}</span>
-                <UiBadge variant="outline">{{ agentCandidates.length }}</UiBadge>
-              </summary>
-              <div class="agent-candidate-list compact">
-                <article v-for="candidate in agentCandidates" :key="candidate.id" class="agent-candidate-row">
-                  <div>
-                    <strong>{{ candidate.name }}</strong>
-                    <span>{{ agentLayerLabel(candidate.layer) }} · {{ agentTypeLabel(candidate.agent_type) }} · {{ candidateStatusLabel(candidate.status) }}</span>
-                  </div>
-                  <UiBadge variant="secondary">{{ t('settings.generatedByEvolution') }}</UiBadge>
-                </article>
-              </div>
-            </details>
-          </aside>
-          </div>
-          </div>
-        </template>
+              <AgentsDirectoryPanel
+                ref="agentsPanelRef"
+                :agents="agents"
+                :agent-directory="agentDirectory"
+                :providers="providers"
+                :routes="routes"
+                :runtime-models="runtimeModels"
+                :runtime-cli-options="runtimeCliOptions"
+                :runtime-acp-options="runtimeAcpOptions"
+                :available-tools="availableTools"
+                :harness-manifest="harnessManifest"
+                :prompt-pipelines="promptPipelines"
+                :permission-requests="agentPermissionRequests"
+                :loading="agentCenterLoading"
+                :loaded="agentCenterLoaded"
+                :failure="agentCenterFailure"
+                :read-diagnostics="agentReadDiagnostics"
+                :center-diagnostics="agentCenterDiagnostics"
+                :definition-failures="agentDefinitionFailures"
+                :definition-loaded-ids="agentDefinitionLoadedIds"
+                :can-access-backend="canAccessBackend"
+                :selected-agent-id="selectedAgentId"
+                :configuring-agent-id="configuringAgentId"
+                :view-mode="agentViewMode"
+                :ensure-agent-definition="ensureAgentDefinition"
+                @update:view-mode="agentViewMode = $event"
+                @update:selected-agent-id="selectedAgentId = $event"
+                @update:configuring-agent-id="configuringAgentId = $event"
+                @patch-agent="handlePatchAgent"
+                @reload="loadAgentCenter"
+              />
+            </template>
             <template #prompts>
               <PromptEngineeringMerged ref="promptsPanelRef" />
             </template>
             <template #modes>
               <AgentModesPanel ref="modePanelRef" />
             </template>
-            <template #runtime>
-              <RuntimeInstancesPanel ref="runtimePanelRef" />
-            </template>
-            <template #evolution>
-              <AgentEvolutionPanel ref="evolutionPanelRef" />
-            </template>
           </AgentCenterSection>
-            <UiSheet :open="showCreateAgent" side="right" @update:open="showCreateAgent = $event">
-              <div class="ac-sheet-body">
-                <h3>{{ t('settings.newAgent') }}</h3>
-                <div>
-                  <UiLabel>{{ t('settings.agentName') }}</UiLabel>
-                  <UiInput v-model="newAgentName" :placeholder="t('settings.agentName')" />
-                </div>
-                <div>
-                  <UiLabel>{{ t('settings.agentSlugLabel') }}</UiLabel>
-                  <UiInput v-model="newAgentSlug" placeholder="optional" />
-                </div>
-                <div>
-                  <UiLabel>{{ t('settings.agentLayer') }}</UiLabel>
-                  <UiSelectField
-                    v-model="newAgentLayer"
-                    :options="[
-                      { value: 'operation', label: t('settings.agentLayerPlanning') },
-                      { value: 'execution', label: t('settings.agentLayerExecution') },
-                    ]"
-                  />
-                </div>
-                <div>
-                  <UiLabel>{{ t('settings.agentRole') }}</UiLabel>
-                  <UiInput v-model="newAgentRole" :placeholder="newAgentLayer === 'operation' ? 'session_coordinator' : 'code_writer'" />
-                </div>
-                <div class="ac-sheet-actions">
-                  <UiButton variant="outline" @click="showCreateAgent = false">{{ t('common.cancel') }}</UiButton>
-                  <UiButton :disabled="newAgentBusy || !newAgentName.trim()" @click="createAgent">{{ t('settings.createAgent') }}</UiButton>
-                </div>
-              </div>
-            </UiSheet>
         </template>
 
         <template v-if="activeSection === 'tools'">

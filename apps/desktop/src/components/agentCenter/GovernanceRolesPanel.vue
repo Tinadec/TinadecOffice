@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GitBranch, ShieldCheck } from '@lucide/vue'
-import { api as baseApi, type AgentDefinitionDto, type WorkspaceDefaultsDto } from '@/api'
+import { GitBranch, RefreshCw, ShieldCheck } from '@lucide/vue'
+import { api as baseApi, type AgentDefinitionDto, type AgentViewDto, type PackI18n, type WorkspaceDefaultsDto } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 import { pickLocalized } from '@/lib/packI18n'
+import { useHostAccess } from '@/lib/hostAccess'
 const api = scopedApi(baseApi, () => 'user')
+const { canAccessBackend } = useHostAccess()
 
 /**
  * Governance roles panel (docs/app-core-ui.md §4.7).
@@ -14,37 +16,43 @@ const api = scopedApi(baseApi, () => 'user')
  * Git tool scope) are distinct roles and are always shown separately. The
  * effective tool intersection shown here is agent.allowed_tools ∩ the
  * manifest-provided catalog; tools missing from the live provider render as
- * "provider unavailable" instead of being silently dropped.
+ * unavailable in the manifest instead of being silently dropped.
  */
 const { t, te, locale } = useI18n()
 const layerLabel = (layer: string) => (te(`orchestrationPanel.layer.${layer}`) ? t(`orchestrationPanel.layer.${layer}`) : layer)
 const statusLabel = (status: string) => (te(`agentCenter.filter.${status}`) ? t(`agentCenter.filter.${status}`) : status)
 
+type RoleAgentLike = AgentDefinitionDto | (AgentViewDto & { i18n?: PackI18n | null })
+
 const props = defineProps<{
   /** Live tool ids from Core/Tool Provider manifest. */
   manifestToolIds: string[]
+  /** Preloaded agents from parent to avoid duplicate 1+N definition fetches. */
+  agents?: RoleAgentLike[]
 }>()
 
-const agents = ref<AgentDefinitionDto[]>([])
+const fetchedAgents = ref<RoleAgentLike[]>([])
 const defaults = ref<WorkspaceDefaultsDto | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
 const GOVERNANCE_ROLES = ['git_steward', 'worker.git']
 
+const sourceAgents = computed<RoleAgentLike[]>(() => props.agents ?? fetchedAgents.value)
+
 const roleAgents = computed(() =>
   GOVERNANCE_ROLES.map((role) =>
-    agents.value.find((a) => a.slug === role || a.name === role || a.role === role || a.agent_type === role),
-  ).filter((a): a is AgentDefinitionDto => Boolean(a)),
+    sourceAgents.value.find((a) => a.slug === role || a.name === role || a.role === role || a.agent_type === role),
+  ).filter((a): a is RoleAgentLike => Boolean(a)),
 )
 
-function displayName(agent: AgentDefinitionDto): string {
+function displayName(agent: RoleAgentLike): string {
   const baseline = agent.display_name ?? agent.slug ?? agent.name ?? agent.id
   return pickLocalized(agent.i18n, locale.value, 'display_name', baseline) ?? baseline
 }
 
 /** Core stores model_strategy as JSON ({ kind: ... }) or a bare string. */
-function modelStrategyLabel(agent: AgentDefinitionDto): string {
+function modelStrategyLabel(agent: RoleAgentLike): string {
   const ms = agent.model_strategy
   if (!ms) return 'inherit'
   if (typeof ms === 'string') return ms
@@ -54,7 +62,7 @@ function modelStrategyLabel(agent: AgentDefinitionDto): string {
   return 'inherit'
 }
 
-function declaredTools(agent: AgentDefinitionDto): string[] {
+function declaredTools(agent: RoleAgentLike): string[] {
   if (Array.isArray(agent.tool_scope)) return agent.tool_scope
   if (typeof agent.tool_scope === 'string') return [agent.tool_scope]
   return agent.allowed_tools ?? []
@@ -65,7 +73,7 @@ interface ToolRow {
   available: boolean
 }
 
-function effectiveTools(agent: AgentDefinitionDto): ToolRow[] {
+function effectiveTools(agent: RoleAgentLike): ToolRow[] {
   const declared = declaredTools(agent)
   if (declared.includes('*')) {
     // Wildcard passes through to whatever the manifest currently serves.
@@ -74,15 +82,31 @@ function effectiveTools(agent: AgentDefinitionDto): ToolRow[] {
   return declared.map((tool) => ({ tool, available: props.manifestToolIds.includes(tool) || tool === '*' }))
 }
 
+const roleEntries = computed(() =>
+  roleAgents.value.map((agent) => {
+    const tools = effectiveTools(agent)
+    return {
+      agent,
+      declaredEmpty: declaredTools(agent).length === 0,
+      tools,
+      availableCount: tools.filter((row) => row.available).length,
+    }
+  }),
+)
+
 async function load(): Promise<void> {
+  if (!canAccessBackend.value) return
   loading.value = true
   loadError.value = null
   try {
+    const needsAgents = props.agents === undefined
     const [all, ws] = await Promise.all([
-      api.listAgentDefinitions().catch(() => [] as AgentDefinitionDto[]),
+      needsAgents ? api.listAgentDefinitions() : Promise.resolve(props.agents ?? []),
       api.getWorkspaceDefaults().catch(() => null),
     ])
-    agents.value = all
+    if (needsAgents) {
+      fetchedAgents.value = Array.isArray(all) ? all : []
+    }
     defaults.value = ws
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
@@ -92,6 +116,9 @@ async function load(): Promise<void> {
 }
 
 onMounted(load)
+watch(canAccessBackend, (ready) => {
+  if (ready) void load()
+})
 </script>
 
 <template>
@@ -104,38 +131,44 @@ onMounted(load)
       </span>
     </header>
 
-    <div v-if="loadError" class="gov-roles__error">{{ loadError }}</div>
-    <p v-else-if="!loading && !roleAgents.length" class="gov-roles__empty" data-testid="gov-roles-empty">
-      {{ t('agentCenter.governanceRolesMissing') }}
+    <div v-if="loadError" class="gov-roles__error" role="alert">
+      <span>{{ loadError }}</span>
+      <button type="button" class="gov-roles__retry" :disabled="loading || !canAccessBackend" @click="void load()">
+        <RefreshCw :size="12" />
+        <span>{{ t('settings.retry') }}</span>
+      </button>
+    </div>
+    <p v-else-if="!loading && !roleEntries.length" class="gov-roles__empty" data-testid="gov-roles-empty">
+      {{ t('agentCenter.governanceRolesMissing') }} <code>{{ GOVERNANCE_ROLES.join(', ') }}</code>
     </p>
 
     <div class="gov-roles__grid">
       <!-- git_steward: operation layer, deliberately tool-less -->
-      <section v-for="agent in roleAgents" :key="agent.id" class="gov-role-card" data-testid="gov-role-card">
+      <section v-for="entry in roleEntries" :key="entry.agent.id" class="gov-role-card" data-testid="gov-role-card">
         <div class="gov-role-card__head">
-          <component :is="agent.layer === 'operation' ? ShieldCheck : GitBranch" class="size-4" />
-          <strong>{{ displayName(agent) }}</strong>
-          <span class="gov-role-card__layer">{{ layerLabel(agent.layer) }}</span>
-          <span v-if="agent.status" class="gov-role-card__status">{{ statusLabel(agent.status) }}</span>
+          <component :is="(entry.agent.layer === 'operation' || entry.agent.layer === 'planning') ? ShieldCheck : GitBranch" class="size-4" />
+          <strong>{{ displayName(entry.agent) }}</strong>
+          <span class="gov-role-card__layer">{{ layerLabel(entry.agent.layer) }}</span>
+          <span v-if="entry.agent.status" class="gov-role-card__status">{{ statusLabel(entry.agent.status) }}</span>
         </div>
 
-        <p v-if="agent.layer === 'operation' && !(agent.allowed_tools ?? []).length" class="gov-role-card__note" data-testid="steward-no-tools">
+        <p v-if="(entry.agent.layer === 'operation' || entry.agent.layer === 'planning') && entry.declaredEmpty" class="gov-role-card__note" data-testid="steward-no-tools">
           {{ t('agentCenter.stewardNoTools') }}
         </p>
 
         <dl class="gov-role-card__facts">
-          <div><dt>{{ t('agentCenter.facts.modelStrategy') }}</dt><dd data-testid="model-strategy">{{ modelStrategyLabel(agent) }}</dd></div>
-          <div v-if="agent.model_route_purpose"><dt>{{ t('agentCenter.facts.route') }}</dt><dd>{{ agent.model_route_purpose }}</dd></div>
+          <div><dt>{{ t('agentCenter.facts.modelStrategy') }}</dt><dd data-testid="model-strategy">{{ modelStrategyLabel(entry.agent) }}</dd></div>
+          <div v-if="entry.agent.model_route_purpose"><dt>{{ t('agentCenter.facts.route') }}</dt><dd>{{ entry.agent.model_route_purpose }}</dd></div>
         </dl>
 
         <div class="gov-role-card__tools">
-          <h4>{{ t('agentCenter.effectiveTools') }}</h4>
+          <h4>{{ t('agentCenter.effectiveTools', { count: entry.availableCount }) }}</h4>
           <ul data-testid="effective-tools">
-            <li v-for="row in effectiveTools(agent)" :key="row.tool" :class="{ 'tool-unavailable': !row.available }">
+            <li v-for="row in entry.tools" :key="row.tool" :class="{ 'tool-unavailable': !row.available }">
               <code>{{ row.tool }}</code>
-              <span v-if="!row.available" class="tool-unavailable-label">{{ t('agentCenter.providerUnavailable') }}</span>
+              <span v-if="!row.available" class="tool-unavailable-label">{{ t('agentCenter.toolUnavailableInManifest') }}</span>
             </li>
-            <li v-if="!effectiveTools(agent).length" class="tool-none">{{ t('common.none') }}</li>
+            <li v-if="!entry.tools.length" class="tool-none">{{ t('common.none') }}</li>
           </ul>
         </div>
       </section>
@@ -144,12 +177,63 @@ onMounted(load)
 </template>
 
 <style scoped>
-.gov-roles { display: flex; flex-direction: column; gap: 12px; }
+.gov-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
+  background: var(--surface-section);
+}
 .gov-roles__head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .gov-roles__head h2 { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; margin: 0; }
 .gov-roles__defaults { font-size: 11px; color: var(--text-secondary); }
-.gov-roles__error { padding: 10px 12px; border-radius: 8px; background: var(--bg-status-danger); color: var(--accent-danger); font-size: 13px; }
-.gov-roles__empty { font-size: 13px; color: var(--text-secondary); }
+.gov-roles__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-status-danger);
+  color: var(--accent-danger);
+  font-size: 13px;
+}
+.gov-roles__retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 35%, transparent);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.gov-roles__empty {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--border-muted);
+  background: var(--surface-raised);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.gov-roles__empty code {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
 .gov-roles__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
 
 .gov-role-card {

@@ -8,14 +8,15 @@ import { ChevronRight, CopyPlus, PackageCheck, PackagePlus, RefreshCw, Trash2 } 
 import { api as baseApi, type AgentPackDto } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
-import { GRAPH_SEED_PACK_VERSION } from '@/agentPacks/GraphSeedPack'
+import { GRAPH_SEED_PACK_VERSION, graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 import {
   graphSeedPackState,
   installOrUpgradeGraphSeedPack,
   refreshGraphSeedPack,
 } from '@/agentPacks/graphSeedPackBootstrap'
+import { pickLocalized } from '@/lib/packI18n'
 import { useNotifications } from '@/composables/useNotifications'
-import { UiBadge, UiButton } from '@/components/ui'
+import { UiBadge, UiButton, UiSelectField } from '@/components/ui'
 
 const emit = defineEmits<{
   /**
@@ -23,16 +24,26 @@ const emit = defineEmits<{
    * parent's sub-tab, loads the roster and opens the agent editor. Emitting keeps the pack facts here
    * and the agent ownership there, instead of lifting half of one into the other.
    */
-  clone: []
+  clone: [slug?: string]
+  /** Pack enable/disable or default-adoption mutated workspace resources. */
+  changed: []
   /** Uninstalling deletes the pack's run history too, so the parent must redraw the centre. */
   uninstalled: [packId: string]
 }>()
 
-const { t } = useI18n()
-const { canAccessBackend, reason: hostReason } = useHostAccess()
+const { t, locale } = useI18n()
+const { canAccessBackend } = useHostAccess()
 const inventoryFailure = useErrorState()
 const inventoryLoading = ref(false)
 const { notify, confirm, status } = useNotifications()
+
+const selectedCloneSlug = ref(graphSeedPackManifest.resources.agents[0]?.slug ?? 'meeting')
+const packAgentOptions = computed(() =>
+  graphSeedPackManifest.resources.agents.map((agent) => ({
+    value: agent.slug,
+    label: pickLocalized(agent.i18n, locale.value, 'display_name', agent.display_name) ?? agent.display_name,
+  })),
+)
 
 const phase = computed(() => graphSeedPackState.value.phase)
 const busy = computed(() => phase.value === 'checking' || phase.value === 'installing')
@@ -92,6 +103,7 @@ async function togglePackEnabled(pack: AgentPackDto): Promise<void> {
     await reloadPackInventory()
     // 模式列表跟着可用包走：重新拉一次让下拉立刻反映启用/禁用。
     void refreshGraphSeedPack()
+    emit('changed')
   } catch (error) {
     notify.error(error, {
       key: `agent-pack-toggle-${pack.pack_id}`,
@@ -109,6 +121,7 @@ async function adoptPackDefaults(pack: AgentPackDto): Promise<void> {
   try {
     await api.adoptAgentPackDefaults(pack.pack_id)
     await reloadPackInventory()
+    emit('changed')
   } catch (error) {
     notify.error(error, {
       key: `agent-pack-adopt-${pack.pack_id}`,
@@ -163,7 +176,6 @@ defineExpose({ reloadPackInventory })
 </script>
 
 <template>
-  <p v-if="!canAccessBackend" role="status">{{ hostReason }}</p>
   <div v-if="inventoryFailure.error.value" role="alert" class="agent-pack-error"><p>{{ inventoryFailure.error.value.message }}</p><p v-if="inventoryFailure.error.value.details">{{ inventoryFailure.error.value.details }}</p><p v-if="inventoryFailure.error.value.traceId">trace_id: {{ inventoryFailure.error.value.traceId }}</p><UiButton variant="outline" size="sm" :disabled="inventoryLoading || !canAccessBackend" @click="reloadPackInventory">{{ t('settings.retry') }}</UiButton></div>
   <section class="agent-pack-status-band" data-testid="graph-seed-pack-status">
     <PackageCheck class="agent-pack-status-icon" aria-hidden="true" />
@@ -176,15 +188,23 @@ defineExpose({ reloadPackInventory })
       <p>{{ t('agentPack.bundledVersion', { version: GRAPH_SEED_PACK_VERSION }) }}</p>
     </div>
     <div class="agent-pack-status-actions">
-      <UiButton
-        v-if="canClone"
-        variant="outline"
-        size="sm"
-        @click="emit('clone')"
-      >
-        <CopyPlus data-icon="inline-start" />
-        {{ t('agentPack.cloneAction') }}
-      </UiButton>
+      <template v-if="canClone">
+        <UiSelectField
+          v-model="selectedCloneSlug"
+          class="compact agent-pack-clone-select"
+          :aria-label="t('agentPack.clonePickerLabel')"
+          :options="packAgentOptions"
+        />
+        <UiButton
+          variant="outline"
+          size="sm"
+          :data-testid="'graph-seed-pack-clone-btn'"
+          @click="emit('clone', selectedCloneSlug)"
+        >
+          <CopyPlus data-icon="inline-start" />
+          {{ t('agentPack.cloneAction') }}
+        </UiButton>
+      </template>
       <UiButton
         v-if="canApply"
         size="sm"
@@ -195,8 +215,9 @@ defineExpose({ reloadPackInventory })
         {{ actionLabel }}
       </UiButton>
       <UiButton
-        variant="ghost"
+        variant="outline"
         size="icon"
+        class="agent-pack-refresh-btn"
         :disabled="busy || !canAccessBackend"
         :title="t('agentPack.refreshStatus')"
         :aria-label="t('agentPack.refreshStatus')"

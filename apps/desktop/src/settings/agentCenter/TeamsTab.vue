@@ -1,80 +1,109 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, ArrowUp, Info, Plus, RefreshCw, X } from '@lucide/vue'
+import { ArrowDown, ArrowUp, Copy, Info, Plus, RefreshCw, Trash2, X } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiSelectField } from '@/components/ui'
-import { api as baseApi, type AgentModeDto, type AgentModeTopologyDto, type AgentViewDto } from '@/api'
-import { scopedApi } from '@/lib/storageScope'
+import type { AgentModeDto, AgentModeTopologyDto, AgentViewDto } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
+import {
+  agentUsableForTeam,
+  normalizeLayer,
+  useAgentModesStore,
+} from '@/composables/useAgentModesStore'
+import { useHostAccess } from '@/lib/hostAccess'
 import {
   buildTeamTopology,
   classifyTeamShape,
-  cloneModeTopology,
   defaultMemberScope,
   MAX_TEAM_MEMBERS,
   type MemberScope,
-  type TeamSelection,
   type TeamStyle,
 } from './teamShape'
 import { TEAM_TEMPLATES, pickLeader, pickMembers, type TeamTemplateDefinition } from './teamTemplates'
 
-const props = defineProps<{
-  modes: AgentModeDto[]
-  agents: AgentViewDto[]
-  canAccessBackend: boolean
+const props = withDefaults(defineProps<{
+  modes?: AgentModeDto[]
+  agents?: AgentViewDto[]
+  canAccessBackend?: boolean
   loading?: boolean
-}>()
+}>(), {
+  modes: () => [],
+  agents: () => [],
+  canAccessBackend: undefined,
+  loading: false,
+})
 
 const emit = defineEmits<{
   changed: []
   'open-graph': [id: string]
 }>()
 
-const api = scopedApi(baseApi, () => 'user')
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { notify } = useNotifications()
+const { canAccessBackend: hostCanAccessBackend } = useHostAccess()
+const store = useAgentModesStore()
 
-const selectedId = ref('')
-const detail = ref<AgentModeTopologyDto | null>(null)
-const detailLoading = ref(false)
-const detailFailure = ref<string | null>(null)
 const query = ref('')
-const editingName = ref('')
-const editingDescription = ref('')
-const editingInstructions = ref('')
-const busy = ref(false)
-const defaultModeId = ref<string | null>(null)
-const settingDefault = ref(false)
-const selection = ref<TeamSelection>({ style: 'team', leaderId: '', memberIds: [] })
-const memberScopes = ref<Record<string, MemberScope>>({})
-let loadGeneration = 0
-
-const operationAgents = computed(() => props.agents.filter(agent => agent.layer !== 'execution'))
-const executionAgents = computed(() => props.agents.filter(agent => agent.layer === 'execution'))
-const selectedMode = computed(() => props.modes.find(mode => mode.id === selectedId.value) ?? null)
-const readOnly = computed(() => Boolean(
-  selectedMode.value?.managed
-  || selectedMode.value?.status === 'published'
-  || selectedMode.value?.status === 'archived',
-))
-const shape = computed(() => detail.value ? classifyTeamShape(detail.value, props.agents) : null)
-const canEditShape = computed(() => shape.value?.editable ?? false)
+const creatingNew = ref(false)
 const templates = TEAM_TEMPLATES
+
+const effectiveCanAccessBackend = computed(() =>
+  props.canAccessBackend !== undefined ? props.canAccessBackend : hostCanAccessBackend.value,
+)
+
+const selectedId = computed(() => store.selectedModeId.value)
+const detail = computed(() => store.selectedModeDetail.value)
+const detailLoading = computed(() => store.detailLoading.value)
+const detailFailure = computed(() => store.detailFailure.value)
+const busy = computed(() => store.modeBusy.value)
+const settingDefault = computed(() => store.settingDefault.value)
+const defaultModeId = computed(() => store.defaultModeId.value)
+const selectedMode = computed(() => store.selectedMode.value)
+const readOnly = computed(() => store.selectedModeReadOnly.value)
+const isPackManaged = computed(() => store.isModePackManaged(selectedMode.value))
+
+const allAgentViews = computed(() => store.agentViews.value)
+const operationAgents = computed(() => allAgentViews.value.filter(agent => normalizeLayer(agent.layer) !== 'execution'))
+const executionAgents = computed(() => allAgentViews.value.filter(agent => normalizeLayer(agent.layer) === 'execution'))
+
+const shape = computed(() => detail.value ? classifyTeamShape(detail.value, allAgentViews.value) : null)
+const canEditShape = computed(() => shape.value?.editable ?? false)
 
 const filteredModes = computed(() => {
   const q = query.value.trim().toLowerCase()
-  const sorted = [...props.modes].sort((a, b) => a.display_name.localeCompare(b.display_name))
+  const sorted = store.sortedModes.value
   if (!q) return sorted
-  return sorted.filter(mode => `${mode.display_name} ${mode.description ?? ''} ${mode.slug ?? ''}`.toLowerCase().includes(q))
+  return sorted.filter((mode) => {
+    const name = store.modeLocalizedName(mode, locale.value)
+    const desc = store.modeLocalizedDescription(mode, locale.value)
+    return `${name} ${desc} ${mode.slug ?? ''}`.toLowerCase().includes(q)
+  })
 })
 
-function agentUsable(agent: AgentViewDto): boolean {
-  return agent.enabled !== false && (!agent.status || agent.status === 'published')
-}
+const editingName = computed({
+  get: () => store.teamDraft.value.displayName,
+  set: (value: string | number) => { store.teamDraft.value.displayName = String(value) },
+})
+
+const editingDescription = computed({
+  get: () => store.teamDraft.value.description,
+  set: (value: string) => { store.teamDraft.value.description = value },
+})
+
+const editingInstructions = computed({
+  get: () => store.teamDraft.value.instructions,
+  set: (value: string) => { store.teamDraft.value.instructions = value },
+})
+
+const selection = computed(() => store.teamDraft.value.selection)
+const memberScopes = computed(() => store.teamDraft.value.memberScopes)
 
 const leaderOptions = computed(() => operationAgents.value
-  .filter(agentUsable)
-  .map(agent => ({ value: agent.id, label: agent.name || agent.slug || agent.id })))
+  .filter(agentUsableForTeam)
+  .map(agent => ({
+    value: agent.id,
+    label: store.agentLocalizedName(agent, locale.value),
+  })))
 
 /**
  * Team style spawns node-less templates, so any usable agent can be a member.
@@ -84,33 +113,37 @@ const leaderOptions = computed(() => operationAgents.value
 const memberPool = computed(() => {
   const style = selection.value.style
   if (style === 'solo') return []
-  const base = props.agents.filter(agent => agent.id !== selection.value.leaderId && agentUsable(agent))
-  return style === 'pipeline' ? base.filter(agent => agent.layer === 'execution') : base
+  const base = allAgentViews.value.filter(agent => agent.id !== selection.value.leaderId && agentUsableForTeam(agent))
+  return style === 'pipeline' ? base.filter(agent => normalizeLayer(agent.layer) === 'execution') : base
 })
 
 const memberRows = computed(() => selection.value.memberIds
-  .map(id => props.agents.find(agent => agent.id === id))
+  .map(id => allAgentViews.value.find(agent => agent.id === id))
   .filter((agent): agent is AgentViewDto => Boolean(agent)))
 
 const availableMembers = computed(() => memberPool.value
   .filter(agent => !selection.value.memberIds.includes(agent.id)))
 
 const memberLimitReached = computed(() => selection.value.memberIds.length >= MAX_TEAM_MEMBERS)
-const unavailableAgents = computed(() => props.agents.filter(agent =>
-  agent.id !== selection.value.leaderId && !agentUsable(agent) && !selection.value.memberIds.includes(agent.id)))
-const selectedLeader = computed(() => props.agents.find(agent => agent.id === selection.value.leaderId) ?? null)
+const unavailableAgents = computed(() => allAgentViews.value.filter(agent =>
+  agent.id !== selection.value.leaderId && !agentUsableForTeam(agent) && !selection.value.memberIds.includes(agent.id)))
+const selectedLeader = computed(() => allAgentViews.value.find(agent => agent.id === selection.value.leaderId) ?? null)
 const isDefaultMode = computed(() => Boolean(selectedId.value && defaultModeId.value === selectedId.value))
-const canSetDefault = computed(() => detail.value?.status === 'published' && !detail.value?.managed)
+const canSetDefault = computed(() => {
+  const status = detail.value?.status ?? selectedMode.value?.status
+  const versionId = detail.value?.latest_published_mode_version_id ?? selectedMode.value?.latest_published_mode_version_id
+  return status === 'published' && Boolean(versionId)
+})
 
 const teamErrors = computed<string[]>(() => {
   const errors: string[] = []
   const name = editingName.value.trim()
   if (!name) errors.push(t('settings.teamNameRequired'))
-  else if (props.modes.some(mode => mode.id !== selectedId.value && mode.display_name.trim().toLowerCase() === name.toLowerCase())) {
+  else if (store.modes.value.some(mode => mode.id !== selectedId.value && mode.display_name.trim().toLowerCase() === name.toLowerCase())) {
     errors.push(t('settings.teamNameTaken'))
   }
   if (!selection.value.leaderId) errors.push(t('settings.teamLeaderRequired'))
-  else if (selectedLeader.value && (!operationAgents.value.some(agent => agent.id === selectedLeader.value?.id) || !agentUsable(selectedLeader.value))) {
+  else if (selectedLeader.value && (!operationAgents.value.some(agent => agent.id === selectedLeader.value?.id) || !agentUsableForTeam(selectedLeader.value))) {
     errors.push(t('settings.teamLeaderUnavailable'))
   }
   if (selection.value.style !== 'solo' && selection.value.memberIds.length === 0) {
@@ -119,27 +152,25 @@ const teamErrors = computed<string[]>(() => {
   if (selection.value.memberIds.length > MAX_TEAM_MEMBERS) {
     errors.push(t('settings.teamMembersLimit', { max: MAX_TEAM_MEMBERS }))
   }
-  const unavailable = memberRows.value.filter(agent => !agentUsable(agent) || !memberPool.value.some(candidate => candidate.id === agent.id))
+  const unavailable = memberRows.value.filter(agent => !agentUsableForTeam(agent) || !memberPool.value.some(candidate => candidate.id === agent.id))
   if (unavailable.length > 0) {
-    errors.push(t('settings.teamMemberUnavailable', { names: unavailable.map(agent => agent.name).join(', ') }))
+    errors.push(t('settings.teamMemberUnavailable', { names: unavailable.map(agent => store.agentLocalizedName(agent, locale.value)).join(', ') }))
   }
   return errors
 })
 
+function layerDisplay(layer?: string): string {
+  return normalizeLayer(layer) === 'execution'
+    ? t('agentCenter.filter.executionLayer')
+    : t('agentCenter.filter.operationLayer')
+}
+
 function agentOf(id: string): AgentViewDto | undefined {
-  return props.agents.find(agent => agent.id === id)
+  return allAgentViews.value.find(agent => agent.id === id)
 }
 
-function agentName(id: string): string {
-  return agentOf(id)?.name ?? id
-}
-
-function agentDescription(id: string): string {
-  return agentOf(id)?.description || ''
-}
-
-function modeStatusLabel(mode: AgentModeDto): string {
-  if (mode.managed) return t('settings.teamBuiltIn')
+function modeStatusLabel(mode: Pick<AgentModeTopologyDto, 'managed' | 'pack_managed' | 'status'>): string {
+  if (store.isModePackManaged(mode)) return t('settings.teamBuiltIn')
   if (mode.status === 'published') return t('settings.teamStatusPublished')
   if (mode.status === 'archived') return t('settings.teamArchived')
   return t('settings.teamDraft')
@@ -153,57 +184,40 @@ function scopeOf(id: string): MemberScope {
 function toggleScope(id: string, key: 'read' | 'write') {
   if (readOnly.value) return
   const current = scopeOf(id)
-  memberScopes.value = { ...memberScopes.value, [id]: { ...current, [key]: !current[key] } }
+  store.teamDraft.value = {
+    ...store.teamDraft.value,
+    memberScopes: {
+      ...store.teamDraft.value.memberScopes,
+      [id]: { ...current, [key]: !current[key] },
+    },
+  }
 }
 
 function eligibleForStyle(style: TeamStyle, leaderId: string): AgentViewDto[] {
   if (style === 'solo') return []
-  const base = props.agents.filter(agent => agent.id !== leaderId && agentUsable(agent))
-  return style === 'pipeline' ? base.filter(agent => agent.layer === 'execution') : base
+  const base = allAgentViews.value.filter(agent => agent.id !== leaderId && agentUsableForTeam(agent))
+  return style === 'pipeline' ? base.filter(agent => normalizeLayer(agent.layer) === 'execution') : base
 }
 
-function applyShape(next: ReturnType<typeof classifyTeamShape>) {
-  const leaderId = next.leaderId || pickLeader(operationAgents.value.filter(agentUsable))
-  const allowed = eligibleForStyle(next.style, leaderId)
-  const memberIds = next.memberIds
-    .filter(id => allowed.some(agent => agent.id === id))
-    .slice(0, MAX_TEAM_MEMBERS)
-  selection.value = {
-    style: next.style,
-    leaderId,
-    memberIds,
-  }
-  const scopes: Record<string, MemberScope> = {}
-  for (const id of memberIds) {
-    const agent = agentOf(id)
-    scopes[id] = next.memberScopes?.[id] ?? (agent ? defaultMemberScope(agent) : { read: true, write: false })
-  }
-  memberScopes.value = scopes
+async function selectMode(mode: Pick<AgentModeTopologyDto, 'id'>) {
+  if (creatingNew.value && !(await store.discardOrConfirm())) return
+  creatingNew.value = false
+  await store.selectMode(mode.id)
 }
 
-async function selectMode(mode: AgentModeDto) {
-  selectedId.value = mode.id
-  await loadDetail(mode.id)
+async function openTemplatePicker() {
+  if (!effectiveCanAccessBackend.value) return
+  if (!(await store.discardOrConfirm())) return
+  creatingNew.value = true
 }
 
-async function loadDetail(id: string) {
-  const generation = ++loadGeneration
-  detailLoading.value = true
-  detailFailure.value = null
-  try {
-    const loaded = await api.getAgentModeTopology(id)
-    if (generation !== loadGeneration) return
-    detail.value = loaded
-    editingName.value = loaded.display_name
-    editingDescription.value = loaded.description ?? ''
-    editingInstructions.value = loaded.instructions ?? ''
-    applyShape(classifyTeamShape(loaded, props.agents))
-  } catch (error) {
-    if (generation !== loadGeneration) return
-    detail.value = null
-    detailFailure.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    if (generation === loadGeneration) detailLoading.value = false
+function setLeaderId(leaderId: string) {
+  if (readOnly.value) return
+  const allowed = eligibleForStyle(selection.value.style, leaderId)
+  const kept = selection.value.memberIds.filter(id => id !== leaderId && allowed.some(agent => agent.id === id))
+  store.teamDraft.value = {
+    ...store.teamDraft.value,
+    selection: { ...selection.value, leaderId, memberIds: kept },
   }
 }
 
@@ -211,40 +225,43 @@ function setStyle(style: TeamStyle) {
   if (readOnly.value) return
   const allowed = eligibleForStyle(style, selection.value.leaderId)
   const kept = selection.value.memberIds.filter(id => allowed.some(agent => agent.id === id))
+  const nextScopes = { ...store.teamDraft.value.memberScopes }
   let memberIds: string[] = []
   if (style !== 'solo') {
-    // Switching shape must not leave a member the new shape cannot represent.
     memberIds = kept.length > 0 ? kept : allowed.slice(0, 2).map(agent => agent.id)
     for (const id of memberIds) {
       const agent = agentOf(id)
-      if (agent) memberScopes.value[id] = defaultMemberScope(agent)
+      if (agent && !nextScopes[id]) nextScopes[id] = defaultMemberScope(agent)
     }
   }
-  selection.value = { ...selection.value, style, memberIds }
+  store.teamDraft.value = {
+    ...store.teamDraft.value,
+    orchestrationTier: null,
+    selection: { ...selection.value, style, memberIds },
+    memberScopes: nextScopes,
+  }
 }
 
 function toggleMember(id: string) {
   if (readOnly.value) return
   const members = [...selection.value.memberIds]
+  const nextScopes = { ...store.teamDraft.value.memberScopes }
   const index = members.indexOf(id)
-  if (index >= 0) members.splice(index, 1)
-  else {
+  if (index >= 0) {
+    members.splice(index, 1)
+  } else {
     if (members.length >= MAX_TEAM_MEMBERS) return
     if (!memberPool.value.some(agent => agent.id === id)) return
     members.push(id)
     const agent = agentOf(id)
-    if (agent) memberScopes.value = { ...memberScopes.value, [id]: defaultMemberScope(agent) }
+    if (agent) nextScopes[id] = defaultMemberScope(agent)
   }
-  selection.value = { ...selection.value, memberIds: members }
+  store.teamDraft.value = {
+    ...store.teamDraft.value,
+    selection: { ...selection.value, memberIds: members },
+    memberScopes: nextScopes,
+  }
 }
-
-watch(() => selection.value.leaderId, (leaderId) => {
-  const allowed = eligibleForStyle(selection.value.style, leaderId)
-  const kept = selection.value.memberIds.filter(id => id !== leaderId && allowed.some(agent => agent.id === id))
-  if (kept.length !== selection.value.memberIds.length) {
-    selection.value = { ...selection.value, memberIds: kept }
-  }
-})
 
 function moveMember(index: number, delta: number) {
   if (readOnly.value) return
@@ -252,185 +269,86 @@ function moveMember(index: number, delta: number) {
   const target = index + delta
   if (target < 0 || target >= members.length) return
   ;[members[index], members[target]] = [members[target], members[index]]
-  selection.value = { ...selection.value, memberIds: members }
-}
-
-function topologyFromEditor() {
-  return buildTeamTopology({
-    style: selection.value.style,
-    leaderId: selection.value.leaderId,
-    memberIds: selection.value.memberIds,
-    memberScopes: memberScopes.value,
-    instructions: editingInstructions.value,
-    displayName: editingName.value.trim() || detail.value?.display_name || 'Team',
-    description: editingDescription.value.trim(),
-  }, props.agents)
+  store.teamDraft.value = {
+    ...store.teamDraft.value,
+    selection: { ...selection.value, memberIds: members },
+  }
 }
 
 async function saveDraft(): Promise<string | null> {
-  if (!props.canAccessBackend) return null
-  const name = editingName.value.trim()
-  if (!name) {
-    notify.error(new Error(t('settings.teamNameRequired')))
-    return null
-  }
-  if (props.modes.some(mode => mode.id !== selectedId.value && mode.display_name.trim().toLowerCase() === name.toLowerCase())) {
-    notify.error(new Error(t('settings.teamNameTaken')))
-    return null
-  }
-  if (!selection.value.leaderId) {
-    notify.error(new Error(t('settings.teamLeaderRequired')))
-    return null
-  }
-  busy.value = true
-  try {
-    const topology = topologyFromEditor()
-    const displayName = name || detail.value?.display_name || 'Team'
-    if (!selectedId.value || readOnly.value) {
-      const created = await api.createAgentModeDraft({
-        slug: `team-${Date.now().toString(36)}`,
-        display_name: displayName,
-        description: editingDescription.value.trim() || null,
-        ...topology,
-      })
-      selectedId.value = created.id
-      editingName.value = created.display_name
-      emit('changed')
-      await loadDetail(created.id)
-      notify.success(t('settings.teamCreated', { name: created.display_name }))
-      return created.id
-    }
-    const expected = detail.value?.etag ?? (detail.value?.revision != null ? String(detail.value.revision) : null)
-    await api.updateAgentModeDraft(selectedId.value, topology, expected)
-    await loadDetail(selectedId.value)
-    emit('changed')
-    notify.success(t('settings.teamDraftSaved'))
-    return selectedId.value
-  } catch (error) {
-    notify.error(error)
-    return null
-  } finally {
-    busy.value = false
-  }
+  if (!effectiveCanAccessBackend.value) return null
+  if (detail.value && !canEditShape.value) return null
+  const savedId = await store.saveTeamDraft()
+  if (savedId) emit('changed')
+  return savedId
 }
 
 async function publishTeam() {
+  if (!effectiveCanAccessBackend.value) return
+  if (detail.value && !canEditShape.value) return
   if (teamErrors.value.length > 0) {
     notify.error(new Error(teamErrors.value[0]))
     return
   }
-  const id = await saveDraft()
-  if (!id) return
-  busy.value = true
-  try {
-    await api.publishAgentMode(id)
-    emit('changed')
-    await loadDetail(id)
-    notify.success(t('settings.teamPublished'))
-  } catch (error) {
-    notify.error(error)
-  } finally {
-    busy.value = false
-  }
+  const ok = await store.publishTeam()
+  if (ok) emit('changed')
 }
 
 async function createFromTemplate(template: TeamTemplateDefinition) {
-  if (!props.canAccessBackend) return
-  const leaderId = pickLeader(operationAgents.value.filter(agentUsable))
+  if (!effectiveCanAccessBackend.value) return
+  const leaderId = pickLeader(operationAgents.value.filter(agentUsableForTeam))
   if (!leaderId) {
     notify.error(new Error(t('settings.teamNoLeader')))
     return
   }
   const pool = template.key === 'pipeline'
-    ? executionAgents.value.filter(agentUsable)
-    : props.agents.filter(agent => agentUsable(agent) && agent.id !== leaderId)
+    ? executionAgents.value.filter(agentUsableForTeam)
+    : allAgentViews.value.filter(agent => agentUsableForTeam(agent) && agent.id !== leaderId)
   const memberIds = template.key === 'solo' ? [] : pickMembers(template, pool).slice(0, MAX_TEAM_MEMBERS)
   if (template.key !== 'solo' && memberIds.length === 0) {
-    // Qoder's templates also create their members; Tinadec reuses existing agents
-    // and refuses to silently save a team that can never dispatch.
     notify.error(new Error(t('settings.teamTemplateNoMembers')))
     return
   }
-  busy.value = true
-  try {
-    const name = t(template.labelKey)
-    const topology = buildTeamTopology({
-      style: template.key,
-      leaderId,
-      memberIds,
-      instructions: template.instructionsKey ? t(template.instructionsKey) : '',
-      displayName: name,
-      description: t(template.hintKey),
-    }, props.agents)
-    const created = await api.createAgentModeDraft({
-      slug: `team-${Date.now().toString(36)}`,
-      display_name: name,
-      description: t(template.hintKey),
-      ...topology,
-    })
+  const name = t(template.labelKey)
+  const topology = buildTeamTopology({
+    style: template.key,
+    leaderId,
+    memberIds,
+    instructions: template.instructionsKey ? t(template.instructionsKey) : '',
+    displayName: name,
+    description: t(template.hintKey),
+  }, allAgentViews.value)
+
+  const created = await store.createMode({
+    displayName: name,
+    slug: `team-${Date.now().toString(36)}`,
+    topology,
+  })
+  if (created) {
+    creatingNew.value = false
     emit('changed')
-    selectedId.value = created.id
-    await loadDetail(created.id)
-    notify.success(t('settings.teamCreated', { name: created.display_name }))
-  } catch (error) {
-    notify.error(error)
-  } finally {
-    busy.value = false
   }
 }
 
 async function cloneToMine() {
-  if (!detail.value) return
-  busy.value = true
-  try {
-    const topology = cloneModeTopology(detail.value)
-    const name = `${editingName.value || detail.value.display_name} ${t('settings.teamCopySuffix')}`
-    const created = await api.createAgentModeDraft({
-      slug: `team-${Date.now().toString(36)}`,
-      display_name: name,
-      description: editingDescription.value || detail.value.description || null,
-      ...topology,
-    })
+  if (!selectedId.value) return
+  const created = await store.cloneMode(selectedId.value)
+  if (created) {
+    creatingNew.value = false
     emit('changed')
-    selectedId.value = created.id
-    await loadDetail(created.id)
-    notify.success(t('settings.teamCreated', { name: created.display_name }))
-  } catch (error) {
-    notify.error(error)
-  } finally {
-    busy.value = false
   }
 }
 
-async function loadDefaults() {
-  try {
-    const defaults = await api.getWorkspaceDefaults()
-    defaultModeId.value = defaults.default_agent_mode_id ?? null
-  } catch {
-    defaultModeId.value = null
-  }
+async function deleteCurrentTeam() {
+  if (!selectedId.value || isPackManaged.value) return
+  const deleted = await store.deleteOrArchiveMode(selectedId.value)
+  if (deleted) emit('changed')
 }
 
-/** The Qoder "invocation policy" analog: new conversations fall back to this team. */
 async function setAsDefault() {
   if (!selectedId.value || !canSetDefault.value || isDefaultMode.value) return
-  settingDefault.value = true
-  try {
-    const current = await api.getWorkspaceDefaults()
-    const draft = await api.updateWorkspaceDefaultsDraft({
-      default_agent_mode_id: selectedId.value,
-      default_mode_version_id: detail.value?.latest_published_mode_version_id ?? null,
-      default_prompt_pipeline_id: current.default_prompt_pipeline_id ?? null,
-      default_prompt_version_id: current.default_prompt_version_id ?? null,
-    }, current.revision ?? null)
-    await api.publishWorkspaceDefaults(draft.revision ?? null)
-    defaultModeId.value = selectedId.value
-    notify.success(t('settings.teamDefaultSet'))
-  } catch (error) {
-    notify.error(error)
-  } finally {
-    settingDefault.value = false
-  }
+  const ok = await store.setAsDefaultMode(selectedId.value)
+  if (ok) emit('changed')
 }
 
 function openGraph() {
@@ -438,23 +356,55 @@ function openGraph() {
 }
 
 function reload() {
-  if (selectedId.value) void loadDetail(selectedId.value)
+  if (effectiveCanAccessBackend.value) {
+    void store.loadAgents({ force: true })
+    void store.loadWorkspaceDefaults()
+    if (selectedId.value) void store.selectMode(selectedId.value, { force: true })
+    else void store.loadModes({ force: true })
+  }
 }
 
 defineExpose({ reload })
 
-watch(() => props.modes, modes => {
-  if (!modes.length) {
-    selectedId.value = ''
-    detail.value = null
-    return
+watch(() => props.modes, (modes) => {
+  if (modes?.length) {
+    store.mergeExternalModes(modes as AgentModeTopologyDto[])
+    if (!store.selectedModeId.value && !creatingNew.value) {
+      const first = store.sortedModes.value[0]
+      if (first) void store.selectMode(first.id, { force: true })
+    }
   }
-  // Do not steal the selection when the refreshed list lags behind a just-created
-  // team; the detail pane already holds the authoritative row.
-  if (!selectedId.value) void selectMode(modes[0])
 }, { immediate: true })
 
-onMounted(() => { void loadDefaults() })
+watch(() => props.agents, (agents) => {
+  if (agents?.length) store.mergeExternalAgents(agents)
+}, { immediate: true })
+
+watch(effectiveCanAccessBackend, (ready) => {
+  if (ready) {
+    void store.loadAgents()
+    void store.loadWorkspaceDefaults()
+    if (store.modes.value.length === 0) void store.loadModes()
+    else if (!store.selectedModeId.value && !creatingNew.value) {
+      const first = store.sortedModes.value[0]
+      if (first) void store.selectMode(first.id, { force: true })
+    }
+  }
+})
+
+onMounted(() => {
+  if (effectiveCanAccessBackend.value) {
+    void store.loadAgents()
+    void store.loadWorkspaceDefaults()
+    if (store.modes.value.length === 0) void store.loadModes()
+    else if (!store.selectedModeId.value && !creatingNew.value) {
+      const first = store.sortedModes.value[0]
+      if (first) void store.selectMode(first.id, { force: true })
+    } else if (store.selectedModeId.value && !store.selectedModeDetail.value) {
+      void store.selectMode(store.selectedModeId.value, { force: true })
+    }
+  }
+})
 </script>
 
 <template>
@@ -462,24 +412,35 @@ onMounted(() => { void loadDefaults() })
     <aside class="team-rail">
       <div class="team-rail-head">
         <UiInput v-model="query" :placeholder="t('settings.teamSearch')" />
+        <UiButton
+          size="sm"
+          variant="outline"
+          class="team-new-btn"
+          data-testid="team-new-btn"
+          :disabled="!effectiveCanAccessBackend || busy"
+          @click="openTemplatePicker"
+        >
+          <Plus :size="14" />
+          <span>{{ t('settings.teamNew') }}</span>
+        </UiButton>
       </div>
       <button
         v-for="mode in filteredModes"
         :key="mode.id"
         type="button"
         class="team-row"
-        :class="{ active: selectedId === mode.id }"
+        :class="{ active: !creatingNew && selectedId === mode.id }"
         @click="selectMode(mode)"
       >
         <div class="team-row-main">
-          <strong>{{ mode.display_name }}</strong>
-          <span>{{ mode.description || mode.slug || '—' }}</span>
+          <strong>{{ store.modeLocalizedName(mode, locale) }}</strong>
+          <span>{{ store.modeLocalizedDescription(mode, locale) || mode.slug || '—' }}</span>
         </div>
-        <UiBadge :variant="mode.managed || mode.status === 'published' ? 'secondary' : 'outline'">
+        <UiBadge :variant="isPackManaged || mode.managed || mode.pack_managed || mode.status === 'published' ? 'secondary' : 'outline'">
           {{ modeStatusLabel(mode) }}
         </UiBadge>
       </button>
-      <div v-if="loading && !filteredModes.length" class="team-rail-loading" aria-live="polite">
+      <div v-if="(loading || store.modesLoading.value) && !filteredModes.length" class="team-rail-loading" aria-live="polite">
         <RefreshCw :size="14" class="center-stale-spinner" aria-hidden="true" />
         <span>{{ t('settings.refreshing') }}</span>
       </div>
@@ -487,7 +448,32 @@ onMounted(() => { void loadDefaults() })
     </aside>
 
     <main class="team-stage">
-      <div v-if="detailLoading" class="team-stage-placeholder" aria-live="polite">
+      <div v-if="creatingNew || (!detail && !detailLoading && !detailFailure)" class="team-welcome">
+        <div class="team-welcome-head">
+          <div>
+            <h3>{{ t('settings.teamWelcomeTitle') }}</h3>
+            <p>{{ t('settings.teamWelcomeHint') }}</p>
+          </div>
+          <UiButton v-if="creatingNew && detail" size="sm" variant="ghost" @click="creatingNew = false">
+            {{ t('settings.teamBackToEditor') }}
+          </UiButton>
+        </div>
+        <div class="team-template-grid">
+          <button
+            v-for="template in templates"
+            :key="template.key"
+            type="button"
+            class="team-template-card"
+            :disabled="!effectiveCanAccessBackend || busy"
+            @click="createFromTemplate(template)"
+          >
+            <strong>{{ t(template.labelKey) }}</strong>
+            <span>{{ t(template.hintKey) }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div v-else-if="detailLoading" class="team-stage-placeholder" aria-live="polite">
         <RefreshCw :size="16" class="center-stale-spinner" aria-hidden="true" />
         <span>{{ t('settings.teamLoading') }}</span>
       </div>
@@ -501,30 +487,10 @@ onMounted(() => { void loadDefaults() })
         <UiButton variant="outline" size="sm" @click="reload">{{ t('settings.retry') }}</UiButton>
       </div>
 
-      <div v-else-if="!detail" class="team-welcome">
-        <div>
-          <h3>{{ t('settings.teamWelcomeTitle') }}</h3>
-          <p>{{ t('settings.teamWelcomeHint') }}</p>
-        </div>
-        <div class="team-template-grid">
-          <button
-            v-for="template in templates"
-            :key="template.key"
-            type="button"
-            class="team-template-card"
-            :disabled="!canAccessBackend || busy"
-            @click="createFromTemplate(template)"
-          >
-            <strong>{{ t(template.labelKey) }}</strong>
-            <span>{{ t(template.hintKey) }}</span>
-          </button>
-        </div>
-      </div>
-
-      <div v-else class="team-editor">
+      <div v-else-if="detail" class="team-editor">
         <header class="team-editor-head">
           <div class="team-editor-title">
-            <h3>{{ editingName || detail.display_name }}</h3>
+            <h3>{{ editingName || store.modeLocalizedName(detail, locale) }}</h3>
             <p>{{ readOnly ? t('settings.teamReadOnlyHint') : t('settings.teamEditorHint') }}</p>
           </div>
           <div class="team-editor-actions">
@@ -536,30 +502,54 @@ onMounted(() => { void loadDefaults() })
             >
               {{ isDefaultMode ? t('settings.teamDefaultCurrent') : t('settings.teamSetDefault') }}
             </UiButton>
-            <UiButton v-if="readOnly" :disabled="busy || !canAccessBackend" @click="cloneToMine">
-              <Plus :size="14" />
+            <UiButton
+              :variant="readOnly ? 'default' : 'outline'"
+              :disabled="busy || !effectiveCanAccessBackend"
+              @click="cloneToMine"
+            >
+              <Copy :size="14" />
               <span>{{ t('settings.teamClone') }}</span>
             </UiButton>
             <template v-if="!readOnly">
-              <UiButton variant="outline" :disabled="busy || !canAccessBackend" @click="saveDraft">
+              <UiButton
+                variant="outline"
+                :disabled="busy || !effectiveCanAccessBackend || !canEditShape"
+                @click="saveDraft"
+              >
                 {{ t('settings.teamSaveDraft') }}
               </UiButton>
-              <UiButton :disabled="busy || !canAccessBackend || !canEditShape || teamErrors.length > 0" @click="publishTeam">
+              <UiButton
+                :disabled="busy || !effectiveCanAccessBackend || !canEditShape || teamErrors.length > 0"
+                @click="publishTeam"
+              >
                 {{ t('settings.teamPublish') }}
               </UiButton>
             </template>
+            <UiButton
+              v-if="!isPackManaged"
+              variant="ghost"
+              class="team-delete-btn"
+              :disabled="busy || !effectiveCanAccessBackend"
+              :title="t('settings.teamDelete')"
+              @click="deleteCurrentTeam"
+            >
+              <Trash2 :size="14" />
+            </UiButton>
             <UiButton variant="ghost" @click="openGraph">{{ t('settings.teamOpenGraph') }}</UiButton>
           </div>
         </header>
 
         <div class="team-summary">
           <UiBadge variant="outline">{{ selection.style }}</UiBadge>
-          <span v-if="selectedLeader">{{ t('settings.teamLeader') }} · {{ selectedLeader.name }}</span>
+          <span v-if="selectedLeader">{{ t('settings.teamLeader') }} · {{ store.agentLocalizedName(selectedLeader, locale) }}</span>
           <span>{{ t('settings.teamMemberCount', { count: memberRows.length, max: MAX_TEAM_MEMBERS }) }}</span>
           <UiBadge v-if="isDefaultMode" variant="secondary">{{ t('settings.teamDefaultCurrent') }}</UiBadge>
+          <UiBadge v-if="store.teamDirty.value && !readOnly" variant="outline" class="team-dirty-badge">
+            {{ t('settings.modeUnsaved') }}
+          </UiBadge>
         </div>
 
-        <div v-if="teamErrors.length > 0 && !readOnly" class="team-errors" role="alert">
+        <div v-if="teamErrors.length > 0 && !readOnly && canEditShape" class="team-errors" role="alert">
           <p v-for="error in teamErrors" :key="error">{{ error }}</p>
         </div>
 
@@ -612,10 +602,11 @@ onMounted(() => { void loadDefaults() })
           <label class="team-field">
             <span>{{ t('settings.teamLeader') }}</span>
             <UiSelectField
-              v-model="selection.leaderId"
+              :model-value="selection.leaderId"
               :aria-label="t('settings.teamLeader')"
               :options="leaderOptions"
               :disabled="readOnly"
+              @update:model-value="setLeaderId"
             />
           </label>
 
@@ -624,10 +615,10 @@ onMounted(() => { void loadDefaults() })
             <div v-if="memberRows.length" class="team-member-list" role="list">
               <div v-for="(agent, index) in memberRows" :key="agent.id" class="team-member-row" role="listitem">
                 <div class="team-member-main">
-                  <strong>{{ agent.name }}</strong>
-                  <span>{{ agent.description || '—' }}</span>
+                  <strong>{{ store.agentLocalizedName(agent, locale) }}</strong>
+                  <span>{{ store.agentLocalizedDescription(agent, locale) || '—' }}</span>
                 </div>
-                <em class="team-member-layer">{{ agent.layer }}</em>
+                <em class="team-member-layer">{{ layerDisplay(agent.layer) }}</em>
                 <div class="team-member-scope" role="group" :aria-label="t('settings.teamMemberScope')">
                   <button
                     type="button"
@@ -667,14 +658,14 @@ onMounted(() => { void loadDefaults() })
                 @click="toggleMember(agent.id)"
               >
                 <Plus :size="12" />
-                <span>{{ agent.name }}</span>
-                <em>{{ agent.layer }}</em>
+                <span>{{ store.agentLocalizedName(agent, locale) }}</span>
+                <em>{{ layerDisplay(agent.layer) }}</em>
               </button>
             </div>
             <p v-if="memberLimitReached" class="team-hint">{{ t('settings.teamMembersLimit', { max: MAX_TEAM_MEMBERS }) }}</p>
             <p v-else-if="availableMembers.length === 0 && selection.style === 'pipeline'" class="team-hint">{{ t('settings.teamNoExecutionAgents') }}</p>
             <p v-if="unavailableAgents.length > 0" class="team-hint">
-              {{ t('settings.teamUnavailableAgents', { names: unavailableAgents.map(agent => agent.name).join(', ') }) }}
+              {{ t('settings.teamUnavailableAgents', { names: unavailableAgents.map(agent => store.agentLocalizedName(agent, locale)).join(', ') }) }}
             </p>
           </div>
         </div>
@@ -701,8 +692,29 @@ onMounted(() => { void loadDefaults() })
   padding-right: 4px;
 }
 
-.team-rail-head { position: sticky; top: 0; padding-bottom: 6px; background: var(--surface-section); z-index: 1; }
-.team-rail-loading, .team-rail-empty { display: flex; align-items: center; gap: 6px; padding: 10px 4px; color: var(--text-muted); font-size: 12px; }
+.team-rail-head {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 6px;
+  padding-bottom: 6px;
+  background: var(--surface-section);
+  z-index: 1;
+}
+
+.team-new-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.team-rail-loading, .team-rail-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 
 .team-row {
   display: flex;
@@ -716,6 +728,7 @@ onMounted(() => { void loadDefaults() })
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 90ms ease;
 }
 .team-row:hover { background: var(--surface-hover); }
 .team-row.active { background: var(--surface-selected); }
@@ -730,10 +743,11 @@ onMounted(() => { void loadDefaults() })
 .team-stage-placeholder.error p { margin: 4px 0 0; color: var(--text-secondary); }
 
 .team-welcome { display: flex; flex-direction: column; gap: 18px; padding: 18px; border: 1px solid var(--border-muted); border-radius: 12px; background: var(--surface-section); }
+.team-welcome-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .team-welcome h3 { margin: 0 0 6px; }
 .team-welcome p { margin: 0; color: var(--text-secondary); font-size: 13px; }
-.team-template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
-.team-template-card { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--border-muted); border-radius: 10px; background: var(--surface-raised); color: var(--text-primary); text-align: left; cursor: pointer; }
+.team-template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.team-template-card { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--border-muted); border-radius: 10px; background: var(--surface-raised); color: var(--text-primary); text-align: left; cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease, transform 90ms ease; }
 .team-template-card:hover { border-color: var(--accent-primary); }
 .team-template-card span { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
 
@@ -741,7 +755,9 @@ onMounted(() => { void loadDefaults() })
 .team-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .team-editor-title h3 { margin: 0 0 4px; }
 .team-editor-title p { margin: 0; color: var(--text-secondary); font-size: 12px; }
-.team-editor-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.team-editor-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.team-delete-btn { color: var(--accent-danger, #ef4444); }
+.team-dirty-badge { border-color: color-mix(in srgb, var(--accent-warning, #d97706) 45%, var(--border-muted)); color: var(--accent-warning, #d97706); }
 
 .team-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border-muted); border-radius: 8px; background: var(--surface-section); font-size: 12px; color: var(--text-secondary); }
 .team-errors { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--accent-danger) 30%, var(--border-muted)); border-radius: 8px; background: color-mix(in srgb, var(--accent-danger) 6%, var(--surface-section)); }
@@ -757,7 +773,7 @@ onMounted(() => { void loadDefaults() })
 .team-hint { margin: 0; color: var(--text-muted); font-size: 12px; }
 
 .team-style-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
-.team-style-row button { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border-muted); border-radius: 9px; background: var(--surface-raised); color: var(--text-primary); text-align: left; cursor: pointer; }
+.team-style-row button { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border-muted); border-radius: 9px; background: var(--surface-raised); color: var(--text-primary); text-align: left; cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease, transform 90ms ease; }
 .team-style-row button.active { border-color: var(--accent-primary); background: var(--surface-selected); }
 .team-style-row button span { color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
 
@@ -776,6 +792,7 @@ onMounted(() => { void loadDefaults() })
   color: var(--text-muted);
   font-size: 10px;
   cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 90ms ease;
 }
 .team-member-scope button.active {
   border-color: var(--accent-primary);
@@ -796,5 +813,18 @@ onMounted(() => { void loadDefaults() })
 @media (max-width: 820px) {
   .team-center { grid-template-columns: 1fr; }
   .team-rail { max-height: 260px; }
+}
+
+@media (max-width: 640px) {
+  .team-template-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-row,
+  .team-template-card,
+  .team-style-row button,
+  .team-member-scope button {
+    transition: none !important;
+  }
 }
 </style>

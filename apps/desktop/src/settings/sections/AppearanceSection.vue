@@ -267,7 +267,7 @@ function resetBackgroundToDefault(): void {
           @click="setCodeFont(font.id)"
         >
           <span class="code-font-name">{{ font.id === 'system' ? t('settings.codeFontSystem') : font.label }}<small v-if="!font.bundled">{{ t('settings.codeFontSystemBadge') }}</small></span>
-          <span class="code-font-sample" :style="{ fontFamily: codeFontStack(font.id) }">{ 0O 1lI } =&gt; 代码</span>
+          <span class="code-font-sample" :style="{ fontFamily: codeFontStack(font.id) }">{ 0O 1lI } =&gt; {{ t('settings.codeFontSampleWord') }}</span>
         </button>
       </div>
     </section>

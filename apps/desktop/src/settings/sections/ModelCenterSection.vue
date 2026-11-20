@@ -29,7 +29,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose } from 'reka-ui'
 import { UiBadge, UiButton, UiCard, UiCheckbox, UiInput, UiLabel, UiSelectField, UiSkeleton, UiSwitch } from '@/components/ui'
-import ModelParametersEditor from '@/settings/sections/ModelParametersEditor.vue'
+import ModelCenterModelRows from '@/settings/sections/ModelCenterModelRows.vue'
 import ModelScopeNotice from '@/settings/sections/ModelScopeNotice.vue'
 import { centerDiagnosticLabel as centerDiagnosticText, providerStatusLabel } from '@/settings/modelCenterLabels'
 import { useNotifications } from '@/composables/useNotifications'
@@ -39,6 +39,7 @@ import type {
   CenterDiagnosticDto,
   HarnessChannelDto,
   ModelCenterOverviewDto,
+  ModelProfileDto,
   ModelProviderInstanceDto,
   ModelReferenceDto,
   SaveModelProviderInstanceInput,
@@ -116,6 +117,7 @@ const {
   connectDiscoveredCli,
   discoverProviderModels,
   saveProviderInstance,
+  saveModelProfile,
 } = props.center
 
 const { t, te } = useI18n()
@@ -160,10 +162,9 @@ const runtimeSectionKeys = ['cli', 'tui', 'acp'] as const
 
 /** The four task pages. Runtime is one page holding the CLI / TUI / ACP inventory sub-tabs. */
 const modelCenterTabs = computed(() => [
-  { key: 'suppliers' as const, label: t('settings.centerConnections'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
+  { key: 'suppliers' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
   { key: 'models' as const, label: t('settings.centerModels'), count: modelCenterOverview.value?.models.length ?? 0 },
-  // Routes/purpose/candidates are engineering concepts; they live under Advanced.
-  { key: 'routes' as const, label: t('settings.centerAdvanced'), count: routes.value.length },
+  { key: 'routes' as const, label: t('settings.centerRoutes'), count: routes.value.length },
   {
     key: 'runtime' as const,
     label: t('settings.centerRuntime'),
@@ -361,6 +362,23 @@ const defaultChatOptions = computed(() => {
       value: `${provider.id}\u0000${model.model_id}`,
       label: `${provider.display_name} · ${model.model_id}`,
     })))
+  for (const runtime of props.runtimeCliOptions) {
+    if (!runtime.provider_instance_id) continue
+    const value = `${runtime.provider_instance_id}\u0000${runtime.model ?? ''}`
+    if (!options.some((option) => option.value === value)) {
+      options.push({
+        value,
+        label: runtime.model ? `${runtime.display_name} (CLI) · ${runtime.model}` : `${runtime.display_name} (CLI)`,
+      })
+    }
+  }
+  for (const runtime of props.runtimeAcpOptions) {
+    if (!runtime.provider_instance_id) continue
+    const value = `${runtime.provider_instance_id}\u0000`
+    if (!options.some((option) => option.value === value)) {
+      options.push({ value, label: `${runtime.display_name} (ACP)` })
+    }
+  }
   if (defaultChatValue.value && !options.some((option) => option.value === defaultChatValue.value)) {
     options.unshift({ value: defaultChatValue.value, label: defaultChatLabel.value })
   }
@@ -371,7 +389,7 @@ async function changeDefaultChat(value: string) {
   if (!value || value === defaultChatValue.value) return
   const [providerId, model] = value.split('\u0000')
   if (!providerId) return
-  await setDefaultChatModel(providerId, model ?? '')
+  await setDefaultChatModel(providerId, model || null, routeCandidateProviderLabel(providerId))
 }
 
 /** The catalog across every supplier; a query matches a supplier name or a model identity. */
@@ -707,6 +725,14 @@ async function modelParametersSaved() {
   await loadModelCenter()
   notify.success(t('settings.modelParametersSaved'))
 }
+
+async function handleSaveModelProfile(
+  provider: ModelProviderInstanceDto,
+  modelId: string,
+  profile: ModelProfileDto | null,
+) {
+  await saveModelProfile(provider, modelId, profile)
+}
 const modelModalProviderId = ref('')
 const modelModalManual = ref('')
 /** New models only: whatever is already persisted stays saved whether or not a row is ticked. */
@@ -937,6 +963,13 @@ async function saveRouteCandidates() {
   }
 }
 
+function toggleModelParameters(providerId: string, modelId: string) {
+  editingModelParameters.value =
+    editingModelParameters.value?.providerId === providerId && editingModelParameters.value?.model === modelId
+      ? null
+      : { providerId, model: modelId }
+}
+
 /** Reverse references (agents / modes / routes / recent invocations) for one configured model. */
 async function toggleModelReferences(providerInstanceId: string, modelId: string) {
   const key = `${providerInstanceId}:${modelId}`
@@ -1115,6 +1148,21 @@ defineExpose({ canLeave, focusProvider })
       <p>{{ t('settings.modelCenterSubtitle') }}</p>
     </div>
     <div class="center-command-actions">
+      <div class="model-center-default-chat">
+        <Route :size="14" aria-hidden="true" />
+        <span class="model-center-default-label">{{ t('settings.defaultChatModel') }}</span>
+        <UiSelectField
+          v-if="defaultChatOptions.length > 0"
+          class="model-center-default-select"
+          :model-value="defaultChatValue"
+          :options="defaultChatOptions"
+          :aria-label="t('settings.defaultChatModel')"
+          :placeholder="t('settings.defaultChatNone')"
+          @update:model-value="changeDefaultChat"
+        />
+        <strong v-else-if="defaultChatCandidate" class="model-center-default-value">{{ defaultChatLabel }}</strong>
+        <span v-else class="quiet">{{ t('settings.defaultChatNone') }}</span>
+      </div>
       <UiButton variant="outline" size="sm" @click="handleAddProviderClick">
         <Plus :size="14" />
         <span>{{ t('settings.addProvider') }}</span>
@@ -1222,38 +1270,21 @@ defineExpose({ canLeave, focusProvider })
       </button>
     </div>
 
-    <div class="model-center-default-chat">
-      <span class="model-center-default-label">{{ t('settings.defaultChatModel') }}</span>
-      <Route :size="15" aria-hidden="true" />
-      <strong v-if="defaultChatCandidate" class="model-center-default-value">{{ defaultChatLabel }}</strong>
-      <span v-else class="quiet">{{ t('settings.defaultChatNone') }}</span>
-      <UiSelectField
-        v-if="defaultChatOptions.length > 0"
-        class="model-center-default-select"
-        :model-value="defaultChatValue"
-        :options="defaultChatOptions"
-        :aria-label="t('settings.defaultChatModel')"
-        :placeholder="t('settings.defaultChatNone')"
-        @update:model-value="changeDefaultChat"
-      />
-      <UiButton variant="ghost" size="sm" @click="selectCenterTab('routes')">
-        {{ t('settings.defaultChatChange') }}
-      </UiButton>
-    </div>
-
     <main
       :id="`model-center-panel-${centerTab}`"
       class="center-resource-stage model-center-stage"
       role="tabpanel"
       :aria-labelledby="`model-center-tab-${centerTab}`"
     >
+      <Transition name="center-stage-fade" mode="out-in">
+      <div :key="centerTab" class="model-center-stage-pane">
   <section v-if="modelCenterSection === 'models'" class="center-resource-section">
     <div class="center-resource-heading">
       <div>
         <h3>{{ t('settings.centerModels') }}</h3>
         <p>{{ t('settings.configuredModelsHint') }}</p>
       </div>
-      <UiBadge variant="outline">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
+      <UiBadge variant="outline" :title="t('settings.configuredModelsHint')">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
     </div>
     <div class="model-center-catalog-toolbar">
       <div class="model-provider-search">
@@ -1294,8 +1325,8 @@ defineExpose({ canLeave, focusProvider })
         <UiButton
           variant="outline"
           size="sm"
-          :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
-          :title="modelCenterOverview?.capabilities.model_discovery_refresh ? t('settings.addModel') : t('settings.modelDiscoveryUnsupported')"
+          :disabled="modelCenterBusy"
+          :title="t('settings.addModel')"
           @click="openAddModelModal(provider.id)"
         >
           <Plus :size="14" />
@@ -1303,64 +1334,30 @@ defineExpose({ canLeave, focusProvider })
         </UiButton>
       </div>
       <div class="model-group-models">
-        <template v-for="model in models" :key="model.id">
-        <div class="center-resource-list-row model-group-model">
-          <div class="center-resource-primary">
-            <Cpu :size="15" />
-            <div>
-              <strong :title="model.model_id">{{ model.model_id }}</strong>
-              <div class="center-resource-meta">
-                <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
-                <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
-              </div>
-              <div v-if="modelReferenceRows[`${provider.id}:${model.model_id}`]" class="model-reference-rows">
-                <span v-for="(reference, index) in modelReferenceRows[`${provider.id}:${model.model_id}`]" :key="index">
-                  {{ referenceKindLabel(reference.reference_kind) }}<template v-if="reference.detail"> · {{ referenceDetailLabel(reference) }}</template>
-                </span>
-                <span v-if="modelReferenceRows[`${provider.id}:${model.model_id}`].length === 0" class="quiet">{{ t('settings.noModelReferences') }}</span>
-              </div>
-            </div>
-          </div>
-          <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
-          <div class="center-resource-actions">
-          <UiButton
-            variant="outline"
-            size="sm"
-            :disabled="modelCenterBusy"
-            :title="t('settings.setDefaultModel')"
-            @click="setDefaultChatModel(provider.id, model.model_id)"
-          >
-            {{ t('settings.setDefaultModel') }}
-          </UiButton>
-          <UiButton variant="outline" size="sm" :disabled="modelCenterBusy" :aria-expanded="editingModelParameters?.providerId === provider.id && editingModelParameters?.model === model.model_id"
-            @click="editingModelParameters = editingModelParameters?.providerId === provider.id && editingModelParameters?.model === model.model_id ? null : { providerId: provider.id, model: model.model_id }">
-            <Settings2 data-icon="inline-start" />
-            {{ t('settings.modelParameters') }}
-          </UiButton>
-          <UiButton
-            variant="ghost"
-            size="sm"
-            :disabled="modelReferenceBusy[`${provider.id}:${model.model_id}`]"
-            :title="t('settings.toggleModelReferences')"
-            @click="toggleModelReferences(provider.id, model.model_id)"
-          >
-            <Info :size="14" />
-          </UiButton>
-          <UiButton
-            variant="ghost"
-            size="sm"
-            :disabled="modelCenterBusy"
-            :title="t('settings.removeModel')"
-            @click="removeModel(provider.id, model.model_id)"
-          >
-            <Trash2 :size="14" />
-          </UiButton>
-          </div>
-        </div>
-        <ModelParametersEditor v-if="editingModelParameters?.providerId === provider.id && editingModelParameters?.model === model.model_id && providers.find(item => item.id === provider.id)"
-          :provider="providers.find(item => item.id === provider.id)!" :model="model.model_id"
-          @saved="modelParametersSaved" @cancel="editingModelParameters = null" @reload="loadModelCenter" />
-        </template>
+        <ModelCenterModelRows
+          :provider-id="provider.id"
+          :provider="providers.find(item => item.id === provider.id) ?? null"
+          :models="models"
+          :busy="modelCenterBusy"
+          :default-chat-candidate="defaultChatCandidate"
+          :model-reference-rows="modelReferenceRows"
+          :model-reference-busy="modelReferenceBusy"
+          :editing-model-parameters="editingModelParameters"
+          :status-label="statusLabel"
+          :status-variant="statusVariant"
+          :configured-model-source-label="configuredModelSourceLabel"
+          :reference-key="referenceKey"
+          :reference-kind-label="referenceKindLabel"
+          :reference-detail-label="referenceDetailLabel"
+          @set-default="setDefaultChatModel"
+          @toggle-parameters="toggleModelParameters"
+          @toggle-references="toggleModelReferences"
+          @remove="removeModel"
+          @parameters-saved="modelParametersSaved"
+          @parameters-cancel="editingModelParameters = null"
+          @save-profile="handleSaveModelProfile"
+          @reload="loadModelCenter"
+        />
         <div v-if="models.length === 0" class="center-empty-state">
           <Cpu :size="20" />
           <span>{{ t('settings.noProviderModels') }}</span>
@@ -1469,22 +1466,24 @@ defineExpose({ canLeave, focusProvider })
     </div>
   </section>
 
-  <div v-if="centerTab === 'runtime'" class="model-center-subtabs" role="tablist" :aria-label="t('settings.centerRuntime')">
-    <button
-      v-for="section in runtimeSections"
-      :key="section.key"
-      role="tab"
-      :aria-selected="modelCenterSection === section.key"
-      :tabindex="modelCenterSection === section.key ? 0 : -1"
-      :class="{ active: modelCenterSection === section.key }"
-      @click="selectRuntimeTab(section.key)"
-      @keydown="onRuntimeTabKeydown"
-    >
-      <span>{{ section.label }}</span>
-      <UiBadge variant="secondary">{{ section.count }}</UiBadge>
-    </button>
-  </div>
-
+  <div v-if="centerTab === 'runtime'" class="model-center-runtime-pane">
+    <div class="model-center-subtabs" role="tablist" :aria-label="t('settings.centerRuntime')">
+      <button
+        v-for="section in runtimeSections"
+        :key="section.key"
+        role="tab"
+        :aria-selected="modelCenterSection === section.key"
+        :tabindex="modelCenterSection === section.key ? 0 : -1"
+        :class="{ active: modelCenterSection === section.key }"
+        @click="selectRuntimeTab(section.key)"
+        @keydown="onRuntimeTabKeydown"
+      >
+        <span>{{ section.label }}</span>
+        <UiBadge variant="secondary">{{ section.count }}</UiBadge>
+      </button>
+    </div>
+    <Transition name="center-stage-fade" mode="out-in">
+      <div :key="modelCenterSection" class="model-center-stage-pane">
   <section v-if="modelCenterSection === 'cli'" class="center-resource-section">
     <div class="center-resource-heading">
       <div>
@@ -1744,6 +1743,9 @@ defineExpose({ canLeave, focusProvider })
       <span>{{ t('settings.noTuiRuntimes') }}</span>
     </div>
   </section>
+      </div>
+    </Transition>
+  </div>
 
   <section v-if="modelCenterSection === 'api'" ref="modelProviderListRef" class="model-provider-section model-center-providers">
     <div class="model-provider-toolbar">
@@ -1757,7 +1759,7 @@ defineExpose({ canLeave, focusProvider })
         </button>
         <button :class="{ active: modelProviderFilter === 'issues' }" :aria-pressed="modelProviderFilter === 'issues'" @click="modelProviderFilter = 'issues'">
           {{ t('settings.filterIssues') }}
-          <span v-if="modelCenterIssueCount > 0">{{ modelCenterIssueCount }}</span>
+          <span v-if="modelCenterIssueCount > 0" class="filter-issue-count">{{ modelCenterIssueCount }}</span>
         </button>
         <button :class="{ active: modelProviderFilter === 'configured' }" :aria-pressed="modelProviderFilter === 'configured'" @click="modelProviderFilter = 'configured'">
           {{ t('settings.filterConfigured') }}
@@ -1993,7 +1995,7 @@ defineExpose({ canLeave, focusProvider })
           </UiCard>
         </form>
 
-        <div v-else-if="selectedProviderDetail" class="model-center-provider-card">
+        <div v-else-if="selectedProviderDetail" :key="selectedProviderDetail.id" class="model-center-provider-card">
           <div class="provider-detail-head compact model-center-provider-head">
             <span
               class="provider-brand-icon"
@@ -2060,8 +2062,8 @@ defineExpose({ canLeave, focusProvider })
               <UiButton
                 variant="outline"
                 size="sm"
-                :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
-                :title="modelCenterOverview?.capabilities.model_discovery_refresh ? t('settings.addModel') : t('settings.modelDiscoveryUnsupported')"
+                :disabled="modelCenterBusy"
+                :title="t('settings.addModel')"
                 @click="openAddModelModal(selectedProviderDetail.id)"
               >
                 <Plus :size="14" />
@@ -2069,72 +2071,30 @@ defineExpose({ canLeave, focusProvider })
               </UiButton>
             </div>
             <div class="model-center-provider-model-list">
-              <div v-for="model in modelsForProvider(selectedProviderDetail.id)" :key="model.id" class="center-resource-list-row model-group-model">
-                <div class="center-resource-primary">
-                  <Cpu :size="15" />
-                  <div>
-                    <strong :title="model.model_id">{{ model.model_id }}</strong>
-                    <div class="center-resource-meta">
-                      <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
-                      <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
-                    </div>
-                    <div v-if="modelReferenceRows[referenceKey(selectedProviderDetail.id, model.model_id)]" class="model-reference-rows">
-                      <span v-for="(reference, index) in modelReferenceRows[referenceKey(selectedProviderDetail.id, model.model_id)]" :key="index">
-                        {{ referenceKindLabel(reference.reference_kind) }}<template v-if="reference.detail"> · {{ referenceDetailLabel(reference) }}</template>
-                      </span>
-                      <span v-if="modelReferenceRows[referenceKey(selectedProviderDetail.id, model.model_id)].length === 0" class="quiet">{{ t('settings.noModelReferences') }}</span>
-                    </div>
-                  </div>
-                </div>
-                <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
-                <div class="center-resource-actions">
-                  <UiButton
-                    variant="outline"
-                    size="sm"
-                    :disabled="modelCenterBusy"
-                    :title="t('settings.setDefaultModel')"
-                    @click="setDefaultChatModel(selectedProviderDetail.id, model.model_id)"
-                  >
-                    {{ t('settings.setDefaultModel') }}
-                  </UiButton>
-                  <UiButton
-                    variant="outline"
-                    size="sm"
-                    :disabled="modelCenterBusy"
-                    :aria-expanded="editingModelParameters?.providerId === selectedProviderDetail.id && editingModelParameters?.model === model.model_id"
-                    @click="editingModelParameters = editingModelParameters?.providerId === selectedProviderDetail.id && editingModelParameters?.model === model.model_id ? null : { providerId: selectedProviderDetail.id, model: model.model_id }"
-                  >
-                    <Settings2 data-icon="inline-start" />
-                    {{ t('settings.modelParameters') }}
-                  </UiButton>
-                  <UiButton
-                    variant="ghost"
-                    size="sm"
-                    :disabled="modelReferenceBusy[referenceKey(selectedProviderDetail.id, model.model_id)]"
-                    :title="t('settings.toggleModelReferences')"
-                    @click="toggleModelReferences(selectedProviderDetail.id, model.model_id)"
-                  >
-                    <Info :size="14" />
-                  </UiButton>
-                  <UiButton
-                    variant="ghost"
-                    size="sm"
-                    :disabled="modelCenterBusy"
-                    :title="t('settings.removeModel')"
-                    @click="removeModel(selectedProviderDetail.id, model.model_id)"
-                  >
-                    <Trash2 :size="14" />
-                  </UiButton>
-                </div>
-                <ModelParametersEditor
-                  v-if="selectedProviderInstance && editingModelParameters?.providerId === selectedProviderDetail.id && editingModelParameters?.model === model.model_id"
-                  :provider="selectedProviderInstance"
-                  :model="model.model_id"
-                  @saved="modelParametersSaved"
-                  @cancel="editingModelParameters = null"
-                  @reload="loadModelCenter"
-                />
-              </div>
+              <ModelCenterModelRows
+                :provider-id="selectedProviderDetail.id"
+                :provider="selectedProviderInstance"
+                :models="modelsForProvider(selectedProviderDetail.id)"
+                :busy="modelCenterBusy"
+                :default-chat-candidate="defaultChatCandidate"
+                :model-reference-rows="modelReferenceRows"
+                :model-reference-busy="modelReferenceBusy"
+                :editing-model-parameters="editingModelParameters"
+                :status-label="statusLabel"
+                :status-variant="statusVariant"
+                :configured-model-source-label="configuredModelSourceLabel"
+                :reference-key="referenceKey"
+                :reference-kind-label="referenceKindLabel"
+                :reference-detail-label="referenceDetailLabel"
+                @set-default="setDefaultChatModel"
+                @toggle-parameters="toggleModelParameters"
+                @toggle-references="toggleModelReferences"
+                @remove="removeModel"
+                @parameters-saved="modelParametersSaved"
+                @parameters-cancel="editingModelParameters = null"
+                @save-profile="handleSaveModelProfile"
+                @reload="loadModelCenter"
+              />
             </div>
             <div v-if="modelsForProvider(selectedProviderDetail.id).length === 0" class="center-empty-state">
               <Cpu :size="20" />
@@ -2147,7 +2107,7 @@ defineExpose({ canLeave, focusProvider })
               <UiButton
                 variant="outline"
                 size="sm"
-                :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
+                :disabled="modelCenterBusy"
                 @click="openAddModelModal(selectedProviderDetail.id)"
               >
                 <Plus :size="14" />
@@ -2164,6 +2124,8 @@ defineExpose({ canLeave, focusProvider })
       </div>
     </div>
   </section>
+      </div>
+      </Transition>
   </main>
   </div>
   </div>
@@ -2185,6 +2147,7 @@ defineExpose({ canLeave, focusProvider })
         </DialogClose>
       </header>
 
+      <div class="model-diagnostics-body">
       <section class="center-overview-receipt" :aria-label="t('settings.centerOverview')">
         <div class="center-receipt-item" :class="{ ready: modelCenterOverview?.capabilities.provider_crud }">
           <Database :size="17" />
@@ -2236,18 +2199,18 @@ defineExpose({ canLeave, focusProvider })
             <span>{{ t('settings.blockedRoutesMetric') }}</span>
             <strong>{{ modelReadiness?.blocked_route_count ?? '—' }}</strong>
           </div>
-          <div>
+          <div v-if="modelCatalogReadiness && (modelCatalogReadiness.template_count > 0 || (modelCatalogReadiness.templates?.length ?? 0) > 0)">
             <span>{{ t('settings.readyTemplatesMetric') }}</span>
-            <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '—' }}</strong>
+            <strong>{{ `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` }}</strong>
           </div>
-          <div>
+          <div v-if="modelCatalogReadiness && (modelCatalogReadiness.runtime_module_count ?? 0) > 0">
             <span>{{ t('settings.runtimeModulesMetric') }}</span>
-            <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '—' }}</strong>
+            <strong>{{ modelCatalogReadiness.runtime_module_count }}</strong>
           </div>
         </div>
       </section>
 
-      <div v-if="modelReadiness || modelCatalogReadiness" class="model-diagnostics-grid">
+      <div v-if="modelReadiness || (modelCatalogReadiness && (modelCatalogReadiness.template_count > 0 || (modelCatalogReadiness.templates?.length ?? 0) > 0 || warningCatalogTemplates.length > 0))" class="model-diagnostics-grid">
         <section v-if="modelReadiness" class="model-diagnostic-section">
           <div class="model-diagnostic-head">
             <div>
@@ -2270,7 +2233,7 @@ defineExpose({ canLeave, focusProvider })
             <li v-for="note in modelReadinessNotes" :key="note">{{ note }}</li>
           </ul>
         </section>
-        <section v-if="modelCatalogReadiness" class="model-diagnostic-section">
+        <section v-if="modelCatalogReadiness && (modelCatalogReadiness.template_count > 0 || (modelCatalogReadiness.templates?.length ?? 0) > 0 || warningCatalogTemplates.length > 0)" class="model-diagnostic-section">
           <div class="model-diagnostic-head">
             <div>
               <strong>{{ t('settings.catalogReceipt') }}</strong>
@@ -2296,6 +2259,7 @@ defineExpose({ canLeave, focusProvider })
             <li>{{ t('settings.readinessBlockedHint') }}</li>
           </ul>
         </section>
+      </div>
       </div>
     </DialogContent>
   </DialogPortal>
@@ -2336,7 +2300,8 @@ defineExpose({ canLeave, focusProvider })
             <UiButton
               variant="outline"
               size="sm"
-              :disabled="modelModalBusy"
+              :disabled="modelModalBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
+              :title="modelCenterOverview?.capabilities.model_discovery_refresh ? undefined : t('settings.modelDiscoveryUnsupported')"
               @click="fetchDiscoveredModels"
             >
               <Server :size="14" />

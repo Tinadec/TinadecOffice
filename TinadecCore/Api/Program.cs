@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using TinadecCore.AspNetCore;
 using TinadecCore.AspNetCore.Auth;
+using TinadecCore.AspNetCore.Endpoints;
 using TinadecCore.Persistence;
 using TinadecCore.Runtime;
 using TinadecCore.Abstractions.Ports;
@@ -77,6 +78,7 @@ using (var seedScope = app.Services.CreateScope())
 
 // Complete /api/v1 route surface lives in the packable TinadecCore.AspNetCore layer.
 app.MapTinadecCore();
+app.MapTinadecMcpServerEndpoints();
 
 app.Run();
 

@@ -1,9 +1,10 @@
 import type {
   AgentModeBindingDto,
+  AgentModeDraftUpdate,
   AgentModeEdgeDto,
   AgentModeNodeDto,
   AgentModeTopologyDto,
-  AgentModeTopologyWriteDto,
+  AgentOrchestrationTier,
   AgentViewDto,
 } from '@/api'
 
@@ -49,6 +50,10 @@ function nodeKey(node: AgentModeNodeDto): string {
   return node.node_key ?? node.id
 }
 
+function stripAgentPrefix(ref: string): string {
+  return ref.startsWith('agent:') ? ref.slice('agent:'.length) : ref
+}
+
 function isConversationNode(node: AgentModeNodeDto, agentBySlug: Map<string, AgentViewDto>): boolean {
   if (node.config?.conversation === true) return true
   const agent = agentBySlug.get(nodeAgentId(node)) ?? agentBySlug.get(node.agent_id ?? '')
@@ -63,6 +68,7 @@ export interface AgentSlugSource {
 
 export interface AgentToolSource {
   allowed_tools?: string[] | null
+  tool_scope?: string[] | string | null
 }
 
 export function agentSlugOf(agent: AgentSlugSource): string {
@@ -70,7 +76,9 @@ export function agentSlugOf(agent: AgentSlugSource): string {
 }
 
 function canWrite(agent: AgentToolSource): boolean {
-  const tools = agent.allowed_tools ?? []
+  if (agent.tool_scope === '*') return true
+  const scopeTools = Array.isArray(agent.tool_scope) ? agent.tool_scope : []
+  const tools = [...(agent.allowed_tools ?? []), ...scopeTools]
   return tools.includes('*') || tools.some(tool => WRITE_TOOLS.has(tool))
 }
 
@@ -99,9 +107,15 @@ function relationshipTypes(value: unknown): string[] {
   return Array.isArray(types) ? types.filter((item): item is string => typeof item === 'string') : []
 }
 
+export function naturalTierForStyle(style: TeamStyle): AgentOrchestrationTier {
+  if (style === 'solo') return 'solo_dispatch'
+  if (style === 'pipeline') return 'deterministic'
+  return 'free_form'
+}
+
 /**
  * Reads the editable team shape out of a Mode detail. Anything with branching,
- * a second leader, extra operation nodes or more than one binding per node is
+ * a second leader, extra operation nodes or non-chain execution graphs is
  * left to the graph editor instead of being flattened and losing facts.
  */
 export function classifyTeamShape(
@@ -136,13 +150,13 @@ export function classifyTeamShape(
     if (id) memberIds.push(id)
   }
   for (const binding of nodeLessBindings) {
-    const agent = bySlug.get(binding.agent_ref!)
+    const agent = bySlug.get(stripAgentPrefix(binding.agent_ref!))
     if (agent && !memberIds.includes(agent.id)) memberIds.push(agent.id)
   }
   // A spawnable member may be declared only through the relationship whitelist;
   // the graph editor can still render it even before a binding is written.
   for (const slug of types) {
-    const agent = bySlug.get(slug)
+    const agent = bySlug.get(stripAgentPrefix(slug))
     if (agent && !memberIds.includes(agent.id)) memberIds.push(agent.id)
   }
 
@@ -155,7 +169,7 @@ export function classifyTeamShape(
     memberScopes[id] = scopeOfBinding(binding, defaultMemberScope(agent))
   })
   for (const binding of nodeLessBindings) {
-    const agent = bySlug.get(binding.agent_ref!)
+    const agent = bySlug.get(stripAgentPrefix(binding.agent_ref!))
     if (agent) memberScopes[agent.id] = scopeOfBinding(binding, defaultMemberScope(agent))
   }
 
@@ -216,93 +230,247 @@ export interface TeamBuildInput extends TeamSelection {
   description?: string
   /** Team-level collaboration instructions, frozen into the mode version. */
   instructions?: string
+  orchestrationTier?: AgentOrchestrationTier | null
   memberScopes?: Record<string, MemberScope>
+  /**
+   * Existing topology when saving from TeamsTab so runtime_policy, canvas_layout,
+   * node model_strategy_override, and unknown advanced bindings are preserved.
+   */
+  existingDetail?: AgentModeTopologyDto | null
 }
 
 /** Qoder's squad keeps the leader plus at most four additional members. */
 export const MAX_TEAM_MEMBERS = 4
 
+function validStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const filtered = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  return filtered.length > 0 ? filtered : null
+}
+
+function validInputsOutputs(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (typeof record.receives === 'string' || typeof record.returns === 'string') return record
+  return null
+}
+
+function validToolSwitches(switches: Record<string, boolean | string> | null | undefined, stripWildcardOff: boolean): Record<string, boolean | string> {
+  if (!switches || typeof switches !== 'object') return {}
+  const next: Record<string, boolean | string> = {}
+  for (const [key, val] of Object.entries(switches)) {
+    if (stripWildcardOff && key === '*' && val === false) continue
+    next[key] = val
+  }
+  return next
+}
+
 /**
- * Builds the draft topology for a team selection. The leader loses its business
- * tool face in every non-solo style (`"*": false`), which is what keeps the run
- * in the deterministic/free_form tier instead of solo_dispatch.
+ * Builds the draft write payload for a team selection. Always emits complete,
+ * valid `relationship` shapes (valid strings/objects/arrays), persists
+ * `display_name`, `description`, and `orchestration_tier`, and losslessly
+ * preserves advanced fields (`runtime_policy`, `canvas_layout`,
+ * `model_strategy_override`, and unknown bindings) when `existingDetail` is given.
  */
-export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[]): AgentModeTopologyWriteDto {
+export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[]): AgentModeDraftUpdate {
   const byId = new Map(agents.map(agent => [agent.id, agent]))
+  const bySlug = new Map(agents.map(agent => [agentSlugOf(agent), agent]))
   const leader = byId.get(input.leaderId)
   const members = input.memberIds
     .map(id => byId.get(id))
     .filter((agent): agent is AgentViewDto => Boolean(agent))
-  const leaderSlug = leader ? agentSlugOf(leader) : ''
   const memberSlugs = members.map(agentSlugOf)
   const isPipeline = input.style === 'pipeline'
   const isTeam = input.style === 'team'
 
-  const leaderNode: AgentModeTopologyWriteDto['nodes'][number] = {
-    node_key: 'leader',
-    agent_definition_id: input.leaderId,
-    layer: 'operation',
-    label: leader?.name ?? 'Leader',
-    position: { x: 120, y: 80 },
-    config: { conversation: true },
-    relationship: isTeam
-      ? {
-          agent_types: memberSlugs,
-          allowed_dispatch_targets: memberSlugs,
-          success_criteria: ['The goal is completed and backed by evidence'],
-        }
-      : {
-          success_criteria: ['The goal is completed and backed by evidence'],
-        },
+  const existingNodes = input.existingDetail?.nodes ?? []
+  const existingEdges = input.existingDetail?.edges ?? []
+  const existingBindings = input.existingDetail?.bindings ?? []
+  const existingLeader = existingNodes.find(n => nodeLayer(n) === 'operation' && isConversationNode(n, bySlug))
+    ?? existingNodes.find(n => nodeLayer(n) === 'operation')
+  const leaderKey = existingLeader ? nodeKey(existingLeader) : 'leader'
+  const existingLeaderRel = (existingLeader?.relationship ?? null) as Record<string, unknown> | null
+  const existingSubscriptions = Array.isArray(existingLeaderRel?.subscriptions)
+    ? existingLeaderRel.subscriptions.filter((item): item is string => typeof item === 'string')
+    : null
+
+  const defaultLeaderDuty = isTeam
+    ? 'Understand the user goal, dispatch independent subtasks to team members, and synthesize verified results.'
+    : isPipeline
+      ? 'Break down the goal, hand off along the declared pipeline stages, and consolidate verified outputs.'
+      : 'Complete the user goal directly and verify evidence.'
+
+  const leaderRelationship: Record<string, unknown> = {
+    duty: typeof existingLeaderRel?.duty === 'string' && existingLeaderRel.duty.trim()
+      ? existingLeaderRel.duty
+      : defaultLeaderDuty,
+    inputs_outputs: validInputsOutputs(existingLeaderRel?.inputs_outputs) ?? {
+      receives: 'user goal',
+      returns: 'final answer',
+    },
+    allowed_dispatch_targets: memberSlugs,
+    success_criteria: validStringArray(existingLeaderRel?.success_criteria) ?? [
+      'The goal is completed and backed by evidence',
+    ],
+    agent_types: isTeam ? memberSlugs : [],
+    ...(existingSubscriptions && existingSubscriptions.length > 0 ? { subscriptions: existingSubscriptions } : {}),
   }
 
-  const nodes: AgentModeTopologyWriteDto['nodes'] = [leaderNode]
-  const edges: AgentModeTopologyWriteDto['edges'] = []
+  const leaderNode: AgentModeDraftUpdate['nodes'][number] = {
+    node_key: leaderKey,
+    agent_definition_id: input.leaderId,
+    layer: 'operation',
+    label: leader?.name ?? existingLeader?.label ?? 'Leader',
+    position: existingLeader?.position ?? { x: 120, y: 60 },
+    config: { ...(existingLeader?.config ?? {}), conversation: true },
+    relationship: leaderRelationship,
+    ...(existingLeader?.model_strategy_override ? { model_strategy_override: existingLeader.model_strategy_override } : {}),
+  }
+
+  const nodes: AgentModeDraftUpdate['nodes'] = [leaderNode]
+  const edges: AgentModeDraftUpdate['edges'] = []
+
+  const existingLeaderBinding = existingBindings.find(b => b.node_key === leaderKey)
+  const existingLeaderEnvelope = (existingLeaderBinding?.envelope ?? {}) as Record<string, unknown>
+  const leaderToolSwitches = input.style === 'solo'
+    ? validToolSwitches(existingLeaderBinding?.tool_switches, true)
+    : { ...validToolSwitches(existingLeaderBinding?.tool_switches, false), '*': false }
+
   const bindings: AgentModeBindingDto[] = [{
-    node_key: 'leader',
-    tool_switches: input.style === 'solo' ? {} : { '*': false },
-    envelope: { spawn: { max_depth: 2, max_agents_per_run: 8, max_parallel_workers: 4 } },
-    includes_core_reserved: false,
+    ...(existingLeaderBinding ?? {}),
+    node_key: leaderKey,
+    tool_switches: leaderToolSwitches,
+    envelope: {
+      spawn: { max_depth: 2, max_agents_per_run: 8, max_parallel_workers: 4 },
+      ...existingLeaderEnvelope,
+    },
+    includes_core_reserved: existingLeaderBinding?.includes_core_reserved ?? false,
   }]
+
+  const existingExecutionNodes = existingNodes.filter(n => nodeLayer(n) === 'execution')
+  const consumedExecutionKeys = new Set(existingExecutionNodes.map(nodeKey))
 
   if (isPipeline) {
     members.forEach((member, index) => {
       const key = `member-${index + 1}`
+      const existingMemberNode = existingExecutionNodes.find(n => nodeKey(n) === key)
+        ?? existingExecutionNodes.find(n => nodeAgentId(n) === member.id)
+      const existingNodeKey = existingMemberNode ? nodeKey(existingMemberNode) : key
+      const existingMemberBinding = existingBindings.find(b => b.node_key === key || b.node_key === existingNodeKey)
+      const existingMemberRel = (existingMemberNode?.relationship ?? null) as Record<string, unknown> | null
+      const nextTargetSlug = index < members.length - 1 ? [agentSlugOf(members[index + 1])] : []
+
       nodes.push({
         node_key: key,
         agent_definition_id: member.id,
         layer: 'execution',
-        label: member.name,
-        position: { x: 360 + index * 240, y: 300 },
+        label: member.name ?? member.display_name ?? agentSlugOf(member),
+        position: existingMemberNode?.position && existingMemberNode.position.y >= 240
+          ? existingMemberNode.position
+          : { x: 60 + index * 260, y: 280 },
+        ...(existingMemberNode?.config ? { config: existingMemberNode.config } : {}),
         relationship: {
-          duty: member.description ?? '',
-          success_criteria: ['Turn the incoming work into a verified result'],
+          duty: (member.description ?? '').trim() || `Execute pipeline stage ${index + 1} as ${member.name || agentSlugOf(member)}.`,
+          inputs_outputs: validInputsOutputs(existingMemberRel?.inputs_outputs) ?? {
+            receives: index === 0 ? 'goal and constraints from leader' : 'artifact from previous stage',
+            returns: index === members.length - 1 ? 'verified final deliverable' : 'stage output for next stage',
+          },
+          allowed_dispatch_targets: nextTargetSlug,
+          success_criteria: validStringArray(existingMemberRel?.success_criteria) ?? [
+            'Turn the incoming work into a verified result',
+          ],
+          agent_types: [],
         },
+        ...(existingMemberNode?.model_strategy_override ? { model_strategy_override: existingMemberNode.model_strategy_override } : {}),
       })
-      bindings.push({ node_key: key, envelope: memberEnvelope(member, input.memberScopes?.[member.id]), includes_core_reserved: false })
+
+      const env = memberEnvelope(member, input.memberScopes?.[member.id])
+      bindings.push({
+        ...(existingMemberBinding ?? {}),
+        node_key: key,
+        envelope: {
+          ...(existingMemberBinding?.envelope ?? {}),
+          ...env,
+        },
+        includes_core_reserved: existingMemberBinding?.includes_core_reserved ?? false,
+      })
+
+      const sourceKey = index === 0 ? leaderKey : `member-${index}`
+      const existingEdge = existingEdges.find(e =>
+        (e.source_node_key ?? e.source) === sourceKey && (e.target_node_key ?? e.target) === key)
       edges.push({
-        edge_key: index === 0 ? 'leader-member-1' : `member-${index}-member-${index + 1}`,
-        source_node_key: index === 0 ? 'leader' : `member-${index}`,
+        edge_key: index === 0 ? `${leaderKey}-member-1` : `member-${index}-member-${index + 1}`,
+        source_node_key: sourceKey,
         target_node_key: key,
-        condition: { label: 'handoff' },
+        condition: existingEdge?.condition ?? { label: 'handoff' },
       })
     })
   } else if (isTeam) {
     for (const member of members) {
+      const slug = agentSlugOf(member)
+      const existingMemberBinding = existingBindings.find(
+        b => !b.node_key && b.agent_ref && stripAgentPrefix(b.agent_ref) === slug,
+      )
+      const env = memberEnvelope(member, input.memberScopes?.[member.id])
       bindings.push({
-        agent_ref: agentSlugOf(member),
-        envelope: memberEnvelope(member, input.memberScopes?.[member.id]),
-        includes_core_reserved: false,
+        ...(existingMemberBinding ?? {}),
+        agent_ref: slug,
+        envelope: {
+          ...(existingMemberBinding?.envelope ?? {}),
+          ...env,
+        },
+        includes_core_reserved: existingMemberBinding?.includes_core_reserved ?? false,
       })
     }
   }
 
+  // Preserve any unknown advanced bindings (e.g. auxiliary node_key bindings not
+  // owned by leader/pipeline execution nodes, or unmapped unknown agent_ref bindings).
+  for (const binding of existingBindings) {
+    if (binding.node_key) {
+      if (binding.node_key === leaderKey) continue
+      if (consumedExecutionKeys.has(binding.node_key) || /^member-\d+$/.test(binding.node_key)) continue
+      bindings.push({ ...binding })
+    } else if (binding.agent_ref) {
+      const refSlug = stripAgentPrefix(binding.agent_ref)
+      if (!bySlug.has(refSlug)) {
+        bindings.push({ ...binding })
+      }
+    }
+  }
+
+  let resolvedTier: AgentOrchestrationTier | null
+  if (input.orchestrationTier !== undefined) {
+    resolvedTier = input.orchestrationTier
+  } else if (input.existingDetail) {
+    const previousStyle = classifyTeamShape(input.existingDetail, agents).style
+    resolvedTier = previousStyle === input.style && input.existingDetail.orchestration_tier !== undefined
+      ? (input.existingDetail.orchestration_tier ?? naturalTierForStyle(input.style))
+      : naturalTierForStyle(input.style)
+  } else {
+    resolvedTier = naturalTierForStyle(input.style)
+  }
+
+  const trimmedName = input.displayName.trim() || input.existingDetail?.display_name || 'Team'
+  const trimmedDescription = input.description !== undefined
+    ? (input.description.trim() || null)
+    : (input.existingDetail?.description ?? null)
+  const trimmedInstructions = input.instructions !== undefined
+    ? (input.instructions.trim() || null)
+    : (input.existingDetail?.instructions ?? null)
+
   return {
+    display_name: trimmedName,
+    description: trimmedDescription,
+    orchestration_tier: resolvedTier,
     nodes,
     edges,
     bindings,
-    instructions: input.instructions?.trim() || null,
-    canvas_layout: {},
+    instructions: trimmedInstructions,
+    canvas_layout: input.existingDetail?.canvas_layout ?? {},
+    ...(input.existingDetail?.runtime_policy !== undefined
+      ? { runtime_policy: input.existingDetail.runtime_policy }
+      : {}),
   }
 }
 
@@ -310,8 +478,11 @@ export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[])
  * Lossless copy of a Mode detail into the draft write contract. Used when the
  * user clones a team (pack modes are read-only) or opens it in the graph editor.
  */
-export function cloneModeTopology(detail: AgentModeTopologyDto): AgentModeTopologyWriteDto {
+export function cloneModeTopology(detail: AgentModeTopologyDto): AgentModeDraftUpdate {
   return {
+    display_name: detail.display_name,
+    description: detail.description ?? null,
+    ...(detail.orchestration_tier !== undefined ? { orchestration_tier: detail.orchestration_tier } : {}),
     nodes: (detail.nodes ?? []).map(node => ({
       node_key: nodeKey(node),
       agent_definition_id: nodeAgentId(node),
@@ -331,6 +502,6 @@ export function cloneModeTopology(detail: AgentModeTopologyDto): AgentModeTopolo
     bindings: (detail.bindings ?? []).map(binding => ({ ...binding })),
     instructions: detail.instructions ?? null,
     canvas_layout: detail.canvas_layout ?? {},
-    ...(detail.runtime_policy ? { runtime_policy: detail.runtime_policy } : {}),
+    ...(detail.runtime_policy !== undefined ? { runtime_policy: detail.runtime_policy } : {}),
   }
 }

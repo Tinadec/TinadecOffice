@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Models.Harness;
@@ -46,6 +47,13 @@ public sealed class ControlPlaneService
     private readonly IAcpHarnessProber _acp;
     private readonly IHarnessBinaryResolver _harnessBinaries;
     private readonly IHarnessTerminalHost _terminalHost;
+    private readonly IModelProfileCatalogService? _modelProfileCatalog;
+    private readonly IPromptFragmentService? _promptFragments;
+    private readonly IPromptAssembler? _promptAssembler;
+    private readonly IDbContextFactory<AgentConfigurationDbContext>? _agentConfig;
+    private readonly GlobalAgentConfiguration? _globalAgentConfig;
+    private readonly ISessionLocator? _sessions;
+    private readonly IToolSkillResourceService? _skills;
 
     public ControlPlaneService(IDbContextFactory<ModelControlDbContext> models, IDbContextFactory<PromptControlDbContext> prompts,
         IDbContextFactory<LifecycleDbContext> lifecycle,
@@ -53,8 +61,24 @@ public sealed class ControlPlaneService
         IAuthorizationService authorization, IToolExecutionCoordinator executions,
         ILifecycleManager runs, IFullDuplexRunEngine engine, IOpencodeServeProcessManager opencode,
         IAcpHarnessProber acp, IHarnessBinaryResolver harnessBinaries,
-        IUserToolActionService userActions, IHarnessTerminalHost terminalHost)
-    { _models = models; _prompts = prompts; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _authorization = authorization; _executions = executions; _userActions = userActions; _runs = runs; _engine = engine; _opencode = opencode; _acp = acp; _harnessBinaries = harnessBinaries; _terminalHost = terminalHost; }
+        IUserToolActionService userActions, IHarnessTerminalHost terminalHost,
+        IModelProfileCatalogService? modelProfileCatalog = null,
+        IPromptFragmentService? promptFragments = null,
+        IPromptAssembler? promptAssembler = null,
+        IDbContextFactory<AgentConfigurationDbContext>? agentConfig = null,
+        GlobalAgentConfiguration? globalAgentConfig = null,
+        ISessionLocator? sessions = null,
+        IToolSkillResourceService? skills = null)
+    {
+        _models = models; _prompts = prompts; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _authorization = authorization; _executions = executions; _userActions = userActions; _runs = runs; _engine = engine; _opencode = opencode; _acp = acp; _harnessBinaries = harnessBinaries; _terminalHost = terminalHost;
+        _modelProfileCatalog = modelProfileCatalog;
+        _promptFragments = promptFragments;
+        _promptAssembler = promptAssembler;
+        _agentConfig = agentConfig;
+        _globalAgentConfig = globalAgentConfig;
+        _sessions = sessions;
+        _skills = skills;
+    }
 
     private TenantContext Tenant => _tenant.Current;
     private static async Task<(string text, ContentReference reference)> PutJsonAsync(IContentStore store, Guid tenant, Guid? workspace, string kind, object value, CancellationToken ct)
@@ -125,7 +149,19 @@ public sealed class ControlPlaneService
         var imageOverrides = Value("image_input").ValueKind == JsonValueKind.Object
             && Value("image_input").TryGetProperty("model_overrides", out var overrides)
             && overrides.ValueKind == JsonValueKind.Object ? overrides.Clone() : (JsonElement?)null;
-        return new { id = row.Id, driver = row.Driver, protocol, channel = String("channel"), display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), model_parameters = ModelParameters.ReadMap(Value("model_parameters")), image_input = new { enabled = imageInput.Enabled, max_image_bytes = imageInput.MaxImageBytes, max_images_per_turn = imageInput.MaxImagesPerTurn, base_enabled = imageBase.Enabled, base_max_image_bytes = imageBase.MaxImageBytes, base_max_images_per_turn = imageBase.MaxImagesPerTurn, editable = !acpSnapshot && protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages, source = acpSnapshot ? "acp_snapshot" : protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages ? "config" : "protocol_unsupported", model_overrides = imageOverrides }, has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+        return new { id = row.Id, driver = row.Driver, protocol, channel = String("channel"), display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), model_parameters = ModelParameters.ReadMap(Value("model_parameters")), model_profiles = SafeReadModelProfiles(Value("model_profiles")), image_input = new { enabled = imageInput.Enabled, max_image_bytes = imageInput.MaxImageBytes, max_images_per_turn = imageInput.MaxImagesPerTurn, base_enabled = imageBase.Enabled, base_max_image_bytes = imageBase.MaxImageBytes, base_max_images_per_turn = imageBase.MaxImagesPerTurn, editable = !acpSnapshot && protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages, source = acpSnapshot ? "acp_snapshot" : protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages ? "config" : "protocol_unsupported", model_overrides = imageOverrides }, has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+
+    private static IReadOnlyDictionary<string, ModelProfileDto> SafeReadModelProfiles(JsonElement value)
+    {
+        try
+        {
+            return ModelProfile.ReadMap(value);
+        }
+        catch (ArgumentException)
+        {
+            return new Dictionary<string, ModelProfileDto>(StringComparer.Ordinal);
+        }
+    }
 
     public async Task<IResult> RefreshProviderModels(Guid id, CancellationToken ct)
     {
@@ -577,11 +613,20 @@ public sealed class ControlPlaneService
                         throw new ArgumentException("Anthropic temperature must be between 0 and 1.");
                 }
             }
+            if (merged.TryGetValue("model_profiles", out var profiles))
+            {
+                _ = ModelProfile.ReadMap(profiles);
+            }
             ImageInputCapability.Validate(JsonSerializer.SerializeToElement(merged));
         }
         catch (Exception ex) when (ex is ArgumentException or JsonException)
         {
-            return Results.BadRequest(new { code = ex.Message.Contains("image_input", StringComparison.Ordinal) ? "invalid_image_input" : "invalid_model_parameters", message = ex.Message });
+            var code = ex.Message.Contains("image_input", StringComparison.Ordinal)
+                ? "invalid_image_input"
+                : ex.Message.Contains("model_profiles", StringComparison.Ordinal)
+                    ? "invalid_model_profile"
+                    : "invalid_model_parameters";
+            return Results.BadRequest(new { code, message = ex.Message });
         }
         var isNew = row is null;
         if (isNew) row = new ModelProviderRecord { Id = id ?? Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now, Revision = 0 };
@@ -702,11 +747,884 @@ public sealed class ControlPlaneService
             HarnessCatalog.ResolveProtocol(Text("protocol"), provider.Driver, Text("channel")));
     }
 
-    public async Task<IResult> ListPrompts(CancellationToken ct)
-    { await using var db = await _prompts.CreateDbContextAsync(ct); var rows = await db.Fragments.Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null).ToListAsync(ct); var output = new List<object>(); foreach (var row in rows) { await using var d = await _prompts.CreateDbContextAsync(ct); var v = await d.Versions.SingleAsync(x => x.Id == row.CurrentVersionId, ct); output.Add(new { id = row.Id, key = row.Key, title = row.Title, scope = row.Scope, target_agent_id = row.TargetAgentId, category = row.Category, content = await ReadAsync(_content, v.ContentReference, ct), priority = row.Priority, enabled = row.Enabled, is_builtin = row.IsBuiltIn, revision = row.Revision, created_at = row.CreatedAt, updated_at = row.UpdatedAt }); } return Results.Ok(output); }
+    public Task<SanitizedModelCatalogDto> GetSanitizedModelCatalogAsync(bool includeDisabled = false, CancellationToken ct = default) =>
+        (_modelProfileCatalog ?? new ModelProfileCatalogService(_models, _content, _secrets, _tenant))
+            .GetSanitizedCatalogAsync(includeDisabled, ct);
+
+    public Task<ModelProfileUpdateResultDto> UpdateModelProfileAsync(
+        Guid providerId,
+        string modelId,
+        ModelProfileDto? profile,
+        long? expectedRevision = null,
+        CancellationToken ct = default) =>
+        (_modelProfileCatalog ?? new ModelProfileCatalogService(_models, _content, _secrets, _tenant))
+            .UpdateModelProfileAsync(providerId, modelId, profile, expectedRevision, ct);
+
+    public async Task<IResult> ListPrompts(
+        CancellationToken ct,
+        string? scope = null,
+        string? targetAgentIdOrSlug = null,
+        string? category = null,
+        bool? enabled = null)
+    {
+        Guid? targetGuid = null;
+        string? targetSlug = null;
+        if (!string.IsNullOrWhiteSpace(targetAgentIdOrSlug))
+        {
+            var trimmed = targetAgentIdOrSlug.Trim();
+            if (Guid.TryParse(trimmed, out var parsed) && parsed != Guid.Empty)
+                targetGuid = parsed;
+            else
+                targetSlug = trimmed;
+        }
+        if (_promptFragments is not null)
+        {
+            var list = await _promptFragments.ListAsync(scope, targetGuid, targetSlug, category, enabled, ct);
+            return Results.Ok(list);
+        }
+        await using var db = await _prompts.CreateDbContextAsync(ct);
+        var rows = await db.Fragments.AsNoTracking()
+            .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null)
+            .ToListAsync(ct);
+        var output = new List<PromptFragmentDto>(rows.Count);
+        foreach (var row in rows)
+        {
+            var v = await db.Versions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == row.CurrentVersionId, ct);
+            var raw = v is null ? string.Empty : await ReadAsync(_content, v.ContentReference, ct);
+            output.Add(new PromptFragmentDto
+            {
+                Id = row.Id,
+                Key = row.Key,
+                Title = row.Title,
+                Scope = row.Scope,
+                TargetAgentId = row.TargetAgentId,
+                TargetAgentSlug = row.TargetAgentSlug,
+                Category = row.Category,
+                Content = UnwrapPromptContent(raw),
+                Priority = row.Priority,
+                Enabled = row.Enabled,
+                IsBuiltIn = row.IsBuiltIn,
+                Revision = row.Revision,
+                CreatedAt = row.CreatedAt,
+                UpdatedAt = row.UpdatedAt
+            });
+        }
+        return Results.Ok(output);
+    }
+
     public async Task<IResult> SavePrompt(JsonElement input, Guid? id, string? ifMatch, CancellationToken ct)
-    { await using var db = await _prompts.CreateDbContextAsync(ct); var now = DateTimeOffset.UtcNow; var row = id.HasValue ? await db.Fragments.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct) : null; if (row?.IsBuiltIn == true) return Results.Conflict(new { message = "Built-in prompt fragments are read-only." }); if (row != null && !Matches(row.Revision, ifMatch)) return Results.StatusCode(412); if (row == null) { row = new PromptFragmentRecord { Id = id ?? Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now }; db.Fragments.Add(row); } string Get(string n, string fallback = "") => input.TryGetProperty(n, out var p) ? p.GetString() ?? fallback : fallback; row.Key = Get("key", row.Key); row.Title = Get("title", row.Title); row.Scope = Get("scope", row.Scope); row.Category = Get("category", row.Category); row.Priority = input.TryGetProperty("priority", out var pr) ? pr.GetInt32() : row.Priority; row.Enabled = !input.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.False; if (input.TryGetProperty("target_agent_id", out var ta) && Guid.TryParse(ta.GetString(), out var aid)) row.TargetAgentId = aid; var content = Get("content"); var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "prompt-fragment", content, ct); var version = new PromptFragmentVersionRecord { Id = Guid.NewGuid(), FragmentId = row.Id, Version = (int)row.Revision + 1, ContentReference = stored.reference.Value, ContentHash = stored.reference.Sha256, ContentLength = stored.reference.Length, ChangeSummary = "configuration update", CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now }; row.Revision++; row.CurrentVersionId = version.Id; row.UpdatedByPrincipalId = Tenant.PrincipalId; row.UpdatedAt = now; db.Versions.Add(version); await db.SaveChangesAsync(ct); return Results.Ok(new { id = row.Id, key = row.Key, title = row.Title, scope = row.Scope, target_agent_id = row.TargetAgentId, category = row.Category, content, priority = row.Priority, enabled = row.Enabled, is_builtin = row.IsBuiltIn, revision = row.Revision, created_at = row.CreatedAt, updated_at = row.UpdatedAt }); }
-    public async Task<IResult> DeletePrompt(Guid id, CancellationToken ct) { await using var db = await _prompts.CreateDbContextAsync(ct); var row = await db.Fragments.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct); if (row == null) return Results.NotFound(); if (row.IsBuiltIn) return Results.Conflict(new { message = "Built-in prompt fragments are read-only." }); row.DeletedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(ct); return Results.NoContent(); }
+    {
+        if (!TryParseOptionalIfMatch(ifMatch, out var expectedRevision))
+            return Results.Json(new { code = "invalid_if_match", message = "If-Match must contain the numeric revision." }, statusCode: 400);
+
+        string? OptString(string name) =>
+            input.ValueKind == JsonValueKind.Object && input.TryGetProperty(name, out var prop)
+                ? prop.ValueKind == JsonValueKind.String ? prop.GetString() : prop.ValueKind == JsonValueKind.Null ? string.Empty : null
+                : null;
+
+        int? priority = input.ValueKind == JsonValueKind.Object && input.TryGetProperty("priority", out var pr) && pr.ValueKind == JsonValueKind.Number && pr.TryGetInt32(out var pv)
+            ? pv
+            : null;
+        bool? enabled = input.ValueKind == JsonValueKind.Object && input.TryGetProperty("enabled", out var en) && en.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? en.GetBoolean()
+            : null;
+
+        var rawTargetAgent = OptString("target_agent_id");
+        var rawTargetSlug = OptString("target_agent_slug");
+        var (resolvedAgentId, resolvedAgentSlug) = await ResolveTargetAgentAsync(rawTargetAgent, rawTargetSlug, ct);
+
+        if (_promptFragments is not null)
+        {
+            try
+            {
+                var saved = await _promptFragments.SaveAsync(
+                    id,
+                    new PromptFragmentSaveRequestDto
+                    {
+                        Key = OptString("key"),
+                        Title = OptString("title"),
+                        Scope = OptString("scope"),
+                        TargetAgentId = resolvedAgentId,
+                        TargetAgentSlug = resolvedAgentSlug,
+                        Category = OptString("category"),
+                        Content = OptString("content"),
+                        Priority = priority,
+                        Enabled = enabled,
+                        ChangeSummary = OptString("change_summary")
+                    },
+                    expectedRevision,
+                    ct);
+                return Results.Ok(saved);
+            }
+            catch (PromptFragmentException ex)
+            {
+                return MapPromptException(ex);
+            }
+        }
+
+        await using var db = await _prompts.CreateDbContextAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        var row = id.HasValue ? await db.Fragments.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct) : null;
+        if (row?.IsBuiltIn == true) return Results.Conflict(new { code = "built_in_read_only", message = "Built-in prompt fragments are read-only." });
+        if (row != null && expectedRevision is { } exp && row.Revision != exp) return Results.StatusCode(412);
+        if (row == null)
+        {
+            row = new PromptFragmentRecord { Id = id ?? Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now };
+            db.Fragments.Add(row);
+        }
+        row.Key = OptString("key") ?? row.Key;
+        row.Title = OptString("title") ?? row.Title;
+        row.Scope = OptString("scope") ?? row.Scope;
+        row.Category = OptString("category") ?? row.Category;
+        row.Priority = priority ?? row.Priority;
+        row.Enabled = enabled ?? row.Enabled;
+        if (resolvedAgentId is not null)
+            row.TargetAgentId = Guid.TryParse(resolvedAgentId, out var aid) ? aid : null;
+        if (resolvedAgentSlug is not null)
+            row.TargetAgentSlug = string.IsNullOrWhiteSpace(resolvedAgentSlug) ? null : resolvedAgentSlug;
+        var content = OptString("content") ?? string.Empty;
+        var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "prompt-fragment", content, ct);
+        var maxVersion = await db.Versions.Where(v => v.FragmentId == row.Id).MaxAsync(v => (int?)v.Version, ct) ?? 0;
+        var version = new PromptFragmentVersionRecord
+        {
+            Id = Guid.NewGuid(),
+            FragmentId = row.Id,
+            Version = maxVersion + 1,
+            ContentReference = stored.reference.Value,
+            ContentHash = stored.reference.Sha256,
+            ContentLength = stored.reference.Length,
+            ChangeSummary = OptString("change_summary") ?? "configuration update",
+            CreatedByPrincipalId = Tenant.PrincipalId,
+            CreatedAt = now
+        };
+        row.Revision++;
+        row.CurrentVersionId = version.Id;
+        row.UpdatedByPrincipalId = Tenant.PrincipalId;
+        row.UpdatedAt = now;
+        db.Versions.Add(version);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new PromptFragmentDto
+        {
+            Id = row.Id,
+            Key = row.Key,
+            Title = row.Title,
+            Scope = row.Scope,
+            TargetAgentId = row.TargetAgentId,
+            TargetAgentSlug = row.TargetAgentSlug,
+            Category = row.Category,
+            Content = content,
+            Priority = row.Priority,
+            Enabled = row.Enabled,
+            IsBuiltIn = row.IsBuiltIn,
+            Revision = row.Revision,
+            CreatedAt = row.CreatedAt,
+            UpdatedAt = row.UpdatedAt
+        });
+    }
+
+    public async Task<IResult> DeletePrompt(Guid id, CancellationToken ct)
+    {
+        if (_promptFragments is not null)
+        {
+            try
+            {
+                var deleted = await _promptFragments.DeleteAsync(id, ct);
+                return deleted ? Results.NoContent() : Results.NotFound(new { code = "not_found", message = $"Prompt fragment '{id}' was not found." });
+            }
+            catch (PromptFragmentException ex)
+            {
+                return MapPromptException(ex);
+            }
+        }
+        await using var db = await _prompts.CreateDbContextAsync(ct);
+        var row = await db.Fragments.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct);
+        if (row == null) return Results.NotFound();
+        if (row.IsBuiltIn) return Results.Conflict(new { code = "built_in_read_only", message = "Built-in prompt fragments are read-only." });
+        row.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    }
+
+    public async Task<IResult> ListPromptVersions(Guid id, CancellationToken ct)
+    {
+        if (_promptFragments is null) return Results.Ok(Array.Empty<PromptFragmentVersionDto>());
+        try
+        {
+            return Results.Ok(await _promptFragments.ListVersionsAsync(id, ct));
+        }
+        catch (PromptFragmentException ex)
+        {
+            return MapPromptException(ex);
+        }
+    }
+
+    public async Task<IResult> CreatePromptVersion(Guid id, JsonElement input, string? ifMatch, CancellationToken ct)
+    {
+        if (!TryParseOptionalIfMatch(ifMatch, out var expectedRevision))
+            return Results.Json(new { code = "invalid_if_match", message = "If-Match must contain the numeric revision." }, statusCode: 400);
+        if (_promptFragments is null)
+            return Results.Json(new { code = "capability_unavailable", message = "Prompt fragment service is not registered." }, statusCode: 501);
+
+        var content = input.ValueKind == JsonValueKind.Object && input.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
+            ? c.GetString() ?? string.Empty
+            : string.Empty;
+        var summary = input.ValueKind == JsonValueKind.Object && input.TryGetProperty("change_summary", out var s) && s.ValueKind == JsonValueKind.String
+            ? s.GetString()
+            : null;
+        string[]? changedFields = input.ValueKind == JsonValueKind.Object && input.TryGetProperty("changed_fields", out var cf) && cf.ValueKind == JsonValueKind.Array
+            ? cf.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToArray()
+            : null;
+
+        try
+        {
+            var created = await _promptFragments.CreateVersionAsync(
+                id,
+                new PromptFragmentVersionCreateRequestDto
+                {
+                    Content = content,
+                    ChangedFields = changedFields,
+                    ChangeSummary = summary
+                },
+                expectedRevision,
+                ct);
+            return Results.Ok(created);
+        }
+        catch (PromptFragmentException ex)
+        {
+            return MapPromptException(ex);
+        }
+    }
+
+    public async Task<IResult> RollbackPrompt(Guid id, JsonElement input, string? ifMatch, CancellationToken ct)
+    {
+        if (!TryParseOptionalIfMatch(ifMatch, out var expectedRevision))
+            return Results.Json(new { code = "invalid_if_match", message = "If-Match must contain the numeric revision." }, statusCode: 400);
+        if (_promptFragments is null)
+            return Results.Json(new { code = "capability_unavailable", message = "Prompt fragment service is not registered." }, statusCode: 501);
+
+        int? targetVersion = null;
+        Guid? versionId = null;
+        string? changeSummary = null;
+
+        if (input.ValueKind == JsonValueKind.Object)
+        {
+            if (input.TryGetProperty("target_version", out var tv))
+            {
+                if (tv.ValueKind == JsonValueKind.Number && tv.TryGetInt32(out var num))
+                    targetVersion = num;
+                else if (tv.ValueKind == JsonValueKind.String && int.TryParse(tv.GetString(), out var parsedNum))
+                    targetVersion = parsedNum;
+            }
+            if (input.TryGetProperty("version_id", out var vid) && vid.ValueKind == JsonValueKind.String)
+            {
+                if (Guid.TryParse(vid.GetString(), out var parsedGuid))
+                    versionId = parsedGuid;
+                else if (targetVersion is null && int.TryParse(vid.GetString(), out var fallbackNum))
+                    targetVersion = fallbackNum;
+            }
+            if (input.TryGetProperty("change_summary", out var cs) && cs.ValueKind == JsonValueKind.String)
+                changeSummary = cs.GetString();
+        }
+
+        try
+        {
+            var updated = await _promptFragments.RollbackAsync(
+                id,
+                new PromptFragmentRollbackRequestDto
+                {
+                    TargetVersion = targetVersion,
+                    VersionId = versionId,
+                    ChangeSummary = changeSummary
+                },
+                expectedRevision,
+                ct);
+            return Results.Ok(updated);
+        }
+        catch (PromptFragmentException ex)
+        {
+            return MapPromptException(ex);
+        }
+    }
+
+    public async Task<IResult> ClonePrompt(Guid id, JsonElement? input, CancellationToken ct)
+    {
+        if (_promptFragments is null)
+            return Results.Json(new { code = "capability_unavailable", message = "Prompt fragment service is not registered." }, statusCode: 501);
+
+        PromptFragmentCloneRequestDto? request = null;
+        if (input is { ValueKind: JsonValueKind.Object } obj)
+        {
+            string? Opt(string name) => obj.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String ? prop.GetString() : null;
+            var (resolvedId, resolvedSlug) = await ResolveTargetAgentAsync(Opt("target_agent_id"), Opt("target_agent_slug"), ct);
+            request = new PromptFragmentCloneRequestDto
+            {
+                Key = Opt("key"),
+                Title = Opt("title"),
+                Scope = Opt("scope"),
+                TargetAgentId = resolvedId,
+                TargetAgentSlug = resolvedSlug
+            };
+        }
+
+        try
+        {
+            var cloned = await _promptFragments.CloneAsync(id, request, ct);
+            return Results.Ok(cloned);
+        }
+        catch (PromptFragmentException ex)
+        {
+            return MapPromptException(ex);
+        }
+    }
+
+    public async Task<IResult> PreviewPromptContext(JsonElement body, CancellationToken ct)
+    {
+        if (_promptAssembler is null)
+            return Results.Json(new { code = "capability_unavailable", message = "Prompt context preview requires the active context assembler runtime." }, statusCode: 501);
+
+        string? OptString(string name) =>
+            body.ValueKind == JsonValueKind.Object && body.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String
+                ? p.GetString()
+                : null;
+        Guid? OptGuid(string name) =>
+            OptString(name) is { } s && Guid.TryParse(s.Trim(), out var g) && g != Guid.Empty ? g : null;
+
+        IReadOnlyList<Guid>? includeFragmentIds = null;
+        if (body.ValueKind == JsonValueKind.Object
+            && body.TryGetProperty("include_fragment_ids", out var incEl)
+            && incEl.ValueKind == JsonValueKind.Array)
+        {
+            var ids = new List<Guid>();
+            foreach (var item in incEl.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String && Guid.TryParse(item.GetString(), out var g) && g != Guid.Empty)
+                    ids.Add(g);
+            }
+            includeFragmentIds = ids;
+        }
+
+        JsonElement? draftGraph = null;
+        if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("draft_pipeline_graph", out var dg))
+        {
+            if (dg.ValueKind == JsonValueKind.Object)
+                draftGraph = dg.Clone();
+            else if (dg.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(dg.GetString()))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(dg.GetString()!);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        draftGraph = doc.RootElement.Clone();
+                }
+                catch (JsonException)
+                {
+                    return Results.BadRequest(new { code = "invalid_request", message = "draft_pipeline_graph must be valid JSON." });
+                }
+            }
+        }
+
+        var requestDto = new PromptContextPreviewRequestDto
+        {
+            AgentId = OptString("agent_id"),
+            Mode = OptString("mode"),
+            ModeId = OptGuid("mode_id"),
+            ModeVersionId = OptGuid("mode_version_id"),
+            PipelineId = OptGuid("pipeline_id"),
+            DraftSystemPrompt = OptString("draft_system_prompt"),
+            DraftModeInstructions = OptString("draft_mode_instructions"),
+            DraftPipelineGraph = draftGraph,
+            IncludeFragmentIds = includeFragmentIds,
+            SessionId = OptGuid("session_id"),
+            RunId = OptGuid("run_id"),
+            UserContent = OptString("user_content")
+        };
+
+        var preview = await PreviewPromptContextCoreAsync(requestDto, ct);
+        return Results.Ok(preview);
+    }
+
+    public async Task<PromptContextPreviewResponseDto> PreviewPromptContextCoreAsync(
+        PromptContextPreviewRequestDto input,
+        CancellationToken ct = default)
+    {
+        var assembler = _promptAssembler ?? throw new InvalidOperationException("IPromptAssembler is not registered.");
+        FrozenWorkspaceBinding? workspace = null;
+        Guid? sessionModeVersionId = null;
+        string? sessionLocale = null;
+
+        if (input.SessionId is { } sessionId && sessionId != Guid.Empty && _sessions is not null)
+        {
+            var session = await _sessions.FindAsync(sessionId, ct);
+            if (session is not null && session.TenantId == Tenant.TenantId && session.WorkspaceId == Tenant.WorkspaceId)
+            {
+                workspace = await WorkspaceBindingFactory.TryCreateAsync(_sessions, session, ct);
+                sessionModeVersionId = session.ModeVersionId;
+                sessionLocale = session.InterfaceLocale;
+            }
+        }
+
+        var resolvedAgent = await ResolveAgentForPreviewAsync(input.AgentId, ct);
+        var resolvedMode = await ResolveModeForPreviewAsync(input.ModeVersionId ?? sessionModeVersionId, input.ModeId, input.Mode, resolvedAgent?.Id, ct);
+        var (pipelineId, promptVersionId, promptVersionHash, promptGraphJson) = await ResolvePipelineForPreviewAsync(
+            input.DraftPipelineGraph,
+            input.PipelineId,
+            resolvedMode?.NodePromptPipelineId,
+            resolvedMode?.NodePromptVersionId,
+            resolvedAgent?.BasePromptPipelineId,
+            ct);
+
+        var effectiveAgentSlug = resolvedAgent?.Slug
+            ?? (!string.IsNullOrWhiteSpace(input.AgentId) && !Guid.TryParse(input.AgentId.Trim(), out _) ? input.AgentId.Trim() : "meeting");
+        var effectiveAgentName = resolvedAgent?.DisplayName ?? effectiveAgentSlug;
+        var effectiveSystemPrompt = input.DraftSystemPrompt ?? resolvedAgent?.SystemPrompt;
+        var effectiveModeInstructions = input.DraftModeInstructions ?? resolvedMode?.Instructions;
+        var effectiveModeSlug = resolvedMode?.ModeSlug ?? input.Mode ?? string.Empty;
+        var effectiveModeName = resolvedMode?.ModeName ?? effectiveModeSlug;
+
+        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(effectiveModeSlug))
+        {
+            metadata["runtime_profile_id"] = resolvedMode?.ModeVersionId is { } mvId
+                ? $"mode:{resolvedMode.ModeId}:{mvId}"
+                : $"mode:{effectiveModeSlug}";
+            metadata["mode_slug"] = effectiveModeSlug;
+        }
+        if (!string.IsNullOrWhiteSpace(effectiveModeName))
+            metadata["mode_name"] = effectiveModeName;
+        if (resolvedAgent is not null)
+        {
+            metadata["agent_definition_id"] = resolvedAgent.Id.ToString();
+            metadata["agent_slug"] = resolvedAgent.Slug;
+            metadata["agent_name"] = resolvedAgent.DisplayName;
+            metadata["layer"] = resolvedAgent.Layer;
+        }
+
+        var evidence = new List<ContextEvidence>();
+        if (!string.IsNullOrWhiteSpace(input.UserContent))
+        {
+            evidence.Add(new ContextEvidence
+            {
+                Source = "user_turn_preview",
+                Content = input.UserContent.Trim()
+            });
+        }
+
+        var contextPack = new ContextPack
+        {
+            TokenBudget = 8192,
+            Metadata = metadata,
+            Evidence = evidence
+        };
+
+        var assemblyRequest = new FrozenPromptAssemblyRequest(
+            AgentId: effectiveAgentSlug,
+            ContextPack: contextPack,
+            SystemPrompt: effectiveSystemPrompt,
+            AgentVersionId: null,
+            AgentVersionContentHash: null,
+            PromptPipelineId: pipelineId,
+            PromptVersionId: promptVersionId,
+            PromptVersionContentHash: promptVersionHash,
+            PromptGraphJson: promptGraphJson,
+            IncludeLiveFragments: true,
+            ResponseLocale: sessionLocale)
+        {
+            Workspace = workspace,
+            RuntimePolicy = resolvedMode?.RuntimePolicy,
+            AgentDefinitionId = resolvedAgent?.Id,
+            AgentName = effectiveAgentName,
+            AgentSlug = effectiveAgentSlug,
+            AgentLayer = resolvedAgent?.Layer,
+            ModeName = effectiveModeName,
+            ModeSlug = effectiveModeSlug,
+            ModeInstructions = effectiveModeInstructions,
+            Capabilities = resolvedAgent?.Capabilities,
+            HasTools = resolvedAgent?.HasTools,
+            IncludeFragmentIds = input.IncludeFragmentIds
+        };
+
+        var assembled = await assembler.AssembleAsync(assemblyRequest, ct);
+
+        IReadOnlyList<PromptFragmentDto> matchedFragments = [];
+        if (_promptFragments is not null)
+        {
+            var allFragments = await _promptFragments.ListAsync(cancellationToken: ct);
+            var usedIds = assembled.FragmentIds
+                .Select(fid => Guid.TryParse(fid, out var g) ? g : Guid.Empty)
+                .Where(g => g != Guid.Empty)
+                .ToHashSet();
+            matchedFragments = allFragments.Where(f => usedIds.Contains(f.Id)).ToArray();
+        }
+
+        return new PromptContextPreviewResponseDto
+        {
+            AssembledPrompt = assembled.Instructions,
+            TotalEstimatedTokens = assembled.EstimatedTokens,
+            Layers = assembled.Layers.Select(l => new PromptContextLayerDto
+            {
+                Id = l.Id,
+                Kind = l.Kind,
+                Title = l.Title,
+                Content = l.Content,
+                EstimatedTokens = l.EstimatedTokens,
+                Source = l.Source
+            }).ToArray(),
+            Warnings = assembled.Warnings,
+            AgentId = effectiveAgentSlug,
+            Mode = effectiveModeSlug,
+            EstimatedTokens = assembled.EstimatedTokens,
+            SystemPrompt = assembled.Instructions,
+            Fragments = matchedFragments,
+            ContextPackIds = assembled.FragmentIds.Where(x => x.StartsWith("context:", StringComparison.Ordinal)).ToArray()
+        };
+    }
+
+    private static bool TryParseOptionalIfMatch(string? ifMatch, out long? revision)
+    {
+        revision = null;
+        if (string.IsNullOrWhiteSpace(ifMatch)) return true;
+        var normalized = ifMatch.Trim().Trim('"', 'W', '/', ' ');
+        if (normalized.Length == 0) return true;
+        if (!long.TryParse(normalized, out var parsed)) return false;
+        revision = parsed;
+        return true;
+    }
+
+    private static IResult MapPromptException(PromptFragmentException ex) => ex.StatusCode switch
+    {
+        404 => Results.NotFound(new { code = ex.Code, message = ex.Message }),
+        409 => Results.Conflict(new { code = ex.Code, message = ex.Message }),
+        412 => Results.Json(new { code = ex.Code, message = ex.Message }, statusCode: 412),
+        _ => Results.BadRequest(new { code = ex.Code, message = ex.Message })
+    };
+
+    private static string UnwrapPromptContent(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return string.Empty;
+        var current = raw;
+        for (var i = 0; i < 4; i++)
+        {
+            var trimmed = current.Trim();
+            if (trimmed.Length < 2 || trimmed[0] != '"') break;
+            try
+            {
+                using var doc = JsonDocument.Parse(trimmed);
+                if (doc.RootElement.ValueKind != JsonValueKind.String) break;
+                current = doc.RootElement.GetString() ?? string.Empty;
+            }
+            catch (JsonException)
+            {
+                break;
+            }
+        }
+        return current;
+    }
+
+    private IEnumerable<IDbContextFactory<AgentConfigurationDbContext>> AgentConfigFactories()
+    {
+        if (_agentConfig is not null) yield return _agentConfig;
+        if (_globalAgentConfig is not null && !ReferenceEquals(_globalAgentConfig.Factory, _agentConfig))
+            yield return _globalAgentConfig.Factory;
+    }
+
+    private async Task<(string? TargetAgentId, string? TargetAgentSlug)> ResolveTargetAgentAsync(
+        string? rawIdOrSlug,
+        string? rawSlug,
+        CancellationToken ct)
+    {
+        if (rawIdOrSlug is null && rawSlug is null)
+            return (null, null);
+
+        var candidate = rawIdOrSlug?.Trim() ?? rawSlug?.Trim() ?? string.Empty;
+        if (candidate.Length == 0)
+            return (string.Empty, string.Empty);
+
+        var isGuid = Guid.TryParse(candidate, out var parsedGuid) && parsedGuid != Guid.Empty;
+        foreach (var factory in AgentConfigFactories())
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var def = isGuid
+                ? await db.AgentDefinitions.AsNoTracking()
+                    .Where(x => x.Id == parsedGuid && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId)
+                    .FirstOrDefaultAsync(ct)
+                : await db.AgentDefinitions.AsNoTracking()
+                    .Where(x => x.Slug == candidate && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.Status != "archived")
+                    .OrderByDescending(x => x.Status == "published")
+                    .ThenByDescending(x => x.Version)
+                    .FirstOrDefaultAsync(ct);
+            if (def is not null)
+                return (def.Id.ToString(), def.Slug);
+        }
+
+        return isGuid
+            ? (parsedGuid.ToString(), rawSlug?.Trim())
+            : (candidate, candidate);
+    }
+
+    private sealed record PreviewResolvedAgent(
+        Guid Id,
+        string Slug,
+        string DisplayName,
+        string Layer,
+        string? SystemPrompt,
+        Guid? BasePromptPipelineId,
+        IReadOnlyList<string> Capabilities,
+        bool HasTools);
+
+    private sealed record PreviewResolvedMode(
+        Guid ModeId,
+        Guid? ModeVersionId,
+        string ModeSlug,
+        string ModeName,
+        string? Instructions,
+        ModeRuntimePolicyDto? RuntimePolicy,
+        Guid? NodePromptPipelineId,
+        Guid? NodePromptVersionId);
+
+    private async Task<PreviewResolvedAgent?> ResolveAgentForPreviewAsync(string? agentIdOrSlug, CancellationToken ct)
+    {
+        var query = string.IsNullOrWhiteSpace(agentIdOrSlug) ? null : agentIdOrSlug.Trim();
+        var hasGuid = query is not null && Guid.TryParse(query, out var parsedGuid) && parsedGuid != Guid.Empty;
+        Guid targetGuid = hasGuid ? Guid.Parse(query!) : Guid.Empty;
+
+        foreach (var factory in AgentConfigFactories())
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            AgentDefinitionRecord? def = null;
+            if (hasGuid)
+            {
+                def = await db.AgentDefinitions.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == targetGuid && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+            }
+            else if (query is not null)
+            {
+                def = await db.AgentDefinitions.AsNoTracking()
+                    .Where(x => x.Slug == query && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.Status != "archived")
+                    .OrderByDescending(x => x.Status == "published")
+                    .ThenByDescending(x => x.Version)
+                    .FirstOrDefaultAsync(ct);
+            }
+            else
+            {
+                var defaults = await db.WorkspaceDefaults.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                if (defaults?.DefaultAgentDefinitionId is { } defId)
+                {
+                    def = await db.AgentDefinitions.AsNoTracking()
+                        .FirstOrDefaultAsync(x => x.Id == defId && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                }
+                def ??= await db.AgentDefinitions.AsNoTracking()
+                    .Where(x => x.Slug == "meeting" && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.Status != "archived")
+                    .OrderByDescending(x => x.Status == "published")
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            if (def is not null)
+            {
+                var caps = ParseStringListJson(def.CapabilitiesJson);
+                var tools = ParseStringListJson(def.ToolScopeJson);
+                return new PreviewResolvedAgent(
+                    def.Id,
+                    def.Slug,
+                    def.DisplayName,
+                    def.Layer,
+                    def.SystemPrompt,
+                    def.BasePromptPipelineId,
+                    caps,
+                    tools.Count > 0);
+            }
+        }
+        return null;
+    }
+
+    private async Task<PreviewResolvedMode?> ResolveModeForPreviewAsync(
+        Guid? modeVersionId,
+        Guid? modeId,
+        string? modeSlugOrId,
+        Guid? targetAgentDefinitionId,
+        CancellationToken ct)
+    {
+        if (modeId is null && !string.IsNullOrWhiteSpace(modeSlugOrId) && Guid.TryParse(modeSlugOrId.Trim(), out var parsedModeGuid))
+            modeId = parsedModeGuid;
+
+        foreach (var factory in AgentConfigFactories())
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            ModeVersionRecord? version = null;
+            AgentModeRecord? mode = null;
+
+            if (modeVersionId is { } mvId && mvId != Guid.Empty)
+            {
+                version = await db.ModeVersions.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == mvId && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                if (version is not null)
+                    mode = await db.AgentModes.AsNoTracking().FirstOrDefaultAsync(x => x.Id == version.AgentModeId, ct);
+            }
+            if (mode is null && modeId is { } mId && mId != Guid.Empty)
+            {
+                mode = await db.AgentModes.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == mId && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+            }
+            if (mode is null && !string.IsNullOrWhiteSpace(modeSlugOrId))
+            {
+                var s = modeSlugOrId.Trim();
+                mode = await db.AgentModes.AsNoTracking()
+                    .Where(x => (x.Slug == s || x.DisplayName == s) && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.ArchivedAt == null)
+                    .OrderByDescending(x => x.Status == "published")
+                    .ThenByDescending(x => x.Version)
+                    .FirstOrDefaultAsync(ct);
+            }
+            if (mode is null && modeVersionId is null && modeId is null && string.IsNullOrWhiteSpace(modeSlugOrId))
+            {
+                var defaults = await db.WorkspaceDefaults.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                if (defaults?.DefaultModeVersionId is { } dmvId)
+                {
+                    version = await db.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == dmvId, ct);
+                    if (version is not null)
+                        mode = await db.AgentModes.AsNoTracking().FirstOrDefaultAsync(x => x.Id == version.AgentModeId, ct);
+                }
+                else if (defaults?.DefaultAgentModeId is { } damId)
+                {
+                    mode = await db.AgentModes.AsNoTracking().FirstOrDefaultAsync(x => x.Id == damId, ct);
+                }
+            }
+
+            if (mode is null && version is null) continue;
+
+            version ??= mode is null
+                ? null
+                : await db.ModeVersions.AsNoTracking()
+                    .Where(x => x.AgentModeId == mode.Id && x.Status == "published")
+                    .OrderByDescending(x => x.Version)
+                    .FirstOrDefaultAsync(ct);
+
+            var instructions = mode?.Instructions;
+            ModeRuntimePolicyDto? runtimePolicy = null;
+            if (!string.IsNullOrWhiteSpace(mode?.RuntimePolicyJson))
+            {
+                try { runtimePolicy = JsonSerializer.Deserialize<ModeRuntimePolicyDto>(mode.RuntimePolicyJson, FrozenRunConfigurationV1.JsonOptions); }
+                catch (JsonException) { }
+            }
+
+            Guid? nodePipelineId = null;
+            Guid? nodePromptVersionId = null;
+            if (!string.IsNullOrWhiteSpace(version?.SnapshotJson))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(version.SnapshotJson);
+                    var root = doc.RootElement;
+                    if (string.IsNullOrWhiteSpace(instructions) && root.TryGetProperty("instructions", out var instEl) && instEl.ValueKind == JsonValueKind.String)
+                        instructions = instEl.GetString();
+                    if (runtimePolicy is null && root.TryGetProperty("runtime_policy", out var rpEl) && rpEl.ValueKind == JsonValueKind.Object)
+                        runtimePolicy = rpEl.Deserialize<ModeRuntimePolicyDto>(FrozenRunConfigurationV1.JsonOptions);
+                    if (root.TryGetProperty("nodes", out var nodesEl) && nodesEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var n in nodesEl.EnumerateArray())
+                        {
+                            if (targetAgentDefinitionId is { } aid
+                                && n.TryGetProperty("agent_definition_id", out var adEl)
+                                && adEl.ValueKind == JsonValueKind.String
+                                && Guid.TryParse(adEl.GetString(), out var nodeAgentId)
+                                && nodeAgentId != aid)
+                            {
+                                continue;
+                            }
+                            if (n.TryGetProperty("prompt_pipeline_id", out var ppEl) && ppEl.ValueKind == JsonValueKind.String && Guid.TryParse(ppEl.GetString(), out var ppId))
+                                nodePipelineId ??= ppId;
+                            if (n.TryGetProperty("prompt_version_id", out var pvEl) && pvEl.ValueKind == JsonValueKind.String && Guid.TryParse(pvEl.GetString(), out var pvId))
+                                nodePromptVersionId ??= pvId;
+                        }
+                    }
+                }
+                catch (JsonException) { }
+            }
+
+            return new PreviewResolvedMode(
+                mode?.Id ?? version!.AgentModeId,
+                version?.Id,
+                mode?.Slug ?? modeSlugOrId ?? string.Empty,
+                mode?.DisplayName ?? mode?.Slug ?? string.Empty,
+                instructions,
+                runtimePolicy,
+                nodePipelineId,
+                nodePromptVersionId);
+        }
+
+        return null;
+    }
+
+    private async Task<(Guid? PipelineId, Guid? PromptVersionId, string? PromptVersionHash, string? GraphJson)> ResolvePipelineForPreviewAsync(
+        JsonElement? draftGraph,
+        Guid? explicitPipelineId,
+        Guid? modeNodePipelineId,
+        Guid? modeNodePromptVersionId,
+        Guid? agentBasePipelineId,
+        CancellationToken ct)
+    {
+        if (draftGraph is { ValueKind: JsonValueKind.Object } graphObj)
+            return (explicitPipelineId, null, null, graphObj.GetRawText());
+
+        var targetPipelineId = explicitPipelineId ?? modeNodePipelineId ?? agentBasePipelineId;
+        foreach (var factory in AgentConfigFactories())
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            if (targetPipelineId is null)
+            {
+                var defaults = await db.WorkspaceDefaults.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                targetPipelineId = defaults?.DefaultPromptPipelineId;
+            }
+            if (targetPipelineId is null && modeNodePromptVersionId is null) continue;
+
+            if (explicitPipelineId is null && modeNodePromptVersionId is { } pvId)
+            {
+                var pv = await db.PromptVersions.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == pvId && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                if (pv is not null)
+                    return (pv.PromptPipelineId, pv.Id, pv.ContentHash, pv.GraphJson);
+            }
+
+            if (targetPipelineId is { } pid)
+            {
+                var pipeline = await db.PromptPipelines.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == pid && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                if (pipeline is not null)
+                {
+                    var latestVersion = await db.PromptVersions.AsNoTracking()
+                        .Where(x => x.PromptPipelineId == pid && x.Status == "published")
+                        .OrderByDescending(x => x.Version)
+                        .FirstOrDefaultAsync(ct);
+                    // Prefer the live draft GraphJson on the pipeline record if edited, or published version graph.
+                    var graphJson = !string.IsNullOrWhiteSpace(pipeline.GraphJson) ? pipeline.GraphJson : latestVersion?.GraphJson;
+                    return (pipeline.Id, latestVersion?.Id, latestVersion?.ContentHash, graphJson);
+                }
+            }
+        }
+
+        return (targetPipelineId, null, null, null);
+    }
+
+    private static IReadOnlyList<string> ParseStringListJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                return doc.RootElement.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(x.GetString()))
+                    .Select(x => x.GetString()!.Trim())
+                    .ToArray();
+            }
+            if (doc.RootElement.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(doc.RootElement.GetString()))
+                return [doc.RootElement.GetString()!.Trim()];
+        }
+        catch (JsonException) { }
+        return [];
+    }
 
     public async Task<IResult> ListApprovals(string? status, string? sessionId, string? runId, CancellationToken ct)
     {

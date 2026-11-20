@@ -1,58 +1,64 @@
 ---
 name: tinadec-workbench
-description: Inspect and change Tinadec's own agents, modes, graph topology, skills and MCP bindings through governed tools. Use when the user asks to edit a team, add or remove a graph node, change an agent's tools, or publish a mode.
-version: 1.0.0
+description: Inspect and configure Tinadec's agents, modes, graph topology, prompts, model profiles, skills, and MCP bindings. Use when editing teams, adding or wiring graph nodes, tuning prompts/models, or publishing modes.
+version: 1.1.0
 ---
 
 # Tinadec workbench configuration
 
-You can change the workbench itself. The tools are `tinadec_*` and every write is approval-gated. A change applies to **new runs only**: an admitted run keeps the snapshot it froze.
+You can inspect and configure the Tinadec workbench directly with the `tinadec_*` tools. Self-config tools execute immediately (with validation, optimistic revision checks, and version history snapshots preserved). Changes apply to **new runs only**: an already-admitted run keeps its frozen snapshot.
 
 ## Read before write
 
-1. `tinadec_inspect` with `target: "agents"` to see the roster and which agents are built in.
-2. `tinadec_inspect` with `target: "modes"` to see modes, status, version and whether a mode is pack-managed.
-3. `tinadec_inspect` with `target: "mode"` and a `mode_id` to read nodes, edges and validation warnings.
+1. `tinadec_inspect` with `target: "agents"` (or `target: "agent", agent_id: "<id_or_slug>"` for full `system_prompt`, `tool_scope`, `model_strategy`, `base_prompt_pipeline_id`, and `source_kind`).
+2. `tinadec_inspect` with `target: "modes"` to list modes, status, version, `orchestration_tier`, and pack management flags.
+3. `tinadec_inspect` with `target: "mode"` and `mode_id: "<guid_or_slug>"` to read `revision`, `instructions`, `orchestration_tier`, `bindings`, `nodes[]`, `edges[]` (with `edge_key`), and validation diagnostics.
+4. `tinadec_inspect` with `target: "models"`, `target: "prompts"`, or `target: "prompt_pipeline", pipeline_id: "<id_or_slug>"` before picking model strategies or prompt pipelines.
 
-Built-in (`managed` / `is_built_in`) objects are read-only. To customize one, clone it first; never try to edit it in place.
+Built-in / pack-managed (`pack_managed` / `is_built_in`) records are read-only. Clone them first before customizing.
 
 ## Write loop
 
 ```
-inspect → clone or create draft → apply → validate → publish
+inspect -> clone or create draft -> apply/validate -> publish
 ```
 
-- `tinadec_mode_apply` creates or updates a **draft**. It runs `GraphValidation` first and returns structured diagnostics. Fix diagnostics and call it again.
-- Every edge needs a stable `edge_key`. Reuse the key from inspect. Omitting it is an error, not a request to generate a new one.
-- `tinadec_mode_publish` validates bindings and publishes. It returns `topology_hash` and warnings. Do not publish a draft with `EMPTY_EFFECTIVE_TOOLS` unless the user accepts it.
-- Removing a node or edge is an explicit delete in `tinadec_mode_apply`; the server removes it from the draft. Never emulate deletion by renaming.
-- `tinadec_agent_apply` only touches custom agents. Changing tools on a built-in agent is refused; clone it and reference the clone from the mode.
-- `tinadec_skill_apply` and `tinadec_mcp_apply` reuse the governed resource services. Secrets are write-only; a masked value means "unchanged", not the real value.
+- `tinadec_mode_apply` creates, clones, upserts, or deletes a **draft** mode (`mode_id` accepts GUID or slug). Send all fields under top-level `payload` (`display_name`, `description`, `instructions`, `orchestration_tier`, `bindings`, `runtime_policy`, `canvas_layout`, `nodes`, `edges`) and pass `expected_revision` on edits.
+- Every edge in `payload.edges[]` must carry a non-empty `edge_key`, `source_node_key`, and `target_node_key`. Nodes and edges omitted from `payload.nodes[]` / `payload.edges[]` on `upsert` are deleted.
+- `tinadec_mode_publish` validates bindings and publishes a mode (`mode_id` by GUID or slug), returning `topology_hash`, `version`, `revision`, and warnings.
+- `tinadec_agent_apply` supports `create`, `clone`, `update`, and `publish`. Pass write fields inside `payload` (including `base_prompt_pipeline_id`, `model_binding`, `tool_settings`, `source_kind`, `provenance`). Agent-created or cloned custom agents default to `source_kind: "agent_generated"`.
+- `tinadec_prompt_apply` creates, updates, clones, publishes, or rolls back prompt fragments (`target: "fragment"`) and prompt pipelines (`target: "pipeline"`).
+- `tinadec_model_profile_apply` inspects or updates non-secret `model_profiles` (`specialties`, `tier`, `notes`, `context_window`, `cost_tier`) on enabled providers.
+- `tinadec_skill_apply` and `tinadec_mcp_apply` manage workspace/shared Skills and MCP servers; masked env values keep the stored secret.
 
 ## Team and graph semantics
 
-- The conversation identity is chosen by the node marker / capability (`user.respond`), then by the literal `meeting`. Keep exactly one marked conversation node on the operation layer.
-- An execution node needs a duty, input/output contract, success criteria and, when it may dispatch, `allowed_dispatch_targets`.
-- `free_form` permits parallel dispatch; `deterministic` follows declared edges; `solo_dispatch` means the conversation identity does the work itself.
-- `max_agents_per_run` and the spawn ceilings are hard limits. A draft that exceeds them fails publish, not runtime.
+- Keep one conversation entry node on the `operation` layer (marked `user.respond` or slug `meeting`).
+- Canonical `orchestration_tier` values are `solo_dispatch`, `free_form`, `self_dispatch`, and `deterministic`.
+- Execution nodes declare `duty`, contracts, and `allowed_dispatch_targets` / `spawnable_agent_types` when dispatching peers or workers.
 
-## Examples
+## Examples (matching tool schema)
 
-**Add a reviewer to Team**
+**Clone and update a Team mode to add a reviewer**
 
-1. `tinadec_inspect(target:"mode", mode_id:"free_director")`
-2. `tinadec_mode_apply(action:"clone", mode_id:"free_director", name:"Team + reviewer")` (if the source is managed)
-3. `tinadec_mode_apply(action:"upsert", mode_id:<draft>, nodes:[...existing..., reviewer node], edges:[] , edge_keys:{...})`
-4. `tinadec_mode_publish(mode_id:<draft>)`
+1. Inspect:
+   `tinadec_inspect` `{ "target": "mode", "mode_id": "free_director" }`
+2. Clone the pack-managed mode (`name` goes inside `payload.display_name`):
+   `tinadec_mode_apply` `{ "action": "clone", "mode_id": "free_director", "payload": { "display_name": "Team + Reviewer" } }`
+3. Upsert the draft with all kept nodes + reviewer node and explicit `edge_key` values:
+   `tinadec_mode_apply` `{ "action": "upsert", "mode_id": "<draft_mode_id>", "expected_revision": <revision>, "payload": { "display_name": "Team + Reviewer", "orchestration_tier": "free_form", "instructions": "...", "nodes": [ ...existingNodes, { "node_key": "reviewer", "agent_definition_id": "<reviewer_agent_id>", "layer": "execution", "duty": "Verify diff and tests" } ], "edges": [ { "edge_key": "meeting-to-reviewer", "source_node_key": "meeting", "target_node_key": "reviewer", "kind": "dispatch" } ] } }`
+4. Publish:
+   `tinadec_mode_publish` `{ "mode_id": "<draft_mode_id>", "expected_revision": <new_revision> }`
 
-**Turn on MCP for the conversation identity**
+**Bind an MCP server or Skill to a custom agent clone**
 
-1. Confirm the server exists: `tinadec_inspect(target:"mcp")`.
-2. Bind it to `meeting` through `tinadec_mcp_apply` or the tool settings.
-3. If `meeting` lacks `mcp_*`, grant the capability with `tinadec_agent_apply` on a clone, or use an executor that already holds it. Do not tell the user MCP is "configured" until `mcp_list` returns the server in a new run.
+1. Confirm server/skill IDs: `tinadec_inspect` `{ "target": "mcp" }` and `{ "target": "skills" }`.
+2. Clone built-in agent or update custom agent with `payload.tool_settings`:
+   `tinadec_agent_apply` `{ "action": "update", "agent_id": "<custom_agent_id>", "payload": { "tool_scope": ["read_file", "mcp_list", "mcp_call"], "tool_settings": { "mcp_server_ids": ["<mcp_id>"], "skill_resource_ids": ["<skill_id>"] } } }`
+3. Publish:
+   `tinadec_agent_apply` `{ "action": "publish", "agent_id": "<custom_agent_id>" }`
 
-## Do not
+## Guardrails
 
-- Do not publish a mode the user has not reviewed when the diff changes who can write.
-- Do not edit `runtime.toml` through shell to bypass approval; runtime policy ceilings are host-owned.
-- Do not claim a change is live. Say "it applies to the next run".
+- Never fabricate revision numbers; always read `expected_revision` from `tinadec_inspect` or the preceding apply response.
+- Never claim a change affects the currently running session; tell the user it applies to new runs.

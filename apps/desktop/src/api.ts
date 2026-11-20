@@ -401,6 +401,29 @@ export interface ModelParametersDto {
   max_output_tokens?: number | null;
 }
 
+export type ModelSpecialty =
+  | 'coding'
+  | 'architecture'
+  | 'research'
+  | 'review'
+  | 'writing'
+  | 'vision'
+  | 'tool_calling'
+  | 'fast_qa'
+  | 'long_context'
+  | string;
+
+export type ModelProfileTier = 'fast' | 'balanced' | 'deep';
+export type ModelCostTier = 'low' | 'medium' | 'high';
+
+export interface ModelProfileDto {
+  specialties: ModelSpecialty[];
+  tier: ModelProfileTier;
+  notes?: string | null;
+  context_window?: number | null;
+  cost_tier?: ModelCostTier | null;
+}
+
 export interface ImageInputSettingsDto {
   enabled?: boolean;
   max_image_bytes?: number;
@@ -435,6 +458,7 @@ export interface ModelProviderInstanceDto {
   model?: string | null;
   models?: string[];
   model_parameters?: Record<string, ModelParametersDto>;
+  model_profiles?: Record<string, ModelProfileDto>;
   image_input?: ImageInputCapabilityDto;
   has_api_key: boolean;
   binary_path?: string | null;
@@ -641,6 +665,7 @@ export interface SaveModelProviderInstanceInput {
   model?: string | null;
   models?: string[];
   model_parameters?: Record<string, ModelParametersDto> | null;
+  model_profiles?: Record<string, ModelProfileDto> | null;
   image_input?: ImageInputSettingsDto | null;
   api_key?: string | null;
   clear_api_key?: boolean;
@@ -1285,7 +1310,11 @@ export interface AgentViewDto {
   /** Versioned projection (Core ToAgentDto) — present on GET /agents since D7.4. */
   slug?: string;
   display_name?: string;
+  i18n?: PackI18n | null;
   role?: string;
+  source_kind?: AgentSourceKind | string;
+  provenance?: AgentProvenanceDto | null;
+  base_prompt_pipeline_id?: string | null;
   tool_scope?: string[] | string | null;
   model_strategy?: Record<string, unknown> | string | null;
   /**
@@ -1317,6 +1346,17 @@ export interface PackI18nOverlay {
 /** Per-locale overlays keyed by Core locale (`zh-CN`, `zh-TW`, `en`, `ja`, `ru`). */
 export type PackI18n = Record<string, PackI18nOverlay>
 
+export type AgentSourceKind = 'pack' | 'custom' | 'agent_generated';
+
+export interface AgentProvenanceDto {
+  created_by_agent_id?: string | null;
+  created_by_run_id?: string | null;
+  reason?: string | null;
+}
+
+export type OrchestrationTier = 'solo_dispatch' | 'free_form' | 'self_dispatch' | 'deterministic';
+export type AgentOrchestrationTier = OrchestrationTier;
+
 export interface AgentDirectoryItemDto {
   id: string;
   slug: string;
@@ -1325,7 +1365,7 @@ export interface AgentDirectoryItemDto {
   i18n?: PackI18n | null;
   layer: 'operation' | 'execution' | string;
   role: string;
-  source_kind: 'custom' | 'pack' | 'bootstrap' | 'missing_reference' | string;
+  source_kind: AgentSourceKind | 'bootstrap' | 'missing_reference' | string;
   source_key: string;
   managed: boolean;
   writable: boolean;
@@ -1334,6 +1374,11 @@ export interface AgentDirectoryItemDto {
   revision: number;
   version: number;
   current_version_id?: string | null;
+  provenance?: AgentProvenanceDto | null;
+  base_prompt_pipeline_id?: string | null;
+  pack_id?: string | null;
+  pack_managed?: boolean;
+  pack_disabled?: boolean;
   configured_strategy: { kind: 'inherit' | 'route' | 'fixed'; route_purpose?: string; provider_instance_id?: string; model?: string | null };
   mode_usages: AgentModeUsageDto[];
   effective_previews: Record<string, ModelResolutionPreviewDto>;
@@ -1364,6 +1409,8 @@ export interface AgentModeDto {
   display_name: string;
   summary?: string;
   description?: string | null;
+  i18n?: PackI18n | null;
+  orchestration_tier?: AgentOrchestrationTier | null;
   latest_published_mode_version_id?: string | null;
   max_parallel_executors?: number;
   worktree_isolation?: boolean;
@@ -1371,6 +1418,9 @@ export interface AgentModeDto {
   budget_policy?: string;
   status?: string;
   managed?: boolean;
+  pack_id?: string | null;
+  pack_managed?: boolean;
+  pack_disabled?: boolean;
   revision?: number;
   version?: number;
 }
@@ -1403,6 +1453,15 @@ export interface AgentDefinitionDto {
   agent_type?: string;
   /** Versioned shape. */
   role?: string;
+  source_kind?: AgentSourceKind | string;
+  source_key?: string | null;
+  managed?: boolean;
+  writable?: boolean;
+  provenance?: AgentProvenanceDto | null;
+  base_prompt_pipeline_id?: string | null;
+  pack_id?: string | null;
+  pack_managed?: boolean;
+  pack_disabled?: boolean;
   model_route_purpose?: string | null;
   /** Versioned shape: { kind: inherit|route|fixed, ... }. */
   model_strategy?: Record<string, unknown> | 'inherit' | 'route' | 'fixed' | string | null;
@@ -1580,6 +1639,7 @@ export interface AgentModeEdgeDto {
 /** Core UpsertModeTopology write contract (node_key/agent_definition_id/layer). */
 export interface AgentModeTopologyWriteDto {
   instructions?: string | null;
+  orchestration_tier?: AgentOrchestrationTier | null;
   nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null; config?: Record<string, unknown> | null; relationship?: Record<string, unknown> | null; model_strategy_override?: Record<string, unknown> | null }>;
   edges: Array<{ edge_key?: string; source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
   bindings?: AgentModeBindingDto[];
@@ -1591,6 +1651,7 @@ export interface AgentModeTopologyWriteDto {
 export interface AgentModeDraftUpdate extends AgentModeTopologyWriteDto {
   display_name?: string | null;
   description?: string | null;
+  orchestration_tier?: AgentOrchestrationTier | null;
 }
 
 /**
@@ -1640,6 +1701,7 @@ export interface AgentModeTopologyDto {
   instructions?: string | null;
   /** Per-locale overlays; absent for modes that ship none. */
   i18n?: PackI18n | null;
+  orchestration_tier?: AgentOrchestrationTier | null;
   runtime_policy?: AgentModeRuntimePolicy | null;
   nodes: AgentModeNodeDto[];
   edges: AgentModeEdgeDto[];
@@ -1648,6 +1710,10 @@ export interface AgentModeTopologyDto {
   status?: string;
   /** True when an installed Agent Pack owns this mode (read-only; clone to customize). */
   managed?: boolean;
+  pack_id?: string | null;
+  pack_managed?: boolean;
+  pack_disabled?: boolean;
+  version?: number | null;
   revision?: number | null;
   etag?: string | null;
   created_at?: string | null;
@@ -1678,29 +1744,98 @@ export interface ModeVersionDto {
   is_active?: boolean;
 }
 
+export interface PromptPipelineNodeDto {
+  id: string;
+  type?: 'template' | 'fragment_ref' | 'condition' | 'workspace_rules' | 'skills_index' | 'assemble' | string;
+  kind?: string;
+  label?: string | null;
+  title?: string | null;
+  key?: string | null;
+  position?: { x: number; y: number } | null;
+  x?: number;
+  y?: number;
+  config?: Record<string, unknown> | null;
+  data?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+export interface PromptPipelineEdgeDto {
+  id: string;
+  source: string;
+  target: string;
+  label?: string | null;
+  condition?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+export interface PromptPipelineGraphDto {
+  nodes: PromptPipelineNodeDto[];
+  edges: PromptPipelineEdgeDto[];
+  canvas_layout?: Record<string, unknown> | null;
+}
+
 export interface PromptPipelineDto {
   id: string;
+  slug?: string | null;
+  display_name?: string | null;
   name?: string | null;
   title?: string | null;
   key?: string | null;
   description?: string | null;
+  i18n?: PackI18n | null;
   scope?: string | null;
   status?: string;
   version?: number | null;
   revision?: number | null;
   etag?: string | null;
-  nodes?: unknown[] | null;
-  edges?: unknown[] | null;
+  graph?: PromptPipelineGraphDto | null;
+  nodes?: PromptPipelineNodeDto[] | null;
+  edges?: PromptPipelineEdgeDto[] | null;
   canvas_layout?: Record<string, unknown> | null;
+  pack_id?: string | null;
+  pack_managed?: boolean;
+  pack_disabled?: boolean;
   created_at?: string | null;
   updated_at?: string | null;
 }
 
+export function normalizePromptPipeline(raw: PromptPipelineDto): PromptPipelineDto {
+  const rawGraph = raw.graph && typeof raw.graph === 'object' ? raw.graph : null
+  const nodes = Array.isArray(rawGraph?.nodes)
+    ? rawGraph.nodes
+    : Array.isArray(raw.nodes)
+      ? raw.nodes
+      : []
+  const edges = Array.isArray(rawGraph?.edges)
+    ? rawGraph.edges
+    : Array.isArray(raw.edges)
+      ? raw.edges
+      : []
+  const canvasLayout = rawGraph?.canvas_layout ?? raw.canvas_layout ?? null
+  const displayName = raw.display_name ?? raw.name ?? raw.title ?? raw.slug ?? raw.id
+  return {
+    ...raw,
+    display_name: displayName,
+    name: raw.name ?? displayName,
+    graph: {
+      nodes,
+      edges,
+      ...(canvasLayout ? { canvas_layout: canvasLayout } : {}),
+    },
+    nodes,
+    edges,
+    canvas_layout: canvasLayout,
+  }
+}
+
 export interface PromptPipelineVersionDto {
   id: string;
-  pipeline_id: string;
+  pipeline_id?: string;
+  prompt_pipeline_id?: string;
   version: number;
+  graph?: PromptPipelineGraphDto | null;
   content?: Record<string, unknown> | null;
+  content_hash?: string | null;
   created_at: string;
 }
 
@@ -1903,6 +2038,7 @@ export interface PromptFragmentDto {
   priority: number;
   enabled: boolean;
   is_builtin: boolean;
+  revision?: number;
   created_at: string;
   updated_at: string;
 }
@@ -1918,22 +2054,47 @@ export interface SavePromptFragmentInput {
   enabled: boolean;
 }
 
+export interface PromptContextLayerDto {
+  id: string;
+  kind: string;
+  title: string;
+  content: string;
+  estimated_tokens: number;
+  source: string;
+}
+
 export interface PromptContextPreviewInput {
-  agent_id: string;
+  agent_id?: string | null;
   mode?: string | null;
+  mode_id?: string | null;
+  mode_version_id?: string | null;
+  pipeline_id?: string | null;
+  draft_system_prompt?: string | null;
+  draft_mode_instructions?: string | null;
+  draft_pipeline_graph?: PromptPipelineGraphDto | Record<string, unknown> | null;
+  include_fragment_ids?: string[] | null;
   session_id?: string | null;
   run_id?: string | null;
   user_content?: string | null;
 }
 
 export interface PromptContextPreviewDto {
-  agent_id: string;
-  mode: string;
-  fragments: PromptFragmentDto[];
-  context_pack_ids: string[];
-  estimated_tokens: number;
-  system_prompt: string;
-  warnings: string[];
+  assembled_prompt?: string;
+  total_estimated_tokens?: number;
+  layers?: PromptContextLayerDto[];
+  warnings?: string[];
+  agent_id?: string;
+  mode?: string;
+  fragments?: PromptFragmentDto[];
+  context_pack_ids?: string[];
+  estimated_tokens?: number;
+  system_prompt?: string;
+}
+
+export interface PromptContextPreviewNormalizedDto extends PromptContextPreviewDto {
+  assembled_prompt: string;
+  total_estimated_tokens: number;
+  layers: PromptContextLayerDto[];
 }
 
 export interface OrchestrationRunDto {
@@ -3518,8 +3679,8 @@ export const api = {
     return definitions.filter((item): item is AgentDefinitionDto => item !== null)
   },
   createAgentDraft: (body: Partial<AgentDefinitionDto>) => request<AgentDefinitionDto>('/api/v1/agents', { method: 'POST', body: JSON.stringify(body) }),
-  updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
-  publishAgent: (id: string, etag?: string | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
+  updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | number | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag != null && etag !== '' ? { 'if-match': String(etag) } : {}, body: JSON.stringify(body) }),
+  publishAgent: (id: string, etag?: string | number | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag != null && etag !== '' ? { 'if-match': String(etag) } : {} }),
   // 用户级运行时绑定（配置体验改造 A）：pack 管理的智能体也可写，绕开 draft/publish。
   putAgentRuntimeBinding: (id: string, body: { mode: 'inherit' | 'route' | 'fixed'; provider_instance_id?: string | null; model?: string | null; route_purpose?: string | null; tool_scope?: string[] | null }) => request<Record<string, unknown>>(`/api/v1/agents/${encodeURIComponent(id)}/runtime-binding`, { method: 'PUT', body: JSON.stringify(body) }),
   archiveAgent: (id: string, revision?: number | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST', headers: revision != null ? { 'if-match': String(revision) } : {} }),
@@ -3565,17 +3726,75 @@ export const api = {
   listAgentModeTopologies: (options?: { signal?: AbortSignal }) => cachedRead(catalogKey('agent-modes'), () => request<AgentModeTopologyDto[]>('/api/v1/agent-modes'), options?.signal),
   createAgentModeDraft: (body: Omit<Partial<AgentModeTopologyDto>, 'nodes' | 'edges'> & Partial<AgentModeTopologyWriteDto>) => request<AgentModeTopologyDto>('/api/v1/agent-modes', { method: 'POST', body: JSON.stringify(body) }),
   getAgentModeTopology: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}`),
-  updateAgentModeDraft: (id: string, body: AgentModeDraftUpdate, etag?: string | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
-  publishAgentMode: (id: string, etag?: string | null) => request<{ id?: string; version?: number; revision?: number; topology_hash?: string; warning?: unknown }>(`/api/v1/agent-modes/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
-  archiveAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  updateAgentModeDraft: (id: string, body: AgentModeDraftUpdate, etag?: string | number | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag != null && etag !== '' ? { 'if-match': String(etag) } : {}, body: JSON.stringify(body) }),
+  reopenAgentModeDraft: (id: string, body: Partial<AgentModeDraftUpdate> = {}, etag?: string | number | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag != null && etag !== '' ? { 'if-match': String(etag) } : {}, body: JSON.stringify(body) }),
+  publishAgentMode: (id: string, etag?: string | number | null) => request<{ id?: string; version?: number; revision?: number; topology_hash?: string; warning?: unknown }>(`/api/v1/agent-modes/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag != null && etag !== '' ? { 'if-match': String(etag) } : {} }),
+  cloneAgentMode: (id: string, body?: { display_name?: string; slug?: string }) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/clone`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
+  deleteAgentMode: (id: string, etag?: string | number | null) => request<void>(`/api/v1/agent-modes/${encodeURIComponent(id)}`, { method: 'DELETE', headers: etag != null && etag !== '' ? { 'if-match': String(etag) } : {} }),
+  archiveAgentMode: (id: string, etag?: string | number | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/archive`, { method: 'POST', headers: etag != null && etag !== '' ? { 'if-match': String(etag) } : {} }),
   listAgentModeVersions: (id: string) => request<ModeVersionDto[]>(`/api/v1/agent-modes/${encodeURIComponent(id)}/versions`),
   // prompt pipelines
-  listPromptPipelines: (options?: { signal?: AbortSignal }) => request<PromptPipelineDto[]>('/api/v1/prompt-pipelines', options),
-  createPromptPipelineDraft: (body: Partial<PromptPipelineDto>) => request<PromptPipelineDto>('/api/v1/prompt-pipelines', { method: 'POST', body: JSON.stringify(body) }),
-  getPromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}`),
-  updatePromptPipelineDraft: (id: string, body: Partial<PromptPipelineDto>, etag?: string | null) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
-  publishPromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
-  archivePromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  listPromptPipelines: async (options?: { signal?: AbortSignal }): Promise<PromptPipelineDto[]> => {
+    const list = await request<PromptPipelineDto[]>('/api/v1/prompt-pipelines', options)
+    return Array.isArray(list) ? list.map(normalizePromptPipeline) : []
+  },
+  createPromptPipelineDraft: async (body: Partial<PromptPipelineDto>): Promise<PromptPipelineDto> => {
+    const display_name = body.display_name ?? body.name ?? body.title ?? undefined
+    const nodes = body.graph?.nodes ?? body.nodes
+    const edges = body.graph?.edges ?? body.edges
+    const canvas_layout = body.graph?.canvas_layout ?? body.canvas_layout
+    const graph = body.graph ?? { nodes: nodes ?? [], edges: edges ?? [], ...(canvas_layout !== undefined ? { canvas_layout } : {}) }
+    const created = await request<PromptPipelineDto>('/api/v1/prompt-pipelines', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(body.slug !== undefined ? { slug: body.slug } : {}),
+        ...(display_name !== undefined ? { display_name } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        graph,
+      }),
+    })
+    return normalizePromptPipeline(created)
+  },
+  getPromptPipeline: async (id: string): Promise<PromptPipelineDto> =>
+    normalizePromptPipeline(await request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}`)),
+  updatePromptPipelineDraft: async (id: string, payload: Partial<PromptPipelineDto>, expectedRevision?: number | string | null): Promise<PromptPipelineDto> => {
+    const display_name = payload.display_name ?? payload.name ?? payload.title ?? undefined
+    const nodes = payload.graph?.nodes ?? payload.nodes
+    const edges = payload.graph?.edges ?? payload.edges
+    const canvas_layout = payload.graph?.canvas_layout ?? payload.canvas_layout
+    const graph = payload.graph ?? (nodes !== undefined || edges !== undefined
+      ? { nodes: nodes ?? [], edges: edges ?? [], ...(canvas_layout !== undefined ? { canvas_layout } : {}) }
+      : undefined)
+    const updated = await request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/draft`, {
+      method: 'PUT',
+      headers: expectedRevision != null && expectedRevision !== '' ? { 'if-match': String(expectedRevision) } : {},
+      body: JSON.stringify({
+        ...(display_name !== undefined ? { display_name } : {}),
+        ...(payload.description !== undefined ? { description: payload.description } : {}),
+        ...(graph !== undefined ? { graph } : {}),
+      }),
+    })
+    return normalizePromptPipeline(updated)
+  },
+  publishPromptPipeline: async (id: string, expectedRevision?: number | string | null): Promise<PromptPipelineDto> =>
+    normalizePromptPipeline(await request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/publish`, {
+      method: 'POST',
+      headers: expectedRevision != null && expectedRevision !== '' ? { 'if-match': String(expectedRevision) } : {},
+    })),
+  archivePromptPipeline: async (id: string, expectedRevision?: number | string | null): Promise<PromptPipelineDto> =>
+    normalizePromptPipeline(await request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/archive`, {
+      method: 'POST',
+      headers: expectedRevision != null && expectedRevision !== '' ? { 'if-match': String(expectedRevision) } : {},
+    })),
+  clonePromptPipeline: async (id: string): Promise<PromptPipelineDto> => {
+    const source = await api.getPromptPipeline(id)
+    const baseName = source.display_name ?? source.name ?? source.slug ?? source.id
+    return api.createPromptPipelineDraft({
+      display_name: `${baseName} (copy)`,
+      description: source.description ?? undefined,
+      graph: source.graph ?? { nodes: source.nodes ?? [], edges: source.edges ?? [] },
+    })
+  },
   listPromptPipelineVersions: (id: string) => request<PromptPipelineVersionDto[]>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/versions`),
   // candidates
   listCandidates: () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'),
@@ -3659,8 +3878,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(fragment)
   }),
-  savePromptFragment: (fragmentId: string, fragment: SavePromptFragmentInput) => request<PromptFragmentDto>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}`, {
+  savePromptFragment: (fragmentId: string, fragment: SavePromptFragmentInput, expectedRevision?: number | string | null) => request<PromptFragmentDto>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}`, {
     method: 'PUT',
+    headers: expectedRevision != null && expectedRevision !== '' ? { 'if-match': String(expectedRevision) } : {},
     body: JSON.stringify(fragment)
   }),
   deletePromptFragment: (fragmentId: string) => request<void>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}`, {
@@ -3669,10 +3889,21 @@ export const api = {
   clonePromptFragment: (fragmentId: string) => request<PromptFragmentDto>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}/clone`, {
     method: 'POST'
   }),
-  previewPromptContext: (input: PromptContextPreviewInput) => request<PromptContextPreviewDto>('/api/v1/prompt-context/preview', {
-    method: 'POST',
-    body: JSON.stringify(input)
+  clonePrompt: (id: string) => request<PromptFragmentDto>(`/api/v1/prompt-fragments/${encodeURIComponent(id)}/clone`, {
+    method: 'POST'
   }),
+  previewPromptContext: async (input: PromptContextPreviewInput): Promise<PromptContextPreviewNormalizedDto> => {
+    const raw = await request<PromptContextPreviewDto>('/api/v1/prompt-context/preview', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    })
+    return {
+      ...raw,
+      assembled_prompt: raw.assembled_prompt ?? raw.system_prompt ?? '',
+      total_estimated_tokens: raw.total_estimated_tokens ?? raw.estimated_tokens ?? 0,
+      layers: Array.isArray(raw.layers) ? raw.layers : [],
+    }
+  },
   /** Current v1 user tool transport. Gateway forwards this request to the Tool Provider. */
   executeCodeTool: (toolId: string, payload: CodeToolExecuteRequestDto = {}, options?: { signal?: AbortSignal }) => request<CodeToolExecuteResultDto>(`/api/v1/code/tools/${encodeURIComponent(toolId)}/execute`, {
     signal: options?.signal,
@@ -3745,6 +3976,7 @@ export const api = {
 
   // --- Prompt Engineering: Versioning + A/B Testing + Effectiveness ---
   listPromptFragmentVersions: (fragmentId: string) => request<PromptFragmentVersionDto[]>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}/versions`),
+  listPromptVersions: (id: string) => request<PromptFragmentVersionDto[]>(`/api/v1/prompt-fragments/${encodeURIComponent(id)}/versions`),
   createPromptFragmentVersion: (fragmentId: string, input: { content: string; changed_fields: string[]; change_summary: string }) => request<PromptFragmentVersionDto>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}/versions`, {
     method: 'POST',
     body: JSON.stringify(input)
@@ -3752,6 +3984,12 @@ export const api = {
   rollbackPromptFragment: (fragmentId: string, targetVersion: number) => request<PromptFragmentDto>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}/rollback`, {
     method: 'POST',
     body: JSON.stringify({ target_version: targetVersion })
+  }),
+  rollbackPrompt: (id: string, versionIdOrNumber: string | number) => request<PromptFragmentDto>(`/api/v1/prompt-fragments/${encodeURIComponent(id)}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify(typeof versionIdOrNumber === 'number'
+      ? { target_version: versionIdOrNumber }
+      : { version_id: versionIdOrNumber })
   }),
   getPromptFragmentEffectiveness: (fragmentId: string) => request<PromptFragmentEffectivenessDto>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}/effectiveness`),
   listAllPromptFragmentEffectiveness: () => request<PromptFragmentEffectivenessDto[]>('/api/v1/prompt-fragments/effectiveness'),

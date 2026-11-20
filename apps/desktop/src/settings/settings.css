@@ -187,7 +187,7 @@ overflow: hidden;
   /* Push content below the 40px window-controls bar so it doesn't
      overlap, while the sidebar (on the left) can start at the top. */
   margin-top: 40px;
-  padding: 24px 32px;
+  padding: 24px 32px 84px;
   overflow: auto;
   background: var(--surface-section);
   border-radius: 12px;
@@ -1882,6 +1882,11 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 90ms ease;
+}
+
+.model-provider-filters button:active {
+  transform: scale(0.985);
 }
 
 .model-provider-filters button:hover {
@@ -1894,7 +1899,7 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   background: var(--surface-selected);
 }
 
-.model-provider-filters button span {
+.model-provider-filters button .filter-issue-count {
   min-width: 16px;
   padding: 1px 4px;
   border-radius: 999px;
@@ -1998,6 +2003,7 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
     grid-template-rows: auto minmax(0, 1fr);
     min-width: 0;
     width: 100%;
+    padding-top: 42px;
   }
 
   .settings-nav {
@@ -2032,7 +2038,8 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 
   .settings-content {
     min-width: 0;
-    padding: 16px;
+    margin-top: 0;
+    padding: 16px 16px 84px;
   }
 
   .center-overview-receipt {
@@ -2228,8 +2235,13 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.54);
+  backdrop-filter: blur(2px);
+}
+
+.model-provider-modal-overlay[data-state="open"],
+.model-diagnostics-overlay[data-state="open"] {
+  animation: modal-overlay-in 150ms ease-out;
 }
 
 .model-provider-modal {
@@ -2241,6 +2253,27 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   max-height: 85vh;
   transform: translate(-50%, -50%);
   outline: none;
+}
+
+.model-provider-modal[data-state="open"],
+.model-diagnostics-dialog[data-state="open"] {
+  animation: modal-dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes modal-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px)) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
 }
 
 .model-provider-modal .model-provider-modal-content {
@@ -2260,13 +2293,26 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 .model-provider-modal-content {
   width: 560px;
   max-height: 85vh;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 0;
   border-radius: 14px;
   background: var(--surface-raised);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   backdrop-filter: var(--material-filter-raised, none);
   -webkit-backdrop-filter: var(--material-filter-raised, none);
+}
+
+.model-provider-modal-content > .card-header,
+.model-provider-modal-content > .card-footer {
+  flex-shrink: 0;
+}
+
+.model-provider-modal-content > .card-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .template-picker-content {
@@ -2358,12 +2404,24 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
+  min-width: 0;
   font-size: 11px;
   color: var(--muted-foreground, #9ca3af);
   max-width: 45%;
+}
+
+.template-picker-card-meta > span {
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: right;
+}
+
+@media (max-width: 560px) {
+  .template-picker-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .template-picker-empty {
@@ -2461,10 +2519,10 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 
 /* Modal fade transition */
 .modal-fade-enter-active {
-  transition: all 0.2s ease-out;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .modal-fade-leave-active {
-  transition: all 0.15s ease-in;
+  transition: opacity 0.14s ease-in, transform 0.14s ease-in;
 }
 .modal-fade-enter-from {
   opacity: 0;
@@ -2639,10 +2697,25 @@ select:focus {
   align-self: auto;
 }
 .section-fade-enter-active {
-transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+transition: opacity 0.14s cubic-bezier(0.16, 1, 0.3, 1), transform 0.14s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .section-fade-leave-active {
-transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+transition: opacity 0.1s ease-in, transform 0.1s ease-in;
+}
+
+.center-stage-fade-enter-active {
+  transition: opacity 140ms cubic-bezier(0.16, 1, 0.3, 1), transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.center-stage-fade-leave-active {
+  transition: opacity 90ms ease-in, transform 90ms ease-in;
+}
+.center-stage-fade-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.center-stage-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-2px);
 }
 
 /* CLI Discovery */
@@ -4016,14 +4089,38 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   }
 
   .section-fade-enter-active,
-  .section-fade-leave-active {
+  .section-fade-leave-active,
+  .center-stage-fade-enter-active,
+  .center-stage-fade-leave-active {
     transition: none !important;
   }
 
   .section-fade-enter-from,
-  .section-fade-leave-to {
+  .section-fade-leave-to,
+  .center-stage-fade-enter-from,
+  .center-stage-fade-leave-to {
     opacity: 1;
     transform: none;
+  }
+
+  .model-center-tabs > button,
+  .model-center-subtabs > button,
+  .model-provider-filters button,
+  .model-center-provider-row {
+    transition: none !important;
+  }
+
+  .ac-subtab {
+    transition: none !important;
+  }
+
+  .model-provider-modal[data-state="open"],
+  .model-provider-modal-overlay[data-state="open"],
+  .model-diagnostics-dialog[data-state="open"],
+  .model-diagnostics-overlay[data-state="open"],
+  .model-center-provider-card,
+  .model-provider-form {
+    animation: none !important;
   }
 
   .settings-module-enter-active,
@@ -4302,26 +4399,38 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 /* Agent Center merged sub-tabs (settings nav merge, D7.3) */
 .ac-subtabs {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
   flex-wrap: wrap;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--surface-chrome);
 }
 
 .ac-subtab {
-  padding: 5px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-section);
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, transform 90ms ease;
 }
 
 .ac-subtab:hover {
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
+.ac-subtab:active {
+  transform: scale(0.985);
+}
+
 .ac-subtab.active {
-  border-color: var(--accent-brand);
+  border-color: color-mix(in srgb, var(--accent-primary) 36%, transparent);
   background: var(--surface-selected);
   color: var(--text-primary);
   font-weight: 600;
@@ -4416,20 +4525,32 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   gap: 12px;
 }
 
+.agent-center-merged .agent-center-packs-slot {
+  display: grid;
+  gap: 8px;
+}
+
 .agent-pack-status-band {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 60px;
-  padding: 10px 16px;
-  background: var(--surface-chrome);
-  border-bottom: 1px solid var(--border-default);
+  min-height: 52px;
+  padding: 10px 14px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
 }
 
 .agent-pack-status-icon {
-  width: 20px;
-  height: 20px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 22%, transparent);
   color: var(--accent-primary);
 }
 
@@ -4452,12 +4573,24 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   font-size: 13px;
 }
 
+.agent-pack-status-title [data-slot="badge"] {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .agent-pack-status-copy p {
-  margin: 3px 0 0;
-  color: var(--text-secondary);
+  margin: 2px 0 0;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.agent-pack-refresh-btn {
+  width: 32px;
+  height: 32px;
 }
 
 @media (max-width: 700px) {
@@ -4476,9 +4609,10 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .agent-pack-inventory {
   display: grid;
   gap: 8px;
-  padding: 12px 16px;
-  background: var(--surface-chrome);
-  border-bottom: 1px solid var(--border-default);
+  padding: 10px 14px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
 }
 
 .agent-pack-inventory > summary {
@@ -4604,15 +4738,16 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .ac-agent-toolbar {
   flex-wrap: wrap;
   justify-content: flex-start;
+  gap: 8px;
 }
 
 .ac-agent-toolbar .ac-agent-search {
-  flex: 1 1 200px;
-  max-width: 320px;
+  flex: 1 1 160px;
+  max-width: 240px;
 }
 
 .ac-agent-toolbar .ui-select {
-  min-width: 118px;
+  min-width: 104px;
 }
 
 .ac-agent-toolbar .ac-toolbar-readout {
@@ -5252,6 +5387,11 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   border-radius: 10px;
   font-size: 12px;
   font-weight: 600;
+  transition: background-color 140ms ease, color 140ms ease, transform 90ms ease;
+}
+
+.model-center-page .model-center-tabs > button:active {
+  transform: scale(0.985);
 }
 
 .model-center-page .model-center-tabs > button:hover {
@@ -5272,24 +5412,30 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   outline-offset: 2px;
 }
 
-/* The one route that decides what a new chat runs on: visible on every page,
-   editable in place, with the full candidate chain one click away in Routes. */
+/* Compact header capsule for the default chat model inside .center-command-actions */
 .model-center-default-chat {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
+  gap: 6px;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 2px 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
   background: var(--surface-raised);
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.model-center-default-chat:has(.model-center-default-select) {
+  padding-right: 3px;
 }
 
 .model-center-default-label {
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .model-center-default-chat > svg {
@@ -5308,12 +5454,23 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .model-center-default-chat .quiet {
   color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .model-center-default-select {
-  min-width: 200px;
-  max-width: 280px;
-  margin-left: auto;
+  min-width: 168px;
+  max-width: 240px;
+}
+
+.model-center-default-select .ui-select-trigger {
+  min-height: 26px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface-section);
+  font-size: 12px;
 }
 
 .model-center-stage {
@@ -5345,6 +5502,11 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 90ms ease;
+}
+
+.model-center-subtabs > button:active {
+  transform: scale(0.985);
 }
 
 .model-center-subtabs > button:hover {
@@ -5494,6 +5656,18 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   padding: 12px;
   border-radius: 12px;
   background: var(--surface-section);
+  animation: model-panel-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes model-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .model-center-provider-card .provider-detail-head {
@@ -5506,6 +5680,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .model-provider-form {
   max-width: 760px;
+  animation: model-panel-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .model-center-provider-models {
@@ -5561,8 +5736,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.54);
+  backdrop-filter: blur(2px);
 }
 
 .model-diagnostics-dialog {
@@ -5576,7 +5751,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   width: min(760px, calc(100vw - 32px));
   max-height: min(85vh, 860px);
   padding: 18px 20px 20px;
-  overflow-y: auto;
+  overflow: hidden;
   border-radius: 14px;
   background: var(--surface-raised);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -5588,9 +5763,20 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .model-diagnostics-header {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.model-diagnostics-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .model-diagnostics-header > div {
@@ -5626,14 +5812,12 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 @media (max-width: 700px) {
   .model-center-default-chat {
-    align-items: flex-start;
-    flex-direction: column;
+    flex-wrap: nowrap;
   }
 
   .model-center-default-select {
-    width: 100%;
-    max-width: none;
-    margin-left: 0;
+    min-width: 140px;
+    max-width: 220px;
   }
 
   .model-center-provider-workspace {

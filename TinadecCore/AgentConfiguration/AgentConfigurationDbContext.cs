@@ -61,6 +61,7 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.Property(x => x.Description).HasMaxLength(2048);
             entity.Property(x => x.SourceKind).HasMaxLength(32).IsRequired();
             entity.Property(x => x.SourceKey).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.ProvenanceJson).HasMaxLength(4096);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             // single draft per workspace logical agent
@@ -109,9 +110,9 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.Property(x => x.DisplayName).HasMaxLength(256).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(4096);
             entity.Property(x => x.RuntimePolicyJson).HasMaxLength(4096);
+            entity.Property(x => x.OrchestrationTier).HasMaxLength(32);
             entity.Property(x => x.Instructions).HasMaxLength(4000);
-            // Draft-only bindings for user-authored modes (team member envelopes).
-            // Pack modes carry bindings inside their frozen snapshot instead.
+            // Bindings (team member envelopes, tool switches) for both authored and pack modes.
             entity.Property(x => x.BindingsJson).HasMaxLength(16384);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
@@ -142,7 +143,7 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.Property(x => x.Label).HasMaxLength(256);
             entity.Property(x => x.PositionJson).HasMaxLength(4096);
             entity.Property(x => x.ConfigJson).HasMaxLength(8192);
-            entity.Property(x => x.RelationshipJson).HasMaxLength(8192);
+            entity.Property(x => x.RelationshipJson).HasMaxLength(GraphValidation.MaxRelationshipBytes);
             entity.Property(x => x.ModelStrategyOverrideJson).HasMaxLength(4096);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
@@ -411,6 +412,8 @@ public sealed class AgentDefinitionRecord
     public string? I18nJson { get; set; }
     public string SourceKind { get; set; } = "custom";
     public string SourceKey { get; set; } = string.Empty;
+    // json: { session_id?, run_id?, created_by_agent_slug?, rationale?, created_at? }
+    public string? ProvenanceJson { get; set; }
     public bool Managed { get; set; }
     public bool Enabled { get; set; } = true;
     public string Status { get; set; } = "draft";
@@ -475,6 +478,11 @@ public sealed class AgentModeRecord
     // json: { "<locale>": { display_name, description } }
     public string? I18nJson { get; set; }
     public string? RuntimePolicyJson { get; set; }
+    /// <summary>
+    /// Optional explicit orchestration tier override (<c>solo_dispatch | free_form | self_dispatch | deterministic</c>).
+    /// Null means derive from graph topology and conversation tools at freeze time.
+    /// </summary>
+    public string? OrchestrationTier { get; set; }
     /// <summary>
     /// Team-level collaboration instructions. Frozen into the mode version snapshot
     /// at publish time and injected into the conversation identity's system prompt.

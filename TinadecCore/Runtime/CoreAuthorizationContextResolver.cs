@@ -232,8 +232,8 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
     /// When the call carries a resource claim, the concrete workspace target must
     /// additionally fall inside a matching prefix — the WS-8 prefix enforcement.
     /// An instance with no grants holds no workspace authorization — fail closed.
-    /// Core-reserved virtual tools (create_workspace) are the projectless
-    /// bootstrap channel and are exempt: the approval gate authorizes them.
+    /// Core-reserved virtual tools (create_workspace, spec_propose, tinadec_*) do not require
+    /// workspace path grants: tool allowlists and per-mode tool_settings still gate them.
     /// </summary>
     private async Task<(IReadOnlyList<CapabilityRule> Rules, string? DenyReason, string? UpgradeReason)> ResourceRulesAsync(
         AgentInstanceRecord instance,
@@ -336,7 +336,9 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
 
     private static bool IsCoreReservedClaim(string resource) =>
         resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)
-        && (CoreVirtualToolPolicy.IsCreateWorkspace(resource[7..]) || CoreVirtualToolPolicy.IsSpecPropose(resource[7..]));
+        && (CoreVirtualToolPolicy.IsCreateWorkspace(resource[7..])
+            || CoreVirtualToolPolicy.IsSpecPropose(resource[7..])
+            || CoreVirtualToolPolicy.IsTinadecConfig(resource[7..]));
 
     private static bool IsSpatialSpecReview(string content, AgentInstanceRecord instance, CapabilityClaim claim)
     {

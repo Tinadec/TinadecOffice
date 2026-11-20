@@ -1,3 +1,4 @@
+// Russian interface text for every window and TinadecUI; same keys as en.ts. Code refers to keys, never to the text.
 export default {
   toolsSettings: {
     skillPackageTooMany: "В пакете навыка больше {max} файлов.",
@@ -18,7 +19,7 @@ export default {
       minItems: "Минимум элементов: {value}.",
       maxItems: "Максимум элементов: {value}.",
       required: "Обязательное свойство.",
-      unknownProperty: "Неизвестное свойство."
+      unknownProperty: "Неизвестное свойство.",
     },
     allResources: "Все доступные ресурсы",
     agentSettingsLink: "Открыть настройки инструментов этого агента",
@@ -37,13 +38,13 @@ export default {
       skills_missing: "Ресурс навыка отсутствует или не виден в этом проекте.",
       skills_invalid: "Ресурс навыка недействителен.",
       skills_disabled: "Этот ресурс навыка отключён.",
-      mcp_program: "Программа MCP-сервера {status}. Регистрация сервера не устанавливает его программу: проверьте и одобрите отдельное действие установки."
+      mcp_program: "Программа MCP-сервера {status}. Регистрация сервера не устанавливает его программу: проверьте и одобрите отдельное действие установки.",
     },
     programStatus: {
       not_installed: "не установлена",
       outdated: "устарела",
       invalid: "недействительна",
-      needs_reinstall: "требует переустановки"
+      needs_reinstall: "требует переустановки",
     },
     connectionDisabledHint: "Включите этот ресурс перед проверкой.",
     connectionStatus: {
@@ -52,12 +53,12 @@ export default {
       error: "Ошибка",
       unavailable: "Недоступно",
       unknown: "Неизвестно",
-      not_reported: "Хост инструментов не сообщил о ресурсе"
+      not_reported: "Хост инструментов не сообщил о ресурсе",
     },
     capabilityReason: {
       not_found: "Исполняемый файл не найден по заданному или вычисленному пути.",
       not_in_path: "Исполняемый файл не найден в PATH.",
-      unsupported_platform: "Не поддерживается на этой платформе."
+      unsupported_platform: "Не поддерживается на этой платформе.",
     },
     skillReason: {
       shadowed: "Навык проекта с тем же именем заменяет его в унаследованных привязках.",
@@ -76,7 +77,7 @@ export default {
       name_invalid: "Имя может содержать только строчные буквы, цифры и одиночные дефисы и не может начинаться или заканчиваться дефисом.",
       description_missing: "Во frontmatter нет description.",
       description_too_long: "Описание длиннее {max} символов.",
-      name_directory_mismatch: "Имя «{name}» не совпадает с папкой «{directory}»."
+      name_directory_mismatch: "Имя «{name}» не совпадает с папкой «{directory}».",
     },
     sourceUndeclared: "Источник не указан",
     usedBy: "Используют: {agents}",
@@ -110,7 +111,7 @@ export default {
       web: "Веб",
       mcp: "MCP",
       skills: "Навыки",
-      advanced: "Дополнительно"
+      advanced: "Дополнительно",
     },
     agent: "Объект настройки",
     project: "Контекст ресурсов проекта",
@@ -185,7 +186,7 @@ export default {
     invalid: "Недействительно",
     pendingApproval: "Ожидает одобрения",
     skillQueuedShared: "Состояние действия с общим навыком: {status}. Действие инструмента {id} зависит от состояния одобрения в Core.",
-    packageReview: "Проверьте перед отправкой: цель {scope}, файлов: {count}, дайджест вычислит Core при отправке."
+    packageReview: "Проверьте перед отправкой: цель {scope}, файлов: {count}, дайджест вычислит Core при отправке.",
   },
   space: {
     sessionUnsupported: "Не удалось создать сеанс пространства: сервис пока не поддерживает отдельные типы сеансов. Обновите сервис и повторите попытку.",
@@ -229,7 +230,7 @@ export default {
       result: "Результат цели",
       tool: "Активность инструментов",
       git: "Ресурсы проекта",
-      approval: "Одобрения"
+      approval: "Одобрения",
     },
     cluster: {
       routeBlocked: "Карточки загораживают эту связь. Упорядочьте эту цель, чтобы её увидеть.",
@@ -272,7 +273,7 @@ export default {
       source: "Источник",
       noRelations: "Загруженных зависимостей нет.",
       terminal: "Терминал агента",
-      hideTerminal: "Скрыть панель терминала"
+      hideTerminal: "Скрыть панель терминала",
     },
     status: {
       running: "Выполняется",
@@ -289,8 +290,8 @@ export default {
       approved: "Одобрено",
       rejected: "Отклонено",
       blocked: "Заблокировано",
-      idle: "Готово"
-    }
+      idle: "Готово",
+    },
   },
   errors: {
     invalidServerResponse: "Сервер вернул недопустимый ответ: {text}",
@@ -519,7 +520,7 @@ export default {
       harness_channel_unsupported: "Этот инструмент не предоставляет такой канал.",
       harness_protocol_unsupported: "Этот инструмент не поддерживает такой протокол.",
       tool_execution_not_found: "Вызов инструмента не найден.",
-      internal_error: "На сервере произошла непредвиденная ошибка."
+      internal_error: "На сервере произошла непредвиденная ошибка.",
     },
     category: {
       config: "Конфигурация модели или рабочей области неполна.",
@@ -572,7 +573,7 @@ export default {
       recovery_marked_failed: "Помечено как неудачное при восстановлении.",
       explicit_deny: "Правило авторизации запрещает этот вызов.",
       boundary_not_allowed: "Ни одно правило авторизации не разрешает этот вызов.",
-      missing_authorization_boundary: "Для этого вызова не настроены правила авторизации."
+      missing_authorization_boundary: "Для этого вызова не настроены правила авторизации.",
     },
     workspaceNotRegistered: "Выбранная рабочая область не зарегистрирована в TinadecCore.",
     actions: {
@@ -582,8 +583,8 @@ export default {
       openStorageSettings: "Настройки хранилища",
       openToolSettings: "Настройки инструментов",
       unregisterWorkspace: "Отменить регистрацию",
-      chooseFolder: "Выбрать папку"
-    }
+      chooseFolder: "Выбрать папку",
+    },
   },
   app: {
     name: "TinadecOffice",
@@ -636,7 +637,7 @@ export default {
       preview: "Предпросмотр",
       settings: "Настройки",
       storage: "Хранилище",
-      tools: "Инструменты"
+      tools: "Инструменты",
     },
     fromOtherWindow: "Из другого окна",
     operationCompleted: "Операция завершена",
@@ -650,12 +651,12 @@ export default {
     backendNotConnected: "Нет подключения к серверу",
     backendNotConnectedMessage: "Не удалось подключиться к Core/Gateway за 30 секунд. Некоторые функции могут быть недоступны.",
     backendDisconnected: "Соединение с сервером потеряно",
-    backendDisconnectedMessage: "Соединение с Core/Gateway потеряно. Повторите попытку, когда сервис станет доступен."
+    backendDisconnectedMessage: "Соединение с Core/Gateway потеряно. Повторите попытку, когда сервис станет доступен.",
   },
   nav: {
     chat: "Чат",
     projects: "Проекты",
-    settings: "Настройки"
+    settings: "Настройки",
   },
   sidebar: {
     showAll: "Показать все",
@@ -693,8 +694,8 @@ export default {
     recentConversations: "Недавние разговоры",
     projectConversations: "Разговоры проектов",
     recentActivity: "Недавняя активность",
-    allActivity: "Вся активность",
-    projectActivity: "Активность проекта",
+    allActivity: 'Вся активность',
+    projectActivity: 'Активность проекта',
     activityEmpty: "Активности пока нет",
     activityState: {
       awaiting: "Ждёт вашего ответа",
@@ -703,15 +704,15 @@ export default {
       failed: "Ошибка",
       cancelled: "Отменено",
       unknown: "Неизвестное состояние",
-      idle: "Нет задачи"
+      idle: "Нет задачи",
     },
-    tokenUsage: "Расход токенов за {days} дней",
-    tokenUsageSummary: "За последние {days} дн.: {tokens} токенов",
-    tokenUsageSummaryTruncated: "За последние {days} дн.: не менее {tokens} токенов",
-    tokenUsageTruncated: "Учтены только последние {count} вызовов",
-    tokenUsageDay: "{date} · {tokens} токенов",
-    tokenUsageDayEmpty: "{date} · нет данных",
-    tokenUsageUnreported: "Эти вызовы не сообщили расход токенов",
+    tokenUsage: 'Расход токенов за {days} дней',
+    tokenUsageSummary: 'За последние {days} дн.: {tokens} токенов',
+    tokenUsageSummaryTruncated: 'За последние {days} дн.: не менее {tokens} токенов',
+    tokenUsageTruncated: 'Учтены только последние {count} вызовов',
+    tokenUsageDay: '{date} · {tokens} токенов',
+    tokenUsageDayEmpty: '{date} · нет данных',
+    tokenUsageUnreported: 'Эти вызовы не сообщили расход токенов',
     editWorkspace: "Изменить рабочую область",
     moveUp: "Переместить вверх",
     moveDown: "Переместить вниз",
@@ -733,7 +734,7 @@ export default {
     trashSessionConfirmMessage: "Переместить «{name}» в корзину? Восстановить или окончательно удалить его можно в настройках.",
     migrateSession: "Перенести в проект",
     migrationTarget: "Целевой проект",
-    migrationExplanation: "Сначала выполните или отмените сообщения в очереди. Диалог и связанные материалы перенесутся после завершения текущего запуска; дальнейшие запуски используют опубликованный режим по умолчанию целевого проекта."
+    migrationExplanation: "Сначала выполните или отмените сообщения в очереди. Диалог и связанные материалы перенесутся после завершения текущего запуска; дальнейшие запуски используют опубликованный режим по умолчанию целевого проекта.",
   },
   tinaChat: {
     refresh: "Обновить",
@@ -796,7 +797,7 @@ export default {
     policySaved: "Политика сообщений обновлена",
     policyUnavailable: "Не удалось прочитать политику сообщений этой рабочей области.",
     revisionStale: "Диалог был изменён; перезагрузите и повторите попытку",
-    actionFailed: "Действие не выполнено"
+    actionFailed: "Действие не выполнено",
   },
   organization: {
     title: "Организация",
@@ -815,7 +816,7 @@ export default {
       reports: "Отчёты",
       evidence: "Свидетельства",
       environments: "Окружения",
-      topology: "Топология"
+      topology: "Топология",
     },
     environments: {
       hint: "Тестовые, облачные, удалённые, локальные и терминальные окружения, зарегистрированные в этой рабочей области. Агенты берут окружение через environment_acquire и возвращают после работы; каждый слот одновременно принадлежит только одному запуску и освобождается, когда запуск завершается.",
@@ -841,8 +842,8 @@ export default {
         cloud: "Облачное",
         remote: "Удалённое",
         terminal: "Терминал",
-        test: "Тестовое"
-      }
+        test: "Тестовое",
+      },
     },
     evidenceSearch: {
       placeholder: "Что искать: ключевые слова, путь, идентификатор вроде search#1 или фразу",
@@ -852,19 +853,19 @@ export default {
       noHits: "Подходящих свидетельств не найдено.",
       mode: {
         hybrid: "Смысл + ключевые слова",
-        keyword: "Ключевые слова"
+        keyword: "Ключевые слова",
       },
       kinds: {
         task_result: "Результат задачи",
         report: "Отчёт",
         member_turn: "Вывод участника",
-        summary: "Сводка"
+        summary: "Сводка",
       },
       matchedBy: {
         semantic: "Совпадение по смыслу",
         keyword: "Совпадение по ключевым словам",
-        both: "Совпадение по смыслу и ключевым словам"
-      }
+        both: "Совпадение по смыслу и ключевым словам",
+      },
     },
     role: {
       human: "Пользователь",
@@ -872,7 +873,7 @@ export default {
       governance: "Управление",
       executor: "Исполнитель",
       host: "Система",
-      other: "Другое"
+      other: "Другое",
     },
     online: "В сети",
     offline: "Не в сети",
@@ -894,7 +895,7 @@ export default {
       board: "Доска объявлений",
       plan: "Комната плана",
       adhoc: "Временная комната",
-      other: "Другое"
+      other: "Другое",
     },
     roomMeta: "Участников: {members} · сообщений: {messages}",
     joined: "Вы участник",
@@ -907,7 +908,7 @@ export default {
     noMessages: "В этой комнате пока нет сообщений",
     messageKind: {
       report: "Отчёт",
-      notice: "Уведомление"
+      notice: "Уведомление",
     },
     confidential: "Конфиденциально",
     notMember: "Вы не участник этой комнаты, поэтому можете только читать её",
@@ -921,20 +922,20 @@ export default {
     severity: {
       info: "Информация",
       warning: "Предупреждение",
-      blocking: "Блокирующее"
+      blocking: "Блокирующее",
     },
     reportKind: {
       conflict: "Конфликт",
       risk: "Риск",
       drift: "Отклонение",
       budget: "Бюджет",
-      progress: "Прогресс"
+      progress: "Прогресс",
     },
     reportStatus: {
       open: "Открыт",
       acted: "Обработан",
       dismissed: "Отклонён",
-      superseded: "Заменён"
+      superseded: "Заменён",
     },
     subject: "Объект",
     subjectKind: {
@@ -943,7 +944,7 @@ export default {
       lease: "Аренда",
       approval: "Одобрение",
       member: "Участник",
-      path: "Путь"
+      path: "Путь",
     },
     subjectState: {
       lease_active: "Удерживается",
@@ -951,7 +952,7 @@ export default {
       path_held: "Занят",
       path_free: "Свободен",
       member_online: "В сети",
-      member_offline: "Не в сети"
+      member_offline: "Не в сети",
     },
     subjectUnknown: "Текущее состояние неизвестно",
     proposed: "Предлагает",
@@ -965,7 +966,7 @@ export default {
       resume_run: "Возобновить запуск",
       stop_run: "Остановить запуск",
       assign_environment: "Назначить окружение",
-      ask_user: "Спросить пользователя"
+      ask_user: "Спросить пользователя",
     },
     evidence: "Свидетельства",
     notePlaceholder: "Примечание (необязательно)",
@@ -986,7 +987,7 @@ export default {
       handle: "Идентификатор",
       task: "Задача",
       status: "Статус",
-      writeScope: "Область записи"
+      writeScope: "Область записи",
     },
     noTasks: "В этом запуске пока нет задач",
     tasksTruncated: "Список задач сокращён",
@@ -1018,8 +1019,8 @@ export default {
       created: "Создано",
       blocked: "Заблокировано",
       waiting: "Ожидание",
-      proposed: "Предложено"
-    }
+      proposed: "Предложено",
+    },
   },
   chat: {
     title: "Сеанс Tinadec",
@@ -1056,7 +1057,7 @@ export default {
       tip: "Совет",
       important: "Важно",
       warning: "Предупреждение",
-      caution: "Осторожно"
+      caution: "Осторожно",
     },
     copy: "Копировать сообщение",
     copied: "Скопировано",
@@ -1081,7 +1082,7 @@ export default {
     jumpToLatest: "К последним сообщениям",
     thinking: "Думает",
     usingTools: "Использует инструменты",
-    waitingForApproval: "Ожидает одобрения"
+    waitingForApproval: "Ожидает одобрения",
   },
   context: {
     approval: "Одобрение",
@@ -1108,12 +1109,12 @@ export default {
     companionGroupsDesc: "Участники и последние сообщения только для чтения",
     companionConnections: "Подключения",
     companionConnectionsDesc: "Авторизация, состояние запуска и время последней проверки по каждому компаньону",
-    companionBuddy: "Разговор с напарником",
-    companionBuddyDesc: "Единственный разговор с напарником; сверху — всё, что ждёт вашего решения.",
-    companionSupervision: "Наблюдение за напарниками",
-    companionSupervisionDesc: "Кто из напарников сессий ждёт вас, работает или уже готов.",
-    companionProfile: "Личность и модель",
-    companionProfileDesc: "Изменить личность выбранного компаньона и модель ответов.",
+    companionBuddy: 'Разговор с напарником',
+    companionBuddyDesc: 'Единственный разговор с напарником; сверху — всё, что ждёт вашего решения.',
+    companionSupervision: 'Наблюдение за напарниками',
+    companionSupervisionDesc: 'Кто из напарников сессий ждёт вас, работает или уже готов.',
+    companionProfile: 'Личность и модель',
+    companionProfileDesc: 'Изменить личность выбранного компаньона и модель ответов.',
     gitWidgetPrimary: "Основная папка",
     gitWidgetPrimaryOnly: "Показана только основная папка рабочей области; другие корни не объединяются.",
     gitWidgetNoProject: "Выберите рабочую область, чтобы увидеть состояние Git",
@@ -1348,7 +1349,7 @@ export default {
       forceDeleteBranch: "Принудительно удалить ветку {branch}",
       renameBranch: "Переименовать текущую ветку в {name}",
       createWorktree: "Создать рабочее дерево {path} для {branch}",
-      removeWorktree: "Удалить рабочее дерево {path}"
+      removeWorktree: "Удалить рабочее дерево {path}",
     },
     gitWorkspaceRequired: "Нужна рабочая область проекта.",
     gitNoDiffText: "Нет текста различий для отображения.",
@@ -1427,7 +1428,7 @@ export default {
       Configuration: "Конфигурация",
       Security: "Безопасность",
       API: "API",
-      Size: "Объём"
+      Size: "Объём",
     },
     gitRisk: {
       conflict: "В {path} есть неразрешённые конфликты слияния",
@@ -1446,7 +1447,7 @@ export default {
       summary: "Обновлён {n} файл; {concerns}. | Обновлено {n} файла; {concerns}. | Обновлено {n} файлов; {concerns}.",
       concernCount: "{n} потенциальная проблема | {n} потенциальные проблемы | {n} потенциальных проблем",
       localExplanation: "Сформировано локальными эвристиками; анализ ИИ недоступен.",
-      aiExplanation: "Оценка рисков, созданная ИИ."
+      aiExplanation: "Оценка рисков, созданная ИИ.",
     },
     gitAiGenerate: "Сгенерировать сообщение коммита с ИИ",
     gitAiGenerating: "ИИ генерирует...",
@@ -1467,13 +1468,13 @@ export default {
     gitConvSubjectTooLong: "Заголовок коммита длиннее 72 символов",
     gitConvSubjectWarn: "Заголовок коммита длиннее рекомендуемых 50 символов",
     gitConvInvalidType: "Тип коммита не соответствует спецификации Conventional Commits",
-    gitConvBodyTooLong: "Некоторые строки текста длиннее рекомендуемых 72 символов"
+    gitConvBodyTooLong: "Некоторые строки текста длиннее рекомендуемых 72 символов",
   },
   settings: {
     codeFont: "Шрифт кода",
     codeFontHint: "Моноширинный шрифт для блоков кода, команд, путей, различий и терминалов. Первые четыре поставляются с приложением; если системного шрифта нет, используется JetBrains Mono.",
     codeFontSystem: "Системный моноширинный",
-    codeFontSystemBadge: "системный",
+    codeFontSystemBadge: "системный", codeFontSampleWord: "код",
     modelScope: {
       follows: "Рабочая область «{name}» использует эту конфигурацию моделей: добавленные, изменённые или удалённые здесь модели сразу применяются к её диалогам.",
       ownCopy: "Рабочая область «{name}» использует собственную конфигурацию моделей, и изменения здесь на неё не влияют.",
@@ -1486,11 +1487,11 @@ export default {
       followConfirm: "Использовать эту конфигурацию",
       followed: "«{name}» теперь использует эту конфигурацию моделей",
       detached: "«{name}» теперь использует собственную конфигурацию моделей",
-      switchFailed: "Не удалось переключить конфигурацию моделей рабочей области"
+      switchFailed: "Не удалось переключить конфигурацию моделей рабочей области",
     },
     modelParameters: "Параметры модели",
     modelParametersFor: "Параметры для {model}",
-    modelParametersHint: "Применяется к новым запускам с этим провайдером и моделью. Пустые поля используют значения по умолчанию среды выполнения или модели. Поддерживаемые значения зависят от модели.",
+    modelParametersHint: "Применяется к новым запускам с этим провайдером и моделью. Пустые поля используют значения по умолчанию; поддерживаемые параметры зависят от модели.",
     modelReasoningEffort: "Интенсивность рассуждений",
     modelDefaultParameter: "По умолчанию",
     modelTemperature: "Температура",
@@ -1499,7 +1500,7 @@ export default {
     modelImageInput: "Принимать изображения",
     modelImageMaxBytes: "Предел одного изображения (байт)",
     modelImageMaxCount: "Максимум изображений за ход",
-    modelImageConfigured: "Определяется настройкой провайдера; для этой модели можно переопределить.",
+    modelImageConfigured: "Наследуется из настроек ввода изображений этого провайдера; можно переопределить для данной модели.",
     modelImageAcpSnapshot: "Только чтение: снимок последнего рукопожатия ACP initialize.",
     modelImageUnsupported: "Этот канал не поддерживает ввод изображений.",
     modelImageBudgetInvalid: "Одно изображение: 1–32 МиБ; за ход: 1–8 изображений.",
@@ -1519,12 +1520,9 @@ export default {
       low: "Низкая",
       medium: "Средняя",
       high: "Высокая",
-      xhigh: "Максимальная"
+      xhigh: "Максимальная",
     },
-    reasoningScale: {
-      faster: "Быстрее",
-      smarter: "Умнее"
-    },
+    reasoningScale: { faster: "Быстрее", smarter: "Умнее" },
     title: "Настройки",
     back: "Назад",
     personal: "Личное",
@@ -1599,7 +1597,7 @@ export default {
     personalShareClose: "Закрыть",
     general: "Общие",
     storage: "Хранилище и конфигурация",
-    userConfigurationSource: "Пользовательская конфигурация по умолчанию · user. TOML модулей проекта редактируется в разделе «Хранилище и конфигурация» после выбора проекта; инструменты и ресурсы проекта — в разделе «Инструменты».",
+    userConfigurationSource: "Редактируется пользовательская конфигурация (user). TOML проекта редактируется в разделе «Хранилище и конфигурация», а ресурсы проекта — в разделе «Инструменты».",
     generalSubtitle: "Настройте подключение настольного приложения к сервисам TinadecOffice.",
     gatewayConnection: "Подключение к Gateway",
     gatewayConnectionHint: "Весь трафик API и событий настольного приложения идёт через этот адрес Gateway.",
@@ -1613,26 +1611,11 @@ export default {
     conversationFlow: "Ход диалога",
     conversationFlowHint: "Сколько шагов и подробностей хода остаётся в диалоге. Ответы, подтверждения и причины ошибок не меняются.",
     conversationFlowPresets: {
-      minimal: {
-        label: "Минимум",
-        summary: "Одна строка итога, шаги инструментов и субагентов полностью свёрнуты."
-      },
-      concise: {
-        label: "Кратко",
-        summary: "Последние шаги остаются, более ранние сворачиваются в одну строку."
-      },
-      balanced: {
-        label: "Средне",
-        summary: "Каждый шаг отдельной строкой, включая чтение файлов и поиск."
-      },
-      detailed: {
-        label: "Подробно",
-        summary: "Строка субагента называет задачу, время и результат, её можно раскрыть на месте."
-      },
-      rich: {
-        label: "Полно",
-        summary: "Все шаги остаются в диалоге, работающий субагент раскрывается сам."
-      }
+      minimal: { label: "Минимум", summary: "Одна строка итога, шаги инструментов и субагентов полностью свёрнуты." },
+      concise: { label: "Кратко", summary: "Последние шаги остаются, более ранние сворачиваются в одну строку." },
+      balanced: { label: "Средне", summary: "Каждый шаг отдельной строкой, включая чтение файлов и поиск." },
+      detailed: { label: "Подробно", summary: "Строка субагента называет задачу, время и результат, её можно раскрыть на месте." },
+      rich: { label: "Полно", summary: "Все шаги остаются в диалоге, работающий субагент раскрывается сам." },
     },
     defaultModeTopology: "Топология режима по умолчанию",
     defaultModeTopologyHint: "Версия топологии режима агентов по умолчанию, используемая при отправке сообщений в сеансе.",
@@ -1648,7 +1631,7 @@ export default {
     serviceDiscoveryHint: "Автоматически ищет на этом компьютере запущенные серверные сервисы TinadecOffice, чтобы не вводить адрес вручную.",
     scanServices: "Найти сервисы",
     scanningServices: "Поиск…",
-    serviceDiscoveryIdleHint: "Нажмите «Найти сервисы», чтобы увидеть доступные серверы, или введите адрес вручную ниже.",
+    serviceDiscoveryIdleHint: "Вы также можете ввести адрес шлюза вручную ниже.",
     serviceDiscoveryEmpty: "Запущенные сервисы Gateway или Core не найдены. Адрес можно ввести вручную.",
     serviceDiscoveryFailed: "Не удалось найти сервисы. Повторите попытку.",
     serviceDiscoverySelected: "Адрес выбранного сервиса подставлен. Сохраните и перезапустите приложение, чтобы применить его.",
@@ -1658,7 +1641,7 @@ export default {
     serviceCoreUnreachable: "Core не в сети",
     serviceMode: {
       local: "Локальный",
-      cloud: "Облачный"
+      cloud: "Облачный",
     },
     serviceCurrent: "Текущее подключение",
     serviceCoreDirectHint: "Прямые подключения к Core показаны только для сведения: для передачи данных инструментов нужен Gateway.",
@@ -1686,7 +1669,7 @@ export default {
     promptEngineering: "Промпт-инжиниринг",
     agentModes: "Топология режимов",
     runtimeInstances: "Работающие экземпляры",
-    agentModesHint: "Двухдорожечная оркестрация топологии: соединение перетаскиванием, переопределения узлов и версии; после публикации режим можно привязать к сеансу.",
+    agentModesHint: "Двухуровневая топология режимов: перетаскивание связей, переопределения узлов и публикация версий.",
     runtimePolicy: "Политика выполнения",
     runtimePolicyNone: "Обычный режим",
     runtimePolicyStructuredInvestigation: "Структурированное расследование",
@@ -1696,8 +1679,8 @@ export default {
     runtimePolicyDependenciesHint: "Зависимости: {pairs}",
     runtimePolicySettings: "Настройки политики выполнения (JSON)",
     runtimePolicySettingsInvalid: "Настройки политики выполнения должны быть корректным объектом JSON.",
-    promptsPanelHint: "Единый вид холста конвейера и библиотеки фрагментов: версии, сигналы эффективности и оценка токенов.",
-    runtimePanelHint: "Мониторинг работающих экземпляров агентов: пауза, возобновление, отмена и перенаправление очереди.",
+    promptsPanelHint: "Переключайтесь между холстом конвейера и библиотекой фрагментов, просматривая версии, эффективность и оценку токенов.",
+    runtimePanelHint: "Мониторинг активных запусков агентов: пауза, возобновление, отмена и переназначение очереди.",
     runtimeCeilings: {
       title: "Пределы политики выполнения",
       hint: "Эти числа решают, будет ли законная задача остановлена досрочно. Они есть только в runtime.toml; здесь показан отчёт только для чтения.",
@@ -1723,7 +1706,7 @@ export default {
       runBudget: "Предохранитель токенов запуска",
       runBudgetHint: "Суммарный предохранитель токенов запуска; когда выключен, работу останавливают повторы и ошибки.",
       toolCalls: "Предохранитель вызовов инструментов",
-      toolCallsHint: "Сколько вызовов инструментов допускает одна задача; обычная задача не приближается к нему."
+      toolCallsHint: "Сколько вызовов инструментов допускает одна задача; обычная задача не приближается к нему.",
     },
     fragmentCountLabel: "фрагментов",
     pipelineCountLabel: "конвейеров",
@@ -1777,12 +1760,9 @@ export default {
     reassignConfirm: "Подтвердить перенаправление",
     reassignDone: "Перенаправление выполнено",
     reassignFailed: "Не удалось перенаправить",
-    reassignFieldsRequired: "Поля Session / Interaction / Target Run обязательны",
+    reassignFieldsRequired: "Необходимо заполнить ID сеанса, ID взаимодействия и ID целевого запуска",
     prevPage: "Назад",
     nextPage: "Далее",
-    promptEngineeringMigrated: "Единый вид промпт-инжиниринга в разработке: здесь объединятся холст конвейера и библиотека фрагментов.",
-    agentModesMigrated: "Редактор топологии режимов в разработке: здесь появятся двухдорожечный холст и управление версиями.",
-    runtimeInstancesMigrated: "Мониторинг работающих экземпляров в разработке: здесь появятся список экземпляров и управление запусками.",
     toolLayer: "Инструменты",
     appearance: "Внешний вид",
     companions: {
@@ -1838,7 +1818,7 @@ export default {
       tagline: "Подпись",
       avatar: "Аватар",
       avatarHint: "Короткий текст или эмодзи; показывается в списках и чатах.",
-      avatarLive2dNote: "Это импортированная модель Live2D. Рендерер не поставляется с приложением, поэтому она пока не отображается — сохраняется только привязка.",
+      avatarLive2dNote: 'Это импортированная модель Live2D. Рендерер не поставляется с приложением, поэтому она пока не отображается — сохраняется только привязка.',
       avatarDefault: "Аватар по умолчанию",
       model: "Модель",
       modelDefault: "Как в маршруте чата по умолчанию",
@@ -1866,7 +1846,7 @@ export default {
         motionCount: "Движений: {count}",
         expressionCount: "Выражений: {count}",
         rendererNote: "Рендерер не входит в состав приложения: модели импортируются и их возможности читаются, но не отображаются. Чтобы показывать модель, предоставьте Cubism Core самостоятельно.",
-        unavailableShort: "Live2D не готов"
+        unavailableShort: "Live2D не готов",
       },
       memory: {
         title: "Личная память",
@@ -1896,7 +1876,7 @@ export default {
         created: "Создано {time}",
         loadFailed: "Не удалось загрузить память",
         saveFailed: "Не удалось сохранить запись",
-        deleteFailed: "Не удалось удалить запись"
+        deleteFailed: "Не удалось удалить запись",
       },
       skill: {
         title: "Навыки",
@@ -1925,7 +1905,7 @@ export default {
         neverLoaded: "Не загружался",
         loadFailed: "Не удалось загрузить навыки",
         saveFailed: "Не удалось сохранить навык",
-        deleteFailed: "Не удалось удалить навык"
+        deleteFailed: "Не удалось удалить навык",
       },
       connection: {
         title: "Подключения",
@@ -1963,7 +1943,7 @@ export default {
         deleteConfirm: "Удалить",
         loadFailed: "Не удалось загрузить подключения",
         saveFailed: "Не удалось сохранить подключение",
-        deleteFailed: "Не удалось удалить подключение"
+        deleteFailed: "Не удалось удалить подключение",
       },
       autonomy: {
         title: "Правила автономии",
@@ -1997,10 +1977,10 @@ export default {
           duplicate_group: "Такая группа уже создана",
           duplicate_member: "Этот участник уже в группе",
           conversation_paused: "Автоответы в этом диалоге приостановлены",
-          duplicate_message: "Это сообщение уже отправлено"
+          duplicate_message: "Это сообщение уже отправлено",
         },
-        saveFailed: "Не удалось сохранить правила автономии"
-      }
+        saveFailed: "Не удалось сохранить правила автономии",
+      },
     },
     pets: "Образ компаньона",
     petdexCatalog: "Каталог Petdex",
@@ -2009,16 +1989,16 @@ export default {
     loadingPets: "Загрузка питомцев",
     noPetsFound: "Подходящих питомцев нет",
     noDownloadedPets: "Загруженных питомцев нет",
-    builtinPetBadge: "Встроенный",
-    builtinPetHint: "Встроенный запасной образ, удалить нельзя",
-    agentAvatarSection: "Образ",
-    agentAvatarHint: "«Случайно» — у каждого запуска свой питомец; «закреплено» — этот агент всегда использует одного.",
-    agentAvatarRandom: "Случайно",
-    agentAvatarEmpty: "Материалы питомцев ещё не установлены; агенты используют заглушку.",
-    agentAvatarSaveFailed: "Не удалось сохранить образ",
+builtinPetBadge: "Встроенный",
+builtinPetHint: "Встроенный запасной образ, удалить нельзя",
+agentAvatarSection: "Образ",
+agentAvatarHint: "«Случайно» — у каждого запуска свой питомец; «закреплено» — этот агент всегда использует одного.",
+agentAvatarRandom: "Случайно",
+agentAvatarEmpty: "Материалы питомцев ещё не установлены; агенты используют заглушку.",
+agentAvatarSaveFailed: "Не удалось сохранить образ",
     petDownloaded: "Загружен",
     petKind: {
-      pet: "Питомец"
+      pet: "Питомец",
     },
     petEnabled: "Включён",
     downloadPet: "Скачать",
@@ -2041,7 +2021,7 @@ export default {
     windowAndTray: "Окно и трей",
     windowAndTrayHint: "Определяет, продолжает ли приложение работу в фоне после закрытия главного окна.",
     closeToTray: "Продолжать работу после закрытия окна",
-    closeToTrayHint: "При закрытии главное окно сворачивается в системный трей, а задачи агентов продолжают выполняться. Нажмите на значок в трее, чтобы открыть окно снова, или щёлкните правой кнопкой, чтобы выйти.",
+    closeToTrayHint: "При закрытии главное окно сворачивается в системный трей, а фоновые задачи продолжают выполняться. Нажмите на значок в трее, чтобы вернуть окно.",
     closeToTraySaveFailed: "Не удалось сохранить настройку окна",
     launchAtLogin: "Запускать при входе",
     launchAtLoginHint: "Запускать TinadecOffice при входе в систему. Вместе с «Продолжать работу после закрытия окна» это позволяет компаньонам оставаться на связи, пока окно закрыто.",
@@ -2066,7 +2046,7 @@ export default {
     apiDocs: "Документация API",
     about: "О программе",
     archiveTrash: "Архив и корзина",
-    archiveTrashSubtitle: "Управляйте архивированными и удалёнными проектами и диалогами: восстанавливайте или удаляйте окончательно.",
+    archiveTrashSubtitle: "Управление архивированными и удалёнными проектами и сеансами: восстановление или полное удаление.",
     archivedGroup: "Архив",
     trashGroup: "Корзина",
     projectsGroup: "Проекты",
@@ -2081,12 +2061,9 @@ export default {
     sessionInProject: "Проект: {name}",
     loadArchiveFailed: "Не удалось загрузить архив и корзину",
     modelCenter: "Центр моделей",
-    modelCenterSubtitle: "Управление поставщиками, API и локальными подключениями, моделями, CLI и источниками среды выполнения ACP.",
+    modelCenterSubtitle: "Управление провайдерами моделей, доступными моделями, маршрутами и средами выполнения CLI / TUI / ACP.",
     agentCenter: "Центр агентов",
-    openWorkbench: "Открыть полную рабочую панель",
-    agentCenterSubtitle: "Просматривайте действующие источники среды выполнения и настраивайте встроенных в Core агентов, режимы и кандидатов эволюции.",
-    toolLayerTitle: "Инструменты",
-    toolLayerSubtitle: "Просмотр набора инструментов Code и базовых инструментов Codex под управлением обвязки Core.",
+    agentCenterSubtitle: "Управление агентами, режимами, промптами и кандидатами эволюции из пакетов, пользовательских определений и автономного создания.",
     toolLayerReadiness: "Готовность слоя инструментов",
     executionAgents: "Исполняющие агенты",
     humanCheckpoints: "Контрольные точки человека",
@@ -2107,7 +2084,6 @@ export default {
     futureCount: "В будущем",
     codeToolSuite: "Набор инструментов Code",
     projectTemplates: "Шаблоны проектов",
-    codexPrimitiveTools: "Базовые инструменты Codex",
     toolDiscovery: "Поиск инструментов",
     toolDiscoveryPlaceholder: "Поиск по инструментам, возможностям, источникам или рискам",
     allSources: "Все источники",
@@ -2130,23 +2106,23 @@ export default {
     modelProviderManagement: "Управление провайдерами",
     modelProviderManagementHint: "Экземпляры, учётные данные и включение хранятся в Core",
     modelCatalogScope: "Охват каталога моделей",
-    configuredModelsOnly: "Значения провайдера по умолчанию и переопределения маршрутов",
+    configuredModelsOnly: "Списки настроенных моделей",
     liveDiscovery: "Обнаружение моделей в реальном времени",
     writable: "Доступно для записи",
     readOnly: "Только чтение",
     available: "Доступно",
     unavailable: "Недоступно",
-    pendingCore: "Ожидается поддержка в Core",
+    pendingCore: "Отключено",
     previewOnly: "Только предпросмотр",
     agentProfilesWritable: "Профили агентов",
     agentProfilesWritableHint: "Режимы, инструменты и промпты можно сохранять",
     runtimePreviewOnly: "Стратегия модели",
-    runtimePreviewOnlyHint: "Наследование, фиксированная модель, CLI и ACP публикуются как неизменяемые версии через черновик → публикацию",
+    runtimePreviewOnlyHint: "Поддерживаются наследуемые маршруты, фиксированные модели и привязки CLI / ACP с публикацией неизменяемых версий",
     agentModelStrategyPublished: "Стратегия модели для {name} опубликована",
     agentStrategyVersioned: "Переопределение источника выполнения",
-    agentStrategyVersionedHint: "Сохраняется как пользовательское переопределение для этого агента и действует также для агентов из пакетов; в любой момент можно вернуться к «Как по умолчанию»",
+    agentStrategyVersionedHint: "Сохраняется как пользовательское переопределение (действует и для управляемых агентов); в любой момент можно вернуться к наследованию маршрута",
     agentConflictTitle: "Конфигурация изменена в другом месте",
-    agentConflictMessage: "Конфигурация этого агента была изменена в другом сеансе (412). Принудительная перезапись применит ваши изменения поверх последней ревизии; перезагрузка отменит локальные правки.",
+    agentConflictMessage: "Конфигурация этого агента была обновлена в другом месте. Принудительная запись применит ваши правки; обновление отменит локальные изменения.",
     agentConflictOverwrite: "Перезаписать принудительно",
     agentConflictRefresh: "Загрузить последнюю версию",
     agentStatusPublished: "Опубликовано · v{version}",
@@ -2157,7 +2133,7 @@ export default {
     agentStatus: "Статус",
     agentSourceCustom: "Пользовательский",
     agentSourcePack: "Пакет",
-    agentSourceBootstrap: "Встроенный",
+    agentSourceBootstrap: "Базовый",
     agentSourceMissing: "Отсутствующая ссылка",
     agentSourceManaged: "Управляемый (только чтение)",
     agentModeUsageSection: "Использование в режимах",
@@ -2179,7 +2155,7 @@ export default {
     agentVersionArchived: "Архивная",
     noVersionsPublished: "Опубликованных версий пока нет",
     activeAgents: "Включённые агенты",
-    agentLayerCounts: "Планирование {planning} · Исполнение {execution}",
+    agentLayerCounts: "Управление {planning} · Исполнение {execution}",
     previewBadge: "Предпросмотр",
     agentProfiles: "Профили агентов",
     centerOverview: "Обзор",
@@ -2189,7 +2165,7 @@ export default {
     optionalCapabilityUnavailable: "Необязательная возможность Core {source} недоступна (HTTP {status}); остальные данные по-прежнему показаны.",
     sharedRouteDiagnostic: "Маршрут {purpose} используется несколькими агентами ({count}) и остаётся устаревшей привязкой только для чтения.",
     modelCenterResources: "Категории ресурсов центра моделей",
-    centerSuppliers: "Поставщики",
+    centerSuppliers: "Провайдеры",
     centerApiConnections: "API и локальные подключения",
     centerModels: "Модели",
     coreCatalog: "Каталог Core",
@@ -2199,7 +2175,7 @@ export default {
     supplierCliSummary: "Передача целых задач агента среде выполнения командной строки.",
     supplierAcpSummary: "Подключение внешней среды выполнения агентов через адаптер ACP.",
     noSuppliers: "Core не вернул каталог поставщиков",
-    configuredModelsHint: "Показаны только модели провайдеров по умолчанию и существующие переопределения маршрутов; это не обнаружение моделей в реальном времени.",
+    configuredModelsHint: "Показывает модели по умолчанию, списки моделей и переопределения маршрутов для настроенных провайдеров.",
     configuredOnly: "Только настроенные",
     modelSourceProviderDefault: "По умолчанию у провайдера",
     modelSourceRouteOverride: "Переопределение маршрута",
@@ -2210,23 +2186,23 @@ export default {
     removeModel: "Удалить модель",
     noProviderModels: "К этому провайдеру ещё не добавлены модели.",
     fetchModels: "Получить модели",
-    fetchModelsFromProvider: "Найти модели у провайдера",
+    fetchModelsFromProvider: "Получить модели от провайдера",
     fetchingModels: "Получение…",
-    fetchModelsEmpty: "Провайдер не вернул ни одной модели.",
+    fetchModelsEmpty: "Провайдер не вернул доступных моделей.",
     manualModel: "Ввести имя модели вручную",
     modelNamePlaceholder: "например, gpt-4o-mini",
     modelSearchPlaceholder: "Фильтр моделей…",
     modelFilterEmpty: "Нет моделей, подходящих под этот фильтр.",
-    modelCatalogSearch: "Поиск моделей или поставщиков",
+    modelCatalogSearch: "Поиск моделей или провайдеров",
     modelAdded: "Добавлена",
-    modelDiscoveryUnsupported: "Core пока не поддерживает обнаружение моделей в реальном времени",
+    modelDiscoveryUnsupported: "Добавление и обновление моделей недоступны",
     discoveredNewModels: "Найдено новых моделей: {count}, они уже выбраны",
     noNewModels: "Новых моделей не найдено",
     mergeDiscoveredTitle: "Добавление найденных моделей",
-    confirmMergeDiscovered: "Найдено ещё не сохранённых новых моделей: {count}. После подтверждения они будут записаны в этого провайдера:",
+    confirmMergeDiscovered: "Найдено новых моделей: {count}. Подтвердите добавление к этому провайдеру:",
     confirmSave: "Сохранить",
     noConfiguredModels: "Настроенных моделей нет. Сначала создайте API или локальное подключение.",
-    cliRuntimeHint: "Однократные запуски обвязки и собственный локальный сервер opencode. Core запускает программу с аргументами, проверенными для этого канала, поэтому сохранённый путь должен указывать на настоящий исполняемый файл.",
+    cliRuntimeHint: "Однократные CLI-инструменты и локальный HTTP-сервер OpenCode; путь должен указывать на реальный исполняемый файл.",
     discoverCli: "Автообнаружение",
     discoveringCli: "Поиск…",
     cliDiscoveryTitle: "Автообнаружение локальных CLI",
@@ -2238,7 +2214,7 @@ export default {
     notDetected: "Не обнаружено",
     pathNotConfigured: "Не задан абсолютный путь к исполняемому файлу",
     workspaceNotConfigured: "Не задан реальный рабочий каталог",
-    noCliRuntimes: "Сред выполнения CLI нет. Создайте её из каталога поставщиков.",
+    noCliRuntimes: "Сред выполнения CLI пока нет. Воспользуйтесь автопоиском выше или добавьте провайдера.",
     acpRuntimeHint: "Постоянный сеанс stdio с процессом обвязки: подключение подтверждается реальным рукопожатием, а сеанс сохраняет контекст между ходами.",
     centerCli: "CLI / serve",
     centerTui: "TUI",
@@ -2253,19 +2229,19 @@ export default {
     channelReason: {
       headless_frame_unverified: "Эта сборка ещё не получила безголовый ответ от {harness}, поэтому не может управлять этим каналом.",
       terminal_host_unsupported: "На этой платформе нет поддерживаемого хоста терминала для TUI {harness}.",
-      protocol_unsupported: "В этой сборке пока нет клиента для этого канала."
+      protocol_unsupported: "В этой сборке пока нет клиента для этого канала.",
     },
     probeNote: {
       start_failed: "Не удалось запустить {command}.",
       probe_timeout: "{name} не ответил на {command} за {timeout_ms} мс, поэтому неизвестно, установлен ли он.",
       exit_code: "{name} завершился с кодом {exit_code} при выполнении {command}.",
-      probe_failed: "Не удалось проверить {name}: {error}"
+      probe_failed: "Не удалось проверить {name}: {error}",
     },
     harnessProviderInstance: "Экземпляр провайдера",
     protocolUnknown: "протокол не записан",
     tuiRuntimeHint: "Полноэкранная обвязка, размещённая в настоящем терминале. Tinadec может отправить один контролируемый ход и взять установившийся текст экрана в качестве ответа.",
     noTuiRuntimes: "Для канала терминала не настроена ни одна обвязка.",
-    tuiBackendUnavailable: "Ходы TUI используют зарегистрированный хост PTY и ограниченное окно тишины экрана. Долгое наблюдение за интерактивным терминалом остаётся отдельным от маршрутизации моделей.",
+    tuiBackendUnavailable: "Ходы TUI выполняются в управляемом терминале с захватом стабилизированного вывода экрана, отдельно от интерактивных вкладок терминала.",
     acpPermissionWarning: "Обвязка отвечает своей моделью и запускает свои инструменты в контролируемом временном каталоге, а не в вашем проекте; в этой сборке каждый её запрос разрешения получает отказ. Объявление «без доступа к файловой системе» не мешает ей писать в этот каталог.",
     manageInMarketplace: "Управлять в маркетплейсе",
     legacyProvider: "Устаревший адаптер провайдера",
@@ -2385,7 +2361,7 @@ export default {
     pickFromScreen: "Взять цвет с экрана",
     version: "Версия",
     versionCode: "Code",
-    planningLayer: "Уровень планирования",
+    planningLayer: "Уровень управления",
     executionLayer: "Уровень исполнения",
     enableAgent: "Включить агента",
     disableAgent: "Отключить агента",
@@ -2393,7 +2369,7 @@ export default {
     closeConfig: "Закрыть настройку",
     openAgentConfig: "Открыть настройку агента",
     pleaseOpenAgentConfig: "Откройте настройку агента",
-    builtInAgent: "Встроен в Core",
+    builtInAgent: "Управляемый (только чтение)",
     defaultEnabled: "Включён по умолчанию",
     agentConfiguration: "Настройка агента",
     agentEnabled: "Включить этого агента",
@@ -2422,14 +2398,14 @@ export default {
     setDefaultModel: "Сделать моделью по умолчанию",
     defaultChatModel: "Чат по умолчанию",
     defaultChatNone: "Модель чата по умолчанию не задана",
-    defaultChatChange: "Изменить",
+    defaultChatChange: "Маршруты",
     defaultModelSet: "Модель по умолчанию: {model}",
     runtimeBindingSaved: "Источник выполнения для {name} обновлён",
     runtimeBindingUnsupported: "Core пока не поддерживает привязку источника выполнения к отдельным агентам",
     routePurpose: "Назначение маршрута",
     routeProvider: "Экземпляр модели",
     routeModel: "Имя модели",
-    saveRoute: "Сохранить настройку модели",
+    saveRoute: "Сохранить маршрут",
     centerRoutes: "Маршруты",
     centerRoutesHint: "Упорядоченные цепочки кандидатов: при разрешении они пробуются по порядку; одно сохранение публикует новую неизменяемую версию.",
     routeNoCandidates: "Кандидатов нет",
@@ -2461,17 +2437,23 @@ export default {
     agentModePlanFirst: "Сначала план",
     agentModeParallel: "Параллельный",
     agentModeSafeResearch: "Безопасное исследование",
-    agentModeBalancedHint: "Двухуровневая оркестрация по умолчанию: одна дорожка планирования и две дорожки исполнения.",
+    agentModeBalancedHint: "Двухуровневая оркестрация по умолчанию: управление координирует и проверяет, исполнение выполняет задачи.",
     agentModePlanFirstHint: "Агенты совещания и надзора составляют граф задач до начала исполнения.",
     agentModeParallelHint: "Добавляет исполнителей, когда это позволяют зависимости и бюджет.",
     agentModeSafeResearchHint: "Исследование только для чтения: запись, команды, сеть и ACP требуют строгого одобрения.",
     policyBalanced: "Сбалансированная политика",
     policyStrict: "Строгая политика",
     policyPerformance: "Приоритет производительности",
-    agentLayerPlanning: "Планирование",
+    agentLayerPlanning: "Управление",
     agentLayerExecution: "Исполнение",
     agentLayerEvolution: "Эволюция",
     agentTypeMeeting: "Агент совещания",
+    agentTypeSessionCoordinator: "Координатор диалога",
+    agentTypeTaskExecutor: "Исполнитель задач",
+    agentTypeGovernanceReviewer: "Ревьюер управления",
+    agentTypeExplorationPlanner: "Планировщик исследования",
+    agentTypeSoloMaster: "Соло-мастер",
+    agentTypeArtexDirector: "Директор исследования",
     agentTypeContextCompressor: "Агент сжатия контекста",
     agentTypePromptContextEngineer: "Инженер контекста промптов",
     agentTypeEvolver: "Агент эволюции",
@@ -2488,15 +2470,6 @@ export default {
     agentTypeDesigner: "Дизайнер",
     agentTypeReviewExecutor: "Исполнитель проверки",
     agentTypeToolPackager: "Упаковщик MCP",
-    gitManagerSubtitle: "Отдельный исполняющий субагент для состояния Git, готовности к отправке и заметок о передаче для пользователя.",
-    gitManagerConfigure: "Настроить агента Git",
-    gitManagerApprovalTitle: "Политика отправки",
-    gitManagerApprovalBody: "Коммиты, отправка, слияние, перебазирование и изменение истории требуют вызовов инструментов, одобренных Core.",
-    gitManagerRouteTitle: "Маршрут Git",
-    gitManagerHandoffTitle: "Заметки о передаче",
-    gitManagerHandoffName: "Объяснение различий и веток",
-    gitManagerHandoffBody: "Сводит состояние репозитория, область влияния, остаточные риски и то, что готово к отправке.",
-    gitManagerCapabilitiesTitle: "Возможности Git",
     noAgents: "Агентов нет",
     noAgentsHint: "Core не вернул ни одного настраиваемого профиля агента.",
     topologyView: "Топология",
@@ -2514,20 +2487,20 @@ export default {
     agentDescription: "Описание",
     agentDescriptionPlaceholder: "Опишите, что делает этот агент...",
     agentTools: "Привязка инструментов",
-    agentToolsHint: "Нажимайте, чтобы включать и выключать инструменты, доступные агенту.",
+    agentToolsHint: "Включайте и отключайте инструменты, доступные этому агенту.",
     agentCapabilities: "Метки возможностей",
     agentCapabilitiesHint: "Добавляйте или удаляйте метки возможностей агента.",
     newCapabilityPlaceholder: "Новая возможность...",
     addCapability: "Добавить",
     agentSystemPrompt: "Системный промпт",
     agentSystemPromptHint: "Переопределяет системный промпт агента по умолчанию. Оставьте пустым, чтобы использовать стандартный.",
-    agentSystemPromptOverrideHint: "Сохраняется как фрагмент-переопределение для этого агента. Оставьте пустым, чтобы использовать стандартный.",
+    agentSystemPromptOverrideHint: "Сохраняется как переопределение промпта для этого агента; пустое значение использует стандартный.",
     agentSystemPromptPlaceholder: "Введите свой системный промпт...",
     saveAgent: "Сохранить настройку",
     cloneAgent: "Клонировать как пользовательский",
     agentConflict: "Конфигурация изменена в другом месте, обновите страницу и повторите попытку",
-    agentBuiltInConflict: "Встроенные агенты доступны только для чтения, сначала клонируйте их",
-    agentRevision: "ревизия {revision}",
+    agentBuiltInConflict: "Управляемые агенты доступны только для чтения; сначала клонируйте",
+    agentRevision: "вер. {revision}",
     promptViewLabel: "Вид промптов",
     fragmentEnabledFilter: "Фильтр по включению",
     builtinBadge: "встроенный",
@@ -2553,7 +2526,7 @@ export default {
     backgroundPickerUnavailable: "Выбор файла фона недоступен",
     backgroundPickFailed: "Не удалось выбрать файл фона",
     modelReadinessUnavailable: "Отчёт о готовности моделей недоступен; показана только конфигурация.",
-    builtInCloneHint: "Встроенные агенты доступны только для чтения. Клонируйте, чтобы настроить инструменты, возможности и промпты",
+    builtInCloneHint: "Управляемые агенты доступны только для чтения. Клонируйте, чтобы настроить инструменты, возможности и промпты",
     selectReadOnlyTools: "Выбрать инструменты только для чтения",
     clearSelection: "Снять выбор",
     toolSearchPlaceholder: "Поиск по имени, ID или риску инструмента",
@@ -2578,12 +2551,12 @@ export default {
     showApiKey: "Показать ключ",
     hideApiKey: "Скрыть ключ",
     apiKeyKeepHint: "Оставьте пустым, чтобы сохранить сохранённый ключ. Здесь он не отображается.",
-    providerNextStep: "У этого провайдера ещё нет моделей. Добавьте модель, чтобы он мог отвечать.",
-    providerListLabel: "Список поставщиков",
-    backToProviderList: "Назад к списку поставщиков",
-    providerModelsHint: "Модели этого поставщика; чат по умолчанию использует одну из них.",
-    noProviderSelected: "Выберите поставщика, чтобы увидеть подключение и модели.",
-    locateProvider: "Показать в поставщиках",
+    providerNextStep: "У этого провайдера ещё нет моделей. Добавьте модель, чтобы начать работу.",
+    providerListLabel: "Список провайдеров",
+    backToProviderList: "Назад к провайдерам",
+    providerModelsHint: "Модели этого провайдера; любую можно назначить чатом по умолчанию или добавить в маршрут.",
+    noProviderSelected: "Выберите провайдера, чтобы просмотреть настройки и модели.",
+    locateProvider: "Показать в провайдерах",
     providerReferencesAffected: "Используется в {count} сохранённых ссылках: {summary}",
     providerNoReferences: "Пока ни один агент, режим или маршрут не ссылается на его модели.",
     providerReferencesUnreadable: "Не удалось прочитать затронутые ссылки. Продолжайте, только если это приемлемо.",
@@ -2637,12 +2610,9 @@ export default {
     reset: "Сбросить",
     resetBackground: "Сбросить фон",
     globalMaterial: "Общий эффект материала",
-    globalMaterialHint: "Единый эффект материала для всех панелей, включая боковую панель, область чата и контекстную панель",
-    panelStyles: "Стили панелей",
-    panelStylesHint: "Настройте непрозрачность и визуальные эффекты каждой панели",
+    globalMaterialHint: "Единый эффект материала для боковой панели, области диалога и боковых панелей.",
     sidebar: "Боковая панель",
     chatPanel: "Панель чата",
-    contextPanel: "Контекстная панель",
     effectOpaque: "Непрозрачный",
     effectTranslucent: "Полупрозрачный",
     effectBlur: "Размытие",
@@ -2652,7 +2622,7 @@ export default {
     bgPreviewHtml: "Введите HTML",
     bgImageFormats: "Поддерживаемые форматы: JPG, PNG, GIF, WebP",
     bgVideoFormats: "Поддерживаемые форматы: MP4, WebM",
-    bgHtmlHint: "HTML отображается как фон, взаимодействие не поддерживается",
+    bgHtmlHint: "HTML отображается как неинтерактивный фоновый слой.",
     bgPerformanceWarning: "Сложный фон может снизить производительность",
     moduleLoading: "Загрузка настроек…",
     moduleError: "Не удалось загрузить этот раздел.",
@@ -2803,7 +2773,7 @@ export default {
     agentDraftDiscard: "Отменить черновик",
     agentDraftTooLarge: "Черновик слишком большой для локального хранения; сначала сохраните его на сервере",
     centerConnections: "Подключения",
-    centerAdvanced: "Дополнительно"
+    centerAdvanced: "Дополнительно",
   },
   providers: {
     openaiCompatible: "Совместимый с OpenAI",
@@ -2865,7 +2835,7 @@ export default {
     zcode: "ZCode",
     zcodeSummary: "Агент ZCode. Без ACP: только однократный запуск или сеанс терминала",
     custom: "Пользовательский провайдер",
-    customSummary: "Пользовательская конечная точка, совместимая с OpenAI"
+    customSummary: "Пользовательская конечная точка, совместимая с OpenAI",
   },
   accentColors: {
     blue: "Синий",
@@ -2876,7 +2846,7 @@ export default {
     red: "Красный",
     cyan: "Голубой",
     yellow: "Жёлтый",
-    dynamic: "Из фона"
+    dynamic: "Из фона",
   },
   market: {
     action: {
@@ -2886,14 +2856,14 @@ export default {
       installPreview: "Предпросмотр установки",
       queueInstall: "Постановка установки в очередь",
       refreshSource: "Обновление источника",
-      uninstallPreview: "Предпросмотр удаления"
+      uninstallPreview: "Предпросмотр удаления",
     },
     defaultSourceName: "Реестр MCP",
     sourceAdded: "Источник добавлен.",
     sourceNoAnswer: "Источник не ответил ({outcome}).",
     sourceOutcome: {
       blocked: "Политика адресов заблокировала доступ к этому источнику.",
-      unavailable: "На этот раз источник прочитать не удалось; каталог остался прежним."
+      unavailable: "На этот раз источник прочитать не удалось; каталог остался прежним.",
     },
     sourceStale: "Последнее обновление не удалось, поэтому записи ниже взяты из более ранних данных: {error}",
     installBlocker: {
@@ -2909,7 +2879,7 @@ export default {
       detail_too_large: "Описание пакета этой записи больше, чем может хранить Core.",
       detail_missing: "У этой записи нет сохранённых подробностей.",
       detail_unreadable: "Не удалось прочитать сохранённые подробности этой записи.",
-      not_installable: "Эту запись нельзя установить в этой сборке."
+      not_installable: "Эту запись нельзя установить в этой сборке.",
     },
     refreshedTruncated: "Обновлено записей: {rows} (страниц: {pages}); список длиннее.",
     refreshed: "Обновлено записей: {rows} (отклонено: {refused}, удалено: {removed}, сохранено как установленные: {retained}).",
@@ -2988,7 +2958,7 @@ export default {
     packageCommit: "Зафиксированный коммит",
     packageHash: "Дайджест пакета",
     packageFiles: "Файлы пакета",
-    scope: "Область"
+    scope: "Область",
   },
   approval: {
     runCommandSummary: "Выполнить команду: {command}",
@@ -2997,14 +2967,14 @@ export default {
     kind: {
       tool: "Вызов инструмента",
       user_tool: "Ваше действие с инструментом",
-      permission: "Запрос разрешения"
+      permission: "Запрос разрешения",
     },
     specConfirmation: "Проверка спецификации",
     specConfirmationHint: "Прочитайте документ целиком. Это решение относится только к документу ниже; последующие этапы требуют отдельного подтверждения.",
     summaryCode: {
       user_requested: "Вы запросили выполнение {tool}.",
       retry_after_unknown: "Повторить {tool}: результат предыдущего запуска неизвестен.",
-      permission_request: "Для выполнения {tool} нужна авторизация."
+      permission_request: "Для выполнения {tool} нужна авторизация.",
     },
     specRequirements: "Требования",
     specDesign: "Проектирование",
@@ -3051,9 +3021,9 @@ export default {
         rejected: "Отклонено",
         escalated: "Возвращено вам",
         skipped: "Не опрашивался",
-        superseded: "Заменено вашим решением"
-      }
-    }
+        superseded: "Заменено вашим решением",
+      },
+    },
   },
   doctor: {
     title: "Диагностика",
@@ -3063,7 +3033,7 @@ export default {
     counts: {
       ready: "готово",
       warning: "с предупреждением",
-      blocked: "заблокировано"
+      blocked: "заблокировано",
     },
     status: {
       ok: "в норме",
@@ -3077,7 +3047,7 @@ export default {
       error: "ошибка",
       rejected: "отклонено",
       missing: "отсутствует",
-      blocked: "заблокировано"
+      blocked: "заблокировано",
     },
     reason: {
       database_ready: "База данных доступна.",
@@ -3125,7 +3095,7 @@ export default {
       tools_handshake_failed: "Программа инструментов ответила некорректно.",
       manifest_ready: "Отпечаток списка инструментов доступен.",
       manifest_hash_missing: "У списка инструментов нет отпечатка, поэтому его изменения нельзя обнаружить.",
-      manifest_unavailable: "Список инструментов неизвестен, потому что программа инструментов недоступна."
+      manifest_unavailable: "Список инструментов неизвестен, потому что программа инструментов недоступна.",
     },
     action: {
       database_unavailable: "Проверьте настройки подключения к базе данных и перезапустите Core.",
@@ -3161,7 +3131,7 @@ export default {
       probe_failed: "Убедитесь, что конечная точка по адресу {base_url} доступна, и повторите попытку; подробности в журнале Core.",
       tools_not_built: "Выполните npm run dev:tools (npm run dev сначала собирает её сам).",
       tools_handshake_failed: "Пересоберите программу инструментов и перезапустите Core.",
-      manifest_unavailable: "Сначала сделайте программу инструментов доступной."
+      manifest_unavailable: "Сначала сделайте программу инструментов доступной.",
     },
     item: {
       database: "База данных",
@@ -3173,8 +3143,8 @@ export default {
       model_route: "Маршрут модели",
       model_probe: "Связь с моделью",
       tool_provider: "Провайдер инструментов",
-      manifest_hash: "Манифест инструментов"
-    }
+      manifest_hash: "Манифест инструментов",
+    },
   },
   debugStudio: {
     preview: {
@@ -3200,7 +3170,7 @@ export default {
         toolCalls: "Вызовы инструментов",
         events: "События",
         agents: "Агенты",
-        tools: "Инструменты"
+        tools: "Инструменты",
       },
       noOrchestration: "В этом сценарии нет запуска оркестрации; переключитесь на «С данными» или «Агенты работают», чтобы его увидеть.",
       noGitDiff: "В этом сценарии нет различий Git; переключитесь на «Изменения Git», чтобы их увидеть.",
@@ -3220,7 +3190,7 @@ export default {
         code: "Редактор кода (настоящий CodePage)",
         settings: "Настройки (настоящий SettingsPage)",
         allTabs: "Доступны все вкладки",
-        market: "Маркетплейс расширений (настоящий MarketPage · изолированный движок UIE)"
+        market: "Маркетплейс расширений (настоящий MarketPage · изолированный движок UIE)",
       },
       items: {
         ChatPanel: "Панель чата",
@@ -3237,50 +3207,50 @@ export default {
         ToolStatsDashboard: "Панель статистики инструментов",
         DiffViewer: "Просмотр различий",
         CommitMessageEditor: "Редактор сообщения коммита",
-        FileTreePanel: "Панель дерева файлов"
+        FileTreePanel: "Панель дерева файлов",
       },
       scenario: {
         populated: {
           label: "С данными",
-          description: "Стандартное насыщенное состояние: проекты, сеансы, сообщения, оркестрация, вызовы инструментов и многое другое."
+          description: "Стандартное насыщенное состояние: проекты, сеансы, сообщения, оркестрация, вызовы инструментов и многое другое.",
         },
         empty: {
           label: "Пусто",
-          description: "Нет проектов, сеансов и сообщений; проверка интерфейса пустого состояния."
+          description: "Нет проектов, сеансов и сообщений; проверка интерфейса пустого состояния.",
         },
         loading: {
           label: "Загрузка",
-          description: "Данные загружаются: все коллекции пусты, а компоненты должны показывать заглушки или индикаторы загрузки."
+          description: "Данные загружаются: все коллекции пусты, а компоненты должны показывать заглушки или индикаторы загрузки.",
         },
         busy: {
           label: "Агенты работают",
-          description: "Запуск оркестрации выполняется, идут вызовы инструментов и есть ожидающие одобрения."
+          description: "Запуск оркестрации выполняется, идут вызовы инструментов и есть ожидающие одобрения.",
         },
         approvalPending: {
           label: "Ожидают одобрения",
-          description: "Три ожидающих одобрения для git / shell / code; проверка интерфейса одобрений."
+          description: "Три ожидающих одобрения для git / shell / code; проверка интерфейса одобрений.",
         },
         error: {
           label: "Ошибка",
-          description: "Doctor сообщает об ошибках, готовность заблокирована; проверка интерфейса ошибок."
+          description: "Doctor сообщает об ошибках, готовность заблокирована; проверка интерфейса ошибок.",
         },
         agentWorking: {
           label: "Агент активен",
-          description: "Запуск оркестрации с несколькими step_results в состоянии заглушки и баннером активности агента."
+          description: "Запуск оркестрации с несколькими step_results в состоянии заглушки и баннером активности агента.",
         },
         manyMessages: {
           label: "Много сообщений",
-          description: "Более 20 сообщений с длинным Markdown; проверка прокрутки и скорости отрисовки списка."
+          description: "Более 20 сообщений с длинным Markdown; проверка прокрутки и скорости отрисовки списка.",
         },
         gitChanges: {
           label: "Изменения Git",
-          description: "Предпросмотр различий Git содержит 3 раздела (рабочее дерево / индекс / сравнение веток) и несколько изменённых файлов."
+          description: "Предпросмотр различий Git содержит 3 раздела (рабочее дерево / индекс / сравнение веток) и несколько изменённых файлов.",
         },
         toolFailures: {
           label: "Сбои инструментов",
-          description: "Несколько вызовов инструментов завершились ошибкой; проверка интерфейса сбоев и отображения ошибок."
-        }
-      }
+          description: "Несколько вызовов инструментов завершились ошибкой; проверка интерфейса сбоев и отображения ошибок.",
+        },
+      },
     },
     tabPreview: "Предпросмотр",
     simulation: {
@@ -3293,7 +3263,7 @@ export default {
       approved: "Имитационное одобрение: одобрено",
       rejectedApproval: "Имитационное одобрение: отклонено",
       decisionRejected: "Решение по одобрению отклонено",
-      decisionFailed: "Не удалось принять решение по одобрению"
+      decisionFailed: "Не удалось принять решение по одобрению",
     },
     requestFailed: {
       injectMessage: "Не удалось вставить сообщение: {error}",
@@ -3308,7 +3278,7 @@ export default {
       fetchDiagnostics: "Не удалось получить диагностику: {error}",
       fetchProcessInfo: "Не удалось получить сведения о процессе: {error}",
       fetchTraces: "Не удалось получить трассировки: {error}",
-      fetchTraceDetail: "Не удалось получить подробности трассировки: {error}"
+      fetchTraceDetail: "Не удалось получить подробности трассировки: {error}",
     },
     title: "Студия отладки агентов",
     tabTimeline: "Временная шкала",
@@ -3369,7 +3339,7 @@ export default {
     errors: "Ошибок: {count}",
     loadingGraph: "Загрузка графа агентов...",
     graphLoadFailed: "Не удалось загрузить каталог агентов из Gateway.",
-    graphDirectoryNote: "Каталог агентов по уровням — топология запуска находится на вкладке оркестрации этого запуска"
+    graphDirectoryNote: "Каталог агентов по уровням — топология запуска находится на вкладке оркестрации этого запуска",
   },
   permission: {
     selectLabel: "Способ одобрения инструментов",
@@ -3385,7 +3355,7 @@ export default {
     delegateBoth: "Одобряют оба",
     delegateConversationHint: "Одобряет координатор, знающий вашу цель. Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы.",
     delegateReviewerHint: "Одобряет рецензент в собственном контексте (только действие и факты, без диалога). Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы.",
-    delegateBothHint: "Выполняется, только если одобрили и рецензент, и координатор; один отказ означает отказ. Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы."
+    delegateBothHint: "Выполняется, только если одобрили и рецензент, и координатор; один отказ означает отказ. Shell, отправку, удаление, коммиты и другие действия высокого риска по-прежнему решаете вы.",
   },
   agent: {
     agent: "Агент",
@@ -3396,7 +3366,7 @@ export default {
     error: "Ошибка",
     idle: "Простаивает",
     noActivity: "Активности агентов нет",
-    planningLayer: "Агенты уровня планирования",
+    planningLayer: "Агенты уровня управления",
     executionLayer: "Агенты уровня исполнения",
     waitingAssignment: "Ожидание назначения агента...",
     taskPlan: "План задач",
@@ -3434,7 +3404,7 @@ export default {
     supervisionCorrect: "Исправить",
     supervisionCancel: "Отмена",
     supervisionCorrectionPrompt: "Опишите исправление; после отправки запуск будет перепланирован.",
-    supervisionDecisionFailed: "Не удалось принять решение надзора"
+    supervisionDecisionFailed: "Не удалось принять решение надзора",
   },
   terminal: {
     agentBadge: "АГЕНТ",
@@ -3454,7 +3424,7 @@ export default {
       cwd: "(рабочий каталог: {cwd})",
       exited: "[Процесс завершился с кодом {code}]",
       terminated: "[Сеанс завершён]",
-      inputLost: "[Ввод не доставлен]"
+      inputLost: "[Ввод не доставлен]",
     },
     call: {
       notReady: "Сеанс терминала ещё не готов; повторите попытку чуть позже",
@@ -3466,11 +3436,11 @@ export default {
       resume: "Продолжить",
       pause: "Пауза",
       stop: "Остановить",
-      openInPanel: "Открыть на панели"
+      openInPanel: "Открыть на панели",
     },
     shellName: {
       cmd: "Командная строка",
-      default: "Оболочка по умолчанию"
+      default: "Оболочка по умолчанию",
     },
     defaultTitle: "Терминал",
     defaultShell: "Оболочка по умолчанию",
@@ -3478,18 +3448,18 @@ export default {
     exited: "Завершён",
     notAvailable: "Терминал недоступен",
     notAvailableHint: "Встроенному терминалу нужно настольное приложение Electron. В браузере или веб-предпросмотре он недоступен.",
-    shortcutHint: "Ctrl+Shift+T — новый · Ctrl+W — закрыть · Ctrl+Tab — переключить"
+    shortcutHint: "Ctrl+Shift+T — новый · Ctrl+W — закрыть · Ctrl+Tab — переключить",
   },
   orchestrationPanel: {
     conversationNode: "агент диалога",
     tier: {
       deterministic: "deterministic · фиксированная топология",
       self_dispatch: "self_dispatch · распределение по связям",
-      free_form: "free_form · свободная сборка"
+      free_form: "free_form · свободная сборка",
     },
     layer: {
-      operation: "операционный уровень",
-      execution: "уровень исполнения"
+      operation: "уровень управления",
+      execution: "уровень исполнения",
     },
     stepResults: "Результаты шагов",
     noStepResults: "Результатов шагов нет.",
@@ -3504,7 +3474,7 @@ export default {
     tabs: {
       timeline: "Временная шкала",
       catalog: "Каталог",
-      stats: "Статистика"
+      stats: "Статистика",
     },
     refreshTools: "Обновить инструменты",
     refreshToolsHint: "Обновить каталог инструментов",
@@ -3534,7 +3504,7 @@ export default {
     groupTokens: "{name}{via} · токенов: {tokens}{partial} · {calls}",
     unreported: " (без отчёта: {count})",
     flows: "{count} поток | {count} потока | {count} потоков",
-    identity: "· агент диалога"
+    identity: "· агент диалога",
   },
   toolPanel: {
     filters: {
@@ -3542,7 +3512,7 @@ export default {
       success: "Успешно",
       failed: "Ошибка",
       approval: "Одобрение",
-      running: "Выполняется"
+      running: "Выполняется",
     },
     newest: "Сначала новые",
     oldest: "Сначала старые",
@@ -3570,7 +3540,7 @@ export default {
       completedWithFailure: "{tool} завершился, но сообщил об ошибке.",
       failed: "{tool} завершился ошибкой.",
       failedWith: "{tool} завершился ошибкой: {reason}",
-      outcome_unknown: "Результат {tool} неизвестен."
+      outcome_unknown: "Результат {tool} неизвестен.",
     },
     catalog: {
       search: "Поиск инструментов по имени, возможности или области…",
@@ -3592,7 +3562,7 @@ export default {
       capabilities: "Возможности",
       required: "Требуется",
       notRequired: "Не требуется",
-      execute: "Выполнить"
+      execute: "Выполнить",
     },
     stats: {
       overview: "Обзор",
@@ -3609,15 +3579,15 @@ export default {
       blocked: "Заблокированы",
       topTools: "Частые инструменты",
       bySource: "По источникам",
-      empty: "В этом сеансе ещё нет данных о выполнении инструментов."
-    }
+      empty: "В этом сеансе ещё нет данных о выполнении инструментов.",
+    },
   },
   taskGraph: {
     empty: "Отправьте задачу, чтобы создать план оркестрации.",
-    escalated: "эскалировано"
+    escalated: "эскалировано",
   },
   eventsPanel: {
-    empty: "В этом диалоге пока нет событий."
+    empty: "В этом диалоге пока нет событий.",
   },
   governance: {
     preAuthorizeHint: "Разрешите ограниченное число использований выбранных инструментов без присмотра в одном запуске. Проверки привязки всё равно применяются к каждому вызову.",
@@ -3630,29 +3600,29 @@ export default {
       auditReference: "ссылка аудита",
       snapshot: "ID снимка",
       lastReason: "последняя причина восстановления",
-      message: "сообщение"
+      message: "сообщение",
     },
     snapshotKind: {
       filesystem: "Копия файлов",
-      git: "Git"
+      git: "Git",
     },
     snapshotStatus: {
       created: "создан",
       conflict: "конфликт",
       restored: "восстановлен",
-      restored_with_conflicts: "восстановлен с конфликтами"
+      restored_with_conflicts: "восстановлен с конфликтами",
     },
     fileChange: {
       added: "добавлен",
       deleted: "удалён",
       modified: "изменён",
-      unchanged: "без изменений"
+      unchanged: "без изменений",
     },
     snapshotFacts: {
       files: "Файлы",
       workspaceHash: "Хеш рабочей области",
       contentHash: "Хеш содержимого",
-      createdAt: "Создан"
+      createdAt: "Создан",
     },
     riskMeta: "риск: {risk}",
     actionApprovals: "Одобрения действий",
@@ -3694,7 +3664,7 @@ export default {
     snapshotsTitle: "Снимки рабочей области",
     supervision: "Проверка надзора",
     supervisionEmpty: "Замечаний надзора пока нет.",
-    undoFile: "Откатить этот файл"
+    undoFile: "Откатить этот файл",
   },
   canvas: {
     unbound: "Не привязано",
@@ -3726,8 +3696,8 @@ export default {
       backflow: "Из execution нельзя соединить обратно в operation",
       "no-conversation": "Нет узла диалоговой идентичности",
       "multi-conversation": "Допускается только одна диалоговая идентичность",
-      "conversation-layer": "Диалоговая идентичность должна быть в слое operation"
-    }
+      "conversation-layer": "Диалоговая идентичность должна быть в слое operation",
+    },
   },
   workbench: {
     title: "Рабочая панель",
@@ -3740,7 +3710,7 @@ export default {
       mode: "режим {value}",
       config: "конф. {value}",
       revision: "ред. {value}",
-      manifest: "манифест {value}"
+      manifest: "манифест {value}",
     },
     facts: {
       layer: "уровень",
@@ -3749,7 +3719,7 @@ export default {
       depth: "глубина порождения",
       parent: "родитель",
       task: "задача",
-      capabilities: "возможности"
+      capabilities: "возможности",
     },
     counts: "узлов: {nodes} · замечаний: {findings} · версий контекста: {versions}",
     findings: "Замечания надзора",
@@ -3761,7 +3731,7 @@ export default {
     executionLane: "исполнение",
     laneEmpty: "Для этого запуска ещё нет экземпляров агентов.",
     lineageEdge: "связь порождения",
-    operationLane: "операционный уровень"
+    operationLane: "операционный уровень",
   },
   documents: {
     tree: "Файлы",
@@ -3772,7 +3742,7 @@ export default {
     hideTree: "Скрыть папки",
     noWorkspace: "Проект не выбран, поэтому файлы рабочей области недоступны.",
     loadingEditor: "Загружаем редактор…",
-    editorFailed: "Не удалось загрузить редактор"
+    editorFailed: "Не удалось загрузить редактор",
   },
   docReader: {
     tabs: "Открытые документы",
@@ -3796,12 +3766,12 @@ export default {
     tooLargeTitle: "Файл слишком большой",
     tooLargeDetail: "Размер файла {size}; он не отображается на боковой панели.",
     closeTab: "Закрыть документ",
-    truncated: "Показаны только первые {count} строк"
+    truncated: "Показаны только первые {count} строк",
   },
   codeEditor: {
     emptyTitle: "Выберите файл для правки",
     emptyHint: "Слева — структура папок этой рабочей области; сохранение требует одобрения.",
-    closeFile: "Закрыть этот файл"
+    closeFile: "Закрыть этот файл",
   },
   code: {
     selectProject: "Выберите проект…",
@@ -3832,16 +3802,16 @@ export default {
       saveShortcut: "Сохранить (Ctrl+S)",
       noChanges: "Изменений нет",
       save: "Сохранить",
-      close: "Закрыть редактор"
+      close: "Закрыть редактор",
     },
     tabMode: {
       view: "Просмотр",
-      edit: "Правка"
+      edit: "Правка",
     },
     viewer: {
       reload: "Перезагрузить",
       editFile: "Изменить файл",
-      edit: "Изменить"
+      edit: "Изменить",
     },
     tree: {
       loadFailed: "Не удалось загрузить каталог",
@@ -3862,7 +3832,7 @@ export default {
       empty: "Каталог пуст.",
       open: "Открыть",
       rename: "Переименовать (с одобрением)",
-      delete: "Удалить (с одобрением)"
+      delete: "Удалить (с одобрением)",
     },
     patch: {
       title: "Различия: {path}",
@@ -3875,7 +3845,7 @@ export default {
       rejected: "Одобрение патча отклонено.",
       apply: "Применить патч",
       noChanges: "Нет изменений для предпросмотра.",
-      loading: "Загрузка различий…"
+      loading: "Загрузка различий…",
     },
     search: {
       files: "Файлы",
@@ -3887,8 +3857,8 @@ export default {
       searching: "Поиск…",
       noResults: "Ничего не найдено.",
       hint: "Введите запрос и нажмите Enter.",
-      truncated: "Показаны первые совпадения — уточните запрос, чтобы сузить их."
-    }
+      truncated: "Показаны первые совпадения — уточните запрос, чтобы сузить их.",
+    },
   },
   userAction: {
     status: {
@@ -3904,8 +3874,8 @@ export default {
       failed: "{operation}: не удалось.",
       failedDetail: "{operation}: не удалось: {detail}",
       other: "{operation}: {status}.",
-      otherDetail: "{operation}: {detail}"
-    }
+      otherDetail: "{operation}: {detail}",
+    },
   },
   hostBanner: {
     previewTitle: "Предпросмотр интерфейса",
@@ -3923,7 +3893,7 @@ export default {
     restarting: "Перезапуск…",
     checking: "Повторная проверка хоста приложения…",
     retry: "Повторить подключение к хосту",
-    retrying: "Повтор…"
+    retrying: "Повтор…",
   },
   uie: {
     move: "Переместить",
@@ -3969,8 +3939,8 @@ export default {
       debugMetrics: "Метрики",
       debugDiagnostics: "Диагностика",
       debugPreview: "Предпросмотр",
-      debugSimulator: "Симулятор"
-    }
+      debugSimulator: "Симулятор",
+    },
   },
   buddy: {
     title: "Напарник",
@@ -3984,7 +3954,7 @@ export default {
     retry: "Повторить",
     you: "Вы",
     systemAuthor: "Система",
-    thinking: "Думает…"
+    thinking: "Думает…",
   },
   host: {
     previewReason: "Предпросмотр интерфейса не подключён к данным пользователя. Рабочие области, хранилище и установку ресурсов используйте в настольном приложении.",
@@ -3997,7 +3967,7 @@ export default {
     connectionStopped: "Хост завершает работу.",
     bridgeUnavailable: "Интерфейс состояния хоста приложения недоступен; повторите подключение.",
     connectionCheckFailed: "Не удалось проверить подключение к хосту. Повторите подключение к хосту приложения.",
-    previewShim: "Предпросмотр интерфейса: операции с рабочими областями, хранилищем и установкой выполняйте в настольном приложении."
+    previewShim: "Предпросмотр интерфейса: операции с рабочими областями, хранилищем и установкой выполняйте в настольном приложении.",
   },
   workspaceRoots: {
     title: "Рабочее пространство",
@@ -4058,8 +4028,8 @@ export default {
       duplicate: "Одно и то же имя в одном переносе",
       exists: "Файл с таким именем уже есть; не перезаписан",
       copy_failed: "Копирование не удалось",
-      unresolved: "Не удалось получить реальный путь"
-    }
+      unresolved: "Не удалось получить реальный путь",
+    },
   },
   workspaceEditor: {
     editTitle: "Изменение рабочей области",
@@ -4094,7 +4064,7 @@ export default {
     save: "Сохранить",
     create: "Создать рабочую область",
     duplicateFolder: "Папка уже добавлена: {path}",
-    tooManyFolders: "Можно добавить не более {max} папок с исходным кодом."
+    tooManyFolders: "Можно добавить не более {max} папок с исходным кодом.",
   },
   home: {
     untitledProject: "Проект",
@@ -4117,7 +4087,7 @@ export default {
       sendMessage: "Отправка сообщения",
       steerMessage: "Отправка направляющего сообщения",
       stopRun: "Остановка запуска",
-      unregisterWorkspace: "Отмена регистрации рабочей области"
+      unregisterWorkspace: "Отмена регистрации рабочей области",
     },
     loadFailed: "Не удалось загрузить",
     workspacesLoadFailed: "Не удалось загрузить рабочие области",
@@ -4142,7 +4112,7 @@ export default {
       recheck: "Проверить перенос снова",
       accepted: "Перенос сеанса принят.",
       queued: "В этом сеансе ещё есть принятые сообщения в очереди. Выполните или отмените очередь перед переносом.",
-      failed: "Не удалось перенести сеанс"
+      failed: "Не удалось перенести сеанс",
     },
     attachmentSessionPreparing: "Сеанс для вложения ещё готовится; отправьте снова чуть позже.",
     attachmentUploading: "Вложение ещё загружается; отправьте снова чуть позже.",
@@ -4150,7 +4120,7 @@ export default {
     stream: {
       httpFailed: "Не удалось открыть поток запуска (HTTP {status})",
       noBody: "Поток запуска не вернул данных",
-      closedEarly: "Поток запуска закрылся до завершения запуска; переподключение"
+      closedEarly: "Поток запуска закрылся до завершения запуска; переподключение",
     },
     sendError: {
       modeUnavailable: "Режим диалога недоступен. Выберите режим заново в левом нижнем углу поля ввода.",
@@ -4158,7 +4128,7 @@ export default {
       modelNotConfigured: "Модель не настроена. Выберите модель в настройках и повторите попытку.",
       forbidden: "Недостаточно прав",
       recovering: "Идёт восстановление; повторите попытку чуть позже",
-      offline: "Нет подключения к сети"
+      offline: "Нет подключения к сети",
     },
     editBlockedByDraft: "В поле ввода остался неотправленный текст. Отправьте или очистите его, прежде чем редактировать прежнее сообщение.",
     editBlockedByRun: "Это сообщение использует запуск. Остановите его, прежде чем переписывать историю.",
@@ -4167,7 +4137,7 @@ export default {
     toolNeedsApproval: "Инструменту нужно одобрение",
     toolCompleted: "Инструмент завершил работу",
     sessionLoadFailed: "Не удалось загрузить сеанс",
-    sessionRecoverFailed: "Не удалось восстановить сеанс"
+    sessionRecoverFailed: "Не удалось восстановить сеанс",
   },
   activity: {
     roles: {
@@ -4185,7 +4155,7 @@ export default {
       file_finder: "Поиск файлов",
       git_manager: "Управление Git",
       code_writer: "Написание кода",
-      designer: "Агент дизайна"
+      designer: "Агент дизайна",
     },
     banner: {
       thinking: "Думает",
@@ -4195,9 +4165,9 @@ export default {
       error: "Ошибка",
       idle: "Простаивает",
       elapsed: "Прошло {time}",
-      planningAgents: "Агенты уровня планирования",
+      planningAgents: "Агенты уровня управления",
       executionAgents: "Агенты уровня исполнения",
-      waitingAssignment: "Ожидание назначения агентов…"
+      waitingAssignment: "Ожидание назначения агентов…",
     },
     agent: {
       active: "Выполняется",
@@ -4205,8 +4175,8 @@ export default {
       completed: "Завершено",
       error: "Ошибка",
       idle: "Простаивает",
-      planningLayer: "Уровень планирования",
-      executionLayer: "Уровень исполнения"
+      planningLayer: "Уровень управления",
+      executionLayer: "Уровень исполнения",
     },
     agentFallback: "Агент",
     coordinator: "Координатор",
@@ -4277,7 +4247,7 @@ export default {
     shellAwaitingApproval: "Команда shell ожидает одобрения: {command}",
     messageCreated: "Создано новое сообщение",
     workerInterrupted: "{who} прерван и продолжает по новым указаниям",
-    runInterrupted: "Запуск прерван; текущий шаг выполняется заново по новым указаниям"
+    runInterrupted: "Запуск прерван; текущий шаг выполняется заново по новым указаниям",
   },
   storage: {
     unsavedDraft: "Несохранённый черновик",
@@ -4305,12 +4275,12 @@ export default {
       logs: "Журналы",
       cache: "Кэш",
       temp: "Временные файлы",
-      worktrees: "Рабочие деревья"
+      worktrees: "Рабочие деревья",
     },
     hostSource: {
       default: "По умолчанию",
       desktop: "Настройки приложения",
-      environment: "Переменная окружения"
+      environment: "Переменная окружения",
     },
     expires: "Действует до",
     cleanupPreview: "Предпросмотр очистки",
@@ -4341,7 +4311,7 @@ export default {
       configuration_unique_filter_unsupported: "Этот фильтр уникального индекса не поддерживается: {detail}",
       runtime_configuration_missing: "Требуется документ конфигурации среды выполнения.",
       runtime_configuration_invalid: "Конфигурация среды выполнения недействительна: {detail}",
-      tool_configuration_invalid: "Конфигурация инструментов недействительна: {detail}"
+      tool_configuration_invalid: "Конфигурация инструментов недействительна: {detail}",
     },
     secretReference: "ссылка на секрет",
     postgresReference: "Ссылка на подключение PostgreSQL",
@@ -4363,8 +4333,8 @@ export default {
     title: "Хранилище и конфигурация",
     closingCancelled: "Закрытие отменено. Подключения проекта восстановлены.",
     closingWait: "Ожидание завершения запусков и подключений проекта.",
-    readingScope: "Считаем занятое место (дольше, если в кэше много файлов)…",
-    statsPartial: "файлов слишком много, подсчёт остановлен (на самом деле больше)",
+    readingScope: 'Считаем занятое место (дольше, если в кэше много файлов)…',
+    statsPartial: 'файлов слишком много, подсчёт остановлен (на самом деле больше)',
     closeScope: "Закрыть область",
     closeMessage: "Закрыть подключение к области, сохранив всю конфигурацию и данные. Закрытие ждёт завершения текущих запусков и запросов; закройте другие окна этого проекта, чтобы освободить активные подключения.",
     unregister: "Отменить регистрацию",
@@ -4394,7 +4364,7 @@ export default {
     discardDraft: "Отменить черновик",
     unsavedMessage: "Если уйти, текущий черновик будет потерян.",
     unsavedTitle: "Несохранённая конфигурация TOML",
-    trustedWindowRequired: "Для этого изменения нужен доверенный хост главного окна. Удалённым и веб-клиентам нужны явно доверенные учётные данные хоста."
+    trustedWindowRequired: "Для этого изменения нужен доверенный хост главного окна. Удалённым и веб-клиентам нужны явно доверенные учётные данные хоста.",
   },
   companion: {
     expand: "Открыть панель компаньона",
@@ -4448,7 +4418,7 @@ export default {
       groupLabel: "Групповой чат",
       groupSubtitle: "{title} · {members}",
       companionPicker: "Компаньон",
-      conversationPicker: "Беседа"
+      conversationPicker: "Беседа",
     },
     center: {
       loading: "Загрузка данных компаньонов…",
@@ -4575,8 +4545,8 @@ export default {
       connectionRuntimeUnknown: "Не проверено",
       connectionRuntimeOnline: "В сети",
       connectionCheckedAt: "проверено {time}",
-      connectionNeverChecked: "Никогда не проверялось"
-    }
+      connectionNeverChecked: "Никогда не проверялось",
+    },
   },
   desktopPet: {
     window: "Окно питомца",
@@ -4587,7 +4557,7 @@ export default {
     approvalTitle: "Требуется ваше одобрение",
     approve: "Одобрить",
     reject: "Отклонить",
-    returnToSession: "Вернуться к сессии"
+    returnToSession: "Вернуться к сессии",
   },
   library: {
     title: "Библиотека",
@@ -4598,14 +4568,14 @@ export default {
       cards: "Карточки",
       feedback: "Обратная связь",
       data: "Отображение данных",
-      layout: "Раскладка"
+      layout: "Раскладка",
     },
     variants: {
       default: "По умолчанию",
       secondary: "Вторичная",
       ghost: "Призрачная",
       outline: "Контурная",
-      destructive: "Разрушительная"
+      destructive: "Разрушительная",
     },
     buttons: {
       variants: "Варианты",
@@ -4614,7 +4584,7 @@ export default {
       small: "Маленькая",
       large: "Большая",
       disabled: "Отключена",
-      loading: "Загрузка"
+      loading: "Загрузка",
     },
     inputs: {
       text: "Текстовое поле",
@@ -4622,19 +4592,19 @@ export default {
       value: "значение: {value}",
       switch: "Переключатель",
       on: "вкл.",
-      off: "выкл."
+      off: "выкл.",
     },
     cards: {
       title: "Карточка по умолчанию",
       description: "Карточка с заголовком и описанием",
       body: "Содержимое слота тела. Для обрамления используйте слоты {header}/{footer}.",
       action: "Действие",
-      badges: "Значки"
+      badges: "Значки",
     },
     feedback: {
       notes: "Примечания",
       notesBody: "Уведомления показывает хост острова (App.vue). Вызывайте их через {call} — здесь они не отрисовываются, чтобы не выходить за границы.",
-      icons: "Значки"
+      icons: "Значки",
     },
     data: {
       table: "Таблица",
@@ -4643,13 +4613,13 @@ export default {
       status: "Статус",
       owner: "Владелец",
       active: "активен",
-      draft: "черновик"
+      draft: "черновик",
     },
     layout: {
       uie: "Главная и маркетплейс используют {canvas} + {column}. Библиотека использует отдельную прокручиваемую раскладку.",
       shell: "Оболочка",
-      shellBody: "Оболочка: {shell} — вертикальный flex с {header} и прокручиваемым содержимым. Панели: трёхколоночный движок TinadecUI."
-    }
+      shellBody: "Оболочка: {shell} — вертикальный flex с {header} и прокручиваемым содержимым. Панели: трёхколоночный движок TinadecUI.",
+    },
   },
   statusLabels: {
     run: {
@@ -4671,7 +4641,7 @@ export default {
       gate_review: "проверка шлюза",
       finalizing: "завершение",
       done: "готово",
-      blocked: "заблокировано"
+      blocked: "заблокировано",
     },
     tool: {
       completed: "завершено",
@@ -4681,20 +4651,20 @@ export default {
       waiting_approval: "ожидает одобрения",
       blocked: "заблокировано",
       requested: "запрошено",
-      outcome_unknown: "результат неизвестен"
+      outcome_unknown: "результат неизвестен",
     },
     risk: {
       low: "низкий риск",
       medium: "средний риск",
       high: "высокий риск",
       elevated: "повышенный риск",
-      critical: "критический риск"
+      critical: "критический риск",
     },
     severity: {
       info: "информация",
       warning: "предупреждение",
       error: "ошибка",
-      blocking: "блокирующее"
+      blocking: "блокирующее",
     },
     userAction: {
       requested: "отправлено",
@@ -4706,7 +4676,7 @@ export default {
       completed: "завершено",
       failed: "ошибка",
       blocked: "заблокировано",
-      outcome_unknown: "результат неизвестен"
+      outcome_unknown: "результат неизвестен",
     },
     availability: {
       available: "доступно",
@@ -4714,12 +4684,12 @@ export default {
       unavailable: "недоступно",
       invalid: "недействительно",
       pending: "обрабатывается",
-      unknown: "неизвестно"
+      unknown: "неизвестно",
     },
     instance: {
       created: "создан",
       running: "работает",
-      released: "освобождён"
+      released: "освобождён",
     },
     approval: {
       pending: "ожидает",
@@ -4728,8 +4698,8 @@ export default {
       expired: "истекло",
       consumed: "использовано",
       cancelled: "отменено",
-      revoked: "отозвано"
-    }
+      revoked: "отозвано",
+    },
   },
   aboutPage: {
     developerTools: "Инструменты разработчика",
@@ -4780,8 +4750,8 @@ export default {
       reviewTerminal: "Тестовый агент · команда терминала",
       reviewPassed: "Автоматическая проверка пройдена",
       reviewSsh: "Тестовый агент · проверка SSH",
-      reviewWaiting: "Ждёт вашего решения"
-    }
+      reviewWaiting: "Ждёт вашего решения",
+    },
   },
   agentPack: {
     name: "GraphSeedPack",
@@ -4800,7 +4770,7 @@ export default {
       conflict: "Конфликт",
       owner_required: "Нужен владелец рабочей области",
       deferred: "Отложено",
-      error: "Проверка не удалась"
+      error: "Проверка не удалась",
     },
     checkAction: "Проверить и установить",
     installAction: "Установить",
@@ -4853,21 +4823,12 @@ export default {
     uninstallFailed: "Не удалось удалить пакет агентов",
     toggleFailed: "Не удалось изменить состояние пакета агентов",
     adoptFailed: "Не удалось сделать пакет режимом по умолчанию для рабочей области",
-    bundledVersion: "Встроенная версия {version}"
+    bundledVersion: "Встроенная версия {version}",
   },
   agentCenter: {
     createMode: "Новый режим",
     tabs: {
-      topology: "Топология"
-    },
-    diagnostics: {
-      title: "Управление и инструменты обвязки",
-      manifestTitle: "Манифест инструментов обвязки",
-      manifestDesc: "Зарегистрировано инструментов со шлюзом одобрения: {count}",
-      layerRules: "Правила управления уровнями",
-      layerRulesDesc: "Операционный уровень координирует процессы и надзор; уровень исполнения планирует задачи и запускает инструменты.",
-      conflictDetection: "Обнаружение конфликтов",
-      conflictDetectionDesc: "При публикации маркеры ревизий и заголовки ETag защищают от перезаписи."
+      topology: "Топология",
     },
     filter: {
       searchAgents: "Поиск по имени, типу или описанию агента...",
@@ -4876,14 +4837,14 @@ export default {
       searchProposals: "Поиск предложений эволюции...",
       searchInstances: "Поиск работающих экземпляров...",
       allLayers: "Все уровни",
-      operationLayer: "Операционный уровень",
+      operationLayer: "Уровень управления",
       executionLayer: "Уровень исполнения",
       allStatuses: "Все статусы",
       draft: "Черновик",
       published: "Опубликован",
       archived: "В архиве",
       active: "Действует",
-      resultCount: "Показано {visible} / {total}"
+      resultCount: "Показано {visible} / {total}",
     },
     agentForm: {
       createTitle: "Новое определение агента",
@@ -4910,10 +4871,10 @@ export default {
       delete: "Удалить",
       saveSuccess: "Определение агента сохранено",
       publishSuccess: "Агент опубликован",
-      deleteSuccess: "Агент удалён"
+      deleteSuccess: "Агент удалён",
     },
     evolution: {
-      panelHint: "Извлекайте кандидатов в специализированные агенты из наблюдаемых запусков.",
+      panelHint: "Извлекайте кандидатов в специализированные агенты из наблюдаемых запусков и утверждайте их как постоянных агентов.",
       generateTitle: "Создание кандидатов по сеансу",
       generateHint: "Выберите прошлый запуск сеанса, чтобы извлечь переиспользуемые определения специализированных агентов.",
       targetSession: "ID целевого сеанса",
@@ -4953,7 +4914,7 @@ export default {
       fieldModelRoute: "Назначение маршрута модели",
       add: "Добавить",
       capabilityPlaceholder: "возможность",
-      systemPromptPlaceholder: "Свой системный промпт вместо стандартного"
+      systemPromptPlaceholder: "Свой системный промпт вместо стандартного",
     },
     runtimeInfo: {
       statusRunning: "Выполняется",
@@ -4969,24 +4930,24 @@ export default {
       frozenVersion: "Зафиксированная версия",
       recentModel: "Последняя модель",
       fallbackSummary: "Попытки кандидатов",
-      usedFallback: "использован резерв"
+      usedFallback: "использован резерв",
     },
     empty: {
       noAgents: "Подходящих агентов не найдено",
       noAgentsHint: "Попробуйте другие ключевые слова, сбросьте фильтры или создайте новое определение агента.",
       noModes: "Топологии выполнения не найдены",
-      noPrompts: "Подходящих фрагментов промптов не найдено"
+      noPrompts: "Подходящих фрагментов промптов не найдено",
     },
-    revisionShort: "ред. {revision}",
+    revisionShort: "вер. {revision}",
     newNodeLabel: "узел {n}",
     facts: {
       modelStrategy: "стратегия модели",
-      route: "маршрут"
+      route: "маршрут",
     },
     governanceRoles: "Роли управления",
     governanceRolesMissing: "Этим ролям управления не назначен опубликованный агент:",
     defaultsActive: "Действующие привязки рабочей области по умолчанию",
-    stewardNoTools: "Нет прямых инструментов — это решение по дизайну, а не ошибка конфигурации: агент работает через возможности проверки и плана коммитов, а выполнение идёт через одобренные действия пользователя или исполнителей.",
+    stewardNoTools: "Эта роль управления работает через проверку и план коммитов без прямых инструментов; изменения выполняются после одобрения.",
     effectiveTools: "Действующие инструменты (∩ манифест) · {count}",
     providerUnavailable: "Сервис определений агентов недоступен; роли управления проверить нельзя.",
     loadModesFailed: "Не удалось загрузить топологии режимов",
@@ -4996,7 +4957,7 @@ export default {
     modeSaveFailed: "Не удалось сохранить режим",
     modePublished: "Режим опубликован",
     versionHistory: "История версий",
-    publishedReadOnlyHint: "Этот режим опубликован и показан только для чтения; клонируйте его, чтобы изменить свою копию."
+    publishedReadOnlyHint: "Этот режим опубликован и показан только для чтения; клонируйте его, чтобы изменить свою копию.",
   },
   commandPanel: {
     kw: {
@@ -5013,13 +4974,13 @@ export default {
       runtime: "cli acp",
       agentModels: "agents executor агенты исполнитель",
       image: "image picture изображение картинка",
-      file: "file attachment файл вложение"
+      file: "file attachment файл вложение",
     },
     backHint: "Когда поиск пуст, нажмите Backspace или Delete, чтобы вернуться.",
     risk: {
       low: "Низкий риск",
       medium: "Средний риск",
-      high: "Высокий риск"
+      high: "Высокий риск",
     },
     model: "Модель",
     modelHint: "Модель агента, который отвечает вам; другим агентам модель задаётся уровнем ниже",
@@ -5057,7 +5018,7 @@ export default {
     nextTask: "Настройки применяются к следующей задаче в этом диалоге. Отправленные задачи сохраняют исходные настройки.",
     modelFooter: "Собственная модель каждого агента — та же настройка, что и в центре агентов. Агент без своей модели использует модель по умолчанию, заданную в центре моделей.",
     modelAgents: "Другие агенты",
-    modelAgentsHint: "Задать отдельную модель исполнителям и другим агентам"
+    modelAgentsHint: "Задать отдельную модель исполнителям и другим агентам",
   },
   composer: {
     agentModels: {
@@ -5073,19 +5034,19 @@ export default {
       inMode: "Используется выбранным режимом",
       ownCount: "Со своей моделью: {count}",
       none: "Других агентов нет",
-      failed: "Не удалось сохранить модель для {agent}"
+      failed: "Не удалось сохранить модель для {agent}",
     },
     reasoning: {
       label: "Интенсивность рассуждений",
       hint: "Интенсивность рассуждений для {model}; применяется к следующей задаче с этой моделью",
-      failed: "Не удалось сохранить интенсивность рассуждений"
+      failed: "Не удалось сохранить интенсивность рассуждений",
     },
     modelSwitch: {
       hint: "Модель по умолчанию: используется во всех диалогах, как «Сделать моделью по умолчанию» в центре моделей",
       none: "Модель по умолчанию не задана",
       empty: "Моделей пока нет — добавьте их в центре моделей",
       manage: "Управлять в центре моделей…",
-      failed: "Не удалось сменить модель по умолчанию"
+      failed: "Не удалось сменить модель по умолчанию",
     },
     pinnedModel: "Закреплено: {model} · по умолчанию",
     pinnedModelUnavailable: "{model} недоступна · по умолчанию",
@@ -5123,7 +5084,7 @@ export default {
     attachFailedUnknown: "Загрузка не удалась",
     attachFailed: "Загрузка не удалась ({code})",
     attachNeedsSession: "Сначала отправьте первое сообщение, затем прикрепляйте файлы",
-    removeAttachment: "Удалить {name}"
+    removeAttachment: "Удалить {name}",
   },
   palette: {
     kwProjectRow: "проект рабочая область папка project workspace folder",
@@ -5202,7 +5163,7 @@ export default {
     kwPets: "pets desktop pet widget питомцы питомец виджет",
     kwLanguage: "language english chinese japanese russian interface translation язык английский китайский японский русский интерфейс перевод",
     kwApiDocs: "api docs developer debug API документация разработчик отладка",
-    kwAbout: "about version copyright update о программе версия авторские права обновление"
+    kwAbout: "about version copyright update о программе версия авторские права обновление",
   },
   memory: {
     title: "Проверка памяти",
@@ -5230,7 +5191,7 @@ export default {
     status: {
       proposed: "предложено",
       promoted: "запомнено",
-      rejected: "отброшено"
+      rejected: "отброшено",
     },
     kind: {
       fact: "факт",
@@ -5239,7 +5200,7 @@ export default {
       success_pattern: "что сработало",
       failure_pattern: "что пошло не так",
       task_template: "шаблон задачи",
-      supervision_rule: "правило надзора"
+      supervision_rule: "правило надзора",
     },
     scopeLabel: "Область",
     scope: {
@@ -5247,13 +5208,13 @@ export default {
       workspace: "рабочая область",
       principal: "обо мне",
       project: "проект",
-      agent: "агент"
-    }
+      agent: "агент",
+    },
   },
   web: {
     gatewayManaged: "URL Gateway задаётся веб-развёртыванием.",
     petsUnavailable: "В веб-версии питомцы недоступны.",
-    panelsUnavailable: "В веб-версии окна панелей недоступны."
+    panelsUnavailable: "В веб-версии окна панелей недоступны.",
   },
   common: {
     copyName: "{name} (копия)",
@@ -5277,7 +5238,7 @@ export default {
     loading: "Загрузка…",
     none: "Нет",
     cancel: "Отмена",
-    refresh: "Обновить"
+    refresh: "Обновить",
   },
   contextMenu: {
     label: "Действия с текстом",
@@ -5288,7 +5249,7 @@ export default {
     copyLink: "Копировать ссылку",
     openLink: "Открыть ссылку",
     clearTerminal: "Очистить терминал",
-    hint: "Применяется к выделенному тексту"
+    hint: "Применяется к выделенному тексту",
   },
   conversation: {
     listSeparator: ", ",
@@ -5298,7 +5259,7 @@ export default {
       files: "{count} файл | {count} файла | {count} файлов",
       searches: "{count} поиск | {count} поиска | {count} поисков",
       lists: "{count} папка | {count} папки | {count} папок",
-      thoughts: "{count} рассуждение | {count} рассуждения | {count} рассуждений"
+      thoughts: "{count} рассуждение | {count} рассуждения | {count} рассуждений",
     },
     duration: {
       underSecond: "<1 с",
@@ -5306,18 +5267,18 @@ export default {
       minutes: "{m} мин",
       minutesSeconds: "{m} мин {s} с",
       hours: "{h} ч",
-      hoursMinutes: "{h} ч {m} мин"
+      hoursMinutes: "{h} ч {m} мин",
     },
     day: {
       today: "Сегодня",
-      yesterday: "Вчера"
+      yesterday: "Вчера",
     },
     reasoning: {
       drafting: "Набросок…",
       planning: "Планирование",
       thinking: "Думает",
       thoughtFor: "Время рассуждения: {duration}",
-      showAll: "Показать всё"
+      showAll: "Показать всё",
     },
     agents: {
       openInPanel: "Открыть на панели",
@@ -5332,12 +5293,12 @@ export default {
         completed: "Готово",
         failed: "Ошибка",
         blocked: "Заблокирован",
-        cancelled: "Отменён"
-      }
+        cancelled: "Отменён",
+      },
     },
     wait: {
       waiting: "Ожидание: {names}",
-      resolved: "Получены результаты: {names}"
+      resolved: "Получены результаты: {names}",
     },
     plan: {
       updated: "План обновлён · {done}/{total}",
@@ -5346,8 +5307,8 @@ export default {
       status: {
         pending: "ожидает",
         in_progress: "в работе",
-        completed: "готово"
-      }
+        completed: "готово",
+      },
     },
     supervision: {
       revise: "Надзор запросил изменения",
@@ -5368,52 +5329,21 @@ export default {
         option: {
           continue: "Сохранить текущие доказательства и завершить с принятым неполным результатом.",
           correct: "Добавить указания и перепланировать до завершения.",
-          cancel: "Остановить запуск и сохранить записанные доказательства."
-        }
-      }
+          cancel: "Остановить запуск и сохранить записанные доказательства.",
+        },
+      },
     },
     correction: {
-      phase: {
-        observe: "Поиск проблемы",
-        intervene: "Исправление",
-        converge: "Проверка результата",
-        backtrack: "Повторное расследование"
-      },
-      status: {
-        investigating: "Расследование",
-        blocked: "Не хватает доказательств",
-        awaiting_user: "Ожидает вас",
-        ready: "Доказательства собраны",
-        resolved: "Решено",
-        reopened: "Открыто снова"
-      },
-      goal: "Цель",
-      symptom: "Симптом",
-      doneWhen: "Готово, когда",
-      rootCause: "Причина",
-      hypotheses: "Гипотезы",
-      evidence: "Доказательства",
-      coverage: "Покрытие",
-      interventions: "Исправления",
-      questions: "Открытые вопросы",
-      empty: "Пока ничего нет",
-      coverageSummary: "Изменено: {modified}, проверено: {verified}",
-      waitingQuestion: "Чтобы продолжить, нужен ваш ответ.",
-      questionTitle: "Нужна ваша проверка",
-      answerPlaceholder: "Добавьте наблюдение или выбор…",
-      answerAction: "Ответить и продолжить",
-      feedbackPrompt: "Что произошло после исправления?",
-      stillReproduces: "Всё ещё воспроизводится",
-      resolvedAction: "Решено",
-      reopened: "Расследование открыто снова",
-      resolved: "Отмечено как решённое",
-      answerFailed: "Не удалось отправить ответ",
-      feedbackFailed: "Не удалось отправить отзыв",
-      hypothesisStatus: {
-        testing: "проверяется",
-        confirmed: "подтверждена",
-        rejected: "отклонена"
-      }
+      phase: { observe: "Поиск проблемы", intervene: "Исправление", converge: "Проверка результата", backtrack: "Повторное расследование" },
+      status: { investigating: "Расследование", blocked: "Не хватает доказательств", awaiting_user: "Ожидает вас", ready: "Доказательства собраны", resolved: "Решено", reopened: "Открыто снова" },
+      goal: "Цель", symptom: "Симптом", doneWhen: "Готово, когда", rootCause: "Причина",
+      hypotheses: "Гипотезы", evidence: "Доказательства", coverage: "Покрытие", interventions: "Исправления", questions: "Открытые вопросы",
+      empty: "Пока ничего нет", coverageSummary: "Изменено: {modified}, проверено: {verified}",
+      waitingQuestion: "Чтобы продолжить, нужен ваш ответ.", questionTitle: "Нужна ваша проверка",
+      answerPlaceholder: "Добавьте наблюдение или выбор…", answerAction: "Ответить и продолжить",
+      feedbackPrompt: "Что произошло после исправления?", stillReproduces: "Всё ещё воспроизводится", resolvedAction: "Решено",
+      reopened: "Расследование открыто снова", resolved: "Отмечено как решённое", answerFailed: "Не удалось отправить ответ", feedbackFailed: "Не удалось отправить отзыв",
+      hypothesisStatus: { testing: "проверяется", confirmed: "подтверждена", rejected: "отклонена" },
     },
     marker: {
       compacted: "Контекст сжат",
@@ -5426,7 +5356,7 @@ export default {
       run_failed: "Остановлено: {reason}",
       run_failed_unknown: "Остановлено из-за ошибки",
       run_cancelled: "Остановлено",
-      worker_interrupted: "Агент прерван"
+      worker_interrupted: "Агент прерван",
     },
     approval: {
       title: "Нужно одобрение",
@@ -5441,7 +5371,7 @@ export default {
       allowPrefix: "Всегда разрешать команды, начинающиеся с {prefix}",
       approveShortcut: "Одобрить (⌘/Ctrl+Enter)",
       rejectShortcut: "Отклонить (⌘/Ctrl+Backspace)",
-      failed: "Не удалось применить решение"
+      failed: "Не удалось применить решение",
     },
     turn: {
       workedFor: "Время работы: {duration}",
@@ -5454,12 +5384,7 @@ export default {
       retryHint: "Вернуть это сообщение в поле ввода",
       newTurns: "Новых: {count}",
       foldedEarlier: "Раньше: {count} шаг | Раньше: {count} шага | Раньше: {count} шагов",
-      awaiting: {
-        awaiting_user: "Ждёт вашего решения",
-        awaiting_approval: "Ждёт вашего одобрения",
-        awaiting_delegate: "Ждёт вашего делегирования",
-        generic: "Ждёт вашего действия"
-      }
+      awaiting: { awaiting_user: "Ждёт вашего решения", awaiting_approval: "Ждёт вашего одобрения", awaiting_delegate: "Ждёт вашего делегирования", generic: "Ждёт вашего действия" },
     },
     tool: {
       terminalTitle: "Терминал агента",
@@ -5476,63 +5401,63 @@ export default {
         withheld: "Результат не показан",
         withheldSensitive: "Не показано: файл может содержать учётные данные",
         exitCode: "Код выхода {code}",
-        timedOut: "Истекло время ожидания"
+        timedOut: "Истекло время ожидания",
       },
       read: {
         active: "Чтение {subject}",
         done: "Прочитано: {subject}",
-        failed: "Не удалось прочитать {subject}"
+        failed: "Не удалось прочитать {subject}",
       },
       list: {
         active: "Просмотр {subject}",
         done: "Просмотрено: {subject}",
-        failed: "Не удалось просмотреть {subject}"
+        failed: "Не удалось просмотреть {subject}",
       },
       search: {
         active: "Поиск: {subject}",
         done: "Поиск выполнен: {subject}",
-        failed: "Поиск не удался: {subject}"
+        failed: "Поиск не удался: {subject}",
       },
       edit: {
         active: "Правка {subject}",
         done: "Изменено: {subject}",
-        failed: "Не удалось изменить {subject}"
+        failed: "Не удалось изменить {subject}",
       },
       run: {
         active: "Выполнение {subject}",
         done: "Выполнено: {subject}",
-        failed: "Ошибка: {subject}"
+        failed: "Ошибка: {subject}",
       },
       git: {
         active: "Выполнение {subject}",
         done: "Выполнено: {subject}",
-        failed: "Ошибка: {subject}"
+        failed: "Ошибка: {subject}",
       },
       mcp: {
         active: "Вызов {subject}",
         done: "Вызвано: {subject}",
-        failed: "Вызов не удался: {subject}"
+        failed: "Вызов не удался: {subject}",
       },
       fetch: {
         active: "Загрузка {subject}",
         done: "Загружено: {subject}",
-        failed: "Не удалось загрузить {subject}"
+        failed: "Не удалось загрузить {subject}",
       },
       browse: {
         active: "Просмотр {subject}",
         done: "Просмотрено: {subject}",
-        failed: "Не удалось просмотреть {subject}"
+        failed: "Не удалось просмотреть {subject}",
       },
       workspace: {
         active: "Создание рабочей области {subject}",
         done: "Создана рабочая область {subject}",
-        failed: "Не удалось создать рабочую область {subject}"
+        failed: "Не удалось создать рабочую область {subject}",
       },
       other: {
         active: "Использование {subject}",
         done: "Использовано: {subject}",
-        failed: "{subject}: ошибка"
-      }
-    }
-  }
-};
+        failed: "{subject}: ошибка",
+      },
+    },
+  },
+}

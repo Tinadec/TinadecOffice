@@ -8242,6 +8242,26 @@
       }
     },
     "/api/v1/agent-modes/{id}": {
+      "delete": {
+        "operationId": "deleteApiV1Agent-modesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Delete custom agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      },
       "get": {
         "operationId": "getApiV1Agent-modesById",
         "parameters": [
@@ -8280,6 +8300,28 @@
           "200": {}
         },
         "summary": "Archive agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/clone": {
+      "post": {
+        "operationId": "postApiV1Agent-modesByIdClone",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Clone agent mode",
         "tags": [
           "AgentCenter"
         ]
@@ -12033,6 +12075,40 @@
           }
         },
         "summary": "List MCP server tools",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/tinadec": {
+      "post": {
+        "operationId": "postApiV1McpTinadec",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "type": "object"
+                    },
+                    "id": {},
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "result": {}
+                  },
+                  "required": [
+                    "jsonrpc"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "JSON-RPC 2.0 response from the loopback Tinadec self-configuration MCP server."
+          }
+        },
+        "summary": "Loopback MCP JSON-RPC 2.0 server for Tinadec self-configuration",
         "tags": [
           "System"
         ]

@@ -272,3 +272,111 @@ test('model-providers models/refresh thin proxy forwards POST and maps discovery
   const problem = await fail.json() as Record<string, unknown>;
   assert.ok(String(problem.detail ?? '').includes('Provider returned HTTP 404'));
 });
+
+test('agent-modes clone/delete and prompt-fragments/prompts rollback/clone proxy routes work cleanly', async () => {
+  const calls: Array<{ url: string; method: string; body: unknown; headers: Record<string, string> }> = [];
+  mockFetch(async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const headers: Record<string, string> = {};
+    if (init?.headers) new Headers(init.headers as HeadersInit).forEach((v, k) => { headers[k] = v; });
+    const parsedBody = typeof init?.body === 'string' && init.body.length > 0 ? JSON.parse(init.body) : null;
+    calls.push({ url, method: init?.method ?? 'GET', body: parsedBody, headers });
+    if (url.endsWith('/agent-modes/mode-1/clone')) {
+      return new Response(JSON.stringify({ id: 'mode-2', slug: 'mode-2' }), {
+        status: 201,
+        headers: { 'content-type': 'application/json', etag: '"1"' },
+      });
+    }
+    if (url.endsWith('/agent-modes/mode-2') && init?.method === 'DELETE') {
+      return Response.json({ id: 'mode-2', deleted: true });
+    }
+    return Response.json({ id: 'frag-1', ok: true });
+  });
+
+  const cloneModeRes = await app.handle(new Request('http://gateway.local/api/v1/agent-modes/mode-1/clone', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ display_name: 'Cloned Team' }),
+  }));
+  assert.equal(cloneModeRes.status, 201);
+  assert.equal(cloneModeRes.headers.get('etag'), '"1"');
+  assert.deepEqual(calls.at(-1)?.body, { display_name: 'Cloned Team' });
+  assert.equal(calls.at(-1)?.url, 'http://127.0.0.1:48731/api/v1/agent-modes/mode-1/clone');
+
+  const deleteModeRes = await app.handle(new Request('http://gateway.local/api/v1/agent-modes/mode-2', {
+    method: 'DELETE',
+  }));
+  assert.equal(deleteModeRes.status, 200);
+  assert.equal(calls.at(-1)?.method, 'DELETE');
+  assert.equal(calls.at(-1)?.url, 'http://127.0.0.1:48731/api/v1/agent-modes/mode-2');
+
+  const fragCloneRes = await app.handle(new Request('http://gateway.local/api/v1/prompt-fragments/frag-1/clone', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key: 'frag-1-copy', title: 'Copy' }),
+  }));
+  assert.equal(fragCloneRes.status, 200);
+  assert.deepEqual(calls.at(-1)?.body, { key: 'frag-1-copy', title: 'Copy' });
+
+  const fragCloneEmptyRes = await app.handle(new Request('http://gateway.local/api/v1/prompt-fragments/frag-1/clone', {
+    method: 'POST',
+  }));
+  assert.equal(fragCloneEmptyRes.status, 200);
+  assert.equal(calls.at(-1)?.url, 'http://127.0.0.1:48731/api/v1/prompt-fragments/frag-1/clone');
+});
+
+test('POST /api/v1/mcp/tinadec blocks non-loopback forwarding headers and proxies loopback JSON-RPC', async () => {
+  const upstreamCalls: Array<{ url: string; body: unknown }> = [];
+  mockFetch((input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const parsedBody = typeof init?.body === 'string' && init.body.length > 0 ? JSON.parse(init.body) : null;
+    upstreamCalls.push({ url, body: parsedBody });
+    if (parsedBody?.method === 'notifications/initialized') {
+      return new Response(null, { status: 202 });
+    }
+    return Response.json({ jsonrpc: '2.0', id: parsedBody?.id ?? 1, result: { tools: [] } });
+  });
+
+  const blockedForwarded = await app.handle(new Request('http://gateway.local/api/v1/mcp/tinadec', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.5' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  }));
+  assert.equal(blockedForwarded.status, 403);
+  const blockedBody = await blockedForwarded.json() as Record<string, unknown>;
+  assert.equal(blockedBody.code, 'external_network_forbidden');
+  assert.equal(upstreamCalls.length, 0);
+
+  const blockedMixed = await app.handle(new Request('http://gateway.local/api/v1/mcp/tinadec', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '127.0.0.1, 10.0.0.4' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+  }));
+  assert.equal(blockedMixed.status, 403);
+  assert.equal(upstreamCalls.length, 0);
+
+  const blockedRealIp = await app.handle(new Request('http://gateway.local/api/v1/mcp/tinadec', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-real-ip': '198.51.100.8' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list' }),
+  }));
+  assert.equal(blockedRealIp.status, 403);
+  assert.equal(upstreamCalls.length, 0);
+
+  const okLoopback = await app.handle(new Request('http://gateway.local/api/v1/mcp/tinadec', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '127.0.0.1, ::1', 'x-real-ip': '::ffff:127.0.0.1' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list' }),
+  }));
+  assert.equal(okLoopback.status, 200);
+  assert.equal(upstreamCalls.length, 1);
+  assert.equal(upstreamCalls[0].url, 'http://127.0.0.1:48731/api/v1/mcp/tinadec');
+
+  const okNotify = await app.handle(new Request('http://gateway.local/api/v1/mcp/tinadec', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+  }));
+  assert.equal(okNotify.status, 202);
+  assert.equal(upstreamCalls.length, 2);
+});

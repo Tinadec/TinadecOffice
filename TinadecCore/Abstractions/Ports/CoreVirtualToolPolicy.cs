@@ -95,11 +95,14 @@ public static class CoreVirtualToolPolicy
     public const string TinadecModePublishToolId = "tinadec_mode_publish";
     public const string TinadecSkillApplyToolId = "tinadec_skill_apply";
     public const string TinadecMcpApplyToolId = "tinadec_mcp_apply";
+    public const string TinadecPromptApplyToolId = "tinadec_prompt_apply";
+    public const string TinadecModelProfileApplyToolId = "tinadec_model_profile_apply";
 
     public static readonly IReadOnlyList<string> TinadecConfigToolIds =
     [
         TinadecInspectToolId, TinadecAgentApplyToolId, TinadecModeApplyToolId,
         TinadecModePublishToolId, TinadecSkillApplyToolId, TinadecMcpApplyToolId,
+        TinadecPromptApplyToolId, TinadecModelProfileApplyToolId,
     ];
 
     public static bool IsTinadecConfig(string? toolId) =>

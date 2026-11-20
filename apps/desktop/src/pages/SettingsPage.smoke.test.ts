@@ -121,7 +121,6 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       // are exactly as easy to orphan as a section.
       'AgentModesPanel',
       'PromptEngineeringMerged',
-      'RuntimeInstancesPanel',
       'CompanionSection',
       'ModelCenterSection',
     ]
@@ -130,11 +129,18 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       // `<Name` rather than `<Name />`: a panel that declares props never closes its tag.
       expect(settingsPageSource).toContain(`<${name}`)
     }
-    // AgentCenterSection lives one directory deeper; the packs panel renders inside it.
-    expect(settingsPageSource).toContain(`import AgentCenterSection from '@/settings/agentCenter/AgentCenterSection.vue'`)
+    // AgentCenterSection and AgentsDirectoryPanel live one directory deeper; the packs and
+    // governance/advanced panels render inside AgentCenterSection.
+    expect(settingsPageSource).toContain(`import AgentCenterSection, { type AgentCenterTabKey } from '@/settings/agentCenter/AgentCenterSection.vue'`)
     expect(settingsPageSource).toContain(`<AgentCenterSection`)
+    expect(settingsPageSource).toContain(`import AgentsDirectoryPanel from '@/settings/agentCenter/AgentsDirectoryPanel.vue'`)
+    expect(settingsPageSource).toContain(`<AgentsDirectoryPanel`)
     expect(agentCenterSectionSource).toContain(`import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'`)
     expect(agentCenterSectionSource).toContain(`<AgentPacksPanel`)
+    expect(agentCenterSectionSource).toContain(`import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'`)
+    expect(agentCenterSectionSource).toContain(`<AgentEvolutionPanel`)
+    expect(agentCenterSectionSource).toContain(`import GovernanceRolesPanel from '@/components/agentCenter/GovernanceRolesPanel.vue'`)
+    expect(agentCenterSectionSource).toContain(`<GovernanceRolesPanel`)
   })
 
   it('assigns the routes ref from loadModelCenter (regression: route writes sent no If-Match)', () => {

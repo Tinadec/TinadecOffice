@@ -164,6 +164,50 @@ function setToolTransportResponseHeaders(
   if (contentType) set.headers['content-type'] = contentType;
 }
 
+function isLoopbackIpAddress(raw: string): boolean {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return false;
+  let host = trimmed;
+  if (host.startsWith('[')) {
+    const close = host.indexOf(']');
+    if (close <= 1) return false;
+    host = host.slice(1, close);
+  } else {
+    const firstColon = host.indexOf(':');
+    const lastColon = host.lastIndexOf(':');
+    if (firstColon !== -1 && firstColon === lastColon) {
+      host = host.slice(0, firstColon);
+    }
+  }
+
+  if (host.startsWith('::ffff:')) {
+    host = host.slice('::ffff:'.length);
+  }
+  if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true;
+  const ipv4Match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!ipv4Match) return false;
+  return Number(ipv4Match[1]) <= 255 && Number(ipv4Match[2]) <= 255 && Number(ipv4Match[3]) <= 255;
+}
+
+function isLoopbackMcpRequest(
+  request: Request,
+  server?: { requestIP?(req: Request): { address?: string } | null } | null,
+): boolean {
+  const remoteIp = server?.requestIP?.(request)?.address;
+  if (remoteIp && !isLoopbackIpAddress(remoteIp)) return false;
+
+  for (const headerName of ['x-forwarded-for', 'x-real-ip']) {
+    const headerVal = request.headers.get(headerName);
+    if (headerVal === null) continue;
+    const segments = headerVal.split(',');
+    if (segments.length === 0) return false;
+    for (const seg of segments) {
+      if (!isLoopbackIpAddress(seg)) return false;
+    }
+  }
+  return true;
+}
+
 const app = new Elysia()
   .use(swagger({
     path: '/docs',
@@ -1468,12 +1512,16 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Delete prompt fragment', tags: ['System'] } })
-  .post('/api/v1/prompt-fragments/:fragmentId/clone', async ({ params, set, request }) => {
+  .post('/api/v1/prompt-fragments/:fragmentId/clone', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/prompt-fragments/${params.fragmentId}/clone`, { method: 'POST', headers });
+    const result = await proxyJson(`/api/v1/prompt-fragments/${params.fragmentId}/clone`, {
+      method: 'POST',
+      ...(body !== undefined ? { body: body as Record<string, unknown> } : {}),
+      headers,
+    });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/prompt-fragments/${params.fragmentId}/clone`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
     return result.data;
   }, { detail: { summary: 'Clone prompt fragment', tags: ['System'] } })
   .post('/api/v1/prompt-context/preview', async ({ body, set, request }) => {
@@ -1781,6 +1829,44 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List MCP server tools', tags: ['System'], responses: { 200: externalJsonResponse('McpServerTools', 'One named server with its tools and schemas; 404 mcp_server_not_found only after Core actually read the inventory.') } } })
+  .post('/api/v1/mcp/tinadec', async ({ body, set, request, server }) => {
+    if (!isLoopbackMcpRequest(request, server)) {
+      setStatus(set, 403);
+      set.headers['content-type'] = 'application/problem+json';
+      return toProblemDetails(403, 'external_network_forbidden', 'The Tinadec self-configuration MCP endpoint only accepts loopback requests.', '/api/v1/mcp/tinadec');
+    }
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/mcp/tinadec', { method: 'POST', body: (body as Record<string, unknown> | undefined) ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/mcp/tinadec'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    if (result.status === 202 || result.status === 204) return '';
+    return result.data;
+  }, {
+    detail: {
+      summary: 'Loopback MCP JSON-RPC 2.0 server for Tinadec self-configuration',
+      tags: ['System'],
+      responses: {
+        200: {
+          description: 'JSON-RPC 2.0 response from the loopback Tinadec self-configuration MCP server.',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['jsonrpc'],
+                properties: {
+                  jsonrpc: { type: 'string' },
+                  id: {},
+                  result: {},
+                  error: { type: 'object' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
   .get('/api/v1/acp/adapters', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/acp/adapters', { headers });
@@ -2108,6 +2194,27 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Update agent mode draft (nodes/edges/layout in body)', tags: ['AgentCenter'] } })
+  .post('/api/v1/agent-modes/:id/clone', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agent-modes/${encodeURIComponent(params.id)}/clone`, {
+      method: 'POST',
+      body: (body as Record<string, unknown> | undefined) ?? {},
+      headers,
+    });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}/clone`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Clone agent mode', tags: ['AgentCenter'] } })
+  .delete('/api/v1/agent-modes/:id', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agent-modes/${encodeURIComponent(params.id)}`, { method: 'DELETE', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    if (result.status === 204) return '';
+    return result.data;
+  }, { detail: { summary: 'Delete custom agent mode', tags: ['AgentCenter'] } })
   .post('/api/v1/agent-modes/:id/publish', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/agent-modes/${params.id}/publish`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });

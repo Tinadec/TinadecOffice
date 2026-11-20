@@ -105,12 +105,13 @@ describe('AgentModeCanvas', () => {
     wrapper.unmount()
   })
 
-  it('keeps the Vue event and drag-stop wiring in the template', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src', 'components', 'canvas', 'AgentModeCanvas.vue'), 'utf8')
+  it('keeps the Vue event, drag-stop, and non-jittering nodes-change wiring in ModeGraphCanvas', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src', 'components', 'modeEditor', 'ModeGraphCanvas.vue'), 'utf8')
     expect(source).toContain('@connect="onConnect"')
     expect(source).toContain('@node-drag-stop="onNodeDragStop"')
-    // The old editor wired every drag tick back into props and jittered.
-    expect(source).not.toContain('@nodes-change=')
+    expect(source).toContain('@nodes-change="onNodesChange"')
+    // Only non-dragging position commits (arrow-key updates) are emitted, never live drag ticks.
+    expect(source).toContain("change.type === 'position' && change.dragging === false && change.position")
   })
 
   it('refuses a self link', async () => {

@@ -1,3 +1,4 @@
+// Traditional Chinese interface text for every window and TinadecUI; same keys as en.ts. Code refers to keys, never to the text.
 export default {
   toolsSettings: {
     skillPackageTooMany: "技能包超過 {max} 個檔案。",
@@ -18,7 +19,7 @@ export default {
       minItems: "至少 {value} 項。",
       maxItems: "最多 {value} 項。",
       required: "缺少必填屬性。",
-      unknownProperty: "未知屬性。"
+      unknownProperty: "未知屬性。",
     },
     allResources: "所有可用資源",
     agentSettingsLink: "開啟此智能體的工具設定",
@@ -37,13 +38,13 @@ export default {
       skills_missing: "技能資源不存在，或在這個專案裡不可見。",
       skills_invalid: "技能資源無效。",
       skills_disabled: "這個技能資源已停用。",
-      mcp_program: "MCP 伺服器程式{status}。登記伺服器不會安裝它的程式，請審閱並核准單獨的安裝操作。"
+      mcp_program: "MCP 伺服器程式{status}。登記伺服器不會安裝它的程式，請審閱並核准單獨的安裝操作。",
     },
     programStatus: {
       not_installed: "未安裝",
       outdated: "已過期",
       invalid: "無效",
-      needs_reinstall: "需要重新安裝"
+      needs_reinstall: "需要重新安裝",
     },
     connectionDisabledHint: "請先啟用這個資源再測試。",
     connectionStatus: {
@@ -52,12 +53,12 @@ export default {
       error: "出錯",
       unavailable: "不可用",
       unknown: "未知",
-      not_reported: "工具宿主沒有報告這個資源"
+      not_reported: "工具宿主沒有報告這個資源",
     },
     capabilityReason: {
       not_found: "在設定或解析出的路徑上找不到執行檔。",
       not_in_path: "PATH 中找不到這個執行檔。",
-      unsupported_platform: "目前平台不支援。"
+      unsupported_platform: "目前平台不支援。",
     },
     skillReason: {
       shadowed: "同名的專案技能在繼承的繫結裡取代了它。",
@@ -76,7 +77,7 @@ export default {
       name_invalid: "名稱只能使用小寫字母、數字和單個連字元，且不能以連字元開頭或結尾。",
       description_missing: "frontmatter 裡沒有 description。",
       description_too_long: "描述超過 {max} 個字元。",
-      name_directory_mismatch: "名稱「{name}」與所在資料夾「{directory}」不一致。"
+      name_directory_mismatch: "名稱「{name}」與所在資料夾「{directory}」不一致。",
     },
     sourceUndeclared: "來源未宣告",
     usedBy: "使用智能體：{agents}",
@@ -110,7 +111,7 @@ export default {
       web: "網頁",
       mcp: "MCP",
       skills: "技能",
-      advanced: "進階"
+      advanced: "進階",
     },
     agent: "設定物件",
     project: "專案資源上下文",
@@ -185,7 +186,7 @@ export default {
     invalid: "無效",
     pendingApproval: "等待審核",
     skillQueuedShared: "共享技能操作狀態：{status}。工具操作 {id} 的後續處理由 Core 審核狀態決定。",
-    packageReview: "提交前確認：目標 {scope}，共 {count} 個檔案，摘要由 Core 在提交時計算。"
+    packageReview: "提交前確認：目標 {scope}，共 {count} 個檔案，摘要由 Core 在提交時計算。",
   },
   space: {
     sessionUnsupported: "無法建立空間會話：服務尚未支援獨立會話型別，請更新服務後重試。",
@@ -229,7 +230,7 @@ export default {
       result: "目標結果",
       tool: "工具活動",
       git: "專案資源",
-      approval: "審查項"
+      approval: "審查項",
     },
     cluster: {
       routeBlocked: "佈局遮擋了連線，可整理本目標後檢視。",
@@ -272,7 +273,7 @@ export default {
       source: "來源",
       noRelations: "沒有已載入的依賴關係。",
       terminal: "智能體終端",
-      hideTerminal: "收合終端面板"
+      hideTerminal: "收合終端面板",
     },
     status: {
       running: "進行中",
@@ -289,8 +290,8 @@ export default {
       approved: "已核准",
       rejected: "已拒絕",
       blocked: "受阻",
-      idle: "就緒"
-    }
+      idle: "就緒",
+    },
   },
   errors: {
     invalidServerResponse: "服務端返回的資料無效：{text}",
@@ -519,7 +520,7 @@ export default {
       harness_channel_unsupported: "這個工具不提供這種通道。",
       harness_protocol_unsupported: "這個工具不支援這種協定。",
       tool_execution_not_found: "找不到這次工具呼叫。",
-      internal_error: "後端發生了意外錯誤。"
+      internal_error: "後端發生了意外錯誤。",
     },
     category: {
       config: "模型或工作區設定不完整。",
@@ -572,7 +573,7 @@ export default {
       recovery_marked_failed: "恢復時被標記為失敗。",
       explicit_deny: "授權規則拒絕了這次呼叫。",
       boundary_not_allowed: "沒有授權規則允許這次呼叫。",
-      missing_authorization_boundary: "這次呼叫沒有可用的授權規則。"
+      missing_authorization_boundary: "這次呼叫沒有可用的授權規則。",
     },
     workspaceNotRegistered: "所選工作區沒有在 TinadecCore 中登記。",
     actions: {
@@ -582,8 +583,8 @@ export default {
       openStorageSettings: "儲存設定",
       openToolSettings: "工具設定",
       unregisterWorkspace: "取消登記",
-      chooseFolder: "選擇資料夾"
-    }
+      chooseFolder: "選擇資料夾",
+    },
   },
   app: {
     name: "TinadecOffice",
@@ -636,7 +637,7 @@ export default {
       preview: "預覽",
       settings: "設定",
       storage: "儲存",
-      tools: "工具"
+      tools: "工具",
     },
     fromOtherWindow: "來自其他視窗",
     operationCompleted: "操作已完成",
@@ -650,12 +651,12 @@ export default {
     backendNotConnected: "後端未連線",
     backendNotConnectedMessage: "30 秒內無法連線 Core/Gateway，部分功能可能不可用。",
     backendDisconnected: "後端已斷開",
-    backendDisconnectedMessage: "與 Core/Gateway 的連線已斷開，服務可用後請重試。"
+    backendDisconnectedMessage: "與 Core/Gateway 的連線已斷開，服務可用後請重試。",
   },
   nav: {
     chat: "聊天",
     projects: "專案",
-    settings: "設定"
+    settings: "設定",
   },
   sidebar: {
     showAll: "展開顯示",
@@ -693,8 +694,8 @@ export default {
     recentConversations: "最近對話",
     projectConversations: "專案對話",
     recentActivity: "最近活動",
-    allActivity: "所有活動",
-    projectActivity: "專案活動",
+    allActivity: '所有活動',
+    projectActivity: '專案活動',
     activityEmpty: "尚無活動",
     activityState: {
       awaiting: "等待你處理",
@@ -703,15 +704,15 @@ export default {
       failed: "出錯",
       cancelled: "已取消",
       unknown: "狀態未知",
-      idle: "無任務"
+      idle: "無任務",
     },
-    tokenUsage: "近 {days} 天 token 用量",
-    tokenUsageSummary: "最近 {days} 天共 {tokens} tokens",
-    tokenUsageSummaryTruncated: "最近 {days} 天至少 {tokens} tokens",
-    tokenUsageTruncated: "只統計了最近 {count} 次呼叫",
-    tokenUsageDay: "{date} · {tokens} tokens",
-    tokenUsageDayEmpty: "{date} · 無紀錄",
-    tokenUsageUnreported: "這些呼叫沒有回報 token 用量",
+    tokenUsage: '近 {days} 天 token 用量',
+    tokenUsageSummary: '最近 {days} 天共 {tokens} tokens',
+    tokenUsageSummaryTruncated: '最近 {days} 天至少 {tokens} tokens',
+    tokenUsageTruncated: '只統計了最近 {count} 次呼叫',
+    tokenUsageDay: '{date} · {tokens} tokens',
+    tokenUsageDayEmpty: '{date} · 無紀錄',
+    tokenUsageUnreported: '這些呼叫沒有回報 token 用量',
     editWorkspace: "編輯工作區",
     moveUp: "上移",
     moveDown: "下移",
@@ -733,7 +734,7 @@ export default {
     trashSessionConfirmMessage: "將會話「{name}」移入回收站？之後可在設定頁恢復或徹底刪除。",
     migrateSession: "遷移到專案",
     migrationTarget: "目標專案",
-    migrationExplanation: "排隊訊息須先執行或取消。目前執行結束後遷移會話與引用內容；後續執行採用目標專案已發布的預設模式。"
+    migrationExplanation: "排隊訊息須先執行或取消。目前執行結束後遷移會話與引用內容；後續執行採用目標專案已發布的預設模式。",
   },
   tinaChat: {
     refresh: "重新整理",
@@ -796,7 +797,7 @@ export default {
     policySaved: "通訊策略已更新",
     policyUnavailable: "無法讀取目前工作區的通訊策略。",
     revisionStale: "設定已被其他改動更新，請重新整理後重試",
-    actionFailed: "操作未完成"
+    actionFailed: "操作未完成",
   },
   organization: {
     title: "組織",
@@ -815,7 +816,7 @@ export default {
       reports: "報告",
       evidence: "證據",
       environments: "環境",
-      topology: "拓撲"
+      topology: "拓撲",
     },
     environments: {
       hint: "這個工作區登記的測試、雲端、遠端、本地與終端環境。智能體用 environment_acquire 取用、用完歸還，每個空位同一時間只歸一個 run；run 結束時自動歸還。",
@@ -841,8 +842,8 @@ export default {
         cloud: "雲端",
         remote: "遠端",
         terminal: "終端",
-        test: "測試"
-      }
+        test: "測試",
+      },
     },
     evidenceSearch: {
       placeholder: "要找什麼：關鍵詞、路徑、代號（如 search#1）或一句話",
@@ -852,19 +853,19 @@ export default {
       noHits: "沒有找到符合的證據。",
       mode: {
         hybrid: "語義 + 關鍵詞",
-        keyword: "關鍵詞"
+        keyword: "關鍵詞",
       },
       kinds: {
         task_result: "任務結果",
         report: "報告",
         member_turn: "成員結論",
-        summary: "摘要"
+        summary: "摘要",
       },
       matchedBy: {
         semantic: "語義命中",
         keyword: "關鍵詞命中",
-        both: "語義與關鍵詞都命中"
-      }
+        both: "語義與關鍵詞都命中",
+      },
     },
     role: {
       human: "使用者",
@@ -872,7 +873,7 @@ export default {
       governance: "治理",
       executor: "執行者",
       host: "系統",
-      other: "其他"
+      other: "其他",
     },
     online: "線上",
     offline: "離線",
@@ -894,7 +895,7 @@ export default {
       board: "公告板",
       plan: "計畫室",
       adhoc: "臨時會議室",
-      other: "其他"
+      other: "其他",
     },
     roomMeta: "{members} 位成員 · {messages} 條訊息",
     joined: "已加入",
@@ -907,7 +908,7 @@ export default {
     noMessages: "這個會議室還沒有訊息",
     messageKind: {
       report: "報告",
-      notice: "通知"
+      notice: "通知",
     },
     confidential: "保密",
     notMember: "你不是這個會議室的成員，只能檢視",
@@ -921,20 +922,20 @@ export default {
     severity: {
       info: "資訊",
       warning: "警告",
-      blocking: "阻斷"
+      blocking: "阻斷",
     },
     reportKind: {
       conflict: "衝突",
       risk: "風險",
       drift: "偏離",
       budget: "預算",
-      progress: "進度"
+      progress: "進度",
     },
     reportStatus: {
       open: "待處理",
       acted: "已處理",
       dismissed: "已駁回",
-      superseded: "已被取代"
+      superseded: "已被取代",
     },
     subject: "物件",
     subjectKind: {
@@ -943,7 +944,7 @@ export default {
       lease: "租約",
       approval: "審核",
       member: "成員",
-      path: "路徑"
+      path: "路徑",
     },
     subjectState: {
       lease_active: "持有中",
@@ -951,7 +952,7 @@ export default {
       path_held: "持有中",
       path_free: "空閒",
       member_online: "線上",
-      member_offline: "離線"
+      member_offline: "離線",
     },
     subjectUnknown: "目前狀態未知",
     proposed: "建議",
@@ -965,7 +966,7 @@ export default {
       resume_run: "恢復執行",
       stop_run: "停止執行",
       assign_environment: "分配環境",
-      ask_user: "詢問使用者"
+      ask_user: "詢問使用者",
     },
     evidence: "證據",
     notePlaceholder: "備註（可選）",
@@ -986,7 +987,7 @@ export default {
       handle: "代號",
       task: "任務",
       status: "狀態",
-      writeScope: "寫入範圍"
+      writeScope: "寫入範圍",
     },
     noTasks: "這個執行還沒有任務",
     tasksTruncated: "任務較多，清單已截斷",
@@ -1018,8 +1019,8 @@ export default {
       created: "已建立",
       blocked: "受阻",
       waiting: "等待中",
-      proposed: "已提出"
-    }
+      proposed: "已提出",
+    },
   },
   chat: {
     title: "Tinadec 會話",
@@ -1056,7 +1057,7 @@ export default {
       tip: "提示",
       important: "重要",
       warning: "警告",
-      caution: "危險"
+      caution: "危險",
     },
     copy: "複製訊息",
     copied: "已複製",
@@ -1081,7 +1082,7 @@ export default {
     jumpToLatest: "回到底部",
     thinking: "正在思考",
     usingTools: "正在使用工具",
-    waitingForApproval: "等待審核"
+    waitingForApproval: "等待審核",
   },
   context: {
     approval: "審核",
@@ -1108,12 +1109,12 @@ export default {
     companionGroupsDesc: "唯讀檢視群聊成員與最近訊息",
     companionConnections: "連接",
     companionConnectionsDesc: "逐夥伴檢視授權、執行狀態與最後檢查時間",
-    companionBuddy: "與搭子的對話",
-    companionBuddyDesc: "唯一的那條搭子對話，頂端是等你處理的事項。",
-    companionSupervision: "會話夥伴監工",
-    companionSupervisionDesc: "哪些會話夥伴需要你、正在跑、還是已經完成。",
-    companionProfile: "人格與模型",
-    companionProfileDesc: "編輯選中夥伴的人格設定與回答模型。",
+    companionBuddy: '與搭子的對話',
+    companionBuddyDesc: '唯一的那條搭子對話，頂端是等你處理的事項。',
+    companionSupervision: '會話夥伴監工',
+    companionSupervisionDesc: '哪些會話夥伴需要你、正在跑、還是已經完成。',
+    companionProfile: '人格與模型',
+    companionProfileDesc: '編輯選中夥伴的人格設定與回答模型。',
     gitWidgetPrimary: "主目錄",
     gitWidgetPrimaryOnly: "僅顯示目前工作區主目錄，不彙總其他源目錄。",
     gitWidgetNoProject: "選擇工作區後檢視 Git 狀態",
@@ -1348,7 +1349,7 @@ export default {
       forceDeleteBranch: "強制刪除分支 {branch}",
       renameBranch: "把目前分支重新命名為 {name}",
       createWorktree: "為 {branch} 建立工作樹 {path}",
-      removeWorktree: "刪除工作樹 {path}"
+      removeWorktree: "刪除工作樹 {path}",
     },
     gitWorkspaceRequired: "需要一個專案工作區。",
     gitNoDiffText: "沒有可顯示的差異內容。",
@@ -1427,7 +1428,7 @@ export default {
       Configuration: "設定",
       Security: "安全",
       API: "API",
-      Size: "規模"
+      Size: "規模",
     },
     gitRisk: {
       conflict: "{path} 有未解決的合併衝突",
@@ -1446,7 +1447,7 @@ export default {
       summary: "更新了 {n} 個檔案，有 {concerns}。",
       concernCount: "{n} 處潛在問題",
       localExplanation: "由本地規則生成，AI 分析不可用。",
-      aiExplanation: "AI 生成的風險評估。"
+      aiExplanation: "AI 生成的風險評估。",
     },
     gitAiGenerate: "AI 生成提交訊息",
     gitAiGenerating: "AI 生成中...",
@@ -1467,13 +1468,13 @@ export default {
     gitConvSubjectTooLong: "提交標題超過 72 字元限制",
     gitConvSubjectWarn: "提交標題超過 50 字元建議長度",
     gitConvInvalidType: "提交型別不符合 Conventional Commits 規範",
-    gitConvBodyTooLong: "部分正文行超過 72 字元建議寬度"
+    gitConvBodyTooLong: "部分正文行超過 72 字元建議寬度",
   },
   settings: {
     codeFont: "程式碼字型",
     codeFontHint: "程式碼塊、命令、路徑、差異和終端使用的等寬字型。前四種隨應用內建；系統字型在缺少時改用 JetBrains Mono。",
     codeFontSystem: "系統等寬字型",
-    codeFontSystemBadge: "系統",
+    codeFontSystemBadge: "系統", codeFontSampleWord: "程式碼",
     modelScope: {
       follows: "目前工作區「{name}」使用這裡的模型設定：在這裡新增、修改或刪除的模型，對它的對話立即生效。",
       ownCopy: "目前工作區「{name}」使用它自己的模型設定，不隨這裡的修改變化。",
@@ -1486,11 +1487,11 @@ export default {
       followConfirm: "使用這裡的設定",
       followed: "「{name}」現在使用這裡的模型設定",
       detached: "「{name}」現在使用自己的模型設定",
-      switchFailed: "沒能切換工作區的模型設定"
+      switchFailed: "沒能切換工作區的模型設定",
     },
     modelParameters: "模型參數",
     modelParametersFor: "{model} 的參數",
-    modelParametersHint: "用於此提供方下的這個模型，對新執行生效。留空沿用執行時或模型預設值。模型支援的參數取值可能不同。",
+    modelParametersHint: "作用於該供應商下的此模型，對新執行生效。留空則沿用預設值；不同模型支援的參數可能不同。",
     modelReasoningEffort: "思考強度",
     modelDefaultParameter: "使用預設值",
     modelTemperature: "溫度",
@@ -1499,7 +1500,7 @@ export default {
     modelImageInput: "接受圖片輸入",
     modelImageMaxBytes: "單張圖片上限（位元組）",
     modelImageMaxCount: "每輪最多圖片數",
-    modelImageConfigured: "由此提供者的圖片設定決定，可為這個模型單獨覆寫。",
+    modelImageConfigured: "繼承該供應商的圖片輸入設定，可為此模型單獨覆寫。",
     modelImageAcpSnapshot: "唯讀：來自最近一次 ACP initialize 連線快照。",
     modelImageUnsupported: "此通道不支援圖片輸入（唯讀）。",
     modelImageBudgetInvalid: "單張圖片須為 1–32 MiB，每輪圖片數須為 1–8。",
@@ -1519,12 +1520,9 @@ export default {
       low: "低",
       medium: "中",
       high: "高",
-      xhigh: "極高"
+      xhigh: "極高",
     },
-    reasoningScale: {
-      faster: "更快",
-      smarter: "更強"
-    },
+    reasoningScale: { faster: "更快", smarter: "更強" },
     title: "設定",
     back: "返回",
     personal: "個人",
@@ -1563,7 +1561,7 @@ export default {
     personalRolesPreview: "已選身份",
     personalRoleSeparator: "·",
     personalRolesCustomLabel: "自定義身份",
-    personalRolesCustomPlaceholder: "插入你的身份",
+    personalRolesCustomPlaceholder: "輸入自定義身分",
     personalRolesCustomMeta: "最多 24 個字元；留空則顯示「其他」。",
     personalRolesSave: "儲存身份",
     personalRolesSaved: "工作身份已儲存。",
@@ -1599,7 +1597,7 @@ export default {
     personalShareClose: "關閉",
     general: "常規",
     storage: "儲存與設定",
-    userConfigurationSource: "使用者預設設定 · user。專案模組 TOML 在「儲存與設定」中選擇專案編輯；專案工具和資源在「工具」中選擇專案維護。",
+    userConfigurationSource: "目前編輯使用者級設定（user）。專案級 TOML 請前往「儲存與設定」；專案工具與資源請前往「工具」選擇對應專案。",
     generalSubtitle: "設定 Desktop 與 TinadecOffice 服務的連線方式。",
     gatewayConnection: "Gateway 連線",
     gatewayConnectionHint: "Desktop 的 API 與事件流量統一通過此 Gateway 地址。",
@@ -1613,26 +1611,11 @@ export default {
     conversationFlow: "對話流",
     conversationFlowHint: "一輪工作裡留下多少步驟與細節。回答、審批和失敗原因不受影響。",
     conversationFlowPresets: {
-      minimal: {
-        label: "極簡",
-        summary: "只留一行總結，工具與子智能體的過程全部收起。"
-      },
-      concise: {
-        label: "簡潔",
-        summary: "最近的步驟留在流裡，更早的折成一行。"
-      },
-      balanced: {
-        label: "適中",
-        summary: "每個步驟單獨一行，讀取檔案和搜尋也各佔一行。"
-      },
-      detailed: {
-        label: "詳細",
-        summary: "子智能體一行寫清任務、耗時與結果，可以就地展開。"
-      },
-      rich: {
-        label: "豐富",
-        summary: "所有步驟都留在流裡，正在跑的子智能體自動展開。"
-      }
+      minimal: { label: "極簡", summary: "只留一行總結，工具與子智能體的過程全部收起。" },
+      concise: { label: "簡潔", summary: "最近的步驟留在流裡，更早的折成一行。" },
+      balanced: { label: "適中", summary: "每個步驟單獨一行，讀取檔案和搜尋也各佔一行。" },
+      detailed: { label: "詳細", summary: "子智能體一行寫清任務、耗時與結果，可以就地展開。" },
+      rich: { label: "豐富", summary: "所有步驟都留在流裡，正在跑的子智能體自動展開。" },
     },
     defaultModeTopology: "預設模式拓撲",
     defaultModeTopologyHint: "會話中傳送互動訊息時採用的預設模式拓撲版本。",
@@ -1648,7 +1631,7 @@ export default {
     serviceDiscoveryHint: "自動掃描本機網路卡上正在執行的 TinadecOffice 後端服務，無需手工填寫地址。",
     scanServices: "掃描服務",
     scanningServices: "掃描中…",
-    serviceDiscoveryIdleHint: "點選「掃描服務」自動列出可連線的後端，也可繼續在下方手工填寫。",
+    serviceDiscoveryIdleHint: "未自動掃描時，也可直接在下方填寫閘道位址。",
     serviceDiscoveryEmpty: "未發現執行中的 Gateway 或 Core 服務，可手工填寫地址。",
     serviceDiscoveryFailed: "服務掃描失敗，請稍後重試。",
     serviceDiscoverySelected: "已填入所選服務地址，儲存後重啟生效。",
@@ -1658,7 +1641,7 @@ export default {
     serviceCoreUnreachable: "Core 離線",
     serviceMode: {
       local: "本地",
-      cloud: "雲端"
+      cloud: "雲端",
     },
     serviceCurrent: "目前連線",
     serviceCoreDirectHint: "Core 直連候選僅作展示：工具傳輸等能力需經 Gateway。",
@@ -1686,7 +1669,7 @@ export default {
     promptEngineering: "提示詞工程",
     agentModes: "模式拓撲",
     runtimeInstances: "執行例項",
-    agentModesHint: "雙泳道拓撲編排：拖曳連線、節點覆寫與版本管理；發布後供會話繫結。",
+    agentModesHint: "雙層模式拓撲編排：拖曳連線、節點模型覆寫與版本發布。",
     runtimePolicy: "執行時策略",
     runtimePolicyNone: "一般模式",
     runtimePolicyStructuredInvestigation: "結構化糾偏",
@@ -1696,8 +1679,8 @@ export default {
     runtimePolicyDependenciesHint: "依賴：{pairs}",
     runtimePolicySettings: "執行時策略設定（JSON）",
     runtimePolicySettingsInvalid: "執行時策略設定必須是合法的 JSON 物件。",
-    promptsPanelHint: "管線畫布 + 片段庫統一檢視：版本、效力訊號與 Token 預估。",
-    runtimePanelHint: "監控執行中的智能體例項：暫停/恢復/取消與佇列改派。",
+    promptsPanelHint: "在管線畫布與片段庫之間切換，檢視版本、效力與 Token 預估。",
+    runtimePanelHint: "檢視執行中的智能體例項，執行暫停、恢復、取消或佇列改派。",
     runtimeCeilings: {
       title: "執行策略上限",
       hint: "這些數值決定一次合法任務會不會被提前攔住；它們只存在 runtime.toml 裡，這裡做唯讀展示。",
@@ -1723,7 +1706,7 @@ export default {
       runBudget: "run 累計 token 熔斷",
       runBudgetHint: "一次 run 的累計 token 熔斷值；關閉時由重複呼叫與連續錯誤等訊號止血。",
       toolCalls: "工具呼叫保險絲",
-      toolCallsHint: "單一任務允許的工具呼叫總數；正常任務不會接近它。"
+      toolCallsHint: "單一任務允許的工具呼叫總數；正常任務不會接近它。",
     },
     fragmentCountLabel: "片段",
     pipelineCountLabel: "管線",
@@ -1777,12 +1760,9 @@ export default {
     reassignConfirm: "確認改派",
     reassignDone: "改派完成",
     reassignFailed: "改派失敗",
-    reassignFieldsRequired: "Session / Interaction / Target Run 均必填",
+    reassignFieldsRequired: "請完整填寫會話 ID、互動 ID 與目標執行 ID",
     prevPage: "上一頁",
     nextPage: "下一頁",
-    promptEngineeringMigrated: "提示詞工程整合檢視構建中：管線畫布與片段庫將在本標籤內合併。",
-    agentModesMigrated: "模式拓撲編輯器構建中：雙泳道畫布與版本管理將在本標籤內提供。",
-    runtimeInstancesMigrated: "執行例項監控構建中：艦隊清單與執行控制將在本標籤內提供。",
     toolLayer: "工具",
     appearance: "外觀",
     companions: {
@@ -1838,7 +1818,7 @@ export default {
       tagline: "個性簽名",
       avatar: "頭像標識",
       avatarHint: "短文字或 emoji，用於清單與聊天中的顯示。",
-      avatarLive2dNote: "這個形象是匯入的 Live2D 模型：應用程式沒有隨附渲染器，所以現在不會顯示它，只記錄綁定關係。",
+      avatarLive2dNote: '這個形象是匯入的 Live2D 模型：應用程式沒有隨附渲染器，所以現在不會顯示它，只記錄綁定關係。',
       avatarDefault: "預設形象",
       model: "模型",
       modelDefault: "跟隨預設聊天路由",
@@ -1866,7 +1846,7 @@ export default {
         motionCount: "{count} 個動作",
         expressionCount: "{count} 個表情",
         rendererNote: "渲染器未隨應用分發：這裡只匯入並讀取模型能力，不會顯示模型；要顯示需自行提供 Cubism Core。",
-        unavailableShort: "Live2D 未就緒"
+        unavailableShort: "Live2D 未就緒",
       },
       memory: {
         title: "私有記憶",
@@ -1896,7 +1876,7 @@ export default {
         created: "建立於 {time}",
         loadFailed: "讀取記憶失敗",
         saveFailed: "儲存記憶失敗",
-        deleteFailed: "刪除記憶失敗"
+        deleteFailed: "刪除記憶失敗",
       },
       skill: {
         title: "技能",
@@ -1925,7 +1905,7 @@ export default {
         neverLoaded: "尚未載入",
         loadFailed: "讀取技能失敗",
         saveFailed: "儲存技能失敗",
-        deleteFailed: "刪除技能失敗"
+        deleteFailed: "刪除技能失敗",
       },
       connection: {
         title: "連線",
@@ -1963,7 +1943,7 @@ export default {
         deleteConfirm: "刪除",
         loadFailed: "讀取連線失敗",
         saveFailed: "儲存連線失敗",
-        deleteFailed: "刪除連線失敗"
+        deleteFailed: "刪除連線失敗",
       },
       autonomy: {
         title: "自主規則",
@@ -1997,10 +1977,10 @@ export default {
           duplicate_group: "相同的群聊已經建立過",
           duplicate_member: "該成員已經在群組中",
           conversation_paused: "該會話的自動回覆已暫停",
-          duplicate_message: "該訊息已經傳送過"
+          duplicate_message: "該訊息已經傳送過",
         },
-        saveFailed: "儲存自主規則失敗"
-      }
+        saveFailed: "儲存自主規則失敗",
+      },
     },
     pets: "夥伴形象",
     petdexCatalog: "Petdex 目錄",
@@ -2009,16 +1989,16 @@ export default {
     loadingPets: "正在載入寵物",
     noPetsFound: "沒有符合的寵物",
     noDownloadedPets: "尚未下載寵物",
-    builtinPetBadge: "內建",
-    builtinPetHint: "隨應用程式內建的備援形象，不可刪除",
-    agentAvatarSection: "形象",
-    agentAvatarHint: "隨機時每次派發換一隻；固定後該智能體的每次任務都用這隻。",
-    agentAvatarRandom: "隨機",
-    agentAvatarEmpty: "尚無可用的寵物素材，智能體將使用佔位形象。",
-    agentAvatarSaveFailed: "形象儲存失敗",
+builtinPetBadge: "內建",
+builtinPetHint: "隨應用程式內建的備援形象，不可刪除",
+agentAvatarSection: "形象",
+agentAvatarHint: "隨機時每次派發換一隻；固定後該智能體的每次任務都用這隻。",
+agentAvatarRandom: "隨機",
+agentAvatarEmpty: "尚無可用的寵物素材，智能體將使用佔位形象。",
+agentAvatarSaveFailed: "形象儲存失敗",
     petDownloaded: "已下載",
     petKind: {
-      pet: "寵物"
+      pet: "寵物",
     },
     petEnabled: "已啟用",
     downloadPet: "下載",
@@ -2041,7 +2021,7 @@ export default {
     windowAndTray: "視窗與系統匣",
     windowAndTrayHint: "控制關閉主視窗後應用程式是否繼續在背景執行。",
     closeToTray: "關閉視窗後保持執行",
-    closeToTrayHint: "關閉主視窗時應用程式收進系統匣，執行中的 Agent 任務繼續進行；點擊匣圖示可重新開啟，右鍵可結束。",
+    closeToTrayHint: "關閉主視窗後最小化至系統匣，背景任務繼續執行；點擊系統匣圖示可恢復視窗。",
     closeToTraySaveFailed: "無法儲存視窗設定",
     launchAtLogin: "開機時自動啟動",
     launchAtLoginHint: "登入系統後自動執行 TinadecOffice；搭配「關閉視窗後保持執行」，夥伴才能在你沒開視窗時繼續待命。",
@@ -2066,7 +2046,7 @@ export default {
     apiDocs: "API 文件",
     about: "關於",
     archiveTrash: "歸檔與回收站",
-    archiveTrashSubtitle: "管理已歸檔與已刪除的專案和會話：恢復或徹底刪除。",
+    archiveTrashSubtitle: "管理已封存或移入垃圾桶的專案與會話，支援復原或徹底刪除。",
     archivedGroup: "已歸檔",
     trashGroup: "回收站",
     projectsGroup: "專案",
@@ -2081,12 +2061,9 @@ export default {
     sessionInProject: "所屬專案：{name}",
     loadArchiveFailed: "載入歸檔與回收站失敗",
     modelCenter: "模型中心",
-    modelCenterSubtitle: "統一管理供應商、API/本地連線、模型、CLI 與 ACP 執行來源。",
+    modelCenterSubtitle: "管理模型供應商、可用模型、路由規則與 CLI / TUI / ACP 執行時。",
     agentCenter: "智能體中心",
-    openWorkbench: "開啟完整工作台",
-    agentCenterSubtitle: "檢視目前有效執行來源，並設定 Core 預製智能體、執行模式與進化候選能力。",
-    toolLayerTitle: "工具",
-    toolLayerSubtitle: "檢視由 Core harness 治理的 Code 工具套件與 Codex 基礎工具。",
+    agentCenterSubtitle: "管理智能體、執行模式、提示詞與演化候選，支援受管包、自定義與自主建立來源。",
     toolLayerReadiness: "工具層就緒狀態",
     executionAgents: "執行智能體",
     humanCheckpoints: "人工檢查點",
@@ -2107,7 +2084,6 @@ export default {
     futureCount: "未來",
     codeToolSuite: "Code 工具套件",
     projectTemplates: "專案範本",
-    codexPrimitiveTools: "Codex 基礎工具",
     toolDiscovery: "工具發現",
     toolDiscoveryPlaceholder: "搜尋工具、能力、來源或風險",
     allSources: "全部來源",
@@ -2130,23 +2106,23 @@ export default {
     modelProviderManagement: "供應商管理",
     modelProviderManagementHint: "例項、憑證與啟停由 Core 持久化",
     modelCatalogScope: "模型目錄範圍",
-    configuredModelsOnly: "供應商預設與路由覆蓋",
+    configuredModelsOnly: "已設定模型清單",
     liveDiscovery: "即時模型發現",
     writable: "可寫",
     readOnly: "唯讀",
     available: "可用",
     unavailable: "不可用",
-    pendingCore: "等待 Core 支援",
+    pendingCore: "未開啟",
     previewOnly: "僅預覽",
     agentProfilesWritable: "智能體設定",
     agentProfilesWritableHint: "模式、工具與提示詞可儲存",
     runtimePreviewOnly: "模型策略",
-    runtimePreviewOnlyHint: "繼承/固定/CLI/ACP 經 draft→publish 發布為不可變版本",
+    runtimePreviewOnlyHint: "支援繼承路由、指定模型與 CLI / ACP 繫結，儲存後發布為不可變版本",
     agentModelStrategyPublished: "{name} 模型策略已發布",
     agentStrategyVersioned: "執行來源覆蓋",
-    agentStrategyVersionedHint: "儲存為該智能體的使用者級覆蓋，pack 管理的智能體同樣生效；隨時可改回「跟隨預設」",
+    agentStrategyVersionedHint: "儲存為該智能體的使用者級覆寫（受管智能體同樣生效），隨時可切回「繼承路由」",
     agentConflictTitle: "設定已被修改",
-    agentConflictMessage: "目前智能體設定已被其他會話修改（412）。強制覆蓋將基於最新版本重放本次更改；重新整理則放棄本地編輯。",
+    agentConflictMessage: "目前智能體設定已被其他改動更新。強制覆蓋會以目前修改為準；重新載入則放棄本地編輯。",
     agentConflictOverwrite: "強制覆蓋",
     agentConflictRefresh: "重新整理檢視最新",
     agentStatusPublished: "已發布 · v{version}",
@@ -2157,7 +2133,7 @@ export default {
     agentStatus: "狀態",
     agentSourceCustom: "自定義",
     agentSourcePack: "智能體包",
-    agentSourceBootstrap: "內建",
+    agentSourceBootstrap: "預設引導",
     agentSourceMissing: "缺失引用",
     agentSourceManaged: "託管唯讀",
     agentModeUsageSection: "Mode 使用位置",
@@ -2179,7 +2155,7 @@ export default {
     agentVersionArchived: "歷史",
     noVersionsPublished: "尚無發布版本",
     activeAgents: "已啟用智能體",
-    agentLayerCounts: "規劃 {planning} · 執行 {execution}",
+    agentLayerCounts: "治理 {planning} · 執行 {execution}",
     previewBadge: "預覽",
     agentProfiles: "智能體資料",
     centerOverview: "概覽",
@@ -2199,34 +2175,34 @@ export default {
     supplierCliSummary: "通過命令列執行時承接完整智能體任務。",
     supplierAcpSummary: "通過 ACP 介面卡連線外部智能體執行時。",
     noSuppliers: "Core 暫未返回供應商目錄",
-    configuredModelsHint: "目前僅展示供應商預設模型和已有路由覆蓋模型，不代表即時模型發現。",
+    configuredModelsHint: "展示已設定供應商下的預設模型、模型清單與路由覆蓋。",
     configuredOnly: "僅已設定",
     modelSourceProviderDefault: "供應商預設",
     modelSourceRouteOverride: "路由覆蓋",
-    modelSourceProviderModels: "渠道清單",
+    modelSourceProviderModels: "供應商清單",
     refreshModels: "重新整理模型",
     addModel: "新增模型",
     addModelTitle: "新增模型",
     removeModel: "移除模型",
-    noProviderModels: "該渠道尚未新增模型。",
+    noProviderModels: "該供應商尚未新增模型。",
     fetchModels: "取得模型",
-    fetchModelsFromProvider: "從渠道發現模型",
+    fetchModelsFromProvider: "從供應商取得模型",
     fetchingModels: "取得中…",
-    fetchModelsEmpty: "該渠道未返回任何模型。",
+    fetchModelsEmpty: "該供應商未傳回可用模型。",
     manualModel: "手動輸入模型名稱",
     modelNamePlaceholder: "如 gpt-4o-mini",
     modelSearchPlaceholder: "篩選模型…",
     modelFilterEmpty: "沒有符合此篩選條件的模型。",
     modelCatalogSearch: "搜尋模型或供應商",
     modelAdded: "已加入",
-    modelDiscoveryUnsupported: "Core 尚未提供即時模型發現能力",
+    modelDiscoveryUnsupported: "目前不支援新增或重新整理模型",
     discoveredNewModels: "發現 {count} 個新模型，已自動勾選",
     noNewModels: "未發現新模型",
     mergeDiscoveredTitle: "合併發現的模型",
-    confirmMergeDiscovered: "發現 {count} 個尚未持久化的新模型，確認後寫入該渠道：",
+    confirmMergeDiscovered: "發現 {count} 個新模型，確認後新增至該供應商：",
     confirmSave: "確認儲存",
     noConfiguredModels: "暫無已設定模型，請先建立 API 或本地連線。",
-    cliRuntimeHint: "單次執行的 harness，以及 opencode 自帶的本地服務。Core 用它為該渠道核實過的參數啟動程式，所以儲存的路徑必須指向真實執行檔。",
+    cliRuntimeHint: "單次執行的 CLI 與 OpenCode 本地 HTTP 服務；路徑須指向真實執行檔。",
     discoverCli: "自發現",
     discoveringCli: "掃描中…",
     cliDiscoveryTitle: "本機 CLI 自發現",
@@ -2238,7 +2214,7 @@ export default {
     notDetected: "未檢測到",
     pathNotConfigured: "未設定執行檔絕對路徑",
     workspaceNotConfigured: "未設定真實工作目錄",
-    noCliRuntimes: "暫無 CLI 執行時，請從供應商目錄建立。",
+    noCliRuntimes: "暫無 CLI 執行時，可透過上方「自動偵測」或新增供應商加入。",
     acpRuntimeHint: "與 harness 常駐處理程序的 stdio 會話：連線時以真實握手驗證，會話在回合之間保留自己的上下文。",
     centerCli: "CLI / 本地服務",
     centerTui: "TUI 終端",
@@ -2253,19 +2229,19 @@ export default {
     channelReason: {
       headless_frame_unverified: "目前構建還沒有采集到 {harness} 的無頭應答，暫時不能通過這個渠道驅動它。",
       terminal_host_unsupported: "目前平台沒有可用的終端宿主，無法執行 {harness} 的 TUI。",
-      protocol_unsupported: "目前構建還沒有這個渠道的客戶端。"
+      protocol_unsupported: "目前構建還沒有這個渠道的客戶端。",
     },
     probeNote: {
       start_failed: "無法啟動 {command}。",
       probe_timeout: "{name} 在 {timeout_ms} 毫秒內沒有響應 {command}，無法確認是否已安裝。",
       exit_code: "{name} 執行 {command} 時以退出碼 {exit_code} 結束。",
-      probe_failed: "無法探測 {name}：{error}"
+      probe_failed: "無法探測 {name}：{error}",
     },
     harnessProviderInstance: "供應商例項",
     protocolUnknown: "未記錄協定",
     tuiRuntimeHint: "在真實終端裡託管的全屏 harness。Tinadec 可以提交一次受治理回合，並把穩定後的螢幕文字投影為答案。",
     noTuiRuntimes: "還沒有按終端渠道設定的 harness。",
-    tuiBackendUnavailable: "TUI 回合使用已註冊的 PTY 宿主，並以有界靜默視窗判斷螢幕已穩定。長駐互動終端觀察仍與模型路由分開。",
+    tuiBackendUnavailable: "TUI 回合在受管終端中執行，並在輸出穩定後擷取螢幕結果；與互動終端會話互相獨立。",
     acpPermissionWarning: "harness 用它自己的模型作答，並在一個受治理的臨時目錄裡執行它自己的工具——那是你的專案目錄之外的地方；本構建對它發起的每一次權限請求都按拒絕回應。宣告\"不存取檔案系統\"並不能阻止它在那個目錄裡寫。",
     manageInMarketplace: "在市場管理",
     legacyProvider: "舊版供應商適配",
@@ -2353,7 +2329,7 @@ export default {
     statusConfigured: "已設定",
     statusFound: "已檢測到",
     statusMissing: "未檢測到",
-    statusMissingProvider: "提供方缺失",
+    statusMissingProvider: "供應商缺失",
     statusUnknown: "未知",
     statusCooldown: "冷卻中",
     save: "儲存",
@@ -2385,7 +2361,7 @@ export default {
     pickFromScreen: "從螢幕取色",
     version: "版本",
     versionCode: "Code",
-    planningLayer: "規劃層",
+    planningLayer: "治理層",
     executionLayer: "執行層",
     enableAgent: "啟用智能體",
     disableAgent: "停用智能體",
@@ -2393,7 +2369,7 @@ export default {
     closeConfig: "關閉設定",
     openAgentConfig: "開啟智能體設定",
     pleaseOpenAgentConfig: "請開啟智能體設定",
-    builtInAgent: "Core 預製",
+    builtInAgent: "受管唯讀",
     defaultEnabled: "預設啟用",
     agentConfiguration: "智能體設定",
     agentEnabled: "啟用此智能體",
@@ -2422,14 +2398,14 @@ export default {
     setDefaultModel: "設為預設模型",
     defaultChatModel: "預設對話",
     defaultChatNone: "尚未設定預設對話模型",
-    defaultChatChange: "變更",
+    defaultChatChange: "管理路由",
     defaultModelSet: "預設模型已設為 {model}",
     runtimeBindingSaved: "已更新 {name} 的執行來源",
     runtimeBindingUnsupported: "Core 尚未支援逐智能體執行來源繫結",
     routePurpose: "路由用途",
     routeProvider: "模型例項",
     routeModel: "模型名稱",
-    saveRoute: "儲存模型設定",
+    saveRoute: "儲存路由",
     centerRoutes: "路由",
     centerRoutesHint: "有序候選鏈：解析時按順序嘗試，一次儲存即發布不可變新版本。",
     routeNoCandidates: "暫無候選",
@@ -2461,17 +2437,23 @@ export default {
     agentModePlanFirst: "先規劃",
     agentModeParallel: "並行",
     agentModeSafeResearch: "安全調研",
-    agentModeBalancedHint: "預設雙層編排：一個規劃通道和兩個執行通道。",
+    agentModeBalancedHint: "預設雙層編排：治理層負責協調與審查，執行層平行完成任務。",
     agentModePlanFirstHint: "會議與監督智能體先生成任務圖，再開始執行。",
     agentModeParallelHint: "依賴關係和預算允許時，啟用更多執行層工作單元。",
     agentModeSafeResearchHint: "唯讀探索；寫入、命令、網路和 ACP 操作需要嚴格審核。",
     policyBalanced: "平衡策略",
     policyStrict: "嚴格策略",
     policyPerformance: "效能優先",
-    agentLayerPlanning: "規劃層",
+    agentLayerPlanning: "治理層",
     agentLayerExecution: "執行層",
     agentLayerEvolution: "進化層",
     agentTypeMeeting: "會議智能體",
+    agentTypeSessionCoordinator: "對話協調",
+    agentTypeTaskExecutor: "任務執行",
+    agentTypeGovernanceReviewer: "治理審查",
+    agentTypeExplorationPlanner: "探索規劃",
+    agentTypeSoloMaster: "單兵全能",
+    agentTypeArtexDirector: "自主探索操舵",
     agentTypeContextCompressor: "上下文壓縮智能體",
     agentTypePromptContextEngineer: "提示詞上下文工程智能體",
     agentTypeEvolver: "進化演化智能體",
@@ -2488,15 +2470,6 @@ export default {
     agentTypeDesigner: "設計智能體",
     agentTypeReviewExecutor: "評審執行智能體",
     agentTypeToolPackager: "MCP 工具包智能體",
-    gitManagerSubtitle: "專門處理 Git 狀態、推送準備和面向使用者交接說明的執行層子代理。",
-    gitManagerConfigure: "設定 Git 智能體",
-    gitManagerApprovalTitle: "推送策略",
-    gitManagerApprovalBody: "提交、推送、合併、變基和歷史改寫都必須通過 Core 審核繫結的工具呼叫。",
-    gitManagerRouteTitle: "Git 路由",
-    gitManagerHandoffTitle: "交接說明",
-    gitManagerHandoffName: "差異和分支說明",
-    gitManagerHandoffBody: "彙總儲存庫狀態、影響範圍、剩餘風險，以及是否已經可以推送。",
-    gitManagerCapabilitiesTitle: "Git 能力",
     noAgents: "暫無智能體",
     noAgentsHint: "Core 尚未返回可設定的智能體資料。",
     topologyView: "拓撲檢視",
@@ -2514,20 +2487,20 @@ export default {
     agentDescription: "描述",
     agentDescriptionPlaceholder: "描述該智能體的職責...",
     agentTools: "工具繫結",
-    agentToolsHint: "點選切換該智能體可使用的工具。",
+    agentToolsHint: "切換該智能體允許呼叫的工具。",
     agentCapabilities: "能力標籤",
     agentCapabilitiesHint: "新增或移除該智能體的能力標籤。",
     newCapabilityPlaceholder: "新增能力...",
     addCapability: "新增",
     agentSystemPrompt: "系統提示詞",
     agentSystemPromptHint: "覆蓋該智能體的預設系統提示詞。留空則使用預設值。",
-    agentSystemPromptOverrideHint: "儲存為該智能體專屬的覆蓋片段。留空則使用預設值。",
+    agentSystemPromptOverrideHint: "儲存為該智能體的提示詞覆寫；留空則沿用預設。",
     agentSystemPromptPlaceholder: "輸入自定義系統提示詞...",
     saveAgent: "儲存設定",
     cloneAgent: "複製為自定義",
     agentConflict: "設定已被他人修改，請重新整理後重試",
-    agentBuiltInConflict: "預製智能體不可直接修改，請先複製",
-    agentRevision: "修訂 {revision}",
+    agentBuiltInConflict: "受管智能體不可直接修改，請先複製為自定義副本",
+    agentRevision: "版本 {revision}",
     promptViewLabel: "提示詞檢視",
     fragmentEnabledFilter: "啟用狀態篩選",
     builtinBadge: "內建",
@@ -2553,7 +2526,7 @@ export default {
     backgroundPickerUnavailable: "無法選擇背景檔案",
     backgroundPickFailed: "選擇背景檔案失敗",
     modelReadinessUnavailable: "暫時讀不到模型就緒回執，只顯示設定。",
-    builtInCloneHint: "預製智能體為唯讀，複製後可自定義工具、能力與提示詞",
+    builtInCloneHint: "受管智能體為唯讀，複製後可自定義工具、能力與提示詞",
     selectReadOnlyTools: "僅選唯讀工具",
     clearSelection: "清空選擇",
     toolSearchPlaceholder: "搜尋工具名稱、ID 或風險",
@@ -2578,11 +2551,11 @@ export default {
     showApiKey: "顯示金鑰",
     hideApiKey: "隱藏金鑰",
     apiKeyKeepHint: "留空表示保留已儲存的金鑰，金鑰不會顯示在這裡。",
-    providerNextStep: "此供應商還沒有模型。新增一個模型後才能使用。",
+    providerNextStep: "此供應商尚未設定模型，新增一個模型後即可用於對話。",
     providerListLabel: "供應商列表",
     backToProviderList: "返回供應商列表",
-    providerModelsHint: "此供應商的模型；預設對話使用其中之一。",
-    noProviderSelected: "選擇一個供應商檢視連線與模型。",
+    providerModelsHint: "該供應商的模型；可設為預設對話模型或加入路由。",
+    noProviderSelected: "選擇一個供應商以檢視設定與模型。",
     locateProvider: "在供應商中檢視",
     providerReferencesAffected: "被 {count} 處引用：{summary}",
     providerNoReferences: "目前沒有智慧體、模式或路由引用它的模型。",
@@ -2637,12 +2610,9 @@ export default {
     reset: "重置",
     resetBackground: "重置背景",
     globalMaterial: "全域性材質效果",
-    globalMaterialHint: "統一設定所有面板的材質效果，包括側邊欄、對話區和上下文面板",
-    panelStyles: "面板樣式",
-    panelStylesHint: "自定義各面板的透明度和視覺效果",
+    globalMaterialHint: "統一控制側邊欄、對話區與功能面板的材質效果。",
     sidebar: "側邊欄",
     chatPanel: "對話面板",
-    contextPanel: "上下文面板",
     effectOpaque: "不透明",
     effectTranslucent: "半透明",
     effectBlur: "模糊效果",
@@ -2652,7 +2622,7 @@ export default {
     bgPreviewHtml: "輸入HTML內容",
     bgImageFormats: "支援格式：JPG、PNG、GIF、WebP",
     bgVideoFormats: "支援格式：MP4、WebM",
-    bgHtmlHint: "HTML內容將作為背景渲染，不支援互動",
+    bgHtmlHint: "HTML 內容僅作為背景層展示，不回應點擊互動。",
     bgPerformanceWarning: "複雜的背景可能影響效能",
     moduleLoading: "正在載入設定…",
     moduleError: "此部分載入失敗。",
@@ -2685,11 +2655,11 @@ export default {
     teamLeaderRequired: "請先選擇隊長",
     teamNameRequired: "團隊名稱不能為空",
     teamNameTaken: "已有同名團隊，請換一個名稱",
-    teamLeaderUnavailable: "隊長不可用：需要已啟用、已發佈且屬於營運層",
+    teamLeaderUnavailable: "隊長不可用：需要已啟用、已發佈且屬於治理層",
     teamMembersRequired: "團隊至少需要 1 名成員",
     teamMembersLimit: "最多 {max} 名成員",
     teamMemberUnavailable: "以下成員不可用：{names}",
-    teamNoLeader: "沒有可用的營運層智慧體，無法建立團隊",
+    teamNoLeader: "沒有可用的治理層智慧體，無法建立團隊",
     teamTemplateNoMembers: "沒有可用的成員智慧體；請先在智慧體頁建立或啟用成員",
     teamInstructions: "協作指令",
     teamInstructionsPlaceholder: "負責人如何分派、成員如何回報、最終如何收口",
@@ -2740,8 +2710,8 @@ export default {
     spawnMembersEmpty: "還沒有成員",
     spawnMemberAdd: "新增成員",
     spawnMemberLimit: "最多 4 名成員",
-    conversationNodeRequired: "對話身分節點不能刪除；請先把對話標記移到另一個營運層節點",
-    conversationLayerRequired: "對話身分節點必須在營運層",
+    conversationNodeRequired: "對話身分節點不能刪除；請先把對話標記移到另一個治理層節點",
+    conversationLayerRequired: "對話身分節點必須在治理層",
     deleteNodeTitle: "刪除節點",
     deleteNodeMessage: "刪除「{name}」及其關聯連線？",
     modeNameField: "模式名稱",
@@ -2803,7 +2773,7 @@ export default {
     agentDraftDiscard: "捨棄草稿",
     agentDraftTooLarge: "草稿過大，未儲存到本機；請先儲存到伺服器",
     centerConnections: "連線",
-    centerAdvanced: "進階"
+    centerAdvanced: "進階",
   },
   providers: {
     openaiCompatible: "OpenAI 相容",
@@ -2865,7 +2835,7 @@ export default {
     zcode: "ZCode",
     zcodeSummary: "ZCode 智能體。不提供 ACP：只能單次執行或終端會話",
     custom: "自定義供應商",
-    customSummary: "自定義 OpenAI 相容端點"
+    customSummary: "自定義 OpenAI 相容端點",
   },
   accentColors: {
     blue: "藍色",
@@ -2876,7 +2846,7 @@ export default {
     red: "紅色",
     cyan: "青色",
     yellow: "黃色",
-    dynamic: "跟隨背景"
+    dynamic: "跟隨背景",
   },
   market: {
     action: {
@@ -2886,14 +2856,14 @@ export default {
       installPreview: "安裝預覽",
       queueInstall: "排隊安裝",
       refreshSource: "重新整理來源",
-      uninstallPreview: "解除安裝預覽"
+      uninstallPreview: "解除安裝預覽",
     },
     defaultSourceName: "MCP 註冊表",
     sourceAdded: "來源已新增。",
     sourceNoAnswer: "來源沒有響應（{outcome}）。",
     sourceOutcome: {
       blocked: "地址策略攔截了對這個來源的存取。",
-      unavailable: "這次沒能讀取這個來源，目錄保持原樣。"
+      unavailable: "這次沒能讀取這個來源，目錄保持原樣。",
     },
     sourceStale: "上次重新整理失敗，下面的條目來自更早的資料：{error}",
     installBlocker: {
@@ -2909,7 +2879,7 @@ export default {
       detail_too_large: "這個條目的軟體包描述超過了 Core 的儲存上限。",
       detail_missing: "這個條目沒有儲存詳情。",
       detail_unreadable: "無法讀取這個條目儲存的詳情。",
-      not_installable: "目前構建無法安裝這個條目。"
+      not_installable: "目前構建無法安裝這個條目。",
     },
     refreshedTruncated: "已從 {pages} 頁重新整理 {rows} 個條目；清單比這更長。",
     refreshed: "已重新整理 {rows} 個條目（拒收 {refused} 個，移除 {removed} 個，因已安裝保留 {retained} 個）。",
@@ -2988,7 +2958,7 @@ export default {
     packageCommit: "固定提交",
     packageHash: "包摘要",
     packageFiles: "包檔案",
-    scope: "作用域"
+    scope: "作用域",
   },
   approval: {
     runCommandSummary: "執行命令：{command}",
@@ -2997,14 +2967,14 @@ export default {
     kind: {
       tool: "工具呼叫",
       user_tool: "你發起的工具操作",
-      permission: "權限請求"
+      permission: "權限請求",
     },
     specConfirmation: "規範文件確認",
     specConfirmationHint: "請閱讀完整文件。這次決定僅針對下方文件，後續階段需要分別確認。",
     summaryCode: {
       user_requested: "你請求執行 {tool}。",
       retry_after_unknown: "重試 {tool}：上一次執行的結果未知。",
-      permission_request: "{tool} 需要授權才能執行。"
+      permission_request: "{tool} 需要授權才能執行。",
     },
     specRequirements: "需求規範",
     specDesign: "設計規範",
@@ -3051,9 +3021,9 @@ export default {
         rejected: "已駁回",
         escalated: "交還給你",
         skipped: "未詢問",
-        superseded: "已被你的決定取代"
-      }
-    }
+        superseded: "已被你的決定取代",
+      },
+    },
   },
   doctor: {
     title: "診斷",
@@ -3063,7 +3033,7 @@ export default {
     counts: {
       ready: "就緒",
       warning: "警告",
-      blocked: "受阻"
+      blocked: "受阻",
     },
     status: {
       ok: "正常",
@@ -3077,7 +3047,7 @@ export default {
       error: "錯誤",
       rejected: "已拒絕",
       missing: "缺失",
-      blocked: "受阻"
+      blocked: "受阻",
     },
     reason: {
       database_ready: "資料庫可以連線。",
@@ -3125,7 +3095,7 @@ export default {
       tools_handshake_failed: "工具程式沒有正確響應。",
       manifest_ready: "工具清單指紋可用。",
       manifest_hash_missing: "工具清單沒有指紋，無法檢測它的變化。",
-      manifest_unavailable: "工具程式不可用，工具清單未知。"
+      manifest_unavailable: "工具程式不可用，工具清單未知。",
     },
     action: {
       database_unavailable: "檢查資料庫連線設定後重啟 Core。",
@@ -3161,7 +3131,7 @@ export default {
       probe_failed: "確認 {base_url} 上的端點可用後重試，詳情見 Core 日誌。",
       tools_not_built: "執行 npm run dev:tools（npm run dev 會先自動構建）。",
       tools_handshake_failed: "重新構建工具程式後重啟 Core。",
-      manifest_unavailable: "請先讓工具程式可用。"
+      manifest_unavailable: "請先讓工具程式可用。",
     },
     item: {
       database: "資料庫",
@@ -3173,8 +3143,8 @@ export default {
       model_route: "模型路由",
       model_probe: "模型連通性",
       tool_provider: "工具提供方",
-      manifest_hash: "工具清單"
-    }
+      manifest_hash: "工具清單",
+    },
   },
   debugStudio: {
     preview: {
@@ -3200,7 +3170,7 @@ export default {
         toolCalls: "工具呼叫",
         events: "事件",
         agents: "智能體",
-        tools: "工具"
+        tools: "工具",
       },
       noOrchestration: "目前場景無編排執行資料，切換到「正常填充」或「智能體工作中」場景檢視效果。",
       noGitDiff: "目前場景無 Git diff 資料，切換到「Git 變更」場景檢視效果。",
@@ -3220,7 +3190,7 @@ export default {
         code: "程式碼編輯器（真實 CodePage）",
         settings: "設定（真實 SettingsPage）",
         allTabs: "全部子頁籤可用",
-        market: "擴充功能市場（真實 MarketPage · UIE 引擎隔離）"
+        market: "擴充功能市場（真實 MarketPage · UIE 引擎隔離）",
       },
       items: {
         ChatPanel: "聊天面板",
@@ -3237,50 +3207,50 @@ export default {
         ToolStatsDashboard: "工具統計儀表板",
         DiffViewer: "Diff 檢視器",
         CommitMessageEditor: "Commit 訊息編輯器",
-        FileTreePanel: "檔案樹面板"
+        FileTreePanel: "檔案樹面板",
       },
       scenario: {
         populated: {
           label: "正常填充",
-          description: "預設的豐富資料狀態，包含專案、會話、訊息、編排、工具呼叫等完整資料。"
+          description: "預設的豐富資料狀態，包含專案、會話、訊息、編排、工具呼叫等完整資料。",
         },
         empty: {
           label: "空狀態",
-          description: "無專案、無會話、無訊息的初始空狀態，用於驗證空態 UI。"
+          description: "無專案、無會話、無訊息的初始空狀態，用於驗證空態 UI。",
         },
         loading: {
           label: "載入中",
-          description: "資料正在載入，所有集合為空但元件應顯示骨架屏或載入指示器。"
+          description: "資料正在載入，所有集合為空但元件應顯示骨架屏或載入指示器。",
         },
         busy: {
           label: "智能體工作中",
-          description: "編排執行狀態為 running，有正在執行的工具呼叫與待審核項。"
+          description: "編排執行狀態為 running，有正在執行的工具呼叫與待審核項。",
         },
         approvalPending: {
           label: "待審核",
-          description: "有 3 個待審核項，涵蓋 git / shell / code 三種類型，用於驗證審核 UI。"
+          description: "有 3 個待審核項，涵蓋 git / shell / code 三種類型，用於驗證審核 UI。",
         },
         error: {
           label: "錯誤狀態",
-          description: "Doctor 檢查存在 error 項，Readiness 狀態為 blocked，用於驗證錯誤態 UI。"
+          description: "Doctor 檢查存在 error 項，Readiness 狀態為 blocked，用於驗證錯誤態 UI。",
         },
         agentWorking: {
           label: "Agent 活動中",
-          description: "編排執行中，多個 step_results 處於 stubbed 狀態，展示 Agent 活動橫幅。"
+          description: "編排執行中，多個 step_results 處於 stubbed 狀態，展示 Agent 活動橫幅。",
         },
         manyMessages: {
           label: "大量訊息",
-          description: "20+ 條訊息，包含長 Markdown 內容，用於驗證訊息清單的捲動與渲染效能。"
+          description: "20+ 條訊息，包含長 Markdown 內容，用於驗證訊息清單的捲動與渲染效能。",
         },
         gitChanges: {
           label: "Git 變更",
-          description: "Git diff 預覽包含 3 個 section（工作區/暫存/分支比較），多個檔案變更。"
+          description: "Git diff 預覽包含 3 個 section（工作區/暫存/分支比較），多個檔案變更。",
         },
         toolFailures: {
           label: "工具失敗",
-          description: "多個工具呼叫處於 failed 狀態，用於驗證失敗態 UI 與錯誤展示。"
-        }
-      }
+          description: "多個工具呼叫處於 failed 狀態，用於驗證失敗態 UI 與錯誤展示。",
+        },
+      },
     },
     tabPreview: "預覽",
     simulation: {
@@ -3293,7 +3263,7 @@ export default {
       approved: "模擬審核：已通過",
       rejectedApproval: "模擬審核：已拒絕",
       decisionRejected: "審核決定被拒絕",
-      decisionFailed: "審核決定失敗"
+      decisionFailed: "審核決定失敗",
     },
     requestFailed: {
       injectMessage: "注入訊息失敗：{error}",
@@ -3308,7 +3278,7 @@ export default {
       fetchDiagnostics: "讀取診斷失敗：{error}",
       fetchProcessInfo: "讀取處理程序資訊失敗：{error}",
       fetchTraces: "讀取追蹤失敗：{error}",
-      fetchTraceDetail: "讀取追蹤詳情失敗：{error}"
+      fetchTraceDetail: "讀取追蹤詳情失敗：{error}",
     },
     title: "智能體除錯工作室",
     tabTimeline: "時間線",
@@ -3369,7 +3339,7 @@ export default {
     errors: "{count} 個錯誤",
     loadingGraph: "正在載入智能體圖...",
     graphLoadFailed: "無法從 Gateway 讀取智能體目錄。",
-    graphDirectoryNote: "按層排列的智能體目錄——執行拓撲請看該 run 的編排頁"
+    graphDirectoryNote: "按層排列的智能體目錄——執行拓撲請看該 run 的編排頁",
   },
   permission: {
     selectLabel: "工具審核方式",
@@ -3385,7 +3355,7 @@ export default {
     delegateBoth: "雙重代批",
     delegateConversationHint: "由對話身份結合你的目標審核；shell、推送、刪除、提交這類高風險動作仍由你本人決定。",
     delegateReviewerHint: "由審查員在獨立上下文中審核（只看動作與事實，不看對話）；shell、推送、刪除、提交這類高風險動作仍由你本人決定。",
-    delegateBothHint: "審查員與對話身份都核准才執行，任一駁回即拒絕；shell、推送、刪除、提交這類高風險動作仍由你本人決定。"
+    delegateBothHint: "審查員與對話身份都核准才執行，任一駁回即拒絕；shell、推送、刪除、提交這類高風險動作仍由你本人決定。",
   },
   agent: {
     agent: "智能體",
@@ -3396,7 +3366,7 @@ export default {
     error: "出錯",
     idle: "空閒",
     noActivity: "暫無智能體活動",
-    planningLayer: "規劃層智能體",
+    planningLayer: "治理層智能體",
     executionLayer: "執行層智能體",
     waitingAssignment: "正在等待智能體分配...",
     taskPlan: "任務計畫",
@@ -3434,7 +3404,7 @@ export default {
     supervisionCorrect: "糾正",
     supervisionCancel: "取消",
     supervisionCorrectionPrompt: "請輸入糾正內容；提交後 run 會重新規劃。",
-    supervisionDecisionFailed: "監督決策失敗"
+    supervisionDecisionFailed: "監督決策失敗",
   },
   terminal: {
     agentBadge: "智能體",
@@ -3454,7 +3424,7 @@ export default {
       cwd: "（工作目錄：{cwd}）",
       exited: "[處理程序已退出，退出碼 {code}]",
       terminated: "[會話已結束]",
-      inputLost: "[輸入沒有送達]"
+      inputLost: "[輸入沒有送達]",
     },
     call: {
       notReady: "終端會話尚未建立，稍候再試",
@@ -3466,11 +3436,11 @@ export default {
       resume: "繼續",
       pause: "暫停",
       stop: "終止",
-      openInPanel: "在功能面板開啟"
+      openInPanel: "在功能面板開啟",
     },
     shellName: {
       cmd: "命令提示符",
-      default: "預設 Shell"
+      default: "預設 Shell",
     },
     defaultTitle: "終端",
     defaultShell: "預設終端",
@@ -3478,18 +3448,18 @@ export default {
     exited: "已退出",
     notAvailable: "終端不可用",
     notAvailableHint: "整合終端需要 Electron 桌面應用環境，在瀏覽器或網頁預覽中不可用。",
-    shortcutHint: "Ctrl+Shift+T 新增 · Ctrl+W 關閉 · Ctrl+Tab 切換"
+    shortcutHint: "Ctrl+Shift+T 新增 · Ctrl+W 關閉 · Ctrl+Tab 切換",
   },
   orchestrationPanel: {
     conversationNode: "對話身份",
     tier: {
       deterministic: "deterministic · 焊死拓撲",
       self_dispatch: "self_dispatch · 邊內自派發",
-      free_form: "free_form · 自由搭建"
+      free_form: "free_form · 自由搭建",
     },
     layer: {
-      operation: "運營層",
-      execution: "執行層"
+      operation: "治理層",
+      execution: "執行層",
     },
     stepResults: "步驟結果",
     noStepResults: "沒有步驟結果。",
@@ -3504,7 +3474,7 @@ export default {
     tabs: {
       timeline: "時間線",
       catalog: "工具目錄",
-      stats: "統計"
+      stats: "統計",
     },
     refreshTools: "重新整理工具",
     refreshToolsHint: "重新整理工具目錄",
@@ -3534,7 +3504,7 @@ export default {
     groupTokens: "{name}{via} · {tokens} 個 token{partial} · {calls}",
     unreported: "（{count} 次未報告）",
     flows: "{count} 條流轉",
-    identity: "· 對話身份"
+    identity: "· 對話身份",
   },
   toolPanel: {
     filters: {
@@ -3542,7 +3512,7 @@ export default {
       success: "成功",
       failed: "失敗",
       approval: "審核",
-      running: "進行中"
+      running: "進行中",
     },
     newest: "最新在前",
     oldest: "最早在前",
@@ -3570,7 +3540,7 @@ export default {
       completedWithFailure: "{tool} 執行完畢，但返回了失敗結果。",
       failed: "{tool} 失敗。",
       failedWith: "{tool} 失敗：{reason}",
-      outcome_unknown: "{tool} 的結果未知。"
+      outcome_unknown: "{tool} 的結果未知。",
     },
     catalog: {
       search: "按名稱、能力或領域搜尋工具…",
@@ -3592,7 +3562,7 @@ export default {
       capabilities: "能力",
       required: "需要",
       notRequired: "不需要",
-      execute: "執行"
+      execute: "執行",
     },
     stats: {
       overview: "概覽",
@@ -3609,15 +3579,15 @@ export default {
       blocked: "受阻",
       topTools: "常用工具",
       bySource: "按來源",
-      empty: "本會話還沒有工具執行資料。"
-    }
+      empty: "本會話還沒有工具執行資料。",
+    },
   },
   taskGraph: {
     empty: "傳送一個任務來生成編排計畫。",
-    escalated: "已上報"
+    escalated: "已上報",
   },
   eventsPanel: {
-    empty: "這個對話還沒有事件。"
+    empty: "這個對話還沒有事件。",
   },
   governance: {
     preAuthorizeHint: "為一次執行裡的指定工具授予有限次數的無人值守使用。每次呼叫仍會做繫結檢查。",
@@ -3630,29 +3600,29 @@ export default {
       auditReference: "審計引用",
       snapshot: "快照 ID",
       lastReason: "上次恢復原因",
-      message: "訊息"
+      message: "訊息",
     },
     snapshotKind: {
       filesystem: "檔案副本",
-      git: "Git"
+      git: "Git",
     },
     snapshotStatus: {
       created: "已建立",
       conflict: "有衝突",
       restored: "已恢復",
-      restored_with_conflicts: "已恢復（有衝突）"
+      restored_with_conflicts: "已恢復（有衝突）",
     },
     fileChange: {
       added: "新增",
       deleted: "刪除",
       modified: "修改",
-      unchanged: "未變"
+      unchanged: "未變",
     },
     snapshotFacts: {
       files: "檔案數",
       workspaceHash: "工作區雜湊",
       contentHash: "內容雜湊",
-      createdAt: "建立時間"
+      createdAt: "建立時間",
     },
     riskMeta: "風險：{risk}",
     actionApprovals: "操作審核",
@@ -3694,7 +3664,7 @@ export default {
     snapshotsTitle: "工作區快照",
     supervision: "監督審查",
     supervisionEmpty: "還沒有監督發現。",
-    undoFile: "復原這個檔案"
+    undoFile: "復原這個檔案",
   },
   canvas: {
     unbound: "未繫結",
@@ -3715,7 +3685,7 @@ export default {
     conversationBadge: "對話",
     emptyTitle: "還沒有節點",
     emptyHint: "新增第一個智慧體；已有節點時可先用自動排版整理。",
-    emptyReadonly: "這個模式由 Agent Pack 管理，複製後即可編輯。",
+    emptyReadonly: "這個模式由 智能體包 管理，複製後即可編輯。",
     issue: {
       empty: "圖為空",
       "unbound-node": "存在未繫結智慧體的節點",
@@ -3723,11 +3693,11 @@ export default {
       "duplicate-edge": "重複連線",
       "dangling-endpoint": "連線端點已不存在",
       cycle: "存在環，無法自動分層",
-      backflow: "執行層不能連回營運層",
+      backflow: "執行層不能連回治理層",
       "no-conversation": "缺少對話身分節點",
       "multi-conversation": "只能有一個對話身分",
-      "conversation-layer": "對話身分必須在營運層"
-    }
+      "conversation-layer": "對話身分必須在治理層",
+    },
   },
   workbench: {
     title: "工作台",
@@ -3740,7 +3710,7 @@ export default {
       mode: "模式 {value}",
       config: "設定 {value}",
       revision: "修訂 {value}",
-      manifest: "工具清單 {value}"
+      manifest: "工具清單 {value}",
     },
     facts: {
       layer: "層級",
@@ -3749,7 +3719,7 @@ export default {
       depth: "派生深度",
       parent: "父例項",
       task: "任務",
-      capabilities: "能力"
+      capabilities: "能力",
     },
     counts: "{nodes} 個節點 · {findings} 條發現 · {versions} 個上下文版本",
     findings: "監督發現",
@@ -3761,7 +3731,7 @@ export default {
     executionLane: "執行層",
     laneEmpty: "這次執行還沒有智能體例項。",
     lineageEdge: "派生關係",
-    operationLane: "運營層"
+    operationLane: "運營層",
   },
   documents: {
     tree: "檔案",
@@ -3772,7 +3742,7 @@ export default {
     hideTree: "收合資料夾",
     noWorkspace: "尚未選擇專案，無法讀取工作區檔案。",
     loadingEditor: "正在載入編輯器…",
-    editorFailed: "編輯器載入失敗"
+    editorFailed: "編輯器載入失敗",
   },
   docReader: {
     tabs: "已開啟的文件",
@@ -3796,12 +3766,12 @@ export default {
     tooLargeTitle: "檔案過大",
     tooLargeDetail: "檔案大小 {size}，不在側欄中呈現。",
     closeTab: "關閉文件",
-    truncated: "僅顯示前 {count} 行"
+    truncated: "僅顯示前 {count} 行",
   },
   codeEditor: {
     emptyTitle: "選一個檔案開始編輯",
     emptyHint: "左側是這個工作區的資料夾結構；儲存會先走核准。",
-    closeFile: "關閉這個檔案"
+    closeFile: "關閉這個檔案",
   },
   code: {
     selectProject: "選擇專案…",
@@ -3832,16 +3802,16 @@ export default {
       saveShortcut: "儲存（Ctrl+S）",
       noChanges: "沒有改動",
       save: "儲存",
-      close: "關閉編輯器"
+      close: "關閉編輯器",
     },
     tabMode: {
       view: "檢視",
-      edit: "編輯"
+      edit: "編輯",
     },
     viewer: {
       reload: "重新載入",
       editFile: "編輯檔案",
-      edit: "編輯"
+      edit: "編輯",
     },
     tree: {
       loadFailed: "目錄載入失敗",
@@ -3862,7 +3832,7 @@ export default {
       empty: "目錄是空的。",
       open: "開啟",
       rename: "重新命名（需審核）",
-      delete: "刪除（需審核）"
+      delete: "刪除（需審核）",
     },
     patch: {
       title: "差異：{path}",
@@ -3875,7 +3845,7 @@ export default {
       rejected: "補丁審核被拒絕。",
       apply: "應用補丁",
       noChanges: "沒有可預覽的改動。",
-      loading: "正在讀取差異…"
+      loading: "正在讀取差異…",
     },
     search: {
       files: "檔案",
@@ -3887,8 +3857,8 @@ export default {
       searching: "正在搜尋…",
       noResults: "沒有找到結果。",
       hint: "輸入要搜尋的內容，按 Enter 開始。",
-      truncated: "只顯示了前面一部分符合，換個更具體的關鍵詞可以縮小範圍。"
-    }
+      truncated: "只顯示了前面一部分符合，換個更具體的關鍵詞可以縮小範圍。",
+    },
   },
   userAction: {
     status: {
@@ -3904,8 +3874,8 @@ export default {
       failed: "{operation}：失敗了。",
       failedDetail: "{operation}：失敗，{detail}",
       other: "{operation}：{status}。",
-      otherDetail: "{operation}：{detail}"
-    }
+      otherDetail: "{operation}：{detail}",
+    },
   },
   hostBanner: {
     previewTitle: "介面預覽",
@@ -3923,7 +3893,7 @@ export default {
     restarting: "正在重啟…",
     checking: "正在重新驗證桌面宿主…",
     retry: "重試宿主連線",
-    retrying: "正在重試…"
+    retrying: "正在重試…",
   },
   uie: {
     move: "移動",
@@ -3969,8 +3939,8 @@ export default {
       debugMetrics: "指標",
       debugDiagnostics: "診斷",
       debugPreview: "預覽",
-      debugSimulator: "模擬器"
-    }
+      debugSimulator: "模擬器",
+    },
   },
   buddy: {
     title: "搭子",
@@ -3984,7 +3954,7 @@ export default {
     retry: "重試",
     you: "你",
     systemAuthor: "系統",
-    thinking: "思考中…"
+    thinking: "思考中…",
   },
   host: {
     previewReason: "介面預覽不連線使用者資料。工作區、儲存和資源安裝請在桌面應用中操作。",
@@ -3997,7 +3967,7 @@ export default {
     connectionStopped: "宿主正在關閉。",
     bridgeUnavailable: "桌面宿主狀態介面暫不可用，請重試連線。",
     connectionCheckFailed: "無法檢查宿主連線，請重試桌面宿主。",
-    previewShim: "介面預覽：工作區、儲存和安裝操作請在桌面應用中進行。"
+    previewShim: "介面預覽：工作區、儲存和安裝操作請在桌面應用中進行。",
   },
   workspaceRoots: {
     title: "工作空間",
@@ -4058,8 +4028,8 @@ export default {
       duplicate: "同一批裡有同名檔案",
       exists: "目標已有同名檔案，未覆寫",
       copy_failed: "複製失敗",
-      unresolved: "無法取得真實路徑"
-    }
+      unresolved: "無法取得真實路徑",
+    },
   },
   workspaceEditor: {
     editTitle: "編輯工作區",
@@ -4094,7 +4064,7 @@ export default {
     save: "儲存",
     create: "建立工作區",
     duplicateFolder: "資料夾已新增：{path}",
-    tooManyFolders: "最多新增 {max} 個來源資料夾。"
+    tooManyFolders: "最多新增 {max} 個來源資料夾。",
   },
   home: {
     untitledProject: "專案",
@@ -4117,7 +4087,7 @@ export default {
       sendMessage: "傳送訊息",
       steerMessage: "傳送轉向訊息",
       stopRun: "停止執行",
-      unregisterWorkspace: "取消工作區登記"
+      unregisterWorkspace: "取消工作區登記",
     },
     loadFailed: "載入失敗",
     workspacesLoadFailed: "工作區載入失敗",
@@ -4142,7 +4112,7 @@ export default {
       recheck: "繼續檢查遷移",
       accepted: "會話遷移已受理。",
       queued: "此會話仍有已受理的排隊訊息。請先執行或取消佇列，再申請遷移。",
-      failed: "會話遷移失敗"
+      failed: "會話遷移失敗",
     },
     attachmentSessionPreparing: "附件會話正在準備，請稍候再發送。",
     attachmentUploading: "附件正在上傳，請稍候再發送。",
@@ -4150,7 +4120,7 @@ export default {
     stream: {
       httpFailed: "執行流無法開啟（HTTP {status}）",
       noBody: "執行流沒有返回資料",
-      closedEarly: "執行流在執行結束前斷開，正在重連"
+      closedEarly: "執行流在執行結束前斷開，正在重連",
     },
     sendError: {
       modeUnavailable: "目前對話模式不可用，請在輸入框左下角重新選擇模式",
@@ -4158,7 +4128,7 @@ export default {
       modelNotConfigured: "模型未設定，請在設定中選擇模型後重試",
       forbidden: "權限不足",
       recovering: "恢復中，請稍候再試",
-      offline: "網路已斷開"
+      offline: "網路已斷開",
     },
     editBlockedByDraft: "輸入框裡還有未傳送的內容，先發送或清空它，再編輯歷史訊息。",
     editBlockedByRun: "這條訊息正被一個 run 使用，先停止它才能改寫它的歷史。",
@@ -4167,7 +4137,7 @@ export default {
     toolNeedsApproval: "工具需要審核",
     toolCompleted: "工具已完成",
     sessionLoadFailed: "會話載入失敗",
-    sessionRecoverFailed: "會話恢復失敗"
+    sessionRecoverFailed: "會話恢復失敗",
   },
   activity: {
     roles: {
@@ -4185,7 +4155,7 @@ export default {
       file_finder: "檔案查詢",
       git_manager: "Git 管理",
       code_writer: "程式碼編寫",
-      designer: "設計智能體"
+      designer: "設計智能體",
     },
     banner: {
       thinking: "思考中",
@@ -4195,9 +4165,9 @@ export default {
       error: "出錯",
       idle: "空閒",
       elapsed: "已耗時 {time}",
-      planningAgents: "規劃層智能體",
+      planningAgents: "治理層智能體",
       executionAgents: "執行層智能體",
-      waitingAssignment: "正在等待智能體分配..."
+      waitingAssignment: "正在等待智能體分配...",
     },
     agent: {
       active: "執行中",
@@ -4205,8 +4175,8 @@ export default {
       completed: "已完成",
       error: "出錯",
       idle: "空閒",
-      planningLayer: "規劃層",
-      executionLayer: "執行層"
+      planningLayer: "治理層",
+      executionLayer: "執行層",
     },
     agentFallback: "智能體",
     coordinator: "協調者",
@@ -4277,7 +4247,7 @@ export default {
     shellAwaitingApproval: "Shell 命令等待審核：{command}",
     messageCreated: "新訊息已生成",
     workerInterrupted: "{who} 被打斷，按新的指示繼續",
-    runInterrupted: "執行被打斷，正在按新的指示重做目前一步"
+    runInterrupted: "執行被打斷，正在按新的指示重做目前一步",
   },
   storage: {
     unsavedDraft: "草稿未儲存",
@@ -4305,12 +4275,12 @@ export default {
       logs: "日誌",
       cache: "快取",
       temp: "臨時檔案",
-      worktrees: "工作樹"
+      worktrees: "工作樹",
     },
     hostSource: {
       default: "預設",
       desktop: "桌面設定",
-      environment: "環境變數"
+      environment: "環境變數",
     },
     expires: "有效期至",
     cleanupPreview: "清理預覽",
@@ -4341,7 +4311,7 @@ export default {
       configuration_unique_filter_unsupported: "不支援這個唯一索引過濾條件：{detail}",
       runtime_configuration_missing: "缺少執行時設定文件。",
       runtime_configuration_invalid: "執行時設定無效：{detail}",
-      tool_configuration_invalid: "工具設定無效：{detail}"
+      tool_configuration_invalid: "工具設定無效：{detail}",
     },
     secretReference: "金鑰引用",
     postgresReference: "PostgreSQL 連線引用",
@@ -4363,8 +4333,8 @@ export default {
     title: "儲存與設定",
     closingCancelled: "關閉已取消，專案連線恢復。",
     closingWait: "正在等待專案執行和連線結束。",
-    readingScope: "正在統計儲存空間用量（快取目錄檔案較多時會更久）…",
-    statsPartial: "檔案過多，已提前結束統計（實際更大）",
+    readingScope: '正在統計儲存空間用量（快取目錄檔案較多時會更久）…',
+    statsPartial: '檔案過多，已提前結束統計（實際更大）',
     closeScope: "關閉作用域",
     closeMessage: "關閉作用域連線，保留所有設定和資料。關閉會等待目前執行和請求結束；請關閉此專案的其他浮窗，以釋放即時連線。",
     unregister: "取消登記",
@@ -4394,7 +4364,7 @@ export default {
     discardDraft: "放棄草稿",
     unsavedMessage: "離開會放棄目前草稿。",
     unsavedTitle: "未儲存的 TOML 設定",
-    trustedWindowRequired: "此寫入需要可信主視窗宿主。遠端或 Web 客戶端需使用顯式可信宿主憑據。"
+    trustedWindowRequired: "此寫入需要可信主視窗宿主。遠端或 Web 客戶端需使用顯式可信宿主憑據。",
   },
   companion: {
     expand: "展開夥伴面板",
@@ -4448,7 +4418,7 @@ export default {
       groupLabel: "群聊",
       groupSubtitle: "{title} · {members}",
       companionPicker: "對話對象",
-      conversationPicker: "會話"
+      conversationPicker: "會話",
     },
     center: {
       loading: "正在讀取夥伴資料…",
@@ -4575,8 +4545,8 @@ export default {
       connectionRuntimeUnknown: "未探測",
       connectionRuntimeOnline: "在線",
       connectionCheckedAt: "{time} 檢查",
-      connectionNeverChecked: "從未檢查"
-    }
+      connectionNeverChecked: "從未檢查",
+    },
   },
   desktopPet: {
     window: "寵物視窗",
@@ -4587,7 +4557,7 @@ export default {
     approvalTitle: "需要你的批准",
     approve: "批准",
     reject: "拒絕",
-    returnToSession: "返回會話"
+    returnToSession: "返回會話",
   },
   library: {
     title: "資源庫",
@@ -4598,14 +4568,14 @@ export default {
       cards: "卡片",
       feedback: "回饋",
       data: "資料展示",
-      layout: "佈局"
+      layout: "佈局",
     },
     variants: {
       default: "預設",
       secondary: "次要",
       ghost: "幽靈",
       outline: "描邊",
-      destructive: "危險"
+      destructive: "危險",
     },
     buttons: {
       variants: "變體",
@@ -4614,7 +4584,7 @@ export default {
       small: "小",
       large: "大",
       disabled: "停用",
-      loading: "載入中"
+      loading: "載入中",
     },
     inputs: {
       text: "文字輸入",
@@ -4622,19 +4592,19 @@ export default {
       value: "值：{value}",
       switch: "開關",
       on: "開",
-      off: "關"
+      off: "關",
     },
     cards: {
       title: "預設卡片",
       description: "帶標題和描述的卡片",
       body: "正文插槽內容。外框部分用 {header}/{footer} 插槽。",
       action: "操作",
-      badges: "徽標"
+      badges: "徽標",
     },
     feedback: {
       notes: "說明",
       notesBody: "通知由靈動島宿主（App.vue）顯示，用 {call} 觸發；這裡不渲染，免得溢位。",
-      icons: "圖示"
+      icons: "圖示",
     },
     data: {
       table: "表格",
@@ -4643,13 +4613,13 @@ export default {
       status: "狀態",
       owner: "所有者",
       active: "啟用",
-      draft: "草稿"
+      draft: "草稿",
     },
     layout: {
       uie: "首頁和市場用 {canvas} + {column}；資源庫用獨立的捲動佈局。",
       shell: "外殼",
-      shellBody: "外殼：{shell} 是縱向 flex，包含 {header} 和捲動內容。面板：TinadecUI 三欄引擎。"
-    }
+      shellBody: "外殼：{shell} 是縱向 flex，包含 {header} 和捲動內容。面板：TinadecUI 三欄引擎。",
+    },
   },
   statusLabels: {
     run: {
@@ -4671,7 +4641,7 @@ export default {
       gate_review: "門控審查",
       finalizing: "收尾中",
       done: "已完成",
-      blocked: "受阻"
+      blocked: "受阻",
     },
     tool: {
       completed: "已完成",
@@ -4681,20 +4651,20 @@ export default {
       waiting_approval: "等待審核",
       blocked: "受阻",
       requested: "已請求",
-      outcome_unknown: "結果未知"
+      outcome_unknown: "結果未知",
     },
     risk: {
       low: "低風險",
       medium: "中風險",
       high: "高風險",
       elevated: "較高風險",
-      critical: "嚴重風險"
+      critical: "嚴重風險",
     },
     severity: {
       info: "提示",
       warning: "警告",
       error: "錯誤",
-      blocking: "阻斷"
+      blocking: "阻斷",
     },
     userAction: {
       requested: "已提交",
@@ -4706,7 +4676,7 @@ export default {
       completed: "已完成",
       failed: "失敗",
       blocked: "受阻",
-      outcome_unknown: "結果未知"
+      outcome_unknown: "結果未知",
     },
     availability: {
       available: "可用",
@@ -4714,12 +4684,12 @@ export default {
       unavailable: "不可用",
       invalid: "無效",
       pending: "處理中",
-      unknown: "未知"
+      unknown: "未知",
     },
     instance: {
       created: "已建立",
       running: "執行中",
-      released: "已釋放"
+      released: "已釋放",
     },
     approval: {
       pending: "待審核",
@@ -4728,8 +4698,8 @@ export default {
       expired: "已過期",
       consumed: "已使用",
       cancelled: "已取消",
-      revoked: "已撤銷"
-    }
+      revoked: "已撤銷",
+    },
   },
   aboutPage: {
     developerTools: "開發者工具",
@@ -4780,12 +4750,12 @@ export default {
       reviewTerminal: "測試 Agent · 終端命令執行",
       reviewPassed: "自動審查已通過",
       reviewSsh: "測試 Agent · SSH 驗證",
-      reviewWaiting: "等待你的決定"
-    }
+      reviewWaiting: "等待你的決定",
+    },
   },
   agentPack: {
     name: "GraphSeedPack",
-    managed: "Pack 管理 · 唯讀",
+    managed: "受管資源 · 唯讀",
     versionSummary: "內建版本 {bundled} · Core 已安裝 {installed}",
     notInstalled: "未安裝",
     refreshStatus: "重新整理 GraphSeedPack 狀態",
@@ -4800,7 +4770,7 @@ export default {
       conflict: "存在衝突",
       owner_required: "需要工作區所有者",
       deferred: "已稍後處理",
-      error: "檢查失敗"
+      error: "檢查失敗",
     },
     checkAction: "檢查並安裝",
     installAction: "安裝",
@@ -4853,21 +4823,12 @@ export default {
     uninstallFailed: "智能體包解除安裝失敗",
     toggleFailed: "無法切換智能體包狀態",
     adoptFailed: "無法設為工作區預設",
-    bundledVersion: "內建版本 {version}"
+    bundledVersion: "內建版本 {version}",
   },
   agentCenter: {
     createMode: "新增模式",
     tabs: {
-      topology: "執行拓撲"
-    },
-    diagnostics: {
-      title: "治理診斷與工具清單",
-      manifestTitle: "Harness 工具清單",
-      manifestDesc: "共掛載 {count} 個工具，支援審核門控",
-      layerRules: "分層治理規則",
-      layerRulesDesc: "Operation 運營層負責全域性協調與監督；Execution 執行層負責任務拆解與具體工具執行。",
-      conflictDetection: "衝突檢測",
-      conflictDetectionDesc: "發布時將通過 Revision 併發標記與 ETag 校驗避免覆蓋。"
+      topology: "執行拓撲",
     },
     filter: {
       searchAgents: "搜尋智能體名稱、型別或描述...",
@@ -4876,14 +4837,14 @@ export default {
       searchProposals: "搜尋演化提案...",
       searchInstances: "搜尋執行例項...",
       allLayers: "全部層級",
-      operationLayer: "運營層 (Operation)",
-      executionLayer: "執行層 (Execution)",
+      operationLayer: "治理層",
+      executionLayer: "執行層",
       allStatuses: "全部狀態",
       draft: "草稿",
       published: "已發布",
       archived: "已歸檔",
       active: "生效中",
-      resultCount: "顯示 {visible} / {total}"
+      resultCount: "顯示 {visible} / {total}",
     },
     agentForm: {
       createTitle: "新增智能體定義",
@@ -4910,10 +4871,10 @@ export default {
       delete: "刪除",
       saveSuccess: "智能體已儲存",
       publishSuccess: "智能體已發布",
-      deleteSuccess: "智能體已刪除"
+      deleteSuccess: "智能體已刪除",
     },
     evolution: {
-      panelHint: "從執行軌跡中提煉可複用的特化智能體候選。",
+      panelHint: "從執行軌跡中提煉可複用的特化智能體候選，經審核後晉升為正式智能體。",
       generateTitle: "從會話回溯生成候選提案",
       generateHint: "選擇一個歷史執行會話，由 Core 智慧提煉可複用的特化智能體定義。",
       targetSession: "目標會話 ID",
@@ -4953,7 +4914,7 @@ export default {
       fieldModelRoute: "模型路由用途",
       add: "新增",
       capabilityPlaceholder: "能力標籤",
-      systemPromptPlaceholder: "自定義系統提示詞覆蓋"
+      systemPromptPlaceholder: "自定義系統提示詞覆蓋",
     },
     runtimeInfo: {
       statusRunning: "執行中",
@@ -4969,24 +4930,24 @@ export default {
       frozenVersion: "凍結版本",
       recentModel: "最近實際模型",
       fallbackSummary: "候選嘗試",
-      usedFallback: "已觸發 fallback"
+      usedFallback: "已觸發 fallback",
     },
     empty: {
       noAgents: "沒有找到符合的智能體",
       noAgentsHint: "您可以嘗試更換搜尋關鍵詞、調整篩選條件，或直接新增一個智能體。",
       noModes: "暫無可用的模式拓撲",
-      noPrompts: "沒有找到符合的提示詞片段"
+      noPrompts: "沒有找到符合的提示詞片段",
     },
-    revisionShort: "修訂 {revision}",
+    revisionShort: "版本 {revision}",
     newNodeLabel: "節點 {n}",
     facts: {
       modelStrategy: "模型策略",
-      route: "路由"
+      route: "路由",
     },
     governanceRoles: "治理角色",
     governanceRolesMissing: "以下治理角色暫無已發布智能體承擔：",
     defaultsActive: "目前工作區預設繫結",
-    stewardNoTools: "不直接持有工具——這是設計決策而非設定錯誤：它通過審查與提交計畫能力工作，實際執行經由經審核的使用者/worker 動作。",
+    stewardNoTools: "此治理角色不直接持有工具，僅透過審查與提交計畫工作；實際變更由審核後的執行動作完成。",
     effectiveTools: "生效工具（與 Manifest 求交）· {count} 個",
     providerUnavailable: "智能體定義服務不可用，無法校驗治理角色。",
     loadModesFailed: "模式拓撲載入失敗",
@@ -4996,7 +4957,7 @@ export default {
     modeSaveFailed: "儲存模式失敗",
     modePublished: "模式已成功發布",
     versionHistory: "版本歷史",
-    publishedReadOnlyHint: "該模式已發布，畫布唯讀；複製後可編輯自定義副本。"
+    publishedReadOnlyHint: "該模式已發布，畫布唯讀；複製後可編輯自定義副本。",
   },
   commandPanel: {
     kw: {
@@ -5013,13 +4974,13 @@ export default {
       runtime: "cli acp",
       agentModels: "agents executor 智能體 執行",
       image: "image picture 圖片",
-      file: "file attachment 檔案 附件"
+      file: "file attachment 檔案 附件",
     },
     backHint: "搜尋為空時按 Backspace 或 Delete 返回上一頁",
     risk: {
       low: "低風險",
       medium: "中風險",
-      high: "高風險"
+      high: "高風險",
     },
     model: "模型",
     modelHint: "與你對話的智能體用哪個模型；其他智能體在下一級裡單獨設定",
@@ -5057,7 +5018,7 @@ export default {
     nextTask: "設定用於目前會話的下一次任務，已傳送的任務保留原有設定。",
     modelFooter: "這裡設定的是每個智能體自己的模型，和智能體中心是同一個設定；沒有單獨指定的智能體跟隨預設模型（在模型中心設定）。",
     modelAgents: "其他智能體",
-    modelAgentsHint: "為執行者等其他智能體單獨指定模型"
+    modelAgentsHint: "為執行者等其他智能體單獨指定模型",
   },
   composer: {
     agentModels: {
@@ -5073,19 +5034,19 @@ export default {
       inMode: "目前模式在用",
       ownCount: "{count} 個已單獨指定",
       none: "沒有其他智能體",
-      failed: "沒能儲存 {agent} 的模型"
+      failed: "沒能儲存 {agent} 的模型",
     },
     reasoning: {
       label: "思考強度",
       hint: "{model} 的思考強度，對這個模型的下一次任務生效",
-      failed: "沒能儲存思考強度"
+      failed: "沒能儲存思考強度",
     },
     modelSwitch: {
       hint: "預設模型：所有對話使用，與模型中心「設為預設模型」相同",
       none: "未設定預設模型",
       empty: "還沒有可用的模型，去模型中心新增",
       manage: "在模型中心管理…",
-      failed: "沒能切換預設模型"
+      failed: "沒能切換預設模型",
     },
     pinnedModel: "固定模型 {model} · 改用預設",
     pinnedModelUnavailable: "{model} 已不可用 · 改用預設",
@@ -5123,7 +5084,7 @@ export default {
     attachFailedUnknown: "上傳失敗",
     attachFailed: "上傳失敗（{code}）",
     attachNeedsSession: "請先發出第一條訊息，再新增附件",
-    removeAttachment: "移除 {name}"
+    removeAttachment: "移除 {name}",
   },
   palette: {
     kwProjectRow: "專案 工作區 project workspace folder",
@@ -5202,7 +5163,7 @@ export default {
     kwPets: "寵物 桌寵 掛件",
     kwLanguage: "語言 中文 簡體 繁體 英文 日文 俄文 介面 翻譯",
     kwApiDocs: "介面 文件 開發者 除錯 api",
-    kwAbout: "關於 版本 版權 更新"
+    kwAbout: "關於 版本 版權 更新",
   },
   memory: {
     title: "記憶評審",
@@ -5230,7 +5191,7 @@ export default {
     status: {
       proposed: "待評審",
       promoted: "已記住",
-      rejected: "已丟棄"
+      rejected: "已丟棄",
     },
     kind: {
       fact: "事實",
@@ -5239,7 +5200,7 @@ export default {
       success_pattern: "成功經驗",
       failure_pattern: "失敗教訓",
       task_template: "任務範本",
-      supervision_rule: "監督規則"
+      supervision_rule: "監督規則",
     },
     scopeLabel: "範圍",
     scope: {
@@ -5247,13 +5208,13 @@ export default {
       workspace: "工作區",
       principal: "關於我",
       project: "專案",
-      agent: "智能體"
-    }
+      agent: "智能體",
+    },
   },
   web: {
     gatewayManaged: "網頁版的閘道器地址由部署方管理。",
     petsUnavailable: "網頁版不支援桌面寵物。",
-    panelsUnavailable: "網頁版不支援獨立面板視窗。"
+    panelsUnavailable: "網頁版不支援獨立面板視窗。",
   },
   common: {
     copyName: "{name}（副本）",
@@ -5277,7 +5238,7 @@ export default {
     loading: "載入中…",
     none: "無",
     cancel: "取消",
-    refresh: "重新整理"
+    refresh: "重新整理",
   },
   contextMenu: {
     label: "文字操作",
@@ -5288,7 +5249,7 @@ export default {
     copyLink: "複製連結",
     openLink: "開啟連結",
     clearTerminal: "清空終端",
-    hint: "作用於選取內容"
+    hint: "作用於選取內容",
   },
   conversation: {
     listSeparator: "、",
@@ -5298,7 +5259,7 @@ export default {
       files: "{count} 個檔案",
       searches: "{count} 次搜尋",
       lists: "{count} 個目錄",
-      thoughts: "{count} 段思考"
+      thoughts: "{count} 段思考",
     },
     duration: {
       underSecond: "<1 秒",
@@ -5306,18 +5267,18 @@ export default {
       minutes: "{m} 分",
       minutesSeconds: "{m} 分 {s} 秒",
       hours: "{h} 小時",
-      hoursMinutes: "{h} 小時 {m} 分"
+      hoursMinutes: "{h} 小時 {m} 分",
     },
     day: {
       today: "今天",
-      yesterday: "昨天"
+      yesterday: "昨天",
     },
     reasoning: {
       drafting: "正在起草…",
       planning: "正在規劃",
       thinking: "正在思考",
       thoughtFor: "思考了 {duration}",
-      showAll: "展開全部"
+      showAll: "展開全部",
     },
     agents: {
       openInPanel: "在面板開啟",
@@ -5332,12 +5293,12 @@ export default {
         completed: "完成",
         failed: "失敗",
         blocked: "受阻",
-        cancelled: "已取消"
-      }
+        cancelled: "已取消",
+      },
     },
     wait: {
       waiting: "等待 {names}",
-      resolved: "已收到 {names} 的結果"
+      resolved: "已收到 {names} 的結果",
     },
     plan: {
       updated: "更新了計畫 · {done}/{total}",
@@ -5346,8 +5307,8 @@ export default {
       status: {
         pending: "待辦",
         in_progress: "進行中",
-        completed: "已完成"
-      }
+        completed: "已完成",
+      },
     },
     supervision: {
       revise: "監督要求修改",
@@ -5368,52 +5329,21 @@ export default {
         option: {
           continue: "保留目前證據，按已接受的不完整結果結束。",
           correct: "補充要求，讓智能體重新規劃後再結束。",
-          cancel: "停止這個 run，並保留已經記錄的證據。"
-        }
-      }
+          cancel: "停止這個 run，並保留已經記錄的證據。",
+        },
+      },
     },
     correction: {
-      phase: {
-        observe: "定位問題",
-        intervene: "執行修復",
-        converge: "驗證結果",
-        backtrack: "重新調查"
-      },
-      status: {
-        investigating: "調查中",
-        blocked: "待補齊證據",
-        awaiting_user: "等待你確認",
-        ready: "證據已齊",
-        resolved: "已解決",
-        reopened: "已重新開啟"
-      },
-      goal: "目標",
-      symptom: "症狀",
-      doneWhen: "完成條件",
-      rootCause: "根因",
-      hypotheses: "假設",
-      evidence: "證據",
-      coverage: "完成覆蓋",
-      interventions: "修復紀錄",
-      questions: "未決問題",
-      empty: "還沒有紀錄",
-      coverageSummary: "修改 {modified} 個產物，已驗證 {verified} 個",
-      waitingQuestion: "需要你的回答才能繼續。",
-      questionTitle: "糾偏需要你確認",
-      answerPlaceholder: "補充你的觀察或選擇…",
-      answerAction: "回答並繼續",
-      feedbackPrompt: "這次糾偏的實際結果如何？",
-      stillReproduces: "仍重現",
-      resolvedAction: "已解決",
-      reopened: "已重新開啟調查",
-      resolved: "已記錄為已解決",
-      answerFailed: "回答未能送達",
-      feedbackFailed: "回饋未能送達",
-      hypothesisStatus: {
-        testing: "驗證中",
-        confirmed: "已確認",
-        rejected: "已駁回"
-      }
+      phase: { observe: "定位問題", intervene: "執行修復", converge: "驗證結果", backtrack: "重新調查" },
+      status: { investigating: "調查中", blocked: "待補齊證據", awaiting_user: "等待你確認", ready: "證據已齊", resolved: "已解決", reopened: "已重新開啟" },
+      goal: "目標", symptom: "症狀", doneWhen: "完成條件", rootCause: "根因",
+      hypotheses: "假設", evidence: "證據", coverage: "完成覆蓋", interventions: "修復紀錄", questions: "未決問題",
+      empty: "還沒有紀錄", coverageSummary: "修改 {modified} 個產物，已驗證 {verified} 個",
+      waitingQuestion: "需要你的回答才能繼續。", questionTitle: "糾偏需要你確認",
+      answerPlaceholder: "補充你的觀察或選擇…", answerAction: "回答並繼續",
+      feedbackPrompt: "這次糾偏的實際結果如何？", stillReproduces: "仍重現", resolvedAction: "已解決",
+      reopened: "已重新開啟調查", resolved: "已記錄為已解決", answerFailed: "回答未能送達", feedbackFailed: "回饋未能送達",
+      hypothesisStatus: { testing: "驗證中", confirmed: "已確認", rejected: "已駁回" },
     },
     marker: {
       compacted: "上下文已壓縮",
@@ -5426,7 +5356,7 @@ export default {
       run_failed: "已停止：{reason}",
       run_failed_unknown: "因錯誤已停止",
       run_cancelled: "已停止",
-      worker_interrupted: "智能體已被打斷"
+      worker_interrupted: "智能體已被打斷",
     },
     approval: {
       title: "需要審核",
@@ -5441,7 +5371,7 @@ export default {
       allowPrefix: "始終允許以 {prefix} 開頭的命令",
       approveShortcut: "核准（⌘/Ctrl+Enter）",
       rejectShortcut: "拒絕（⌘/Ctrl+Backspace）",
-      failed: "決定未能生效"
+      failed: "決定未能生效",
     },
     turn: {
       workedFor: "已工作 {duration}",
@@ -5454,12 +5384,7 @@ export default {
       retryHint: "把這條訊息放回輸入框",
       newTurns: "{count} 條新訊息",
       foldedEarlier: "更早 {count} 步",
-      awaiting: {
-        awaiting_user: "等待你的裁決",
-        awaiting_approval: "等待你批准",
-        awaiting_delegate: "等待你授權委派",
-        generic: "等待你的操作"
-      }
+      awaiting: { awaiting_user: "等待你的裁決", awaiting_approval: "等待你批准", awaiting_delegate: "等待你授權委派", generic: "等待你的操作" },
     },
     tool: {
       terminalTitle: "智能體終端",
@@ -5476,63 +5401,63 @@ export default {
         withheld: "結果不顯示",
         withheldSensitive: "不顯示：該檔案可能含憑據",
         exitCode: "退出碼 {code}",
-        timedOut: "已超時"
+        timedOut: "已超時",
       },
       read: {
         active: "正在讀取 {subject}",
         done: "讀取 {subject}",
-        failed: "無法讀取 {subject}"
+        failed: "無法讀取 {subject}",
       },
       list: {
         active: "正在列出 {subject}",
         done: "列出 {subject}",
-        failed: "無法列出 {subject}"
+        failed: "無法列出 {subject}",
       },
       search: {
         active: "正在搜尋 {subject}",
         done: "搜尋 {subject}",
-        failed: "搜尋失敗：{subject}"
+        failed: "搜尋失敗：{subject}",
       },
       edit: {
         active: "正在編輯 {subject}",
         done: "編輯 {subject}",
-        failed: "無法編輯 {subject}"
+        failed: "無法編輯 {subject}",
       },
       run: {
         active: "正在執行 {subject}",
         done: "執行 {subject}",
-        failed: "執行失敗：{subject}"
+        failed: "執行失敗：{subject}",
       },
       git: {
         active: "正在執行 {subject}",
         done: "執行 {subject}",
-        failed: "執行失敗：{subject}"
+        failed: "執行失敗：{subject}",
       },
       mcp: {
         active: "正在呼叫 {subject}",
         done: "呼叫 {subject}",
-        failed: "呼叫失敗：{subject}"
+        failed: "呼叫失敗：{subject}",
       },
       fetch: {
         active: "正在取得 {subject}",
         done: "取得 {subject}",
-        failed: "無法取得 {subject}"
+        failed: "無法取得 {subject}",
       },
       browse: {
         active: "正在瀏覽 {subject}",
         done: "瀏覽 {subject}",
-        failed: "瀏覽失敗：{subject}"
+        failed: "瀏覽失敗：{subject}",
       },
       workspace: {
         active: "正在建立工作區 {subject}",
         done: "建立工作區 {subject}",
-        failed: "無法建立工作區 {subject}"
+        failed: "無法建立工作區 {subject}",
       },
       other: {
         active: "正在使用 {subject}",
         done: "使用 {subject}",
-        failed: "{subject} 失敗"
-      }
-    }
-  }
-};
+        failed: "{subject} 失敗",
+      },
+    },
+  },
+}

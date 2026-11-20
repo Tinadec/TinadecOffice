@@ -64,7 +64,8 @@ internal static class CoreSkillLoadTool
         if (string.IsNullOrWhiteSpace(name))
             return Failure(wire, "load_skill needs a 'name' copied from the available skills list.");
 
-        var catalog = await skills.ListAsync(scope.ProjectId, includeBuiltins: true, cancellationToken).ConfigureAwait(false);
+        var projectId = CoreVirtualToolPolicy.FromWireSentinel(scope.ProjectId);
+        var catalog = await skills.ListAsync(projectId, includeBuiltins: true, cancellationToken).ConfigureAwait(false);
         var resource = catalog.Skills.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.Ordinal)
             && x.Valid && x.Enabled && x.ShadowedBy is null);
         if (resource is null)
@@ -76,7 +77,7 @@ internal static class CoreSkillLoadTool
             return Failure(wire, $"No enabled skill named '{name}' in this run; {known}.");
         }
 
-        var body = (await skills.GetAsync(resource.ResourceId, scope.ProjectId, cancellationToken).ConfigureAwait(false))?.Content;
+        var body = (await skills.GetAsync(resource.ResourceId, projectId, cancellationToken).ConfigureAwait(false))?.Content;
         if (body is null)
             return Failure(wire, $"Skill '{name}' is listed but its body could not be read. Reload the skill catalog and try again.");
 
