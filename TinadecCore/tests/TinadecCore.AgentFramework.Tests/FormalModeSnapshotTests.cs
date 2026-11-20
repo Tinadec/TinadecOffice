@@ -377,6 +377,16 @@ public sealed class FormalModeSnapshotTests
                         withTier["orchestration_tier"] = orchestrationTier;
                         modeBody = withTier.ToJsonString();
                     }
+                    // Pin the SHAPE, not just the outcome. Without this, `writeNullTier` would
+                    // silently degrade into a duplicate of the absent-key test if a future edit
+                    // made the assignment remove the key instead of writing JSON null (assigning
+                    // `null` to a JsonObject member emits `null`; `Remove()` deletes it). The two
+                    // produce the same roster and the same assertion, so nothing downstream would
+                    // notice that one of the three shapes had stopped being covered.
+                    if (writeNullTier)
+                    {
+                        Assert.Contains("\"orchestration_tier\":null", modeBody, StringComparison.Ordinal);
+                    }
                     db.ModeVersions.Add(new ModeVersionRecord
                     {
                         Id = modeVersionId,
