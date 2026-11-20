@@ -101,6 +101,108 @@ public interface IFrozenPromptFragmentSource
         Guid tenantId,
         Guid? workspaceId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The same snapshot, narrowed to the fragments that can ever apply to one agent. The run
+    /// engine freezes this into <c>FrozenRunConfigurationV1</c> when the prompt is scoped to a
+    /// single agent, so a resumed run carries no fragment belonging to another agent.
+    /// </summary>
+    async Task<IReadOnlyList<FrozenPromptFragment>> SnapshotForAgentAsync(
+        Guid tenantId,
+        Guid? workspaceId,
+        string agentIdOrSlug,
+        Guid? agentDefinitionId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var all = await SnapshotActiveFragmentsAsync(tenantId, workspaceId, cancellationToken).ConfigureAwait(false);
+        return PromptFragmentTargeting.FilterForAgent(all, agentIdOrSlug, agentDefinitionId);
+    }
+}
+
+/// <summary>
+/// The one place that decides whether an agent-scoped fragment applies to an agent. Both the
+/// assembler and the frozen-snapshot reader use it, so a fragment that applies at preview time
+/// applies identically at run time.
+/// </summary>
+/// <remarks>
+/// An agent is addressable two ways — its definition GUID and its slug ("meeting") — and stored
+/// fragments use either form: a scoped fragment may carry only <c>TargetAgentId</c>, only
+/// <c>TargetAgentSlug</c>, or a GUID that a resolver once also recorded as the slug text. Matching
+/// therefore compares both columns against the whole identity set rather than against one form.
+/// </remarks>
+public static class PromptFragmentTargeting
+{
+    /// <summary>The fragments from a snapshot that could ever apply to this agent.</summary>
+    public static IReadOnlyList<FrozenPromptFragment> FilterForAgent(
+        IReadOnlyList<FrozenPromptFragment> fragments,
+        string agentIdOrSlug,
+        Guid? agentDefinitionId = null,
+        string? agentSlug = null)
+    {
+        var (guids, slugs) = BuildIdentity(agentIdOrSlug, agentDefinitionId, agentSlug);
+        return fragments
+            .Where(fragment => Matches(fragment.TargetAgentId, fragment.TargetAgentSlug, guids, slugs))
+            .ToArray();
+    }
+
+    public static (IReadOnlySet<Guid> Guids, IReadOnlySet<string> Slugs) BuildIdentity(
+        string? agentIdOrSlug,
+        Guid? agentDefinitionId = null,
+        string? agentSlug = null)
+    {
+        var guids = new HashSet<Guid>();
+        var slugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddToken(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            var trimmed = raw.Trim();
+            if (trimmed.Length == 0) return;
+            if (Guid.TryParse(trimmed, out var parsed) && parsed != Guid.Empty)
+            {
+                guids.Add(parsed);
+                // A resolver that cannot find the definition records the GUID text as the slug.
+                slugs.Add(trimmed);
+                return;
+            }
+            slugs.Add(trimmed);
+        }
+
+        AddToken(agentIdOrSlug);
+        AddToken(agentSlug);
+        if (agentDefinitionId is { } definitionId && definitionId != Guid.Empty) guids.Add(definitionId);
+        return (guids, slugs);
+    }
+
+    public static bool Matches(
+        Guid? targetAgentId,
+        string? targetAgentSlug,
+        IReadOnlySet<Guid> candidateGuids,
+        IReadOnlySet<string> candidateSlugs)
+    {
+        var hasId = targetAgentId is { } id && id != Guid.Empty;
+        var hasSlug = !string.IsNullOrWhiteSpace(targetAgentSlug);
+        if (!hasId && !hasSlug) return true;
+
+        if (hasSlug)
+        {
+            var slug = targetAgentSlug!.Trim();
+            if (slug.Length > 0)
+            {
+                if (candidateSlugs.Contains(slug)) return true;
+                if (Guid.TryParse(slug, out var slugAsGuid) && slugAsGuid != Guid.Empty && candidateGuids.Contains(slugAsGuid))
+                    return true;
+            }
+        }
+
+        if (hasId)
+        {
+            if (candidateGuids.Contains(targetAgentId!.Value)) return true;
+            if (candidateSlugs.Contains(targetAgentId.Value.ToString())) return true;
+        }
+
+        return false;
+    }
 }
 
 public sealed record AgentIdentitySnapshot(

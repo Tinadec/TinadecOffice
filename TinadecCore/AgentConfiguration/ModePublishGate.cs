@@ -131,17 +131,13 @@ public static class ModePublishGate
                 $"mode '{modeKey}' binding '{nodeKey}' spawn.{key}={requested} exceeds the runtime ceiling {ceiling}; envelopes may only narrow.");
     }
 
-    internal static bool IsSwitchedOff(JsonElement? switches, string toolId)
-    {
-        if (switches is not { ValueKind: JsonValueKind.Object } switchValue) return false;
-        if (switchValue.TryGetProperty(toolId, out var state))
-            return IsFalseState(state);
-        return switchValue.TryGetProperty("*", out var wildcardState) && IsFalseState(wildcardState);
-    }
-
-    private static bool IsFalseState(JsonElement state) =>
-        state.ValueKind == JsonValueKind.False
-        || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase));
+    /// <summary>
+    /// One predicate, three publish paths (pack admission, manual publish, binding
+    /// validation). Delegates to <see cref="GraphValidation.IsSwitchedOff"/> so
+    /// <c>"*": false</c> cannot be honoured on one path and ignored on another.
+    /// </summary>
+    internal static bool IsSwitchedOff(JsonElement? switches, string toolId) =>
+        GraphValidation.IsSwitchedOff(switches, toolId);
 
     private static IReadOnlyList<string> StringArray(JsonElement element, string modeKey, string nodeKey, string field)
     {

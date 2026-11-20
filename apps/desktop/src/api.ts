@@ -1940,13 +1940,18 @@ export interface AgentEvolutionProposalDto {
   updated_at: string;
 }
 
-export interface PromoteAgentCandidateInput {
-  agent_id: string;
-  mode: string;
-  model_route_purpose: string;
-  allowed_tools: string[];
-  capabilities: string[];
-  system_prompt?: string | null;
+/**
+ * Core binds the promote body to `PromoteAgentCandidateRequest`
+ * (`Contracts/Dtos/AgentEvolutionDtos.cs`), which declares exactly two members: `Reason`
+ * and `EvalRunId`. `AgentCandidatePromotion.cs` returns 422 `EVAL_REQUIRED` when the eval
+ * run is absent, then re-reads and re-hashes that run's evidence before it creates the
+ * draft agent from the proposal payload itself. So the client may not supply the agent
+ * shape at all — only the evidence reference that gates the promotion.
+ */
+export interface PromoteAgentDecisionInput {
+  /** Required: the evaluation run whose evidence Core re-validates. Absent → 422 `EVAL_REQUIRED`. */
+  eval_run_id: string
+  reason?: string | null
 }
 
 export interface PromptFragmentVersionDto {
@@ -3965,7 +3970,7 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<AgentEvolutionProposalDto[]>(`/api/v1/agent-evolution/generate${suffix}`, { method: 'POST' });
   },
-  promoteAgentCandidate: (candidateId: string, input: PromoteAgentCandidateInput) => request<AgentEvolutionProposalDto>(`/api/v1/agent-evolution/proposals/${encodeURIComponent(candidateId)}/promote`, {
+  promoteAgentCandidate: (candidateId: string, input: PromoteAgentDecisionInput) => request<AgentEvolutionProposalDto>(`/api/v1/agent-evolution/proposals/${encodeURIComponent(candidateId)}/promote`, {
     method: 'POST',
     body: JSON.stringify(input)
   }),

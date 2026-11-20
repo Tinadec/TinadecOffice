@@ -300,7 +300,14 @@ export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[])
       ? 'Break down the goal, hand off along the declared pipeline stages, and consolidate verified outputs.'
       : 'Complete the user goal directly and verify evidence.'
 
+  // The team view only models five relationship keys, but the graph editor can
+  // write any others (subscriptions, per-node policy hints, future Core fields).
+  // Spreading the existing object first keeps every unknown key; the explicit
+  // keys below then overwrite only the ones this view owns. Without the spread a
+  // team save silently deleted them, because the mode write replaces the whole
+  // RelationshipJson.
   const leaderRelationship: Record<string, unknown> = {
+    ...(existingLeaderRel ?? {}),
     duty: typeof existingLeaderRel?.duty === 'string' && existingLeaderRel.duty.trim()
       ? existingLeaderRel.duty
       : defaultLeaderDuty,
@@ -313,7 +320,6 @@ export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[])
       'The goal is completed and backed by evidence',
     ],
     agent_types: isTeam ? memberSlugs : [],
-    ...(existingSubscriptions && existingSubscriptions.length > 0 ? { subscriptions: existingSubscriptions } : {}),
   }
 
   const leaderNode: AgentModeDraftUpdate['nodes'][number] = {
@@ -369,7 +375,10 @@ export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[])
           ? existingMemberNode.position
           : { x: 60 + index * 260, y: 280 },
         ...(existingMemberNode?.config ? { config: existingMemberNode.config } : {}),
+        // Same rule as the leader: keep unknown relationship keys the graph
+        // editor authored, overwrite only the ones the team view owns.
         relationship: {
+          ...(existingMemberRel ?? {}),
           duty: (member.description ?? '').trim() || `Execute pipeline stage ${index + 1} as ${member.name || agentSlugOf(member)}.`,
           inputs_outputs: validInputsOutputs(existingMemberRel?.inputs_outputs) ?? {
             receives: index === 0 ? 'goal and constraints from leader' : 'artifact from previous stage',

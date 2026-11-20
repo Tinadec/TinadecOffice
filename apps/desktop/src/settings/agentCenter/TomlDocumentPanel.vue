@@ -7,7 +7,6 @@ import { api } from '@/api'
 import type { ConfigurationDocumentDto } from '@/settings/storage'
 import { useNotifications } from '@/composables/useNotifications'
 import { useHostAccess } from '@/lib/hostAccess'
-import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 
 const props = withDefaults(defineProps<{ storageId?: string }>(), { storageId: 'user' })
 const emit = defineEmits<{ changed: [] }>()
@@ -15,7 +14,6 @@ const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
 const { notify, confirm } = useNotifications()
 const { canAccessBackend } = useHostAccess()
-const { getMonaco, isDark } = useMonaco()
 
 const panelRef = ref<HTMLElement | null>(null)
 const monacoHost = ref<HTMLDivElement | null>(null)
@@ -29,9 +27,29 @@ const editing = ref(false)
 const diagnostics = ref<Array<Record<string, unknown>>>([])
 const notice = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
-const monacoFallback = ref(
-  typeof window === 'undefined' || /happy-dom|jsdom/i.test(window.navigator?.userAgent ?? ''),
-)
+
+/**
+ * Monaco is never imported eagerly, and `@/composables/useMonaco` is not imported at module
+ * scope either.
+ *
+ * That composable pulls `@monaco-editor/loader` and, transitively, `@/monaco.config` — which
+ * imports five `?worker` entrypoints. Vite has no worker resolution under happy-dom or jsdom,
+ * so importing it while a settings suite renders this panel fails the whole module graph, not
+ * just the editor. Both the composable and Monaco itself are therefore reached only through
+ * `import()` inside `initMonaco()`, which is gated on `monacoAvailable`.
+ *
+ * The textarea is a permanent, dependency-free fallback: it renders whenever Monaco is
+ * unavailable AND whenever loading Monaco throws, so this panel can never be left without an
+ * editor.
+ */
+function detectTestDom(): boolean {
+  if (typeof window === 'undefined') return true
+  if (typeof (window as { happyDOM?: unknown }).happyDOM !== 'undefined') return true
+  if (typeof (window as { jsdom?: unknown }).jsdom !== 'undefined') return true
+  return /happy-dom|jsdom/i.test(window.navigator?.userAgent ?? '')
+}
+
+const monacoFallback = ref(detectTestDom())
 
 let disposed = false
 let editor: import('monaco-editor').editor.IStandaloneCodeEditor | null = null
@@ -43,8 +61,10 @@ const documentOptions = computed(() => documents.value.map((id) => ({ value: id,
 async function confirmDiscardUnsaved(): Promise<boolean> {
   if (!isDirty.value) return true
   return confirm({
-    title: t('settings.unsavedTitle'),
-    message: t('settings.unsavedMessage'),
+    // `storage.unsavedTitle` / `storage.unsavedMessage` are the existing leaves that talk about
+    // unsaved configuration-document text; `settings.unsaved*` only ever existed as `storage.*`.
+    title: t('storage.unsavedTitle'),
+    message: t('storage.unsavedMessage'),
     confirmLabel: t('settings.discardChanges'),
     cancelLabel: t('settings.keepEditing'),
     destructive: true,
@@ -54,6 +74,12 @@ async function confirmDiscardUnsaved(): Promise<boolean> {
 async function initMonaco(): Promise<void> {
   if (monacoFallback.value || !monacoHost.value || editor) return
   try {
+    // Both of these are imported HERE, not at module scope: neither may be in the module
+    // graph of a test that merely mounts the panel (see the `monacoFallback` comment).
+    const [{ useMonaco, detectLanguage }] = await Promise.all([
+      import('@/composables/useMonaco'),
+    ])
+    const { getMonaco, isDark } = useMonaco()
     const monaco = await getMonaco()
     if (disposed || !monacoHost.value) return
     model = monaco.editor.createModel(text.value, detectLanguage(selected.value || 'config.toml'))
@@ -81,6 +107,7 @@ async function initMonaco(): Promise<void> {
       if (editing.value && !busy.value) void save()
     })
   } catch {
+    // Worker assets missing or the CDN is unreachable: keep the textarea rather than blank.
     if (!disposed) monacoFallback.value = true
   }
 }
@@ -156,18 +183,40 @@ async function cancelEdit() {
   notice.value = ''
 }
 
-async function selectDocument(documentId: string) {
-  if (!canAccessBackend.value) return
+/**
+ * Focus a specific configuration document by id.
+ *
+ * Called by `WorkspaceDefaultsPanel`'s "Edit runtime.toml" button. The list is fetched first
+ * because the caller may fire before this panel's own `reload()` finished, and a lookup
+ * against an empty list would silently open nothing. Resolution is tolerant of the three
+ * spellings Core uses (`runtime`, `runtime.toml`, `runtime.*`) and returns whether it found a
+ * match, so a caller (or a test) can tell "opened the wrong document" from "there is no such
+ * document" instead of both looking like success.
+ */
+async function selectDocument(documentId: string): Promise<boolean> {
+  if (!canAccessBackend.value || !documentId) return false
+  const wanted = documentId.trim().toLowerCase()
+  if (!wanted) return false
   if (documents.value.length === 0) {
     await reload()
   }
-  const match = documents.value.find(
-    (id) => id === documentId || id === `${documentId}.toml` || id.startsWith(`${documentId}.`),
-  )
+  const normalized = (id: string) => id.trim().toLowerCase()
+  const match =
+    documents.value.find((id) => normalized(id) === wanted) ??
+    documents.value.find((id) => normalized(id) === `${wanted}.toml`) ??
+    documents.value.find((id) => normalized(id).startsWith(`${wanted}.`)) ??
+    documents.value.find((id) => normalized(id).startsWith(wanted))
   if (match) {
+    // Same document already open and loaded: scroll to it rather than re-reading the file
+    // and discarding any in-progress edit behind a confirm dialog.
+    if (match === selected.value && activeDocument.value) {
+      panelRef.value?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+      return true
+    }
     await onSelectDocument(match)
   }
   panelRef.value?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+  return Boolean(match)
 }
 
 async function validate(): Promise<boolean> {
@@ -294,11 +343,17 @@ defineExpose({ reload, selectDocument })
       <Loader2 :size="14" class="center-stale-spinner" aria-hidden="true" />
       <span>{{ t('settings.refreshing') }}</span>
     </div>
+    <!--
+      The textarea is the editor of record whenever Monaco is unavailable, which includes
+      every happy-dom/jsdom test and any browser where the worker bundle failed to load.
+      It is never conditionally absent, so the panel always has exactly one editing surface.
+    -->
     <textarea
       v-if="monacoFallback"
       v-show="!loading"
       v-model="text"
       class="toml-editor"
+      data-testid="toml-editor-fallback"
       :readonly="!editing"
       spellcheck="false"
       :aria-label="t('settings.tomlTitle')"
@@ -308,6 +363,7 @@ defineExpose({ reload, selectDocument })
       v-show="!loading"
       ref="monacoHost"
       class="toml-monaco-host"
+      data-testid="toml-editor-monaco"
       :aria-label="t('settings.tomlTitle')"
     />
 

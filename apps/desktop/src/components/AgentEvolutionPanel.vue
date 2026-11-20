@@ -5,24 +5,20 @@ import { useI18n } from 'vue-i18n'
 import {
   api as baseApi,
   type AgentEvolutionProposalDto,
-  type AgentModeDto,
-  type PromoteAgentCandidateInput
 } from '../api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
-import { UiBadge, UiButton, UiCard, UiInput, UiLabel, UiSelectField, UiSheet, UiSkeleton } from '@/components/ui'
+import { UiBadge, UiButton, UiCard, UiInput, UiLabel, UiSheet, UiSkeleton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 import { useHostAccess } from '@/lib/hostAccess'
-import { pickLocalized } from '@/lib/packI18n'
 
 const emit = defineEmits<{ changed: [] }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { notify, status, confirm, dismissByKey } = useNotifications()
 const { canAccessBackend } = useHostAccess()
 
 const proposals = ref<AgentEvolutionProposalDto[]>([])
-const agentModes = ref<AgentModeDto[]>([])
 const loading = ref(false)
 const busy = ref(false)
 const selectedProposalId = ref('')
@@ -31,17 +27,22 @@ const rejectReason = ref('')
 const generateSessionId = ref('')
 const generateLookback = ref('200')
 
-// Promote form state
-const promoteForm = ref<PromoteAgentCandidateInput>({
-  agent_id: '',
-  mode: '',
-  model_route_purpose: 'chat',
-  allowed_tools: [],
-  capabilities: [],
-  system_prompt: null
+/**
+ * The promotion body is Core's `PromoteAgentCandidateRequest`
+ * (TinadecCore/Contracts/Dtos/AgentEvolutionDtos.cs:17-21): `reason` + `eval_run_id`, nothing
+ * else. The client type is `PromoteAgentDecisionInput` at `src/api.ts:1951` and matches it
+ * exactly, so the call below is type-checked against the real wire contract.
+ *
+ * It re-reads the evaluation evidence and refuses with 422 `EVAL_REQUIRED` when
+ * `eval_run_id` is absent, so the field is required in the UI. The agent identity is derived
+ * from the proposal by Core — the old form's agent_id/mode/tools fields were ignored and
+ * made promotion impossible.
+ */
+const promoteForm = ref({
+  eval_run_id: '',
+  reason: '',
 })
-const promoteToolInput = ref('')
-const promoteCapabilityInput = ref('')
+
 
 const selectedProposal = computed(() =>
   proposals.value.find((p) => p.id === selectedProposalId.value) ?? null
@@ -55,28 +56,29 @@ const sortedProposals = computed(() =>
   [...proposals.value].sort((a, b) => b.confidence - a.confidence)
 )
 
-const promoteModeOptions = computed(() =>
-  agentModes.value
-    .filter((mode) => mode.status !== 'archived')
-    .map((mode) => {
-      const name = pickLocalized(mode.i18n, locale.value, 'display_name', mode.display_name) ?? mode.display_name
-      const desc = pickLocalized(mode.i18n, locale.value, 'description', mode.description ?? mode.summary)
-      return {
-        value: mode.id,
-        label: desc ? `${name} · ${desc}` : name,
-      }
-    }),
-)
-
-function isOperationLayer(layer: string): boolean {
-  return layer === 'planning' || layer === 'operation'
+/**
+ * Layer spelling is not stable across data: Core writes `operation`, the pack manifests and
+ * older proposals say `planning`, and both mean the governance seat. Trailing/leading case
+ * and whitespace drift too, so the comparison is normalised once here rather than at each
+ * call site — the icon, the label and the default route purpose must agree.
+ */
+function normalizeLayer(layer?: string | null): string {
+  // `planner` is a third spelling seen in older proposal rows.
+  const raw = String(layer ?? '').trim().toLowerCase()
+  if (raw === 'planning' || raw === 'planner') return 'operation'
+  return raw
 }
 
-function agentLayerLabel(layer: string): string {
-  if (isOperationLayer(layer)) return t('settings.agentLayerPlanning')
-  if (layer === 'execution') return t('settings.agentLayerExecution')
-  if (layer === 'evolution') return t('settings.agentLayerEvolution')
-  return layer
+function isOperationLayer(layer?: string | null): boolean {
+  return normalizeLayer(layer) === 'operation'
+}
+
+function agentLayerLabel(layer?: string | null): string {
+  const normalized = normalizeLayer(layer)
+  if (normalized === 'operation') return t('settings.agentLayerPlanning')
+  if (normalized === 'execution') return t('settings.agentLayerExecution')
+  if (normalized === 'evolution') return t('settings.agentLayerEvolution')
+  return String(layer ?? '')
 }
 
 function confidenceVariant(score: number): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -106,12 +108,8 @@ async function loadProposals() {
   if (!canAccessBackend.value) return
   loading.value = true
   try {
-    const [proposalList, modes] = await Promise.all([
-      api.listEvolutionProposals(),
-      api.listAgentModes()
-    ])
+    const proposalList = await api.listEvolutionProposals()
     proposals.value = Array.isArray(proposalList) ? proposalList : []
-    agentModes.value = Array.isArray(modes) ? modes : []
     if (!selectedProposalId.value && proposals.value.length > 0) {
       selectedProposalId.value = proposals.value[0].id
     }
@@ -150,67 +148,25 @@ async function generateProposals() {
   }
 }
 
-function defaultPromoteModeId(layer: string): string {
-  const activeModes = agentModes.value.filter((mode) => mode.status !== 'archived')
-  const preferredSlugs = isOperationLayer(layer)
-    ? ['plan', 'team', 'review', 'spec', 'free_director']
-    : ['solo', 'fixed_pipeline', 'vibe_graph']
-  const match = activeModes.find((mode) => mode.slug && preferredSlugs.includes(mode.slug))
-  return match?.id ?? activeModes[0]?.id ?? agentModes.value[0]?.id ?? ''
-}
-
 function openPromotePanel(proposal: AgentEvolutionProposalDto) {
   showPromotePanel.value = proposal.id
-  // Pre-fill form with proposal suggestions
-  const baseAgentId = `agent_${proposal.agent_type}_${Date.now().toString(36)}`
-  const isOp = isOperationLayer(proposal.layer)
-  promoteForm.value = {
-    agent_id: baseAgentId,
-    mode: defaultPromoteModeId(proposal.layer),
-    model_route_purpose: isOp ? 'planner' : 'chat',
-    allowed_tools: [],
-    capabilities: [],
-    system_prompt: null
-  }
-  promoteToolInput.value = ''
-  promoteCapabilityInput.value = ''
+  // The evaluation run id is the only decision input Core accepts; it is never derivable
+  // from the proposal row, so the operator must supply it and the field stays empty.
+  promoteForm.value = { eval_run_id: '', reason: '' }
 }
 
 function closePromotePanel() {
   showPromotePanel.value = ''
 }
 
-function addPromoteTool() {
-  const tool = promoteToolInput.value.trim()
-  if (tool && !promoteForm.value.allowed_tools.includes(tool)) {
-    promoteForm.value.allowed_tools.push(tool)
-    promoteToolInput.value = ''
-  }
-}
-
-function removePromoteTool(tool: string) {
-  const idx = promoteForm.value.allowed_tools.indexOf(tool)
-  if (idx >= 0) promoteForm.value.allowed_tools.splice(idx, 1)
-}
-
-function addPromoteCapability() {
-  const cap = promoteCapabilityInput.value.trim()
-  if (cap && !promoteForm.value.capabilities.includes(cap)) {
-    promoteForm.value.capabilities.push(cap)
-    promoteCapabilityInput.value = ''
-  }
-}
-
-function removePromoteCapability(cap: string) {
-  const idx = promoteForm.value.capabilities.indexOf(cap)
-  if (idx >= 0) promoteForm.value.capabilities.splice(idx, 1)
-}
-
 async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
-  if (!canAccessBackend.value || !promoteForm.value.agent_id.trim()) return
+  if (!canAccessBackend.value || !promoteForm.value.eval_run_id.trim()) return
   busy.value = true
   try {
-    await api.promoteAgentCandidate(proposal.id, promoteForm.value)
+    await api.promoteAgentCandidate(proposal.id, {
+      eval_run_id: promoteForm.value.eval_run_id.trim(),
+      reason: promoteForm.value.reason.trim() || null,
+    })
     await loadProposals()
     showPromotePanel.value = ''
     emit('changed')
@@ -365,63 +321,22 @@ defineExpose({ loadProposals })
 
         <div class="evolution-form-grid">
           <div class="evolution-form-field">
-            <UiLabel>{{ t('settings.agentIdField') }}</UiLabel>
-            <UiInput v-model="promoteForm.agent_id" placeholder="agent_xxx" />
+            <UiLabel>{{ t('agentCenter.evolution.fieldEvalRun') }}</UiLabel>
+            <UiInput v-model="promoteForm.eval_run_id" placeholder="eval_run_id" data-testid="promote-eval-run-id" />
           </div>
           <div class="evolution-form-field">
-            <UiLabel>{{ t('agentCenter.evolution.fieldMode') }}</UiLabel>
-            <UiSelectField
-              v-model="promoteForm.mode"
-              :options="promoteModeOptions"
-            />
-          </div>
-          <div class="evolution-form-field">
-            <UiLabel>{{ t('agentCenter.evolution.fieldModelRoute') }}</UiLabel>
-            <UiInput v-model="promoteForm.model_route_purpose" placeholder="chat / planner / executor / reviewer" />
+            <UiLabel>{{ t('agentCenter.evolution.fieldReason') }}</UiLabel>
+            <UiInput v-model="promoteForm.reason" :placeholder="t('agentCenter.evolution.rejectPlaceholder')" />
           </div>
         </div>
 
-        <div class="evolution-form-block">
-          <UiLabel>{{ t('agentCenter.agentForm.tools') }}</UiLabel>
-          <div class="evolution-tag-list">
-            <span v-for="tool in promoteForm.allowed_tools" :key="tool" class="evolution-tag removable">
-              {{ tool }}
-              <button class="evolution-tag-remove" @click="removePromoteTool(tool)">×</button>
-            </span>
-          </div>
-          <div class="evolution-add-row">
-            <UiInput v-model="promoteToolInput" :placeholder="t('agentCenter.evolution.toolIdPlaceholder')" size="sm" @keydown.enter="addPromoteTool" />
-            <UiButton variant="outline" size="sm" :disabled="!promoteToolInput.trim()" @click="addPromoteTool">{{ t('agentCenter.evolution.add') }}</UiButton>
-          </div>
-        </div>
-
-        <div class="evolution-form-block">
-          <UiLabel>{{ t('agentCenter.agentForm.capabilities') }}</UiLabel>
-          <div class="evolution-tag-list">
-            <span v-for="cap in promoteForm.capabilities" :key="cap" class="evolution-tag removable">
-              {{ cap }}
-              <button class="evolution-tag-remove" @click="removePromoteCapability(cap)">×</button>
-            </span>
-          </div>
-          <div class="evolution-add-row">
-            <UiInput v-model="promoteCapabilityInput" :placeholder="t('agentCenter.evolution.capabilityPlaceholder')" size="sm" @keydown.enter="addPromoteCapability" />
-            <UiButton variant="outline" size="sm" :disabled="!promoteCapabilityInput.trim()" @click="addPromoteCapability">{{ t('agentCenter.evolution.add') }}</UiButton>
-          </div>
-        </div>
-
-        <div class="evolution-form-block">
-          <UiLabel>{{ t('agentCenter.agentForm.systemPrompt') }}</UiLabel>
-          <textarea
-            v-model="promoteForm.system_prompt"
-            class="settings-textarea"
-            rows="4"
-            :placeholder="t('agentCenter.evolution.systemPromptPlaceholder')"
-          ></textarea>
-        </div>
+        <p class="quiet evolution-eval-hint" data-testid="promote-eval-hint">
+          {{ t('agentCenter.evolution.evalRequiredHint') }}
+        </p>
 
         <div class="ac-sheet-actions">
           <UiButton variant="outline" @click="closePromotePanel">{{ t('settings.cancel') }}</UiButton>
-          <UiButton :disabled="!canAccessBackend || busy || !promoteForm.agent_id.trim()" @click="promoteCandidate(selectedProposal!)">
+          <UiButton :disabled="!canAccessBackend || busy || !promoteForm.eval_run_id.trim()" @click="promoteCandidate(selectedProposal!)">
             <Check :size="14" />
             <span>{{ t('agentCenter.evolution.promoteConfirm') }}</span>
           </UiButton>
@@ -612,6 +527,11 @@ defineExpose({ loadProposals })
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+.evolution-eval-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
 }
 .evolution-form-block {
   display: grid;

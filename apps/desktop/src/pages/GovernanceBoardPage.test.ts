@@ -18,6 +18,32 @@ vi.mock('@/api', () => ({
   },
 }))
 
+/**
+ * The runtime section is `v-show`, not `v-if`, so `RuntimeInstancesPanel` mounts on every page
+ * load — and that panel renders the Vapor-compiled `UiBadge`/`UiLabel`/`UiSheet`. Under vitest
+ * those resolve to their CJS builds, which do not export `simpleSetCurrentInstance`, so mounting
+ * one throws `Cannot read properties of undefined (reading 'mount')` from `processComponent`.
+ *
+ * Only the three Vapor primitives are replaced, and everything else is spread through from the
+ * real module so a component added to this page later (as `UiSelectField` was) does not silently
+ * become `undefined`. Stubbing exactly these three is this repo's established precedent
+ * (`RuntimeInstancesPanel.test.ts`, `SettingsPage.*.test.ts`, `SearchNavigation.test.ts`,
+ * `modeEditor.test.ts`); the alias that would fix it at the root was tried and reverted because
+ * it breaks real mounting.
+ */
+vi.mock('@/components/ui', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  const { defineComponent, h } = await import('vue')
+  const pass = (name: string, tag = 'span') =>
+    defineComponent({ name, inheritAttrs: false, setup: (_, { slots, attrs }) => () => h(tag, attrs, slots.default?.()) })
+  return {
+    ...actual,
+    UiBadge: pass('UiBadge'),
+    UiLabel: pass('UiLabel', 'label'),
+    UiSheet: pass('UiSheet', 'div'),
+  }
+})
+
 import { api, type ApprovalDto } from '@/api'
 const apiMock = vi.mocked(api, true)
 const english = () => ({ global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] } })

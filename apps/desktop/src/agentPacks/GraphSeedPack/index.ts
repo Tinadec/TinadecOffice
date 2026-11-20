@@ -109,6 +109,24 @@ export interface AgentPackModeResource {
     features: string[]
     settings?: Record<string, number>
   } | null
+  /**
+   * Declared orchestration tier, so the runtime stops GUESSING the enforcement path
+   * from the shape it happens to freeze.
+   *
+   * `FrozenRunConfiguration.DeriveGraphTier` infers a tier from the frozen roster
+   * (does the conversation identity hold tools? are there declared edges? does it
+   * carry spawn authority?), and the inference is order-sensitive: adding a tool to
+   * a conversation identity flips a mode to `solo_dispatch`. Declaring the tier
+   * pins it. The values are the same four Core enforces
+   * (`GraphValidation.ValidOrchestrationTiers`), plus the `solo` alias Core accepts;
+   * `solo` is spelled out here so the pack can say it without depending on the alias.
+   *
+   * A declared value is authoritative, so it must MATCH the mode's real shape: a
+   * tier the topology cannot carry fails closed at run admission (an execution-less
+   * graph is only admissible as `solo_dispatch` or `free_form` with spawn authority)
+   * or silently narrows dispatch (`deterministic` denies every spawn).
+   */
+  orchestration_tier?: 'solo' | 'solo_dispatch' | 'free_form' | 'self_dispatch' | 'deterministic'
   nodes: AgentPackModeNodeResource[]
   edges: AgentPackModeEdgeResource[]
   bindings?: AgentPackModeBindingResource[]
@@ -154,7 +172,7 @@ export interface AgentPackEnvelope {
 }
 
 export const GRAPH_SEED_PACK_ID = 'tinadec.graph.seed-pack'
-export const GRAPH_SEED_PACK_VERSION = '3.5.0'
+export const GRAPH_SEED_PACK_VERSION = '3.6.0'
 
 export const graphSeedPackManifest = manifestJson as unknown as AgentPackManifest
 
@@ -167,7 +185,7 @@ export const graphSeedPackManifest = manifestJson as unknown as AgentPackManifes
 // The digest must be computed over the DTO-closed manifest, i.e. the raw file as
 // written — Core canonicalizes its DTO round-trip of this same body. See
 // packIntegrity.ts for the invariant and the gates that enforce it.
-export const GRAPH_SEED_PACK_DIGEST = '9ccc0d080e2d2f51f5a0580f1bcdff27b0fe36a3bfb6056a9bc9b7ef63f897b9'
+export const GRAPH_SEED_PACK_DIGEST = 'b8b9fff208d270cb353330b0d87c4c5c319dcffa45903ac8f1df840701fd2416'
 
 export const graphSeedPackEnvelope: AgentPackEnvelope = {
   manifest: graphSeedPackManifest,

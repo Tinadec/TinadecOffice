@@ -103,14 +103,27 @@ export const PROVIDER_TOOL_IDS = [
 /**
  * Tools Core executes itself, so they never appear in the provider manifest.
  * Mirrors `CoreVirtualToolPolicy` (`create_workspace`, `task_dispatch`, `task_wait`, `plan_update`, `spec_propose`,
- * `update_correction_trace`, `read_attachment`, `run_dossier`, the nine `tina_chat_*` ids, the seven `org_*`
- * organization tools, `graph_view`, `recall_evidence` and the three `environment_*` steward tools) — and
- * `toolPresentation.test.ts` now proves the copy by parsing that file, so a Core virtual tool cannot arrive here
- * as an unknown id.
+ * `update_correction_trace`, `read_attachment`, `load_skill`, the eight `tinadec_*` self-configuration tools,
+ * `run_dossier`, the nine `tina_chat_*` ids, the seven `org_*` organization tools, `graph_view`, `recall_evidence`
+ * and the three `environment_*` steward tools) — and `toolPresentation.test.ts` now proves the copy by parsing that
+ * file, so a Core virtual tool cannot arrive here as an unknown id.
+ *
+ * The `tinadec_*` block is what the Agent Center's self-configuration surface runs on; it was added to Core in the
+ * same phase that shipped `tinadec_prompt_apply` / `tinadec_model_profile_apply`, and omitting it here made the
+ * desktop treat eight real virtual tools as unknown provider tools.
  */
 export const CORE_VIRTUAL_TOOL_IDS = [
   'create_workspace',
   'read_attachment',
+  'load_skill',
+  'tinadec_inspect',
+  'tinadec_agent_apply',
+  'tinadec_mode_apply',
+  'tinadec_mode_publish',
+  'tinadec_skill_apply',
+  'tinadec_mcp_apply',
+  'tinadec_prompt_apply',
+  'tinadec_model_profile_apply',
   'task_dispatch',
   'task_wait',
   'plan_update',
@@ -216,7 +229,19 @@ const KIND_BY_ID: Record<string, ToolKind> = {
   recall_evidence: 'search',
   environment_list: 'orchestration',
   environment_acquire: 'orchestration',
-  environment_release: 'orchestration'
+  environment_release: 'orchestration',
+  // `load_skill` reads the skill catalog into the run; the `tinadec_*` block edits the workspace's
+  // own configuration (agents, modes, prompts, MCP servers, model profiles). Both are configuration
+  // surfaces rather than file or shell access, so they group with orchestration.
+  load_skill: 'orchestration',
+  tinadec_inspect: 'orchestration',
+  tinadec_agent_apply: 'orchestration',
+  tinadec_mode_apply: 'orchestration',
+  tinadec_mode_publish: 'orchestration',
+  tinadec_skill_apply: 'orchestration',
+  tinadec_mcp_apply: 'orchestration',
+  tinadec_prompt_apply: 'orchestration',
+  tinadec_model_profile_apply: 'orchestration'
 }
 
 const ICON_BY_KIND: Record<ToolKind, Component> = {

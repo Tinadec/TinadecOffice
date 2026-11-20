@@ -32,7 +32,7 @@ public static class ControlPlaneEndpoints
         app.MapGet("/api/v1/model-providers/harnesses/discover", (ControlPlaneService service, CancellationToken ct) => service.DiscoverHarnesses(ct));
         app.MapPost("/api/v1/model-providers/harnesses/connect", async (HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
         {
-            var result = await service.ConnectHarness(await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), ct);
+            var result = await service.ConnectHarness(await ReadJsonBodyAsync(request, ct), ct);
             await WithEtagAsync(response, result, ct);
             return result;
         });
@@ -49,22 +49,68 @@ public static class ControlPlaneEndpoints
             await WithEtagAsync(response, result, ct);
             return result;
         });
-        app.MapGet("/api/v1/model-settings", () => Results.Ok(new { base_url = "", model = "", has_api_key = false, revision = 0L, updated_at = DateTimeOffset.UtcNow }));
-        app.MapPut("/api/v1/model-settings", () => Results.Json(new { code = "capability_unavailable", message = "Use model-providers for persisted provider configuration." }, statusCode: 501));
+        // The single-model settings surface the desktop still exposes. It is a projection over the
+        // real provider + `chat` route, not a second place where inference is configured: GET reads
+        // the provider the chat route actually resolves to, PUT edits that provider and re-pins the
+        // route, so what the settings screen reports and what a run resolves cannot diverge.
+        app.MapGet("/api/v1/model-settings", (ControlPlaneService service, CancellationToken ct) => service.GetModelSettings(ct));
+        app.MapPut("/api/v1/model-settings", async (HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var result = await service.SaveModelSettings(
+                await ReadJsonBodyAsync(request, ct),
+                request.Headers.IfMatch.FirstOrDefault(),
+                ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
 
         app.MapGet("/api/v1/prompt-fragments", (ControlPlaneService service, CancellationToken ct) => service.ListPrompts(ct));
-        app.MapPost("/api/v1/prompt-fragments", async (HttpRequest request, ControlPlaneService service, CancellationToken ct) => await service.SavePrompt(await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), null, request.Headers.IfMatch.FirstOrDefault(), ct));
-        app.MapPut("/api/v1/prompt-fragments/{id:guid}", async (Guid id, HttpRequest request, ControlPlaneService service, CancellationToken ct) => await service.SavePrompt(await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), id, request.Headers.IfMatch.FirstOrDefault(), ct));
+        app.MapPost("/api/v1/prompt-fragments", async (HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var result = await service.SavePrompt(await ReadJsonBodyAsync(request, ct), null, request.Headers.IfMatch.FirstOrDefault(), ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
+        app.MapPut("/api/v1/prompt-fragments/{id:guid}", async (Guid id, HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var result = await service.SavePrompt(await ReadJsonBodyAsync(request, ct), id, request.Headers.IfMatch.FirstOrDefault(), ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
         app.MapDelete("/api/v1/prompt-fragments/{id:guid}", (Guid id, ControlPlaneService service, CancellationToken ct) => service.DeletePrompt(id, ct));
-        app.MapPost("/api/v1/prompt-fragments/{id:guid}/clone", () => Results.Json(new { code = "capability_unavailable", message = "Clone requires an explicit new fragment identity." }, statusCode: 501));
-        app.MapGet("/api/v1/prompt-fragments/{id:guid}/versions", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/prompt-fragments/{id:guid}/versions", () => Results.Json(new { code = "capability_unavailable", message = "Use PUT to create an immutable prompt version." }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-fragments/{id:guid}/rollback", () => Results.Json(new { code = "capability_unavailable", message = "Rollback endpoint is not enabled in this runtime." }, statusCode: 501));
+        // Clone forks the fragment's current body and metadata into a NEW identity. The desktop posts
+        // no body at all (derive "<key>-copy"), so an empty body must mean "derive", not "invalid".
+        app.MapPost("/api/v1/prompt-fragments/{id:guid}/clone", async (Guid id, HttpRequest request, ControlPlaneService service, CancellationToken ct) =>
+            await service.ClonePrompt(id, await ReadOptionalJsonObjectAsync(request, ct), ct));
+        app.MapGet("/api/v1/prompt-fragments/{id:guid}/versions", (Guid id, ControlPlaneService service, CancellationToken ct) => service.ListPromptVersions(id, ct));
+        // Creates an immutable version row from the posted body; it does not edit metadata.
+        app.MapPost("/api/v1/prompt-fragments/{id:guid}/versions", async (Guid id, HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var result = await service.CreatePromptVersion(id, await ReadJsonBodyAsync(request, ct), request.Headers.IfMatch.FirstOrDefault(), ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
+        // Restores a historical version's content AND records a new version row that becomes current,
+        // so history stays append-only and the rollback itself is auditable.
+        app.MapPost("/api/v1/prompt-fragments/{id:guid}/rollback", async (Guid id, HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var result = await service.RollbackPrompt(id, await ReadJsonBodyAsync(request, ct), request.Headers.IfMatch.FirstOrDefault(), ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
         app.MapGet("/api/v1/prompt-fragments/{id:guid}/effectiveness", (Guid id) => Results.Ok(new { fragment_id = id, active_version = 0, total_invocations = 0, positive_signals = 0, negative_signals = 0, effectiveness_score = 0d, last_evaluated_at = DateTimeOffset.UtcNow, versions = Array.Empty<object>() }));
         app.MapGet("/api/v1/prompt-fragments/effectiveness", () => Results.Ok(Array.Empty<object>()));
+        // A signal is only meaningful when it names the run that produced it. Core stores no
+        // prompt-usage telemetry, so recording one would persist a fact nobody measured.
         app.MapPost("/api/v1/prompt-fragments/{id:guid}/signals", () => Results.Json(new { code = "capability_unavailable", message = "Prompt signal recording requires an active run." }, statusCode: 501));
+        // Comparison is a read of that same missing telemetry. A body diff would be a different
+        // feature wearing this route's name, so it stays unavailable instead of lying.
         app.MapPost("/api/v1/prompt-fragments/{id:guid}/compare", () => Results.Json(new { code = "capability_unavailable", message = "Prompt comparison requires version telemetry." }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-context/preview", () => Results.Json(new { code = "capability_unavailable", message = "Prompt context preview requires the active context assembler runtime." }, statusCode: 501));
+        // Real assembly: resolves the agent, the mode (and its frozen node pipeline) and the pipeline
+        // graph, then runs IPromptAssembler over live fragments. The optional draft_* fields override
+        // stored values exactly as the editor shows them, so the preview is the run's prompt.
+        app.MapPost("/api/v1/prompt-context/preview", async (HttpRequest request, ControlPlaneService service, CancellationToken ct) =>
+            await service.PreviewPromptContext(await ReadJsonBodyAsync(request, ct), ct));
 
         app.MapPost("/api/v1/approvals/pre-authorizations", (PreAuthorizationRequestDto input, ControlPlaneService service, CancellationToken ct) => service.CreatePreAuthorization(input, ct));
         app.MapGet("/api/v1/approvals", (string? status, string? session_id, string? run_id, ControlPlaneService service, CancellationToken ct) => service.ListApprovals(status, session_id, run_id, ct));
@@ -82,18 +128,62 @@ public static class ControlPlaneEndpoints
         return app;
     }
 
+    /// <summary>
+    /// A clone body is optional: the desktop posts none, a script may post the new key/title/scope.
+    /// An absent, empty, non-object or malformed body therefore means "derive the identity", never
+    /// "invalid request" — clone is defined by the source fragment, not by the new body.
+    /// </summary>
+    private static async Task<JsonElement?> ReadOptionalJsonObjectAsync(HttpRequest request, CancellationToken ct)
+    {
+        // A body-less POST has no Content-Length header at all, and `curl -d ''` sends 0. Both mean
+        // "derive the identity", so neither may reach the deserializer.
+        if (request.ContentLength is null or 0) return null;
+        try
+        {
+            var element = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct);
+            return element.ValueKind == JsonValueKind.Object ? element : null;
+        }
+        catch (JsonException)
+        {
+            // A garbage body still clones: the alternative is a 400 for a request whose intent the
+            // URL already states, and clone is defined by the source fragment, not by the new body.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the request body as a JSON element without turning an empty body into a 500. The
+    /// service handlers already treat a non-object element as "no fields supplied", so an empty
+    /// POST is answered with a validation error instead of an unhandled JsonException.
+    /// </summary>
+    private static async Task<JsonElement> ReadJsonBodyAsync(HttpRequest request, CancellationToken ct)
+    {
+        try
+        {
+            return await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct);
+        }
+        catch (JsonException)
+        {
+            return default;
+        }
+    }
+
     private static bool ParseForce(HttpRequest request)
         => request.Query.ContainsKey("force") &&
            (request.Query["force"].Count == 0 || !bool.TryParse(request.Query["force"].ToString(), out var parsed) || parsed);
 
-    // The service returns anonymous objects whose only reliable revision carrier is the
-    // "revision" JSON field; echo it as an ETag so clients can chain conditional updates.
-    private static async Task WithEtagAsync(HttpResponse response, IResult result, CancellationToken ct)
+    // The service returns values whose only reliable revision carrier is a "revision" member; echo
+    // it as an ETag so clients can chain conditional updates. Matched through the generic result's
+    // value rather than a concrete Ok<T>, because a typed payload is Ok<PromptFragmentDto> and a
+    // pattern on Ok<object> silently never fires.
+    private static Task WithEtagAsync(HttpResponse response, IResult result, CancellationToken ct)
     {
-        if (result is not Microsoft.AspNetCore.Http.HttpResults.Ok<object> ok || ok.Value is null) return;
-        var revisionProperty = ok.Value.GetType().GetProperty("revision");
-        if (revisionProperty?.GetValue(ok.Value) is not long revision) return;
-        SetRevisionEtag(response, revision);
-        await Task.CompletedTask;
+        var value = (result as IValueHttpResult)?.Value;
+        if (value is null) return Task.CompletedTask;
+        var revisionProperty = value.GetType()
+            .GetProperty("revision", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
+        if (revisionProperty?.GetValue(value) is long revision)
+            SetRevisionEtag(response, revision);
+        return Task.CompletedTask;
     }
 }

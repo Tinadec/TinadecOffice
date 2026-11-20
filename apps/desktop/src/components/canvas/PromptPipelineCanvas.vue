@@ -18,6 +18,30 @@ import { Graph, layout } from '@dagrejs/dagre'
 import { LayoutGrid, Maximize2, Plus, Rocket, Save, Trash2 } from '@lucide/vue'
 import type { PromptPipelineDto, PromptPipelineEdgeDto, PromptPipelineNodeDto } from '@/api'
 
+/**
+ * The node types the Core assembler actually executes
+ * (`TinadecCore/Prompts/PromptsModuleRegistrar.cs` `ExecutePromptGraphAsync`, L1182-1392).
+ * Anything else falls into Core's `default:` branch, which renders `config.content` as a
+ * generic text block — it is not an error, but it is not one of the six working node kinds
+ * either, so the toolbar only offers the ones that do something.
+ */
+type PromptNodeType =
+  | 'template'
+  | 'fragment_ref'
+  | 'condition'
+  | 'workspace_rules'
+  | 'skills_index'
+  | 'assemble'
+
+const PROMPT_NODE_TYPES: readonly PromptNodeType[] = [
+  'template',
+  'fragment_ref',
+  'condition',
+  'workspace_rules',
+  'skills_index',
+  'assemble',
+]
+
 const FLOW_ID = 'prompt-pipeline-editor'
 const NODE_WIDTH = 208
 const NODE_HEIGHT = 76
@@ -49,6 +73,7 @@ const emit = defineEmits<{
   'select-node': [node: PromptPipelineNodeDto | null]
   'select-edge': [edge: PromptPipelineEdgeDto | null]
   'save-draft': []
+  clone: []
   publish: []
 }>()
 
@@ -58,6 +83,14 @@ const { fitView } = useVueFlow(FLOW_ID)
 const localSelectedNodeId = ref<string | null>(props.selectedNodeId ?? null)
 const localSelectedEdgeId = ref<string | null>(props.selectedEdgeId ?? null)
 const warn = ref('')
+
+/**
+ * Edge staging: a graph editor that refuses to *send* a bad connection must still show the
+ * user what it refused, otherwise clicking a handle looks broken. Source is picked by
+ * clicking a node's outgoing handle; the target is then picked by clicking another node,
+ * and the pair is validated exactly as a live drag would be.
+ */
+const stagedSourceId = ref<string | null>(null)
 
 watch(
   () => props.selectedNodeId,
@@ -84,16 +117,26 @@ function nodeLabelOf(node: PromptPipelineNodeDto): string {
   return String(node.label ?? node.title ?? node.key ?? node.id)
 }
 
+function nodeConfigOf(node: PromptPipelineNodeDto): Record<string, unknown> {
+  return node.config ?? node.data ?? {}
+}
+
 function nodeSnippetOf(node: PromptPipelineNodeDto): string {
-  const cfg = node.config ?? node.data ?? {}
+  const cfg = nodeConfigOf(node)
   const type = nodeTypeOf(node)
   if (type === 'fragment_ref') {
     return String(cfg.fragment_key ?? cfg.fragment_id ?? '')
   }
   if (type === 'condition') {
-    const field = String(cfg.field ?? cfg.condition ?? '')
+    const field = String(cfg.field ?? cfg.condition_field ?? '')
     const value = cfg.value !== undefined && cfg.value !== '' ? ` = ${String(cfg.value)}` : ''
     return `${field}${value}`.trim()
+  }
+  if (type === 'workspace_rules') {
+    return String(cfg.content ?? cfg.template ?? '').replace(/\s+/g, ' ').slice(0, 48) || 'workspace facts'
+  }
+  if (type === 'skills_index') {
+    return 'skills catalog'
   }
   const content = String(cfg.content ?? cfg.template ?? cfg.text ?? '')
   return content ? content.replace(/\s+/g, ' ').slice(0, 48) : ''
@@ -161,6 +204,7 @@ const vfNodes = computed<Node[]>(() =>
       (n.x != null && n.y != null ? { x: Number(n.x), y: Number(n.y) } : undefined) ??
       fallbackPositions.value.get(n.id) ?? { x: 40 + index * 240, y: 80 }
     const isSel = localSelectedNodeId.value === n.id
+    const isStaged = stagedSourceId.value === n.id
     return {
       id: n.id,
       type: 'custom',
@@ -172,6 +216,7 @@ const vfNodes = computed<Node[]>(() =>
         nodeType: nodeTypeOf(n),
         snippet: nodeSnippetOf(n),
         selected: isSel,
+        staged: isStaged,
         raw: n,
       },
       style: { background: 'transparent', border: 'none', padding: '0', width: `${NODE_WIDTH}px` },
@@ -249,23 +294,35 @@ function showWarn(message: string) {
   }, 2200)
 }
 
-function handleConnect(c: Connection) {
-  if (props.readonly || !c.source || !c.target) return
-  if (c.source === c.target) {
+/** Both the live drag and the staged-click path funnel through this one validator. */
+function commitEdge(source: string, target: string): boolean {
+  if (props.readonly) return false
+  if (!source || !target) return false
+  if (source === target) {
     showWarn(t('canvas.noSelfLink'))
-    return
+    return false
   }
-  if (rawEdges.value.some((e) => e.source === c.source && e.target === c.target)) return
-  const next: PromptPipelineEdgeDto = { id: `e-${c.source}-${c.target}`, source: c.source, target: c.target }
+  if (rawEdges.value.some((e) => e.source === source && e.target === target)) {
+    showWarn(t('settings.promptStudio.stageEdgeHint'))
+    return false
+  }
+  const next: PromptPipelineEdgeDto = { id: `e-${source}-${target}`, source, target }
   if (hasCycle([...rawEdges.value, next])) {
     showWarn(t('canvas.cycleBlocked'))
-    return
+    return false
   }
   warn.value = ''
   emit('update:edges', [...rawEdges.value, next])
+  return true
+}
+
+function handleConnect(c: Connection) {
+  if (props.readonly || !c.source || !c.target) return
+  commitEdge(c.source, c.target)
 }
 
 function onNodeClick(e: { node: Node }) {
+  stagedSourceId.value = null
   localSelectedNodeId.value = e.node.id
   localSelectedEdgeId.value = null
   const n = rawNodes.value.find((x) => x.id === e.node.id) ?? null
@@ -273,7 +330,29 @@ function onNodeClick(e: { node: Node }) {
   emit('select-edge', null)
 }
 
+/** Clicking a node's outgoing handle stages it as an edge source. */
+function onSourceHandleClick(nodeId: string) {
+  if (props.readonly) return
+  if (stagedSourceId.value && stagedSourceId.value !== nodeId) {
+    const ok = commitEdge(stagedSourceId.value, nodeId)
+    stagedSourceId.value = null
+    if (ok) return
+  }
+  stagedSourceId.value = stagedSourceId.value === nodeId ? null : nodeId
+}
+
+/** With a source staged, clicking any other node's body completes the edge. */
+function onNodeBodyClick(e: { node: Node }) {
+  if (stagedSourceId.value && stagedSourceId.value !== e.node.id) {
+    const ok = commitEdge(stagedSourceId.value, e.node.id)
+    stagedSourceId.value = null
+    if (ok) return
+  }
+  onNodeClick(e)
+}
+
 function onEdgeClick(e: { edge: Edge }) {
+  stagedSourceId.value = null
   localSelectedEdgeId.value = e.edge.id
   localSelectedNodeId.value = null
   const ed = rawEdges.value.find((x) => edgeIdOf(x) === e.edge.id) ?? null
@@ -282,6 +361,7 @@ function onEdgeClick(e: { edge: Edge }) {
 }
 
 function onPaneClick() {
+  stagedSourceId.value = null
   localSelectedNodeId.value = null
   localSelectedEdgeId.value = null
   emit('select-node', null)
@@ -298,7 +378,36 @@ function onNodeDragStop(event: NodeDragEvent) {
   emit('update:nodes', next)
 }
 
-function addNode(type: 'template' | 'fragment_ref' | 'condition' | 'assemble') {
+/**
+ * Add-button wording. `workspace_rules` and `skills_index` have no dedicated translation
+ * key because they are the node-kind identifiers themselves — the same string the node
+ * badge and Core's warnings show — so translating them would make the canvas disagree
+ * with the backend about what a node is called.
+ */
+function addNodeLabel(type: PromptNodeType): string {
+  switch (type) {
+    case 'template': return t('settings.promptStudio.addTemplate')
+    case 'fragment_ref': return t('settings.promptStudio.addFragmentRef')
+    case 'condition': return t('settings.promptStudio.addCondition')
+    case 'assemble': return t('settings.promptStudio.addAssemble')
+    default: return type
+  }
+}
+
+const isPackReadonly = computed(() =>
+  Boolean(props.pipeline?.pack_managed || props.pipeline?.status === 'archived'),
+)
+
+const DEFAULT_CONFIG: Record<PromptNodeType, Record<string, unknown>> = {
+  template: { content: '' },
+  fragment_ref: { fragment_id: '', fragment_key: '' },
+  condition: { field: 'layer', value: 'execution' },
+  workspace_rules: { content: '' },
+  skills_index: {},
+  assemble: { separator: '\n\n' },
+}
+
+function addNode(type: PromptNodeType) {
   if (props.readonly || !props.pipeline) return
   let idx = rawNodes.value.length + 1
   let id = `${type}_${idx}`
@@ -314,23 +423,17 @@ function addNode(type: 'template' | 'fragment_ref' | 'condition' | 'assemble') {
   }, -200)
   const position = { x: Math.max(40, Math.round((maxX + 260) / 10) * 10), y: 80 + (rawNodes.value.length % 3) * 90 }
 
-  const configByType: Record<typeof type, Record<string, unknown>> = {
-    template: { content: '' },
-    fragment_ref: { fragment_id: '', fragment_key: '' },
-    condition: { field: 'layer', value: 'execution' },
-    assemble: { separator: '\n\n' },
-  }
   const newNode: PromptPipelineNodeDto = {
     id,
     type,
     label: id,
     position,
-    config: configByType[type],
+    config: { ...DEFAULT_CONFIG[type] },
   }
-  const nextNodes = [...rawNodes.value, newNode]
-  emit('update:nodes', nextNodes)
+  emit('update:nodes', [...rawNodes.value, newNode])
   localSelectedNodeId.value = newNode.id
   localSelectedEdgeId.value = null
+  stagedSourceId.value = null
   emit('select-node', newNode)
   emit('select-edge', null)
 }
@@ -353,6 +456,7 @@ function deleteSelected() {
     const nextNodes = rawNodes.value.filter((n) => n.id !== targetId)
     const nextEdges = rawEdges.value.filter((e) => e.source !== targetId && e.target !== targetId)
     localSelectedNodeId.value = null
+    if (stagedSourceId.value === targetId) stagedSourceId.value = null
     emit('update:nodes', nextNodes)
     emit('update:edges', nextEdges)
     emit('select-node', null)
@@ -391,6 +495,7 @@ function scheduleFit() {
 
 watch(() => props.pipeline?.id, () => {
   warn.value = ''
+  stagedSourceId.value = null
   localSelectedNodeId.value = null
   localSelectedEdgeId.value = null
   scheduleFit()
@@ -400,26 +505,30 @@ watch(() => rawNodes.value.length, (next, prev) => {
   if (prev === 0 && next > 0) scheduleFit()
 })
 
+watch(() => props.readonly, (next) => { if (next) stagedSourceId.value = null })
+
 onMounted(scheduleFit)
 
-defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
+const readonlyBannerText = computed(() => t('canvas.readonlyHint'))
+
+defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect, addNode, commitEdge })
 </script>
 
 <template>
   <div ref="wrapperRef" class="prompt-pipeline-canvas" tabindex="0" @keydown="onKeydown">
     <div v-if="pipeline" class="pp-toolbar" data-testid="prompt-pipeline-toolbar">
-      <div class="pp-toolbar-group">
-        <button type="button" class="pp-tool-btn" :disabled="readonly" @click="addNode('template')">
-          <Plus :size="12" /><span>{{ t('settings.promptStudio.addTemplate') }}</span>
-        </button>
-        <button type="button" class="pp-tool-btn" :disabled="readonly" @click="addNode('fragment_ref')">
-          <Plus :size="12" /><span>{{ t('settings.promptStudio.addFragmentRef') }}</span>
-        </button>
-        <button type="button" class="pp-tool-btn" :disabled="readonly" @click="addNode('condition')">
-          <Plus :size="12" /><span>{{ t('settings.promptStudio.addCondition') }}</span>
-        </button>
-        <button type="button" class="pp-tool-btn" :disabled="readonly" @click="addNode('assemble')">
-          <Plus :size="12" /><span>{{ t('settings.promptStudio.addAssemble') }}</span>
+      <div class="pp-toolbar-group" role="group" :aria-label="t('canvas.addNode')">
+        <button
+          v-for="type in PROMPT_NODE_TYPES"
+          :key="type"
+          type="button"
+          class="pp-tool-btn"
+          :data-node-type="type"
+          :disabled="readonly"
+          @click="addNode(type)"
+        >
+          <Plus :size="12" />
+          <span>{{ addNodeLabel(type) }}</span>
         </button>
       </div>
       <div class="pp-toolbar-group">
@@ -434,16 +543,29 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
         </button>
       </div>
       <div class="pp-toolbar-group pp-toolbar-persist">
-        <button type="button" class="pp-tool-btn" :disabled="readonly || saving || !dirty" @click="emit('save-draft')">
+        <button
+          v-if="isPackReadonly"
+          type="button"
+          class="pp-tool-btn"
+          data-testid="pipeline-clone-to-customize"
+          @click="emit('clone')"
+        >
+          <span>{{ t('settings.promptStudio.clonePipeline') }}</span>
+        </button>
+        <button v-else type="button" class="pp-tool-btn" :disabled="readonly || saving || !dirty" @click="emit('save-draft')">
           <Save :size="12" /><span>{{ t('settings.promptStudio.saveDraftAction') }}</span>
         </button>
-        <button type="button" class="pp-tool-btn primary" :disabled="readonly || publishing" @click="emit('publish')">
+        <button v-if="!isPackReadonly" type="button" class="pp-tool-btn primary" :disabled="readonly || publishing" @click="emit('publish')">
           <Rocket :size="12" /><span>{{ t('settings.publishAction') }}</span>
         </button>
       </div>
     </div>
 
     <div v-if="warn" class="pp-warn" role="status">{{ warn }}</div>
+    <div v-if="stagedSourceId" class="pp-staged" role="status" data-testid="pipeline-edge-staging">
+      <span>{{ t('settings.promptStudio.stageEdge') }} · <code>{{ stagedSourceId }}</code> → ?</span>
+      <button type="button" class="pp-tool-btn" @click="stagedSourceId = null">{{ t('common.cancel') }}</button>
+    </div>
     <div v-if="!pipeline" class="center-empty-state"><span>{{ t('canvas.choosePipeline') }}</span></div>
     <div v-else class="pp-wrap">
       <VueFlow
@@ -457,15 +579,15 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
         class="vf"
         @nodes-initialized="scheduleFit"
         @connect="handleConnect"
-        @node-click="onNodeClick"
+        @node-click="onNodeBodyClick"
         @edge-click="onEdgeClick"
         @pane-click="onPaneClick"
         @node-drag-stop="onNodeDragStop"
       >
         <Background :gap="20" />
-        <Panel position="top-right" class="vf-panel">{{ readonly ? t('canvas.readonlyHint') : t('canvas.pipelineHint') }}</Panel>
+        <Panel position="top-right" class="vf-panel">{{ readonly ? readonlyBannerText : t('canvas.pipelineHint') }}</Panel>
         <template #node-custom="{ data }">
-          <div class="pp-node" :class="[{ sel: data.selected }, `type-${data.nodeType}`]">
+          <div class="pp-node" :class="[{ sel: data.selected, staged: data.staged }, `type-${data.nodeType}`]" :data-node-id="(data.raw as PromptPipelineNodeDto)?.id">
             <Handle type="target" :position="Position.Left" />
             <div class="pp-node-head">
               <span class="pp-node-type">{{ data.nodeType }}</span>
@@ -473,7 +595,11 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
             </div>
             <div v-if="data.snippet" class="pp-node-snippet" :title="data.snippet">{{ data.snippet }}</div>
             <div v-else class="pp-node-id">{{ (data.raw as PromptPipelineNodeDto)?.id }}</div>
-            <Handle type="source" :position="Position.Right" />
+            <Handle
+              type="source"
+              :position="Position.Right"
+              @click.stop="onSourceHandleClick((data.raw as PromptPipelineNodeDto).id)"
+            />
           </div>
         </template>
       </VueFlow>
@@ -530,14 +656,29 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
   color: var(--accent-danger);
 }
 .pp-warn { font-size: 11px; color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 8%, var(--surface-raised)); border: 1px solid color-mix(in srgb, var(--accent-danger) 22%, var(--border-muted)); padding: 6px 10px; border-radius: 8px; }
+.pp-staged {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-chrome);
+  border: 1px dashed var(--accent-brand);
+  border-radius: 8px;
+  padding: 4px 10px;
+}
+.pp-staged code { font-family: var(--font-mono); color: var(--text-primary); }
 .pp-wrap { height: 380px; border: 1px solid var(--border-muted); border-radius: 12px; overflow: hidden; background: var(--surface-section); position: relative; }
 .vf { width: 100%; height: 100%; }
 .vf-panel { font-size: 11px; color: var(--text-muted); background: var(--surface-raised); padding: 4px 8px; border-radius: 6px; }
 .pp-node { position: relative; width: 208px; padding: 8px 10px; border-radius: 10px; background: var(--surface-raised); border: 1px solid var(--border-muted); display: grid; gap: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
 .pp-node.sel { border-color: var(--accent-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 22%, transparent); }
+.pp-node.staged { border-color: var(--accent-brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-brand) 26%, transparent); }
 .pp-node.type-assemble { border-left: 3px solid var(--accent-success); }
 .pp-node.type-condition { border-left: 3px solid var(--accent-warning); }
 .pp-node.type-fragment_ref { border-left: 3px solid var(--accent-brand); }
+.pp-node.type-skills_index { border-left: 3px solid var(--accent-primary); }
+.pp-node.type-workspace_rules { border-left: 3px solid var(--text-secondary); }
 .pp-node-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pp-node-type { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); background: var(--surface-section); padding: 2px 6px; border-radius: 999px; flex-shrink: 0; }
 .pp-node-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-primary); }

@@ -318,4 +318,62 @@ describe('team shape', () => {
     expect(solo.orchestration_tier).toBe('solo_dispatch')
     expect(solo.bindings?.[0].tool_switches).toEqual({ custom_tool: true })
   })
+
+  it('keeps relationship keys the team view does not model, on the leader and on pipeline members', () => {
+    // The team view owns five relationship keys, but the graph editor can write
+    // others. Because a mode write replaces the whole RelationshipJson, rebuilding
+    // the object from a whitelist silently deleted them on every team save.
+    const advanced = {
+      duty: 'custom duty',
+      inputs_outputs: { receives: 'goal', returns: 'answer' },
+      allowed_dispatch_targets: ['search'],
+      success_criteria: ['evidence'],
+      agent_types: ['search'],
+      subscriptions: ['lease_conflict'],
+      per_node_budget: { tokens: 1200 },
+    }
+    const existing = detail({
+      nodes: [
+        {
+          id: 'leader',
+          node_key: 'leader',
+          agent_id: leader.id,
+          agent_definition_id: leader.id,
+          lane: 'operation',
+          position: { x: 60, y: 60 },
+          config: { conversation: true },
+          relationship: advanced,
+        },
+        {
+          id: 'member-1',
+          node_key: 'member-1',
+          agent_id: search.id,
+          agent_definition_id: search.id,
+          lane: 'execution',
+          position: { x: 60, y: 280 },
+          relationship: { duty: 'stage one', stage_hint: 'keep me' },
+        },
+      ],
+      edges: [{ id: 'e1', source: 'leader', target: 'member-1' }],
+      bindings: [],
+    })
+
+    const updated = buildTeamTopology({
+      style: 'pipeline',
+      leaderId: leader.id,
+      memberIds: [search.id, engineering.id],
+      displayName: 'Kept',
+      existingDetail: existing,
+    }, agents)
+
+    const leaderRel = updated.nodes[0].relationship as Record<string, unknown>
+    expect(leaderRel.subscriptions).toEqual(['lease_conflict'])
+    expect(leaderRel.per_node_budget).toEqual({ tokens: 1200 })
+    // The keys this view owns are still rewritten from the selection.
+    expect(leaderRel.allowed_dispatch_targets).toEqual(['search', 'global_engineering'])
+    expect(leaderRel.duty).toBe('custom duty')
+
+    const memberRel = updated.nodes[1].relationship as Record<string, unknown>
+    expect(memberRel.stage_hint).toBe('keep me')
+  })
 })

@@ -8,6 +8,52 @@ import {
   graphSeedPackManifest,
 } from './index'
 
+/**
+ * The eight workbench-configuration tool ids, in the order Core declares them
+ * (`CoreVirtualToolPolicy.TinadecConfigToolIds`). `tinadec_inspect` is the read-only
+ * one; the other seven are approval-gated writes.
+ */
+const TINADEC_CONFIG_TOOLS = [
+  'tinadec_inspect',
+  'tinadec_agent_apply',
+  'tinadec_mode_apply',
+  'tinadec_mode_publish',
+  'tinadec_skill_apply',
+  'tinadec_mcp_apply',
+  'tinadec_prompt_apply',
+  'tinadec_model_profile_apply',
+]
+
+/**
+ * The tier each mode declares, with the shape evidence behind it. Every value equals
+ * what `FrozenRunConfiguration.DeriveGraphTier` infers from that mode's frozen roster,
+ * so declaring it pins the current behaviour instead of changing the enforcement path.
+ */
+const MODE_TIERS = {
+  // No declared edges, spawn authority, business tools switched off => free_form.
+  free_director: 'free_form',
+  // Two declared edges to execution nodes + spawn authority => self_dispatch.
+  vibe_graph: 'self_dispatch',
+  // Same two edges; its spawn room is max_depth 0 but the tier is read off the edges
+  // and the conversation capabilities, not the envelope => self_dispatch.
+  fixed_pipeline: 'self_dispatch',
+  // The conversation identity keeps the whole ceiling and works itself => solo_dispatch.
+  solo: 'solo_dispatch',
+  // No edges, so inference gives free_form; declared solo_dispatch because Plan's
+  // conversation identity holds its own read-only tool surface and the master works
+  // itself (Plan must NOT be deterministic: that tier denies every spawn, which would
+  // break the read-only investigation Plan dispatches to `search`).
+  plan: 'solo_dispatch',
+  // No edges + spawn authority, conversation holds only the config tools => free_form.
+  review: 'free_form',
+  spec: 'free_form',
+  // Structured investigation: the conversation identity keeps 40+ business tools
+  // (only plan_update is switched off) => solo_dispatch.
+  correction: 'solo_dispatch',
+  // Autonomous exploration: a director that drives a planner and dispatches workers.
+  artex: 'solo_dispatch',
+} as const
+
 describe('GraphSeedPack', () => {
   it('has stable app ownership and internal references', () => {
     expect(graphSeedPackManifest.metadata.pack_id).toBe(GRAPH_SEED_PACK_ID)
@@ -213,7 +259,22 @@ describe('GraphSeedPack', () => {
     const soloMaster = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'solo_master')!
     for (const slug of ['free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec']) {
       const switches = conversationBinding(slug).tool_switches ?? {}
-      for (const tool of soloMaster.tool_scope ?? []) expect(switches[tool], `${slug} switches ${tool} off`).toBe(false)
+      // Every BUSINESS tool stays switched off: these modes must still shed the business
+      // tool face, which is what keeps their tier non-solo. The workbench-configuration
+      // tools are the exception (asserted below), because "the AI configures itself"
+      // is the point of the mode and holding an id is not holding the authority — every
+      // write in that group is approval-gated in Core.
+      for (const tool of soloMaster.tool_scope ?? []) {
+        if (TINADEC_CONFIG_TOOLS.includes(tool)) continue
+        expect(switches[tool], `${slug} switches ${tool} off`).toBe(false)
+      }
+      // All EIGHT tinadec_* ids are ON, including the two that were added with the
+      // prompt/model-profile surfaces. An id that is switched on but missing from the
+      // agent ceiling is inert, so the ceiling assertion below is what makes this real.
+      for (const tool of TINADEC_CONFIG_TOOLS) {
+        expect(switches[tool], `${slug} switches ${tool} on`).toBe(true)
+        expect(soloMaster.tool_scope, `${slug} needs ${tool} in the ceiling to reach it`).toContain(tool)
+      }
     }
 
     const resourceKeys = new Set(graphSeedPackManifest.resources.agents.map((agent) => agent.resource_key))
@@ -457,11 +518,15 @@ describe('GraphSeedPack', () => {
     const effective = soloMaster.tool_scope.filter((tool) => switches[tool] !== false)
     // Reading the organization (who is here, what was said, the session graph, the evidence archive)
     // is reading; posting into it and closing reports are not, so those stay off in Plan.
+    // `tinadec_inspect` belongs in the reading set: it is the read-only half of the
+    // workbench group (no approval, no mutation), and a Plan that cannot look at the
+    // live configuration cannot write a plan that fits it.
     expect(effective).toEqual(['ls', 'stat', 'read_file', 'load_skill', 'file_search', 'git_status', 'git_diff', 'git_log', 'read_attachment', 'task_dispatch', 'task_wait', 'plan_update',
-      'graph_view', 'org_directory', 'org_read', 'recall_evidence', 'environment_list'])
-    // The workbench write tools and MCP egress are switched off in Plan: planning must not
-    // reconfigure the workbench or reach the network.
-    for (const tool of ['mcp_list', 'mcp_search', 'mcp_invoke', 'tinadec_agent_apply', 'tinadec_mode_apply', 'tinadec_mode_publish', 'tinadec_skill_apply', 'tinadec_mcp_apply']) {
+      'graph_view', 'org_directory', 'org_read', 'recall_evidence', 'environment_list', 'tinadec_inspect'])
+    // Inspection is on; the seven WRITE tools of the group and MCP egress stay off: planning
+    // must not reconfigure the workbench or reach the network.
+    expect(switches.tinadec_inspect, 'plan allows read-only inspection').toBe(true)
+    for (const tool of ['mcp_list', 'mcp_search', 'mcp_invoke', 'tinadec_agent_apply', 'tinadec_mode_apply', 'tinadec_mode_publish', 'tinadec_skill_apply', 'tinadec_mcp_apply', 'tinadec_prompt_apply', 'tinadec_model_profile_apply']) {
       expect(switches[tool], `plan switches ${tool} off`).toBe(false)
     }
     // No write grant either: even a tool that slipped through would be denied at the decision point.
@@ -469,6 +534,132 @@ describe('GraphSeedPack', () => {
     expect(binding.envelope!.resources!.write).toBeUndefined()
     // The spawn room stays, so Plan can still send read-only investigation out.
     expect(binding.envelope!.spawn!.max_depth).toBeGreaterThan(0)
+  })
+
+  it('declares an orchestration tier on every mode and matches the tier its shape can carry', () => {
+    // The tier used to be inferred at freeze time from the roster and the edge count,
+    // which made it order-sensitive: handing the conversation identity one tool moved a
+    // mode onto `solo_dispatch` with nobody having decided that. Declaring the tier pins
+    // it, so the declaration has to agree with the shape or it becomes a lie the runtime
+    // trusts — a wrong value either fails closed at admission (an execution-less graph is
+    // only admissible as solo_dispatch / free_form-with-spawn-authority) or silently
+    // narrows dispatch (`deterministic` denies every spawn).
+    const modes = graphSeedPackManifest.resources.modes
+    const agentByRef = new Map(graphSeedPackManifest.resources.agents.map((agent) => [`agent:${agent.resource_key}`, agent]))
+    // Resolve the conversation identity from the mode itself rather than assuming
+    // `meeting`: ArtEx converses through `artex_director`, so a hardcoded identity would
+    // make the shape rules below vacuous for that mode (every switch on an empty
+    // tool_switches reads as "not switched off", which passes any assertion).
+    const conversationOf = (mode: (typeof modes)[number]) => {
+      const node = mode.nodes.find((candidate) => candidate.config?.conversation === true)
+      expect(node, `${mode.resource_key} declares a conversation node`).toBeDefined()
+      const agent = agentByRef.get(node!.agent_ref)!
+      expect(agent, `${mode.resource_key} conversation agent resolves`).toBeDefined()
+      const binding = mode.bindings?.find((candidate) =>
+        (candidate.node_key ?? 'meeting') === node!.node_key && candidate.agent_ref === node!.agent_ref)
+      expect(binding, `${mode.resource_key} conversation binding`).toBeDefined()
+      return { node: node!, agent, switches: binding!.tool_switches ?? {} }
+    }
+
+    for (const mode of modes) {
+      expect(mode.orchestration_tier, `${mode.resource_key} declares orchestration_tier`).toBeTruthy()
+      expect(mode.orchestration_tier, `${mode.resource_key} tier`).toBe(MODE_TIERS[mode.resource_key as keyof typeof MODE_TIERS])
+      // Core accepts four canonical values plus the `solo` alias; the pack spells the
+      // canonical one so a reader never has to know the alias.
+      expect(['solo_dispatch', 'free_form', 'self_dispatch', 'deterministic'],
+        `${mode.resource_key} tier is canonical`).toContain(mode.orchestration_tier)
+      // The tier belongs to the MODE, not to a binding: putting it inside `bindings`
+      // would make it per-node and invisible to the freeze path that reads it.
+      expect(Object.keys(mode)).toContain('orchestration_tier')
+      for (const binding of mode.bindings ?? []) {
+        expect(binding, `${mode.resource_key} keeps the tier off its bindings`).not.toHaveProperty('orchestration_tier')
+      }
+    }
+
+    // ── Shape consistency, one rule per tier ──────────────────────────────────
+    for (const mode of modes) {
+      const { agent, switches } = conversationOf(mode)
+      const effective = agent.tool_scope.filter((tool) => switches[tool] !== false)
+      const configTools = effective.filter((tool) => TINADEC_CONFIG_TOOLS.includes(tool))
+      const businessTools = effective.filter((tool) => !TINADEC_CONFIG_TOOLS.includes(tool))
+      const executionNodes = mode.nodes.filter((node) => node.layer !== 'operation')
+      const tier = mode.orchestration_tier
+
+      if (tier === 'deterministic') {
+        // deterministic denies every spawn (graph_tier_spawn_denied) and may only
+        // dispatch along declared edges. No mode is deterministic any more, so the rule
+        // is stated as an implication: a deterministic mode must not enable the write
+        // half of the config group, because the tier it declares forbids the dispatch
+        // those tools need to do anything useful.
+        for (const tool of TINADEC_CONFIG_TOOLS.filter((tool) => tool !== 'tinadec_inspect')) {
+          expect(switches[tool], `${mode.resource_key} is deterministic so must not enable ${tool}`).not.toBe(true)
+        }
+        continue
+      }
+
+      if (tier === 'solo_dispatch') {
+        // The conversation identity works itself, so it must hold a real tool surface.
+        // Excluding the config ids on purpose: a mode that holds ONLY the workbench group
+        // is not a master doing the work, it is a mode whose business face is shed.
+        expect(effective.length, `${mode.resource_key} solo_dispatch holds tools`).toBeGreaterThan(0)
+        expect(effective.length > configTools.length, `${mode.resource_key} solo_dispatch holds business tools too`).toBe(true)
+        continue
+      }
+
+      if (tier === 'free_form') {
+        // free_form is edge-less by definition (edges would make the tier declared-graph).
+        expect(mode.edges, `${mode.resource_key} free_form has no declared edges`).toHaveLength(0)
+        // The business face is shed, so what the conversation identity keeps is exactly
+        // the workbench group (possibly empty).
+        expect(businessTools, `${mode.resource_key} free_form sheds the business tool face`).toEqual([])
+        continue
+      }
+
+      if (tier === 'self_dispatch') {
+        // self_dispatch is a declared-graph tier: it dispatches along its edges and may
+        // additionally spawn from the whitelist.
+        expect(mode.edges.length, `${mode.resource_key} self_dispatch declares edges`).toBeGreaterThan(0)
+        expect(executionNodes.length, `${mode.resource_key} self_dispatch has execution nodes`).toBeGreaterThan(0)
+      }
+    }
+
+    // The modes that enable the write half of the workbench group must not claim a tier
+    // that forbids the dispatch those writes depend on. This is the assertion the brief
+    // asked for in one line: "every mode whose meeting binding enables the write tools is
+    // not deterministic".
+    const writeConfigTools = TINADEC_CONFIG_TOOLS.filter((tool) => tool !== 'tinadec_inspect')
+    for (const mode of modes) {
+      const { switches } = conversationOf(mode)
+      const enablesWrites = writeConfigTools.some((tool) => switches[tool] === true)
+      if (enablesWrites) expect(mode.orchestration_tier, `${mode.resource_key} enables config writes so cannot be deterministic`).not.toBe('deterministic')
+    }
+
+    // Plan is the one deliberate asymmetry: read-only inspection is on, every write is off.
+    const plan = modes.find((mode) => mode.resource_key === 'plan')!
+    const planSwitches = conversationOf(plan).switches
+    expect(planSwitches.tinadec_inspect).toBe(true)
+    for (const tool of writeConfigTools) expect(planSwitches[tool], `plan ${tool}`).toBe(false)
+  })
+
+  it('keeps the two newly declared config tools inside every ceiling that can reach them', () => {
+    // A `true` switch is not a grant: the effective surface is `tool_scope` MINUS the
+    // switched-off ids, so an id that is switched on but absent from the ceiling is
+    // silently inert. That is the exact failure this test exists to catch, because
+    // `tinadec_prompt_apply` / `tinadec_model_profile_apply` were added to Core's policy
+    // after the ceilings were written.
+    const agents = graphSeedPackManifest.resources.agents
+    for (const key of ['meeting', 'solo_master']) {
+      const agent = agents.find((candidate) => candidate.resource_key === key)!
+      for (const tool of TINADEC_CONFIG_TOOLS) {
+        expect(agent.tool_scope, `${key} ceiling holds ${tool}`).toContain(tool)
+      }
+    }
+    // The two identities stay interchangeable: every mode converses through `meeting`
+    // while sessions frozen on `solo_master` keep working, so a divergence would make
+    // self-configuration depend on which identity a session happens to be on.
+    const meeting = agents.find((agent) => agent.resource_key === 'meeting')!
+    const soloMaster = agents.find((agent) => agent.resource_key === 'solo_master')!
+    expect(soloMaster.tool_scope).toEqual(meeting.tool_scope)
   })
 
   it('points activation at declared resources', () => {

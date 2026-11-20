@@ -459,10 +459,15 @@ function commitNodePosition(nodeId: string, rawPos: { x: number; y: number }): v
       showLaneNotice(t('canvas.laneClamped'))
     }
   } else {
-    // Unbound draft nodes can cross SPLIT_Y to switch lanes smoothly.
-    const targetLane = laneForY(snapped.y)
-    nextLane = targetLane
-    nextPos = clampToLane(snapped, targetLane)
+    // An unbound draft node still belongs to the lane it was created in. Letting a
+    // drag move it across 治理层/执行层 silently would change what the mode means
+    // with no trace, so the crossing is clamped and announced; the lane stays
+    // changeable on purpose through the inspector's lane select.
+    nextLane = currentLane
+    nextPos = clampToLane(snapped, currentLane)
+    if (laneForY(snapped.y) !== currentLane || nextPos.x !== snapped.x || nextPos.y !== snapped.y) {
+      showLaneNotice(t('canvas.laneClamped'))
+    }
   }
 
   // Keep Vue Flow's internal node position aligned when clamping returns the

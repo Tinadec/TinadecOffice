@@ -160,6 +160,13 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             var envelopes = ParseBindingEnvelopes(mv);
             var runtimePolicy = ParseRuntimePolicy(mv);
             var modeInstructions = ParseModeInstructions(mv);
+            // The explicit tier the author declared on the published mode, folded onto the
+            // canonical names by the shared reader in Abstractions (the same one the freeze-side
+            // mapping consumes). Frozen into the snapshot by both publish paths; null for every
+            // mode that never opted in, which is what keeps the inference path byte-identical
+            // for legacy modes. Without this assignment the run freeze receives null and
+            // inference silently overrides what the mode declared.
+            var orchestrationTier = FormalModeSnapshotDocuments.ReadOrchestrationTier(mv.SnapshotJson);
             var policyTools = CorrectionRuntimePolicy.IsStructuredInvestigation(runtimePolicy)
                 ? new[] { CoreVirtualToolPolicy.CorrectionTraceToolId }
                 : [];
@@ -388,7 +395,11 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 ConversationTemplateSlug = conversationSlug,
                 SpawnableTemplates = spawnable,
                 RuntimePolicy = runtimePolicy,
-                ModeInstructions = modeInstructions
+                ModeInstructions = modeInstructions,
+                // The last hop of the explicit-tier feature: without this the run freeze
+                // receives null, MapDeclaredTier always returns null, and inference silently
+                // overrides what the mode declared.
+                OrchestrationTier = orchestrationTier
             };
         }
         catch (Exception ex)

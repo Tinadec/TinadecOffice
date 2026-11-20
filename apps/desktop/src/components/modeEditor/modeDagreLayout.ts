@@ -68,6 +68,11 @@ export function laneForY(y: number): ModeLane {
 /**
  * Clamps a node position cleanly to its lane's world Y band and snaps to the
  * uniform 20px grid so dragged nodes never cross into the opposite swimlane.
+ *
+ * Both bands have a far edge too: without a lower bound on `operation` a
+ * governance node dragged upwards past the world origin kept its negative Y and
+ * left the framed view entirely, which read as "the node vanished". The lower
+ * bound is the grid origin so every lane is a closed interval.
  */
 export function clampToLane(pos: { x: number; y: number }, lane: ModeLane): { x: number; y: number } {
   const snappedX = snapToGrid(pos.x)
@@ -76,7 +81,7 @@ export function clampToLane(pos: { x: number; y: number }, lane: ModeLane): { x:
     const maxOperationY = snapToGrid(MODE_LANE_SPLIT_Y - MODE_NODE_HEIGHT - LANE_BOUNDARY_PADDING)
     return {
       x: snappedX,
-      y: Math.min(snappedY, maxOperationY),
+      y: Math.max(0, Math.min(snappedY, maxOperationY)),
     }
   }
   const minExecutionY = snapToGrid(MODE_LANE_SPLIT_Y + MODE_GRID_SIZE)

@@ -6,7 +6,7 @@
     "owner": "tinadec",
     "product_id": "tinadec-core",
     "name": "GraphSeedPack",
-    "version": "3.5.0",
+    "version": "3.6.0",
     "description": "DmaEA 图编排种子包：八种工作模式。Solo 与 Plan 是熟悉的单智能体用法（亲自动手、先出方案），Team、Review、Spec 由协调者带着执行者完成组队、评审与规格驱动开发，Graph 与 Workflow 沿声明好的协作图推进，Correction 用宿主拥有的因果轨迹、验证契约和复现重开完成证据驱动的纠偏。协调者按职责点名执行者（固定 id：search / global_engineering / reviewer），每种模式都绑定独立的提示词管线、角色边界和工具授权；写入与高风险操作继续经过审批。每个会话同时是一个 TinaChat 组织：执行者也是成员，按派发关系互为联系人，在计划室、私聊与公告板里协作；Team 模式常驻治理审查与上下文整理两个角色：前者盯执行者之间的资源冲突，后者在任务结束与 run 收尾时把会话上下文压成结构化摘要。"
   },
   "compatibility": {
@@ -85,7 +85,9 @@
           "tinadec_mode_apply",
           "tinadec_mode_publish",
           "tinadec_skill_apply",
-          "tinadec_mcp_apply"
+          "tinadec_mcp_apply",
+          "tinadec_model_profile_apply",
+          "tinadec_prompt_apply"
         ],
         "system_prompt": "你是用户与系统的对话身份，也是协调者。先弄清用户要什么，再按本模式的编排语义把工作拆成可独立验收的任务：每个任务用 assignee 点名一位执行者，依据是执行者名册里的职责与边界，而不是它碰巧持有哪些工具。执行者看不到本次对话，任务描述要自足。作答时只依据执行证据：说清每项任务由谁完成、结果如何、哪些成功标准没有证据；对用户保持简洁、先结论后依据。",
         "enabled": true,
@@ -181,7 +183,9 @@
           "tinadec_mode_apply",
           "tinadec_mode_publish",
           "tinadec_skill_apply",
-          "tinadec_mcp_apply"
+          "tinadec_mcp_apply",
+          "tinadec_model_profile_apply",
+          "tinadec_prompt_apply"
         ],
         "system_prompt": "你是用户与系统的对话身份，并且亲自下场做事：小范围、单文件的改动由你自己用工具完成，需要并行或专项职责时用 task_dispatch 把子任务派给执行者：agent 填执行者名册里的 id（按职责选），description 写成自足的简报；要用子任务的结果时先把能并行的都派出去，再调 task_wait 取回结果（在拿到之前不要声称它已完成）；要在上一个子任务基础上继续，用 follow_up_of 带上它的 dispatch_id 或句柄。三步以上的活先用 plan_update 写下计划（整份提交、同时只有一步 in_progress、做完一步就标 completed），用户会实时看到；简单的事不必写计划。改已有文件优先用 replace_lines / insert_line / delete_line（先 read_file 拿到 line_hash 与 file_hash），整文件重写才用 write_file。写操作前先读现状；每次写都要用户批准（不要因为被问过就把批准当成已得）；如实报告你实际做了什么、以及有什么没做到。要与其他智能体或用户协作时用 TinaChat 工具：先 tina_chat_bind 绑定你自己持有的 handle，再用 tina_chat_list_rooms / tina_chat_read_inbox 看清场合与来件，用 tina_chat_send 发言（本调用不会带回任何回复，不要把没读到的答复说成已收到）；只有具备整理意图资格的身份才能 tina_chat_propose_intent。简报由会话角色决定：用 tina_chat_list_intents 读到 conversation_revision，再用 tina_chat_decide_intent 采纳或拒绝（你不是 owner/admin 就会被拒，别反复试），已采纳的用 tina_chat_execute_intent 交给执行——那是分离的 run，本调用只返回标识符，结果稍后会作为群消息回到群里。这个会话本身也是一个组织：你派出的执行者（按句柄称呼，例如 search#1）、治理角色和用户都是成员。graph_view 能看到所有 run、任务、执行者与各自占用的资源；执行者之间的讨论在计划室（org_read room=plan），发给你的消息和治理角色的报告在 org_read room=inbox；要回应或点名某个成员就用 org_send（mention 会让对方收到）；报告处理完用 org_decide_report 记录结果。要回查已完成任务的原话、以前的报告或上下文摘要，用 recall_evidence（检索的是原文，不是摘要）。要让几个子任务并行改同一个仓库时，先用 git_worktree_create 给每个子任务开一个独立 worktree（默认在仓库的 .tinadec/worktrees 下，开出来就归你这个 run 持有，别的 run 的写入会被拒），把 worktree 路径写进子任务的 write_scope 再派发；用完用 git_worktree_remove 回收（回收会释放持有）。要用测试、云端、远程或终端环境时，先 environment_list 看有哪些、谁占着，再 environment_acquire 按名字或类型取一个（取到的归这个 run，被拒会告诉你谁占着——等、换一个或如实告诉用户），用完尽快 environment_release 归还；连接信息里的凭据只以 secret_ref 出现，不要索要或臆造密码。",
         "enabled": true,
@@ -1510,6 +1514,7 @@
         "display_name": "Team",
         "description": "协调者按需组队，把活拆给多名执行者，再汇总验收。适合跨模块的复杂任务。",
         "prompt_pipeline_ref": "prompt:free-base",
+        "orchestration_tier": "free_form",
         "nodes": [
           {
             "node_key": "meeting",
@@ -1683,12 +1688,14 @@
               "tina_chat_read_inbox": false,
               "tina_chat_search_people": false,
               "tina_chat_send": false,
-              "tinadec_agent_apply": false,
-              "tinadec_inspect": false,
-              "tinadec_mcp_apply": false,
-              "tinadec_mode_apply": false,
-              "tinadec_mode_publish": false,
-              "tinadec_skill_apply": false,
+              "tinadec_agent_apply": true,
+              "tinadec_inspect": true,
+              "tinadec_mcp_apply": true,
+              "tinadec_mode_apply": true,
+              "tinadec_mode_publish": true,
+              "tinadec_model_profile_apply": true,
+              "tinadec_prompt_apply": true,
+              "tinadec_skill_apply": true,
               "write_file": false
             },
             "envelope": {
@@ -1774,6 +1781,7 @@
         "display_name": "Graph",
         "description": "固定角色沿画好的协作图分工，每条连线写明交付什么。适合要分清职责的多角色协作。",
         "prompt_pipeline_ref": "prompt:vibe-base",
+        "orchestration_tier": "self_dispatch",
         "nodes": [
           {
             "node_key": "meeting",
@@ -1973,12 +1981,14 @@
               "tina_chat_read_inbox": false,
               "tina_chat_search_people": false,
               "tina_chat_send": false,
-              "tinadec_agent_apply": false,
-              "tinadec_inspect": false,
-              "tinadec_mcp_apply": false,
-              "tinadec_mode_apply": false,
-              "tinadec_mode_publish": false,
-              "tinadec_skill_apply": false,
+              "tinadec_agent_apply": true,
+              "tinadec_inspect": true,
+              "tinadec_mcp_apply": true,
+              "tinadec_mode_apply": true,
+              "tinadec_mode_publish": true,
+              "tinadec_model_profile_apply": true,
+              "tinadec_prompt_apply": true,
+              "tinadec_skill_apply": true,
               "write_file": false
             },
             "envelope": {
@@ -2052,6 +2062,7 @@
         "display_name": "Workflow",
         "description": "按固定阶段逐步推进，不临时加人、不越界，过程可复现、可审阅。适合要留痕的交付。",
         "prompt_pipeline_ref": "prompt:fixed-base",
+        "orchestration_tier": "self_dispatch",
         "nodes": [
           {
             "node_key": "meeting",
@@ -2254,12 +2265,14 @@
               "tina_chat_read_inbox": false,
               "tina_chat_search_people": false,
               "tina_chat_send": false,
-              "tinadec_agent_apply": false,
-              "tinadec_inspect": false,
-              "tinadec_mcp_apply": false,
-              "tinadec_mode_apply": false,
-              "tinadec_mode_publish": false,
-              "tinadec_skill_apply": false,
+              "tinadec_agent_apply": true,
+              "tinadec_inspect": true,
+              "tinadec_mcp_apply": true,
+              "tinadec_mode_apply": true,
+              "tinadec_mode_publish": true,
+              "tinadec_model_profile_apply": true,
+              "tinadec_prompt_apply": true,
+              "tinadec_skill_apply": true,
               "write_file": false
             },
             "envelope": {
@@ -2337,6 +2350,7 @@
         "display_name": "Solo",
         "description": "亲自读代码、改文件、跑命令，活大时再派帮手分担。适合修 bug 和日常改动。",
         "prompt_pipeline_ref": "prompt:solo-base",
+        "orchestration_tier": "solo_dispatch",
         "nodes": [
           {
             "node_key": "meeting",
@@ -2467,6 +2481,7 @@
         "display_name": "Plan",
         "description": "只读调研，写出分步方案请你确认，不改任何文件；确认后切到 Solo 执行。",
         "prompt_pipeline_ref": "prompt:plan-base",
+        "orchestration_tier": "solo_dispatch",
         "nodes": [
           {
             "node_key": "meeting",
@@ -2544,10 +2559,12 @@
               "tina_chat_search_people": false,
               "tina_chat_send": false,
               "tinadec_agent_apply": false,
-              "tinadec_inspect": false,
+              "tinadec_inspect": true,
               "tinadec_mcp_apply": false,
               "tinadec_mode_apply": false,
               "tinadec_mode_publish": false,
+              "tinadec_model_profile_apply": false,
+              "tinadec_prompt_apply": false,
               "tinadec_skill_apply": false,
               "write_file": false
             },
@@ -2624,6 +2641,7 @@
         "display_name": "Review",
         "description": "几名评审各自独立、各查一个角度，核实后合并成一份问题清单，不改代码。",
         "prompt_pipeline_ref": "prompt:review-base",
+        "orchestration_tier": "free_form",
         "nodes": [
           {
             "node_key": "meeting",
@@ -2718,12 +2736,14 @@
               "tina_chat_read_inbox": false,
               "tina_chat_search_people": false,
               "tina_chat_send": false,
-              "tinadec_agent_apply": false,
-              "tinadec_inspect": false,
-              "tinadec_mcp_apply": false,
-              "tinadec_mode_apply": false,
-              "tinadec_mode_publish": false,
-              "tinadec_skill_apply": false,
+              "tinadec_agent_apply": true,
+              "tinadec_inspect": true,
+              "tinadec_mcp_apply": true,
+              "tinadec_mode_apply": true,
+              "tinadec_mode_publish": true,
+              "tinadec_model_profile_apply": true,
+              "tinadec_prompt_apply": true,
+              "tinadec_skill_apply": true,
               "write_file": false
             },
             "envelope": {
@@ -2778,6 +2798,7 @@
         "display_name": "Spec",
         "description": "先写需求、设计、任务三份规格，逐份请你确认，再按任务清单实现。适合从零做新功能。",
         "prompt_pipeline_ref": "prompt:spec-base",
+        "orchestration_tier": "free_form",
         "nodes": [
           {
             "node_key": "meeting",
@@ -2874,12 +2895,14 @@
               "tina_chat_read_inbox": false,
               "tina_chat_search_people": false,
               "tina_chat_send": false,
-              "tinadec_agent_apply": false,
-              "tinadec_inspect": false,
-              "tinadec_mcp_apply": false,
-              "tinadec_mode_apply": false,
-              "tinadec_mode_publish": false,
-              "tinadec_skill_apply": false,
+              "tinadec_agent_apply": true,
+              "tinadec_inspect": true,
+              "tinadec_mcp_apply": true,
+              "tinadec_mode_apply": true,
+              "tinadec_mode_publish": true,
+              "tinadec_model_profile_apply": true,
+              "tinadec_prompt_apply": true,
+              "tinadec_skill_apply": true,
               "write_file": false
             },
             "envelope": {
@@ -2964,6 +2987,7 @@
         "display_name": "纠偏",
         "description": "用证据驱动的纠偏 episode 定位问题、验证假设、修复并复验；用户复现会重新打开调查。",
         "prompt_pipeline_ref": "prompt:correction-base",
+        "orchestration_tier": "solo_dispatch",
         "runtime_policy": {
           "kind": "structured_investigation",
           "version": 1,
@@ -3109,6 +3133,7 @@
         "display_name": "ArtEx",
         "description": "自主探索：规划者按证据增量调度工人，结论必须有引用。",
         "prompt_pipeline_ref": "prompt:artex-base",
+        "orchestration_tier": "solo_dispatch",
         "runtime_policy": {
           "kind": "autonomous_exploration",
           "version": 1,

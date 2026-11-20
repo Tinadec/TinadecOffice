@@ -15,9 +15,12 @@ import { useHostAccess } from '@/lib/hostAccess'
 const props = withDefaults(defineProps<{
   showCeilings?: boolean
   enableAutoRefresh?: boolean
+  /** Prefill from the route (`/governance?session_id=…`) so a deep link lands filtered. */
+  initialSessionId?: string
 }>(), {
   showCeilings: true,
   enableAutoRefresh: true,
+  initialSessionId: '',
 })
 
 const emit = defineEmits<{
@@ -31,10 +34,17 @@ const { canAccessBackend } = useHostAccess()
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'released', 'stopped'])
 
+/**
+ * A `paused` run is still live: resume and cancel are legal, pause is not (the run is
+ * already paused, and Core answers the same way). A terminal run accepts nothing at all —
+ * every control is disabled rather than allowed to 409 in the operator's face.
+ */
+const PAUSED_STATUSES = new Set(['paused', 'suspended', 'awaiting_user', 'blocked'])
+
 const runtimeInstances = ref<AgentRuntimeInstanceDto[]>([])
 const runtimeLoaded = ref(false)
 const runtimeLoading = ref(false)
-const runtimeSessionFilter = ref('')
+const runtimeSessionFilter = ref(props.initialSessionId)
 const runtimeStatusFilter = ref('all')
 const runtimePage = ref(1)
 const runtimePageSize = ref(10)
@@ -120,6 +130,38 @@ function isTerminalStatus(status?: string | null): boolean {
   return TERMINAL_STATUSES.has(String(status ?? '').trim().toLowerCase())
 }
 
+function isPausedStatus(status?: string | null): boolean {
+  return PAUSED_STATUSES.has(String(status ?? '').trim().toLowerCase())
+}
+
+/**
+ * One decision per control, computed from the status the server just reported. Kept as a
+ * single object so the template cannot drift out of step with the guard in
+ * `controlInstance`, and so a test can assert the rule without clicking.
+ */
+function controlState(status?: string | null): {
+  terminal: boolean
+  paused: boolean
+  canPause: boolean
+  canResume: boolean
+  canCancel: boolean
+  canSteer: boolean
+} {
+  const terminal = isTerminalStatus(status)
+  const paused = isPausedStatus(status)
+  return {
+    terminal,
+    paused,
+    // Pausing an already-paused or terminal run is a no-op the server would refuse.
+    canPause: !terminal && !paused,
+    // Resuming a terminal run would resurrect finished work; resuming a running one is noise.
+    canResume: !terminal && paused,
+    canCancel: !terminal,
+    // Steering targets a queued interaction on a live run; a finished run has none.
+    canSteer: !terminal,
+  }
+}
+
 function readinessVariant(status?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   const s = String(status ?? '')
   if (['running', 'completed'].includes(s)) return 'default'
@@ -164,7 +206,6 @@ async function controlInstance(runId: string, action: 'pause' | 'resume' | 'canc
     runtimeControlBusy.value = null
   }
 }
-
 function openReassignForm(inst: AgentRuntimeInstanceDto) {
   reassignForm.value = {
     session_id: inst.session_id ?? '',
@@ -349,26 +390,35 @@ defineExpose({ loadRuntimeInstances })
             {{ t('agentCenter.runtimeInfo.fallbackSummary') }}: {{ inst.fallback_summary.attempts - inst.fallback_summary.failed_attempts }}/{{ inst.fallback_summary.attempts }}<template v-if="inst.fallback_summary.used_fallback"> · {{ t('agentCenter.runtimeInfo.usedFallback') }}</template>
           </span>
         </div>
-        <div class="ac-instance-actions">
+        <div class="ac-instance-actions" data-testid="instance-actions">
           <UiButton
             size="xs"
             variant="outline"
-            :disabled="isTerminalStatus(inst.status) || String(inst.status).toLowerCase() === 'paused' || runtimeControlBusy === `${inst.run_id}:pause`"
+            data-testid="instance-pause"
+            :disabled="!controlState(inst.status).canPause || runtimeControlBusy === `${inst.run_id}:pause`"
             @click="controlInstance(inst.run_id, 'pause')"
           >{{ t('agentCenter.runtimeInfo.actionPause') }}</UiButton>
           <UiButton
             size="xs"
             variant="outline"
-            :disabled="isTerminalStatus(inst.status) || runtimeControlBusy === `${inst.run_id}:resume`"
+            data-testid="instance-resume"
+            :disabled="!controlState(inst.status).canResume || runtimeControlBusy === `${inst.run_id}:resume`"
             @click="controlInstance(inst.run_id, 'resume')"
           >{{ t('agentCenter.runtimeInfo.actionResume') }}</UiButton>
           <UiButton
             size="xs"
             variant="outline"
-            :disabled="isTerminalStatus(inst.status) || runtimeControlBusy === `${inst.run_id}:cancel`"
+            data-testid="instance-cancel"
+            :disabled="!controlState(inst.status).canCancel || runtimeControlBusy === `${inst.run_id}:cancel`"
             @click="controlInstance(inst.run_id, 'cancel')"
           >{{ t('agentCenter.runtimeInfo.actionCancel') }}</UiButton>
-          <UiButton size="xs" variant="ghost" @click="openReassignForm(inst)">{{ t('agentCenter.runtimeInfo.actionSteer') }}</UiButton>
+          <UiButton
+            size="xs"
+            variant="ghost"
+            data-testid="instance-steer"
+            :disabled="!controlState(inst.status).canSteer"
+            @click="openReassignForm(inst)"
+          >{{ t('agentCenter.runtimeInfo.actionSteer') }}</UiButton>
         </div>
       </div>
 

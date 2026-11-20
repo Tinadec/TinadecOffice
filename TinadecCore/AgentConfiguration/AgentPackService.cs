@@ -1148,6 +1148,10 @@ public sealed class AgentPackService : IAgentPackService
         };
         if (resource.RuntimePolicy is not null)
             snapshotObject["runtime_policy"] = resource.RuntimePolicy;
+        // Frozen only when declared, matching the manual publish path: writing the key
+        // unconditionally would change the topology hash of every mode that predates it.
+        if (!string.IsNullOrWhiteSpace(resource.OrchestrationTier))
+            snapshotObject["orchestration_tier"] = GraphValidation.NormalizeOrchestrationTier(resource.OrchestrationTier);
         var snapshotElement = JsonSerializer.SerializeToElement(snapshotObject, JsonOptions);
         var snapshot = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(snapshotElement));
         var hash = Sha256Hex(Encoding.UTF8.GetBytes(snapshot));
@@ -1173,6 +1177,17 @@ public sealed class AgentPackService : IAgentPackService
         logical.DisplayName = resource.DisplayName!;
         logical.Description = resource.Description;
         logical.I18nJson = CanonicalI18n(resource.I18n);
+        // The mode row is the EDITOR AND RUNTIME READ surface, not just a publication
+        // receipt: without these the installed pack mode reads back with empty team bindings
+        // and no explicit tier, so the Agent Center shows a team with no members and the
+        // runtime can never see a tier the pack declared.
+        // The bindings are serialized straight from the manifest DTOs, so the stored
+        // document keeps the manifest's own key shape (omitted-when-absent, agent:<key>
+        // references) instead of a re-shaped copy.
+        logical.BindingsJson = resource.Bindings is { Count: > 0 } declaredBindings
+            ? JsonSerializer.Serialize(declaredBindings, JsonOptions)
+            : null;
+        logical.OrchestrationTier = GraphValidation.NormalizeOrchestrationTier(resource.OrchestrationTier);
         logical.RuntimePolicyJson = resource.RuntimePolicy is null
             ? null
             : JsonSerializer.Serialize(resource.RuntimePolicy, JsonOptions);
@@ -1211,6 +1226,13 @@ public sealed class AgentPackService : IAgentPackService
             I18nJson = CanonicalI18n(node.I18n),
             PositionJson = node.Position.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? null : Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(node.Position)),
             ConfigJson = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(NormalizeObject(node.Config))),
+            // The relationship file is the node's duty contract — it is what the planner
+            // reads to choose this worker and what the runtime freezes for the role prompt.
+            // Stored verbatim from the manifest (raw object text, key order preserved) so a
+            // read-back is the document the pack declared, not a re-shaped copy.
+            RelationshipJson = node.Relationship is { ValueKind: JsonValueKind.Object } relationship
+                ? relationship.GetRawText()
+                : null,
             Status = "published", Revision = 1, CreatedAt = now, UpdatedAt = now
         }));
         db.ModeEdges.AddRange(resource.Edges.Select(edge => new ModeEdgeRecord
@@ -1226,6 +1248,20 @@ public sealed class AgentPackService : IAgentPackService
             LayoutJson = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(NormalizeObject(resource.CanvasLayout))),
             Status = "published", Revision = 1, CreatedAt = now, UpdatedAt = now
         });
+        // The projection owns the per-node rows, so the mode-level documents that ride the
+        // same install are written here as well: a reinstall that reaches this method must
+        // not leave the previous version's bindings behind on a row it just replaced.
+        // The lookup is change-tracker aware because a first install adds the mode row in
+        // this same unit of work, before anything is saved.
+        var modeRow = db.AgentModes.Local.FirstOrDefault(item => item.Id == modeId)
+            ?? await db.AgentModes.FirstOrDefaultAsync(item => item.Id == modeId, cancellationToken).ConfigureAwait(false);
+        if (modeRow is not null)
+        {
+            modeRow.BindingsJson = resource.Bindings is { Count: > 0 } declaredBindings
+                ? JsonSerializer.Serialize(declaredBindings, JsonOptions)
+                : null;
+            modeRow.OrchestrationTier = GraphValidation.NormalizeOrchestrationTier(resource.OrchestrationTier);
+        }
     }
 
     private static IReadOnlyList<string> EffectiveTools(IReadOnlyList<string> agentTools, JsonElement config)
@@ -1245,11 +1281,15 @@ public sealed class AgentPackService : IAgentPackService
         return effective.OrderBy(item => item, StringComparer.Ordinal).ToArray();
     }
 
+    /// <summary>
+    /// Pack admission's view of a tool switch map. Delegates to the single shared
+    /// predicate (<see cref="GraphValidation.IsSwitchedOff"/>) so <c>"*": false</c> is
+    /// honoured here exactly as manual publish and ModePublishGate honour it — this
+    /// copy used to consult only the exact id, which is how a pack could declare
+    /// <c>"*": false</c> and still ship the whole tool face into the frozen roster.
+    /// </summary>
     private static bool IsSwitchedOff(JsonElement switches, string toolId) =>
-        switches.ValueKind == JsonValueKind.Object
-        && switches.TryGetProperty(toolId, out var state)
-        && (state.ValueKind == JsonValueKind.False
-            || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase)));
+        GraphValidation.IsSwitchedOff(switches, toolId);
 
     private static JsonElement NormalizeObject(JsonElement value) => value.ValueKind == JsonValueKind.Object
         ? value
@@ -1685,6 +1725,14 @@ public sealed class AgentPackService : IAgentPackService
                     Invalid($"mode '{mode.ResourceKey}' runtime_policy requires compatibility.required_core_capabilities to declare '{requiredCapability}'.");
             }
             if (mode.Nodes.Count == 0) Invalid($"mode '{mode.ResourceKey}' must contain nodes.");
+            // An explicit tier is part of the mode contract the runtime prefers over
+            // inference; an unsupported value must fail at admission instead of being
+            // dropped and silently falling back to derivation.
+            if (mode.OrchestrationTier is { Length: > 0 } declaredTier)
+            {
+                try { _ = GraphValidation.NormalizeOrchestrationTier(declaredTier); }
+                catch (InvalidDataException tierError) { Invalid($"mode '{mode.ResourceKey}' {tierError.Message}"); }
+            }
             EnsureUnique(mode.Nodes.Select(item => RequiredToken(item.NodeKey, $"mode '{mode.ResourceKey}' node_key", 128)), $"mode '{mode.ResourceKey}' node_key");
             EnsureUnique(mode.Edges.Select(item => RequiredToken(item.EdgeKey, $"mode '{mode.ResourceKey}' edge_key", 128)), $"mode '{mode.ResourceKey}' edge_key");
             // Mode-level prompt pipeline: typed reference to a pipeline declared by the

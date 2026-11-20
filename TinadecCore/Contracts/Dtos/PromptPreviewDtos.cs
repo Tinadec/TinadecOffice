@@ -188,6 +188,14 @@ public sealed record PromptContextPreviewRequestDto
 
     [JsonPropertyName("user_content")]
     public string? UserContent { get; init; }
+
+    /// <summary>
+    /// Response language to preview the prompt in. The preview has no session to freeze a
+    /// locale from, so the caller states it; null means "do not render a response-language
+    /// layer", which is exactly what a run without a frozen locale produces.
+    /// </summary>
+    [JsonPropertyName("response_locale")]
+    public string? ResponseLocale { get; init; }
 }
 
 public sealed record PromptContextLayerDto

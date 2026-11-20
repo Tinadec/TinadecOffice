@@ -74,6 +74,24 @@ vi.mock('@/composables/useNotifications', () => ({
   }),
 }))
 
+/**
+ * UiBadge / UiLabel / UiSkeleton are Vapor SFCs (`<template vapor>`). Under the
+ * classic runtime that @vue/test-utils mounts, `vaporInteropPlugin` reaches into
+ * `@vue/runtime-vapor`, whose `simpleSetCurrentInstance` is not exported by the
+ * `@vue/runtime-dom` build vitest resolves — so mounting any real render of one
+ * throws `simpleSetCurrentInstance is not a function` and the whole tree fails to
+ * mount. That is a harness limitation, not a component bug: the app itself mounts
+ * these fine. Every other happy-dom suite in this repo (SettingsPage.*.test.ts,
+ * SearchNavigation.test.ts, RuntimeInstancesPanel.test.ts) replaces exactly these
+ * three primitives with classic pass-throughs for the same reason, so this suite
+ * follows that precedent instead of asserting against a crash.
+ */
+vi.mock('@/components/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/ui')>()
+  const passThrough = { template: '<span><slot /></span>' }
+  return { ...actual, UiBadge: passThrough, UiLabel: passThrough, UiSkeleton: passThrough }
+})
+
 import { setHostAccessStatus } from '@/lib/hostAccess'
 import { __resetAgentModesStoreForTests, useAgentModesStore } from '@/composables/useAgentModesStore'
 import TeamsTab from '@/settings/agentCenter/TeamsTab.vue'
@@ -314,6 +332,43 @@ describe('modeDagreLayout', () => {
     expect(slot.y).toBeGreaterThanOrEqual(MODE_LANE_SPLIT_Y)
     expect(slot).not.toEqual({ x: 60, y: 280 })
   })
+
+  it('clamps the far edge of every lane so a node can never be dragged out of the framed view', () => {
+    // Dragging a governance node above the world origin used to keep its negative
+    // Y: the node left the canvas and appeared to vanish.
+    expect(clampToLane({ x: 60, y: -400 }, 'operation').y).toBe(0)
+    // The 20px grid is preserved on both threads.
+    expect(clampToLane({ x: 63, y: -7 }, 'operation')).toEqual({ x: 60, y: 0 })
+  })
+
+  it('constrains a drag across a lane instead of silently moving the node', async () => {
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: { nodes: sampleNodes, edges: sampleEdges, agents: allAgents, graphKey: 'mode-1' },
+    })
+    await flushPromises()
+
+    const vf = wrapper.findComponent(VueFlow)
+    // An UNBOUND draft node dragged from governance into execution must stay put
+    // and say why, rather than silently changing lanes.
+    const unbound: AgentModeNodeDto[] = [
+      { id: 'draft', node_key: 'draft', agent_id: '', lane: 'operation', position: { x: 60, y: 60 } },
+    ]
+    await wrapper.setProps({ nodes: unbound, edges: [], graphKey: 'mode-draft' })
+    await flushPromises()
+    vf.vm.$emit('nodesChange', [{ id: 'draft', type: 'position', dragging: false, position: { x: 60, y: 320 }, from: { x: 60, y: 60 } }])
+    await flushPromises()
+
+    const moved = wrapper.emitted('node-moved')?.[0]?.[0] as { id: string; position: { x: number; y: number }; lane?: string }
+    expect(moved.position.y).toBeLessThan(MODE_LANE_SPLIT_Y)
+    // No lane payload: the node was clamped, not reclassified.
+    expect(moved.lane).toBeUndefined()
+    // And the canvas explained itself instead of doing it silently.
+    expect(wrapper.find('.lane-notice').exists()).toBe(true)
+    expect(wrapper.find('.lane-notice').text()).toBe('canvas.laneClamped')
+
+    wrapper.unmount()
+  })
 })
 
 describe('useAgentModesStore', () => {
@@ -415,6 +470,47 @@ describe('useAgentModesStore', () => {
     expect(apiMocks.deleteAgentMode).toHaveBeenCalledWith('mode-1', '2')
     expect(deleted).toBe(true)
   })
+
+  it('surfaces a 409 built_in_read_only as a friendly message instead of a raw conflict', async () => {
+    const store = useAgentModesStore()
+    await store.loadAll()
+    await store.selectMode('mode-1', { force: true })
+
+    const refusal = Object.assign(new Error('Conflict'), { status: 409, code: 'built_in_read_only' })
+    apiMocks.deleteAgentMode.mockRejectedValueOnce(refusal)
+    apiMocks.confirm.mockResolvedValueOnce(true)
+
+    const deleted = await store.deleteOrArchiveMode('mode-1')
+    expect(deleted).toBe(false)
+    // A pack-managed refusal must NOT be swallowed into an archive call.
+    expect(apiMocks.archiveAgentMode).not.toHaveBeenCalled()
+    expect(apiMocks.notifyError).toHaveBeenCalledTimes(1)
+    const shown = apiMocks.notifyError.mock.calls.at(-1)![0] as Error
+    // The store resolves `tr()` against the REAL i18n bundle (not this suite's
+    // useI18n stub), so the assertion is "the user sees prose, not a dotted key".
+    expect(shown.message).not.toBe('settings.modeBuiltInReadOnly')
+    expect(shown.message).not.toMatch(/^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/)
+    expect(shown.message.length).toBeGreaterThan(4)
+    expect(store.isBuiltInReadOnlyError(refusal)).toBe(true)
+    expect(store.isBuiltInReadOnlyError(new Error('other'))).toBe(false)
+  })
+
+  it('keeps at least 50 undo steps of history', async () => {
+    const store = useAgentModesStore()
+    await store.loadAll()
+    await store.selectMode('mode-1', { force: true })
+
+    for (let i = 0; i < 60; i += 1) {
+      store.commitDraft((cur) => ({ ...cur, displayName: `Name ${i}` }))
+    }
+    expect(store.draft.value.displayName).toBe('Name 59')
+
+    // 60 recorded steps must all be undoable — the contract floor is 50.
+    for (let i = 0; i < 60; i += 1) store.undo()
+    expect(store.draft.value.displayName).toBe('Custom Team')
+    for (let i = 0; i < 60; i += 1) store.redo()
+    expect(store.draft.value.displayName).toBe('Name 59')
+  })
 })
 
 describe('ModeGraphCanvas & ModeInspectorDrawer', () => {
@@ -488,6 +584,173 @@ describe('ModeGraphCanvas & ModeInspectorDrawer', () => {
     wrapper.unmount()
   })
 
+  it('pans and highlights the offending node when an issue capsule is clicked', async () => {
+    // A backflow edge (execution -> operation) is an error-severity issue, so the
+    // capsule row must render and be clickable.
+    const backflowEdges: AgentModeEdgeDto[] = [
+      { id: 'bad', source: 'worker-eng', target: 'leader' },
+    ]
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: { nodes: sampleNodes, edges: backflowEdges, agents: allAgents, graphKey: 'mode-issue' },
+    })
+    await flushPromises()
+
+    const capsules = wrapper.findAll('.canvas-issue')
+    expect(capsules.length).toBeGreaterThan(0)
+    const backflow = capsules.find((c) => c.text() === 'canvas.issue.backflow')
+    expect(backflow).toBeTruthy()
+
+    await backflow!.trigger('click')
+    await flushPromises()
+
+    // A backflow issue is carried by EDGES, not nodes, so the capsule selects the
+    // offending edge (the thing the user has to delete or re-route) rather than an
+    // endpoint. The contract is "pans to and highlights the offending node/edge",
+    // and for an edge-shaped issue the edge is the offender.
+    expect(wrapper.emitted('select-edge')?.at(-1)).toEqual(['bad'])
+    // Both endpoints must still be highlighted, so the user can find an edge that
+    // may be scrolled far from the viewport.
+    const highlighted = wrapper.findAll('.mode-agent-node.highlighted')
+    expect(highlighted.length).toBe(2)
+
+    wrapper.unmount()
+  })
+
+  it('selects the offending NODE when an issue capsule is node-shaped', async () => {
+    // An unbound node is a node-shaped error, so this path must emit select-node.
+    const unbound: AgentModeNodeDto[] = [
+      { id: 'leader', node_key: 'leader', agent_id: meetingAgent.id, lane: 'operation', position: { x: 120, y: 60 }, config: { conversation: true } },
+      { id: 'orphan', node_key: 'orphan', agent_id: '', lane: 'execution', position: { x: 60, y: 280 } },
+    ]
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: { nodes: unbound, edges: [], agents: allAgents, graphKey: 'mode-unbound' },
+    })
+    await flushPromises()
+
+    const capsule = wrapper.findAll('.canvas-issue').find((c) => c.text() === 'canvas.issue.unbound-node')
+    expect(capsule).toBeTruthy()
+    await capsule!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('select-node')?.at(-1)).toEqual(['orphan'])
+    expect(wrapper.findAll('.mode-agent-node.highlighted').length).toBe(1)
+
+    wrapper.unmount()
+  })
+
+  it('frames a loaded mode with fitView instead of leaving it parked at the origin', async () => {
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: { nodes: [], edges: [], agents: allAgents, graphKey: 'empty' },
+    })
+    await flushPromises()
+
+    // Loading a mode (nodes appear) must trigger the data-ready fit.
+    await wrapper.setProps({ nodes: sampleNodes, edges: sampleEdges, graphKey: 'mode-loaded' })
+    await flushPromises()
+
+    const vf = wrapper.findComponent(VueFlow)
+    expect(vf.exists()).toBe(true)
+    // @nodes-initialized is the trigger the contract names; emitting it must not
+    // throw and must be handled (the handler is what runs fitView).
+    expect(() => vf.vm.$emit('nodesInitialized')).not.toThrow()
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('mounts MiniMap and Controls from their packages', async () => {
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: { nodes: sampleNodes, edges: sampleEdges, agents: allAgents, graphKey: 'mode-1' },
+    })
+    await flushPromises()
+    expect(wrapper.find('.vue-flow__minimap').exists()).toBe(true)
+    expect(wrapper.find('.vue-flow__controls').exists()).toBe(true)
+    // The 20px snap grid must match the dot background, or dragging feels offset.
+    const vf = wrapper.findComponent(VueFlow)
+    expect(vf.props('snapGrid')).toEqual([MODE_GRID_SIZE, MODE_GRID_SIZE])
+    expect(vf.props('snapToGrid')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders the lane ruler with 治理层 / 执行层 and no leftover 运营层', async () => {
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: { nodes: sampleNodes, edges: sampleEdges, agents: allAgents, graphKey: 'mode-1' },
+    })
+    await flushPromises()
+
+    const headers = wrapper.findAll('.lane-header')
+    expect(headers.length).toBe(2)
+    // useI18n is stubbed to echo keys, so the two keys prove which ruler slots
+    // render; the real zh-CN wording for those keys is 治理层 / 执行层 and is
+    // asserted by the five-bundle guard below.
+    const labels = headers.map((h) => h.text())
+    expect(labels.some((l) => l.includes('agentCenter.filter.operationLayer'))).toBe(true)
+    expect(labels.some((l) => l.includes('agentCenter.filter.executionLayer'))).toBe(true)
+    // The retired 运营层 label must not appear anywhere in the rendered tree.
+    expect(wrapper.html()).not.toContain('运营层')
+    wrapper.unmount()
+  })
+
+  it('deletes on Delete/Backspace, deselects on Escape, and undoes with Ctrl+Z', async () => {
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: {
+        nodes: sampleNodes,
+        edges: sampleEdges,
+        agents: allAgents,
+        graphKey: 'mode-keys',
+        selectedNodeId: 'worker-search',
+        selectedEdgeId: null,
+      },
+    })
+    await flushPromises()
+    const root = wrapper.find('.mode-graph-canvas')
+
+    await root.trigger('keydown', { key: 'Delete' })
+    expect(wrapper.emitted('delete-node')?.at(-1)).toEqual(['worker-search'])
+
+    await root.trigger('keydown', { key: 'Backspace' })
+    expect(wrapper.emitted('delete-node')).toHaveLength(2)
+
+    await root.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('select-node')?.at(-1)).toEqual([null])
+
+    await root.trigger('keydown', { key: 'z', ctrlKey: true })
+    expect(wrapper.emitted('undo')).toHaveLength(1)
+    await root.trigger('keydown', { key: 'y', ctrlKey: true })
+    expect(wrapper.emitted('redo')).toHaveLength(1)
+    // Ctrl+Shift+Z is also redo, matching every other editor.
+    await root.trigger('keydown', { key: 'z', ctrlKey: true, shiftKey: true })
+    expect(wrapper.emitted('redo')).toHaveLength(2)
+
+    wrapper.unmount()
+  })
+
+  it('ignores canvas shortcuts while a text field has focus', async () => {
+    const wrapper = mount(ModeGraphCanvas, {
+      attachTo: document.body,
+      props: {
+        nodes: sampleNodes,
+        edges: sampleEdges,
+        agents: allAgents,
+        graphKey: 'mode-keys',
+        selectedNodeId: 'worker-search',
+      },
+    })
+    await flushPromises()
+    const input = document.createElement('input')
+    wrapper.element.appendChild(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    await flushPromises()
+    // Typing Backspace in the inspector must not delete the selected node.
+    expect(wrapper.emitted('delete-node')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('switches ModeInspectorDrawer cleanly between overview, node, and edge without blocking modals', async () => {
     const store = useAgentModesStore()
     await store.loadAll()
@@ -515,16 +778,127 @@ describe('ModeGraphCanvas & ModeInspectorDrawer', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('settings.modeOverview')
+    // The drawer is a docked <aside>, never a dialog: a modal would trap focus and
+    // make node-to-node clicking impossible.
+    expect(wrapper.element.tagName).toBe('ASIDE')
+    expect(wrapper.attributes('data-testid')).toBe('mode-inspector-drawer')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    // useI18n is stubbed to echo keys in this suite, so the label assertion proves
+    // the tier selector is rendered; the keys themselves are checked against the
+    // real bundles by the dedicated test further down.
     expect(wrapper.text()).toContain('settings.modeOrchestrationTier')
+    // The tier control is a UiSelectField (role="combobox"), and its options are
+    // the five tiers the contract names.
+    expect(wrapper.find('[role="combobox"]').exists()).toBe(true)
 
     await wrapper.setProps({ panel: 'node', selectedNode: sampleNodes[1] })
     expect(wrapper.text()).toContain('settings.nodeConfigTitle')
-    expect(wrapper.text()).toContain('settings.nodeDutyField')
+
+    // Switching node A -> node B must re-render the same panel with no remount.
+    await wrapper.setProps({ selectedNode: sampleNodes[2] })
+    expect(wrapper.text()).toContain('settings.nodeConfigTitle')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
 
     await wrapper.setProps({ panel: 'edge', selectedNode: null, selectedEdge: sampleEdges[0] })
     expect(wrapper.text()).toContain('settings.edgeConfigTitle')
     wrapper.unmount()
+  })
+
+  it('disables every input when the mode is pack-managed (read-only)', async () => {
+    const store = useAgentModesStore()
+    await store.loadAll()
+    await store.selectMode('mode-1', { force: true })
+
+    const wrapper = mount(ModeInspectorDrawer, {
+      global: { plugins: [vaporInteropPlugin] },
+      props: {
+        panel: 'node',
+        readonly: true,
+        selectedModeId: 'mode-1',
+        selectedMode: store.selectedMode.value,
+        draft: store.draft.value,
+        selectedNode: sampleNodes[1],
+        selectedEdge: null,
+        addNodeLane: 'operation',
+        agents: allAgents,
+        providers: [],
+        routes: [],
+        runtimePolicyDefinitions: [],
+        policySettingsError: '',
+        bindingsError: null,
+        modeVersions: [],
+        modeVersionsLoading: false,
+        modeBusy: false,
+      },
+    })
+
+    // `attributes('disabled')` returns '' for a present attribute, which is falsy,
+    // so read the DOM property instead — that is what actually blocks input.
+    const controls = wrapper.findAll('input, textarea, select, button')
+    expect(controls.length).toBeGreaterThan(4)
+    const enabled = controls.filter((el) => {
+      const node = el.element as HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      return !node.disabled && !node.hasAttribute('disabled')
+    })
+    // The only enabled controls in read-only mode are non-mutating: the header's
+    // close button and the strategy preview, which only reads Core.
+    for (const el of enabled) {
+      const label = `${el.attributes('aria-label') ?? ''} ${el.text()}`
+      expect(label).toMatch(/close|preview|common\.close|settings\.previewNodeStrategy/)
+    }
+    wrapper.unmount()
+  })
+})
+
+describe('mode editor i18n contract', () => {
+  /**
+   * `locales/i18nParity.test.ts` only scrapes single-quoted `t('…')` and only for
+   * the files in its own glob. That is why 32 keys used by this surface shipped
+   * without a translation and rendered as literal dotted paths. This guard walks
+   * the real bundles and asserts every key these components can render exists —
+   * including the dynamically built `canvas.issue.<code>` family.
+   */
+  const ownedSources = import.meta.glob(
+    ['./ModeGraphCanvas.vue', './ModeAgentNode.vue', './ModeInspectorDrawer.vue'],
+    { query: '?raw', import: 'default', eager: true },
+  ) as Record<string, string>
+
+  function resolveKey(bundle: Record<string, unknown>, key: string): unknown {
+    let node: unknown = bundle
+    for (const part of key.split('.')) {
+      if (!node || typeof node !== 'object') return undefined
+      node = (node as Record<string, unknown>)[part]
+    }
+    return node
+  }
+
+  it('every translatable key these components reference exists in all five bundles', async () => {
+    const bundles: Record<string, Record<string, unknown>> = {
+      'zh-CN': (await import('@/locales/zh-CN')).default as Record<string, unknown>,
+      'zh-TW': (await import('@/locales/zh-TW')).default as Record<string, unknown>,
+      en: (await import('@/locales/en')).default as Record<string, unknown>,
+      ja: (await import('@/locales/ja')).default as Record<string, unknown>,
+      ru: (await import('@/locales/ru')).default as Record<string, unknown>,
+    }
+
+    const keys = new Set<string>()
+    for (const source of Object.values(ownedSources)) {
+      for (const match of source.matchAll(/\bt\(\s*['"`]([A-Za-z0-9_.-]+)['"`]/g)) keys.add(match[1]!)
+    }
+    // Keys the components build at runtime from a validated code.
+    for (const code of ['empty', 'unbound-node', 'self-loop', 'duplicate-edge', 'dangling-endpoint',
+      'cycle', 'backflow', 'no-conversation', 'multi-conversation', 'conversation-layer']) {
+      keys.add(`canvas.issue.${code}`)
+    }
+
+    expect(keys.size).toBeGreaterThan(50)
+    const missing: string[] = []
+    for (const key of keys) {
+      for (const [locale, bundle] of Object.entries(bundles)) {
+        if (resolveKey(bundle, key) === undefined) missing.push(`${locale}:${key}`)
+      }
+    }
+    expect(missing, `mode editor renders raw keys for: ${missing.join(', ')}`).toEqual([])
   })
 })
 

@@ -27,7 +27,11 @@ type RoleAgentLike = AgentDefinitionDto | (AgentViewDto & { i18n?: PackI18n | nu
 const props = defineProps<{
   /** Live tool ids from Core/Tool Provider manifest. */
   manifestToolIds: string[]
-  /** Preloaded agents from parent to avoid duplicate 1+N definition fetches. */
+  /**
+   * Preloaded agents from parent to avoid duplicate 1+N definition fetches. Presence of the
+   * prop (even as an empty array) is the signal — an empty list means "the parent already
+   * asked and got nothing", which must not trigger a second identical request.
+   */
   agents?: RoleAgentLike[]
 }>()
 
@@ -36,14 +40,45 @@ const defaults = ref<WorkspaceDefaultsDto | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
+/**
+ * The governance roles this surface is responsible for. `operation` is the layer Core writes
+ * today; `planning` is the legacy spelling some packs still carry. Both name the same seat,
+ * so both are listed and matched — a legacy proposal must not silently disappear.
+ */
 const GOVERNANCE_ROLES = ['git_steward', 'worker.git']
+
+const LAYER_ALIASES: Record<string, string> = { operation: 'operation', planning: 'operation' }
 
 const sourceAgents = computed<RoleAgentLike[]>(() => props.agents ?? fetchedAgents.value)
 
+function agentsProvided(): boolean {
+  return props.agents !== undefined
+}
+
+function normalizeLayer(layer?: string | null): string {
+  const key = String(layer ?? '').trim().toLowerCase()
+  return LAYER_ALIASES[key] ?? key
+}
+
+function matchesRole(agent: RoleAgentLike, role: string): boolean {
+  const wanted = role.toLowerCase()
+  return [agent.slug, agent.name, agent.role, agent.agent_type]
+    .some((value) => String(value ?? '').trim().toLowerCase() === wanted)
+}
+
 const roleAgents = computed(() =>
-  GOVERNANCE_ROLES.map((role) =>
-    sourceAgents.value.find((a) => a.slug === role || a.name === role || a.role === role || a.agent_type === role),
-  ).filter((a): a is RoleAgentLike => Boolean(a)),
+  GOVERNANCE_ROLES.map((role) => sourceAgents.value.find((a) => matchesRole(a, role))).filter(
+    (a): a is RoleAgentLike => Boolean(a),
+  ),
+)
+
+/** Every governance-layer agent, so the empty state can name what Core actually has. */
+const governanceLayerAgents = computed(() =>
+  sourceAgents.value.filter((a) => normalizeLayer(a.layer) === 'operation'),
+)
+
+const missingRoles = computed(() =>
+  GOVERNANCE_ROLES.filter((role) => !roleAgents.value.some((agent) => matchesRole(agent, role))),
 )
 
 function displayName(agent: RoleAgentLike): string {
@@ -99,9 +134,12 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = null
   try {
-    const needsAgents = props.agents === undefined
+    // Only fetch the definitions when the parent did not hand them over. `undefined` means
+    // "nobody loaded them"; `[]` means "loaded, and there are none" — refetching on `[]` is
+    // exactly the duplicate 1+N the prop exists to prevent.
+    const needsAgents = !agentsProvided()
     const [all, ws] = await Promise.all([
-      needsAgents ? api.listAgentDefinitions() : Promise.resolve(props.agents ?? []),
+      needsAgents ? api.listAgentDefinitions() : Promise.resolve(null),
       api.getWorkspaceDefaults().catch(() => null),
     ])
     if (needsAgents) {
@@ -119,6 +157,17 @@ onMounted(load)
 watch(canAccessBackend, (ready) => {
   if (ready) void load()
 })
+
+/**
+ * A later parent load fills the prop after this panel has already mounted; adopting it
+ * (rather than refetching) is what keeps the panel in step with the Agent Center directory.
+ */
+watch(
+  () => props.agents,
+  () => {
+    if (agentsProvided()) loadError.value = null
+  },
+)
 </script>
 
 <template>
@@ -138,9 +187,27 @@ watch(canAccessBackend, (ready) => {
         <span>{{ t('settings.retry') }}</span>
       </button>
     </div>
-    <p v-else-if="!loading && !roleEntries.length" class="gov-roles__empty" data-testid="gov-roles-empty">
-      {{ t('agentCenter.governanceRolesMissing') }} <code>{{ GOVERNANCE_ROLES.join(', ') }}</code>
-    </p>
+    <!--
+      The empty state names both what is missing AND what Core actually has on the
+      governance layer, so "no roles" is never a dead end: an operator can see the seats
+      that exist and the two that were expected.
+    -->
+    <div v-else-if="!loading && !roleEntries.length" class="gov-roles__empty" data-testid="gov-roles-empty">
+      <p class="gov-roles__empty-lead">
+        {{ t('agentCenter.governanceRolesMissing') }}
+        <code v-for="role in missingRoles" :key="role">{{ role }}</code>
+      </p>
+      <div v-if="governanceLayerAgents.length" class="gov-roles__present" data-testid="gov-roles-present">
+        <span class="gov-roles__present-label">{{ t('settings.agentLayerPlanning') }}</span>
+        <ul>
+          <li v-for="agent in governanceLayerAgents" :key="agent.id">
+            <strong>{{ displayName(agent) }}</strong>
+            <code>{{ agent.slug ?? agent.name ?? agent.id }}</code>
+          </li>
+        </ul>
+      </div>
+      <p v-else class="quiet gov-roles__none">{{ t('agentCenter.empty.noAgents') }}</p>
+    </div>
 
     <div class="gov-roles__grid">
       <!-- git_steward: operation layer, deliberately tool-less -->

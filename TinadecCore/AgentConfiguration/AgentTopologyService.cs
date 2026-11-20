@@ -28,6 +28,13 @@ public static class AgentTopologyCodes
     public const string EdgeEndpointsRequired = "edge_endpoints_required";
     public const string NodeAgentRequired = "agent_definition_id_required";
     public const string ModeGraphInvalid = "mode_graph_invalid";
+    /// <summary>
+    /// The mode's bindings or effective tool surface failed the same gate a pack publish
+    /// runs (<see cref="ModePublishGate"/> / <see cref="ExplorationToolPolicy"/>). Carried
+    /// as its own code so a caller can tell "the graph is malformed" from "the arms are
+    /// over-declared".
+    /// </summary>
+    public const string ModePublishRejected = "mode_publish_rejected";
     public const string PublishedVersionExists = "published_version_exists";
     public const string DuplicateSlug = "duplicate_slug";
 }
@@ -109,7 +116,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
     {
         var scope = _tenant.Current;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var mode = await db.AgentModes.FirstOrDefaultAsync(
+        // AsNoTracking on the whole read: the snapshot backfill below mutates the projected
+        // objects, and a read must never be able to persist that repair as a side effect.
+        var mode = await db.AgentModes.AsNoTracking().FirstOrDefaultAsync(
             x => x.Id == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken);
         if (mode is null)
             return AgentTopologyResult.Failure(AgentTopologyStatus.NotFound, AgentTopologyCodes.NotFound, "Mode not found.");
@@ -120,13 +129,33 @@ public sealed class AgentTopologyService : IAgentTopologyService
         // draft projection; published/managed modes read the published projection. The
         // draft-only guard belongs on writes, not on this read.
         var nodeStatus = string.Equals(mode.Status, "draft", StringComparison.OrdinalIgnoreCase) ? "draft" : "published";
-        var nodes = await db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
+        var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
             .OrderBy(x => x.NodeKey).ToListAsync(cancellationToken);
-        var edges = await db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
+        var edges = await db.ModeEdges.AsNoTracking().Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
             .OrderBy(x => x.EdgeKey).ToListAsync(cancellationToken);
-        var layout = await db.CanvasLayouts.FirstOrDefaultAsync(
+        var layout = await db.CanvasLayouts.AsNoTracking().FirstOrDefaultAsync(
             x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus, cancellationToken);
         var managed = await _packs.FindManagedResourceAsync("mode", modeId, cancellationToken) is not null;
+
+        // Retroactive repair of modes installed before the row projection carried these
+        // documents: backfill the mode's team bindings and each node's relationship file
+        // from the newest frozen snapshot so a reader sees what the pack published
+        // without reinstalling it. Projection-only by design — a read never writes.
+        // The snapshot query is skipped entirely when the projection is already complete,
+        // which is every mode published by the current build: the repair costs one extra
+        // read only for the modes that actually need it.
+        if (NeedsSnapshotBackfill(mode, nodes))
+        {
+            var repaired = await SnapshotBackfillAsync(db, modeId, scope.TenantId, scope.WorkspaceId, cancellationToken);
+            if (repaired is not null)
+            {
+                mode.BindingsJson = BackfillDocument(mode.BindingsJson, repaired.BindingsJson);
+                mode.Instructions = BackfillDocument(mode.Instructions, repaired.Instructions);
+                mode.OrchestrationTier = BackfillDocument(mode.OrchestrationTier, repaired.OrchestrationTier);
+                foreach (var node in nodes)
+                    node.RelationshipJson = BackfillDocument(node.RelationshipJson, repaired.RelationshipFor(node.NodeKey));
+            }
+        }
         return new AgentTopologyResult
         {
             Ok = true,
@@ -135,6 +164,97 @@ public sealed class AgentTopologyService : IAgentTopologyService
             Version = mode.Version,
             Mode = ProjectDetail(mode, nodes, edges, layout, managed),
         };
+    }
+
+    /// <summary>
+    /// The documents a frozen snapshot still holds but a pre-fix row projection lost.
+    /// Every member is raw JSON text, so a backfilled value is byte-comparable with
+    /// what the pack manifest declared instead of a re-serialization of a different shape.
+    /// </summary>
+    private sealed record ModeSnapshotBackfill(string? BindingsJson, string? Instructions, string? OrchestrationTier, IReadOnlyDictionary<string, string> RelationshipsByNodeKey)
+    {
+        public string? RelationshipFor(string nodeKey) =>
+            RelationshipsByNodeKey.TryGetValue(nodeKey, out var relationship) ? relationship : null;
+    }
+
+    private static string? BackfillDocument(string? current, string? snapshotValue) =>
+        string.IsNullOrWhiteSpace(current) ? snapshotValue : current;
+
+    /// <summary>
+    /// True when the stored projection is missing a document the frozen snapshot may still
+    /// hold. Keyed on the mode's bindings, instructions and tier plus every node's
+    /// relationship: a complete projection costs nothing, an incomplete one costs one extra
+    /// read. A node with no relationship in either place is indistinguishable from a node
+    /// whose pack declared none, so an empty relationship alone does not trigger the repair
+    /// unless the mode-level documents are also missing.
+    /// </summary>
+    private static bool NeedsSnapshotBackfill(AgentModeRecord mode, IReadOnlyList<ModeNodeRecord> nodes) =>
+        string.IsNullOrWhiteSpace(mode.BindingsJson)
+        || string.IsNullOrWhiteSpace(mode.Instructions)
+        || string.IsNullOrWhiteSpace(mode.OrchestrationTier)
+        || nodes.Any(node => string.IsNullOrWhiteSpace(node.RelationshipJson));
+
+    /// <summary>
+    /// Reads the newest <see cref="ModeVersionRecord"/> of a mode and extracts the three
+    /// documents the pre-fix projection never persisted: the mode-level bindings array,
+    /// the team instructions and the explicit tier, plus each node's relationship file.
+    /// Returns null when the mode has no snapshot (never published) or the snapshot is
+    /// unreadable — a corrupt snapshot degrades the read to the stored rows instead of
+    /// throwing on a GET.
+    /// </summary>
+    private static async Task<ModeSnapshotBackfill?> SnapshotBackfillAsync(
+        AgentConfigurationDbContext db,
+        Guid modeId,
+        Guid tenantId,
+        Guid workspaceId,
+        CancellationToken cancellationToken)
+    {
+        var snapshotJson = await db.ModeVersions.AsNoTracking()
+            .Where(x => x.AgentModeId == modeId && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.SnapshotJson != null)
+            .OrderByDescending(x => x.Version)
+            .Select(x => x.SnapshotJson)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(snapshotJson)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(snapshotJson!);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+
+            // An EMPTY array is not a document: the pack snapshot always writes a bindings
+            // array, so backfilling `[]` would make a mode that never declared bindings read
+            // back as "declared an empty list" and would grow a key on every legacy mode.
+            string? bindings = root.TryGetProperty("bindings", out var bindingsElement)
+                && bindingsElement.ValueKind == JsonValueKind.Array
+                && bindingsElement.GetArrayLength() > 0
+                    ? bindingsElement.GetRawText()
+                    : null;
+            string? instructions = root.TryGetProperty("instructions", out var instructionsElement) && instructionsElement.ValueKind == JsonValueKind.String
+                ? instructionsElement.GetString()
+                : null;
+            string? tier = root.TryGetProperty("orchestration_tier", out var tierElement) && tierElement.ValueKind == JsonValueKind.String
+                ? tierElement.GetString()
+                : null;
+
+            var relationships = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (root.TryGetProperty("nodes", out var nodeArray) && nodeArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var node in nodeArray.EnumerateArray())
+                {
+                    if (node.ValueKind != JsonValueKind.Object
+                        || !node.TryGetProperty("node_key", out var keyElement) || keyElement.ValueKind != JsonValueKind.String
+                        || !node.TryGetProperty("relationship", out var relationshipElement) || relationshipElement.ValueKind != JsonValueKind.Object)
+                        continue;
+                    var key = keyElement.GetString();
+                    if (!string.IsNullOrWhiteSpace(key)) relationships[key!] = relationshipElement.GetRawText();
+                }
+            }
+            return new ModeSnapshotBackfill(bindings, instructions, tier, relationships);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -154,6 +274,10 @@ public sealed class AgentTopologyService : IAgentTopologyService
         display_name = mode.DisplayName,
         description = mode.Description,
         instructions = mode.Instructions,
+        // The explicit tier is what the editor's selector binds to and what the runtime
+        // prefers over inference at freeze time; omitting it from the projection is why
+        // the feature was invisible to every reader (and to tinadec_inspect).
+        orchestration_tier = mode.OrchestrationTier,
         i18n = Element(mode.I18nJson),
         runtime_policy = Element(mode.RuntimePolicyJson),
         bindings = Element(mode.BindingsJson),
@@ -212,6 +336,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
             Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
             Slug = slug, DisplayName = name.Trim(), Description = Text(payload, "description"),
             RuntimePolicyJson = policy.Json,
+            OrchestrationTier = topology.Input!.OrchestrationTier,
+            Instructions = topology.Input!.Instructions,
+            BindingsJson = topology.Input!.BindingsJson,
             Status = "draft", Revision = 1, Version = 0,
             CreatedAt = now, UpdatedAt = now,
             CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId,
@@ -239,10 +366,30 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (string.Equals(source.Status, "archived", StringComparison.OrdinalIgnoreCase))
             return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.Conflict, "An archived mode cannot be cloned.");
 
-        var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId).ToListAsync(cancellationToken);
-        var edges = await db.ModeEdges.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId).ToListAsync(cancellationToken);
-        var layout = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
-            .OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(cancellationToken);
+        // A clone is a copy of the LIVE topology: a pack reinstall archives the previous
+        // projection rows and adds new ones, so copying every row would carry the whole
+        // history — including nodes and edges the current version deleted — into the copy.
+        var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.Status != "archived" && x.ArchivedAt == null).ToListAsync(cancellationToken);
+        var edges = await db.ModeEdges.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.Status != "archived" && x.ArchivedAt == null).ToListAsync(cancellationToken);
+        // The layout is ordered IN MEMORY on purpose: SQLite cannot translate a
+        // DateTimeOffset ORDER BY, so `.OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync()`
+        // throws at query time. PublishAsync at L682 already does it this way.
+        var layouts = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.Status != "archived" && x.ArchivedAt == null).ToListAsync(cancellationToken);
+        var layout = layouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
+
+        // A clone must be an EDITABLE COPY, not a shell: instructions, the team binding
+        // list, every node's relationship file and the explicit tier all travel with it.
+        // Modes installed before the row projection carried bindings/relationships get
+        // them from the newest frozen snapshot here — the same repair GET applies.
+        var backfill = NeedsSnapshotBackfill(source, nodes)
+            ? await SnapshotBackfillAsync(db, sourceModeId, scope.TenantId, scope.WorkspaceId, cancellationToken)
+            : null;
+        var instructions = BackfillDocument(source.Instructions, backfill?.Instructions);
+        var bindingsJson = BackfillDocument(source.BindingsJson, backfill?.BindingsJson);
+        var orchestrationTier = BackfillDocument(source.OrchestrationTier, backfill?.OrchestrationTier);
 
         var now = DateTimeOffset.UtcNow;
         var name = (payload.ValueKind == JsonValueKind.Object ? Text(payload, "display_name") : null) ?? $"{source.DisplayName} (copy)";
@@ -252,6 +399,7 @@ public sealed class AgentTopologyService : IAgentTopologyService
             Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
             Slug = slug, DisplayName = name.Trim(), Description = source.Description,
             I18nJson = null, RuntimePolicyJson = source.RuntimePolicyJson,
+            Instructions = instructions, BindingsJson = bindingsJson, OrchestrationTier = orchestrationTier,
             Status = "draft", Revision = 1, Version = 0,
             CreatedAt = now, UpdatedAt = now,
             CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId,
@@ -263,7 +411,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
                 Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ModeId = copy.Id,
                 NodeKey = node.NodeKey, AgentDefinitionId = node.AgentDefinitionId, Layer = node.Layer,
                 Label = node.Label, I18nJson = node.I18nJson, PositionJson = node.PositionJson,
-                ConfigJson = node.ConfigJson, ModelStrategyOverrideJson = node.ModelStrategyOverrideJson,
+                ConfigJson = node.ConfigJson,
+                RelationshipJson = BackfillDocument(node.RelationshipJson, backfill?.RelationshipFor(node.NodeKey)),
+                ModelStrategyOverrideJson = node.ModelStrategyOverrideJson,
                 Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now,
             });
         foreach (var edge in edges)
@@ -329,6 +479,15 @@ public sealed class AgentTopologyService : IAgentTopologyService
         return await LoadResultAsync(db, mode, cancellationToken);
     }
 
+    /// <summary>
+    /// Deletes a user-authored mode — draft OR published. Three things this must get right:
+    /// historical <see cref="ModeVersionRecord"/> rows are KEPT (they are the audit trail of
+    /// what ran, and a purge of them would orphan every run binding that names one), every
+    /// projection row and mode binding belonging to the mode is removed, and any workspace
+    /// default still pointing at the mode or at one of its versions is cleared so a fresh
+    /// workspace cannot resolve a deleted mode. Pack-managed modes are refused: the pack
+    /// still owns them and its next reconcile would resurrect them.
+    /// </summary>
     public async Task<AgentTopologyResult> DeleteDraftAsync(Guid modeId, CancellationToken cancellationToken = default)
     {
         var scope = _tenant.Current;
@@ -341,15 +500,34 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (managed is not null)
             return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.BuiltInReadOnly,
                 $"Pack '{managed.PackId}' manages mode '{managed.ResourceKey}'. Clone it before editing it.");
-        if (!string.Equals(mode.Status, "draft", StringComparison.OrdinalIgnoreCase))
-            return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.NotDraft, "Only a draft mode can be deleted; archive a published mode instead.");
-        if (await db.ModeVersions.AnyAsync(x => x.AgentModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken))
-            return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.PublishedVersionExists,
-                "This mode has published versions; archive it instead of deleting its history.");
 
+        var now = DateTimeOffset.UtcNow;
         db.ModeNodes.RemoveRange(db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
         db.ModeEdges.RemoveRange(db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
         db.CanvasLayouts.RemoveRange(db.CanvasLayouts.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
+        db.ModeBindings.RemoveRange(db.ModeBindings.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
+
+        // Workspace defaults pointing at the mode (or at a version of it) are a dangling
+        // reference the moment the row disappears. Both halves are cleared together because
+        // the publish gate requires default_mode_version_id to belong to
+        // default_agent_mode_id; the version half is checked independently as well, because a
+        // draft write can set it without going through that gate.
+        var defaults = await db.WorkspaceDefaults.FirstOrDefaultAsync(
+            x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken);
+        if (defaults is not null)
+        {
+            var versionPointsAtMode = defaults.DefaultModeVersionId is { } versionId
+                && await db.ModeVersions.AnyAsync(x => x.Id == versionId && x.AgentModeId == modeId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken);
+            if (defaults.DefaultAgentModeId == modeId || versionPointsAtMode)
+            {
+                defaults.DefaultAgentModeId = null;
+                defaults.DefaultModeVersionId = null;
+                defaults.Revision++;
+                defaults.UpdatedAt = now;
+            }
+        }
+
         db.AgentModes.Remove(mode);
         await db.SaveChangesAsync(cancellationToken);
         return new AgentTopologyResult { Ok = true, ModeId = modeId };
@@ -390,6 +568,26 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (graphError is not null)
             return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.ModeGraphInvalid, graphError,
                 new AgentTopologyDiagnostic(AgentTopologyCodes.ModeGraphInvalid, graphError));
+
+        // A manual publish must not be able to reach a state a pack publish would refuse:
+        // the binding-envelope gate (ModePublishGate) and the exploration-tool/policy gate
+        // run here with the same shapes pack admission builds. Skipping them made the two
+        // publish paths carry two different rule sets, which is exactly how a custom mode
+        // could arm an envelope the pack path rejects.
+        // The slug lookup covers the WHOLE workspace because a node-less binding attaches an
+        // envelope to a spawnable template that is deliberately not a node of this mode — the
+        // pack path resolves those against the pack's own agents, and skipping them here
+        // would leave exactly that shape unchecked.
+        // Grouped by slug: two packs may legitimately install agents with the SAME slug
+        // (the roster contract allows it), and a ToDictionary would throw on that.
+        var workspaceAgentRows = await db.AgentDefinitions.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .ToListAsync(cancellationToken);
+        var workspaceAgentsBySlug = workspaceAgentRows
+            .GroupBy(x => x.Slug, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var gateFailure = ValidatePublishGates(mode, nodes, agentDefinitions, workspaceAgentsBySlug);
+        if (gateFailure is not null) return gateFailure;
 
         // cross-layer reuse warning
         var byAgent = nodes.GroupBy(n => n.AgentDefinitionId).Where(g => g.Select(x => x.Layer).Distinct().Count() > 1).Select(g => g.Key).ToArray();
@@ -505,6 +703,10 @@ public sealed class AgentTopologyService : IAgentTopologyService
         // change the topology hash of every newly published legacy mode.
         if (!string.IsNullOrWhiteSpace(mode.Instructions))
             snapshotObject["instructions"] = mode.Instructions;
+        // Same rule for the explicit tier: omitted when the mode declares none, so a mode
+        // that never opted in keeps its inferred tier and its historical hash.
+        if (!string.IsNullOrWhiteSpace(mode.OrchestrationTier))
+            snapshotObject["orchestration_tier"] = GraphValidation.NormalizeOrchestrationTier(mode.OrchestrationTier);
         var snapshot = JsonSerializer.Serialize(snapshotObject);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(snapshot))).ToLowerInvariant();
         var version = (await db.ModeVersions.Where(x => x.AgentModeId == modeId).MaxAsync(x => (int?)x.Version, cancellationToken) ?? 0) + 1;
@@ -541,6 +743,149 @@ public sealed class AgentTopologyService : IAgentTopologyService
 
     // ── topology apply/validate ──
 
+    /// <summary>
+    /// The two gates a PACK publish already runs, applied to a CUSTOM publish so the two
+    /// paths cannot diverge: <see cref="ModePublishGate.ValidateBindings"/> over the stored
+    /// binding list (envelope ⊆ template capabilities/tools, spawn ceilings, and a kept
+    /// workspace-mutating tool needs a write grant) and
+    /// <see cref="ExplorationToolPolicy.Validate"/> over the mode's effective tool surface
+    /// (every exploration tool must be backed by a policy feature). Subjects are built the
+    /// same way pack admission builds them, so one vocabulary decides both.
+    ///
+    /// The pack path passes <c>ceilings: null</c> because TOML ceilings are not available at
+    /// admission; the same is true here — the freeze gate remains authoritative for numbers.
+    /// </summary>
+    private static AgentTopologyResult? ValidatePublishGates(
+        AgentModeRecord mode,
+        IReadOnlyList<ModeNodeRecord> nodes,
+        IReadOnlyDictionary<Guid, AgentDefinitionRecord> agentDefinitions,
+        IReadOnlyDictionary<string, AgentDefinitionRecord> workspaceAgentsBySlug)
+    {
+        var nodeByKey = nodes.GroupBy(x => x.NodeKey, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        // A slug resolves to the agent this mode actually nodes first, then to any workspace
+        // agent (a node-less binding names a spawnable template that is not a mode node).
+        AgentDefinitionRecord? ResolveAgentBySlug(string slug)
+        {
+            foreach (var node in nodes)
+                if (agentDefinitions.TryGetValue(node.AgentDefinitionId, out var candidate)
+                    && string.Equals(candidate.Slug, slug, StringComparison.Ordinal))
+                    return candidate;
+            return workspaceAgentsBySlug.TryGetValue(slug, out var agent) ? agent : null;
+        }
+
+        // switchesByNode mirrors the pack path: a node-keyed binding's tool_switches narrow that
+        // node's effective surface (narrowing only — this map can never add a tool).
+        var switchesByNode = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        var subjects = new List<ModePublishGate.BindingSubject>();
+        foreach (var binding in ParseBindingArray(mode.BindingsJson))
+        {
+            var nodeKey = Text(binding, "node_key");
+            var agentRef = Text(binding, "agent_ref");
+            AgentDefinitionRecord? agent = null;
+            string subjectKey;
+            if (!string.IsNullOrWhiteSpace(nodeKey))
+            {
+                // A dangling node_key is GraphValidation's diagnostic, not this gate's: keep
+                // building subjects for the keys that resolve so the two errors do not compete.
+                if (!nodeByKey.TryGetValue(nodeKey, out var node)) continue;
+                agentDefinitions.TryGetValue(node.AgentDefinitionId, out agent);
+                subjectKey = nodeKey;
+            }
+            else if (!string.IsNullOrWhiteSpace(agentRef))
+            {
+                agent = ResolveAgentBySlug(StripAgentReferencePrefix(agentRef));
+                subjectKey = agentRef;
+            }
+            else
+            {
+                continue;
+            }
+
+            var switches = binding.TryGetProperty("tool_switches", out var switchElement) && switchElement.ValueKind == JsonValueKind.Object
+                ? switchElement
+                : (JsonElement?)null;
+            var envelope = binding.TryGetProperty("envelope", out var envelopeElement) && envelopeElement.ValueKind == JsonValueKind.Object
+                ? envelopeElement
+                : (JsonElement?)null;
+            if (nodeKey is { Length: > 0 } && switches is { } nodeSwitches) switchesByNode[nodeKey] = nodeSwitches;
+
+            subjects.Add(new ModePublishGate.BindingSubject(
+                subjectKey,
+                agent?.Slug ?? string.Empty,
+                agent?.Layer ?? string.Empty,
+                ParseCapabilities(agent?.CapabilitiesJson),
+                ParseTools(agent?.ToolScopeJson).ToArray(),
+                switches,
+                envelope));
+        }
+
+        try
+        {
+            if (subjects.Count > 0) ModePublishGate.ValidateBindings(mode.Slug, subjects, ceilings: null);
+        }
+        catch (InvalidDataException exception)
+        {
+            return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.ModePublishRejected, exception.Message,
+                new AgentTopologyDiagnostic(AgentTopologyCodes.ModePublishRejected, exception.Message));
+        }
+
+        // The exploration gate reads the mode's ENTIRE effective surface, which pack admission
+        // builds by walking every node (a node with no binding still holds its template scope)
+        // and then every node-less binding that arms a spawnable template. Same walk here.
+        var tools = new List<string>();
+        foreach (var node in nodes)
+        {
+            if (!agentDefinitions.TryGetValue(node.AgentDefinitionId, out var agent)) continue;
+            var effective = EffectiveTools(agent, node.ConfigJson);
+            if (switchesByNode.TryGetValue(node.NodeKey, out var nodeSwitches))
+                effective = effective.Where(tool => !GraphValidation.IsSwitchedOff(nodeSwitches, tool));
+            tools.AddRange(effective);
+        }
+        foreach (var binding in ParseBindingArray(mode.BindingsJson))
+        {
+            if (Text(binding, "node_key") is { Length: > 0 }) continue;
+            var agentRef = StripAgentReferencePrefix(Text(binding, "agent_ref"));
+            var agent = ResolveAgentBySlug(agentRef);
+            if (agent is null) continue;
+            var switches = binding.TryGetProperty("tool_switches", out var switchElement) && switchElement.ValueKind == JsonValueKind.Object
+                ? switchElement
+                : (JsonElement?)null;
+            tools.AddRange(ParseTools(agent.ToolScopeJson).Where(tool => !GraphValidation.IsSwitchedOff(switches, tool)));
+        }
+
+        var policy = ParseRuntimePolicyJson(mode.RuntimePolicyJson);
+        if (ExplorationToolPolicy.Validate(policy, tools, $"mode '{mode.Slug}'") is { } explorationError)
+            return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.ModePublishRejected, explorationError,
+                new AgentTopologyDiagnostic(AgentTopologyCodes.ModePublishRejected, explorationError));
+        return null;
+    }
+
+    /// <summary>Agent-reference spelling on the wire may be a bare slug or <c>agent:&lt;slug&gt;</c>.</summary>
+    private static string StripAgentReferencePrefix(string? value) =>
+        value is { Length: > 6 } reference && reference.StartsWith("agent:", StringComparison.Ordinal) ? reference[6..] : value ?? string.Empty;
+
+    /// <summary>
+    /// The node's effective tools: the agent's scope narrowed by the node config's own tool
+    /// arrays. Same precedence as the pack publish path — a wildcard agent scope plus a
+    /// non-empty node list means "exactly the node list", never the wildcard.
+    /// </summary>
+    private static IEnumerable<string> EffectiveTools(AgentDefinitionRecord agent, string? configJson)
+    {
+        var agentTools = ParseTools(agent.ToolScopeJson);
+        var modeTools = ParseTools(configJson);
+        if (agentTools.Contains("*"))
+            return modeTools.Count > 0 ? modeTools : agentTools;
+        return modeTools.Count == 0 ? agentTools : agentTools.Intersect(modeTools, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static ModeRuntimePolicyDto? ParseRuntimePolicyJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<ModeRuntimePolicyDto>(json); }
+        catch (JsonException) { return null; }
+    }
+
     private sealed record SubmittedNode(
         string NodeKey, Guid AgentDefinitionId, string Layer, string? Label,
         string? PositionJson, string? ConfigJson, string? RelationshipJson, string? ModelStrategyOverrideJson);
@@ -551,9 +896,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
     /// A submitted topology. <see cref="HasNodes"/>/<see cref="HasEdges"/> distinguish
     /// "an empty array = delete everything" from "the property was not sent = leave it
     /// alone": only a submitted array can be the full state a deletion is derived from.
-    /// <see cref="HasInstructions"/>/<see cref="HasBindings"/> apply the same rule to the
-    /// two mode-level fields: absent leaves the stored value, an explicit value
-    /// (including JSON <c>null</c>) replaces it.
+    /// <see cref="HasInstructions"/>/<see cref="HasBindings"/>/<see cref="HasOrchestrationTier"/>
+    /// apply the same rule to the mode-level fields: absent leaves the stored value, an
+    /// explicit value (including JSON <c>null</c>) replaces it.
     /// </summary>
     private sealed record TopologyInput(
         IReadOnlyList<SubmittedNode> Nodes,
@@ -565,7 +910,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
         bool HasInstructions,
         string? Instructions,
         bool HasBindings,
-        string? BindingsJson);
+        string? BindingsJson,
+        bool HasOrchestrationTier,
+        string? OrchestrationTier);
 
     /// <summary>The draft projection after a write: what validation reads.</summary>
     private sealed record TopologyState(IReadOnlyList<SubmittedNode> Nodes, IReadOnlyList<SubmittedEdge> Edges);
@@ -674,13 +1021,29 @@ public sealed class AgentTopologyService : IAgentTopologyService
             bindingsJson = bindingsElement.GetRawText();
         }
 
+        // orchestration_tier: an explicit tier string (or the "solo" alias), null to
+        // clear. Absent = leave alone. Normalization lives in GraphValidation so the
+        // pack manifest, the editor and the tools accept exactly one vocabulary.
+        var hasTier = payload.TryGetProperty("orchestration_tier", out var tierElement);
+        string? orchestrationTier = null;
+        if (hasTier && tierElement.ValueKind != JsonValueKind.Null)
+        {
+            if (tierElement.ValueKind != JsonValueKind.String)
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "orchestration_tier must be a string or null."));
+            try { orchestrationTier = GraphValidation.NormalizeOrchestrationTier(tierElement.GetString()); }
+            catch (InvalidDataException exception)
+            {
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, exception.Message));
+            }
+        }
+
         return new(new TopologyInput(nodes, edges, hasNodes, hasEdges, hasLayout, hasLayout ? layout.GetRawText() : null,
-            hasInstructions, instructions, hasBindings, bindingsJson), null);
+            hasInstructions, instructions, hasBindings, bindingsJson, hasTier, orchestrationTier), null);
     }
 
-    /// A mode's collaboration instructions are frozen into the version snapshot;
-    /// the 4 KiB cap keeps that snapshot inside its 32 KiB column.
-    private const int MaxModeInstructionsLength = 4000;
+    /// A mode's collaboration instructions are frozen into the version snapshot; the
+    /// 4 KiB cap keeps that snapshot inside its 32 KiB column.
+    private const int MaxModeInstructionsLength = GraphValidation.MaxModeInstructionsLength;
 
     /// <summary>
     /// Applies the submitted arrays to the tracked draft projection: upsert by key,
@@ -822,6 +1185,8 @@ public sealed class AgentTopologyService : IAgentTopologyService
             mode.Instructions = input.Instructions;
         if (input.HasBindings)
             mode.BindingsJson = input.BindingsJson;
+        if (input.HasOrchestrationTier)
+            mode.OrchestrationTier = input.OrchestrationTier;
 
         return (new TopologyState(nodeState.Values.ToArray(), edgeState.Values.ToArray()), null);
     }
@@ -1001,16 +1366,13 @@ public sealed class AgentTopologyService : IAgentTopologyService
         catch (JsonException) { return []; }
     }
 
-    /// <summary>A tool is switched off by an explicit <c>false</c> (bool or string) on
-    /// its own id, or by the wildcard <c>"*": false</c> that sheds the whole face.</summary>
-    private static bool IsSwitchedOff(JsonElement switches, string toolId)
-    {
-        static bool Off(JsonElement state) => state.ValueKind == JsonValueKind.False
-            || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase));
-        if (switches.ValueKind != JsonValueKind.Object) return false;
-        if (switches.TryGetProperty(toolId, out var exact) && Off(exact)) return true;
-        return switches.TryGetProperty("*", out var all) && Off(all);
-    }
+    /// <summary>
+    /// The snapshot-fetch path's view of a tool switch map: delegates to the single shared
+    /// predicate (<see cref="GraphValidation.IsSwitchedOff"/>) so the surface frozen into the
+    /// published snapshot sheds exactly what the pack path sheds — including <c>"*": false</c>.
+    /// </summary>
+    private static bool IsSwitchedOff(JsonElement switches, string toolId) =>
+        GraphValidation.IsSwitchedOff(switches, toolId);
 
     private static IReadOnlyList<string> ParseCapabilities(string? capabilitiesJson)
     {

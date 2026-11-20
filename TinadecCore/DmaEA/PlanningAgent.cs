@@ -83,11 +83,29 @@ public sealed class PlanningAgent
     }
 
     public async Task<PlannedTask[]> PlanAsync(DmaeaRunContext ctx, IReadOnlyList<AgentDefinition> agents, CancellationToken ct)
-        => await PlanAsync(ctx, agents, null, ct).ConfigureAwait(false);
+        => await PlanAsync(ctx, agents, (IReadOnlyList<StageDependency>?)null, null, ct).ConfigureAwait(false);
 
     public async Task<PlannedTask[]> PlanAsync(
         DmaeaRunContext ctx,
         IReadOnlyList<AgentDefinition> agents,
+        string? assembledInstructions,
+        CancellationToken ct)
+        => await PlanAsync(ctx, agents, (IReadOnlyList<StageDependency>?)null, assembledInstructions, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// Plans with the mode graph's ordered stage hand-offs in the planner context.
+    /// <paramref name="stageDependencies"/> are the <c>execution -&gt; execution</c> edges
+    /// (<see cref="GraphEdgeAuthority.StageDependencies"/>): a pipeline mode's
+    /// <c>leader -&gt; m1 -&gt; m2</c> chain. Without them the planner sees a flat roster and
+    /// freely assigns <c>m2</c> work that depends on <c>m1</c>'s output; with them it is
+    /// told which hand-off order the graph declares. They are prompt material — the
+    /// dependency is a hint the planner should express as task <c>dependencies</c>, never a
+    /// constraint the engine re-derives from them.
+    /// </summary>
+    public async Task<PlannedTask[]> PlanAsync(
+        DmaeaRunContext ctx,
+        IReadOnlyList<AgentDefinition> agents,
+        IReadOnlyList<StageDependency>? stageDependencies,
         string? assembledInstructions,
         CancellationToken ct)
     {
@@ -95,7 +113,7 @@ public sealed class PlanningAgent
         if (!resolved.IsAvailable) throw new InvalidOperationException(resolved.Error);
 
         var chatClient = await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false);
-        var rosterInstructions = BuildRosterInstructions(agents);
+        var rosterInstructions = BuildPlannerContext(agents, stageDependencies);
         var options = new ChatOptions
         {
             Instructions = string.IsNullOrWhiteSpace(assembledInstructions)
@@ -138,6 +156,49 @@ public sealed class PlanningAgent
             }];
         }
         return tasks.Take(8).ToArray();
+    }
+
+    /// <summary>
+    /// Plans with the mode graph's ordered stage hand-offs derived from the frozen run
+    /// configuration itself. This is the overload a run engine should call: it is the same
+    /// <see cref="GraphEdgeAuthority.StageDependencies"/> result the dispatch authority uses
+    /// to permit the chained edges, so what the planner is told and what dispatch allows
+    /// cannot drift.
+    /// </summary>
+    public Task<PlannedTask[]> PlanAsync(
+        DmaeaRunContext ctx,
+        IReadOnlyList<AgentDefinition> agents,
+        FrozenRunConfigurationV1 configuration,
+        string? assembledInstructions,
+        CancellationToken ct) =>
+        PlanAsync(ctx, agents, GraphEdgeAuthority.StageDependencies(configuration.Graph), assembledInstructions, ct);
+
+    /// <summary>
+    /// The full planner context: the roster, then — when the mode declares stage edges —
+    /// the ordered hand-offs the graph requires.
+    /// </summary>
+    internal static string BuildPlannerContext(IReadOnlyList<AgentDefinition> agents, IReadOnlyList<StageDependency>? stageDependencies)
+    {
+        var roster = BuildRosterInstructions(agents);
+        var stages = BuildStageInstructions(stageDependencies);
+        return stages.Length == 0 ? roster : roster + "\n\n" + stages;
+    }
+
+    /// <summary>
+    /// Renders the <c>execution -&gt; execution</c> stage edges as an ordered hand-off list.
+    /// Empty when the mode declares no stage edges, which keeps the prompt for every
+    /// non-pipeline mode byte-identical to what it was.
+    /// </summary>
+    internal static string BuildStageInstructions(IReadOnlyList<StageDependency>? stageDependencies)
+    {
+        if (stageDependencies is not { Count: > 0 }) return string.Empty;
+        var lines = stageDependencies
+            .Select(stage => $"- {stage.PredecessorSlug} → {stage.SuccessorSlug}")
+            .ToArray();
+        return "阶段依赖（声明图给出的执行层先后顺序，权威）：\n"
+            + "下游阶段的任务必须把上游阶段的任务 task_key 写进 dependencies，不要与上游并行派发；"
+            + "同一阶段内的多个任务可以并行。\n"
+            + string.Join("\n", lines);
     }
 
     /// <summary>

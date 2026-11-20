@@ -39,8 +39,23 @@ public sealed class PromptsModuleRegistrar : IModuleRegistrar
     }
 }
 
-internal static class PromptContentCodec
+/// <summary>
+/// Prompt bodies live in the content store as one JSON string. That encoding is NOT cosmetic:
+/// the <c>prompts.toml</c> configuration projection re-reads every
+/// <c>prompt_fragment_versions</c> content blob and validates it as JSON
+/// (<c>ConfigurationProjectionCoordinator.EncodeRowAsync/MaterializeContentAsync</c>), so a raw
+/// markdown blob would break scope export/import. One layer is therefore the storage contract;
+/// what the product fixes here is the SECOND layer — older importers and scripts handed us a
+/// string that was already JSON-encoded, and wrapping it again made a prompt body read back as
+/// <c>"\"...\""</c> instead of its text.
+/// </summary>
+public static class PromptContentCodec
 {
+    /// <summary>
+    /// Unwraps any number of legacy encoding layers (up to 4) and also accepts an object envelope
+    /// with a <c>content</c> or <c>text</c> member. Text that is not JSON at all - the new, clean
+    /// form - passes through untouched.
+    /// </summary>
     public static string UnwrapFragmentText(string? raw)
     {
         if (string.IsNullOrEmpty(raw)) return string.Empty;
@@ -81,6 +96,34 @@ internal static class PromptContentCodec
         return current;
     }
 
+    /// <summary>
+    /// Reduces the caller's body to the text it means so a write never stacks a second encoding
+    /// layer on top of one an importer already applied. Only a JSON STRING literal is unwrapped:
+    /// an object-shaped body is a legitimate prompt (a fragment can document a JSON schema) and
+    /// must not be rewritten. Reads stay tolerant of both forms; writes stay conservative.
+    /// </summary>
+    public static string NormalizeForWrite(string? content)
+    {
+        if (string.IsNullOrEmpty(content)) return string.Empty;
+        var current = content;
+        for (var depth = 0; depth < 4; depth++)
+        {
+            var trimmed = current.Trim();
+            if (trimmed.Length < 2 || trimmed[0] != '"') break;
+            try
+            {
+                using var doc = JsonDocument.Parse(trimmed);
+                if (doc.RootElement.ValueKind != JsonValueKind.String) break;
+                current = doc.RootElement.GetString() ?? string.Empty;
+            }
+            catch (JsonException)
+            {
+                break;
+            }
+        }
+        return current;
+    }
+
     public static async Task<string> ReadTextAsync(
         IContentStore contentStore,
         PromptFragmentVersionRecord version,
@@ -101,8 +144,9 @@ internal static class PromptContentCodec
         string content,
         CancellationToken cancellationToken)
     {
-        // Keep prompts.toml projection valid (ConfigurationProjectionDocumentValidator parses content as JSON).
-        var jsonText = JsonSerializer.Serialize(content ?? string.Empty);
+        // Exactly one encoding layer - see the type comment for why the layer exists at all.
+        var clean = NormalizeForWrite(content);
+        var jsonText = JsonSerializer.Serialize(clean);
         await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(jsonText));
         return await contentStore.PutAsync(
             new ContentWriteRequest(tenantId, workspaceId, "prompt-fragment", "application/json", stream),
@@ -349,7 +393,9 @@ internal sealed class PromptFragmentService : IPromptFragmentService, IFrozenPro
 
         await ApplyTargetAgentAsync(row!, input.TargetAgentId, input.TargetAgentSlug, changedFields, isNew, cancellationToken).ConfigureAwait(false);
 
-        var content = input.Content ?? previousContent ?? string.Empty;
+        // Normalize once here, not just inside the codec: the caller's echo must be the text that
+        // was stored, so a legacy double-encoded body does not come back wrapped.
+        var content = PromptContentCodec.NormalizeForWrite(input.Content ?? previousContent ?? string.Empty);
         if (isNew || !string.Equals(content, previousContent, StringComparison.Ordinal))
             changedFields.Add("content");
         if (changedFields.Count == 0)
@@ -432,7 +478,7 @@ internal sealed class PromptFragmentService : IPromptFragmentService, IFrozenPro
         if (expectedRevision is { } expected && row.Revision != expected)
             throw new PromptFragmentException(412, "revision_conflict", $"Prompt fragment revision conflict: expected {expected}, actual {row.Revision}.");
 
-        var content = input.Content ?? string.Empty;
+        var content = PromptContentCodec.NormalizeForWrite(input.Content ?? string.Empty);
         var storedRef = await PromptContentCodec.WriteJsonStringAsync(_content, tenant.TenantId, tenant.WorkspaceId, content, cancellationToken).ConfigureAwait(false);
         var maxVersion = await db.Versions.Where(v => v.FragmentId == row.Id).MaxAsync(v => (int?)v.Version, cancellationToken).ConfigureAwait(false) ?? 0;
         var changedFields = input.ChangedFields is { Count: > 0 } ? input.ChangedFields : ["content"];
@@ -738,15 +784,375 @@ internal sealed class PromptFragmentService : IPromptFragmentService, IFrozenPro
 }
 
 /// <summary>
+/// The pure half of prompt-pipeline execution: token estimation, token substitution, condition
+/// evaluation, edge parsing, topological ordering and fragment-reference resolution. It holds no
+/// store, no tenant and no clock, so every rule the canvas depends on can be asserted directly;
+/// <see cref="PromptAssembler"/> owns only the I/O around it.
+/// </summary>
+public static class PromptPipeline
+{
+    private static readonly Regex TokenPattern = new(@"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Approximate token cost of a layer. Most prompts in this product are Chinese, where
+    /// <c>length / 4</c> under-reports by roughly 6x: CJK codepoints average ~1.5 characters per
+    /// token, ASCII ~4. Counted separately so a mixed layer is estimated by what it actually is.
+    /// </summary>
+    public static int EstimateTokens(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        var cjk = 0;
+        foreach (var ch in text)
+        {
+            if (IsCjkChar(ch)) cjk++;
+        }
+        var nonCjk = text.Length - cjk;
+        var estimated = (int)Math.Ceiling(cjk / 1.5d + nonCjk / 4.0d);
+        return Math.Max(1, estimated);
+    }
+
+    /// <summary>CJK ideographs, kana, hangul and the fullwidth/CJK punctuation blocks.</summary>
+    public static bool IsCjkChar(char ch) =>
+        ch is (>= '\u4E00' and <= '\u9FFF')
+            or (>= '\u3400' and <= '\u4DBF')
+            or (>= '\uF900' and <= '\uFAFF')
+            or (>= '\u3000' and <= '\u303F')
+            or (>= '\u3040' and <= '\u309F')
+            or (>= '\u30A0' and <= '\u30FF')
+            or (>= '\uAC00' and <= '\uD7AF')
+            or (>= '\uFF00' and <= '\uFFEF');
+
+    /// <summary>Substitutes the five documented variables; an unknown token is left verbatim.</summary>
+    public static string SubstituteTokens(string template, PromptEvalContext ctx) =>
+        TokenPattern.Replace(template, match => match.Groups[1].Value.ToLowerInvariant() switch
+        {
+            "agent_name" => ctx.AgentName,
+            "agent_slug" => ctx.AgentSlug,
+            "mode_name" => ctx.ModeName,
+            "mode_slug" => ctx.ModeSlug,
+            "workspace_root" => ctx.WorkspaceRoot,
+            _ => match.Value
+        });
+
+    /// <summary>
+    /// Evaluates the structured conditions the node inspector writes. Every property present must
+    /// hold; a node with no condition is unconditionally true. Supports both the inspector pair
+    /// (<c>field</c> + <c>value</c>) and direct keys, read from the node itself or its
+    /// <c>config</c>/<c>data</c> envelope.
+    /// </summary>
+    public static bool EvaluateCondition(JsonElement node, PromptEvalContext ctx)
+    {
+        foreach (var container in NodeContainers(node))
+        {
+            if (container.TryGetProperty("condition", out var nested) && nested.ValueKind == JsonValueKind.Object)
+            {
+                if (!EvaluateConditionObject(nested, ctx)) return false;
+            }
+            if (!EvaluateConditionObject(container, ctx)) return false;
+        }
+        return true;
+    }
+
+    private static bool EvaluateConditionObject(JsonElement obj, PromptEvalContext ctx)
+    {
+        if (obj.ValueKind != JsonValueKind.Object) return true;
+
+        var field = ReadString(obj, "field") ?? ReadString(obj, "condition_field");
+        if (!string.IsNullOrWhiteSpace(field) && obj.TryGetProperty("value", out var fieldValue))
+        {
+            if (!EvaluateFieldPredicate(field.Trim().ToLowerInvariant(), fieldValue, ctx))
+                return false;
+        }
+
+        if (obj.TryGetProperty("layer", out var layerEl) && !EvaluateFieldPredicate("layer", layerEl, ctx))
+            return false;
+        if (obj.TryGetProperty("mode_slug", out var modeEl) && !EvaluateFieldPredicate("mode_slug", modeEl, ctx))
+            return false;
+        if (obj.TryGetProperty("has_workspace", out var wsEl) && !EvaluateFieldPredicate("has_workspace", wsEl, ctx))
+            return false;
+        if (obj.TryGetProperty("has_tools", out var toolsEl) && !EvaluateFieldPredicate("has_tools", toolsEl, ctx))
+            return false;
+        if (obj.TryGetProperty("capability", out var capEl) && !EvaluateFieldPredicate("capability", capEl, ctx))
+            return false;
+
+        return true;
+    }
+
+    public static bool EvaluateFieldPredicate(string field, JsonElement value, PromptEvalContext ctx)
+    {
+        if (value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return true;
+        return field switch
+        {
+            "layer" => MatchesStringOrArray(ctx.Layer, value),
+            "mode_slug" => MatchesStringOrArray(ctx.ModeSlug, value),
+            "has_workspace" => TryReadBool(value, out var bWs) && ctx.HasWorkspace == bWs,
+            "has_tools" => TryReadBool(value, out var bTools) && ctx.HasTools == bTools,
+            "capability" => MatchesCapability(ctx.Capabilities, value),
+            _ => true
+        };
+    }
+
+    private static bool MatchesStringOrArray(string actual, JsonElement expected)
+    {
+        if (expected.ValueKind == JsonValueKind.String)
+            return string.Equals(actual, expected.GetString()?.Trim(), StringComparison.OrdinalIgnoreCase);
+        if (expected.ValueKind == JsonValueKind.Array)
+            return expected.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String
+                && string.Equals(actual, item.GetString()?.Trim(), StringComparison.OrdinalIgnoreCase));
+        return true;
+    }
+
+    private static bool MatchesCapability(IReadOnlySet<string> actual, JsonElement expected)
+    {
+        if (expected.ValueKind == JsonValueKind.String)
+        {
+            var cap = expected.GetString()?.Trim();
+            return !string.IsNullOrEmpty(cap) && actual.Contains(cap);
+        }
+        if (expected.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in expected.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String && item.GetString()?.Trim() is { Length: > 0 } cap && actual.Contains(cap))
+                    return true;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private static bool TryReadBool(JsonElement value, out bool result)
+    {
+        if (value.ValueKind == JsonValueKind.True) { result = true; return true; }
+        if (value.ValueKind == JsonValueKind.False) { result = false; return true; }
+        if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString()?.Trim(), out var parsed))
+        {
+            result = parsed;
+            return true;
+        }
+        result = false;
+        return false;
+    }
+
+    /// <summary>
+    /// Where a rendered block lands relative to the layers the assembler owns. Anything the canvas
+    /// does not spell as a known slot is a plain pipeline block.
+    /// </summary>
+    public static string NormalizePlacement(string? raw) => raw?.Trim().ToLowerInvariant() switch
+    {
+        "before_system_prompt" or "before_system" => "before_system_prompt",
+        "after_system_prompt" or "after_system" => "after_system_prompt",
+        "before_runtime_constraints" or "before_constraints" or "after_fragments" => "before_runtime_constraints",
+        _ => "pipeline"
+    };
+
+    public static bool TryGetNodesArray(JsonElement root, out JsonElement nodes)
+    {
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            if (root.TryGetProperty("nodes", out nodes) && nodes.ValueKind == JsonValueKind.Array) return true;
+            if (root.TryGetProperty("prompt_nodes", out nodes) && nodes.ValueKind == JsonValueKind.Array) return true;
+        }
+        nodes = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Reads the edge array, dropping edges that name an unknown node or repeat a pair. A malformed
+    /// edge is not a failure: the graph still sorts by what remains.
+    /// </summary>
+    public static List<PromptGraphEdge> ParseEdges(JsonElement root, IReadOnlyList<PromptGraphNode> nodes)
+    {
+        if (!root.TryGetProperty("edges", out var edgesEl) || edgesEl.ValueKind != JsonValueKind.Array)
+            return [];
+        var knownIds = nodes.Select(n => n.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<(string Source, string Target)>();
+        var edges = new List<PromptGraphEdge>();
+        foreach (var e in edgesEl.EnumerateArray())
+        {
+            var src = ReadString(e, "source") ?? ReadString(e, "source_node_key");
+            var tgt = ReadString(e, "target") ?? ReadString(e, "target_node_key");
+            if (string.IsNullOrWhiteSpace(src) || string.IsNullOrWhiteSpace(tgt)) continue;
+            src = src.Trim();
+            tgt = tgt.Trim();
+            if (string.Equals(src, tgt, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!knownIds.Contains(src) || !knownIds.Contains(tgt)) continue;
+            if (seen.Add((src, tgt)))
+                edges.Add(new PromptGraphEdge(src, tgt));
+        }
+        return edges;
+    }
+
+    /// <summary>
+    /// Kahn order along <c>graph.edges</c>. Edgeless graphs keep declaration order (there is no
+    /// information to reorder on), and a cycle falls back to declaration order with a warning
+    /// rather than throwing, because a half-built canvas must still preview.
+    /// </summary>
+    public static List<PromptGraphNode> TopologicalSort(
+        IReadOnlyList<PromptGraphNode> nodes,
+        IReadOnlyList<PromptGraphEdge> edges,
+        ICollection<string> warnings)
+    {
+        if (edges.Count == 0) return [.. nodes];
+
+        // A canvas can contain two nodes with the same id (a duplicated paste, a hand-edited
+        // export). Ordering one of them twice is meaningless, and ToDictionary would throw, so the
+        // first occurrence wins and the duplicate is reported instead of crashing the preview.
+        var unique = new List<PromptGraphNode>(nodes.Count);
+        var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in nodes)
+        {
+            if (seenIds.Add(node.Id)) unique.Add(node);
+            else warnings.Add($"Prompt graph node id '{node.Id}' appears more than once; only the first is executed.");
+        }
+        if (unique.Count != nodes.Count) nodes = unique;
+
+        var byId = nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+        var inDegree = nodes.ToDictionary(n => n.Id, _ => 0, StringComparer.OrdinalIgnoreCase);
+        var adj = nodes.ToDictionary(n => n.Id, _ => new List<string>(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var edge in edges)
+        {
+            if (!byId.ContainsKey(edge.Source) || !byId.ContainsKey(edge.Target)) continue;
+            adj[edge.Source].Add(edge.Target);
+            inDegree[edge.Target] = inDegree[edge.Target] + 1;
+        }
+
+        var ready = new PriorityQueue<PromptGraphNode, int>();
+        foreach (var node in nodes)
+        {
+            if (inDegree[node.Id] == 0)
+                ready.Enqueue(node, node.Order);
+        }
+
+        var sorted = new List<PromptGraphNode>(nodes.Count);
+        while (ready.Count > 0)
+        {
+            var current = ready.Dequeue();
+            sorted.Add(current);
+            foreach (var neighborId in adj[current.Id])
+            {
+                inDegree[neighborId]--;
+                if (inDegree[neighborId] == 0)
+                {
+                    var neighbor = byId[neighborId];
+                    ready.Enqueue(neighbor, neighbor.Order);
+                }
+            }
+        }
+
+        if (sorted.Count < nodes.Count)
+        {
+            warnings.Add("Prompt graph contains a cycle; falling back to node declaration order.");
+            return [.. nodes];
+        }
+
+        return sorted;
+    }
+
+    /// <summary>
+    /// Resolves a <c>fragment_ref</c> node against the fragment pool. A GUID reference is matched
+    /// first, then the key, so a node saved before a fragment was renamed still resolves by id and
+    /// a node saved by key survives a re-keyed import.
+    /// </summary>
+    public static PromptFragmentCandidate? ResolveFragmentReference(
+        IReadOnlyList<PromptFragmentCandidate> pool,
+        string? fragmentIdText,
+        string? fragmentKey)
+    {
+        if (Guid.TryParse(fragmentIdText, out var refGuid) && refGuid != Guid.Empty)
+        {
+            var byId = pool.FirstOrDefault(f => f.Id == refGuid);
+            if (byId is not null) return byId;
+        }
+        if (!string.IsNullOrWhiteSpace(fragmentKey))
+        {
+            var key = fragmentKey.Trim();
+            return pool.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
+        }
+        return null;
+    }
+
+    public static string? ReadTemplateText(JsonElement node) =>
+        ReadNodeString(node, "content", "template", "text", "value");
+
+    public static string? ReadNodeString(JsonElement node, params string[] keys)
+    {
+        foreach (var container in NodeContainers(node))
+        {
+            foreach (var key in keys)
+            {
+                if (ReadString(container, key) is { } value) return value;
+            }
+        }
+        return null;
+    }
+
+    public static IEnumerable<JsonElement> NodeContainers(JsonElement node)
+    {
+        yield return node;
+        if (node.TryGetProperty("config", out var config) && config.ValueKind == JsonValueKind.Object)
+            yield return config;
+        if (node.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+            yield return data;
+    }
+
+    public static string? ReadString(JsonElement element, string property) =>
+        element.ValueKind == JsonValueKind.Object
+        && element.TryGetProperty(property, out var value)
+        && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    /// <summary>Fragment category precedence: mode profile, then agent profile, then task, then the rest.</summary>
+    public static int CategoryOrder(string category) => category.Trim().ToLowerInvariant() switch
+    {
+        "mode_profile" or "mode" => 1,
+        "agent_profile" or "agent" => 2,
+        "task" or "task_context" => 3,
+        _ => 4
+    };
+}
+
+/// <summary>One node of a prompt graph, already parsed out of the canvas JSON.</summary>
+public sealed record PromptGraphNode(int Order, string Id, string Kind, string Label, JsonElement Element);
+
+/// <summary>A directed edge between two prompt graph nodes.</summary>
+public sealed record PromptGraphEdge(string Source, string Target);
+
+/// <summary>The identity-facing facts a condition can test.</summary>
+public sealed record PromptEvalContext(
+    string AgentName,
+    string AgentSlug,
+    string ModeName,
+    string ModeSlug,
+    string Layer,
+    string WorkspaceRoot,
+    bool HasWorkspace,
+    bool HasTools,
+    IReadOnlySet<string> Capabilities);
+
+/// <summary>One fragment as the pipeline sees it: identity, targeting, ordering and body.</summary>
+public sealed record PromptFragmentCandidate(
+    Guid Id,
+    string Key,
+    string Title,
+    string Scope,
+    Guid? TargetAgentId,
+    string? TargetAgentSlug,
+    string Category,
+    int Priority,
+    bool Enabled,
+    string Content);
+
+/// <summary>
 /// Deterministically assembles the local prompt in the following order: architecture baseline,
 /// system prompt, response language, mode instructions, workspace facts, mode/agent profile,
 /// topologically executed PromptPipeline graph, active/frozen PromptFragments, task context,
 /// then runtime constraints.
 /// </summary>
-internal sealed class PromptAssembler : IPromptAssembler
+public sealed class PromptAssembler : IPromptAssembler
 {
-    private static readonly Regex TokenPattern = new(@"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", RegexOptions.Compiled);
-
     private readonly IDbContextFactory<PromptControlDbContext> _dbFactory;
     private readonly IContentStore _content;
     private readonly ITenantContextAccessor _tenant;
@@ -784,24 +1190,15 @@ internal sealed class PromptAssembler : IPromptAssembler
         var agentId = request.AgentId.Trim();
         var contextPack = request.ContextPack;
 
-        // Collect all agent identifiers (GUID + slug) so TargetAgentId matches both.
-        var candidateGuids = new HashSet<Guid>();
-        var candidateSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (Guid.TryParse(agentId, out var parsedAgentGuid) && parsedAgentGuid != Guid.Empty)
-            candidateGuids.Add(parsedAgentGuid);
-        else
-            candidateSlugs.Add(agentId);
-
-        if (request.AgentDefinitionId is { } explicitGuid && explicitGuid != Guid.Empty)
-            candidateGuids.Add(explicitGuid);
-        if (!string.IsNullOrWhiteSpace(request.AgentSlug))
-            candidateSlugs.Add(request.AgentSlug.Trim());
+        // Collect the agent's whole identity (GUID(s) + slug(s)) once; every scoped fragment and
+        // every frozen snapshot is then answered by the same rule.
+        var (candidateGuids, candidateSlugs) = PromptFragmentTargeting.BuildIdentity(agentId, request.AgentDefinitionId, request.AgentSlug);
         if (contextPack?.Metadata.TryGetValue("agent_definition_id", out var metaGuidText) == true
             && Guid.TryParse(metaGuidText, out var metaGuid) && metaGuid != Guid.Empty)
-            candidateGuids.Add(metaGuid);
+            candidateGuids = new HashSet<Guid>(candidateGuids) { metaGuid };
         if (contextPack?.Metadata.TryGetValue("agent_slug", out var metaSlugText) == true
             && !string.IsNullOrWhiteSpace(metaSlugText))
-            candidateSlugs.Add(metaSlugText.Trim());
+            candidateSlugs = new HashSet<string>(candidateSlugs, StringComparer.OrdinalIgnoreCase) { metaSlugText.Trim() };
 
         AgentIdentitySnapshot? lookedUpAgent = null;
         if (_agentLookup is not null)
@@ -809,9 +1206,11 @@ internal sealed class PromptAssembler : IPromptAssembler
             lookedUpAgent = await _agentLookup.ResolveAsync(request.AgentSlug ?? agentId, cancellationToken).ConfigureAwait(false);
             if (lookedUpAgent is not null)
             {
-                candidateGuids.Add(lookedUpAgent.Id);
-                if (!string.IsNullOrWhiteSpace(lookedUpAgent.Slug))
-                    candidateSlugs.Add(lookedUpAgent.Slug);
+                var guids = new HashSet<Guid>(candidateGuids) { lookedUpAgent.Id };
+                var slugs = new HashSet<string>(candidateSlugs, StringComparer.OrdinalIgnoreCase);
+                if (!string.IsNullOrWhiteSpace(lookedUpAgent.Slug)) slugs.Add(lookedUpAgent.Slug);
+                candidateGuids = guids;
+                candidateSlugs = slugs;
             }
         }
 
@@ -840,7 +1239,7 @@ internal sealed class PromptAssembler : IPromptAssembler
                 ? string.Equals(metaTools, "true", StringComparison.OrdinalIgnoreCase)
                 : lookedUpAgent?.HasTools ?? false);
 
-        var evalContext = new PipelineEvalContext(
+        var evalContext = new PromptEvalContext(
             AgentName: effectiveAgentName,
             AgentSlug: effectiveAgentSlug,
             ModeName: effectiveModeName,
@@ -1067,7 +1466,7 @@ internal sealed class PromptAssembler : IPromptAssembler
         };
     }
 
-    private async Task<List<PoolFragment>> LoadFragmentPoolAsync(
+    private async Task<List<PromptFragmentCandidate>> LoadFragmentPoolAsync(
         FrozenPromptAssemblyRequest request,
         ICollection<string> warnings,
         CancellationToken cancellationToken)
@@ -1075,7 +1474,7 @@ internal sealed class PromptAssembler : IPromptAssembler
         if (request.FrozenFragments is not null)
         {
             return request.FrozenFragments
-                .Select(f => new PoolFragment(f.Id, f.Key, f.Title, f.Scope, f.TargetAgentId, f.TargetAgentSlug, f.Category, f.Priority, true, PromptContentCodec.UnwrapFragmentText(f.Content)))
+                .Select(f => new PromptFragmentCandidate(f.Id, f.Key, f.Title, f.Scope, f.TargetAgentId, f.TargetAgentSlug, f.Category, f.Priority, true, PromptContentCodec.UnwrapFragmentText(f.Content)))
                 .ToList();
         }
 
@@ -1096,7 +1495,7 @@ internal sealed class PromptAssembler : IPromptAssembler
             .Where(x => versionIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, cancellationToken).ConfigureAwait(false);
 
-        var pool = new List<PoolFragment>(rows.Count);
+        var pool = new List<PromptFragmentCandidate>(rows.Count);
         foreach (var row in rows)
         {
             if (!versions.TryGetValue(row.CurrentVersionId, out var version))
@@ -1105,15 +1504,15 @@ internal sealed class PromptAssembler : IPromptAssembler
                 continue;
             }
             var text = await PromptContentCodec.ReadTextAsync(_content, version, cancellationToken).ConfigureAwait(false);
-            pool.Add(new PoolFragment(row.Id, row.Key, row.Title, row.Scope, row.TargetAgentId, row.TargetAgentSlug, row.Category, row.Priority, row.Enabled, text));
+            pool.Add(new PromptFragmentCandidate(row.Id, row.Key, row.Title, row.Scope, row.TargetAgentId, row.TargetAgentSlug, row.Category, row.Priority, row.Enabled, text));
         }
         return pool;
     }
 
     private async Task<List<PipelineRenderedBlock>> ExecutePromptGraphAsync(
         FrozenPromptAssemblyRequest request,
-        PipelineEvalContext evalContext,
-        IReadOnlyList<PoolFragment> pool,
+        PromptEvalContext evalContext,
+        IReadOnlyList<PromptFragmentCandidate> pool,
         HashSet<Guid> consumedFragmentIds,
         int budget,
         ICollection<string> warnings,
@@ -1138,7 +1537,7 @@ internal sealed class PromptAssembler : IPromptAssembler
             var root = document.RootElement;
             if (!TryGetNodesArray(root, out var nodesElement)) return [];
 
-            var parsedNodes = new List<GraphNode>();
+            var parsedNodes = new List<PromptGraphNode>();
             var index = 0;
             foreach (var nodeEl in nodesElement.EnumerateArray())
             {
@@ -1146,7 +1545,7 @@ internal sealed class PromptAssembler : IPromptAssembler
                 var id = ReadString(nodeEl, "id") ?? ReadString(nodeEl, "node_key") ?? index.ToString(CultureInfo.InvariantCulture);
                 var kind = (ReadString(nodeEl, "type") ?? ReadString(nodeEl, "kind") ?? string.Empty).Trim().ToLowerInvariant();
                 var label = ReadString(nodeEl, "label") ?? ReadString(nodeEl, "title") ?? ReadString(nodeEl, "name") ?? id;
-                parsedNodes.Add(new GraphNode(index - 1, id, kind, label, nodeEl.Clone()));
+                parsedNodes.Add(new PromptGraphNode(index - 1, id, kind, label, nodeEl.Clone()));
             }
             if (parsedNodes.Count == 0) return [];
 
@@ -1234,11 +1633,7 @@ internal sealed class PromptAssembler : IPromptAssembler
                         activeNodes.Add(node.Id);
                         var refIdText = ReadNodeString(node.Element, "fragment_id");
                         var refKey = ReadNodeString(node.Element, "fragment_key", "key");
-                        PoolFragment? match = null;
-                        if (Guid.TryParse(refIdText, out var refGuid) && refGuid != Guid.Empty)
-                            match = pool.FirstOrDefault(f => f.Id == refGuid);
-                        if (match is null && !string.IsNullOrWhiteSpace(refKey))
-                            match = pool.FirstOrDefault(f => string.Equals(f.Key, refKey.Trim(), StringComparison.OrdinalIgnoreCase));
+                        var match = PromptPipeline.ResolveFragmentReference(pool, refIdText, refKey);
 
                         if (match is null)
                         {
@@ -1397,211 +1792,27 @@ internal sealed class PromptAssembler : IPromptAssembler
     }
 
     private static bool TryGetNodesArray(JsonElement root, out JsonElement nodes)
-    {
-        if (root.ValueKind == JsonValueKind.Object)
-        {
-            if (root.TryGetProperty("nodes", out nodes) && nodes.ValueKind == JsonValueKind.Array) return true;
-            if (root.TryGetProperty("prompt_nodes", out nodes) && nodes.ValueKind == JsonValueKind.Array) return true;
-        }
-        nodes = default;
-        return false;
-    }
+        => PromptPipeline.TryGetNodesArray(root, out nodes);
 
-    private static List<GraphEdge> ParseEdges(JsonElement root, IReadOnlyList<GraphNode> nodes)
-    {
-        if (!root.TryGetProperty("edges", out var edgesEl) || edgesEl.ValueKind != JsonValueKind.Array)
-            return [];
-        var knownIds = nodes.Select(n => n.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var seen = new HashSet<(string Source, string Target)>();
-        var edges = new List<GraphEdge>();
-        foreach (var e in edgesEl.EnumerateArray())
-        {
-            var src = ReadString(e, "source") ?? ReadString(e, "source_node_key");
-            var tgt = ReadString(e, "target") ?? ReadString(e, "target_node_key");
-            if (string.IsNullOrWhiteSpace(src) || string.IsNullOrWhiteSpace(tgt)) continue;
-            src = src.Trim();
-            tgt = tgt.Trim();
-            if (string.Equals(src, tgt, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!knownIds.Contains(src) || !knownIds.Contains(tgt)) continue;
-            if (seen.Add((src, tgt)))
-                edges.Add(new GraphEdge(src, tgt));
-        }
-        return edges;
-    }
+    private static List<PromptGraphEdge> ParseEdges(JsonElement root, IReadOnlyList<PromptGraphNode> nodes)
+        => PromptPipeline.ParseEdges(root, nodes);
 
-    private static List<GraphNode> TopologicalSort(
-        List<GraphNode> nodes,
-        List<GraphEdge> edges,
+    private static List<PromptGraphNode> TopologicalSort(
+        IReadOnlyList<PromptGraphNode> nodes,
+        IReadOnlyList<PromptGraphEdge> edges,
         ICollection<string> warnings)
-    {
-        if (edges.Count == 0) return nodes;
+        => PromptPipeline.TopologicalSort(nodes, edges, warnings);
 
-        var byId = nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
-        var inDegree = nodes.ToDictionary(n => n.Id, _ => 0, StringComparer.OrdinalIgnoreCase);
-        var adj = nodes.ToDictionary(n => n.Id, _ => new List<string>(), StringComparer.OrdinalIgnoreCase);
+    private static string SubstituteTokens(string template, PromptEvalContext ctx)
+        => PromptPipeline.SubstituteTokens(template, ctx);
 
-        foreach (var edge in edges)
-        {
-            adj[edge.Source].Add(edge.Target);
-            inDegree[edge.Target] = inDegree[edge.Target] + 1;
-        }
+    private static bool EvaluateCondition(JsonElement node, PromptEvalContext ctx)
+        => PromptPipeline.EvaluateCondition(node, ctx);
 
-        var ready = new PriorityQueue<GraphNode, int>();
-        foreach (var node in nodes)
-        {
-            if (inDegree[node.Id] == 0)
-                ready.Enqueue(node, node.Order);
-        }
+    private static string NormalizePlacement(string? raw) => PromptPipeline.NormalizePlacement(raw);
 
-        var sorted = new List<GraphNode>(nodes.Count);
-        while (ready.Count > 0)
-        {
-            var current = ready.Dequeue();
-            sorted.Add(current);
-            foreach (var neighborId in adj[current.Id])
-            {
-                inDegree[neighborId]--;
-                if (inDegree[neighborId] == 0)
-                {
-                    var neighbor = byId[neighborId];
-                    ready.Enqueue(neighbor, neighbor.Order);
-                }
-            }
-        }
-
-        if (sorted.Count < nodes.Count)
-        {
-            warnings.Add("Prompt graph contains a cycle; falling back to node declaration order.");
-            return nodes;
-        }
-
-        return sorted;
-    }
-
-    internal static string SubstituteTokens(string template, PipelineEvalContext ctx) =>
-        TokenPattern.Replace(template, match => match.Groups[1].Value.ToLowerInvariant() switch
-        {
-            "agent_name" => ctx.AgentName,
-            "agent_slug" => ctx.AgentSlug,
-            "mode_name" => ctx.ModeName,
-            "mode_slug" => ctx.ModeSlug,
-            "workspace_root" => ctx.WorkspaceRoot,
-            _ => match.Value
-        });
-
-    internal static bool EvaluateCondition(JsonElement node, PipelineEvalContext ctx)
-    {
-        // Support nested `condition` object, `config`, `data`, or direct properties.
-        foreach (var container in NodeContainers(node))
-        {
-            if (container.TryGetProperty("condition", out var nested) && nested.ValueKind == JsonValueKind.Object)
-            {
-                if (!EvaluateConditionObject(nested, ctx)) return false;
-            }
-            if (!EvaluateConditionObject(container, ctx)) return false;
-        }
-        return true;
-    }
-
-    private static bool EvaluateConditionObject(JsonElement obj, PipelineEvalContext ctx)
-    {
-        if (obj.ValueKind != JsonValueKind.Object) return true;
-
-        // UI inspector pair: { field: "has_workspace" | "has_tools" | "layer" | "mode_slug" | "capability", value: "..." }
-        var field = ReadString(obj, "field") ?? ReadString(obj, "condition_field");
-        if (!string.IsNullOrWhiteSpace(field) && obj.TryGetProperty("value", out var fieldValue))
-        {
-            if (!EvaluateFieldPredicate(field.Trim().ToLowerInvariant(), fieldValue, ctx))
-                return false;
-        }
-
-        if (obj.TryGetProperty("layer", out var layerEl) && !EvaluateFieldPredicate("layer", layerEl, ctx))
-            return false;
-        if (obj.TryGetProperty("mode_slug", out var modeEl) && !EvaluateFieldPredicate("mode_slug", modeEl, ctx))
-            return false;
-        if (obj.TryGetProperty("has_workspace", out var wsEl) && !EvaluateFieldPredicate("has_workspace", wsEl, ctx))
-            return false;
-        if (obj.TryGetProperty("has_tools", out var toolsEl) && !EvaluateFieldPredicate("has_tools", toolsEl, ctx))
-            return false;
-        if (obj.TryGetProperty("capability", out var capEl) && !EvaluateFieldPredicate("capability", capEl, ctx))
-            return false;
-
-        return true;
-    }
-
-    private static bool EvaluateFieldPredicate(string field, JsonElement value, PipelineEvalContext ctx)
-    {
-        if (value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return true;
-        return field switch
-        {
-            "layer" => MatchesStringOrArray(ctx.Layer, value),
-            "mode_slug" => MatchesStringOrArray(ctx.ModeSlug, value),
-            "has_workspace" => TryReadBool(value, out var bWs) && ctx.HasWorkspace == bWs,
-            "has_tools" => TryReadBool(value, out var bTools) && ctx.HasTools == bTools,
-            "capability" => MatchesCapability(ctx.Capabilities, value),
-            _ => true
-        };
-    }
-
-    private static bool MatchesStringOrArray(string actual, JsonElement expected)
-    {
-        if (expected.ValueKind == JsonValueKind.String)
-            return string.Equals(actual, expected.GetString()?.Trim(), StringComparison.OrdinalIgnoreCase);
-        if (expected.ValueKind == JsonValueKind.Array)
-            return expected.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String
-                && string.Equals(actual, item.GetString()?.Trim(), StringComparison.OrdinalIgnoreCase));
-        return true;
-    }
-
-    private static bool MatchesCapability(IReadOnlySet<string> actual, JsonElement expected)
-    {
-        if (expected.ValueKind == JsonValueKind.String)
-        {
-            var cap = expected.GetString()?.Trim();
-            return !string.IsNullOrEmpty(cap) && actual.Contains(cap);
-        }
-        if (expected.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in expected.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.String && item.GetString()?.Trim() is { Length: > 0 } cap && actual.Contains(cap))
-                    return true;
-            }
-            return false;
-        }
-        return true;
-    }
-
-    private static bool TryReadBool(JsonElement value, out bool result)
-    {
-        if (value.ValueKind == JsonValueKind.True) { result = true; return true; }
-        if (value.ValueKind == JsonValueKind.False) { result = false; return true; }
-        if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString()?.Trim(), out var parsed))
-        {
-            result = parsed;
-            return true;
-        }
-        result = false;
-        return false;
-    }
-
-    private static string NormalizePlacement(string? raw) => raw?.Trim().ToLowerInvariant() switch
-    {
-        "before_system_prompt" or "before_system" => "before_system_prompt",
-        "after_system_prompt" or "after_system" => "after_system_prompt",
-        "before_runtime_constraints" or "before_constraints" or "after_fragments" => "before_runtime_constraints",
-        _ => "pipeline"
-    };
-
-    private static bool MatchesAgent(PoolFragment fragment, IReadOnlySet<Guid> candidateGuids, IReadOnlySet<string> candidateSlugs)
-    {
-        var hasId = fragment.TargetAgentId is { } tid && tid != Guid.Empty;
-        var hasSlug = !string.IsNullOrWhiteSpace(fragment.TargetAgentSlug);
-        if (!hasId && !hasSlug) return true;
-        if (hasId && candidateGuids.Contains(fragment.TargetAgentId!.Value)) return true;
-        if (hasSlug && candidateSlugs.Contains(fragment.TargetAgentSlug!.Trim())) return true;
-        return false;
-    }
+    private static bool MatchesAgent(PromptFragmentCandidate fragment, IReadOnlySet<Guid> candidateGuids, IReadOnlySet<string> candidateSlugs)
+        => PromptFragmentTargeting.Matches(fragment.TargetAgentId, fragment.TargetAgentSlug, candidateGuids, candidateSlugs);
 
     /// <summary>
     /// The run's workspace facts. Root, git facts and the path contract are always
@@ -1651,84 +1862,20 @@ internal sealed class PromptAssembler : IPromptAssembler
     private static string ArchitectureBaseline(string agentId) =>
         $"TinadecOffice uses a Core-owned operation/execution agent harness. You are '{agentId}'. The meeting agent is the only formal user-facing agent; all other agents submit auditable evidence to Core.";
 
-    private static string? ReadTemplateText(JsonElement node) =>
-        ReadNodeString(node, "content", "template", "text", "value");
+    private static string? ReadTemplateText(JsonElement node) => PromptPipeline.ReadTemplateText(node);
 
     private static string? ReadNodeString(JsonElement node, params string[] keys)
-    {
-        foreach (var container in NodeContainers(node))
-        {
-            foreach (var key in keys)
-            {
-                if (ReadString(container, key) is { } value) return value;
-            }
-        }
-        return null;
-    }
+        => PromptPipeline.ReadNodeString(node, keys);
 
-    private static IEnumerable<JsonElement> NodeContainers(JsonElement node)
-    {
-        yield return node;
-        if (node.TryGetProperty("config", out var config) && config.ValueKind == JsonValueKind.Object)
-            yield return config;
-        if (node.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-            yield return data;
-    }
+    private static string? ReadString(JsonElement element, string property)
+        => PromptPipeline.ReadString(element, property);
 
-    private static string? ReadString(JsonElement element, string property) =>
-        element.ValueKind == JsonValueKind.Object
-        && element.TryGetProperty(property, out var value)
-        && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    internal static int CategoryOrder(string category) => category.Trim().ToLowerInvariant() switch
-    {
-        "mode_profile" or "mode" => 1,
-        "agent_profile" or "agent" => 2,
-        "task" or "task_context" => 3,
-        _ => 4
-    };
+    internal static int CategoryOrder(string category) => PromptPipeline.CategoryOrder(category);
 
     /// <summary>
     /// CJK-aware token estimation (~1.5 CJK characters per token vs ~4 ASCII characters per token).
     /// </summary>
-    internal static int EstimateTokens(string? text)
-    {
-        if (string.IsNullOrEmpty(text)) return 0;
-        var cjk = 0;
-        foreach (var ch in text)
-        {
-            if (IsCjkChar(ch)) cjk++;
-        }
-        var nonCjk = text.Length - cjk;
-        var estimated = (int)Math.Ceiling(cjk / 1.5d + nonCjk / 4.0d);
-        return Math.Max(1, estimated);
-    }
+    internal static int EstimateTokens(string? text) => PromptPipeline.EstimateTokens(text);
 
-    private static bool IsCjkChar(char ch) =>
-        ch is (>= '\u4E00' and <= '\u9FFF')
-            or (>= '\u3400' and <= '\u4DBF')
-            or (>= '\uF900' and <= '\uFAFF')
-            or (>= '\u3000' and <= '\u303F')
-            or (>= '\u3040' and <= '\u309F')
-            or (>= '\u30A0' and <= '\u30FF')
-            or (>= '\uAC00' and <= '\uD7AF')
-            or (>= '\uFF00' and <= '\uFFEF');
-
-    private sealed record GraphNode(int Order, string Id, string Kind, string Label, JsonElement Element);
-    private sealed record GraphEdge(string Source, string Target);
-    private sealed record PoolFragment(Guid Id, string Key, string Title, string Scope, Guid? TargetAgentId, string? TargetAgentSlug, string Category, int Priority, bool Enabled, string Content);
     private sealed record PipelineRenderedBlock(string Id, string NodeId, string Kind, string Title, string Content, string Source, string Placement, string? FragmentId, bool IsWorkspaceRulesPlacement);
-
-    internal sealed record PipelineEvalContext(
-        string AgentName,
-        string AgentSlug,
-        string ModeName,
-        string ModeSlug,
-        string Layer,
-        string WorkspaceRoot,
-        bool HasWorkspace,
-        bool HasTools,
-        IReadOnlySet<string> Capabilities);
 }

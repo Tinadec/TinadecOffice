@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Activity,
   Check,
   Copy,
   Eye,
+  FileCode2,
   FileText,
   GitBranch,
   History,
@@ -35,6 +36,7 @@ import {
   type PromptPipelineDto,
   type PromptPipelineEdgeDto,
   type PromptPipelineNodeDto,
+  type PromptPipelineVersionDto,
 } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
@@ -82,6 +84,7 @@ const pipelineDraftName = ref('')
 const pipelineDraftDesc = ref('')
 const pipelineDraftNodes = ref<PromptPipelineNodeDto[]>([])
 const pipelineDraftEdges = ref<PromptPipelineEdgeDto[]>([])
+const pipelineCanvasLayout = ref<Record<string, unknown> | null>(null)
 const pipelineBaseline = ref('')
 const pipelineSaving = ref(false)
 const pipelinePublishing = ref(false)
@@ -89,6 +92,9 @@ const showCreatePipeline = ref(false)
 const newPipelineForm = ref({ display_name: '', slug: '', description: '' })
 const selectedNodeId = ref<string | null>(null)
 const selectedEdgeId = ref<string | null>(null)
+const pipelineVersions = ref<PromptPipelineVersionDto[]>([])
+const pipelineVersionsLoading = ref(false)
+const pipelineVersionsFailed = ref('')
 
 const pipelineCanvasPipeline = computed(() =>
   pipelineCanvasSelectedId.value ? pipelines.value.find((p) => p.id === pipelineCanvasSelectedId.value) ?? null : null,
@@ -104,13 +110,18 @@ const activePipelineForCanvas = computed<PromptPipelineDto | null>(() => {
     graph: {
       nodes: pipelineDraftNodes.value,
       edges: pipelineDraftEdges.value,
-      ...(base.graph?.canvas_layout ? { canvas_layout: base.graph.canvas_layout } : {}),
+      ...(pipelineCanvasLayout.value ? { canvas_layout: pipelineCanvasLayout.value } : {}),
     },
     nodes: pipelineDraftNodes.value,
     edges: pipelineDraftEdges.value,
   }
 })
 
+/**
+ * Pack pipelines and archived pipelines are read-only on the server. Rendering editable
+ * inputs that a PUT would refuse is the "fake save button" failure this panel is supposed
+ * to eliminate, so the whole canvas switches to a clone-to-customize affordance instead.
+ */
 const isPipelineReadonly = computed(() => {
   const p = pipelineCanvasPipeline.value
   if (!p) return true
@@ -135,15 +146,29 @@ function syncPipelineDraft(p: PromptPipelineDto | null) {
     pipelineDraftDesc.value = ''
     pipelineDraftNodes.value = []
     pipelineDraftEdges.value = []
+    pipelineCanvasLayout.value = null
     pipelineBaseline.value = ''
     return
   }
-  const nodes = structuredClone(p.graph?.nodes ?? p.nodes ?? [])
-  const edges = structuredClone(p.graph?.edges ?? p.edges ?? [])
+  // Both shapes are live: Core may answer with `graph.nodes` (the contract) or, on the
+  // list projection, with top-level `nodes`. Reading either one is what keeps the canvas
+  // from going blank against a slightly older build.
+  //
+  // `toRaw` is mandatory, not defensive: `p` comes from `pipelines.value.find(...)`, so it is
+  // a reactive Proxy, and `structuredClone` on a Proxy throws `DataCloneError` instead of
+  // degrading. That throw happens inside the `watch` callback, which aborted the whole sync
+  // and left the canvas empty for every user. `JSON.parse(JSON.stringify(...))` is not a
+  // substitute — it drops `undefined` and stringifies dates in data that round-trips to Core.
+  const nodes = structuredClone(toRaw(p.graph?.nodes ?? p.nodes ?? []))
+  const edges = structuredClone(toRaw(p.graph?.edges ?? p.edges ?? []))
   pipelineDraftName.value = p.display_name ?? p.name ?? p.title ?? p.slug ?? ''
   pipelineDraftDesc.value = p.description ?? ''
   pipelineDraftNodes.value = nodes
   pipelineDraftEdges.value = edges
+  pipelineCanvasLayout.value = structuredClone(toRaw(p.graph?.canvas_layout ?? p.canvas_layout ?? null))
+  // Open on the first node. Without this the inspector shows "select a node" on a pipeline
+  // that already has one, so the panel's only useful surface starts empty on every load.
+  selectedNodeId.value = nodes[0]?.id ?? null
   pipelineBaseline.value = JSON.stringify({
     name: pipelineDraftName.value,
     description: pipelineDraftDesc.value,
@@ -155,6 +180,9 @@ function syncPipelineDraft(p: PromptPipelineDto | null) {
 watch(pipelineCanvasSelectedId, (id) => {
   const found = id ? pipelines.value.find((p) => p.id === id) ?? null : null
   syncPipelineDraft(found)
+  pipelineVersions.value = []
+  pipelineVersionsFailed.value = ''
+  if (found) void loadPipelineVersions(found.id)
 })
 
 const selectedNode = computed<PromptPipelineNodeDto | null>(() =>
@@ -170,6 +198,10 @@ function nodeTypeOf(node: PromptPipelineNodeDto): string {
   return String(node.type ?? node.kind ?? 'template').toLowerCase()
 }
 
+function nodeConfigOf(node: PromptPipelineNodeDto): Record<string, unknown> {
+  return node.config ?? node.data ?? {}
+}
+
 function localizedPackTemplate(node: PromptPipelineNodeDto): string | null {
   const p = pipelineCanvasPipeline.value
   if (!p?.pack_managed) return null
@@ -179,11 +211,53 @@ function localizedPackTemplate(node: PromptPipelineNodeDto): string | null {
   return typeof tpl === 'string' && tpl.trim() ? tpl : null
 }
 
+/**
+ * Mutates a copy of the selected node. The assembler reads `config` first and falls back to
+ * `data` (Core `NodeContainers`), so writes go to `config` and never to both — writing both
+ * would make a later `data` edit silently lose to a stale `config`.
+ *
+ * `toRaw` is required: the node comes out of `pipelineDraftNodes.value`, so it is a reactive
+ * Proxy, and `structuredClone` on a Proxy throws `DataCloneError`. That threw inside the
+ * inspector's input handler, which meant editing any node's label or content silently did
+ * nothing.
+ */
 function patchSelectedNode(mutator: (node: PromptPipelineNodeDto) => PromptPipelineNodeDto) {
   if (!selectedNodeId.value || isPipelineReadonly.value) return
   pipelineDraftNodes.value = pipelineDraftNodes.value.map((n) =>
-    n.id === selectedNodeId.value ? mutator(structuredClone(n)) : n,
+    n.id === selectedNodeId.value ? mutator(structuredClone(toRaw(n))) : n,
   )
+}
+
+function patchSelectedNodeConfig(key: string, value: unknown) {
+  patchSelectedNode((n) => ({ ...n, config: { ...(n.config ?? n.data ?? {}), [key]: value } }))
+}
+
+function patchSelectedNodeType(nextType: string) {
+  patchSelectedNode((n) => {
+    const base = n.config ?? n.data ?? {}
+    // Switching kind keeps the keys the new kind understands and drops the rest: a
+    // `template` carrying a stale `fragment_id` looks wired up in the inspector but
+    // assembles as an empty block.
+    const next: Record<string, unknown> = {}
+    if (nextType === 'template' || nextType === 'workspace_rules' || nextType === 'assemble') {
+      next.content = base.content ?? base.template ?? ''
+    }
+    if (nextType === 'assemble') {
+      next.separator = base.separator ?? '\n\n'
+    }
+    if (nextType === 'fragment_ref') {
+      next.fragment_id = base.fragment_id ?? ''
+      next.fragment_key = base.fragment_key ?? ''
+    }
+    if (nextType === 'condition') {
+      next.field = base.field ?? 'layer'
+      next.value = base.value ?? 'execution'
+    }
+    if (nextType === 'template' || nextType === 'fragment_ref' || nextType === 'condition') {
+      if (base.placement !== undefined) next.placement = base.placement
+    }
+    return { ...n, type: nextType, config: next }
+  })
 }
 
 function patchSelectedEdgeLabel(label: string) {
@@ -191,6 +265,79 @@ function patchSelectedEdgeLabel(label: string) {
   pipelineDraftEdges.value = pipelineDraftEdges.value.map((e) =>
     (e.id || `${e.source}->${e.target}`) === selectedEdgeId.value ? { ...e, label } : e,
   )
+}
+
+const NODE_TYPE_OPTIONS = [
+  'template',
+  'fragment_ref',
+  'condition',
+  'workspace_rules',
+  'skills_index',
+  'assemble',
+].map((value) => ({ value, label: value }))
+
+const CONDITION_FIELDS = ['layer', 'mode_slug', 'has_workspace', 'has_tools', 'capability'].map((value) => ({
+  value,
+  label: value,
+}))
+
+/** `has_workspace` / `has_tools` compare booleans in Core, so a free-text "true"/"false" is a trap. */
+const conditionFieldIsBoolean = computed(() => {
+  const node = selectedNode.value
+  if (!node) return false
+  const field = String(nodeConfigOf(node).field ?? '')
+  return field === 'has_workspace' || field === 'has_tools'
+})
+
+const conditionValueOptions = [
+  { value: 'true', label: 'true' },
+  { value: 'false', label: 'false' },
+]
+
+function orderedPipelineVersions(): PromptPipelineVersionDto[] {
+  return [...pipelineVersions.value].sort((a, b) => b.version - a.version)
+}
+
+async function loadPipelineVersions(pipelineId: string) {
+  if (!canAccessBackend.value) return
+  pipelineVersionsLoading.value = true
+  pipelineVersionsFailed.value = ''
+  try {
+    const list = await api.listPromptPipelineVersions(pipelineId)
+    if (pipelineCanvasSelectedId.value !== pipelineId) return
+    pipelineVersions.value = Array.isArray(list) ? list : []
+  } catch (e) {
+    if (pipelineCanvasSelectedId.value !== pipelineId) return
+    pipelineVersions.value = []
+    // An endpoint that still answers 501 is a fact the operator needs, not an empty list.
+    pipelineVersionsFailed.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    pipelineVersionsLoading.value = false
+  }
+}
+
+async function restorePipelineVersion(version: PromptPipelineVersionDto) {
+  const target = pipelineCanvasPipeline.value
+  if (!target || isPipelineReadonly.value || !canAccessBackend.value) return
+  const snapshot = version.graph ?? (version.content as { graph?: PromptPipelineVersionDto['graph'] } | null)?.graph ?? null
+  if (!snapshot || !Array.isArray(snapshot.nodes)) {
+    notify.error(new Error(t('settings.previewFailed')), { title: t('settings.promptLoadFailed') })
+    return
+  }
+  const ok = await confirm({
+    title: t('settings.rollbackAction'),
+    message: `v${version.version}`,
+    confirmLabel: t('settings.rollbackAction'),
+    cancelLabel: t('common.cancel'),
+  })
+  if (!ok) return
+  // Rollback of a pipeline draft is a draft write of the historical graph: Core has no
+  // dedicated pipeline-rollback route, and inventing one client-side would be a fake.
+  // `toRaw` for the same reason as `syncPipelineDraft`: `version` is a reactive proxy.
+  pipelineDraftNodes.value = structuredClone(toRaw(snapshot.nodes))
+  pipelineDraftEdges.value = structuredClone(toRaw(snapshot.edges ?? []))
+  const saved = await savePipelineDraft()
+  if (saved) notify.success({ message: t('settings.rollbackDone', { version: version.version }) })
 }
 
 async function loadPipelines() {
@@ -229,6 +376,11 @@ function handleSelectEdge(edge: PromptPipelineEdgeDto | null) {
   if (edge) selectedNodeId.value = null
 }
 
+/**
+ * The real draft write. The payload keeps the contract shape on purpose: `graph.nodes`,
+ * `graph.edges` and `graph.canvas_layout`, never a flattened `{ nodes, edges }` — Core
+ * deserializes `graph`, so a flattened body saves an empty pipeline and reports success.
+ */
 async function savePipelineDraft(): Promise<boolean> {
   const target = pipelineCanvasPipeline.value
   if (!target || isPipelineReadonly.value || !canAccessBackend.value) return false
@@ -242,7 +394,7 @@ async function savePipelineDraft(): Promise<boolean> {
         graph: {
           nodes: pipelineDraftNodes.value,
           edges: pipelineDraftEdges.value,
-          ...(target.graph?.canvas_layout ? { canvas_layout: target.graph.canvas_layout } : {}),
+          ...(pipelineCanvasLayout.value ? { canvas_layout: pipelineCanvasLayout.value } : {}),
         },
       },
       target.revision ?? target.etag ?? null,
@@ -363,6 +515,22 @@ const selectedFragment = computed(() =>
 const isReadonlyFragment = computed(() => Boolean(selectedFragment.value?.is_builtin))
 const sortedVersions = computed(() => [...fragmentVersions.value].sort((a, b) => b.version - a.version))
 
+/** Built-in fragments have no editable revision history; they change only with a new build. */
+const showFragmentVersions = computed(() => Boolean(selectedFragment.value) && !isReadonlyFragment.value)
+
+function scopeLabel(scope: string): string {
+  if (scope === 'global') return t('settings.promptStudio.scopeGlobal')
+  if (scope === 'mode') return t('settings.promptStudio.scopeMode')
+  if (scope === 'agent') return t('settings.promptStudio.scopeAgent')
+  return scope
+}
+
+function targetAgentName(agentId?: string | null): string | null {
+  if (!agentId) return null
+  const agent = agents.value.find((a) => a.id === agentId || a.slug === agentId)
+  return agent ? agentDisplayName(agent) : agentId
+}
+
 function syncFragmentDraft(fragment: PromptFragmentDto | null) {
   if (!fragment) return
   fragmentDraft.value = {
@@ -447,6 +615,9 @@ async function selectFragment(fragment: PromptFragmentDto) {
   fragmentVersions.value = []
   fragmentEffectiveness.value = null
   try {
+    // Built-in fragments are code, not rows: asking for their version history only
+    // produces a 501/404 the panel then has to explain away.
+    if (fragment.is_builtin) return
     const versionList = await api.listPromptVersions(fid)
     if (selectedFragmentId.value !== fid) return
     fragmentVersions.value = Array.isArray(versionList) ? versionList : []
@@ -551,13 +722,14 @@ async function deleteCurrentFragment() {
 }
 
 async function rollbackVersion(version: number) {
-  if (!selectedFragment.value || !canAccessBackend.value) return
+  if (!selectedFragment.value || isReadonlyFragment.value || !canAccessBackend.value) return
+  const fragmentId = selectedFragment.value.id
   fragBusy.value = true
   try {
-    await api.rollbackPrompt(selectedFragment.value.id, version)
-    notify.success(t('settings.rollbackDone', { version }))
+    await api.rollbackPrompt(fragmentId, version)
+    notify.success({ message: t('settings.rollbackDone', { version }) })
     await loadFragments()
-    const fresh = fragments.value.find((item) => item.id === selectedFragment.value?.id)
+    const fresh = fragments.value.find((item) => item.id === fragmentId)
     if (fresh) await selectFragment(fresh)
   } catch (e) {
     notify.error(e, { title: t('settings.rollbackFailed') })
@@ -568,6 +740,7 @@ async function rollbackVersion(version: number) {
 
 // ── Live Context Preview & Per-Layer Token Breakdown ──
 const promptPreview = ref<PromptContextPreviewNormalizedDto | null>(null)
+const previewError = ref('')
 const promptPreviewAgentId = ref('meeting')
 const promptPreviewModeId = ref('')
 const promptPreviewPipelineId = ref('')
@@ -606,6 +779,10 @@ function layerPercent(tokens: number): number {
   return Math.max(2, Math.round((tokens / previewTotalTokens.value) * 100))
 }
 
+function layerTokenShare(tokens: number): string {
+  return `${Math.round(((tokens || 0) / previewTotalTokens.value) * 100)}%`
+}
+
 function toggleLayerExpanded(id: string) {
   expandedLayers.value = { ...expandedLayers.value, [id]: !expandedLayers.value[id] }
 }
@@ -625,6 +802,7 @@ async function copyAssembledPrompt() {
 async function generatePromptPreview() {
   if (!canAccessBackend.value) return
   previewBusy.value = true
+  previewError.value = ''
   try {
     const selectedMode = modes.value.find((m) => m.id === promptPreviewModeId.value)
     const input: PromptContextPreviewInput = {
@@ -644,7 +822,10 @@ async function generatePromptPreview() {
     }
     promptPreview.value = await api.previewPromptContext(input)
   } catch (e) {
-    notify.error(e, { title: t('settings.previewFailed') })
+    // A 501 from a build without the assembler is a real answer. Reporting it as "no
+    // layers" would look like a working preview of an empty prompt.
+    promptPreview.value = null
+    previewError.value = e instanceof Error ? e.message : String(e)
   } finally {
     previewBusy.value = false
   }
@@ -740,7 +921,7 @@ defineExpose({ refreshAll })
               <UiLabel>{{ t('settings.promptStudio.pipelineDescription') }}</UiLabel>
               <UiInput v-model="pipelineDraftDesc" :disabled="isPipelineReadonly" />
             </div>
-            <UiBadge v-if="isPipelineReadonly" variant="secondary">{{ t('settings.promptStudio.pipelineReadonlyHint') }}</UiBadge>
+            <UiBadge v-if="isPipelineReadonly" variant="secondary" data-testid="pipeline-readonly-badge">{{ t('settings.promptStudio.pipelineReadonlyHint') }}</UiBadge>
           </div>
 
           <PromptPipelineCanvas
@@ -756,6 +937,7 @@ defineExpose({ refreshAll })
             @select-node="handleSelectNode"
             @select-edge="handleSelectEdge"
             @save-draft="savePipelineDraft"
+            @clone="cloneCurrentPipeline()"
             @publish="pipelineCanvasPipeline && publishPipeline(pipelineCanvasPipeline.id)"
           />
 
@@ -768,7 +950,7 @@ defineExpose({ refreshAll })
                     <Workflow :size="14" />
                     <span>{{ t('settings.promptStudio.nodeInspector') }} · {{ selectedNode.id }}</span>
                   </div>
-                  <UiBadge variant="outline">{{ nodeTypeOf(selectedNode) }}</UiBadge>
+                  <UiBadge variant="outline" data-testid="inspector-node-type">{{ nodeTypeOf(selectedNode) }}</UiBadge>
                 </div>
                 <div class="pe-inspector-grid">
                   <div class="pe-field">
@@ -779,55 +961,107 @@ defineExpose({ refreshAll })
                       @update:model-value="patchSelectedNode((n) => ({ ...n, label: String($event) }))"
                     />
                   </div>
-                  <div v-if="nodeTypeOf(selectedNode) === 'fragment_ref'" class="pe-field">
-                    <UiLabel>{{ t('settings.promptStudio.fragmentRef') }}</UiLabel>
+                  <div class="pe-field">
+                    <UiLabel>{{ t('settings.promptStudio.nodeType') }}</UiLabel>
                     <UiSelectField
-                      :model-value="String((selectedNode.config?.fragment_id ?? selectedNode.config?.fragment_key) ?? '')"
+                      :model-value="nodeTypeOf(selectedNode)"
                       :disabled="isPipelineReadonly"
-                      :options="fragments.map((f) => ({ value: f.id, label: `${f.title} (${f.key})` }))"
-                      @update:model-value="(val) => {
-                        const frag = fragments.find((f) => f.id === val)
-                        patchSelectedNode((n) => ({ ...n, config: { ...(n.config ?? {}), fragment_id: val, fragment_key: frag?.key ?? '' } }))
-                      }"
+                      :aria-label="t('settings.promptStudio.nodeType')"
+                      :options="NODE_TYPE_OPTIONS"
+                      @update:model-value="patchSelectedNodeType(String($event))"
                     />
                   </div>
-                  <template v-else-if="nodeTypeOf(selectedNode) === 'condition'">
+                </div>
+
+                <!-- template: content is the block the assembler substitutes into -->
+                <div v-if="nodeTypeOf(selectedNode) === 'template'" class="pe-field" data-testid="inspector-template">
+                  <UiLabel>{{ t('settings.promptStudio.templateContent') }}</UiLabel>
+                  <textarea
+                    :value="localizedPackTemplate(selectedNode) ?? String(nodeConfigOf(selectedNode).content ?? nodeConfigOf(selectedNode).template ?? '')"
+                    :readonly="isPipelineReadonly"
+                    class="pe-template-textarea"
+                    rows="5"
+                    @input="patchSelectedNodeConfig('content', ($event.target as HTMLTextAreaElement).value)"
+                  ></textarea>
+                  <small class="quiet">{{ t('settings.promptStudio.templateVarsHint') }}</small>
+                </div>
+
+                <!-- fragment_ref: pick a real fragment row, not a free-text id -->
+                <div v-else-if="nodeTypeOf(selectedNode) === 'fragment_ref'" class="pe-field" data-testid="inspector-fragment-ref">
+                  <UiLabel>{{ t('settings.promptStudio.fragmentRef') }}</UiLabel>
+                  <UiSelectField
+                    :model-value="String(nodeConfigOf(selectedNode).fragment_id ?? nodeConfigOf(selectedNode).fragment_key ?? '')"
+                    :disabled="isPipelineReadonly"
+                    :aria-label="t('settings.promptStudio.fragmentRef')"
+                    :options="fragments.map((f) => ({ value: f.id, label: `${f.title} (${f.key})` }))"
+                    @update:model-value="(val) => {
+                      const frag = fragments.find((f) => f.id === val)
+                      patchSelectedNode((n) => ({ ...n, config: { ...(n.config ?? n.data ?? {}), fragment_id: val, fragment_key: frag?.key ?? '' } }))
+                    }"
+                  />
+                  <small class="quiet">{{ fragments.length === 0 ? t('agentCenter.empty.noPrompts') : '' }}</small>
+                </div>
+
+                <!-- condition: field + value; booleans get a select so "true" is not typed -->
+                <template v-else-if="nodeTypeOf(selectedNode) === 'condition'">
+                  <div class="pe-inspector-grid" data-testid="inspector-condition">
                     <div class="pe-field">
                       <UiLabel>{{ t('settings.promptStudio.conditionField') }}</UiLabel>
                       <UiSelectField
-                        :model-value="String(selectedNode.config?.field ?? 'layer')"
+                        :model-value="String(nodeConfigOf(selectedNode).field ?? 'layer')"
                         :disabled="isPipelineReadonly"
-                        :options="[
-                          { value: 'layer', label: 'layer' },
-                          { value: 'mode_slug', label: 'mode_slug' },
-                          { value: 'has_workspace', label: 'has_workspace' },
-                          { value: 'has_tools', label: 'has_tools' },
-                          { value: 'capability', label: 'capability' },
-                        ]"
-                        @update:model-value="patchSelectedNode((n) => ({ ...n, config: { ...(n.config ?? {}), field: String($event) } }))"
+                        :aria-label="t('settings.promptStudio.conditionField')"
+                        :options="CONDITION_FIELDS"
+                        @update:model-value="patchSelectedNodeConfig('field', String($event))"
                       />
                     </div>
                     <div class="pe-field">
                       <UiLabel>{{ t('settings.promptStudio.conditionValue') }}</UiLabel>
-                      <UiInput
-                        :model-value="String(selectedNode.config?.value ?? '')"
+                      <UiSelectField
+                        v-if="conditionFieldIsBoolean"
+                        :model-value="String(nodeConfigOf(selectedNode).value ?? 'true')"
                         :disabled="isPipelineReadonly"
-                        @update:model-value="patchSelectedNode((n) => ({ ...n, config: { ...(n.config ?? {}), value: String($event) } }))"
+                        :aria-label="t('settings.promptStudio.conditionValue')"
+                        :options="conditionValueOptions"
+                        @update:model-value="patchSelectedNodeConfig('value', String($event))"
+                      />
+                      <UiInput
+                        v-else
+                        :model-value="String(nodeConfigOf(selectedNode).value ?? '')"
+                        :disabled="isPipelineReadonly"
+                        @update:model-value="patchSelectedNodeConfig('value', String($event))"
                       />
                     </div>
-                  </template>
-                </div>
-                <div v-if="nodeTypeOf(selectedNode) === 'template'" class="pe-field">
+                  </div>
+                </template>
+
+                <!-- workspace_rules: optional extra text appended to the workspace facts -->
+                <div v-else-if="nodeTypeOf(selectedNode) === 'workspace_rules'" class="pe-field" data-testid="inspector-workspace-rules">
                   <UiLabel>{{ t('settings.promptStudio.templateContent') }}</UiLabel>
                   <textarea
-                    :value="localizedPackTemplate(selectedNode) ?? String(selectedNode.config?.content ?? selectedNode.config?.template ?? '')"
+                    :value="String(nodeConfigOf(selectedNode).content ?? nodeConfigOf(selectedNode).template ?? '')"
                     :readonly="isPipelineReadonly"
                     class="pe-template-textarea"
-                    rows="5"
-                    @input="patchSelectedNode((n) => ({ ...n, config: { ...(n.config ?? {}), content: ($event.target as HTMLTextAreaElement).value } }))"
+                    rows="4"
+                    @input="patchSelectedNodeConfig('content', ($event.target as HTMLTextAreaElement).value)"
                   ></textarea>
                   <small class="quiet">{{ t('settings.promptStudio.templateVarsHint') }}</small>
                 </div>
+
+                <!-- assemble: optional separator/header/footer around the joined blocks -->
+                <div v-else-if="nodeTypeOf(selectedNode) === 'assemble'" class="pe-field" data-testid="inspector-assemble">
+                  <UiLabel>{{ t('settings.promptStudio.addAssemble') }}</UiLabel>
+                  <UiInput
+                    :model-value="String(nodeConfigOf(selectedNode).separator ?? '')"
+                    :disabled="isPipelineReadonly"
+                    @update:model-value="patchSelectedNodeConfig('separator', String($event))"
+                  />
+                </div>
+
+                <!-- skills_index: no config, Core fills it from the skill catalog -->
+                <p v-else-if="nodeTypeOf(selectedNode) === 'skills_index'" class="quiet pe-empty-sm" data-testid="inspector-skills-index">
+                  skills_index
+                </p>
               </template>
 
               <template v-else-if="selectedEdge">
@@ -851,17 +1085,50 @@ defineExpose({ refreshAll })
             </template>
           </UiCard>
 
+          <!-- Pipeline version history: real payloads, or the backend's own error -->
+          <UiCard v-if="pipelineCanvasPipeline" class="pe-detail-card">
+            <template #content>
+              <div class="pe-section-head">
+                <div class="pe-section-title"><History :size="14" /><span>{{ t('settings.versionHistoryTitle') }}</span></div>
+                <UiButton size="xs" variant="ghost" :disabled="pipelineVersionsLoading || !canAccessBackend" @click="loadPipelineVersions(pipelineCanvasPipeline.id)">
+                  <RefreshCw :size="12" />
+                  <span>{{ t('settings.refresh') }}</span>
+                </UiButton>
+              </div>
+              <p v-if="pipelineVersionsFailed" class="pe-backend-error" data-testid="pipeline-versions-error">{{ pipelineVersionsFailed }}</p>
+              <div v-else-if="pipelineVersionsLoading" class="quiet pe-empty-sm">{{ t('common.loading') }}</div>
+              <div v-else-if="pipelineVersions.length === 0" class="quiet pe-empty-sm">{{ t('settings.noFragmentVersions') }}</div>
+              <div v-else class="pe-version-list">
+                <div v-for="version in orderedPipelineVersions()" :key="version.id" class="center-list-row pe-version-row">
+                  <div class="pe-version-main">
+                    <div class="pe-version-head-row">
+                      <strong>v{{ version.version }}</strong>
+                      <span class="pe-version-date">{{ new Date(version.created_at).toLocaleString(locale) }}</span>
+                    </div>
+                    <p class="pe-version-summary">{{ version.content_hash ?? '' }}</p>
+                  </div>
+                  <div class="pe-version-actions">
+                    <UiButton size="sm" variant="ghost" :disabled="isPipelineReadonly || pipelineSaving" @click="restorePipelineVersion(version)">
+                      <Undo2 :size="14" /><span>{{ t('settings.rollbackAction') }}</span>
+                    </UiButton>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </UiCard>
+
           <div class="ac-pipeline-grid">
             <UiCard v-for="p in pipelines" :key="p.id">
               <template #content>
                 <div class="ac-pipeline-card-head">
                   {{ pipelineDisplayName(p) }}
                   <UiBadge variant="outline">{{ p.status ? definitionStatusLabel(p.status) : t('common.draft') }}</UiBadge>
+                  <UiBadge v-if="p.pack_managed" variant="secondary">{{ t('settings.builtinBadge') }}</UiBadge>
                 </div>
                 <div class="quiet ac-pipeline-card-desc">{{ pipelineDescription(p) || '—' }}</div>
                 <div class="ac-pipeline-card-actions">
-                  <UiButton v-if="!p.pack_managed" size="xs" :disabled="pipelinePublishing" @click="publishPipeline(p.id)">{{ t('settings.publishAction') }}</UiButton>
-                  <UiButton size="xs" variant="outline" @click="cloneCurrentPipeline(p.id)">{{ t('settings.promptStudio.cloneFragment') }}</UiButton>
+                  <UiButton v-if="!p.pack_managed && p.status !== 'archived'" size="xs" :disabled="pipelinePublishing" @click="publishPipeline(p.id)">{{ t('settings.publishAction') }}</UiButton>
+                  <UiButton size="xs" variant="outline" :disabled="pipelineSaving" @click="cloneCurrentPipeline(p.id)">{{ t('settings.promptStudio.clonePipeline') }}</UiButton>
                   <UiButton size="xs" variant="ghost" @click="pipelineCanvasSelectedId = p.id">{{ t('settings.viewOnCanvas') }}</UiButton>
                 </div>
               </template>
@@ -888,7 +1155,7 @@ defineExpose({ refreshAll })
             </UiButton>
           </div>
 
-          <div class="center-workbench workbench-duo">
+          <div class="center-workbench workbench-duo pe-fragment-workbench">
             <aside class="center-resource-rail pe-fragment-list">
               <div class="pe-list-header">
                 <h3>{{ t('settings.fragmentsView') }}</h3>
@@ -906,7 +1173,8 @@ defineExpose({ refreshAll })
                   <strong :title="fragment.title">{{ fragment.title }}</strong>
                   <UiBadge v-if="fragment.is_builtin" variant="secondary">{{ t('settings.builtinBadge') }}</UiBadge>
                 </div>
-                <span class="pe-fragment-meta">{{ fragment.scope }} / {{ fragment.category }} · {{ t('settings.fragmentPriority', { priority: fragment.priority }) }}</span>
+                <span class="pe-fragment-meta">{{ scopeLabel(fragment.scope) }} / {{ fragment.category }} · {{ t('settings.fragmentPriority', { priority: fragment.priority }) }}</span>
+                <span v-if="fragment.target_agent_id" class="pe-fragment-meta">{{ targetAgentName(fragment.target_agent_id) }}</span>
               </button>
             </aside>
 
@@ -917,10 +1185,10 @@ defineExpose({ refreshAll })
                     <div class="pe-detail-head">
                       <div>
                         <h3>{{ creatingFragment ? t('settings.promptStudio.newFragment') : selectedFragment!.title }}</h3>
-                        <p v-if="selectedFragment">{{ selectedFragment.key }} · {{ selectedFragment.scope }} / {{ selectedFragment.category }}</p>
+                        <p v-if="selectedFragment">{{ selectedFragment.key }} · {{ scopeLabel(selectedFragment.scope) }} / {{ selectedFragment.category }}</p>
                       </div>
                       <div class="pe-detail-head-actions">
-                        <label class="pe-switch-inline">
+                        <label v-if="!isReadonlyFragment" class="pe-switch-inline">
                           <span>{{ t('settings.promptStudio.fragmentEnabledLabel') }}</span>
                           <UiSwitch
                             :model-value="fragmentDraft.enabled"
@@ -939,7 +1207,9 @@ defineExpose({ refreshAll })
                       </div>
                     </div>
 
-                    <p v-if="isReadonlyFragment" class="pe-readonly-banner">{{ t('settings.promptStudio.builtinReadonlyHint') }}</p>
+                    <p v-if="isReadonlyFragment" class="pe-readonly-banner" data-testid="fragment-readonly-banner">
+                      {{ t('settings.promptStudio.builtinReadonlyHint') }}
+                    </p>
 
                     <div v-if="selectedFragment && fragmentEffectiveness" class="pe-metrics">
                       <div class="pe-metric"><Activity :size="14" /><div><span>{{ t('settings.fragmentScore') }}</span><strong>{{ (fragmentEffectiveness.effectiveness_score * 100).toFixed(0) }}%</strong></div></div>
@@ -962,6 +1232,7 @@ defineExpose({ refreshAll })
                         <UiSelectField
                           v-model="fragmentDraft.scope"
                           :disabled="isReadonlyFragment"
+                          :aria-label="t('settings.promptStudio.fragmentScope')"
                           :options="[
                             { value: 'global', label: t('settings.promptStudio.scopeGlobal') },
                             { value: 'mode', label: t('settings.promptStudio.scopeMode') },
@@ -975,6 +1246,7 @@ defineExpose({ refreshAll })
                           v-if="agents.length > 0"
                           v-model="fragmentDraft.target_agent_id"
                           :disabled="isReadonlyFragment"
+                          :aria-label="t('settings.promptStudio.fragmentTargetAgent')"
                           :options="agents.map((a) => ({ value: a.id, label: `${agentDisplayName(a)} (${a.slug || a.id.slice(0, 8)})` }))"
                         />
                         <UiInput v-else v-model="fragmentDraft.target_agent_id" :disabled="isReadonlyFragment" placeholder="meeting" />
@@ -1012,7 +1284,7 @@ defineExpose({ refreshAll })
                   </template>
                 </UiCard>
 
-                <UiCard v-if="selectedFragment && !creatingFragment" class="pe-detail-card">
+                <UiCard v-if="showFragmentVersions" class="pe-detail-card">
                   <template #content>
                     <div class="pe-section-head">
                       <div class="pe-section-title"><History :size="14" /><span>{{ t('settings.versionHistoryTitle') }}</span></div>
@@ -1030,7 +1302,7 @@ defineExpose({ refreshAll })
                           <p class="pe-version-summary">{{ version.change_summary }}</p>
                         </div>
                         <div class="pe-version-actions">
-                          <UiButton v-if="!version.is_active && !isReadonlyFragment" size="sm" variant="ghost" :disabled="fragBusy" @click="rollbackVersion(version.version)">
+                          <UiButton v-if="!version.is_active" size="sm" variant="ghost" :disabled="fragBusy" @click="rollbackVersion(version.version)">
                             <Undo2 :size="14" /><span>{{ t('settings.rollbackAction') }}</span>
                           </UiButton>
                         </div>
@@ -1067,6 +1339,7 @@ defineExpose({ refreshAll })
                 <UiSelectField
                   v-if="previewAgentOptions.length > 0"
                   v-model="promptPreviewAgentId"
+                  :aria-label="t('settings.agentIdField')"
                   :options="previewAgentOptions"
                 />
                 <UiInput v-else v-model="promptPreviewAgentId" placeholder="meeting" />
@@ -1075,6 +1348,7 @@ defineExpose({ refreshAll })
                 <UiLabel>{{ t('settings.modeFieldOptional') }}</UiLabel>
                 <UiSelectField
                   v-model="promptPreviewModeId"
+                  :aria-label="t('settings.modeFieldOptional')"
                   :options="previewModeOptions"
                 />
               </div>
@@ -1082,6 +1356,7 @@ defineExpose({ refreshAll })
                 <UiLabel>{{ t('settings.promptStudio.previewPipelineOptional') }}</UiLabel>
                 <UiSelectField
                   v-model="promptPreviewPipelineId"
+                  :aria-label="t('settings.promptStudio.previewPipelineOptional')"
                   :options="previewPipelineOptions"
                 />
               </div>
@@ -1096,11 +1371,14 @@ defineExpose({ refreshAll })
                 <input v-model="includeDraftInPreview" type="checkbox" />
                 <span>{{ t('settings.promptStudio.previewDraftContent') }}</span>
               </label>
-              <UiButton size="sm" :disabled="previewBusy || !canAccessBackend" @click="generatePromptPreview">
+              <UiButton class="pe-preview-generate" size="sm" :disabled="previewBusy || !canAccessBackend" @click="generatePromptPreview">
                 <Eye :size="14" />
                 <span>{{ t('settings.generatePreview') }}</span>
               </UiButton>
             </div>
+
+            <!-- Honest failure: the backend's own message, never an empty panel that looks like a working preview -->
+            <p v-if="previewError" class="pe-backend-error" data-testid="preview-backend-error">{{ previewError }}</p>
 
             <template v-if="promptPreview">
               <div v-if="(promptPreview.warnings ?? []).length > 0" class="pe-preview-warnings">
@@ -1125,12 +1403,13 @@ defineExpose({ refreshAll })
                   />
                 </div>
                 <div class="pe-layer-list">
-                  <div v-for="layer in previewLayers" :key="layer.id" class="pe-layer-row">
+                  <div v-for="layer in previewLayers" :key="layer.id" class="pe-layer-row" data-testid="preview-layer-row">
                     <button type="button" class="pe-layer-summary" @click="toggleLayerExpanded(layer.id)">
                       <span class="pe-layer-kind">{{ layer.kind }}</span>
                       <strong :title="layer.title">{{ layer.title }}</strong>
                       <span class="pe-layer-source">{{ layer.source }}</span>
                       <span class="pe-layer-tokens">{{ layer.estimated_tokens }}t</span>
+                      <span class="pe-layer-share">{{ layerTokenShare(layer.estimated_tokens) }}</span>
                     </button>
                     <pre v-if="expandedLayers[layer.id]" class="pe-layer-content">{{ layer.content }}</pre>
                   </div>
@@ -1140,17 +1419,17 @@ defineExpose({ refreshAll })
               <div class="pe-section">
                 <div class="pe-section-head">
                   <div class="pe-section-title"><span>{{ t('settings.promptStudio.previewAssembledTitle') }}</span></div>
-                  <UiButton size="xs" variant="ghost" @click="copyAssembledPrompt">
+                  <UiButton size="xs" variant="ghost" :disabled="!promptPreview.assembled_prompt" @click="copyAssembledPrompt">
                     <Check v-if="promptCopied" :size="12" />
                     <Copy v-else :size="12" />
-                    <span>{{ promptCopied ? t('common.copied') : t('settings.promptStudio.previewCopyPrompt') }}</span>
+                    <span>{{ promptCopied ? t('chat.copied') : t('settings.promptStudio.previewCopyPrompt') }}</span>
                   </UiButton>
                 </div>
                 <textarea :value="promptPreview.assembled_prompt" class="pe-preview-textarea" rows="10" readonly></textarea>
               </div>
             </template>
 
-            <p v-else class="quiet pe-preview-empty">{{ t('settings.promptStudio.previewEmptyHint') }}</p>
+            <p v-else-if="!previewError" class="quiet pe-preview-empty">{{ t('settings.promptStudio.previewEmptyHint') }}</p>
           </template>
         </UiCard>
       </aside>
@@ -1200,7 +1479,7 @@ defineExpose({ refreshAll })
 }
 .pe-studio-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+  grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr);
   gap: 14px;
   align-items: start;
 }
@@ -1297,6 +1576,13 @@ defineExpose({ refreshAll })
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
+/* The primary action sizes to its label; it must not stretch the whole card. */
+.pe-preview-generate {
+  flex: 0 0 auto;
+  justify-self: start;
+  width: auto;
+  align-self: flex-start;
+}
 .pe-switch-inline {
   display: inline-flex;
   align-items: center;
@@ -1318,6 +1604,16 @@ defineExpose({ refreshAll })
 .pe-preview-warnings ul {
   margin: 4px 0 0;
   padding-left: 16px;
+}
+.pe-backend-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 30%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-danger) 8%, var(--surface-raised));
+  color: var(--accent-danger);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .pe-layers-section {
   display: grid;
@@ -1395,6 +1691,13 @@ defineExpose({ refreshAll })
   font-weight: 600;
   color: var(--accent-primary);
 }
+.pe-layer-share {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  min-width: 34px;
+  text-align: right;
+}
 .pe-layer-content {
   margin: 0;
   padding: 8px;
@@ -1406,6 +1709,11 @@ defineExpose({ refreshAll })
   max-height: 160px;
   overflow-y: auto;
   background: var(--surface-raised);
+}
+/* The fragment rail keeps a usable measure and the detail pane takes the rest: the
+   earlier share made the list ~200px wide next to a mostly blank stage. */
+.pe-fragment-workbench {
+  grid-template-columns: clamp(230px, 27%, 300px) minmax(0, 1fr);
 }
 .pe-fragment-list {
   display: flex;

@@ -63,22 +63,32 @@ const toolsLabel = computed(() =>
     }"
     :data-node-id="id"
   >
+    <!--
+      Handles stay mounted in read-only mode. Vue Flow anchors every edge to the
+      element matching the edge's `sourceHandle`/`targetHandle` id; removing the
+      handles made pack-managed edges fall back to the node centre, so they were
+      drawn straight through the cards instead of respecting the lane boundary.
+      They are rendered but not connectable while read-only.
+    -->
     <!-- Primary vertical target on execution lane -->
     <Handle
-      v-if="!data.readonly && data.lane === 'execution'"
+      v-if="data.lane === 'execution'"
       id="top-target"
       type="target"
       :position="Position.Top"
+      :connectable="!data.readonly"
       class="mode-handle mode-handle-v"
+      :class="{ 'handle-readonly': data.readonly }"
     />
 
     <!-- Optional same-lane horizontal handles -->
     <Handle
-      v-if="!data.readonly"
       id="left-target"
       type="target"
       :position="Position.Left"
+      :connectable="!data.readonly"
       class="mode-handle mode-handle-h"
+      :class="{ 'handle-readonly': data.readonly }"
     />
 
     <div class="node-head">
@@ -161,20 +171,22 @@ const toolsLabel = computed(() =>
     </div>
 
     <Handle
-      v-if="!data.readonly"
       id="right-source"
       type="source"
       :position="Position.Right"
+      :connectable="!data.readonly"
       class="mode-handle mode-handle-h"
+      :class="{ 'handle-readonly': data.readonly }"
     />
 
     <!-- Primary vertical source (Governance -> Execution, Execution -> Execution) -->
     <Handle
-      v-if="!data.readonly"
       id="bottom-source"
       type="source"
       :position="Position.Bottom"
+      :connectable="!data.readonly"
       class="mode-handle mode-handle-v"
+      :class="{ 'handle-readonly': data.readonly }"
     />
   </div>
 </template>
@@ -398,14 +410,29 @@ const toolsLabel = computed(() =>
   color: var(--accent-danger, #ef4444);
 }
 
+/*
+ * The visible dot is 14px, but Vue Flow's own `.vue-flow__handle` rules set
+ * min-width/min-height and a 1px border, which can shrink the pointer target.
+ * Pinning both axes keeps every handle >= 12px in each direction (the contract
+ * minimum) and keeps the hit box centred on the node border.
+ */
 :deep(.mode-handle) {
-  width: 14px;
-  height: 14px;
+  width: 14px !important;
+  height: 14px !important;
+  min-width: 14px;
+  min-height: 14px;
   border-radius: 999px;
   background: var(--surface-raised);
   border: 2px solid var(--accent-primary);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface-raised) 85%, transparent);
   transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+/* Read-only handles only anchor edges; they must not invite a connection drag. */
+:deep(.mode-handle.handle-readonly) {
+  pointer-events: none;
+  border-color: var(--border-default);
+  opacity: 0.5;
 }
 
 :deep(.mode-handle:hover) {

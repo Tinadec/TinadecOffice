@@ -167,7 +167,11 @@ const panelSources = import.meta.glob(
     './../lib/hostAccess.ts',
     './../lib/hostConnection.ts',
     // The mode / pipeline canvases and Debug Studio, whose chrome was hardcoded Chinese.
-    './../components/canvas/AgentModeCanvas.vue',
+    // `components/canvas/AgentModeCanvas.vue` is deliberately NOT listed: it is now a
+    // string-free delegation wrapper over `modeEditor/ModeGraphCanvas.vue`. The three
+    // modeEditor files are NOT listed either yet — they reference ~25 keys that do not
+    // exist in any locale (see the open coordinator ticket); listing them now would fail
+    // this guard instead of catching the real defect. They get listed once the keys land.
     './../components/canvas/PromptPipelineCanvas.vue',
     './../debug/DebugStudio.vue',
     './../debug/preview/PreviewGallery.vue',
@@ -328,5 +332,42 @@ describe('i18n locale parity and reference integrity', () => {
       const rawCjk = template.match(new RegExp(`[^'"\\\`>]*${CJK.source}`))
       expect(rawCjk, `${file} has untranslated CJK text in template: ${rawCjk?.[0]?.trim()}`).toBeNull()
     }
+  })
+
+  /**
+   * Compiles every leaf message with vue-i18n's own compiler.
+   *
+   * This exists because the `placeholders()` rule above cannot see `{{name}}` at all: it matches
+   * exactly one `{` before an identifier, so a raw `{{agent_name}}` and its escaped form
+   * `{'{{'}agent_name{'}}'}` BOTH yield an empty string. That made an unescaped brace invisible to
+   * parity — `settings.promptStudio.templateVarsHint` shipped with five raw `{{…}}` in all five
+   * bundles, passed 8/8 green, and then threw `SyntaxError: Not allowed nest placeholder` at
+   * render, blanking the whole prompt node inspector. A message that cannot compile is a broken UI
+   * string no matter how well its keys line up, so this asserts the property that actually matters:
+   * every leaf in every bundle parses.
+   */
+  it('every leaf message compiles, so no bundle can ship a string that throws at render', async () => {
+    // `baseCompile` is the exported entry point (`compile` does not exist in this package); it
+    // reports syntax errors through `onError` rather than throwing, so the handler below is what
+    // turns a broken message into a failure instead of a silently returned error node.
+    const { baseCompile } = await import('@intlify/message-compiler')
+    const failures: string[] = []
+    let checked = 0
+    for (const [locale, bundle] of Object.entries(bundles)) {
+      for (const [key, text] of leafValues(bundle)) {
+        checked += 1
+        try {
+          // No `locale` option: `CompileOptions` has no such property (TS2353), and
+          // `baseCompile` has no locale-dependent behaviour — it compiles a message to an AST,
+          // it does not localise. The per-locale identity is carried by the key in the message.
+          baseCompile(text, { onError: (error: Error) => { throw error } })
+        } catch (error) {
+          failures.push(`${locale}:${key} — ${(error as Error).message.split('\n')[0]}`)
+        }
+      }
+    }
+    // A mis-wired walk would check nothing and report green.
+    expect(checked).toBeGreaterThan(1000)
+    expect(failures, `${failures.length} locale message(s) cannot compile:\n${failures.join('\n')}`).toEqual([])
   })
 })

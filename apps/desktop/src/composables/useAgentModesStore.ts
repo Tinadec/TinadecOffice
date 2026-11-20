@@ -64,7 +64,14 @@ export interface CommitDraftOptions {
   coalesceKey?: string
 }
 
-const MAX_HISTORY = 50
+/**
+ * Undo depth. The contract requires at least 50 steps. The commit path truncates
+ * with `slice(-(MAX_HISTORY - 1))` before pushing, so a cap of exactly 50 holds
+ * exactly 50 snapshots — right on the floor, with no room for an off-by-one in
+ * the coalescing path. 100 is still cheap (each snapshot is a small plain-object
+ * clone) and keeps the documented minimum with margin.
+ */
+const MAX_HISTORY = 100
 const COALESCE_WINDOW_MS = 650
 
 function createEmptyModeDraft(): ModeDraftState {
@@ -206,6 +213,34 @@ export function isModeReadOnly(mode: Pick<AgentModeTopologyDto, 'managed' | 'pac
 
 export function agentUsableForTeam(agent: Pick<AgentDefinitionDto, 'enabled' | 'status'>): boolean {
   return agent.enabled !== false && (!agent.status || agent.status === 'published')
+}
+
+/**
+ * Core refuses any mutation of a pack-managed mode with 409 `built_in_read_only`.
+ * The store disables those actions in the UI, but a stale list (a pack installed
+ * in another window) can still reach the request, so the refusal has a name of
+ * its own instead of surfacing as a raw 409.
+ */
+export function isBuiltInReadOnlyError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const probe = error as { code?: unknown; status?: unknown; message?: unknown; detail?: unknown }
+  if (String(probe.code ?? '').trim().toLowerCase() === 'built_in_read_only') return true
+  if (Number(probe.status) === 409 && /built_in_read_only/i.test(`${String(probe.message ?? '')} ${String(probe.detail ?? '')}`)) {
+    return true
+  }
+  return false
+}
+
+function notifyModeWriteError(error: unknown, fallbackTitle: string): void {
+  if (isBuiltInReadOnlyError(error)) {
+    notify.error(new Error(tr(
+      'settings.modeBuiltInReadOnly',
+      undefined,
+      'This mode is managed by an agent pack and is read-only. Clone it to customize.',
+    )), { title: tr('agentPack.managedReadOnly', undefined, 'Managed by an agent pack') })
+    return
+  }
+  notify.error(error, { title: fallbackTitle })
 }
 
 // ── Shared module-level reactive state ──────────────────────────────────────
@@ -943,7 +978,7 @@ async function cloneMode(id = selectedModeId.value, customName?: string): Promis
     notify.success({ message: tr('agentCenter.modeCreated', { name: created.display_name }, `Created ${created.display_name}`) })
     return created
   } catch (e) {
-    notify.error(e)
+    notifyModeWriteError(e, tr('agentCenter.modeSaveFailed', undefined, 'Failed to save mode'))
     return null
   } finally {
     modeBusy.value = false
@@ -969,9 +1004,13 @@ async function deleteOrArchiveMode(id = selectedModeId.value): Promise<boolean> 
       try {
         await api.deleteAgentMode(id, modeEtag.value)
       } catch (err) {
-        // Fallback to archiving if the backend preserves versioned history via 409
+        // A pack-managed mode must never be archived as a "fallback": the refusal
+        // is the answer, and archiving a pack row would hide it from its pack.
+        if (isBuiltInReadOnlyError(err)) throw err
+        // Core keeps versioned history for a published mode and answers 409
+        // `mode_has_published_versions`; archiving is the documented fallback there.
         const msg = err instanceof Error ? err.message : String(err)
-        if (/version|published|archive|409/i.test(msg)) {
+        if (/published|version/i.test(msg) && !/read.?only/i.test(msg)) {
           await api.archiveAgentMode(id, modeEtag.value)
         } else {
           throw err
@@ -992,7 +1031,7 @@ async function deleteOrArchiveMode(id = selectedModeId.value): Promise<boolean> 
     notify.success({ message: tr('settings.modeDeleted', { name: targetName }, `Deleted ${targetName}`) })
     return true
   } catch (e) {
-    notify.error(e)
+    notifyModeWriteError(e, tr('agentCenter.modeSaveFailed', undefined, 'Failed to save mode'))
     return false
   } finally {
     modeBusy.value = false
@@ -1048,7 +1087,7 @@ async function saveTeamDraft(): Promise<string | null> {
     notify.success(tr('settings.teamDraftSaved', undefined, 'Team draft saved'))
     return selectedModeId.value
   } catch (error) {
-    notify.error(error)
+    notifyModeWriteError(error, tr('agentCenter.modeSaveFailed', undefined, 'Failed to save mode'))
     return null
   } finally {
     modeBusy.value = false
@@ -1265,6 +1304,7 @@ export function useAgentModesStore() {
     agentLocalizedDescription,
     isModePackManaged,
     isModeReadOnly,
+    isBuiltInReadOnlyError,
 
     // Actions
     mergeExternalModes,

@@ -77,8 +77,18 @@ public sealed record FormalModeRoster(
     /// <summary>
     /// Optional explicit orchestration tier (<c>solo_dispatch | free_form | self_dispatch | deterministic</c>)
     /// declared on the published mode. Null means derive from graph topology and conversation tools.
+    ///
+    /// The resolver populates this from the frozen snapshot's <c>orchestration_tier</c> key via
+    /// <see cref="FormalModeSnapshotDocuments.ReadOrchestrationTier"/>. It is the value the run
+    /// freeze prefers over inference — <c>AgentRuntimeConfigurationResolver.DeriveGraphTier</c>
+    /// takes it as its fourth argument and maps it onto <c>FrozenGraphTiers</c>, falling back to
+    /// the four-branch derivation only when it is null/empty.
     /// </summary>
     public string? OrchestrationTier { get; init; }
+
+    /// <summary>True when the published mode declared its tier explicitly (no inference needed).</summary>
+    [JsonIgnore]
+    public bool HasExplicitOrchestrationTier => !string.IsNullOrWhiteSpace(OrchestrationTier);
 
     // DmaEA graph orchestration: the declared communication topology, conversation
     // resolution and spawnable-template declarations resolved from the frozen mode
@@ -229,4 +239,84 @@ public sealed record RuntimeAgentRosterEntry(
 
     /// <summary>Resource-path grants from the node's binding envelope (empty = no workspace authorization for provider tools).</summary>
     public IReadOnlyList<FrozenResourceGrant> ResourceGrants { get; init; } = [];
+}
+
+/// <summary>
+/// Reads the mode-level documents a frozen <c>tinadec.mode_version/v1</c> snapshot carries but
+/// that are not part of the node/edge projection: the explicit orchestration tier and the team
+/// collaboration instructions.
+///
+/// Lives here, next to the record that consumes them, so the resolver that has the snapshot in
+/// hand and the freeze that needs the value cannot each invent their own key spelling. Both
+/// readers are tolerant by design: a snapshot published before a field existed, and a snapshot
+/// with a malformed value, both read as null — an old mode keeps its inferred tier instead of
+/// failing admission over a field it never declared.
+///
+/// Usage in <c>TinadecCore/Runtime/FormalModeResolver.cs</c> where the roster is built:
+/// <code>
+/// OrchestrationTier = FormalModeSnapshotDocuments.ReadOrchestrationTier(mv.SnapshotJson),
+/// ModeInstructions  = FormalModeSnapshotDocuments.ReadInstructions(mv.SnapshotJson),
+/// </code>
+/// </summary>
+public static class FormalModeSnapshotDocuments
+{
+    public const string OrchestrationTierProperty = "orchestration_tier";
+    public const string InstructionsProperty = "instructions";
+
+    /// <summary>The snapshot's declared tier, folded onto the canonical tier names, or null.</summary>
+    public static string? ReadOrchestrationTier(string? snapshotJson)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(snapshotJson!);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty(OrchestrationTierProperty, out var tier)
+                && tier.ValueKind == JsonValueKind.String
+                    ? NormalizeTier(tier.GetString())
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The snapshot's team collaboration instructions, or null when it declares none.</summary>
+    public static string? ReadInstructions(string? snapshotJson)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(snapshotJson!);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty(InstructionsProperty, out var instructions)
+                || instructions.ValueKind != JsonValueKind.String)
+                return null;
+            var text = instructions.GetString();
+            return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The canonical tier names, with the <c>solo</c> alias folded onto <c>solo_dispatch</c>.
+    /// Mirrors <c>GraphValidation.NormalizeOrchestrationTier</c> (the publish-side authority);
+    /// an unrecognized value reads as null so the caller falls back to inference.
+    /// </summary>
+    public static string? NormalizeTier(string? tier)
+    {
+        if (string.IsNullOrWhiteSpace(tier)) return null;
+        return tier.Trim().ToLowerInvariant() switch
+        {
+            "solo" or "solo_dispatch" => "solo_dispatch",
+            "free_form" => "free_form",
+            "self_dispatch" => "self_dispatch",
+            "deterministic" => "deterministic",
+            _ => null
+        };
+    }
 }

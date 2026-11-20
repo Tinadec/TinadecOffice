@@ -30,6 +30,11 @@ public static class AgentConfigurationEndpoints
         app.MapGet("/api/v1/agent-modes", ListModes);
         app.MapPost("/api/v1/agent-modes", CreateMode);
         app.MapGet("/api/v1/agent-modes/{id:guid}", GetMode);
+        // Clone + delete were declared on IAgentTopologyService and proxied by the Gateway
+        // (/clone, DELETE /{id}) but never mapped here, so both answered 404 and the Agent
+        // Center's clone/delete actions were dead in the UI.
+        app.MapPost("/api/v1/agent-modes/{id:guid}/clone", CloneMode);
+        app.MapDelete("/api/v1/agent-modes/{id:guid}", DeleteMode);
         app.MapPut("/api/v1/agent-modes/{id:guid}/draft", UpdateModeDraft);
         app.MapPost("/api/v1/agent-modes/{id:guid}/publish", PublishMode);
         app.MapPost("/api/v1/agent-modes/{id:guid}/archive", ArchiveMode);
@@ -630,6 +635,38 @@ static async Task<IResult> GetMode(Guid id, IAgentTopologyService topology, Canc
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         var result = await topology.UpsertDraftAsync(id, el, IfMatch(req), ct);
         return result.Ok ? Results.Ok(result.Mode) : TopologyFailure(result);
+    }
+
+    /// <summary>
+    /// <c>POST /agent-modes/{id}/clone</c> — copy a mode (pack-managed included) into a new
+    /// editable draft. The body is optional and may carry only <c>display_name</c>/<c>slug</c>;
+    /// everything else is copied from the source. Answers 201 with the full projection so the
+    /// caller can navigate straight to the new mode instead of re-reading it.
+    /// </summary>
+    static async Task<IResult> CloneMode(Guid id, HttpRequest req, IAgentTopologyService topology, CancellationToken ct)
+    {
+        JsonElement payload;
+        try { payload = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct); }
+        catch (JsonException) { return Results.BadRequest(new { code = AgentTopologyCodes.InvalidRequest, message = "The request body must be a JSON object." }); }
+        if (payload.ValueKind == JsonValueKind.Undefined) payload = JsonSerializer.SerializeToElement(new { });
+        if (payload.ValueKind != JsonValueKind.Object)
+            return Results.BadRequest(new { code = AgentTopologyCodes.InvalidRequest, message = "The request body must be a JSON object." });
+        var result = await topology.CloneDraftAsync(id, payload, ct);
+        if (!result.Ok) return TopologyFailure(result);
+        return Results.Created($"/api/v1/agent-modes/{result.ModeId}", result.Mode);
+    }
+
+    /// <summary>
+    /// <c>DELETE /agent-modes/{id}</c> — delete a user-authored mode, draft or published.
+    /// Answers <c>{ id, deleted = true }</c> rather than 204 so the client gets the id it
+    /// deleted back; a pack-managed mode answers 409 <c>built_in_read_only</c> from the
+    /// service, whose code the failure mapper passes through unchanged.
+    /// </summary>
+    static async Task<IResult> DeleteMode(Guid id, IAgentTopologyService topology, CancellationToken ct)
+    {
+        var result = await topology.DeleteDraftAsync(id, ct);
+        if (!result.Ok) return TopologyFailure(result);
+        return Results.Ok(new { id = result.ModeId ?? id, deleted = true });
     }
 
     static async Task<IResult> PublishMode(Guid id, HttpRequest req, IAgentTopologyService topology, CancellationToken ct)

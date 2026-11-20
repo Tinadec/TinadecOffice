@@ -24,11 +24,26 @@ import { useStatusLabels } from '@/lib/statusLabels'
  */
 type GovernanceBoardTab = 'decisions' | 'runtime'
 
-function initialBoardTab(): GovernanceBoardTab {
-  if (typeof window === 'undefined') return 'decisions'
+/** Read a query value from either the hash route (`#/governance?tab=runtime`) or the path route. */
+function queryValue(key: string): string | null {
+  if (typeof window === 'undefined') return null
   const query = window.location.hash.split('?')[1] ?? window.location.search.slice(1)
-  const tab = new URLSearchParams(query).get('tab')
-  return tab === 'runtime' ? 'runtime' : 'decisions'
+  const value = new URLSearchParams(query).get(key)
+  return value && value.trim() ? value.trim() : null
+}
+
+function initialBoardTab(): GovernanceBoardTab {
+  return queryValue('tab') === 'runtime' ? 'runtime' : 'decisions'
+}
+
+/**
+ * `/governance?session_id=…` opens the runtime tab filtered to that session. The runtime
+ * panel is the only surface that can act on a run, so a link that names a session but
+ * lands on the decisions tab makes the operator find it by hand.
+ */
+function initialSessionId(): string {
+  const id = queryValue('session_id') ?? queryValue('session')
+  return id ?? ''
 }
 
 const { t, te } = useI18n()
@@ -36,7 +51,8 @@ const { riskLabel, severityLabel } = useStatusLabels()
 const kindLabel = (kind: string) => (te(`approval.kind.${kind}`) ? t(`approval.kind.${kind}`) : kind)
 const userActionStore = useUserActionStore()
 
-const activeTab = ref<GovernanceBoardTab>(initialBoardTab())
+const requestedSessionId = initialSessionId()
+const activeTab = ref<GovernanceBoardTab>(requestedSessionId ? 'runtime' : initialBoardTab())
 const approvals = ref<ApprovalDto[]>([])
 const permissions = ref<PermissionRequestDto[]>([])
 const findings = ref<SupervisionFindingDto[]>([])
@@ -180,17 +196,18 @@ onUnmounted(() => {
       >
         {{ t('governance.tabDecisions') }} ({{ openDecisionsCount }})
       </button>
-      <button
-        type="button"
-        role="tab"
-        class="approval-board__tab"
-        :class="{ active: activeTab === 'runtime' }"
-        :aria-selected="activeTab === 'runtime'"
-        @click="activeTab = 'runtime'"
-      >
-        <Activity class="size-3.5" />
-        <span>{{ t('settings.runtimeInstances') }} ({{ runtimeCount }})</span>
-      </button>
+        <button
+          type="button"
+          role="tab"
+          class="approval-board__tab"
+          :class="{ active: activeTab === 'runtime' }"
+          :aria-selected="activeTab === 'runtime'"
+          data-testid="governance-tab-runtime"
+          @click="activeTab = 'runtime'"
+        >
+          <Activity class="size-3.5" />
+          <span>{{ t('settings.runtimeInstances') }} ({{ runtimeCount }})</span>
+        </button>
     </div>
 
     <div v-if="loadError" class="approval-board__error">{{ loadError }}</div>
@@ -247,8 +264,14 @@ onUnmounted(() => {
       </section>
     </div>
 
+    <!--
+      Mounted from page load and toggled with v-show, not v-if: the panel's own onMounted
+      read is the "first paint already has instances" path, and a tab click must not be the
+      only thing that ever asks Core for them. Auto-refresh stays off here because this page
+      owns one timer that pauses while hidden.
+    -->
     <section
-      v-if="activeTab === 'runtime'"
+      v-show="activeTab === 'runtime'"
       class="approval-board__runtime"
       data-testid="governance-runtime-section"
     >
@@ -256,6 +279,7 @@ onUnmounted(() => {
         ref="runtimePanelRef"
         :show-ceilings="false"
         :enable-auto-refresh="false"
+        :initial-session-id="requestedSessionId"
         @count-changed="runtimeCount = $event"
       />
     </section>

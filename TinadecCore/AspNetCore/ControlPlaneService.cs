@@ -760,6 +760,297 @@ public sealed class ControlPlaneService
         (_modelProfileCatalog ?? new ModelProfileCatalogService(_models, _content, _secrets, _tenant))
             .UpdateModelProfileAsync(providerId, modelId, profile, expectedRevision, ct);
 
+    /// <summary>
+    /// The purpose the desktop's single-model settings screen is a projection of. It is the same
+    /// route a run resolves for chat, so the settings screen cannot describe a model nothing uses.
+    /// </summary>
+    private const string ModelSettingsRoutePurpose = "chat";
+
+    /// <summary>
+    /// Reads the model settings from the provider the <c>chat</c> route actually resolves to.
+    /// When nothing is configured it reports the empty values instead of inventing a default, so
+    /// the screen can say "not configured" rather than showing a model that would fail at run time.
+    /// </summary>
+    public async Task<IResult> GetModelSettings(CancellationToken ct)
+    {
+        await using var db = await _models.CreateDbContextAsync(ct);
+        var resolved = await ResolveModelSettingsAsync(db, ct);
+        if (resolved is null)
+            return Results.Ok(new { base_url = "", model = "", has_api_key = false, revision = 0L, updated_at = DateTimeOffset.UtcNow });
+
+        var (provider, model, config) = resolved.Value;
+        string? Text(string key) => config.TryGetValue(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        var hasApiKey = provider.SecretReference is not null && await _secrets.ExistsAsync(provider.SecretReference, ct);
+        return Results.Ok(new
+        {
+            base_url = Text("base_url") ?? string.Empty,
+            model = model ?? Text("model") ?? string.Empty,
+            has_api_key = hasApiKey,
+            revision = provider.Revision,
+            updated_at = provider.UpdatedAt
+        });
+    }
+
+    /// <summary>
+    /// Writes the settings onto the provider the chat route resolves to, then keeps the route's
+    /// explicit model in step with it. Two writes, one intent: if the route pinned a model id and
+    /// the form changes the model, leaving the pin behind would make GET report the new value while
+    /// a run kept using the old one.
+    /// </summary>
+    public async Task<IResult> SaveModelSettings(JsonElement input, string? ifMatch, CancellationToken ct)
+    {
+        if (input.ValueKind != JsonValueKind.Object)
+            return Results.BadRequest(new { code = "invalid_request", message = "Model settings must be a JSON object." });
+        if (!TryParseOptionalIfMatch(ifMatch, out var expectedRevision))
+            return Results.Json(new { code = "invalid_if_match", message = "If-Match must contain the numeric revision." }, statusCode: 400);
+
+        string? Opt(string name) => input.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+        var clearApiKey = input.TryGetProperty("clear_api_key", out var clear) && clear.ValueKind == JsonValueKind.True;
+
+        var now = DateTimeOffset.UtcNow;
+        // Declared without an initializer: both are assigned inside the write scope below, and the
+        // compiler must be able to see that assignment rather than infer it through `await using`.
+        ModelProviderRecord provider;
+        Dictionary<string, JsonElement> config;
+        var hasApiKey = false;
+
+        // The provider write and the route re-pin are two contexts on purpose: SQLite takes a write
+        // lock per connection, and holding this one open while SaveRoute writes would deadlock the
+        // save that just succeeded.
+        await using (var db = await _models.CreateDbContextAsync(ct))
+        {
+            var resolved = await ResolveModelSettingsAsync(db, ct);
+            var createdProvider = false;
+
+            if (resolved is { } existing)
+            {
+                provider = existing.Provider;
+                if (expectedRevision is { } expected && provider.Revision != expected)
+                    return Results.Json(new { code = "revision_conflict", message = $"Model settings revision conflict: expected {expected}, actual {provider.Revision}." }, statusCode: 412);
+                provider = await db.Providers.SingleAsync(x => x.Id == provider.Id, ct);
+            }
+            else
+            {
+                // Nothing to project yet: the first save creates the provider the route will name.
+                provider = new ModelProviderRecord
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = Tenant.TenantId,
+                    WorkspaceId = Tenant.WorkspaceId,
+                    Scope = "workspace",
+                    Driver = "openai",
+                    DisplayName = "Model settings",
+                    ConnectionKind = "api-key",
+                    Enabled = true,
+                    Revision = 0,
+                    CreatedByPrincipalId = Tenant.PrincipalId,
+                    CreatedAt = now
+                };
+                db.Providers.Add(provider);
+                createdProvider = true;
+            }
+
+            config = createdProvider
+                ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+                : await LoadProviderConfigAsync(db, provider.CurrentVersionId, ct);
+
+            var model = Opt("model");
+            var baseUrl = Opt("base_url");
+
+            if (baseUrl is not null)
+            {
+                var trimmed = baseUrl.Trim();
+                if (trimmed.Length == 0) config.Remove("base_url");
+                else config["base_url"] = JsonSerializer.SerializeToElement(trimmed);
+            }
+
+            if (model is not null)
+            {
+                var trimmed = model.Trim();
+                if (trimmed.Length == 0)
+                {
+                    config.Remove("model");
+                }
+                else
+                {
+                    config["model"] = JsonSerializer.SerializeToElement(trimmed);
+                    // Keep the advertised model list truthful: a model that is saved but absent from
+                    // the list is rejected by the model picker that reads this provider.
+                    var models = config.TryGetValue("models", out var list) && list.ValueKind == JsonValueKind.Array
+                        ? list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                        : [];
+                    if (!models.Contains(trimmed, StringComparer.Ordinal))
+                    {
+                        models.Insert(0, trimmed);
+                        config["models"] = JsonSerializer.SerializeToElement(models.ToArray());
+                    }
+                }
+            }
+
+            if (input.TryGetProperty("api_key", out var apiKey) && apiKey.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(apiKey.GetString()))
+            {
+                provider.SecretReference ??= "provider-" + provider.Id.ToString("N");
+                await _secrets.PutAsync(provider.SecretReference, apiKey.GetString()!, ct);
+            }
+            else if (clearApiKey && provider.SecretReference is not null)
+            {
+                await _secrets.DeleteAsync(provider.SecretReference, ct);
+                provider.SecretReference = null;
+            }
+
+            var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "model-config", config, ct);
+            var maxVersion = await db.ProviderVersions.Where(v => v.ProviderId == provider.Id).MaxAsync(v => (int?)v.Version, ct) ?? 0;
+            var version = new ModelProviderVersionRecord
+            {
+                Id = Guid.NewGuid(),
+                ProviderId = provider.Id,
+                Version = maxVersion + 1,
+                ContentReference = stored.reference.Value,
+                ContentHash = stored.reference.Sha256,
+                ContentLength = stored.reference.Length,
+                CreatedByPrincipalId = Tenant.PrincipalId,
+                CreatedAt = now
+            };
+            provider.Revision++;
+            provider.CurrentVersionId = version.Id;
+            provider.UpdatedByPrincipalId = Tenant.PrincipalId;
+            provider.UpdatedAt = now;
+            db.ProviderVersions.Add(version);
+            await db.SaveChangesAsync(ct);
+
+            hasApiKey = provider.SecretReference is not null && await _secrets.ExistsAsync(provider.SecretReference, ct);
+        }
+
+        // Re-pin the chat route so an explicit candidate model follows the form. A route whose
+        // candidate has no model already inherits the provider's, so it needs no edit.
+        var effectiveModel = Opt("model")?.Trim() is { Length: > 0 } m ? m : null;
+        await RepinModelSettingsRouteAsync(provider.Id, effectiveModel, ct);
+
+        return Results.Ok(new
+        {
+            base_url = config.TryGetValue("base_url", out var savedBaseUrl) && savedBaseUrl.ValueKind == JsonValueKind.String ? savedBaseUrl.GetString() : string.Empty,
+            model = config.TryGetValue("model", out var savedModel) && savedModel.ValueKind == JsonValueKind.String ? savedModel.GetString() : string.Empty,
+            has_api_key = hasApiKey,
+            revision = provider.Revision,
+            updated_at = provider.UpdatedAt
+        });
+    }
+
+    /// <summary>
+    /// The provider + model the settings screen speaks for: the first enabled candidate of the
+    /// <c>chat</c> route, else the newest enabled provider. Null means nothing is configured.
+    /// </summary>
+    private async Task<(ModelProviderRecord Provider, string? Model, Dictionary<string, JsonElement> Config)?> ResolveModelSettingsAsync(
+        ModelControlDbContext db, CancellationToken ct)
+    {
+        var route = await db.Routes.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Purpose == ModelSettingsRoutePurpose && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct);
+        if (route is not null)
+        {
+            var routeVersion = await db.RouteVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == route.CurrentVersionId, ct);
+            if (routeVersion is not null)
+            {
+                var candidate = await db.RouteCandidates.AsNoTracking()
+                    .Where(x => x.RouteVersionId == routeVersion.Id)
+                    .OrderBy(x => x.Position)
+                    .FirstOrDefaultAsync(ct);
+                if (candidate is not null)
+                {
+                    var provider = await db.Providers.AsNoTracking()
+                        .FirstOrDefaultAsync(x => x.Id == candidate.ProviderInstanceId && x.DeletedAt == null, ct);
+                    if (provider is not null)
+                        return (provider, candidate.Model, await LoadProviderConfigAsync(db, provider.CurrentVersionId, ct));
+                }
+            }
+        }
+
+        var fallback = await db.Providers.AsNoTracking()
+            .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null && x.Enabled)
+            .OrderByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (fallback is null) return null;
+        return (fallback, null, await LoadProviderConfigAsync(db, fallback.CurrentVersionId, ct));
+    }
+
+    private async Task RepinModelSettingsRouteAsync(Guid providerId, string? model, CancellationToken ct)
+    {
+        long? routeRevision = null;
+        Guid? routeId = null;
+        ModelRouteCandidateDto[]? repinned = null;
+
+        // Read in a scope that is closed before SaveRoute opens its own: SQLite takes a write lock
+        // per connection, so writing while this read context is still alive can deadlock the save.
+        await using (var db = await _models.CreateDbContextAsync(ct))
+        {
+            var route = await db.Routes.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Purpose == ModelSettingsRoutePurpose && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct);
+            if (route is not null)
+            {
+                routeId = route.Id;
+                routeRevision = route.Revision;
+                var routeVersion = await db.RouteVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == route.CurrentVersionId, ct);
+                if (routeVersion is not null)
+                {
+                    var candidates = await db.RouteCandidates.AsNoTracking()
+                        .Where(x => x.RouteVersionId == routeVersion.Id)
+                        .OrderBy(x => x.Position)
+                        .ToListAsync(ct);
+                    if (candidates.Count > 0)
+                    {
+                        var head = candidates[0];
+                        if (head.ProviderInstanceId != providerId || (model is not null && !string.Equals(head.Model, model, StringComparison.Ordinal)))
+                        {
+                            // SaveRoute refuses duplicate (provider, model) pairs, and moving this
+                            // provider to the head can create one with a tail candidate naming it.
+                            repinned = candidates
+                                .Select((candidate, position) => new ModelRouteCandidateDto
+                                {
+                                    ProviderInstanceId = position == 0 ? providerId : candidate.ProviderInstanceId,
+                                    Model = position == 0 ? model : candidate.Model,
+                                    Position = position
+                                })
+                                .GroupBy(x => (x.ProviderInstanceId, x.Model))
+                                .Select(group => group.First())
+                                .Select((candidate, position) => new ModelRouteCandidateDto
+                                {
+                                    ProviderInstanceId = candidate.ProviderInstanceId,
+                                    Model = candidate.Model,
+                                    Position = position
+                                })
+                                .ToArray();
+                        }
+                    }
+                }
+            }
+        }
+
+        if (routeId is null)
+        {
+            await SaveRoute(
+                ModelSettingsRoutePurpose,
+                new ModelRouteWriteRequestDto
+                {
+                    Candidates = [new ModelRouteCandidateDto { ProviderInstanceId = providerId, Model = model, Position = 0 }]
+                },
+                ifMatch: null,
+                ct);
+            return;
+        }
+
+        if (repinned is null) return; // the route already names this provider and this model
+
+        // The route row is authoritative for its own revision; this is an internal follow-up write
+        // of a form save the operator already authorized, so the precondition is satisfied by the
+        // revision just read rather than by asking the caller for a second ETag.
+        await SaveRoute(
+            ModelSettingsRoutePurpose,
+            new ModelRouteWriteRequestDto { Candidates = repinned },
+            routeRevision?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ct);
+    }
+
     public async Task<IResult> ListPrompts(
         CancellationToken ct,
         string? scope = null,
@@ -882,17 +1173,17 @@ public sealed class ControlPlaneService
             row.TargetAgentId = Guid.TryParse(resolvedAgentId, out var aid) ? aid : null;
         if (resolvedAgentSlug is not null)
             row.TargetAgentSlug = string.IsNullOrWhiteSpace(resolvedAgentSlug) ? null : resolvedAgentSlug;
-        var content = OptString("content") ?? string.Empty;
-        var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "prompt-fragment", content, ct);
+        var content = PromptContentCodec.NormalizeForWrite(OptString("content") ?? string.Empty);
+        var storedRef = await PromptContentCodec.WriteJsonStringAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, content, ct);
         var maxVersion = await db.Versions.Where(v => v.FragmentId == row.Id).MaxAsync(v => (int?)v.Version, ct) ?? 0;
         var version = new PromptFragmentVersionRecord
         {
             Id = Guid.NewGuid(),
             FragmentId = row.Id,
             Version = maxVersion + 1,
-            ContentReference = stored.reference.Value,
-            ContentHash = stored.reference.Sha256,
-            ContentLength = stored.reference.Length,
+            ContentReference = storedRef.Value,
+            ContentHash = storedRef.Sha256,
+            ContentLength = storedRef.Length,
             ChangeSummary = OptString("change_summary") ?? "configuration update",
             CreatedByPrincipalId = Tenant.PrincipalId,
             CreatedAt = now
@@ -965,9 +1256,15 @@ public sealed class ControlPlaneService
         if (_promptFragments is null)
             return Results.Json(new { code = "capability_unavailable", message = "Prompt fragment service is not registered." }, statusCode: 501);
 
-        var content = input.ValueKind == JsonValueKind.Object && input.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
-            ? c.GetString() ?? string.Empty
-            : string.Empty;
+        // A version is a body. An empty or non-object request would otherwise append an empty
+        // version that becomes current and silently blanks the fragment.
+        var bodyEl = default(JsonElement);
+        if (input.ValueKind != JsonValueKind.Object
+            || !input.TryGetProperty("content", out bodyEl)
+            || bodyEl.ValueKind != JsonValueKind.String)
+            return Results.BadRequest(new { code = "invalid_request", message = "Creating a prompt version requires a string 'content' field." });
+
+        var content = bodyEl.GetString() ?? string.Empty;
         var summary = input.ValueKind == JsonValueKind.Object && input.TryGetProperty("change_summary", out var s) && s.ValueKind == JsonValueKind.String
             ? s.GetString()
             : null;
@@ -1136,7 +1433,8 @@ public sealed class ControlPlaneService
             IncludeFragmentIds = includeFragmentIds,
             SessionId = OptGuid("session_id"),
             RunId = OptGuid("run_id"),
-            UserContent = OptString("user_content")
+            UserContent = OptString("user_content"),
+            ResponseLocale = OptString("response_locale")
         };
 
         var preview = await PreviewPromptContextCoreAsync(requestDto, ct);
@@ -1150,7 +1448,6 @@ public sealed class ControlPlaneService
         var assembler = _promptAssembler ?? throw new InvalidOperationException("IPromptAssembler is not registered.");
         FrozenWorkspaceBinding? workspace = null;
         Guid? sessionModeVersionId = null;
-        string? sessionLocale = null;
 
         if (input.SessionId is { } sessionId && sessionId != Guid.Empty && _sessions is not null)
         {
@@ -1159,7 +1456,6 @@ public sealed class ControlPlaneService
             {
                 workspace = await WorkspaceBindingFactory.TryCreateAsync(_sessions, session, ct);
                 sessionModeVersionId = session.ModeVersionId;
-                sessionLocale = session.InterfaceLocale;
             }
         }
 
@@ -1227,7 +1523,7 @@ public sealed class ControlPlaneService
             PromptVersionContentHash: promptVersionHash,
             PromptGraphJson: promptGraphJson,
             IncludeLiveFragments: true,
-            ResponseLocale: sessionLocale)
+            ResponseLocale: input.ResponseLocale)
         {
             Workspace = workspace,
             RuntimePolicy = resolvedMode?.RuntimePolicy,
@@ -1298,27 +1594,7 @@ public sealed class ControlPlaneService
         _ => Results.BadRequest(new { code = ex.Code, message = ex.Message })
     };
 
-    private static string UnwrapPromptContent(string? raw)
-    {
-        if (string.IsNullOrEmpty(raw)) return string.Empty;
-        var current = raw;
-        for (var i = 0; i < 4; i++)
-        {
-            var trimmed = current.Trim();
-            if (trimmed.Length < 2 || trimmed[0] != '"') break;
-            try
-            {
-                using var doc = JsonDocument.Parse(trimmed);
-                if (doc.RootElement.ValueKind != JsonValueKind.String) break;
-                current = doc.RootElement.GetString() ?? string.Empty;
-            }
-            catch (JsonException)
-            {
-                break;
-            }
-        }
-        return current;
-    }
+    private static string UnwrapPromptContent(string? raw) => PromptContentCodec.UnwrapFragmentText(raw);
 
     private IEnumerable<IDbContextFactory<AgentConfigurationDbContext>> AgentConfigFactories()
     {

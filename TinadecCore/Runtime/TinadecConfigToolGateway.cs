@@ -42,6 +42,9 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
     private readonly IToolProvider? _provider;
     private readonly ISessionLocator? _sessions;
     private readonly IConfiguration? _configuration;
+    private readonly IPromptFragmentService? _promptFragments;
+    private readonly IModelProfileCatalogService? _modelProfiles;
+    private readonly IToolSettingsStore? _toolSettingsStore;
 
     public TinadecConfigToolGateway(
         IAgentTopologyService topology,
@@ -53,7 +56,10 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         IToolConfigurationResolver? toolSettings = null,
         IToolProvider? provider = null,
         ISessionLocator? sessions = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        IPromptFragmentService? promptFragments = null,
+        IModelProfileCatalogService? modelProfiles = null,
+        IToolSettingsStore? toolSettingsStore = null)
     {
         _topology = topology;
         _packs = packs;
@@ -65,6 +71,9 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         _provider = provider;
         _sessions = sessions;
         _configuration = configuration;
+        _promptFragments = promptFragments;
+        _modelProfiles = modelProfiles;
+        _toolSettingsStore = toolSettingsStore;
     }
 
     public async Task<ToolWireResponseDto> ExecuteAsync(
@@ -81,6 +90,8 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
             if (string.Equals(toolId, CoreVirtualToolPolicy.TinadecModePublishToolId, StringComparison.OrdinalIgnoreCase)) return await ModePublishAsync(scope, wire, ct).ConfigureAwait(false);
             if (string.Equals(toolId, CoreVirtualToolPolicy.TinadecSkillApplyToolId, StringComparison.OrdinalIgnoreCase)) return await SkillApplyAsync(scope, wire, ct).ConfigureAwait(false);
             if (string.Equals(toolId, CoreVirtualToolPolicy.TinadecMcpApplyToolId, StringComparison.OrdinalIgnoreCase)) return await McpApplyAsync(scope, wire, ct).ConfigureAwait(false);
+            if (string.Equals(toolId, CoreVirtualToolPolicy.TinadecPromptApplyToolId, StringComparison.OrdinalIgnoreCase)) return await PromptApplyAsync(scope, wire, ct).ConfigureAwait(false);
+            if (string.Equals(toolId, CoreVirtualToolPolicy.TinadecModelProfileApplyToolId, StringComparison.OrdinalIgnoreCase)) return await ModelProfileApplyAsync(scope, wire, ct).ConfigureAwait(false);
             return Fail(wire, "unknown_tool", $"No workbench configuration tool named '{toolId}'.");
         }
         catch (ToolSettingsException exception)
@@ -90,6 +101,22 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         catch (MarketCatalogException exception)
         {
             return Fail(wire, exception.Code, exception.Message);
+        }
+        catch (PromptFragmentException exception)
+        {
+            return Fail(wire, exception.Code, exception.Message);
+        }
+        catch (ModelProfileException exception)
+        {
+            return Fail(wire, exception.Code, exception.Message);
+        }
+        catch (WireRefusal refusal)
+        {
+            return Fail(wire, refusal.Code, refusal.Message, refusal.Diagnostics);
+        }
+        catch (ArgumentException exception)
+        {
+            return Fail(wire, "invalid_request", exception.Message);
         }
         catch (DbUpdateException exception)
         {
@@ -115,16 +142,39 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         {
             case "agents":
                 return Ok(wire, await InspectAgentsAsync(scope, query, limit, ct).ConfigureAwait(false));
+            case "agent":
+            {
+                var reference = Text(parameters, "agent_id") ?? Text(parameters, "id");
+                if (string.IsNullOrWhiteSpace(reference))
+                    return Fail(wire, "invalid_request", "target=agent needs agent_id (a GUID or a slug).");
+                var agent = await InspectAgentDetailAsync(scope, reference, ct).ConfigureAwait(false);
+                return agent is null ? NotFound(wire, "agent", reference) : Ok(wire, agent);
+            }
             case "catalog":
                 return Ok(wire, await InspectCatalogAsync(scope, query, limit, ct).ConfigureAwait(false));
             case "modes":
                 return Ok(wire, await InspectModesAsync(scope, query, limit, ct).ConfigureAwait(false));
             case "mode":
             {
-                if ((GuidOf(parameters, "mode_id") ?? GuidOf(parameters, "id")) is not { } modeId)
-                    return Fail(wire, "invalid_request", "target=mode needs mode_id.");
-                var result = await _topology.GetAsync(modeId, ct).ConfigureAwait(false);
+                var reference = Text(parameters, "mode_id") ?? Text(parameters, "id");
+                if (string.IsNullOrWhiteSpace(reference))
+                    return Fail(wire, "invalid_request", "target=mode needs mode_id (a GUID or a slug).");
+                var modeId = await ResolveModeIdAsync(scope, reference, ct).ConfigureAwait(false);
+                if (modeId is null) return NotFound(wire, "mode", reference);
+                var result = await _topology.GetAsync(modeId.Value, ct).ConfigureAwait(false);
                 return result.Ok ? Ok(wire, new { ok = true, mode = result.Mode }) : TopologyFailure(wire, result);
+            }
+            case "models":
+                return Ok(wire, await InspectModelsAsync(limit, ct).ConfigureAwait(false));
+            case "prompts":
+                return Ok(wire, await InspectPromptsAsync(scope, query, limit, ct).ConfigureAwait(false));
+            case "prompt_pipeline":
+            {
+                var reference = Text(parameters, "pipeline_id") ?? Text(parameters, "id");
+                if (string.IsNullOrWhiteSpace(reference))
+                    return Fail(wire, "invalid_request", "target=prompt_pipeline needs pipeline_id (a GUID or a slug).");
+                var pipeline = await InspectPromptPipelineAsync(scope, reference, ct).ConfigureAwait(false);
+                return pipeline is null ? NotFound(wire, "prompt_pipeline", reference) : Ok(wire, pipeline);
             }
             case "skills":
                 return Ok(wire, await InspectSkillsAsync(scope, query, limit, ct).ConfigureAwait(false));
@@ -133,7 +183,8 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
             case "market":
                 return Ok(wire, await InspectMarketAsync(query, limit, ct).ConfigureAwait(false));
             default:
-                return Fail(wire, "invalid_request", "target must be one of agents, modes, mode, catalog, skills, mcp, market.");
+                return Fail(wire, "invalid_request",
+                    "target must be one of agents, agent, modes, mode, catalog, models, prompts, prompt_pipeline, skills, mcp, market.");
         }
     }
 
@@ -175,6 +226,255 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
                     description = Truncate(x.Description, MaxText),
                 };
             }).ToArray(),
+        };
+    }
+
+    /// <summary>
+    /// The FULL agent definition, not the list projection: a caller that is about to
+    /// edit or clone an agent needs the prompt, the model strategy, the whole tool
+    /// scope and the prompt-pipeline binding, and needs to know whether the row is a
+    /// pack resource and how it came to exist. The list projection deliberately
+    /// truncates all of that.
+    /// </summary>
+    private async Task<object?> InspectAgentDetailAsync(ToolInvocationScope scope, string reference, CancellationToken ct)
+    {
+        await using var db = await _agents.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var record = await FindAgentAsync(db, scope, reference, ct).ConfigureAwait(false);
+        if (record is null) return null;
+        var ownership = await PackOwnershipAsync(db, scope.TenantId, scope.WorkspaceId, ct).ConfigureAwait(false);
+        ownership.TryGetValue(record.Id, out var owner);
+        var builtIn = owner.PackId is not null;
+        var runtime = await db.AgentRuntimeBindings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.AgentDefinitionId == record.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct)
+            .ConfigureAwait(false);
+        return new
+        {
+            target = "agent",
+            ok = true,
+            agent = new
+            {
+                id = record.Id,
+                slug = record.Slug,
+                display_name = record.DisplayName,
+                description = record.Description,
+                layer = record.Layer,
+                role = record.Role,
+                status = record.Status,
+                enabled = record.Enabled,
+                version = record.Version,
+                revision = record.Revision,
+                source_kind = record.SourceKind,
+                source_key = record.SourceKey,
+                managed = record.Managed,
+                provenance = Element(record.ProvenanceJson),
+                pack_id = owner.PackId,
+                built_in = builtIn,
+                writable = !builtIn && !string.Equals(record.Status, "archived", StringComparison.Ordinal),
+                system_prompt = record.SystemPrompt,
+                model_strategy = Element(record.ModelStrategyJson),
+                tool_scope = Element(record.ToolScopeJson),
+                capabilities = Element(record.CapabilitiesJson),
+                base_prompt_pipeline_id = record.BasePromptPipelineId,
+                // The runtime binding is an override row, not part of the definition; it is
+                // what a frozen run prefers over model_strategy, so an editor has to see it.
+                runtime_binding = runtime is null ? (object?)null : new
+                {
+                    mode = runtime.Mode,
+                    provider_instance_id = runtime.ProviderInstanceId,
+                    model = runtime.Model,
+                    route_purpose = runtime.RoutePurpose,
+                    tool_scope_override = Element(runtime.ToolScopeOverrideJson),
+                    revision = runtime.Revision,
+                    updated_at = runtime.UpdatedAt,
+                },
+                created_at = record.CreatedAt,
+                updated_at = record.UpdatedAt,
+                archived_at = record.ArchivedAt,
+            },
+        };
+    }
+
+    /// <summary>
+    /// Sanitized model catalog plus the per-model profiles an agent designer needs to
+    /// choose a model. Everything here comes from the sanitized projection — provider
+    /// secrets never cross this boundary, by construction in the service itself.
+    /// </summary>
+    private async Task<object> InspectModelsAsync(int limit, CancellationToken ct)
+    {
+        if (_modelProfiles is null)
+            return new { target = "models", available = false, items = Array.Empty<object>(), note = "No model catalog is registered in this host." };
+        var catalog = await _modelProfiles.GetSanitizedCatalogAsync(includeDisabled: false, ct).ConfigureAwait(false);
+        return new
+        {
+            target = "models",
+            available = true,
+            provider_count = catalog.Providers.Count,
+            truncated = catalog.Providers.Count > limit,
+            providers = catalog.Providers.Take(limit).Select(provider => new
+            {
+                id = provider.Id,
+                display_name = provider.DisplayName,
+                driver = provider.Driver,
+                protocol = provider.Protocol,
+                channel = provider.Channel,
+                connection_kind = provider.ConnectionKind,
+                enabled = provider.Enabled,
+                has_api_key = provider.HasApiKey,
+                default_model = provider.DefaultModel,
+                revision = provider.Revision,
+                models = provider.Models.Take(MaxRows).ToArray(),
+                capabilities = provider.Capabilities.Take(MaxRows).ToArray(),
+                // The profile map is keyed by model id and is the only place a model's
+                // specialties/tier live; tinadec_model_profile_apply writes exactly this.
+                model_profiles = provider.ModelProfiles,
+            }).ToArray(),
+            routes = catalog.Routes.Take(MaxRows).Select(route => new
+            {
+                id = route.Id,
+                purpose = route.Purpose,
+                version = route.Version,
+                revision = route.Revision,
+                candidates = route.Candidates.Take(MaxRows).Select(candidate => new
+                {
+                    position = candidate.Position,
+                    provider_instance_id = candidate.ProviderInstanceId,
+                    model = candidate.Model,
+                }).ToArray(),
+            }).ToArray(),
+            health = catalog.Health.Take(MaxRows).Select(state => new
+            {
+                provider_instance_id = state.ProviderInstanceId,
+                model = state.Model,
+                consecutive_failures = state.ConsecutiveFailures,
+                is_cooling = state.IsCooling,
+                cooling_until = state.CoolingUntil,
+                last_category = state.LastCategory,
+                updated_at = state.UpdatedAt,
+            }).ToArray(),
+        };
+    }
+
+    /// <summary>
+    /// Prompt fragments (with content) and prompt pipelines (graph included). Fragments
+    /// are workspace-scoped through the service's own tenant context; pipelines live in
+    /// the agent-configuration store, which is why this reads two sources.
+    /// </summary>
+    private async Task<object> InspectPromptsAsync(ToolInvocationScope scope, string? query, int limit, CancellationToken ct)
+    {
+        IReadOnlyList<PromptFragmentDto> fragments = _promptFragments is null
+            ? []
+            : await _promptFragments.ListAsync(cancellationToken: ct).ConfigureAwait(false);
+        var matchedFragments = fragments.Where(fragment => Matches(query, fragment.Key, fragment.Title, fragment.Category))
+            .OrderBy(fragment => fragment.Category, StringComparer.Ordinal)
+            .ThenByDescending(fragment => fragment.Priority)
+            .ThenBy(fragment => fragment.Key, StringComparer.Ordinal)
+            .ToArray();
+
+        await using var db = await _agents.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var pipelines = await db.PromptPipelines.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .ToListAsync(ct).ConfigureAwait(false);
+        var ownership = await PackOwnershipAsync(db, scope.TenantId, scope.WorkspaceId, ct).ConfigureAwait(false);
+        var matchedPipelines = pipelines.Where(pipeline => Matches(query, pipeline.Slug, pipeline.DisplayName, pipeline.Description))
+            .OrderBy(pipeline => pipeline.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new
+        {
+            target = "prompts",
+            fragments = new
+            {
+                total = matchedFragments.Length,
+                truncated = matchedFragments.Length > limit,
+                items = matchedFragments.Take(limit).Select(fragment => new
+                {
+                    id = fragment.Id,
+                    key = fragment.Key,
+                    title = fragment.Title,
+                    scope = fragment.Scope,
+                    category = fragment.Category,
+                    target_agent_id = fragment.TargetAgentId,
+                    target_agent_slug = fragment.TargetAgentSlug,
+                    priority = fragment.Priority,
+                    enabled = fragment.Enabled,
+                    is_builtin = fragment.IsBuiltIn,
+                    writable = !fragment.IsBuiltIn,
+                    revision = fragment.Revision,
+                    // Content is a prompt fragment's whole purpose; it is workspace data,
+                    // never a secret, and truncating it would make the tool useless.
+                    content = fragment.Content,
+                    updated_at = fragment.UpdatedAt,
+                }).ToArray(),
+            },
+            pipelines = new
+            {
+                total = matchedPipelines.Length,
+                truncated = matchedPipelines.Length > limit,
+                items = matchedPipelines.Take(limit).Select(pipeline =>
+                {
+                    ownership.TryGetValue(pipeline.Id, out var owner);
+                    var builtIn = owner.PackId is not null;
+                    return new
+                    {
+                        id = pipeline.Id,
+                        slug = pipeline.Slug,
+                        display_name = pipeline.DisplayName,
+                        description = pipeline.Description,
+                        status = pipeline.Status,
+                        version = pipeline.Version,
+                        revision = pipeline.Revision,
+                        node_count = CountGraphNodes(pipeline.GraphJson),
+                        pack_id = owner.PackId,
+                        built_in = builtIn,
+                        writable = !builtIn && string.Equals(pipeline.Status, "draft", StringComparison.Ordinal),
+                        updated_at = pipeline.UpdatedAt,
+                    };
+                }).ToArray(),
+            },
+            note = "A pipeline's own graph is returned by target=prompt_pipeline with its pipeline_id.",
+        };
+    }
+
+    private async Task<object?> InspectPromptPipelineAsync(ToolInvocationScope scope, string reference, CancellationToken ct)
+    {
+        await using var db = await _agents.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var pipeline = await FindPromptPipelineAsync(db, scope, reference, ct).ConfigureAwait(false);
+        if (pipeline is null) return null;
+        var ownership = await PackOwnershipAsync(db, scope.TenantId, scope.WorkspaceId, ct).ConfigureAwait(false);
+        ownership.TryGetValue(pipeline.Id, out var owner);
+        var builtIn = owner.PackId is not null;
+        var latestVersion = await db.PromptVersions.AsNoTracking()
+            .Where(x => x.PromptPipelineId == pipeline.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .OrderByDescending(x => x.Version)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        return new
+        {
+            target = "prompt_pipeline",
+            ok = true,
+            pipeline = new
+            {
+                id = pipeline.Id,
+                slug = pipeline.Slug,
+                display_name = pipeline.DisplayName,
+                description = pipeline.Description,
+                status = pipeline.Status,
+                version = pipeline.Version,
+                revision = pipeline.Revision,
+                pack_id = owner.PackId,
+                built_in = builtIn,
+                writable = !builtIn && string.Equals(pipeline.Status, "draft", StringComparison.Ordinal),
+                // The full graph: nodes AND edges, exactly as the canvas edits it.
+                graph = Element(pipeline.GraphJson),
+                latest_published_version = latestVersion is null ? (object?)null : new
+                {
+                    id = latestVersion.Id,
+                    version = latestVersion.Version,
+                    content_hash = latestVersion.ContentHash,
+                    created_at = latestVersion.CreatedAt,
+                },
+                created_at = pipeline.CreatedAt,
+                updated_at = pipeline.UpdatedAt,
+            },
         };
     }
 
@@ -247,6 +547,9 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
                     status = x.Status,
                     revision = x.Revision,
                     version = x.Version,
+                    // Null means "derive from the topology at freeze time"; a value is the
+                    // author's explicit declaration and wins over the inference.
+                    orchestration_tier = x.OrchestrationTier,
                     node_count = counts.GetValueOrDefault(x.Id),
                     pack_id = owner.PackId,
                     built_in = builtIn,
@@ -356,19 +659,27 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         var parameters = wire.Params ?? default;
         var action = (Text(parameters, "action") ?? string.Empty).Trim().ToLowerInvariant();
         var payload = ChildObject(parameters, "payload");
+        var reference = Text(parameters, "agent_id") ?? Text(parameters, "id");
         await using var db = await _agents.CreateDbContextAsync(ct).ConfigureAwait(false);
         var now = DateTimeOffset.UtcNow;
         switch (action)
         {
             case "create":
             {
-                var name = Text(payload, "display_name") ?? Text(payload, "name");
+                var name = Text(payload, "display_name") ?? Text(payload, "name") ?? Text(parameters, "display_name");
                 if (string.IsNullOrWhiteSpace(name))
                     return Fail(wire, "invalid_request", "action=create needs payload.display_name.");
                 var layer = (Text(payload, "layer") ?? "operation").Trim().ToLowerInvariant();
                 if (ValidateLayer(layer) is { } layerError) return Fail(wire, "invalid_layer", layerError);
                 if (ModelStrategyError(payload) is { } strategyError) return Fail(wire, "invalid_model_strategy", strategyError);
+                if (await ResolvePromptPipelineAsync(db, scope, payload, ct).ConfigureAwait(false) is { } pipelineFailure) return Fail(wire, pipelineFailure.Code, pipelineFailure.Message);
+                var modelBinding = await ApplyRuntimeBindingAsync(db, scope, null, payload, ct).ConfigureAwait(false);
+                if (modelBinding.Failure is { } modelBindingFailure) return Fail(wire, modelBindingFailure.Code, modelBindingFailure.Message);
                 var slug = await UniqueDraftSlugAsync(db, Text(payload, "slug") ?? name, scope, ct).ConfigureAwait(false);
+                // An agent runtime creating an agent is not the same event as a person
+                // filling in a form. When the caller did not say, the calling run decides:
+                // a run means "agent_generated", no run means "custom".
+                var sourceKind = DefaultSourceKind(payload, scope);
                 var record = new AgentDefinitionRecord
                 {
                     Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
@@ -379,7 +690,9 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
                     ToolScopeJson = Raw(payload, "tool_scope") ?? Raw(payload, "allowed_tools") ?? "[]",
                     SystemPrompt = Text(payload, "system_prompt"),
                     Description = Text(payload, "description"),
-                    SourceKind = "custom", SourceKey = slug, Managed = false,
+                    BasePromptPipelineId = GuidOf(payload, "base_prompt_pipeline_id"),
+                    SourceKind = sourceKind, SourceKey = slug, Managed = false,
+                    ProvenanceJson = Provenance(scope, payload, sourceKind),
                     Enabled = ReadBool(payload, "enabled", true),
                     Status = "draft", Revision = 1, Version = 0, CreatedAt = now, UpdatedAt = now,
                     CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId,
@@ -387,49 +700,86 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
                 db.AgentDefinitions.Add(record);
                 try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
                 catch (DbUpdateException) { return Fail(wire, "duplicate_slug", "A draft agent already uses this slug."); }
-                return Ok(wire, new { ok = true, action, agent = DescribeAgent(record, builtIn: false), note = "Saved as a draft; publish it before a new run can use it." });
+                if (modelBinding.Binding is not null)
+                    await SaveRuntimeBindingAsync(db, scope, record.Id, modelBinding.Binding, now, ct).ConfigureAwait(false);
+                var toolSettingsNote = await ApplyToolSettingsAsync(record.Id, payload, ct).ConfigureAwait(false);
+                return Ok(wire, new
+                {
+                    ok = true,
+                    action,
+                    agent = DescribeAgent(record, builtIn: false),
+                    source_kind = record.SourceKind,
+                    base_prompt_pipeline_id = record.BasePromptPipelineId,
+                    note = "Saved as a draft; call tinadec_agent_apply action=publish before a mode can use it.",
+                    tool_settings_note = toolSettingsNote,
+                });
             }
             case "clone":
             {
-                if ((GuidOf(parameters, "agent_id") ?? GuidOf(parameters, "source_id")) is not { } sourceId)
-                    return Fail(wire, "invalid_request", "action=clone needs agent_id (the agent to copy).");
+                var sourceId = reference is not null ? await ResolveAgentIdAsync(db, scope, reference, ct).ConfigureAwait(false) : null;
+                if (sourceId is null)
+                    return Fail(wire, "invalid_request", "action=clone needs agent_id (the agent to copy, GUID or slug).");
                 var source = await db.AgentDefinitions.AsNoTracking()
-                    .FirstOrDefaultAsync(x => x.Id == sourceId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+                    .FirstOrDefaultAsync(x => x.Id == sourceId.Value && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
                 if (source is null) return Fail(wire, "not_found", "Agent not found.");
                 if (string.Equals(source.Status, "archived", StringComparison.Ordinal))
                     return Fail(wire, "conflict", "An archived agent cannot be cloned.");
+                if (await ResolvePromptPipelineAsync(db, scope, payload, ct).ConfigureAwait(false) is { } pipelineFailure) return Fail(wire, pipelineFailure.Code, pipelineFailure.Message);
                 var name = Text(payload, "display_name") ?? $"{source.DisplayName} (copy)";
                 var slug = await UniqueDraftSlugAsync(db, Text(payload, "slug") ?? $"{source.Slug}-copy", scope, ct).ConfigureAwait(false);
+                var sourceKind = DefaultSourceKind(payload, scope);
                 var copy = new AgentDefinitionRecord
                 {
                     Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
                     Slug = slug, DisplayName = name.Trim(), Layer = source.Layer,
                     Role = source.Role, CapabilitiesJson = source.CapabilitiesJson,
-                    BasePromptPipelineId = source.BasePromptPipelineId,
-                    ModelStrategyJson = source.ModelStrategyJson, ToolScopeJson = source.ToolScopeJson,
-                    SystemPrompt = source.SystemPrompt, Description = source.Description,
-                    I18nJson = null, SourceKind = "custom", SourceKey = slug, Managed = false,
-                    Enabled = source.Enabled, Status = "draft", Revision = 1, Version = 0,
+                    // An explicit payload value wins; otherwise the copy inherits the source's
+                    // pipeline. A clone that silently lost its prompt would be a trap.
+                    BasePromptPipelineId = GuidOf(payload, "base_prompt_pipeline_id") ?? source.BasePromptPipelineId,
+                    ModelStrategyJson = Raw(payload, "model_strategy") ?? source.ModelStrategyJson,
+                    ToolScopeJson = Raw(payload, "tool_scope") ?? Raw(payload, "allowed_tools") ?? source.ToolScopeJson,
+                    SystemPrompt = Text(payload, "system_prompt") ?? source.SystemPrompt,
+                    Description = Text(payload, "description") ?? source.Description,
+                    I18nJson = null, SourceKind = sourceKind, SourceKey = slug, Managed = false,
+                    ProvenanceJson = Provenance(scope, payload, sourceKind, source.Id),
+                    Enabled = ReadBool(payload, "enabled", source.Enabled), Status = "draft", Revision = 1, Version = 0,
                     CreatedAt = now, UpdatedAt = now,
                     CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId,
                 };
                 db.AgentDefinitions.Add(copy);
                 try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
                 catch (DbUpdateException) { return Fail(wire, "duplicate_slug", "A draft agent already uses this slug."); }
-                return Ok(wire, new { ok = true, action, agent = DescribeAgent(copy, builtIn: false), source_agent_id = source.Id, note = "A custom draft copy; the source is unchanged." });
+                var cloneBinding = await ApplyRuntimeBindingAsync(db, scope, null, payload, ct).ConfigureAwait(false);
+                if (cloneBinding.Failure is { } cloneBindingFailure) return Fail(wire, cloneBindingFailure.Code, cloneBindingFailure.Message);
+                if (cloneBinding.Binding is not null)
+                    await SaveRuntimeBindingAsync(db, scope, copy.Id, cloneBinding.Binding, now, ct).ConfigureAwait(false);
+                var toolSettingsNote = await ApplyToolSettingsAsync(copy.Id, payload, ct).ConfigureAwait(false);
+                return Ok(wire, new
+                {
+                    ok = true,
+                    action,
+                    agent = DescribeAgent(copy, builtIn: false),
+                    source_agent_id = source.Id,
+                    source_kind = copy.SourceKind,
+                    tool_settings_note = toolSettingsNote,
+                    note = "A custom draft copy; the source is unchanged. Publish it before a mode can use it.",
+                });
             }
             case "update":
             {
-                if (GuidOf(parameters, "agent_id") is not { } agentId)
-                    return Fail(wire, "invalid_request", "action=update needs agent_id.");
+                var agentId = reference is not null ? await ResolveAgentIdAsync(db, scope, reference, ct).ConfigureAwait(false) : null;
+                if (agentId is null) return Fail(wire, "invalid_request", "action=update needs agent_id (GUID or slug).");
                 var record = await db.AgentDefinitions
-                    .FirstOrDefaultAsync(x => x.Id == agentId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+                    .FirstOrDefaultAsync(x => x.Id == agentId.Value && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
                 if (record is null) return Fail(wire, "not_found", "Agent not found.");
-                if (await _packs.FindManagedResourceAsync("agent", agentId, ct).ConfigureAwait(false) is { } managed)
+                if (await _packs.FindManagedResourceAsync("agent", agentId.Value, ct).ConfigureAwait(false) is { } managed)
                     return Fail(wire, AgentTopologyCodes.BuiltInReadOnly,
                         $"Pack '{managed.PackId}' manages agent '{managed.ResourceKey}'. Clone it and update the copy.");
                 if (string.Equals(record.Status, "archived", StringComparison.Ordinal))
                     return Fail(wire, "conflict", "An archived agent cannot be edited.");
+                var expected = ReadInt(parameters, "expected_revision", ReadInt(payload, "expected_revision", -1));
+                if (expected >= 0 && record.Revision != expected)
+                    return Fail(wire, "conflict", $"The agent changed since it was read: expected revision {expected}, actual {record.Revision}. Inspect it again.");
                 if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("layer", out var layerElement))
                 {
                     var layer = (layerElement.GetString() ?? "operation").Trim().ToLowerInvariant();
@@ -437,6 +787,7 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
                     record.Layer = layer;
                 }
                 if (ModelStrategyError(payload) is { } strategyError) return Fail(wire, "invalid_model_strategy", strategyError);
+                if (await ResolvePromptPipelineAsync(db, scope, payload, ct).ConfigureAwait(false) is { } pipelineFailure) return Fail(wire, pipelineFailure.Code, pipelineFailure.Message);
                 if (Text(payload, "display_name") is { } displayName && !string.IsNullOrWhiteSpace(displayName)) record.DisplayName = displayName;
                 if (Text(payload, "role") is { } role) record.Role = role;
                 if (Raw(payload, "capabilities") is { } capabilities) record.CapabilitiesJson = capabilities;
@@ -444,19 +795,135 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
                 if ((Raw(payload, "tool_scope") ?? Raw(payload, "allowed_tools")) is { } toolScope) record.ToolScopeJson = toolScope;
                 if (Text(payload, "system_prompt") is { } systemPrompt) record.SystemPrompt = systemPrompt;
                 if (Text(payload, "description") is { } description) record.Description = description;
+                if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("base_prompt_pipeline_id", out var pipelineElement))
+                    record.BasePromptPipelineId = pipelineElement.ValueKind switch
+                    {
+                        JsonValueKind.Null => null,
+                        JsonValueKind.String when Guid.TryParse(pipelineElement.GetString(), out var pipelineId) && pipelineId != Guid.Empty => pipelineId,
+                        // Undefined/null clears; anything else is a caller bug, not a silent no-op.
+                        JsonValueKind.String => null,
+                        _ => record.BasePromptPipelineId,
+                    };
                 if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("enabled", out var enabled) && enabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
                     record.Enabled = enabled.ValueKind == JsonValueKind.True;
+                if (Text(payload, "source_kind") is { } sourceKind && !string.IsNullOrWhiteSpace(sourceKind))
+                    record.SourceKind = sourceKind.Trim().ToLowerInvariant();
+                if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("provenance", out _))
+                    record.ProvenanceJson = Provenance(scope, payload, record.SourceKind) ?? record.ProvenanceJson;
                 record.Status = "draft";
                 record.Revision++;
                 record.UpdatedAt = now;
                 record.UpdatedByPrincipalId = scope.PrincipalId;
                 try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
                 catch (DbUpdateConcurrencyException) { return Fail(wire, "conflict", "The agent changed since it was read."); }
-                return Ok(wire, new { ok = true, action, agent = DescribeAgent(record, builtIn: false), note = "Saved as a draft; publish it before a new run can use it." });
+                var updateBinding = await ApplyRuntimeBindingAsync(db, scope, record.Id, payload, ct).ConfigureAwait(false);
+                if (updateBinding.Failure is { } updateBindingFailure) return Fail(wire, updateBindingFailure.Code, updateBindingFailure.Message);
+                if (updateBinding.Binding is not null)
+                    await SaveRuntimeBindingAsync(db, scope, record.Id, updateBinding.Binding, now, ct).ConfigureAwait(false);
+                var toolSettingsNote = await ApplyToolSettingsAsync(record.Id, payload, ct).ConfigureAwait(false);
+                return Ok(wire, new
+                {
+                    ok = true,
+                    action,
+                    agent = DescribeAgent(record, builtIn: false),
+                    base_prompt_pipeline_id = record.BasePromptPipelineId,
+                    runtime_binding = updateBinding.Binding is null ? (object?)null : new { mode = updateBinding.Binding.Mode, revision = updateBinding.Binding.Revision },
+                    tool_settings_note = toolSettingsNote,
+                    note = "Saved as a draft; publish it to make a new runnable version.",
+                });
+            }
+            case "publish":
+            {
+                var agentId = reference is not null ? await ResolveAgentIdAsync(db, scope, reference, ct).ConfigureAwait(false) : null;
+                if (agentId is null) return Fail(wire, "invalid_request", "action=publish needs agent_id (GUID or slug).");
+                return await PublishAgentAsync(db, scope, wire, agentId.Value, parameters, payload, ct).ConfigureAwait(false);
             }
             default:
-                return Fail(wire, "invalid_request", "action must be clone, create or update.");
+                return Fail(wire, "invalid_request", "action must be clone, create, update or publish.");
         }
+    }
+
+    /// <summary>
+    /// Publishes a draft agent the same way the editor does: validate, snapshot an
+    /// immutable version, then flip the definition to published. This is the missing
+    /// half of self-configuration — a mode only accepts published agents, so an agent
+    /// an AI created could never reach a runnable mode without it.
+    /// </summary>
+    private async Task<ToolWireResponseDto> PublishAgentAsync(
+        AgentConfigurationDbContext db,
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        Guid agentId,
+        JsonElement parameters,
+        JsonElement payload,
+        CancellationToken ct)
+    {
+        var record = await db.AgentDefinitions
+            .FirstOrDefaultAsync(x => x.Id == agentId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+        if (record is null) return Fail(wire, "not_found", "Agent not found.");
+        if (await _packs.FindManagedResourceAsync("agent", agentId, ct).ConfigureAwait(false) is { } managed)
+            return Fail(wire, AgentTopologyCodes.BuiltInReadOnly,
+                $"Pack '{managed.PackId}' manages agent '{managed.ResourceKey}'. Clone it and publish the copy.");
+        var expected = ReadInt(parameters, "expected_revision", ReadInt(payload, "expected_revision", -1));
+        if (expected >= 0 && record.Revision != expected)
+            return Fail(wire, "conflict", $"The agent changed since it was read: expected revision {expected}, actual {record.Revision}. Inspect it again.");
+        if (string.Equals(record.Status, "archived", StringComparison.Ordinal))
+            return Fail(wire, "conflict", "An archived agent cannot be published.");
+        if (!string.Equals(record.Status, "draft", StringComparison.OrdinalIgnoreCase))
+            return Fail(wire, "not_draft", $"This agent is already '{record.Status}'. Edit the draft to create a new version.");
+        if (ValidateLayer(record.Layer) is { } layerError) return Fail(wire, "invalid_layer", layerError);
+        if (string.IsNullOrWhiteSpace(record.DisplayName))
+            return Fail(wire, "invalid_request", "An agent needs a display_name before it can be published.");
+        if (record.ModelStrategyJson is { } strategyJson && AgentTopologyService.ValidateModelStrategy(strategyJson) is { } strategyError)
+            return Fail(wire, "invalid_model_strategy", strategyError);
+
+        var now = DateTimeOffset.UtcNow;
+        var version = (await db.AgentVersions.Where(x => x.AgentDefinitionId == agentId).MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) ?? 0) + 1;
+        // Same snapshot shape PublishAgent writes, so a version published by a model and a
+        // version published by the editor are indistinguishable to a reader.
+        var snapshot = JsonSerializer.Serialize(new
+        {
+            id = record.Id,
+            slug = record.Slug,
+            display_name = record.DisplayName,
+            layer = record.Layer,
+            role = record.Role,
+            source_kind = record.SourceKind,
+            provenance = Element(record.ProvenanceJson),
+            capabilities = ParseJson(record.CapabilitiesJson),
+            model_strategy = ParseJson(record.ModelStrategyJson),
+            tool_scope = ParseJson(record.ToolScopeJson),
+            base_prompt_pipeline_id = record.BasePromptPipelineId,
+            system_prompt = record.SystemPrompt,
+            description = record.Description,
+            enabled = record.Enabled,
+        });
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(snapshot))).ToLowerInvariant();
+        db.AgentVersions.Add(new AgentVersionRecord
+        {
+            Id = Guid.NewGuid(), TenantId = record.TenantId, WorkspaceId = record.WorkspaceId,
+            AgentDefinitionId = record.Id, Version = version, Layer = record.Layer, Role = record.Role,
+            SnapshotJson = snapshot, ContentHash = hash,
+            ContentLength = System.Text.Encoding.UTF8.GetByteCount(snapshot),
+            Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId,
+        });
+        record.Version = version;
+        record.Status = "published";
+        record.Revision++;
+        record.UpdatedAt = now;
+        record.UpdatedByPrincipalId = scope.PrincipalId;
+        try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
+        catch (DbUpdateConcurrencyException) { return Fail(wire, "conflict", "The agent changed since it was read."); }
+        return Ok(wire, new
+        {
+            ok = true,
+            action = "publish",
+            agent = DescribeAgent(record, builtIn: false),
+            version,
+            revision = record.Revision,
+            content_hash = hash,
+            note = "Published. A mode can now use this agent; runs already admitted keep their frozen version.",
+        });
     }
 
     // ── tinadec_mode_apply / tinadec_mode_publish ──
@@ -466,30 +933,57 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         var parameters = wire.Params ?? default;
         var action = (Text(parameters, "action") ?? string.Empty).Trim().ToLowerInvariant();
         var payload = ChildObject(parameters, "payload");
+        var body = payload.ValueKind == JsonValueKind.Object ? payload : parameters;
         var expectedRevision = ReadInt(parameters, "expected_revision", -1);
-        var modeId = GuidOf(parameters, "mode_id");
+        var reference = Text(parameters, "mode_id") ?? Text(parameters, "id");
+        Guid? modeId = null;
+        if (!string.IsNullOrWhiteSpace(reference))
+        {
+            modeId = await ResolveModeIdAsync(scope, reference, ct).ConfigureAwait(false);
+            // create must not silently fall back to "make another mode" when the caller
+            // named an existing one: that would duplicate a slug instead of reporting it.
+            if (modeId is null && action is not "create")
+                return NotFound(wire, "mode", reference);
+        }
+        // The tier is a first-class mode field, not a graph detail: it selects the
+        // enforcement path a run takes. IAgentTopologyService validates and persists it
+        // (ParseTopology → ApplyTopologyAsync), so this only normalizes what to echo back
+        // and refuses a typo before any write happens.
+        string? tier = null;
+        if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("orchestration_tier", out var tierElement)
+            && tierElement.ValueKind is not JsonValueKind.Null)
+        {
+            if (tierElement.ValueKind != JsonValueKind.String)
+                return Fail(wire, "invalid_request", "orchestration_tier must be a string or null.");
+            tier = NormalizeTier(tierElement.GetString());
+            if (tier is null)
+                return Fail(wire, "invalid_orchestration_tier",
+                    "orchestration_tier must be one of solo, solo_dispatch, free_form, self_dispatch, deterministic.");
+        }
         AgentTopologyResult result;
         switch (action)
         {
             case "create":
-                result = await _topology.CreateDraftAsync(payload.ValueKind == JsonValueKind.Object ? payload : parameters, ct).ConfigureAwait(false);
+                result = await _topology.CreateDraftAsync(body, ct).ConfigureAwait(false);
                 break;
             case "clone":
-                if (modeId is null) return Fail(wire, "invalid_request", "action=clone needs mode_id (the mode to copy).");
+                if (modeId is null) return Fail(wire, "invalid_request", "action=clone needs mode_id (the mode to copy, GUID or slug).");
                 result = await _topology.CloneDraftAsync(modeId.Value, payload, ct).ConfigureAwait(false);
                 break;
             case "upsert":
-                if (modeId is null) return Fail(wire, "invalid_request", "action=upsert needs mode_id.");
-                result = await _topology.UpsertDraftAsync(modeId.Value, payload.ValueKind == JsonValueKind.Object ? payload : parameters, expectedRevision, ct).ConfigureAwait(false);
+                if (modeId is null) return Fail(wire, "invalid_request", "action=upsert needs mode_id (GUID or slug).");
+                result = await _topology.UpsertDraftAsync(modeId.Value, body, expectedRevision, ct).ConfigureAwait(false);
                 break;
             case "delete":
-                if (modeId is null) return Fail(wire, "invalid_request", "action=delete needs mode_id.");
+                if (modeId is null) return Fail(wire, "invalid_request", "action=delete needs mode_id (GUID or slug).");
                 result = await _topology.DeleteDraftAsync(modeId.Value, ct).ConfigureAwait(false);
                 break;
             default:
                 return Fail(wire, "invalid_request", "action must be clone, create, upsert or delete.");
         }
         if (!result.Ok) return TopologyFailure(wire, result);
+        // The topology service persists the tier itself (ParseTopology → ApplyTopologyAsync),
+        // so this only reports what was asked for and what was stored.
         return Ok(wire, new
         {
             ok = true,
@@ -498,6 +992,7 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
             mode_id = result.ModeId,
             revision = result.Revision,
             version = result.Version,
+            orchestration_tier = tier,
             note = action == "delete" ? null : "Saved as a draft; call tinadec_mode_publish when the graph is right.",
         });
     }
@@ -505,9 +1000,12 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
     private async Task<ToolWireResponseDto> ModePublishAsync(ToolInvocationScope scope, ToolWireRequestDto wire, CancellationToken ct)
     {
         var parameters = wire.Params ?? default;
-        if (GuidOf(parameters, "mode_id") is not { } modeId)
-            return Fail(wire, "invalid_request", "tinadec_mode_publish needs mode_id.");
-        var result = await _topology.PublishAsync(modeId, ReadInt(parameters, "expected_revision", -1), ct).ConfigureAwait(false);
+        var reference = Text(parameters, "mode_id") ?? Text(parameters, "id");
+        if (string.IsNullOrWhiteSpace(reference))
+            return Fail(wire, "invalid_request", "tinadec_mode_publish needs mode_id (GUID or slug).");
+        var modeId = await ResolveModeIdAsync(scope, reference, ct).ConfigureAwait(false);
+        if (modeId is null) return NotFound(wire, "mode", reference);
+        var result = await _topology.PublishAsync(modeId.Value, ReadInt(parameters, "expected_revision", -1), ct).ConfigureAwait(false);
         if (!result.Ok) return TopologyFailure(wire, result);
         return Ok(wire, new
         {
@@ -722,6 +1220,509 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         }
     }
 
+    // ── tinadec_prompt_apply ──
+
+    /// <summary>
+    /// Prompt fragments and prompt pipelines. Fragments go through
+    /// <see cref="IPromptFragmentService"/>, which is the one store the assembler reads;
+    /// pipelines go through the agent-configuration store that the canvas and
+    /// <c>IAgentConfigurationService.PublishAsync</c> already use. There is no second
+    /// store here on purpose: a fragment written by a model must be the same row the
+    /// assembler snapshots into a run.
+    /// </summary>
+    private async Task<ToolWireResponseDto> PromptApplyAsync(ToolInvocationScope scope, ToolWireRequestDto wire, CancellationToken ct)
+    {
+        var parameters = wire.Params ?? default;
+        var target = (Text(parameters, "target") ?? string.Empty).Trim().ToLowerInvariant();
+        var action = (Text(parameters, "action") ?? string.Empty).Trim().ToLowerInvariant();
+        var payload = ChildObject(parameters, "payload");
+        var expectedRevision = ReadInt(parameters, "expected_revision", -1);
+        long? expected = expectedRevision >= 0 ? expectedRevision : null;
+        if (target is not ("fragment" or "pipeline"))
+            return Fail(wire, "invalid_request", "target must be fragment or pipeline.");
+        if (action is not ("create" or "update" or "clone" or "publish" or "rollback"))
+            return Fail(wire, "invalid_request", "action must be create, update, clone, publish or rollback.");
+        return target == "fragment"
+            ? await PromptFragmentApplyAsync(scope, wire, action, parameters, payload, expected, ct).ConfigureAwait(false)
+            : await PromptPipelineApplyAsync(scope, wire, action, parameters, payload, expected, ct).ConfigureAwait(false);
+    }
+
+    private async Task<ToolWireResponseDto> PromptFragmentApplyAsync(
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        string action,
+        JsonElement parameters,
+        JsonElement payload,
+        long? expected,
+        CancellationToken ct)
+    {
+        if (_promptFragments is null)
+            return Fail(wire, "unavailable", "No prompt fragment store is registered in this host.");
+        var reference = Text(parameters, "fragment_id") ?? Text(parameters, "id");
+        Guid? fragmentId = null;
+        if (!string.IsNullOrWhiteSpace(reference))
+        {
+            fragmentId = await ResolveFragmentIdAsync(reference, ct).ConfigureAwait(false);
+            if (fragmentId is null && action != "create") return NotFound(wire, "prompt_fragment", reference);
+        }
+        switch (action)
+        {
+            case "create":
+            {
+                var key = Text(payload, "key");
+                if (string.IsNullOrWhiteSpace(key))
+                    return Fail(wire, "invalid_request", "target=fragment action=create needs payload.key (a stable fragment key, not a GUID).");
+                var content = Text(payload, "content");
+                if (content is null)
+                    return Fail(wire, "invalid_request", "target=fragment action=create needs payload.content.");
+                var saved = await _promptFragments.SaveAsync(null, FragmentRequest(payload), null, ct).ConfigureAwait(false);
+                return Ok(wire, new { ok = true, target = "fragment", action, fragment = DescribeFragment(saved), note = FragmentNote(saved) });
+            }
+            case "update":
+            {
+                if (fragmentId is null)
+                    return Fail(wire, "invalid_request", "target=fragment action=update needs fragment_id (GUID, or key when unique).");
+                var existing = await _promptFragments.GetAsync(fragmentId.Value, ct).ConfigureAwait(false);
+                if (existing is null) return NotFound(wire, "prompt_fragment", fragmentId.ToString());
+                if (existing.IsBuiltIn)
+                    return Fail(wire, AgentTopologyCodes.BuiltInReadOnly, "Built-in prompt fragments are read-only. Clone one with action=clone and edit the copy.");
+                var saved = await _promptFragments.SaveAsync(fragmentId, FragmentRequest(payload), expected, ct).ConfigureAwait(false);
+                return Ok(wire, new { ok = true, target = "fragment", action, fragment = DescribeFragment(saved), note = FragmentNote(saved) });
+            }
+            case "clone":
+            {
+                if (fragmentId is null) return Fail(wire, "invalid_request", "target=fragment action=clone needs fragment_id (the fragment to copy).");
+                var clone = new PromptFragmentCloneRequestDto
+                {
+                    Key = Text(payload, "new_key") ?? Text(payload, "key"),
+                    Title = Text(payload, "title"),
+                    Scope = Text(payload, "scope"),
+                    TargetAgentId = Text(payload, "target_agent_id"),
+                    TargetAgentSlug = Text(payload, "target_agent_slug"),
+                };
+                var saved = await _promptFragments.CloneAsync(fragmentId.Value, clone, ct).ConfigureAwait(false);
+                return Ok(wire, new { ok = true, target = "fragment", action, fragment = DescribeFragment(saved), note = "A new editable fragment; the source is unchanged." });
+            }
+            case "publish":
+            {
+                // A fragment has no draft/published split: every save already writes an
+                // immutable version. "Publish" therefore means "add a named version", which
+                // is the operation a caller actually wants and the one history shows.
+                if (fragmentId is null) return Fail(wire, "invalid_request", "target=fragment action=publish needs fragment_id.");
+                var existing = await _promptFragments.GetAsync(fragmentId.Value, ct).ConfigureAwait(false);
+                if (existing is null) return NotFound(wire, "prompt_fragment", fragmentId.ToString());
+                if (existing.IsBuiltIn)
+                    return Fail(wire, AgentTopologyCodes.BuiltInReadOnly, "Built-in prompt fragments are read-only.");
+                var created = await _promptFragments.CreateVersionAsync(fragmentId.Value, new PromptFragmentVersionCreateRequestDto
+                {
+                    Content = Text(payload, "content") ?? existing.Content,
+                    ChangedFields = ReadStringArray(payload, "changed_fields") is { Count: > 0 } changed ? changed : null,
+                    ChangeSummary = Text(payload, "change_summary") ?? "published by tinadec_prompt_apply",
+                }, expected, ct).ConfigureAwait(false);
+                // Re-read rather than guessing the new revision: the caller's next write uses
+                // this number as expected_revision, so a fabricated one would be a guaranteed
+                // conflict on the very next call.
+                var afterPublish = await _promptFragments.GetAsync(fragmentId.Value, ct).ConfigureAwait(false) ?? existing;
+                return Ok(wire, new
+                {
+                    ok = true,
+                    target = "fragment",
+                    action,
+                    fragment = DescribeFragment(afterPublish),
+                    version = new { id = created.Id, version = created.Version, is_active = created.IsActive, created_at = created.CreatedAt },
+                    note = "A new immutable fragment version; earlier versions stay readable and rollback-able.",
+                });
+            }
+            case "rollback":
+            {
+                if (fragmentId is null) return Fail(wire, "invalid_request", "target=fragment action=rollback needs fragment_id.");
+                var existing = await _promptFragments.GetAsync(fragmentId.Value, ct).ConfigureAwait(false);
+                if (existing is null) return NotFound(wire, "prompt_fragment", fragmentId.ToString());
+                if (existing.IsBuiltIn)
+                    return Fail(wire, AgentTopologyCodes.BuiltInReadOnly, "Built-in prompt fragments are read-only.");
+                var versionRaw = Text(parameters, "version_id") ?? Text(payload, "version_id");
+                var targetVersion = ReadInt(payload, "target_version", ReadInt(parameters, "target_version", 0));
+                var rollback = new PromptFragmentRollbackRequestDto
+                {
+                    VersionId = Guid.TryParse(versionRaw, out var versionId) && versionId != Guid.Empty ? versionId : null,
+                    TargetVersion = targetVersion > 0 ? targetVersion : null,
+                    ChangeSummary = Text(payload, "change_summary"),
+                };
+                if (rollback.VersionId is null && rollback.TargetVersion is null)
+                    return Fail(wire, "invalid_request", "target=fragment action=rollback needs version_id (GUID) or target_version (the version number).");
+                var saved = await _promptFragments.RollbackAsync(fragmentId.Value, rollback, expected, ct).ConfigureAwait(false);
+                return Ok(wire, new { ok = true, target = "fragment", action, fragment = DescribeFragment(saved), note = FragmentNote(saved) });
+            }
+            default:
+                return Fail(wire, "invalid_request", "Unsupported fragment action.");
+        }
+    }
+
+    private async Task<ToolWireResponseDto> PromptPipelineApplyAsync(
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        string action,
+        JsonElement parameters,
+        JsonElement payload,
+        long? expected,
+        CancellationToken ct)
+    {
+        await using var db = await _agents.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var reference = Text(parameters, "pipeline_id") ?? Text(parameters, "id");
+        PromptPipelineRecord? record = null;
+        if (!string.IsNullOrWhiteSpace(reference))
+        {
+            record = await FindPromptPipelineAsync(db, scope, reference, ct).ConfigureAwait(false);
+            if (record is null && action != "create") return NotFound(wire, "prompt_pipeline", reference);
+        }
+        var now = DateTimeOffset.UtcNow;
+        switch (action)
+        {
+            case "create":
+            {
+                var name = Text(payload, "display_name") ?? Text(payload, "name");
+                if (string.IsNullOrWhiteSpace(name))
+                    return Fail(wire, "invalid_request", "target=pipeline action=create needs payload.display_name.");
+                // The graph is the pipeline: refuse one that cannot run rather than
+                // saving a draft the publish gate will reject later.
+                var graphJson = GraphPayload(payload);
+                if (graphJson is null)
+                    return Fail(wire, "invalid_request", "target=pipeline action=create needs payload.graph (or payload.nodes + payload.edges).");
+                if (ValidatePipelineGraph(graphJson) is { } graphError)
+                    return Fail(wire, "invalid_request", graphError);
+                var slug = await UniquePipelineSlugAsync(db, Text(payload, "slug") ?? name, scope, ct).ConfigureAwait(false);
+                var created = new PromptPipelineRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+                    Slug = slug, DisplayName = name.Trim(), Description = Text(payload, "description"),
+                    GraphJson = graphJson, Status = "draft", Revision = 1, Version = 0,
+                    CreatedAt = now, UpdatedAt = now,
+                    CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId,
+                };
+                db.PromptPipelines.Add(created);
+                try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
+                catch (DbUpdateException) { return Fail(wire, "duplicate_slug", "A draft prompt pipeline already uses this slug."); }
+                return Ok(wire, new
+                {
+                    ok = true,
+                    target = "pipeline",
+                    action,
+                    pipeline = DescribePipeline(created, builtIn: false),
+                    note = PipelineNote(created),
+                });
+            }
+            case "update":
+            {
+                if (record is null) return Fail(wire, "invalid_request", "target=pipeline action=update needs pipeline_id (GUID or slug).");
+                if (await _packs.FindManagedResourceAsync("prompt_pipeline", record.Id, ct).ConfigureAwait(false) is { } managed)
+                    return Fail(wire, AgentTopologyCodes.BuiltInReadOnly,
+                        $"Pack '{managed.PackId}' manages prompt pipeline '{managed.ResourceKey}'. Clone it with action=clone and edit the copy.");
+                if (!string.Equals(record.Status, "draft", StringComparison.OrdinalIgnoreCase))
+                    return Fail(wire, "not_draft", $"This pipeline is '{record.Status}'; only a draft can be edited.");
+                if (expected is { } expectedRevision && record.Revision != expectedRevision)
+                    return Fail(wire, "revision_conflict", $"Prompt pipeline revision conflict: expected {expectedRevision}, actual {record.Revision}.");
+                if (Text(payload, "display_name") is { } displayName && !string.IsNullOrWhiteSpace(displayName)) record.DisplayName = displayName;
+                if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("description", out var description))
+                    record.Description = description.ValueKind == JsonValueKind.String ? description.GetString() : null;
+                if (GraphPayload(payload) is { } graphJson)
+                {
+                    if (ValidatePipelineGraph(graphJson) is { } graphError)
+                        return Fail(wire, "invalid_request", graphError);
+                    record.GraphJson = graphJson;
+                }
+                record.Revision++;
+                record.UpdatedAt = now;
+                record.UpdatedByPrincipalId = scope.PrincipalId;
+                try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
+                catch (DbUpdateConcurrencyException) { return Fail(wire, "revision_conflict", "The pipeline changed since it was read."); }
+                return Ok(wire, new { ok = true, target = "pipeline", action, pipeline = DescribePipeline(record, builtIn: false), note = PipelineNote(record) });
+            }
+            case "clone":
+            {
+                if (record is null) return Fail(wire, "invalid_request", "target=pipeline action=clone needs pipeline_id (the pipeline to copy).");
+                var name = Text(payload, "display_name") ?? $"{record.DisplayName} (copy)";
+                var slug = await UniquePipelineSlugAsync(db, Text(payload, "slug") ?? $"{record.Slug}-copy", scope, ct).ConfigureAwait(false);
+                var copy = new PromptPipelineRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+                    Slug = slug, DisplayName = name.Trim(), Description = record.Description,
+                    // Explicit graph wins, so "clone and change one node" is one call.
+                    GraphJson = GraphPayload(payload) ?? record.GraphJson,
+                    Status = "draft", Revision = 1, Version = 0,
+                    CreatedAt = now, UpdatedAt = now,
+                    CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId,
+                };
+                if (ValidatePipelineGraph(copy.GraphJson) is { } cloneGraphError)
+                    return Fail(wire, "invalid_request", cloneGraphError);
+                db.PromptPipelines.Add(copy);
+                try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
+                catch (DbUpdateException) { return Fail(wire, "duplicate_slug", "A draft prompt pipeline already uses this slug."); }
+                return Ok(wire, new
+                {
+                    ok = true,
+                    target = "pipeline",
+                    action,
+                    pipeline = DescribePipeline(copy, builtIn: false),
+                    source_pipeline_id = record.Id,
+                    note = "A new editable draft pipeline; the source is unchanged.",
+                });
+            }
+            case "publish":
+            {
+                if (record is null) return Fail(wire, "invalid_request", "target=pipeline action=publish needs pipeline_id.");
+                if (await _packs.FindManagedResourceAsync("prompt_pipeline", record.Id, ct).ConfigureAwait(false) is { } managed)
+                    return Fail(wire, AgentTopologyCodes.BuiltInReadOnly,
+                        $"Pack '{managed.PackId}' manages prompt pipeline '{managed.ResourceKey}'. Clone it before publishing your own version.");
+                if (expected is { } expectedRevision && record.Revision != expectedRevision)
+                    return Fail(wire, "revision_conflict", $"Prompt pipeline revision conflict: expected {expectedRevision}, actual {record.Revision}.");
+                if (!string.Equals(record.Status, "draft", StringComparison.OrdinalIgnoreCase))
+                    return Fail(wire, "not_draft", $"This pipeline is already '{record.Status}'. Edit the draft to create a new version.");
+                if (GraphPayload(payload) is { } publishedGraph)
+                {
+                    if (ValidatePipelineGraph(publishedGraph) is { } publishGraphError)
+                        return Fail(wire, "invalid_request", publishGraphError);
+                    record.GraphJson = publishedGraph;
+                }
+                // Publish requires a runnable shape: the assembler needs a template to
+                // produce text and an assemble node to collect it.
+                if (PipelinePublishError(record.GraphJson) is { } publishError)
+                    return Fail(wire, "invalid_request", publishError);
+                var version = (await db.PromptVersions.Where(x => x.PromptPipelineId == record.Id)
+                    .MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) ?? 0) + 1;
+                var hash = Sha256(record.GraphJson);
+                db.PromptVersions.Add(new PromptVersionRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = record.TenantId, WorkspaceId = record.WorkspaceId,
+                    PromptPipelineId = record.Id, Version = version, GraphJson = record.GraphJson,
+                    ContentHash = hash, ContentLength = System.Text.Encoding.UTF8.GetByteCount(record.GraphJson),
+                    Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId,
+                });
+                record.Version = version;
+                record.Status = "published";
+                record.Revision++;
+                record.UpdatedAt = now;
+                record.UpdatedByPrincipalId = scope.PrincipalId;
+                try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
+                catch (DbUpdateConcurrencyException) { return Fail(wire, "revision_conflict", "The pipeline changed since it was read."); }
+                return Ok(wire, new
+                {
+                    ok = true,
+                    target = "pipeline",
+                    action,
+                    pipeline = DescribePipeline(record, builtIn: false),
+                    version,
+                    revision = record.Revision,
+                    content_hash = hash,
+                    note = "Published as an immutable version; agents bound to this pipeline keep their frozen version until a run picks this one up.",
+                });
+            }
+            case "rollback":
+            {
+                if (record is null) return Fail(wire, "invalid_request", "target=pipeline action=rollback needs pipeline_id.");
+                if (await _packs.FindManagedResourceAsync("prompt_pipeline", record.Id, ct).ConfigureAwait(false) is { } managed)
+                    return Fail(wire, AgentTopologyCodes.BuiltInReadOnly,
+                        $"Pack '{managed.PackId}' manages prompt pipeline '{managed.ResourceKey}'. Clone it first.");
+                var versionRaw = Text(parameters, "version_id") ?? Text(payload, "version_id");
+                var targetVersion = ReadInt(payload, "target_version", ReadInt(parameters, "target_version", 0));
+                PromptVersionRecord? target = null;
+                if (Guid.TryParse(versionRaw, out var versionId) && versionId != Guid.Empty)
+                    target = await db.PromptVersions.AsNoTracking().FirstOrDefaultAsync(
+                        x => x.Id == versionId && x.PromptPipelineId == record.Id, ct).ConfigureAwait(false);
+                else if (targetVersion > 0)
+                    target = await db.PromptVersions.AsNoTracking().FirstOrDefaultAsync(
+                        x => x.PromptPipelineId == record.Id && x.Version == targetVersion, ct).ConfigureAwait(false);
+                else
+                    return Fail(wire, "invalid_request", "target=pipeline action=rollback needs version_id (GUID) or target_version (the version number).");
+                if (target is null) return Fail(wire, "not_found", "The requested prompt pipeline version was not found.");
+                // Rollback restores content as a NEW version: history is append-only, so a
+                // run that already froze the version being abandoned stays reproducible.
+                var nextVersion = (await db.PromptVersions.Where(x => x.PromptPipelineId == record.Id)
+                    .MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) ?? 0) + 1;
+                record.GraphJson = target.GraphJson;
+                var hash = Sha256(record.GraphJson);
+                db.PromptVersions.Add(new PromptVersionRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = record.TenantId, WorkspaceId = record.WorkspaceId,
+                    PromptPipelineId = record.Id, Version = nextVersion, GraphJson = record.GraphJson,
+                    ContentHash = hash, ContentLength = System.Text.Encoding.UTF8.GetByteCount(record.GraphJson),
+                    Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId,
+                });
+                record.Version = nextVersion;
+                record.Status = "published";
+                record.Revision++;
+                record.UpdatedAt = now;
+                record.UpdatedByPrincipalId = scope.PrincipalId;
+                try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
+                catch (DbUpdateConcurrencyException) { return Fail(wire, "revision_conflict", "The pipeline changed since it was read."); }
+                return Ok(wire, new
+                {
+                    ok = true,
+                    target = "pipeline",
+                    action,
+                    pipeline = DescribePipeline(record, builtIn: false),
+                    rolled_back_from_version = target.Version,
+                    version = nextVersion,
+                    revision = record.Revision,
+                    content_hash = hash,
+                    note = $"Restored version {target.Version} as new version {nextVersion}; earlier versions stay readable.",
+                });
+            }
+            default:
+                return Fail(wire, "invalid_request", "Unsupported pipeline action.");
+        }
+    }
+
+    // ── tinadec_model_profile_apply ──
+
+    /// <summary>
+    /// Per-model ability profiles: specialties, tier, notes, context window, cost tier.
+    /// Deliberately narrow — <see cref="IModelProfileCatalogService"/> cannot write an
+    /// API key, and this handler never passes a secret field even if one arrives.
+    /// </summary>
+    private async Task<ToolWireResponseDto> ModelProfileApplyAsync(ToolInvocationScope scope, ToolWireRequestDto wire, CancellationToken ct)
+    {
+        if (_modelProfiles is null)
+            return Fail(wire, "unavailable", "No model catalog is registered in this host.");
+        var parameters = wire.Params ?? default;
+        var action = (Text(parameters, "action") ?? string.Empty).Trim().ToLowerInvariant();
+        var payload = ChildObject(parameters, "payload");
+        var expectedRevision = ReadInt(parameters, "expected_revision", -1);
+        long? expected = expectedRevision >= 0 ? expectedRevision : null;
+        var providerReference = Text(parameters, "provider_id") ?? Text(payload, "provider_id");
+        var modelId = Text(parameters, "model_id") ?? Text(payload, "model_id");
+        var catalog = await _modelProfiles.GetSanitizedCatalogAsync(includeDisabled: false, ct).ConfigureAwait(false);
+
+        switch (action)
+        {
+            case "inspect":
+            {
+                var providers = FilterProviders(catalog, providerReference);
+                if (providers.Length == 0) return NotFound(wire, "model_provider", providerReference ?? "(enabled providers)");
+                return Ok(wire, new
+                {
+                    ok = true,
+                    action,
+                    providers = providers.Select(provider => new
+                    {
+                        id = provider.Id,
+                        display_name = provider.DisplayName,
+                        driver = provider.Driver,
+                        protocol = provider.Protocol,
+                        enabled = provider.Enabled,
+                        revision = provider.Revision,
+                        default_model = provider.DefaultModel,
+                        models = provider.Models,
+                        model_profiles = modelId is null
+                            ? provider.ModelProfiles
+                            : provider.ModelProfiles.Where(pair => string.Equals(pair.Key, modelId, StringComparison.Ordinal))
+                                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+                    }).ToArray(),
+                    note = "model_profiles is keyed by model id; only specialties, tier, notes, context_window and cost_tier are writable.",
+                });
+            }
+            case "update":
+            {
+                if (string.IsNullOrWhiteSpace(modelId))
+                    return Fail(wire, "invalid_request", "action=update needs model_id (the model the profile describes).");
+                var providers = FilterProviders(catalog, providerReference);
+                // A model id is not unique across providers in general, so refusing an
+                // ambiguous write beats silently picking the first one.
+                if (providers.Length > 1)
+                    throw Refuse("ambiguous_provider",
+                        $"model_id '{modelId}' matches {providers.Length} enabled providers; pass provider_id to choose one.",
+                        providers.Select(candidate => new { id = candidate.Id, display_name = candidate.DisplayName }).ToArray());
+                // The empty-payload guard runs BEFORE provider resolution on purpose: an empty
+                // payload is the caller's actual mistake, and answering "provider not found"
+                // sends it looking for a provider instead of fixing its own request.
+                if (!HasProfileChange(payload))
+                    return Fail(wire, "invalid_request",
+                        "action=update needs at least one of specialties, tier, notes, context_window, cost_tier in payload.");
+                if (providers.Length == 0)
+                    return NotFound(wire, "model_provider", providerReference ?? "(enabled providers)");
+                var provider = providers[0];
+                if (!provider.Models.Contains(modelId, StringComparer.Ordinal))
+                    return Fail(wire, "unknown_model",
+                        $"Model '{modelId}' is not listed on provider '{provider.DisplayName}'. Enabled models: {string.Join(", ", provider.Models.Take(20))}. Call tinadec_inspect target=models for the exact provider and model ids.");
+                var existing = provider.ModelProfiles.TryGetValue(modelId, out var current) ? current : null;
+                // Merge over the stored profile so a partial update does not blank fields
+                // the caller did not mention.
+                var merged = new ModelProfileDto
+                {
+                    Specialties = payload.TryGetProperty("specialties", out var specialties) && specialties.ValueKind == JsonValueKind.Array
+                        ? ReadStringArray(payload, "specialties")
+                        : existing?.Specialties ?? [],
+                    Tier = Text(payload, "tier") ?? existing?.Tier ?? "balanced",
+                    Notes = payload.TryGetProperty("notes", out var notes) && notes.ValueKind == JsonValueKind.Null
+                        ? null
+                        : Text(payload, "notes") ?? existing?.Notes,
+                    ContextWindow = payload.TryGetProperty("context_window", out var contextWindow) && contextWindow.ValueKind == JsonValueKind.Null
+                        ? null
+                        : ReadNullableInt(payload, "context_window") ?? existing?.ContextWindow,
+                    CostTier = payload.TryGetProperty("cost_tier", out var costTier) && costTier.ValueKind == JsonValueKind.Null
+                        ? null
+                        : Text(payload, "cost_tier") ?? existing?.CostTier,
+                };
+                ModelProfileUpdateResultDto updated;
+                try
+                {
+                    updated = await _modelProfiles.UpdateModelProfileAsync(provider.Id, modelId, merged, expected, ct).ConfigureAwait(false);
+                }
+                catch (ArgumentException exception)
+                {
+                    // ModelProfile.Normalize throws ArgumentException naming the bad leaf
+                    // (e.g. "model_profiles.tier must be fast|balanced|deep."). Its code is
+                    // the documented one, and the message already tells the model what to fix.
+                    return Fail(wire, "invalid_model_profile", exception.Message);
+                }
+                return Ok(wire, new
+                {
+                    ok = true,
+                    action,
+                    provider_instance_id = updated.ProviderInstanceId,
+                    model = updated.Model,
+                    profile = updated.Profile,
+                    model_profiles = updated.ModelProfiles,
+                    revision = updated.Revision,
+                    updated_at = updated.UpdatedAt,
+                    note = "Profile metadata only. API keys and secret references are never read or written here.",
+                });
+            }
+            default:
+                return Fail(wire, "invalid_request", "action must be inspect or update.");
+        }
+    }
+
+    private static SanitizedProviderCatalogItemDto[] FilterProviders(SanitizedModelCatalogDto catalog, string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return catalog.Providers.ToArray();
+        var needle = reference.Trim();
+        return catalog.Providers.Where(provider =>
+                provider.Id.ToString().Equals(needle, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(provider.DisplayName, needle, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(provider.DefaultModel, needle, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
+    private static bool HasProfileChange(JsonElement payload) =>
+        payload.ValueKind == JsonValueKind.Object
+        && (payload.TryGetProperty("specialties", out _) || payload.TryGetProperty("tier", out _)
+            || payload.TryGetProperty("notes", out _) || payload.TryGetProperty("context_window", out _)
+            || payload.TryGetProperty("cost_tier", out _));
+
+    /// <summary>
+    /// A per-request failure that carries structured diagnostics. Thrown so a deep
+    /// helper can refuse without threading a response object through every caller; the
+    /// outer catch turns it into the wire failure.
+    /// </summary>
+    private sealed class WireRefusal(string code, string message, object? diagnostics) : Exception(message)
+    {
+        public string Code { get; } = code;
+        public object? Diagnostics { get; } = diagnostics;
+    }
+
+    private static WireRefusal Refuse(string code, string message, object? diagnostics = null) =>
+        new(code, message, diagnostics);
+
     // ── projections ──
 
     private static object DescribeAgent(AgentDefinitionRecord agent, bool builtIn) => new
@@ -790,6 +1791,542 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
     }
 
     // ── helpers ──
+
+    // ── reference resolution ──
+    //
+    // Every tool that names a resource accepts the id shape a model can actually see:
+    // a slug from tinadec_inspect, not only a GUID. A GUID lookup that silently treats
+    // a slug as "not found" is what makes a model retry with a fabricated id.
+
+    private async Task<Guid?> ResolveAgentIdAsync(AgentConfigurationDbContext db, ToolInvocationScope scope, string reference, CancellationToken ct)
+    {
+        var agent = await FindAgentAsync(db, scope, reference, ct).ConfigureAwait(false);
+        return agent?.Id;
+    }
+
+    private static async Task<AgentDefinitionRecord?> FindAgentAsync(
+        AgentConfigurationDbContext db,
+        ToolInvocationScope scope,
+        string reference,
+        CancellationToken ct)
+    {
+        var needle = reference.Trim();
+        if (Guid.TryParse(needle, out var id) && id != Guid.Empty)
+        {
+            var byId = await db.AgentDefinitions.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+            if (byId is not null) return byId;
+        }
+        // Slugs are unique per workspace per status, and an archived row must not shadow
+        // the live one. Two queries rather than an ORDER BY on a CASE expression: the
+        // second only runs when an archived duplicate actually exists.
+        var live = await db.AgentDefinitions.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.Slug == needle && x.Status != "archived", ct).ConfigureAwait(false);
+        return live ?? await db.AgentDefinitions.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Slug == needle, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<Guid?> ResolveModeIdAsync(ToolInvocationScope scope, string reference, CancellationToken ct)
+    {
+        var needle = reference.Trim();
+        if (Guid.TryParse(needle, out var id) && id != Guid.Empty) return id;
+        // Slug resolution has to read the table: IAgentTopologyService exposes no
+        // lookup-by-slug, and adding one to a file this worker does not own would be a
+        // cross-slice edit. Reported to core-topology; they may fold it into the service.
+        await using var db = await _agents.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var live = await db.AgentModes.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.Slug == needle && x.Status != "archived", ct).ConfigureAwait(false);
+        if (live is not null) return live.Id;
+        var archived = await db.AgentModes.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Slug == needle, ct)
+            .ConfigureAwait(false);
+        return archived?.Id;
+    }
+
+    private static async Task<PromptPipelineRecord?> FindPromptPipelineAsync(
+        AgentConfigurationDbContext db,
+        ToolInvocationScope scope,
+        string reference,
+        CancellationToken ct)
+    {
+        var needle = reference.Trim();
+        if (Guid.TryParse(needle, out var id) && id != Guid.Empty)
+        {
+            var byId = await db.PromptPipelines.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+            if (byId is not null) return byId;
+        }
+        return await db.PromptPipelines.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Slug == needle, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<Guid?> ResolveFragmentIdAsync(string reference, CancellationToken ct)
+    {
+        if (_promptFragments is null) return null;
+        var needle = reference.Trim();
+        if (Guid.TryParse(needle, out var id) && id != Guid.Empty)
+        {
+            var byId = await _promptFragments.GetAsync(id, ct).ConfigureAwait(false);
+            if (byId is not null) return byId.Id;
+        }
+        // A fragment's model-facing identity is its key, e.g. "arch-baseline".
+        var all = await _promptFragments.ListAsync(cancellationToken: ct).ConfigureAwait(false);
+        var matches = all.Where(fragment => string.Equals(fragment.Key, needle, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return matches.Length == 1 ? matches[0].Id : null;
+    }
+
+    /// <summary>One refusal a helper hands back: the code and message <see cref="Fail"/> needs.</summary>
+    private readonly record struct WireError(string Code, string Message);
+
+    /// <summary>
+    /// Refuses a base_prompt_pipeline_id that names nothing, at write time rather than at
+    /// the next run. A draft pipeline is acceptable — an agent is a draft too — but a
+    /// fabricated GUID is not, because it would make the agent publish with an empty
+    /// prompt layer and nobody would know why.
+    /// </summary>
+    private static async Task<WireError?> ResolvePromptPipelineAsync(
+        AgentConfigurationDbContext db,
+        ToolInvocationScope scope,
+        JsonElement payload,
+        CancellationToken ct)
+    {
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("base_prompt_pipeline_id", out var element)
+            || element.ValueKind == JsonValueKind.Null)
+            return null;
+        if (element.ValueKind != JsonValueKind.String || !Guid.TryParse(element.GetString(), out var pipelineId) || pipelineId == Guid.Empty)
+            return new WireError("invalid_request", "payload.base_prompt_pipeline_id must be a prompt pipeline GUID or null.");
+        var exists = await db.PromptPipelines.AsNoTracking()
+            .AnyAsync(x => x.Id == pipelineId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false);
+        return exists
+            ? null
+            : new WireError("not_found",
+                $"No prompt pipeline '{pipelineId}' in this workspace. Call tinadec_inspect target=prompts for the real pipeline ids.");
+    }
+
+    /// <summary>One revision-guarded attempt at recording an agent's runtime binding.</summary>
+    private sealed record RuntimeBindingOutcome(RuntimeBinding? Binding, WireError? Failure);
+
+    /// <summary>What a model_binding payload settles to; null when the caller sent none.</summary>
+    private sealed record RuntimeBinding(
+        string Mode,
+        Guid? ProviderInstanceId,
+        string? Model,
+        string? RoutePurpose,
+        long Revision);
+
+    /// <summary>
+    /// Translates <c>payload.model_binding</c> into the same inherit|route|fixed triple the
+    /// runtime-binding endpoint accepts, and refuses the combinations that endpoint
+    /// refuses. Validation only: the row is written after the agent exists.
+    /// </summary>
+    private async Task<RuntimeBindingOutcome> ApplyRuntimeBindingAsync(
+        AgentConfigurationDbContext db,
+        ToolInvocationScope scope,
+        Guid? agentId,
+        JsonElement payload,
+        CancellationToken ct)
+    {
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("model_binding", out var binding))
+            return new RuntimeBindingOutcome(null, null);
+        if (binding.ValueKind == JsonValueKind.Null)
+            return new RuntimeBindingOutcome(new RuntimeBinding("inherit", null, null, null, 0), null);
+        if (binding.ValueKind != JsonValueKind.Object)
+            return new RuntimeBindingOutcome(null, new WireError("invalid_request", "payload.model_binding must be an object or null."));
+
+        var mode = (Text(binding, "mode") ?? Text(binding, "strategy") ?? "fixed").Trim().ToLowerInvariant();
+        if (mode is not ("inherit" or "route" or "fixed"))
+            return new RuntimeBindingOutcome(null, new WireError("invalid_request", "model_binding.mode must be inherit, route or fixed (or omit it for fixed)."));
+        var providerInstanceId = GuidOf(binding, "provider_instance_id") ?? GuidOf(binding, "provider_id");
+        var model = Text(binding, "model") ?? Text(binding, "model_id");
+        var routePurpose = Text(binding, "route_purpose") ?? Text(binding, "purpose");
+        if (mode == "fixed" && providerInstanceId is null)
+            return new RuntimeBindingOutcome(null, new WireError("invalid_request", "model_binding.mode=fixed needs provider_instance_id."));
+        if (mode == "route" && string.IsNullOrWhiteSpace(routePurpose))
+            return new RuntimeBindingOutcome(null, new WireError("invalid_request", "model_binding.mode=route needs route_purpose."));
+
+        long revision = 0;
+        if (agentId is { } existingId)
+        {
+            var row = await db.AgentRuntimeBindings.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.AgentDefinitionId == existingId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct)
+                .ConfigureAwait(false);
+            revision = row?.Revision ?? 0;
+            var expected = ReadInt(payload, "expected_binding_revision", -1);
+            if (expected >= 0 && row is not null && row.Revision != expected)
+                return new RuntimeBindingOutcome(null, new WireError("revision_conflict", $"Model binding revision conflict: expected {expected}, actual {row.Revision}."));
+        }
+        return new RuntimeBindingOutcome(new RuntimeBinding(
+            mode,
+            mode == "fixed" ? providerInstanceId : null,
+            mode == "fixed" ? model : null,
+            mode == "route" ? routePurpose : null,
+            revision), null);
+    }
+
+    /// <summary>
+    /// Writes (or clears) the agent's runtime binding. The three modes are mutually
+    /// exclusive, so switching one clears the other mode's fields — a stale provider id
+    /// left behind reads as a valid configuration on the next run.
+    /// </summary>
+    private async Task SaveRuntimeBindingAsync(
+        AgentConfigurationDbContext db,
+        ToolInvocationScope scope,
+        Guid agentId,
+        RuntimeBinding binding,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var row = await db.AgentRuntimeBindings
+            .FirstOrDefaultAsync(x => x.AgentDefinitionId == agentId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct)
+            .ConfigureAwait(false);
+        if (row is null)
+        {
+            row = new AgentRuntimeBindingRecord { AgentDefinitionId = agentId, TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, Revision = 1 };
+            db.AgentRuntimeBindings.Add(row);
+        }
+        else row.Revision++;
+        row.Mode = binding.Mode;
+        row.ProviderInstanceId = binding.ProviderInstanceId;
+        row.Model = binding.Model;
+        row.RoutePurpose = binding.RoutePurpose;
+        row.UpdatedAt = now;
+        row.UpdatedByPrincipalId = scope.PrincipalId;
+        try { await db.SaveChangesAsync(ct).ConfigureAwait(false); }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw Refuse("revision_conflict", "The agent's model binding changed since it was read. Re-inspect and retry.");
+        }
+    }
+
+    /// <summary>
+    /// Applies <c>payload.tool_settings</c> ({ mcp_server_ids, skill_resource_ids, plus the
+    /// optional tool-family switches }) as this agent's own tool-settings document.
+    /// A supplied list REPLACES that binding (an empty array means "none"), which is what
+    /// a caller writing "this agent uses these two MCP servers" means.
+    /// </summary>
+    private async Task<string?> ApplyToolSettingsAsync(Guid agentId, JsonElement payload, CancellationToken ct)
+    {
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("tool_settings", out var settings) || settings.ValueKind == JsonValueKind.Null)
+            return null;
+        if (_toolSettingsStore is null) return "tool_settings was ignored: this host registers no tool settings store.";
+        if (settings.ValueKind != JsonValueKind.Object)
+            throw Refuse("invalid_request", "payload.tool_settings must be an object.");
+        var patch = new Dictionary<string, object?>(StringComparer.Ordinal);
+        // Each section is built once and then filled, so a caller that sends both a
+        // selection and an enabled flag does not lose one of them to a second assignment.
+        if (settings.TryGetProperty("mcp_server_ids", out _) || settings.TryGetProperty("mcp_enabled", out _))
+        {
+            var mcp = new Dictionary<string, object?>(StringComparer.Ordinal);
+            if (settings.TryGetProperty("mcp_server_ids", out _)) mcp["server_resource_ids"] = ReadStringArray(settings, "mcp_server_ids");
+            if (settings.TryGetProperty("mcp_enabled", out var mcpEnabled) && mcpEnabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                mcp["enabled"] = mcpEnabled.ValueKind == JsonValueKind.True;
+            patch["mcp"] = mcp;
+        }
+        if (settings.TryGetProperty("skill_resource_ids", out _) || settings.TryGetProperty("skills_enabled", out _))
+        {
+            var skills = new Dictionary<string, object?>(StringComparer.Ordinal);
+            if (settings.TryGetProperty("skill_resource_ids", out _)) skills["resource_ids"] = ReadStringArray(settings, "skill_resource_ids");
+            if (settings.TryGetProperty("skills_enabled", out var skillsEnabled) && skillsEnabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                skills["enabled"] = skillsEnabled.ValueKind == JsonValueKind.True;
+            patch["skills"] = skills;
+        }
+        if (patch.Count == 0)
+            throw Refuse("invalid_request",
+                "payload.tool_settings needs at least one of mcp_server_ids, skill_resource_ids, mcp_enabled, skills_enabled.");
+        var document = await _toolSettingsStore.GetAsync(agentId, ct).ConfigureAwait(false);
+        // Merge into the agent's OWN patch rather than its effective settings: a caller
+        // adding one MCP server must not flatten overrides someone else configured, and
+        // storing the merged effective document would turn shared defaults into agent
+        // overrides (which then fail the narrowing check on the next save).
+        var merged = MergeJsonObjects(document.Settings, JsonSerializer.SerializeToElement(patch));
+        await _toolSettingsStore.SaveAsync(agentId, merged, document.Revision, ct).ConfigureAwait(false);
+        return "Applied as this agent's tool settings (MCP server / Skill bindings).";
+    }
+
+    /// <summary>
+    /// Shallow-per-section merge of two settings patches: an existing section keeps its
+    /// fields, a new section is added whole. The store validates the result against the
+    /// schema, so this only has to avoid dropping what is already there.
+    /// </summary>
+    private static JsonElement MergeJsonObjects(JsonElement current, JsonElement patch)
+    {
+        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        if (current.ValueKind == JsonValueKind.Object)
+            foreach (var property in current.EnumerateObject()) result[property.Name] = property.Value;
+        if (patch.ValueKind == JsonValueKind.Object)
+            foreach (var property in patch.EnumerateObject())
+            {
+                if (property.Value.ValueKind == JsonValueKind.Object
+                    && result.TryGetValue(property.Name, out var existing) && existing.ValueKind == JsonValueKind.Object)
+                {
+                    var mergedSection = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                    foreach (var field in existing.EnumerateObject()) mergedSection[field.Name] = field.Value;
+                    foreach (var field in property.Value.EnumerateObject()) mergedSection[field.Name] = field.Value;
+                    result[property.Name] = JsonSerializer.SerializeToElement(mergedSection);
+                }
+                else result[property.Name] = property.Value;
+            }
+        return JsonSerializer.SerializeToElement(result);
+    }
+
+    // ── prompt helpers ──
+
+    private static PromptFragmentSaveRequestDto FragmentRequest(JsonElement payload) => new()
+    {
+        Key = Text(payload, "key"),
+        Title = Text(payload, "title"),
+        Scope = Text(payload, "scope"),
+        TargetAgentId = Text(payload, "target_agent_id"),
+        TargetAgentSlug = Text(payload, "target_agent_slug"),
+        Category = Text(payload, "category"),
+        Content = Text(payload, "content"),
+        Priority = payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("priority", out var priority) && priority.ValueKind == JsonValueKind.Number && priority.TryGetInt32(out var value) ? value : null,
+        Enabled = ReadNullableBool(payload, "enabled"),
+        ChangeSummary = Text(payload, "change_summary"),
+    };
+
+    private static object DescribeFragment(PromptFragmentDto fragment) => new
+    {
+        id = fragment.Id,
+        key = fragment.Key,
+        title = fragment.Title,
+        scope = fragment.Scope,
+        category = fragment.Category,
+        target_agent_id = fragment.TargetAgentId,
+        target_agent_slug = fragment.TargetAgentSlug,
+        priority = fragment.Priority,
+        enabled = fragment.Enabled,
+        is_builtin = fragment.IsBuiltIn,
+        revision = fragment.Revision,
+        content = fragment.Content,
+        updated_at = fragment.UpdatedAt,
+    };
+
+    private static string? FragmentNote(PromptFragmentDto fragment) => fragment.IsBuiltIn
+        ? "A built-in fragment: readable, not editable. Clone it to customize."
+        : null;
+
+    private static object DescribePipeline(PromptPipelineRecord pipeline, bool builtIn) => new
+    {
+        id = pipeline.Id,
+        slug = pipeline.Slug,
+        display_name = pipeline.DisplayName,
+        description = pipeline.Description,
+        status = pipeline.Status,
+        version = pipeline.Version,
+        revision = pipeline.Revision,
+        graph = Element(pipeline.GraphJson),
+        built_in = builtIn,
+        writable = !builtIn && string.Equals(pipeline.Status, "draft", StringComparison.Ordinal),
+        created_at = pipeline.CreatedAt,
+        updated_at = pipeline.UpdatedAt,
+    };
+
+    private static string? PipelineNote(PromptPipelineRecord pipeline) =>
+        string.Equals(pipeline.Status, "draft", StringComparison.Ordinal)
+            ? "Saved as a draft; call target=pipeline action=publish when the graph is right."
+            : null;
+
+    private static string? GraphPayload(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object) return null;
+        if (payload.TryGetProperty("graph", out var graph) && graph.ValueKind != JsonValueKind.Null) return graph.GetRawText();
+        if (payload.TryGetProperty("graph_json", out var graphJson) && graphJson.ValueKind == JsonValueKind.String) return graphJson.GetString();
+        // A caller that sends nodes+edges instead of a wrapper gets the wrapper built for
+        // it: the canvas and the tools should not need two different shapes.
+        if (payload.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
+            return JsonSerializer.Serialize(new
+            {
+                nodes,
+                edges = payload.TryGetProperty("edges", out var edges) && edges.ValueKind == JsonValueKind.Array
+                    ? edges
+                    : JsonSerializer.SerializeToElement(Array.Empty<object>()),
+                canvas_layout = payload.TryGetProperty("canvas_layout", out var layout) ? layout : (JsonElement?)null,
+            });
+        return null;
+    }
+
+    /// <summary>The node kinds the assembler can execute.</summary>
+    private static readonly IReadOnlyList<string> PromptNodeKinds =
+        ["template", "variable", "fragment_ref", "condition", "workspace_rules", "skills_index", "assemble", "stage", "stage_select", "retrieval", "read_only_retrieval", "memory", "budget", "context_trim"];
+
+    private static string? ValidatePipelineGraph(string graphJson)
+    {
+        JsonDocument document;
+        try { document = JsonDocument.Parse(graphJson); }
+        catch (JsonException exception) { return $"graph is not valid JSON: {exception.Message}"; }
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return "graph must be an object with nodes[] and edges[].";
+            if (!root.TryGetProperty("nodes", out var nodes) || nodes.ValueKind != JsonValueKind.Array)
+                return "graph.nodes must be an array (an empty pipeline is a draft, not a graph).";
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var node in nodes.EnumerateArray())
+            {
+                if (node.ValueKind != JsonValueKind.Object) return "graph.nodes must contain objects.";
+                var key = Text(node, "node_key") ?? Text(node, "id");
+                if (string.IsNullOrWhiteSpace(key)) return "Every prompt node needs a stable node_key.";
+                if (!keys.Add(key.Trim())) return $"Duplicate prompt node key '{key}'.";
+                var kind = (Text(node, "kind") ?? Text(node, "type"))?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(kind)) return $"Prompt node '{key}' needs a kind (e.g. template, fragment_ref, assemble).";
+                if (!PromptNodeKinds.Contains(kind, StringComparer.Ordinal))
+                    return $"Prompt node '{key}' has unknown kind '{kind}'. Known kinds: {string.Join(", ", PromptNodeKinds)}.";
+            }
+            if (root.TryGetProperty("edges", out var edges))
+            {
+                if (edges.ValueKind != JsonValueKind.Array) return "graph.edges must be an array.";
+                foreach (var edge in edges.EnumerateArray())
+                {
+                    if (edge.ValueKind != JsonValueKind.Object) return "graph.edges must contain objects.";
+                    var source = Text(edge, "source_node_key") ?? Text(edge, "source") ?? Text(edge, "from");
+                    var target = Text(edge, "target_node_key") ?? Text(edge, "target") ?? Text(edge, "to");
+                    if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
+                        return "Every prompt edge needs source_node_key and target_node_key.";
+                    if (!keys.Contains(source.Trim()) || !keys.Contains(target.Trim()))
+                        return $"Prompt edge '{source}' -> '{target}' references a node that is not declared.";
+                }
+            }
+            return null;
+        }
+    }
+
+    private static string? PipelinePublishError(string graphJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(graphJson);
+            var kinds = new HashSet<string>(StringComparer.Ordinal);
+            if (document.RootElement.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
+                foreach (var node in nodes.EnumerateArray())
+                {
+                    var kind = (Text(node, "kind") ?? Text(node, "type"))?.Trim().ToLowerInvariant();
+                    if (kind is not null) kinds.Add(kind);
+                }
+            if (!kinds.Contains("template"))
+                return "A pipeline cannot be published without at least one template node: the assembler would produce no text.";
+            if (!kinds.Contains("assemble"))
+                return "A pipeline cannot be published without an assemble node: the template output would never be collected.";
+            return null;
+        }
+        catch (JsonException exception)
+        {
+            return $"graph is not valid JSON: {exception.Message}";
+        }
+    }
+
+    private static int CountGraphNodes(string? graphJson)
+    {
+        if (string.IsNullOrWhiteSpace(graphJson)) return 0;
+        try
+        {
+            using var document = JsonDocument.Parse(graphJson);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array
+                    ? nodes.GetArrayLength()
+                    : 0;
+        }
+        catch (JsonException) { return 0; }
+    }
+
+    private static async Task<string> UniquePipelineSlugAsync(
+        AgentConfigurationDbContext db,
+        string candidate,
+        ToolInvocationScope scope,
+        CancellationToken ct)
+    {
+        var slug = AgentTopologyService.Slugify(candidate);
+        if (string.IsNullOrWhiteSpace(slug)) slug = "pipeline";
+        var taken = (await db.PromptPipelines.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+                .Select(x => x.Slug).ToListAsync(ct).ConfigureAwait(false))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!taken.Contains(slug)) return slug;
+        for (var index = 2; index < 500; index++)
+        {
+            var next = $"{slug}-{index}";
+            if (!taken.Contains(next)) return next;
+        }
+        return $"{slug}-{Guid.NewGuid():N}";
+    }
+
+    private static string? NormalizeTier(string? tier)
+    {
+        if (string.IsNullOrWhiteSpace(tier)) return null;
+        var normalized = tier.Trim().ToLowerInvariant();
+        if (normalized == "solo") return "solo_dispatch";
+        return normalized is "solo_dispatch" or "free_form" or "self_dispatch" or "deterministic" ? normalized : null;
+    }
+
+    private static string Sha256(string value) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static JsonElement ParseJson(string? json) =>
+        string.IsNullOrWhiteSpace(json) ? default : JsonSerializer.Deserialize<JsonElement>(json);
+
+    private static JsonElement? Element(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<JsonElement>(json); }
+        catch (JsonException) { return null; }
+    }
+
+    private static int? ReadNullableInt(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : null;
+
+    /// <summary>
+    /// Where a new agent came from. An explicit payload.source_kind always wins. When it
+    /// is absent the CALLING CONTEXT decides: a run means an agent generated this, so the
+    /// row is "agent_generated"; no run means a person authored it, so it is "custom".
+    /// Guessing "custom" for a run-originated agent would erase the only evidence that a
+    /// model, not a human, created it.
+    /// </summary>
+    private static string DefaultSourceKind(JsonElement payload, ToolInvocationScope scope)
+    {
+        var explicitKind = Text(payload, "source_kind")?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrEmpty(explicitKind)) return explicitKind;
+        return scope.RunId != Guid.Empty ? "agent_generated" : "custom";
+    }
+
+    /// <summary>
+    /// Records where a generated agent came from. An explicit payload.provenance wins;
+    /// otherwise the run that made the call is the provenance, which is what makes
+    /// "agent_generated" meaningful instead of a label with no evidence behind it.
+    /// </summary>
+    private static string? Provenance(ToolInvocationScope scope, JsonElement payload, string sourceKind, Guid? clonedFromAgentId = null)
+    {
+        var explicitProvenance = payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("provenance", out var provenance)
+            && provenance.ValueKind == JsonValueKind.Object
+                ? provenance
+                : (JsonElement?)null;
+        var hasRun = scope.RunId != Guid.Empty;
+        // A person editing in the Agent Center has no run; an agent runtime always does.
+        // Defaulting on that fact is what keeps "custom" honest.
+        var generated = !string.Equals(sourceKind, "custom", StringComparison.Ordinal) || hasRun;
+        if (!generated && explicitProvenance is null && clonedFromAgentId is null) return null;
+        return JsonSerializer.Serialize(new
+        {
+            created_by_agent_id = Text(explicitProvenance ?? default, "created_by_agent_id")
+                ?? Text(explicitProvenance ?? default, "agent_id")
+                ?? (scope.AgentInstanceId != Guid.Empty ? scope.AgentInstanceId.ToString() : null),
+            created_by_run_id = Text(explicitProvenance ?? default, "created_by_run_id")
+                ?? Text(explicitProvenance ?? default, "run_id")
+                ?? (hasRun ? scope.RunId.ToString() : null),
+            created_by_principal_id = scope.PrincipalId.ToString(),
+            cloned_from_agent_id = clonedFromAgentId?.ToString(),
+            reason = Text(explicitProvenance ?? default, "reason"),
+            source_kind = sourceKind,
+            created_at = DateTimeOffset.UtcNow,
+        });
+    }
+
+    private static ToolWireResponseDto NotFound(ToolWireRequestDto wire, string kind, string reference) =>
+        Fail(wire, "not_found", $"No {kind} matches '{reference}' in this tenant and workspace. Call tinadec_inspect for the real ids and slugs.");
 
     private static ToolWireResponseDto Ok(ToolWireRequestDto wire, object payload) => new()
     {

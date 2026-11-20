@@ -435,7 +435,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             .GroupBy(agent => agent.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().ResourceGrants, StringComparer.OrdinalIgnoreCase);
         var graph = new FrozenGraph(
-            DeriveGraphTier(operation, relational.HasDeclaredEdges, relational.ConversationTemplateSlug),
+            DeriveGraphTier(operation, relational.HasDeclaredEdges, relational.ConversationTemplateSlug, relational.OrchestrationTier),
             relational.ConversationTemplateSlug,
             relational.ConversationNodeKey,
             relational.GraphNodes.Select(node => new FrozenGraphNode(
@@ -539,17 +539,34 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     }
 
     /// <summary>
-    /// Four-branch tier derivation, decided only from frozen inputs, first match wins:
+    /// Tier derivation. An EXPLICIT tier declared on the mode wins outright: the author
+    /// said how this mode is orchestrated, and inference exists only for the modes that
+    /// predate the field. The mapping accepts the alias <c>solo</c> and the four canonical
+    /// names; an unrecognized string is ignored rather than fatal, because admission must
+    /// not fail on a value a newer Core accepted (the publish gate already refused it).
+    ///
+    /// Without an explicit tier, the four-branch inference applies, first match wins:
     /// the conversation identity declares a tool surface → solo_dispatch (the master
     /// executes; topology-independent); no declared dispatch edges → free_form (the
-    /// director builds its own workers); declared edges + a conversation identity
-    /// holding a dispatchable-worker spawn authority (agent.create_temporary, or the
-    /// agent.spawn alias) → self_dispatch; declared edges without spawn authority
-    /// (including create_persistent-only, which mints candidates not dispatchable
-    /// workers) → deterministic.
+    /// director builds its own workers); declared edges + a conversation identity holding
+    /// a dispatchable-worker spawn authority (agent.create_temporary, or the agent.spawn
+    /// alias) → self_dispatch; declared edges without spawn authority (including
+    /// create_persistent-only, which mints candidates not dispatchable workers) →
+    /// deterministic.
+    ///
+    /// Core self-configuration tools (<see cref="CoreVirtualToolPolicy.IsTinadecConfig"/>)
+    /// do NOT count as a tool surface for the solo branch: enabling <c>tinadec_inspect</c>
+    /// on a mode's conversation identity is a governance affordance, not "the master does
+    /// the work", and treating it as one silently degraded every self-configurable mode
+    /// to solo_dispatch.
     /// </summary>
-    internal static string DeriveGraphTier(IReadOnlyList<RuntimeAgentDefinition> operation, bool hasDeclaredEdges, string? conversationSlug)
+    internal static string DeriveGraphTier(
+        IReadOnlyList<RuntimeAgentDefinition> operation,
+        bool hasDeclaredEdges,
+        string? conversationSlug,
+        string? declaredTier = null)
     {
+        if (MapDeclaredTier(declaredTier) is { } explicitTier) return explicitTier;
         var conversation = conversationSlug is { } slug
             ? operation.FirstOrDefault(agent => string.Equals(agent.Id, slug, StringComparison.OrdinalIgnoreCase))
             : null;
@@ -557,7 +574,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         // answers a different question than the two that follow — who EXECUTES, not how
         // dispatch is shaped. The three modes that predate it declare an empty meeting
         // tool_scope and therefore land on their original branches unchanged.
-        if (conversation is { AllowedTools.Count: > 0 }) return FrozenGraphTiers.SoloDispatch;
+        if (conversation is { } executor && ExecutorToolFace(executor.AllowedTools).Count > 0) return FrozenGraphTiers.SoloDispatch;
         if (!hasDeclaredEdges) return FrozenGraphTiers.FreeForm;
         var capabilities = conversation?.Capabilities ?? [];
         return capabilities.Any(capability =>
@@ -566,6 +583,38 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             ? FrozenGraphTiers.SelfDispatch
             : FrozenGraphTiers.Deterministic;
     }
+
+    /// <summary>
+    /// Maps a declared tier string onto the frozen tier vocabulary, or null when nothing
+    /// usable was declared. <c>solo</c> is the accepted alias for <c>solo_dispatch</c>
+    /// (same alias set as <c>GraphValidation.NormalizeOrchestrationTier</c>, which is what
+    /// the editor and the pack manifest validate against).
+    /// </summary>
+    internal static string? MapDeclaredTier(string? declaredTier)
+    {
+        if (string.IsNullOrWhiteSpace(declaredTier)) return null;
+        return declaredTier.Trim().ToLowerInvariant() switch
+        {
+            "solo" or "solo_dispatch" => FrozenGraphTiers.SoloDispatch,
+            "free_form" => FrozenGraphTiers.FreeForm,
+            "self_dispatch" => FrozenGraphTiers.SelfDispatch,
+            "deterministic" => FrozenGraphTiers.Deterministic,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// The tools that make the conversation identity an EXECUTOR: its declared surface
+    /// minus the Core self-configuration tools. <c>tinadec_inspect</c> and its siblings
+    /// let an identity READ and EDIT its own governance records; that is a governance
+    /// affordance, not "this identity does the work", so holding them must never flip a
+    /// mode to solo_dispatch. The exclusion is deliberately narrow — exactly the ids
+    /// <see cref="CoreVirtualToolPolicy.IsTinadecConfig"/> names — because widening it to
+    /// every virtual tool would re-tier modes whose conversation identity legitimately
+    /// holds dispatch/exploration tools and does work itself.
+    /// </summary>
+    private static IReadOnlyList<string> ExecutorToolFace(IReadOnlyList<string> allowedTools) =>
+        allowedTools.Where(tool => !string.IsNullOrWhiteSpace(tool) && !CoreVirtualToolPolicy.IsTinadecConfig(tool)).ToArray();
 
     private async Task<IReadOnlyList<RuntimeAgentDefinition>> FreezeModelPlansAsync(
         IReadOnlyList<RuntimeAgentDefinition> definitions,

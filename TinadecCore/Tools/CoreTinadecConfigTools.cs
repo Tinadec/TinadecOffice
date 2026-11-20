@@ -91,7 +91,7 @@ public static class CoreTinadecConfigTools
 
     private const string InspectSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"agent\",\"modes\",\"mode\",\"catalog\",\"models\",\"prompts\",\"prompt_pipeline\",\"skills\",\"mcp\",\"market\"],\"description\":\"What to read. 'agent' needs agent_id (GUID or slug); 'mode' needs mode_id (GUID or slug); 'prompt_pipeline' needs pipeline_id (GUID or slug); 'models' lists sanitized enabled providers, routes, health, and model_profiles; 'prompts' lists fragments and pipelines.\"}," +
+        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"agent\",\"modes\",\"mode\",\"catalog\",\"models\",\"prompts\",\"prompt_pipeline\",\"skills\",\"mcp\",\"market\"],\"description\":\"What to read. 'agent' needs agent_id (GUID or slug) and returns the FULL definition (system_prompt, model_strategy, tool_scope, capabilities, base_prompt_pipeline_id, source_kind, provenance, runtime_binding); 'mode' needs mode_id (GUID or slug); 'prompt_pipeline' needs pipeline_id (GUID or slug) and returns the full graph (nodes + edges); 'models' lists sanitized enabled providers, models, routes, health, and model_profiles; 'prompts' lists fragments (with content) and pipelines.\"}," +
         "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug, required for target=agent.\"}," +
         "\"mode_id\":{\"type\":\"string\",\"description\":\"Mode id (GUID) or slug, required for target=mode.\"}," +
         "\"pipeline_id\":{\"type\":\"string\",\"description\":\"Prompt pipeline id (GUID) or slug, required for target=prompt_pipeline.\"}," +
@@ -101,18 +101,18 @@ public static class CoreTinadecConfigTools
 
     private const string AgentSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"action\":{\"type\":\"string\",\"enum\":[\"clone\",\"create\",\"update\",\"publish\"]}," +
-        "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug: source for clone, target for update/publish.\"}," +
-        "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Optional optimistic revision from inspect; stale values fail with conflict.\"}," +
-        "\"payload\":{\"type\":\"object\",\"description\":\"Write fields: display_name, slug, layer (operation|execution), role, capabilities[], tool_scope[], system_prompt, description, model_strategy, enabled, base_prompt_pipeline_id, source_kind, provenance { created_by_agent_id, created_by_run_id, reason }, model_binding { provider_id, model_id, strategy, tier, notes }, tool_settings { mcp_server_ids[], skill_resource_ids[] }.\"}" +
+        "\"action\":{\"type\":\"string\",\"enum\":[\"clone\",\"create\",\"update\",\"publish\"],\"description\":\"create makes a draft; publish freezes an immutable version and is what makes a mode accept the agent.\"}," +
+        "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug: source for clone, target for update and publish.\"}," +
+        "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Optional optimistic revision from tinadec_inspect; a stale value fails with conflict.\"}," +
+        "\"payload\":{\"type\":\"object\",\"description\":\"Write fields: display_name, slug, layer (operation|execution), role, capabilities[], tool_scope[], system_prompt, description, model_strategy, enabled, base_prompt_pipeline_id (a prompt pipeline GUID, validated against this workspace), source_kind, provenance { created_by_agent_id, created_by_run_id, reason }, model_binding { mode (inherit|route|fixed; default fixed), provider_instance_id, model, route_purpose }, tool_settings { mcp_server_ids[], skill_resource_ids[], mcp_enabled, skills_enabled }. An omitted source_kind defaults to agent_generated when the call comes from a run.\"}" +
         "},\"required\":[\"action\"],\"additionalProperties\":false}";
 
     private const string ModeSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"action\":{\"type\":\"string\",\"enum\":[\"clone\",\"create\",\"upsert\",\"delete\"]}," +
-        "\"mode_id\":{\"type\":\"string\",\"description\":\"Target mode (GUID or slug): source for clone, target for upsert/delete.\"}," +
+        "\"action\":{\"type\":\"string\",\"enum\":[\"clone\",\"create\",\"upsert\",\"delete\"],\"description\":\"clone copies a pack or custom mode into an editable draft; upsert edits a draft you own.\"}," +
+        "\"mode_id\":{\"type\":\"string\",\"description\":\"Target mode: a GUID or the mode slug (for example free_director). Source for clone, target for upsert and delete.\"}," +
         "\"expected_revision\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"The revision tinadec_inspect returned; a stale value is refused with a conflict.\"}," +
-        "\"payload\":{\"type\":\"object\",\"description\":\"display_name, slug, description, instructions, orchestration_tier (solo_dispatch|free_form|self_dispatch|deterministic), bindings, runtime_policy, canvas_layout, nodes[], edges[]. Nodes need node_key + agent_definition_id + layer; edges need edge_key + source_node_key + target_node_key.\"}" +
+        "\"payload\":{\"type\":\"object\",\"description\":\"display_name, slug, description, instructions (at most 4000 chars), orchestration_tier (solo|solo_dispatch|free_form|self_dispatch|deterministic), bindings[] (each needs node_key or agent_ref), runtime_policy, canvas_layout, nodes[], edges[]. Nodes need node_key + agent_definition_id + layer and may carry relationship { duty, inputs_outputs, allowed_dispatch_targets, success_criteria, agent_types, subscriptions }; edges need edge_key + source_node_key + target_node_key. Nodes or edges omitted from a submitted array are deleted.\"}" +
         "},\"required\":[\"action\"],\"additionalProperties\":false}";
 
     private const string PublishSchema =

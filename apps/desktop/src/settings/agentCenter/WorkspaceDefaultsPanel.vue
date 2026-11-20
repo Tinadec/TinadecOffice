@@ -29,10 +29,19 @@ const props = defineProps<{
   pipelines?: PipelineLike[]
 }>()
 
+/**
+ * `focus-toml` is emitted with the document id the TOML panel should select. It is the
+ * document *key* (`runtime`, `agent`, …) as Core names it, because that is what
+ * `TomlDocumentPanel.selectDocument(id)` resolves — passing a filename would make the
+ * lookup fall back to "first document" and silently open the wrong file.
+ */
 const emit = defineEmits<{
   changed: []
   'focus-toml': [documentId: string]
 }>()
+
+/** The document that owns the ceilings this card reports. */
+const RUNTIME_DOCUMENT_ID = 'runtime'
 
 const { t, locale } = useI18n()
 const { notify } = useNotifications()
@@ -289,7 +298,13 @@ defineExpose({ load })
           <strong>{{ t('settings.runtimeCeilings.title') }}</strong>
           <UiBadge v-if="runtimePolicy?.revision != null" variant="outline">{{ t('settings.runtimeCeilings.revision', { revision: runtimePolicy.revision }) }}</UiBadge>
         </div>
-        <UiButton size="xs" variant="outline" :disabled="!canAccessBackend" @click="emit('focus-toml', 'runtime')">
+        <UiButton
+          size="xs"
+          variant="outline"
+          :disabled="!canAccessBackend"
+          data-testid="edit-runtime-toml"
+          @click="emit('focus-toml', RUNTIME_DOCUMENT_ID)"
+        >
           <FileCode2 :size="12" />
           <span>{{ t('settings.runtimeCeilings.editDocument') }}</span>
         </UiButton>

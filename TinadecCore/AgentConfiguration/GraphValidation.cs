@@ -36,6 +36,13 @@ internal static class GraphValidation
     /// <summary>Per-node relationship description file cap (S11).</summary>
     public const int MaxRelationshipBytes = 16 * 1024;
 
+    /// <summary>
+    /// Mode-level collaboration instructions cap. The instructions are frozen into the
+    /// version snapshot, so the cap keeps one snapshot inside its 32 KiB column; both
+    /// publish paths (manual draft and pack manifest) enforce this same number.
+    /// </summary>
+    public const int MaxModeInstructionsLength = 4000;
+
     public static readonly IReadOnlyList<string> ValidOrchestrationTiers =
     [
         "solo_dispatch",
@@ -161,6 +168,26 @@ internal static class GraphValidation
         if (Encoding.UTF8.GetByteCount(serialized) > MaxRelationshipBytes)
             Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file exceeds the {MaxRelationshipBytes} byte cap.");
     }
+
+    /// <summary>
+    /// The one tool-switch predicate every publish path shares. A switch map is
+    /// <c>{ "&lt;tool_id&gt;": true|false }</c>; a tool is OFF when its own id maps to false
+    /// (bool <c>false</c> or the string <c>"false"</c>), and — this is the rule that
+    /// used to exist in three places with one of them missing it — when the wildcard
+    /// <c>"*": false</c> maps to false. "Shed the whole face, then re-arm one tool" is
+    /// therefore expressible: <c>*: false</c> plus <c>write_file: true</c> re-arms
+    /// write_file, because an exact id always wins over the wildcard.
+    /// </summary>
+    internal static bool IsSwitchedOff(JsonElement? switches, string toolId)
+    {
+        if (switches is not { ValueKind: JsonValueKind.Object } map) return false;
+        if (map.TryGetProperty(toolId, out var exact)) return IsFalseState(exact);
+        return map.TryGetProperty("*", out var wildcard) && IsFalseState(wildcard);
+    }
+
+    internal static bool IsFalseState(JsonElement state) =>
+        state.ValueKind == JsonValueKind.False
+        || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase));
 
     internal static bool IsConversationMarked(JsonElement config) =>
         config.ValueKind == JsonValueKind.Object
