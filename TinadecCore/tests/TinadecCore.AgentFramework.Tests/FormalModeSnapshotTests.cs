@@ -45,6 +45,45 @@ public sealed class FormalModeSnapshotTests
             && binding.ConfigurationVersionId == fixture.PromptVersionV1);
     }
 
+    /// <summary>
+    /// The last hop of the explicit-tier feature: a tier declared on the published mode snapshot
+    /// must arrive on the roster, because that is the value the run freeze reads. The derivation
+    /// (`DeriveGraphTier`/`MapDeclaredTier`) and the snapshot reader are both unit-tested, but
+    /// nothing drove a snapshot through the resolver into <see cref="FormalModeRoster"/>. Without
+    /// this, the feature can be fully "tested" and still be inert — which is exactly what happened
+    /// before this phase: the 4th argument was honoured and nothing ever populated it.
+    /// </summary>
+    [Fact]
+    public async Task ResolveRoster_CarriesTheDeclaredOrchestrationTierFromTheSnapshot()
+    {
+        await using var fixture = await FormalModeFixture.CreateAsync(orchestrationTier: "self_dispatch");
+
+        var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterAsync(fixture.SessionId);
+
+        Assert.NotNull(roster);
+        Assert.Equal("self_dispatch", roster.OrchestrationTier);
+        Assert.True(roster.HasExplicitOrchestrationTier);
+    }
+
+    /// <summary>
+    /// The complement, and the one that matters for legacy data: a mode published before the field
+    /// existed must read back as "no declared tier" so inference still runs and the run does not
+    /// fail admission over a field it never declared.
+    /// </summary>
+    [Fact]
+    public async Task ResolveRoster_WithoutADeclaredTier_LeavesItNullSoInferenceRuns()
+    {
+        await using var fixture = await FormalModeFixture.CreateAsync();
+
+        var roster = await fixture.Services.GetRequiredService<IFormalModeResolver>()
+            .ResolveRosterAsync(fixture.SessionId);
+
+        Assert.NotNull(roster);
+        Assert.Null(roster.OrchestrationTier);
+        Assert.False(roster.HasExplicitOrchestrationTier);
+    }
+
     [Fact]
     public async Task ResolveRoster_InjectsModeInstructionsIntoConversationIdentityOnly()
     {
@@ -149,7 +188,8 @@ public sealed class FormalModeSnapshotTests
         public static async Task<FormalModeFixture> CreateAsync(
             bool tamperAgentHash = false,
             bool structuredInvestigation = false,
-            string? instructions = null)
+            string? instructions = null,
+            string? orchestrationTier = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "tinadec-formal-mode-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -279,6 +319,10 @@ public sealed class FormalModeSnapshotTests
                         edges = Array.Empty<object>(),
                         canvas_layout = (object?)null,
                         instructions,
+                        // Serialized as JSON null when unset. `ReadOrchestrationTier` only accepts
+                        // ValueKind.String, so null reads back as "no declared tier" — the same
+                        // answer the publish paths produce by omitting the key entirely.
+                        orchestration_tier = orchestrationTier,
                         runtime_policy = structuredInvestigation
                             ? new
                             {
