@@ -85,6 +85,7 @@ public sealed class TinaChatMemberTurnRunner : ITinaChatMemberTurnRunner
             Tools = tools.Count == 0 ? null : tools.Select(tool => (AITool)AIFunctionFactory.CreateDeclaration(tool.Id, tool.Description, tool.InputSchema, null)).ToList()
         };
         var messages = new List<ChatMessage> { new(ChatRole.User, turn.Briefing) };
+        var imageMode = ToolResultImages.DeliveryModeFor(resolution);
         var called = new List<string>();
         string? finalText = null;
         var rounds = 0;
@@ -101,6 +102,7 @@ public sealed class TinaChatMemberTurnRunner : ITinaChatMemberTurnRunner
                 break;
             }
             var results = new List<AIContent>();
+            var imageCarriers = new List<ChatMessage>();
             foreach (var call in calls)
             {
                 var callId = string.IsNullOrWhiteSpace(call.CallId) ? $"call-{rounds}-{results.Count}" : call.CallId;
@@ -119,9 +121,33 @@ public sealed class TinaChatMemberTurnRunner : ITinaChatMemberTurnRunner
                             ? await RecallAsync(archive, turn, arguments, visibility, cancellationToken).ConfigureAwait(false)
                             : Outcome(await toolbox.ExecuteAsync(call.Name, arguments, $"{turn.TurnKey}:{rounds}:{callId}", cancellationToken).ConfigureAwait(false));
                 }
-                results.Add(new FunctionResultContent(callId, ExecutionAgent.ModelFacingResult(result)));
+                var modelFacing = ExecutionAgent.ModelFacingResult(result);
+                // Delivery follows the route's mode (ToolResultImages): native keeps the image in
+                // the result JSON for the HTTP rewrite, carrier adds the adjacent user-role
+                // message. This loop accumulates messages across rounds, so older carriers are
+                // demoted each round.
+                if (ToolResultImages.Find(result) is { } image)
+                {
+                    var reason = ToolResultImages.NotDeliveredReason(resolution, withinBudget: true, image);
+                    if (reason is null && imageMode == ToolImageDeliveryMode.UserCarrier)
+                    {
+                        var carrier = await ToolResultImages.BuildCarrierAsync(callId, call.Name, image, cancellationToken).ConfigureAwait(false);
+                        if (carrier is not null) imageCarriers.Add(carrier);
+                        else reason = "截图文件读取失败。";
+                    }
+                    if (reason is not null)
+                    {
+                        if (imageMode == ToolImageDeliveryMode.NativeInToolResult)
+                            modelFacing = ToolResultImages.StripImageFromResult(modelFacing);
+                        modelFacing += "\n" + ToolResultImages.UndeliveredNote(reason);
+                    }
+                }
+                results.Add(new FunctionResultContent(callId, modelFacing));
             }
             messages.Add(new ChatMessage(ChatRole.Tool, results));
+            foreach (var carrier in imageCarriers) messages.Add(carrier);
+            if (imageMode == ToolImageDeliveryMode.UserCarrier) ToolResultImages.DemoteBeyondBudget(messages);
+            ToolResultImages.AssertNoToolMessageImages(messages, resolution);
         }
 
         var outcome = new TinaChatMemberTurnOutcome(rounds + (finalText is null ? 0 : 1), called.Count, finalText, called);

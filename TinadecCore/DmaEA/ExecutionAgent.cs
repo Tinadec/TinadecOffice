@@ -116,7 +116,8 @@ public sealed class ExecutionAgent
             maxHistoryMessages,
             ct,
             imageInput.Parts,
-            fullResults).ConfigureAwait(false);
+            fullResults,
+            resolved).ConfigureAwait(false);
         var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
             .GetResponseAsync(conversation, options, ct)
             .ConfigureAwait(false);
@@ -184,9 +185,22 @@ public sealed class ExecutionAgent
         int maxHistoryMessages,
         CancellationToken cancellationToken,
         IReadOnlyList<AIContent>? goalParts = null,
-        IReadOnlyDictionary<string, string>? fullResults = null)
+        IReadOnlyDictionary<string, string>? fullResults = null,
+        ChatResolution? resolution = null)
     {
         var messages = new List<ChatMessage>();
+        // Tool-result images are budgeted before the loop: the newest image turns keep theirs,
+        // older ones degrade to an in-result note. On Responses routes the kept images stay in
+        // the result JSON and the HTTP rewrite turns them into native function_call_output parts
+        // (NativeInToolResult); everywhere else they ride the user-role carrier message.
+        var imageMode = ToolResultImages.DeliveryModeFor(resolution);
+        var imageRefs = new ToolResultImageRef?[history.Count];
+        for (var i = 0; i < history.Count; i++)
+        {
+            var stored = history[i].ResultOnExecution && fullResults?.GetValueOrDefault(history[i].CallId) is { } full ? full : history[i].ResultJson;
+            imageRefs[i] = stored is null ? null : ToolResultImages.Find(stored);
+        }
+        var imageBudget = ToolResultImages.PlanBudget(imageRefs);
         // A round the user cut off sits in the transcript where it happened: what the worker had
         // said so far, then what the user sent. Only ever between whole tool rounds, never between a
         // call and its result.
@@ -212,10 +226,40 @@ public sealed class ExecutionAgent
             if (!string.IsNullOrWhiteSpace(turn.ResultJson))
             {
                 var result = turn.ResultOnExecution && fullResults?.GetValueOrDefault(turn.CallId) is { } full ? full : turn.ResultJson;
+                var modelFacing = ModelFacingResult(result);
+                ChatMessage? imageCarrier = null;
+                if (imageRefs[index] is { } image)
+                {
+                    var reason = ToolResultImages.NotDeliveredReason(resolution, imageBudget.Contains(index), image);
+                    if (reason is null && imageMode == ToolImageDeliveryMode.UserCarrier)
+                    {
+                        imageCarrier = await ToolResultImages.BuildCarrierAsync(turn.CallId, turn.ToolId, image, cancellationToken).ConfigureAwait(false);
+                        if (imageCarrier is null) reason = "截图文件读取失败。";
+                    }
+                    else if (reason is null)
+                    {
+                        // Native mode: the image object stays in the result JSON; the HTTP rewrite
+                        // layer turns it into a native function_call_output part. A missing file
+                        // fails the request at rewrite time instead of silently losing the image.
+                    }
+                    if (reason is not null)
+                    {
+                        // Out of budget / oversized / unreadable: strip the image object in native
+                        // mode (the rewrite must not pick it up) and tell the model why.
+                        if (imageMode == ToolImageDeliveryMode.NativeInToolResult)
+                            modelFacing = ToolResultImages.StripImageFromResult(modelFacing);
+                        modelFacing += "\n" + ToolResultImages.UndeliveredNote(reason);
+                    }
+                }
                 messages.Add(new ChatMessage(ChatRole.Tool,
                 [
-                    new FunctionResultContent(turn.CallId, ModelFacingResult(result))
+                    new FunctionResultContent(turn.CallId, modelFacing)
                 ]));
+                // Carrier mode: the screenshot rides a user-role message right after its tool
+                // result — inside the Tool message itself both OpenAI adapters drop the image
+                // part on the floor (wire-probed). Native mode adds no message: the image rides
+                // the tool result itself via the HTTP rewrite.
+                if (imageCarrier is not null) messages.Add(imageCarrier);
             }
             AddInterruptions(++index);
         }

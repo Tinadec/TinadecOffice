@@ -50,6 +50,7 @@ function createAgentBrowserManager({
   now = () => new Date(),
   randomUUID = crypto.randomUUID,
   platform = process.platform,
+  nativeImage = null,
 }) {
   if (!BrowserWindow || !WebContentsView) throw new TypeError('createAgentBrowserManager requires Electron constructors');
   if (typeof shellUrl !== 'function') throw new TypeError('createAgentBrowserManager requires shellUrl()');
@@ -423,6 +424,10 @@ function createAgentBrowserManager({
     }
   }
 
+  // Long-edge cap for the model-facing context copy of a capture; mirrors the desktop tools'
+  // MaxContextImageEdge so both capture families deliver the same budget shape.
+  const MAX_CONTEXT_IMAGE_EDGE = 1568;
+
   async function screenshot(sessionId, tabId, fullPage, shotsRoot) {
     const result = await cdp(sessionId, tabId, 'Page.captureScreenshot', {
       format: 'png',
@@ -435,7 +440,39 @@ function createAgentBrowserManager({
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const file = path.join(dir, `shot-${randomUUID()}.png`);
     fs.writeFileSync(file, bytes);
-    return { path: file, bytes: bytes.length };
+
+    // Dimensions and the downscaled context copy need a real decoder; without nativeImage the
+    // result keeps the old shape (path/bytes only) and the .NET side falls back to the full file.
+    let decoded = null;
+    if (nativeImage) {
+      try { decoded = nativeImage.createFromBuffer(bytes); } catch { decoded = null; }
+    }
+    if (!decoded) return { path: file, bytes: bytes.length };
+
+    const size = decoded.getSize();
+    const shot = { path: file, bytes: bytes.length, width: size.width, height: size.height };
+    const longEdge = Math.max(size.width, size.height);
+    if (longEdge <= MAX_CONTEXT_IMAGE_EDGE) {
+      shot.context_path = file;
+      shot.context_bytes = bytes.length;
+      shot.context_width = size.width;
+      shot.context_height = size.height;
+      return shot;
+    }
+    const scale = MAX_CONTEXT_IMAGE_EDGE / longEdge;
+    const width = Math.max(1, Math.round(size.width * scale));
+    const height = Math.max(1, Math.round(size.height * scale));
+    let resized;
+    try { resized = decoded.resize({ width, height, quality: 'good' }); } catch { return shot; }
+    const contextBytes = resized.toPNG();
+    if (!contextBytes || !contextBytes.length) return shot;
+    const contextFile = file.replace(/\.png$/, '-ctx.png');
+    fs.writeFileSync(contextFile, contextBytes);
+    shot.context_path = contextFile;
+    shot.context_bytes = contextBytes.length;
+    shot.context_width = width;
+    shot.context_height = height;
+    return shot;
   }
 
   function setControl(sessionId, mode) {
