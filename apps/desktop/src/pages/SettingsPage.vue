@@ -334,6 +334,15 @@ async function loadAgentPermissionRequests() {
 
 async function loadAgentCenterData(context: ReadContext) {
   const { signal, isCurrent } = context
+  // Capture the editor's unsaved state BEFORE the directory is replaced. Two things go wrong if
+  // this is read afterwards:
+  //   1. `agents.value` is rewritten below, so the panel's `configuringAgent` resolves to null and
+  //      `persistAgentDraft` early-returns — the edit is never written to the draft store.
+  //   2. Edits are persisted on a 400 ms debounce, so even a live panel may not have flushed yet.
+  // Flushing and snapshotting dirtiness here is what lets the editor survive a directory refresh.
+  agentsPanelRef.value?.flushAgentDraft()
+  const preserveDraft = Boolean(agentsPanelRef.value?.isEditorDirty())
+  const draftAgentId = configuringAgentId.value
   const partial: Array<{ source: string; error: ErrorState }> = []
   function preserve<T>(source: string, fallback: T): (error: unknown) => T {
     return error => { if (isCurrent()) partial.push({ source, error: toErrorState(error) }); return fallback }
@@ -351,13 +360,12 @@ async function loadAgentCenterData(context: ReadContext) {
       .map((resource) => resource.logical_entity_id!),
   )
   const failures: Record<string, ErrorState> = {}
-  const preserveDraft = Boolean(agentsPanelRef.value?.isEditorDirty())
   if (!preserveDraft) agentDefinitionLoadedIds.value = new Set()
   agentDefinitionLoadingId.value = ''
   const previousAgents = new Map(agents.value.map(agent => [agent.id, agent]))
-  if (preserveDraft && !directory.some(item => item.id === configuringAgentId.value)) {
-    failures[configuringAgentId.value] = toErrorState(new Error(t('settings.agentDraftSourceMissing')))
-    partial.push({ source: previousAgents.get(configuringAgentId.value)?.name ?? configuringAgentId.value, error: failures[configuringAgentId.value]! })
+  if (preserveDraft && !directory.some(item => item.id === draftAgentId)) {
+    failures[draftAgentId] = toErrorState(new Error(t('settings.agentDraftSourceMissing')))
+    partial.push({ source: previousAgents.get(draftAgentId)?.name ?? draftAgentId, error: failures[draftAgentId]! })
   }
   agentDefinitionFailures.value = failures
   agentCenterOverview.value = null

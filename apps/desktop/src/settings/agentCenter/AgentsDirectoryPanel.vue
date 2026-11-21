@@ -240,6 +240,17 @@ const filteredAgentCount = computed(() => filteredOperationAgents.value.length +
 const agentGeneratedCount = computed(() => props.agents.filter((agent) => agentSourceKindFor(agent.id) === 'agent_generated').length)
 
 // ── Inspector & Editor State ──
+/**
+ * The definition the editor was seeded from, retained across a directory refresh.
+ *
+ * `configuringAgent` resolves from `props.agents`, so when a directory reload omits the agent
+ * (a read failure, a transient 404, a pack briefly uninstalled) it becomes null — and everything
+ * that guards on it, including `persistAgentDraft`, silently stops working while the user's text
+ * is still on screen. Keeping the last known definition lets the draft be written for the
+ * identity the editor is actually showing.
+ */
+const lastSeededAgent = ref<AgentViewDto | null>(null)
+
 const configuringAgent = computed(() =>
   props.definitionFailures[props.configuringAgentId]
     ? null
@@ -531,7 +542,13 @@ function agentEditorSnapshot(): string {
 }
 
 function isEditorDirty(): boolean {
-  return agentEditorBaseline !== '' && agentEditorSnapshot() !== agentEditorBaseline
+  if (agentEditorBaseline !== '') return agentEditorSnapshot() !== agentEditorBaseline
+  // No baseline means this instance has not seeded an editor yet — it was just mounted, or the
+  // page is asking before the first seed. Falling through to "not dirty" here is what made the
+  // page re-seed over the user's text, so consult the persisted draft instead: `persistAgentDraft`
+  // writes it on every edit and `settleAgentDraft` clears it only on save or discard.
+  const agent = configuringAgent.value ?? lastSeededAgent.value
+  return Boolean(agent && readDraft('user', 'agent', agent.id))
 }
 
 const agentDraftNotice = ref<{ status: 'dirty' | 'stale'; savedAt: number } | null>(null)
@@ -607,7 +624,10 @@ function restoreAgentDraft(agent: AgentViewDto) {
 }
 
 function persistAgentDraft() {
-  const agent = configuringAgent.value
+  // Fall back to the last seeded definition: `configuringAgent` goes null the moment a directory
+  // refresh omits this agent, and returning early there would drop the user's unsaved edit on the
+  // floor even though it is still on screen.
+  const agent = configuringAgent.value ?? lastSeededAgent.value
   if (!agent || isAgentReadOnly(agent) || applyingAgentDraft) return
   if (agentEditorSnapshot() === agentEditorBaseline) return
   const baseRevision = agentEditRevision.value ?? agent.revision ?? null
@@ -742,6 +762,9 @@ function openAgentConfig(agent: AgentViewDto, forceSeed = false) {
     binding?.route_purpose || (agent as AgentViewDto & { model_route_purpose?: string }).model_route_purpose || props.routes[0]?.purpose || ''
   agentRuntimeModelQuery.value = ''
   restoreAgentDraft(agent)
+  // Remember the identity the editor is showing, so a later directory refresh that omits this
+  // agent cannot make the draft path silently no-op.
+  lastSeededAgent.value = agent
   agentEditorBaseline = agentEditorSnapshot()
   void loadAgentVersionHistory(agent.id)
   void nextTick(() => {
