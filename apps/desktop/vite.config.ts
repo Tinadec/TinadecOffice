@@ -41,7 +41,7 @@ export default defineConfig({
       // 它们默认落在 project root 之内，chokidar 启动时会把 36467 个文件全爬一遍，
       // 和首次依赖扫描抢同一块 IO：实测冷启动时仅这一步就占 30-110s（见
       // .tinadec_dev/evidence/2026-10-18-perf-dev/README.zh-CN.md）。
-      ignored: ['**/release/**', '**/runtime/**', '**/dist/**'],
+      ignored: ['**/release/**', '**/runtime/**', '**/dist/**', '**/.runtime-cache/**'],
     },
   },
   build: {

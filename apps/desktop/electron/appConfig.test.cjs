@@ -319,7 +319,7 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
   const disposed = makeWindow(4, true);
   const env = { TINADEC_RESOLVED_GATEWAY_URL: DEFAULT_GATEWAY_URL };
   const nodeProcess = { platform: process.platform, env };
-  const hostPaths = { desktopConfig: configFile, root: path.dirname(configFile), source: 'default', hostLogs: 'unused-test-log' };
+  const hostPaths = { desktopConfig: configFile, root: path.dirname(configFile), source: 'default', hostLogs: 'unused-test-log', state: path.join(path.dirname(configFile), 'state') };
   const fakeElectron = {
     app: { on() {}, whenReady: () => ({ then() {} }), setAppUserModelId() {} },
     BrowserWindow: { getAllWindows: () => [main, panel, state.debug, disposed].filter(Boolean) },
@@ -393,6 +393,20 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
     './appBundle.cjs': {},
     './localMedia.cjs': {},
     './externalLinks.cjs': {},
+    // The agent browser (P1/P5) is built at main.cjs load time and torn down from the
+    // close/quit hooks. These cases exercise unrelated IPC, so the stubs only need the
+    // shapes production calls: the manager's lifecycle/shell methods and the bridge's
+    // start/stop.
+    './agentBrowser.cjs': {
+      createAgentBrowserManager: () => ({
+        closeAll() {},
+        setLocale() {},
+        shellState: () => ({}),
+        shellCommand: () => ({}),
+      }),
+    },
+    './browserBridge.cjs': { createBrowserBridge: () => ({ start: async () => ({}), stopSync() {} }) },
+    './agentBrowserStrings.cjs': { stringsForLocale: () => ({}) },
     // Logto auth (1eb448b4): no case here exercises the account channels, the stub
     // only satisfies main.cjs's destructuring at load time with the real shapes.
     './auth.cjs': {

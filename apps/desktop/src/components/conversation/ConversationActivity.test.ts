@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 import { nextTick, ref, shallowRef } from 'vue'
 import en from '@/locales/en'
 import { applyEvents, createFeedState, type PlanEntry, type ReasoningEntry, type ToolEntry } from '@/lib/conversation/reducer'
+import type { EventEnvelope } from '@/api'
 import { EventScript } from '@/lib/conversation/fixtures/builder'
 import { exploreEditShell, finishedTeamRun, parallelSubAgents, pendingApproval, type FeedFixture } from '@/lib/conversation/fixtures'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
@@ -343,5 +344,36 @@ describe('AgentTodos', () => {
     const wrapper = track(mount(AgentTodos, { props: { entry: { ...plan(0), steps: repeated } }, global }))
     expect(wrapper.findAll('.conversation-todo')).toHaveLength(6)
     expect(wrapper.findAll('.conversation-todo').every((row) => row.text().includes('Update the call sites'))).toBe(true)
+  })
+})
+
+describe('live activity reactivity', () => {
+  // The reducer appends `entry.text` on the same object it handed the leaf as a prop. If the
+  // record were a plain object, Vue would skip the child (stable prop identity) and cache its
+  // computeds, freezing the reasoning text until a remount. This pins the reactive-record fix:
+  // a delta plus a published revision must reach the DOM with no remount. Reverting the
+  // `reactive(...)` wrap in reducer.ts turns this red (the text stops at the first frame).
+  it('streams reasoning text into an open block as deltas arrive', async () => {
+    const state = createFeedState()
+    const envelope = (seq: number, type: string, payload: Record<string, unknown>): EventEnvelope => ({
+      run_id: 'r1', v: '1.0', type, request_id: '', session_id: 's1', trace_id: '', seq,
+      ts: '2026-11-07T09:00:00Z', capabilities: [], payload,
+    })
+    applyEvents(state, [
+      envelope(1, 'model.output.started', { response_id: 'resp1', task_id: 't1', channel: 'reasoning' }),
+      envelope(2, 'model.output.delta', { response_id: 'resp1', channel: 'reasoning', delta: 'first thought' }),
+    ])
+    const revision = ref(1)
+    const feed: ConversationFeed = { state: shallowRef(state), revision, hydrated: ref(true) }
+    const runs = [{ id: 'r1', status: 'executing', trigger_message_id: 'm1', created_at: '2026-11-07T09:00:00Z', updated_at: null }]
+    const messages = [{ id: 'm1', role: 'user', content: 'hi', created_at: '2026-11-07T09:00:00Z', session_id: 's1' } as never]
+    const wrapper = track(mount(ConversationView, { props: { messages, runs, feed, workspaceRoot: '/w' }, global, attachTo: document.body }))
+    await flush()
+    expect(wrapper.text()).toContain('first thought')
+
+    applyEvents(state, [envelope(3, 'model.output.delta', { response_id: 'resp1', channel: 'reasoning', delta: ' and a second' })])
+    revision.value += 1
+    await flush()
+    expect(wrapper.text()).toContain('and a second')
   })
 })

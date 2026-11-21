@@ -274,8 +274,22 @@ function isBudgetRow(node: FeedNode): boolean {
 /**
  * Groups one run. `live` is true while the run can still change (not settled), which is
  * what lets the last exploration group stay open and what suppresses the row budget.
+ *
+ * Memoized per run: a result is reused while the run's `version`, liveness and shape
+ * options are unchanged. The feed re-derives turns on every published batch, but only the
+ * run that actually received events pays for a regroup; historical runs return the same
+ * object, so their nodes keep a stable identity and Vue skips their leaf updates. Reading
+ * `record.version` here also makes the calling computed track exactly that run.
  */
+const groupCache = new WeakMap<RunActivity, { version: number; live: boolean; quiet: 'grouped' | 'listed'; budget: number; result: GroupedRun }>()
+
 export function groupRun(record: RunActivity, live: boolean, options: GroupOptions = {}): GroupedRun {
+  const quiet = options.quiet ?? 'grouped'
+  const budget = live ? 0 : options.budget ?? 0
+  const cached = groupCache.get(record)
+  if (cached && cached.version === record.version && cached.live === live && cached.quiet === quiet && cached.budget === budget) {
+    return cached.result
+  }
   const byScope = new Map<string | null, FeedEntry[]>()
   const ordered = [...record.entries].sort((a, b) => a.seq - b.seq)
   for (const entry of ordered) {
@@ -284,13 +298,14 @@ export function groupRun(record: RunActivity, live: boolean, options: GroupOptio
     if (list) list.push(entry)
     else byScope.set(scope, [entry])
   }
-  const context: Context = { record, byScope, approvals: [], agents: [], live, quiet: options.quiet ?? 'grouped' }
+  const context: Context = { record, byScope, approvals: [], agents: [], live, quiet }
   const nodes = build(context, null, null)
-  const budget = live ? 0 : options.budget ?? 0
   const foldable = budget > 0 ? nodes.filter(isBudgetRow) : []
   const hidden = foldable.slice(0, Math.max(0, foldable.length - budget)).map((node) => node.id)
   const running = context.agents.filter((node) => node.status === 'running' || node.status === 'awaiting_approval').length
-  return { nodes, hidden, approvals: context.approvals, agents: context.agents, running, review: record.review }
+  const result: GroupedRun = { nodes, hidden, approvals: context.approvals, agents: context.agents, running, review: record.review }
+  groupCache.set(record, { version: record.version, live, quiet, budget, result })
+  return result
 }
 
 /** Longest interim answer that still reads as a note between steps, not as the answer. */
