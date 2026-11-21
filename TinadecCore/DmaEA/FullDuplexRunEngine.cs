@@ -1404,6 +1404,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
+                    configuration,
                     instructionsForAttempt,
                     cancellationToken).ConfigureAwait(false);
                 plannerHead = planner.LastResponseHead;
@@ -3461,7 +3462,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         {
             Workspace = configuration.Workspace,
             ResponseLocale = configuration.InterfaceLocale,
-            RuntimePolicy = configuration.RuntimePolicy
+            RuntimePolicy = configuration.RuntimePolicy,
+            // Use ONLY the fragments frozen at admission when present, so a run is reproducible
+            // even if the fragment store changes mid-flight. Null (a body frozen before this
+            // existed) leaves the assembler on the live path it has always used.
+            FrozenFragments = configuration.FrozenPromptFragments,
+            IncludeLiveFragments = configuration.FrozenPromptFragments is null
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -4966,6 +4972,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
+                    configuration,
                     instructionsForAttempt,
                     cancellationToken).ConfigureAwait(false);
                 replanParseError = planner.LastParseErrorDetail;

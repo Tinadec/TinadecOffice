@@ -1527,6 +1527,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 var planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
+                    configuration,
                     instructionsForAttempt,
                     cancellationToken).ConfigureAwait(false);
                 laneParseError = planner.LastParseErrorDetail;

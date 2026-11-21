@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
@@ -96,6 +97,18 @@ public sealed record FrozenRunConfigurationV1(
 
     /// <summary>Protocol version of <see cref="ToolManifest"/> (zero for legacy bodies).</summary>
     public int ToolManifestProtocolVersion { get; init; }
+
+    /// <summary>
+    /// The prompt fragments this run may assemble, snapshotted at admission.
+    ///
+    /// Freezing them is what makes a resumed run reproducible: without it the assembler re-reads
+    /// the live fragment store on every turn, so a fragment edited mid-run changes the instructions
+    /// of a run that is supposed to be pinned to one configuration. Null on bodies frozen before
+    /// this existed, and on runs admitted without a fragment source — readers then fall back to the
+    /// live store, which is the pre-existing behaviour.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<FrozenPromptFragment>? FrozenPromptFragments { get; init; }
 
     /// <summary>
     /// Policy versions captured at admission.  An empty list is meaningful when
@@ -287,6 +300,8 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     private readonly IPolicySnapshotProvider? _policySnapshots;
     private readonly IToolConfigurationResolver? _toolSettings;
     private readonly IConfigurationProjectionCoordinator? _configurationFiles;
+    private readonly IFrozenPromptFragmentSource? _promptFragments;
+    private readonly ILogger<AgentRuntimeConfigurationResolver>? _logger;
 
     public AgentRuntimeConfigurationResolver(
         IAgentRuntimeConfiguration baseline,
@@ -295,7 +310,9 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         ISessionLocator sessions,
         IPolicySnapshotProvider? policySnapshots = null,
         IToolConfigurationResolver? toolSettings = null,
-        IConfigurationProjectionCoordinator? configurationFiles = null)
+        IConfigurationProjectionCoordinator? configurationFiles = null,
+        IFrozenPromptFragmentSource? promptFragments = null,
+        ILogger<AgentRuntimeConfigurationResolver>? logger = null)
     {
         _baseline = baseline;
         _formal = formal;
@@ -304,6 +321,8 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         _policySnapshots = policySnapshots;
         _toolSettings = toolSettings;
         _configurationFiles = configurationFiles;
+        _promptFragments = promptFragments;
+        _logger = logger;
     }
 
     public Task<FrozenRunConfigurationV1> ResolveAsync(
@@ -528,7 +547,14 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             InterfaceLocale = RunLocaleResolver.Normalize(interfaceLocale),
             Workspace = workspace,
             SpaceOptions = spaceOptions,
-            SpacePreparationToolIds = preparationTools.Length == 0 ? null : preparationTools
+            SpacePreparationToolIds = preparationTools.Length == 0 ? null : preparationTools,
+            // Freeze the fragments this run may assemble, scoped to the conversation identity.
+            // Without this the assembler re-reads the live store every turn, so a fragment edited
+            // mid-run silently rewrites the instructions of a run that is supposed to be pinned.
+            // Null when no source is registered: the assembler then keeps its live-store path.
+            FrozenPromptFragments = _promptFragments is null || string.IsNullOrWhiteSpace(graph?.ConversationNodeKey)
+                ? null
+                : await FreezePromptFragmentsAsync(graph, session, cancellationToken).ConfigureAwait(false)
         };
         if (fileSnapshot is not null && _configurationFiles is not null)
         {
@@ -539,7 +565,38 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     }
 
     /// <summary>
-    /// Tier derivation. An EXPLICIT tier declared on the mode wins outright: the author
+    /// Snapshots the prompt fragments the run may assemble, scoped to the conversation identity.
+    ///
+    /// Scoped rather than global on purpose: the assembler applies fragments by category precedence
+    /// across whatever list it is handed, so freezing the whole tenant would make a resumed run carry
+    /// another agent's fragments. `SnapshotForAgentAsync` applies the same targeting rule the live
+    /// path uses, so the frozen and live results agree.
+    ///
+    /// A failure here is not fatal: admission must not be refused because the fragment store is
+    /// briefly unreadable, and the assembler's live path is the pre-existing behaviour.
+    /// </summary>
+    private async Task<IReadOnlyList<FrozenPromptFragment>?> FreezePromptFragmentsAsync(
+        FrozenGraph? graph,
+        SessionReference session,
+        CancellationToken cancellationToken)
+    {
+        var slug = graph?.ConversationNodeKey is { } nodeKey
+            ? graph.Nodes.FirstOrDefault(node => string.Equals(node.NodeKey, nodeKey, StringComparison.Ordinal))?.AgentSlug
+            : null;
+        if (string.IsNullOrWhiteSpace(slug)) return null;
+        try
+        {
+            return await _promptFragments!.SnapshotForAgentAsync(session.TenantId, session.WorkspaceId, slug, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogWarning(ex, "Could not freeze prompt fragments for agent '{Slug}'; the run will assemble from the live store.", slug);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// said how this mode is orchestrated, and inference exists only for the modes that
     /// predate the field. The mapping accepts the alias <c>solo</c> and the four canonical
     /// names; an unrecognized string is ignored rather than fatal, because admission must
