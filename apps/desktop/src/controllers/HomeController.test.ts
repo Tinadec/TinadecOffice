@@ -781,6 +781,48 @@ describe('HomeController composer settings', () => {
     expect(homeController.draft.value).toBe('draft with a file')
     homeController.setViewMode('flat')
   })
+
+  it('selectMode pre-fills space_options from default_options and sends ephemeral flat overrides on interactions without mutating mode presets', async () => {
+    const teamDefaults = { plan_first: false, spec_enabled: false, multi_agent: true, workflow_mode_version_id: null, bulletin_board: true, worktree: false }
+    const overridden = { ...teamDefaults, worktree: true }
+    await selectSettingsSession('flat')
+
+    // selectMode atomically sets mode_version_id and mode.default_options on the session.
+    expect(await homeController.selectMode('mv-team', { default_options: teamDefaults })).toBe(true)
+    expect(h.updateSessionSettings).toHaveBeenLastCalledWith('settings-a', {
+      mode_version_id: 'mv-team',
+      space_options: teamDefaults,
+      expected_settings_revision: 3,
+    })
+    expect(homeController.composerSettings.value.mode_version_id).toBe('mv-team')
+    expect(homeController.composerSettings.value.space_options).toEqual(teamDefaults)
+
+    // Ephemeral switch toggle updates session settings and travels on flat interaction + queued promote.
+    expect(await homeController.updateComposerSettings({ space_options: overridden })).toBe(true)
+    homeController.updateDraft('flat with overrides')
+    h.createInteraction.mockResolvedValueOnce({ interaction_id: 'flat-q', run_id: 'busy-flat', status: 'queued' } as never)
+    await homeController.sendMessage({ dispatch_mode: 'queued' })
+    expect(h.createInteraction.mock.calls.at(-1)?.[1]).toMatchObject({ mode_version_id: 'mv-team', space_options: overridden })
+
+    const queued = homeController.queuedMessages.value.at(-1)!
+    h.createInteraction.mockClear()
+    await homeController.promoteQueued(queued.id)
+    expect(h.createInteraction.mock.calls[0]?.[1]).toMatchObject({ mode_version_id: 'mv-team', space_options: overridden })
+
+    // selectMode with absent default_options falls back to defaultSpaceOptions() (all false).
+    expect(await homeController.selectMode('mv-solo', null)).toBe(true)
+    expect(homeController.composerSettings.value.space_options).toEqual({
+      plan_first: false, spec_enabled: false, multi_agent: false, workflow_mode_version_id: null, bulletin_board: false, worktree: false,
+    })
+
+    // selectMode(null) clears mode_version_id and resets space_options to defaultSpaceOptions().
+    expect(await homeController.selectMode(null)).toBe(true)
+    expect(h.updateSessionSettings).toHaveBeenLastCalledWith('settings-a', {
+      clear_mode_version: true,
+      space_options: { plan_first: false, spec_enabled: false, multi_agent: false, workflow_mode_version_id: null, bulletin_board: false, worktree: false },
+      expected_settings_revision: 6,
+    })
+  })
 })
 
 describe('HomeController initial load', () => {

@@ -1411,6 +1411,8 @@ export interface AgentModeDto {
   description?: string | null;
   i18n?: PackI18n | null;
   orchestration_tier?: AgentOrchestrationTier | null;
+  /** Run switches the mode presets; a composer override is per-session and never written back here. */
+  default_options?: SpaceOptionsDto | null;
   latest_published_mode_version_id?: string | null;
   max_parallel_executors?: number;
   worktree_isolation?: boolean;
@@ -1640,6 +1642,7 @@ export interface AgentModeEdgeDto {
 export interface AgentModeTopologyWriteDto {
   instructions?: string | null;
   orchestration_tier?: AgentOrchestrationTier | null;
+  default_options?: SpaceOptionsDto | null;
   nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null; config?: Record<string, unknown> | null; relationship?: Record<string, unknown> | null; model_strategy_override?: Record<string, unknown> | null }>;
   edges: Array<{ edge_key?: string; source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
   bindings?: AgentModeBindingDto[];
@@ -1702,6 +1705,7 @@ export interface AgentModeTopologyDto {
   /** Per-locale overlays; absent for modes that ship none. */
   i18n?: PackI18n | null;
   orchestration_tier?: AgentOrchestrationTier | null;
+  default_options?: SpaceOptionsDto | null;
   runtime_policy?: AgentModeRuntimePolicy | null;
   nodes: AgentModeNodeDto[];
   edges: AgentModeEdgeDto[];

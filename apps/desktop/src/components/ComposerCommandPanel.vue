@@ -8,7 +8,7 @@ import type { PermissionLevel } from '@/types/mode'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { composerSettings, pageDepth, parentPage, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
-import { defaultSpaceOptions } from '@/lib/composerSettings'
+import { resolveModeDefaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { pickLocalized } from '@/lib/packI18n'
@@ -49,6 +49,8 @@ const emit = defineEmits<{
   'update:modeVersionId': [value: string | null]
   'update:permission': [value: PermissionLevel]
   'update:spaceOptions': [value: SpaceOptionsDto]
+  'select-mode': [payload: { mode_version_id: string | null; space_options: SpaceOptionsDto }]
+  'mode-defaults': [defaults: SpaceOptionsDto | null, hasMode: boolean]
   'manage-models': []
   /** A model chosen for the conversation agent should take effect, so the session pin goes. */
   'clear-model-pin': []
@@ -75,7 +77,6 @@ const index = ref(0)
 const modes = ref<AgentModeTopologyDto[]>([])
 const loading = ref(false)
 const modeError = ref(false)
-const space = computed(() => props.spaceOptions ?? defaultSpaceOptions())
 /** The agent whose model the agent-model page sets. */
 const modelAgentId = ref<string | null>(null)
 const modelAgent = computed(() => props.agentModels?.agents.value.find(agent => agent.id === modelAgentId.value) ?? null)
@@ -152,14 +153,34 @@ const availableModes = computed(() => {
 })
 const selectedMode = computed(() => availableModes.value
   .find(mode => mode.latest_published_mode_version_id === props.modeVersionId))
+const modeDefaults = computed(() => resolveModeDefaultSpaceOptions(selectedMode.value?.default_options))
+const space = computed(() => props.spaceOptions ? resolveModeDefaultSpaceOptions(props.spaceOptions) : modeDefaults.value)
+const hasSpaceOverrides = computed(() => {
+  if (!props.spaceOptions) return false
+  if (props.modeVersionId && !selectedMode.value) return false
+  return !spaceOptionsEqual(props.spaceOptions, modeDefaults.value)
+})
 watch([selectedMode, () => props.modeVersionId, loading, locale], () => {
   emit('mode-label', selectedMode.value ? modeName(selectedMode.value) : t('commandPanel.mode'), !!props.modeVersionId && !selectedMode.value && !loading.value, selectedMode.value ? modeIcon(selectedMode.value.slug) : Layers)
+  emit('mode-defaults', selectedMode.value ? modeDefaults.value : null, Boolean(selectedMode.value))
 }, { immediate: true })
+function applyModePreset(mode: AgentModeTopologyDto, preserveExistingSpace = false) {
+  const modeVersionId = mode.latest_published_mode_version_id!
+  const nextSpace = preserveExistingSpace && props.spaceOptions
+    ? resolveModeDefaultSpaceOptions(props.spaceOptions)
+    : resolveModeDefaultSpaceOptions(mode.default_options)
+  emit('update:modeVersionId', modeVersionId)
+  emit('select-mode', { mode_version_id: modeVersionId, space_options: nextSpace })
+}
+function resetToPresetDefaults() {
+  if (props.settingsSaving) return
+  emit('update:spaceOptions', { ...modeDefaults.value })
+}
 // A conversation without a mode gets the first published one (Solo when the pack has it) as
 // soon as the catalog is known, so its runs never fall back to workspace-defaults' choice.
 watch([availableModes, () => props.modeVersionId, loading], ([modes, current, busy]) => {
   if (props.spatial || busy || current || props.settingsSaving || !modes.length) return
-  emit('update:modeVersionId', modes[0]!.latest_published_mode_version_id!)
+  applyModePreset(modes[0]!, true)
 })
 const workflowName = computed(() => {
   const mode = availableModes.value.find(mode => mode.latest_published_mode_version_id === space.value.workflow_mode_version_id)
@@ -225,7 +246,7 @@ function modeRows(workflow: boolean): Row[] {
     disabled: props.settingsSaving,
     run: () => {
       if (workflow) emit('update:spaceOptions', { ...space.value, workflow_mode_version_id: mode.latest_published_mode_version_id! })
-      else if (!workflow) emit('update:modeVersionId', mode.latest_published_mode_version_id!)
+      else applyModePreset(mode)
     },
   }))]
 }
@@ -339,7 +360,7 @@ const allRows = computed<Row[]>(() => {
     { id: 'file', label: t('chat.addFile'), hint: props.canAttach ? undefined : t('commandPanel.attachmentsBusy'), keywords: t('commandPanel.kw.file'), icon: FileText, disabled: !props.canAttach, testId: 'composer-attach-file', run: () => emit('attach', '') },
   ]
   for (const setting of composerSettings) {
-    if ('surface' in setting && (setting.surface === 'space') !== Boolean(props.spatial)) continue
+    if ('surface' in setting && setting.surface === 'space' && !props.spatial) continue
     const toggle = 'toggle' in setting ? setting.toggle : null
     const submenu = 'page' in setting ? setting.page : null
     const currentValue = setting.id === 'model' ? props.defaultModelLabel : setting.id === 'mode' ? (selectedMode.value ? modeName(selectedMode.value) : t('commandPanel.mode')) : setting.id === 'permission' ? permissionName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
@@ -549,6 +570,10 @@ defineExpose({ keydown, activate, page, selectPage })
         <Search :size="15" aria-hidden="true" />
         <input ref="searchRef" :value="activeQuery" :readonly="page === 'root' && slashQuery != null" :placeholder="t('commandPanel.search')" :aria-label="t('commandPanel.search')" @input="query = ($event.target as HTMLInputElement).value" />
       </label>
+      <div v-if="hasSpaceOverrides && (page === 'root' || page === 'mode')" class="command-panel-override-bar" data-testid="command-panel-overrides" role="status">
+        <span class="command-panel-override-badge">{{ t('commandPanel.temporaryOverrides') }}</span>
+        <button type="button" class="command-panel-override-reset" :title="t('commandPanel.resetToPresetHint')" :disabled="settingsSaving" data-testid="command-panel-reset-options" @click="resetToPresetDefaults">{{ t('commandPanel.resetToPreset') }}</button>
+      </div>
       <div class="command-panel-list">
         <p v-if="catalogError" class="command-panel-feedback" role="alert">{{ t('commandPanel.catalogError') }} <button @click="loadCatalogs">{{ t('commandPanel.retry') }}</button></p>
         <p v-if="agentListFailed" class="command-panel-feedback" role="alert" data-testid="command-panel-agents-failed">{{ t(page === 'model' ? 'composer.agentModels.loadFailedFallback' : 'composer.agentModels.loadFailed') }} <button @click="agentModels?.load()">{{ t('commandPanel.retry') }}</button></p>
@@ -585,6 +610,11 @@ defineExpose({ keydown, activate, page, selectPage })
 .command-panel-back { width: auto; display: inline-flex; gap: 4px; padding: 0 6px; }
 .command-panel-close { margin-left: auto; }
 .command-panel-search { display: flex; gap: 8px; align-items: center; color: var(--text-muted); margin: 4px 12px 8px; padding: 8px; border-radius: 8px; background: var(--surface-input); flex-shrink: 0; font-weight: 400; }
+.command-panel-override-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 12px 6px; padding: 4px 10px; border-radius: 8px; background: color-mix(in srgb, var(--accent-warning, #d97706) 10%, transparent); color: var(--text-secondary); font-size: 11px; flex-shrink: 0; }
+.command-panel-override-badge { font-weight: 500; color: var(--accent-warning, var(--text-primary)); }
+.command-panel-override-reset { padding: 2px 7px; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--surface-section); color: var(--text-primary); font: inherit; font-size: 11px; cursor: pointer; }
+.command-panel-override-reset:hover:not(:disabled) { background: var(--surface-hover); }
+.command-panel-override-reset:disabled { opacity: .5; cursor: not-allowed; }
 .command-panel-search input { min-width: 0; width: 100%; height: auto; min-height: 0; padding: 0; border-radius: 0; line-height: 1.5; color: var(--text-primary); background: transparent; border: 0; box-shadow: none; outline: none; font: inherit; }
 .command-panel-reasoning { flex-shrink: 0; margin: 0 12px 8px; padding: 10px 12px 12px; border-radius: 10px; background: var(--surface-input); }
 .command-panel-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 0 6px 6px; }

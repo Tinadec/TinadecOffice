@@ -5,6 +5,30 @@ export function defaultSpaceOptions(): SpaceOptionsDto {
   return { plan_first: false, spec_enabled: false, multi_agent: false, workflow_mode_version_id: null, bulletin_board: false, worktree: false }
 }
 
+export function resolveModeDefaultSpaceOptions(defaults?: Partial<SpaceOptionsDto> | null): SpaceOptionsDto {
+  const base = defaultSpaceOptions()
+  if (!defaults) return base
+  return {
+    plan_first: Boolean(defaults.plan_first),
+    spec_enabled: Boolean(defaults.spec_enabled),
+    multi_agent: Boolean(defaults.multi_agent),
+    workflow_mode_version_id: defaults.workflow_mode_version_id ?? null,
+    bulletin_board: Boolean(defaults.bulletin_board),
+    worktree: Boolean(defaults.worktree),
+  }
+}
+
+export function spaceOptionsEqual(a?: Partial<SpaceOptionsDto> | null, b?: Partial<SpaceOptionsDto> | null): boolean {
+  const left = resolveModeDefaultSpaceOptions(a)
+  const right = resolveModeDefaultSpaceOptions(b)
+  return left.plan_first === right.plan_first
+    && left.spec_enabled === right.spec_enabled
+    && left.multi_agent === right.multi_agent
+    && left.bulletin_board === right.bulletin_board
+    && left.worktree === right.worktree
+    && (left.workflow_mode_version_id ?? null) === (right.workflow_mode_version_id ?? null)
+}
+
 export interface ComposerSettings {
   mode_version_id: string | null
   permission_mode: PermissionLevel
@@ -12,8 +36,8 @@ export interface ComposerSettings {
   space_options: SpaceOptionsDto | null
 }
 
-export function newComposerSettings(view: 'flat' | 'space'): ComposerSettings {
-  return { mode_version_id: null, permission_mode: 'default', meeting_model_override: null, space_options: view === 'space' ? defaultSpaceOptions() : null }
+export function newComposerSettings(_view?: 'flat' | 'space'): ComposerSettings {
+  return { mode_version_id: null, permission_mode: 'default', meeting_model_override: null, space_options: null }
 }
 
 /** Plain snapshots prevent a later switch (or reactive proxy) changing a queued request. */

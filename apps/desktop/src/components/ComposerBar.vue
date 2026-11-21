@@ -20,7 +20,7 @@ import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 import { isCommandAvailable, parseSlashCommand, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { toggleSessionPartner as togglePartnerWindow } from '@/lib/sessionPartner'
 import { composerSlashQuery, composerSettings, permissionChoices, type ComposerPage } from '@/lib/composerCommands'
-import { defaultSpaceOptions } from '@/lib/composerSettings'
+import { defaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
 import { completeMentionToken, filterMentionEntries, parseMentionToken, type MentionToken } from '@/lib/fileMentions'
 import {
   attachFiles,
@@ -77,6 +77,7 @@ const emit = defineEmits<{
   'update:modeVersionId': [value: string | null]
   'update:meetingModelOverride': [value: MeetingModelOverrideDto | null]
   'update:spaceOptions': [value: SpaceOptionsDto]
+  'select-mode': [payload: { mode_version_id: string | null; space_options: SpaceOptionsDto }]
   'submit': [payload: { dispatch_mode: 'parallel' | 'queued' | 'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; space_options?: SpaceOptionsDto | null }]
   'welcome-submit': [payload: { content: string; permission_mode: PermissionLevel; mode_version_id: string | null; meeting_model_override?: MeetingModelOverrideDto | null; space_options?: SpaceOptionsDto | null }]
   'create-project': []
@@ -96,10 +97,27 @@ const modeUnavailable = ref(false)
 // dereference an undefined choice while rendering that session.
 const permissionChoice = computed(() => permissionChoices.find(choice => choice.value === props.permission) ?? permissionChoices[0])
 const permissionLabel = computed(() => t(permissionChoice.value.label))
-const enabledSpaceLabels = computed(() => props.spatial ? [
-  ...composerSettings.filter(setting => 'toggle' in setting && props.spaceOptions?.[setting.toggle]).map(setting => t(setting.label)),
-  ...(props.spaceOptions?.workflow_mode_version_id ? [t('commandPanel.workflow')] : []),
-] : [])
+const activeModeDefaults = ref<SpaceOptionsDto | null>(null)
+const hasActiveMode = ref(false)
+const hasSpaceOverrides = computed(() => {
+  if (!props.spaceOptions) return false
+  if (props.modeVersionId && !hasActiveMode.value) return false
+  return !spaceOptionsEqual(props.spaceOptions, activeModeDefaults.value ?? defaultSpaceOptions())
+})
+const enabledSpaceLabels = computed(() => {
+  if (props.spatial) {
+    return [
+      ...composerSettings.filter(setting => 'toggle' in setting && props.spaceOptions?.[setting.toggle]).map(setting => t(setting.label)),
+      ...(props.spaceOptions?.workflow_mode_version_id ? [t('commandPanel.workflow')] : []),
+    ]
+  }
+  if (!hasSpaceOverrides.value) return []
+  const baseline = activeModeDefaults.value ?? defaultSpaceOptions()
+  const changed = composerSettings
+    .filter(setting => 'toggle' in setting && Boolean(props.spaceOptions?.[setting.toggle]) !== Boolean(baseline[setting.toggle]))
+    .map(setting => t(setting.label))
+  return [t('commandPanel.temporaryOverrides'), ...changed]
+})
 const plusTriggerRef = ref<HTMLElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const sendTriggerRef = ref<HTMLElement | null>(null)
@@ -154,7 +172,7 @@ const commandHost: CommandHost = {
       target_run_id: null,
       mode_version_id: props.modeVersionId ?? null,
       meeting_model_override: props.meetingModelOverride ?? null,
-      ...(props.spatial ? { space_options: { ...(props.spaceOptions ?? defaultSpaceOptions()) } } : {}),
+      ...(props.spaceOptions ? { space_options: { ...props.spaceOptions } } : {}),
     })
   },
   // Stop keeps going out over the emit chain instead of calling homeController.stopRun()
@@ -265,7 +283,12 @@ function consumeSettingsSlash() {
   }
 }
 
-function changeMode(value: string | null) { consumeSettingsSlash(); emit('update:modeVersionId', value) }
+function selectModePreset(payload: { mode_version_id: string | null; space_options: SpaceOptionsDto }) {
+  consumeSettingsSlash()
+  emit('update:modeVersionId', payload.mode_version_id)
+  emit('update:spaceOptions', payload.space_options)
+  emit('select-mode', payload)
+}
 function changePermission(value: PermissionLevel) { consumeSettingsSlash(); emit('update:permission', value) }
 function changeModel(value: MeetingModelOverrideDto | null) { consumeSettingsSlash(); emit('update:meetingModelOverride', value) }
 
@@ -621,7 +644,7 @@ function submit(pref?: DispatchPref, asText = false) {
       permission_mode: props.permission,
       mode_version_id: props.modeVersionId ?? null,
       meeting_model_override: props.meetingModelOverride ?? null,
-      ...(props.spatial ? { space_options: { ...(props.spaceOptions ?? defaultSpaceOptions()) } } : {}),
+      ...(props.spaceOptions ? { space_options: { ...props.spaceOptions } } : {}),
     })
     return
   }
@@ -637,7 +660,7 @@ function submit(pref?: DispatchPref, asText = false) {
     target_run_id: null,
     mode_version_id: props.modeVersionId ?? null,
     meeting_model_override: props.meetingModelOverride ?? null,
-    ...(props.spatial ? { space_options: { ...(props.spaceOptions ?? defaultSpaceOptions()) } } : {}),
+    ...(props.spaceOptions ? { space_options: { ...props.spaceOptions } } : {}),
   })
 }
 
@@ -947,12 +970,13 @@ function confirmSteer(id: string, interrupt = false) {
       @attach="openFilePicker"
       @action="chooseCommand"
       @send-as-text="closeCommandPanel(); submit(undefined, true)"
-      @update:mode-version-id="changeMode"
+      @select-mode="selectModePreset"
       @update:permission="changePermission"
       @update:space-options="changeSpaceOptions"
       @clear-model-pin="changeModel(null)"
       @manage-models="manageModels"
       @mode-label="(label, unavailable, icon) => { modeLabel = label; modeUnavailable = unavailable; modeGlyph = icon }"
+      @mode-defaults="(defaults, active) => { activeModeDefaults = defaults; hasActiveMode = active }"
     />
 
     <!-- Docked-only dispatch menu: teleported so the dialog's overflow:hidden never clips it. -->

@@ -75,6 +75,11 @@ function pipelineDescription(pipeline: PromptPipelineDto): string {
   return pickLocalized(i18n, locale.value, 'description', pipeline.description) ?? ''
 }
 
+/** structuredClone throws DataCloneError on Vue reactive Proxies; JSON DTOs clone safely this way. */
+function plainClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 // ── pipelines (canvas view) ──
 const pipelines = ref<PromptPipelineDto[]>([])
 const pipelineCanvasSelectedId = ref<string | null>(null)
@@ -138,8 +143,8 @@ function syncPipelineDraft(p: PromptPipelineDto | null) {
     pipelineBaseline.value = ''
     return
   }
-  const nodes = structuredClone(p.graph?.nodes ?? p.nodes ?? [])
-  const edges = structuredClone(p.graph?.edges ?? p.edges ?? [])
+  const nodes = plainClone(p.graph?.nodes ?? p.nodes ?? [])
+  const edges = plainClone(p.graph?.edges ?? p.edges ?? [])
   pipelineDraftName.value = p.display_name ?? p.name ?? p.title ?? p.slug ?? ''
   pipelineDraftDesc.value = p.description ?? ''
   pipelineDraftNodes.value = nodes
@@ -182,7 +187,7 @@ function localizedPackTemplate(node: PromptPipelineNodeDto): string | null {
 function patchSelectedNode(mutator: (node: PromptPipelineNodeDto) => PromptPipelineNodeDto) {
   if (!selectedNodeId.value || isPipelineReadonly.value) return
   pipelineDraftNodes.value = pipelineDraftNodes.value.map((n) =>
-    n.id === selectedNodeId.value ? mutator(structuredClone(n)) : n,
+    n.id === selectedNodeId.value ? mutator(plainClone(n)) : n,
   )
 }
 

@@ -155,4 +155,38 @@ describe('ChatPanel send payload', () => {
     wrapper.unmount()
     document.body.innerHTML = ''
   })
+
+  it('forwards composerSettings.space_options and emits atomic select-mode and space_options updates', async () => {
+    const initialSpace = { plan_first: true, spec_enabled: false, multi_agent: false, workflow_mode_version_id: null, bulletin_board: false, worktree: false }
+    const nextPresetSpace = { plan_first: false, spec_enabled: false, multi_agent: true, workflow_mode_version_id: null, bulletin_board: true, worktree: false }
+    const toggledSpace = { ...nextPresetSpace, worktree: true }
+    const wrapper = mount(ChatPanel, {
+      props: {
+        ...baseProps,
+        messages: [msg('m1')],
+        composerSettings: {
+          mode_version_id: 'mv-1',
+          permission_mode: 'default',
+          meeting_model_override: null,
+          space_options: initialSpace,
+        },
+      },
+      global: { stubs: { ChatHeader: true, ConversationView: true } },
+    })
+    await nextTick()
+
+    const composer = wrapper.findComponent({ name: 'ComposerBar' })
+    expect(composer.props('spaceOptions')).toEqual(initialSpace)
+
+    composer.vm.$emit('select-mode', { mode_version_id: 'mv-team', space_options: nextPresetSpace })
+    composer.vm.$emit('update:spaceOptions', toggledSpace)
+    await nextTick()
+
+    expect(wrapper.emitted('update:settings')).toEqual([
+      [{ mode_version_id: 'mv-team', space_options: nextPresetSpace }],
+      [{ space_options: toggledSpace }],
+    ])
+    wrapper.unmount()
+    document.body.innerHTML = ''
+  })
 })

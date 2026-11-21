@@ -42,7 +42,7 @@ import { setErrorRecoveryHandlers, useNotifications } from '@/composables/useNot
 import type { PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { ComposerSubmitOptions, DispatchMode, MeetingModelOverrideDto, SessionSettingsUpdate, SpaceOptionsDto } from '@/api'
-import { applyComposerSettings, copyComposerSettings, defaultSpaceOptions, newComposerSettings, type ComposerSettings } from '@/lib/composerSettings'
+import { applyComposerSettings, copyComposerSettings, newComposerSettings, resolveModeDefaultSpaceOptions, type ComposerSettings } from '@/lib/composerSettings'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 import { createRunStream, type RunStreamHandle } from '@/lib/runStream'
 import { generatedApi } from '@/generated/client'
@@ -135,7 +135,7 @@ function settingsFor(session: SessionDto | null, view: SessionView): ComposerSet
     mode_version_id: session.mode_version_id ?? null,
     permission_mode: (session.permission_mode ?? 'default') as PermissionLevel,
     meeting_model_override: session.meeting_model_override ?? null,
-    space_options: view === 'space' ? session.space_options ?? defaultSpaceOptions() : null,
+    space_options: session.space_options ?? null,
   } : newSessionSettings.value[view]
 }
 const composerSettings = computed(() => settingsFor(currentSession.value, viewMode.value))
@@ -1083,7 +1083,7 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
   const requestedPermission = selected.permission_mode
   const requestedMode = selected.mode_version_id
   const requestedModel = selected.meeting_model_override
-  const requestedSpace = requestedView === 'space' ? selected.space_options : null
+  const requestedSpace = selected.space_options ?? null
   let requestedSettingsRevision = requestedRecord?.settings_revision
   await run(t('home.action.sendMessage'), async (accepted) => {
     let sessionId = requestedSession
@@ -1600,6 +1600,22 @@ function start() {
   })
 }
 
+async function selectMode(
+  modeVersionId: string | null,
+  modeOrDefaults?: SpaceOptionsDto | { default_options?: SpaceOptionsDto | null } | null,
+): Promise<boolean> {
+  const rawDefaults: Partial<SpaceOptionsDto> | null | undefined =
+    modeOrDefaults && typeof modeOrDefaults === 'object' && 'default_options' in modeOrDefaults
+      ? modeOrDefaults.default_options
+      : modeOrDefaults && typeof modeOrDefaults === 'object' && 'plan_first' in modeOrDefaults
+        ? modeOrDefaults
+        : null
+  const nextSpaceOptions = resolveModeDefaultSpaceOptions(rawDefaults)
+  return updateComposerSettings(modeVersionId
+    ? { mode_version_id: modeVersionId, space_options: nextSpaceOptions }
+    : { clear_mode_version: true, space_options: nextSpaceOptions })
+}
+
 export const homeController = {
   viewMode,
   visibleSessions,
@@ -1630,6 +1646,7 @@ export const homeController = {
   settingsSaving,
   settingsError,
   updateComposerSettings,
+  selectMode,
   ensureComposerSession,
   currentProject,
   currentSession,

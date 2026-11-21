@@ -1079,7 +1079,7 @@ public sealed class AgentPackService : IAgentPackService
             if (switchesByNode.TryGetValue(node.NodeKey!, out var switches))
             {
                 effectiveTools = effectiveTools
-                    .Where(tool => !IsSwitchedOff(switches, tool))
+                    .Where(tool => !ModePublishGate.IsSwitchedOff(switches, tool))
                     .ToArray();
             }
             var snapshotNode = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -1146,8 +1146,11 @@ public sealed class AgentPackService : IAgentPackService
             ["bindings"] = snapshotBindings,
             ["canvas_layout"] = NormalizeObject(resource.CanvasLayout)
         };
+        var orchestrationTier = GraphValidation.NormalizeOrchestrationTier(resource.OrchestrationTier);
         if (resource.RuntimePolicy is not null)
             snapshotObject["runtime_policy"] = resource.RuntimePolicy;
+        if (orchestrationTier is not null)
+            snapshotObject["orchestration_tier"] = orchestrationTier;
         var snapshotElement = JsonSerializer.SerializeToElement(snapshotObject, JsonOptions);
         var snapshot = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(snapshotElement));
         var hash = Sha256Hex(Encoding.UTF8.GetBytes(snapshot));
@@ -1157,6 +1160,11 @@ public sealed class AgentPackService : IAgentPackService
         if (unchanged)
         {
             version = latest!;
+            if (resource.Nodes.Any(n => n.Relationship is { ValueKind: JsonValueKind.Object })
+                && await db.ModeNodes.AnyAsync(item => item.ModeId == logical.Id && item.Status != "archived" && item.RelationshipJson == null, cancellationToken).ConfigureAwait(false))
+            {
+                await ReplaceModeProjectionAsync(db, logical.Id, resource, agents, scope, now, cancellationToken).ConfigureAwait(false);
+            }
         }
         else
         {
@@ -1176,6 +1184,10 @@ public sealed class AgentPackService : IAgentPackService
         logical.RuntimePolicyJson = resource.RuntimePolicy is null
             ? null
             : JsonSerializer.Serialize(resource.RuntimePolicy, JsonOptions);
+        logical.OrchestrationTier = orchestrationTier;
+        logical.BindingsJson = snapshotBindings.Length == 0
+            ? null
+            : Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(JsonSerializer.SerializeToElement(snapshotBindings, JsonOptions)));
         logical.Status = "published";
         logical.Version = version.Version;
         logical.Revision++;
@@ -1211,6 +1223,9 @@ public sealed class AgentPackService : IAgentPackService
             I18nJson = CanonicalI18n(node.I18n),
             PositionJson = node.Position.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? null : Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(node.Position)),
             ConfigJson = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(NormalizeObject(node.Config))),
+            RelationshipJson = node.Relationship is not { } rel || rel.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+                ? null
+                : Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(NormalizeObject(rel))),
             Status = "published", Revision = 1, CreatedAt = now, UpdatedAt = now
         }));
         db.ModeEdges.AddRange(resource.Edges.Select(edge => new ModeEdgeRecord
@@ -1244,12 +1259,6 @@ public sealed class AgentPackService : IAgentPackService
         else effective = agent.Intersect(mode, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return effective.OrderBy(item => item, StringComparer.Ordinal).ToArray();
     }
-
-    private static bool IsSwitchedOff(JsonElement switches, string toolId) =>
-        switches.ValueKind == JsonValueKind.Object
-        && switches.TryGetProperty(toolId, out var state)
-        && (state.ValueKind == JsonValueKind.False
-            || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase)));
 
     private static JsonElement NormalizeObject(JsonElement value) => value.ValueKind == JsonValueKind.Object
         ? value
@@ -1676,6 +1685,8 @@ public sealed class AgentPackService : IAgentPackService
                 ValidateI18n(node.I18n, $"mode '{mode.ResourceKey}' node '{node.NodeKey}'", requireDisplayName: false, requireLabel: true);
             if (ModeRuntimePolicyRegistry.Validate(mode.RuntimePolicy) is { } policyError)
                 Invalid($"mode '{mode.ResourceKey}' {policyError}");
+            try { _ = GraphValidation.NormalizeOrchestrationTier(mode.OrchestrationTier); }
+            catch (InvalidDataException ex) { Invalid($"mode '{mode.ResourceKey}' {ex.Message}"); }
             if (mode.RuntimePolicy is not null)
             {
                 var requiredCapability = ModeRuntimePolicyRegistry.Definition(mode.RuntimePolicy)?.RequiredCoreCapability;
@@ -1816,14 +1827,14 @@ public sealed class AgentPackService : IAgentPackService
         {
             var effective = EffectiveTools(agents[agentKeyByNode[node.NodeKey!]].ToolScope, node.Config);
             if (switchesByNode.TryGetValue(node.NodeKey!, out var switches) && switches is { } switchesElement)
-                effective = effective.Where(tool => !IsSwitchedOff(switchesElement, tool)).ToArray();
+                effective = effective.Where(tool => !ModePublishGate.IsSwitchedOff(switchesElement, tool)).ToArray();
             tools.AddRange(effective);
         }
         foreach (var binding in (mode.Bindings ?? []).Where(item => item.NodeKey is not { Length: > 0 }))
         {
             var agent = agents[ReferenceKey(binding.AgentRef!, "agent", $"mode '{mode.ResourceKey}' node-less binding agent_ref")];
             foreach (var tool in agent.ToolScope)
-                if (binding.ToolSwitches is not { } switches || !IsSwitchedOff(switches, tool)) tools.Add(tool);
+                if (binding.ToolSwitches is not { } switches || !ModePublishGate.IsSwitchedOff(switches, tool)) tools.Add(tool);
         }
         if (ExplorationToolPolicy.Validate(mode.RuntimePolicy, tools, $"mode '{mode.ResourceKey}'") is { } error) Invalid(error);
     }

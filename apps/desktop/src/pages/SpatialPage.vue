@@ -485,6 +485,7 @@ function leavePreview(event: FocusEvent) { if (!(event.currentTarget as HTMLElem
             :projects="c.projects.value" :selected-project-id="c.selectedProjectId.value" :session-id="c.currentSession.value?.id ?? null"
             :mode-version-id="c.composerSettings.value.mode_version_id" :meeting-model-override="c.composerSettings.value.meeting_model_override"
             :space-options="c.composerSettings.value.space_options" :settings-saving="c.settingsSaving.value" :settings-error="c.settingsError.value"
+            @select-mode="c.updateComposerSettings($event.mode_version_id ? { mode_version_id: $event.mode_version_id, space_options: $event.space_options } : { clear_mode_version: true, space_options: $event.space_options })"
             @update:space-options="c.updateComposerSettings({ space_options: $event })"
             @update:meeting-model-override="c.updateComposerSettings($event ? { meeting_model_override: $event } : { clear_meeting_model_override: true })"
             :runs="c.runs.value" :can-stop="Boolean(c.stoppableRunId.value)"

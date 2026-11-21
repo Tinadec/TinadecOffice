@@ -9,6 +9,16 @@ export const parentPage: Partial<Record<ComposerPage, ComposerPage>> = { 'model-
 export const pageDepth = (page: ComposerPage): number => page === 'root' ? 0 : 1 + (parentPage[page] ? pageDepth(parentPage[page]!) : 0)
 export type SpaceToggle = Exclude<keyof SpaceOptionsDto, 'workflow_mode_version_id'>
 
+export interface ComposerSettingEntry {
+  readonly id: string
+  readonly label: string
+  readonly hint: string
+  readonly keywords: string
+  readonly page?: ComposerPage
+  readonly toggle?: SpaceToggle
+  readonly surface?: 'space'
+}
+
 // Metadata only: session ownership and all mutations remain in HomeController.
 // The model row is the model of the agent that answers the user, the same per-agent setting as
 // the agent center; the other agents' models sit one page further down.
@@ -16,15 +26,15 @@ export type SpaceToggle = Exclude<keyof SpaceOptionsDto, 'workflow_mode_version_
 // label, hint and keywords are translation keys.
 export const composerSettings = [
   { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'commandPanel.kw.model', page: 'model' },
-  { id: 'mode', label: 'commandPanel.mode', hint: 'commandPanel.modeHint', keywords: 'commandPanel.kw.mode', page: 'mode', surface: 'flat' },
+  { id: 'mode', label: 'commandPanel.mode', hint: 'commandPanel.modeHint', keywords: 'commandPanel.kw.mode', page: 'mode' },
   { id: 'permission', label: 'commandPanel.permission', hint: 'permission.nextRunHint', keywords: 'commandPanel.kw.permission', page: 'permission' },
-  { id: 'plan', label: 'commandPanel.plan', hint: 'commandPanel.planHint', keywords: 'commandPanel.kw.plan', toggle: 'plan_first', surface: 'space' },
-  { id: 'spec', label: 'commandPanel.spec', hint: 'commandPanel.specHint', keywords: 'commandPanel.kw.spec', toggle: 'spec_enabled', surface: 'space' },
-  { id: 'agents', label: 'commandPanel.agents', hint: 'commandPanel.agentsHint', keywords: 'commandPanel.kw.agents', toggle: 'multi_agent', surface: 'space' },
+  { id: 'plan', label: 'commandPanel.plan', hint: 'commandPanel.planHint', keywords: 'commandPanel.kw.plan', toggle: 'plan_first' },
+  { id: 'spec', label: 'commandPanel.spec', hint: 'commandPanel.specHint', keywords: 'commandPanel.kw.spec', toggle: 'spec_enabled' },
+  { id: 'agents', label: 'commandPanel.agents', hint: 'commandPanel.agentsHint', keywords: 'commandPanel.kw.agents', toggle: 'multi_agent' },
   { id: 'workflow', label: 'commandPanel.workflow', hint: 'commandPanel.workflowHint', keywords: 'commandPanel.kw.workflow', page: 'workflow', surface: 'space' },
-  { id: 'bulletin', label: 'commandPanel.bulletin', hint: 'commandPanel.bulletinHint', keywords: 'commandPanel.kw.bulletin', toggle: 'bulletin_board', surface: 'space' },
-  { id: 'worktree', label: 'commandPanel.worktree', hint: 'commandPanel.worktreeHint', keywords: 'commandPanel.kw.worktree', toggle: 'worktree', surface: 'space' },
-] as const
+  { id: 'bulletin', label: 'commandPanel.bulletin', hint: 'commandPanel.bulletinHint', keywords: 'commandPanel.kw.bulletin', toggle: 'bulletin_board' },
+  { id: 'worktree', label: 'commandPanel.worktree', hint: 'commandPanel.worktreeHint', keywords: 'commandPanel.kw.worktree', toggle: 'worktree' },
+] as const satisfies readonly ComposerSettingEntry[]
 
 export type PermissionRisk = 'neutral' | 'low' | 'medium' | 'high'
 export const permissionChoices: ReadonlyArray<{ value: PermissionLevel; label: string; hint: string; icon: Component; risk: PermissionRisk }> = [

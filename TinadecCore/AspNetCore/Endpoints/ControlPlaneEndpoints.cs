@@ -52,19 +52,69 @@ public static class ControlPlaneEndpoints
         app.MapGet("/api/v1/model-settings", () => Results.Ok(new { base_url = "", model = "", has_api_key = false, revision = 0L, updated_at = DateTimeOffset.UtcNow }));
         app.MapPut("/api/v1/model-settings", () => Results.Json(new { code = "capability_unavailable", message = "Use model-providers for persisted provider configuration." }, statusCode: 501));
 
-        app.MapGet("/api/v1/prompt-fragments", (ControlPlaneService service, CancellationToken ct) => service.ListPrompts(ct));
-        app.MapPost("/api/v1/prompt-fragments", async (HttpRequest request, ControlPlaneService service, CancellationToken ct) => await service.SavePrompt(await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), null, request.Headers.IfMatch.FirstOrDefault(), ct));
-        app.MapPut("/api/v1/prompt-fragments/{id:guid}", async (Guid id, HttpRequest request, ControlPlaneService service, CancellationToken ct) => await service.SavePrompt(await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), id, request.Headers.IfMatch.FirstOrDefault(), ct));
+        app.MapGet("/api/v1/prompt-fragments", (HttpRequest request, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var scope = request.Query["scope"].FirstOrDefault();
+            var targetAgent = request.Query["target_agent_id"].FirstOrDefault()
+                ?? request.Query["targetAgentId"].FirstOrDefault()
+                ?? request.Query["target_agent_slug"].FirstOrDefault();
+            var category = request.Query["category"].FirstOrDefault();
+            bool? enabled = bool.TryParse(request.Query["enabled"].FirstOrDefault(), out var parsedEnabled)
+                ? parsedEnabled
+                : null;
+            return service.ListPrompts(ct, scope, targetAgent, category, enabled);
+        });
+        app.MapPost("/api/v1/prompt-fragments", async (HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var (ok, body, error) = await TryReadJsonBodyAsync(request, allowEmpty: false, ct);
+            if (!ok) return error!;
+            var result = await service.SavePrompt(body!.Value, null, request.Headers.IfMatch.FirstOrDefault(), ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
+        app.MapPut("/api/v1/prompt-fragments/{id:guid}", async (Guid id, HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var (ok, body, error) = await TryReadJsonBodyAsync(request, allowEmpty: false, ct);
+            if (!ok) return error!;
+            var result = await service.SavePrompt(body!.Value, id, request.Headers.IfMatch.FirstOrDefault(), ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
         app.MapDelete("/api/v1/prompt-fragments/{id:guid}", (Guid id, ControlPlaneService service, CancellationToken ct) => service.DeletePrompt(id, ct));
-        app.MapPost("/api/v1/prompt-fragments/{id:guid}/clone", () => Results.Json(new { code = "capability_unavailable", message = "Clone requires an explicit new fragment identity." }, statusCode: 501));
-        app.MapGet("/api/v1/prompt-fragments/{id:guid}/versions", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/prompt-fragments/{id:guid}/versions", () => Results.Json(new { code = "capability_unavailable", message = "Use PUT to create an immutable prompt version." }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-fragments/{id:guid}/rollback", () => Results.Json(new { code = "capability_unavailable", message = "Rollback endpoint is not enabled in this runtime." }, statusCode: 501));
+        app.MapPost("/api/v1/prompt-fragments/{id:guid}/clone", async (Guid id, HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var (ok, body, error) = await TryReadJsonBodyAsync(request, allowEmpty: true, ct);
+            if (!ok) return error!;
+            var result = await service.ClonePrompt(id, body, ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
+        app.MapGet("/api/v1/prompt-fragments/{id:guid}/versions", (Guid id, ControlPlaneService service, CancellationToken ct) =>
+            service.ListPromptVersions(id, ct));
+        app.MapPost("/api/v1/prompt-fragments/{id:guid}/versions", async (Guid id, HttpRequest request, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var (ok, body, error) = await TryReadJsonBodyAsync(request, allowEmpty: false, ct);
+            if (!ok) return error!;
+            return await service.CreatePromptVersion(id, body!.Value, request.Headers.IfMatch.FirstOrDefault(), ct);
+        });
+        app.MapPost("/api/v1/prompt-fragments/{id:guid}/rollback", async (Guid id, HttpRequest request, HttpResponse response, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var (ok, body, error) = await TryReadJsonBodyAsync(request, allowEmpty: false, ct);
+            if (!ok) return error!;
+            var result = await service.RollbackPrompt(id, body!.Value, request.Headers.IfMatch.FirstOrDefault(), ct);
+            await WithEtagAsync(response, result, ct);
+            return result;
+        });
         app.MapGet("/api/v1/prompt-fragments/{id:guid}/effectiveness", (Guid id) => Results.Ok(new { fragment_id = id, active_version = 0, total_invocations = 0, positive_signals = 0, negative_signals = 0, effectiveness_score = 0d, last_evaluated_at = DateTimeOffset.UtcNow, versions = Array.Empty<object>() }));
         app.MapGet("/api/v1/prompt-fragments/effectiveness", () => Results.Ok(Array.Empty<object>()));
         app.MapPost("/api/v1/prompt-fragments/{id:guid}/signals", () => Results.Json(new { code = "capability_unavailable", message = "Prompt signal recording requires an active run." }, statusCode: 501));
         app.MapPost("/api/v1/prompt-fragments/{id:guid}/compare", () => Results.Json(new { code = "capability_unavailable", message = "Prompt comparison requires version telemetry." }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-context/preview", () => Results.Json(new { code = "capability_unavailable", message = "Prompt context preview requires the active context assembler runtime." }, statusCode: 501));
+        app.MapPost("/api/v1/prompt-context/preview", async (HttpRequest request, ControlPlaneService service, CancellationToken ct) =>
+        {
+            var (ok, body, error) = await TryReadJsonBodyAsync(request, allowEmpty: true, ct);
+            if (!ok) return error!;
+            return await service.PreviewPromptContext(body ?? EmptyJsonObject(), ct);
+        });
 
         app.MapPost("/api/v1/approvals/pre-authorizations", (PreAuthorizationRequestDto input, ControlPlaneService service, CancellationToken ct) => service.CreatePreAuthorization(input, ct));
         app.MapGet("/api/v1/approvals", (string? status, string? session_id, string? run_id, ControlPlaneService service, CancellationToken ct) => service.ListApprovals(status, session_id, run_id, ct));
@@ -86,13 +136,44 @@ public static class ControlPlaneEndpoints
         => request.Query.ContainsKey("force") &&
            (request.Query["force"].Count == 0 || !bool.TryParse(request.Query["force"].ToString(), out var parsed) || parsed);
 
-    // The service returns anonymous objects whose only reliable revision carrier is the
-    // "revision" JSON field; echo it as an ETag so clients can chain conditional updates.
+    private static JsonElement EmptyJsonObject()
+    {
+        using var doc = JsonDocument.Parse("{}");
+        return doc.RootElement.Clone();
+    }
+
+    private static async Task<(bool Ok, JsonElement? Body, IResult? Error)> TryReadJsonBodyAsync(
+        HttpRequest request,
+        bool allowEmpty,
+        CancellationToken ct)
+    {
+        using var reader = new StreamReader(request.Body, leaveOpen: true);
+        var raw = await reader.ReadToEndAsync(ct);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            if (allowEmpty) return (true, null, null);
+            return (false, null, Results.BadRequest(new { code = "invalid_request", message = "Request JSON body is required." }));
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return (true, doc.RootElement.Clone(), null);
+        }
+        catch (JsonException)
+        {
+            return (false, null, Results.BadRequest(new { code = "invalid_json", message = "Request body must be valid JSON." }));
+        }
+    }
+
+    // The service returns either anonymous objects ("revision") or typed DTOs ("Revision") whose
+    // revision is echoed as an ETag so clients can chain conditional updates.
     private static async Task WithEtagAsync(HttpResponse response, IResult result, CancellationToken ct)
     {
-        if (result is not Microsoft.AspNetCore.Http.HttpResults.Ok<object> ok || ok.Value is null) return;
-        var revisionProperty = ok.Value.GetType().GetProperty("revision");
-        if (revisionProperty?.GetValue(ok.Value) is not long revision) return;
+        if (result is IStatusCodeHttpResult { StatusCode: >= 400 }) return;
+        if (result is not Microsoft.AspNetCore.Http.IValueHttpResult { Value: { } value }) return;
+        var revisionProperty = value.GetType().GetProperty("revision")
+            ?? value.GetType().GetProperty("Revision");
+        if (revisionProperty?.GetValue(value) is not long revision) return;
         SetRevisionEtag(response, revision);
         await Task.CompletedTask;
     }

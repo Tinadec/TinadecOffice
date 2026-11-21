@@ -641,7 +641,7 @@ describe('ComposerBar unified command panel', () => {
     await wrapper.find('.welcome-dialog-plus').trigger('click')
     await flushPromises()
     const plan = document.querySelector('[data-testid="command-panel-plan"]') as HTMLButtonElement
-    expect(document.querySelector('[data-testid="command-panel-mode"]')).toBeNull()
+    expect(document.querySelector('[data-testid="command-panel-mode"]')).not.toBeNull()
     expect(document.querySelectorAll('[role="switch"]')).toHaveLength(5)
     plan.click()
     await flushPromises()
@@ -1061,6 +1061,81 @@ describe('ComposerBar unified command panel', () => {
     expect(wrapper.get('[data-testid="composer-pinned-model"]').classes()).not.toContain('is-unavailable')
     expect(wrapper.emitted('update:meetingModelOverride')).toBeUndefined()
     expect(wrapper.props('meetingModelOverride')).toEqual(model)
+    wrapper.unmount()
+  })
+
+  it('unifies flat and spatial command surfaces: flat exposes mode + all 5 switches (without spatial workflow) and sends space_options', async () => {
+    const teamDefaults: import('@/api').SpaceOptionsDto = {
+      plan_first: false, spec_enabled: false, multi_agent: true,
+      workflow_mode_version_id: null, bulletin_board: true, worktree: false,
+    }
+    const teamMode = { ...CONVERSATION_MODE, id: 'am-team', slug: 'free_director', display_name: 'Team', latest_published_mode_version_id: 'mv-team', default_options: teamDefaults }
+    const soloMode = { ...WORKSPACE_TOPOLOGY, id: 'am-solo', slug: 'solo', display_name: 'Solo', latest_published_mode_version_id: 'mv-solo', default_options: null }
+    apiMock.api.listAgentModeTopologies.mockResolvedValue([soloMode, teamMode] as never)
+
+    const wrapper = mountComposer({ sessionId: 'flat-1', modeVersionId: 'mv-solo', spaceOptions })
+    await flushPromises()
+    await wrapper.find('.welcome-dialog-plus').trigger('click')
+    await flushPromises()
+
+    // Flat exposes mode preset AND all 5 switches, while spatial-only workflow stays scoped to spatial.
+    expect(document.querySelector('[data-testid="command-panel-mode"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="command-panel-workflow"]')).toBeNull()
+    expect(document.querySelectorAll('[role="switch"]')).toHaveLength(5)
+    expect(document.querySelector('[data-testid="command-panel-overrides"]')).toBeNull()
+
+    // Selecting Team pre-fills space_options with Team's default_options.
+    click('[data-testid="command-panel-mode"]')
+    await flushPromises()
+    click('[data-testid="command-panel-mv-team"]')
+    await flushPromises()
+    expect(wrapper.emitted('update:modeVersionId')?.at(-1)?.[0]).toBe('mv-team')
+    expect(wrapper.emitted('update:spaceOptions')?.at(-1)?.[0]).toEqual(teamDefaults)
+    expect(wrapper.emitted('select-mode')?.at(-1)?.[0]).toEqual({ mode_version_id: 'mv-team', space_options: teamDefaults })
+
+    await wrapper.setProps({ modeVersionId: 'mv-team', spaceOptions: teamDefaults })
+    await flushPromises()
+    expect(wrapper.find('.composer-settings-summary').exists()).toBe(false)
+
+    // Flipping worktree creates an ephemeral override and surfaces the subtle summary pill + reset control.
+    await wrapper.find('.welcome-dialog-plus').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[data-testid="command-panel-agents"]')?.getAttribute('aria-checked')).toBe('true')
+    expect(document.querySelector('[data-testid="command-panel-overrides"]')).toBeNull()
+    click('[data-testid="command-panel-worktree"]')
+    await flushPromises()
+
+    const overridden = { ...teamDefaults, worktree: true }
+    expect(wrapper.emitted('update:spaceOptions')?.at(-1)?.[0]).toEqual(overridden)
+    await wrapper.setProps({ spaceOptions: overridden, modelValue: 'run flat task' })
+    await flushPromises()
+    expect(wrapper.find('.composer-settings-summary').text()).toContain('commandPanel.temporaryOverrides')
+    expect(wrapper.find('.composer-settings-summary').text()).toContain('commandPanel.worktree')
+
+    // Submitting in flat view carries the ephemeral space_options.
+    await wrapper.find('[data-testid="composer-send"]').trigger('click')
+    expect(wrapper.emitted('submit')?.at(-1)?.[0]).toMatchObject({ mode_version_id: 'mv-team', space_options: overridden })
+
+    // Reopening shows the override badge and 1-click Reset reverts to Team's default_options.
+    await wrapper.find('.welcome-dialog-plus').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[data-testid="command-panel-overrides"]')).not.toBeNull()
+    click('[data-testid="command-panel-reset-options"]')
+    await flushPromises()
+    expect(wrapper.emitted('update:spaceOptions')?.at(-1)?.[0]).toEqual(teamDefaults)
+    expect(document.querySelector('.composer-command-panel')).not.toBeNull()
+
+    await wrapper.setProps({ spaceOptions: teamDefaults })
+    await flushPromises()
+    expect(document.querySelector('[data-testid="command-panel-overrides"]')).toBeNull()
+    expect(wrapper.find('.composer-settings-summary').exists()).toBe(false)
+
+    // Switching to Solo (default_options: null) falls back cleanly to defaultSpaceOptions().
+    click('[data-testid="command-panel-mode"]')
+    await flushPromises()
+    click('[data-testid="command-panel-mv-solo"]')
+    await flushPromises()
+    expect(wrapper.emitted('select-mode')?.at(-1)?.[0]).toEqual({ mode_version_id: 'mv-solo', space_options: spaceOptions })
     wrapper.unmount()
   })
 })

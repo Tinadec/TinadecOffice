@@ -5,7 +5,7 @@ import ConversationView from './conversation/ConversationView.vue'
 import ComposerBar from './ComposerBar.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
-import type { ComposerSubmitOptions, SessionSettingsUpdate, MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
+import type { ComposerSubmitOptions, SessionSettingsUpdate, SpaceOptionsDto, MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
 import type { ComposerSettings } from '@/lib/composerSettings'
 import type { PermissionLevel } from '@/types/mode'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
@@ -82,14 +82,23 @@ const { mode: chatMode } = useChatResponsiveMode(conversationRef)
 const hero = computed(() => props.messages.length === 0 && !props.loading)
 
 const modeVersionId = ref<string | null>(null)
-function selectMode(value: string | null) {
-  modeVersionId.value = value
-  emit('update:settings', value ? { mode_version_id: value } : { clear_mode_version: true })
+const spaceOptions = ref<SpaceOptionsDto | null>(null)
+function selectModePreset(payload: { mode_version_id: string | null; space_options: SpaceOptionsDto }) {
+  modeVersionId.value = payload.mode_version_id
+  spaceOptions.value = { ...payload.space_options }
+  emit('update:settings', payload.mode_version_id
+    ? { mode_version_id: payload.mode_version_id, space_options: payload.space_options }
+    : { clear_mode_version: true, space_options: payload.space_options })
+}
+function updateSpaceOptions(value: SpaceOptionsDto) {
+  spaceOptions.value = { ...value }
+  emit('update:settings', { space_options: value })
 }
 watch(
   () => props.currentSession?.id,
   () => {
     modeVersionId.value = props.currentSession?.mode_version_id ?? null
+    spaceOptions.value = props.currentSession?.space_options ? { ...props.currentSession.space_options } : null
   },
   { immediate: true },
 )
@@ -165,6 +174,7 @@ watch(hero, async () => {
       :session-id="currentSession?.id ?? null"
       :mode-version-id="composerSettings ? composerSettings.mode_version_id : modeVersionId"
       :meeting-model-override="composerSettings ? composerSettings.meeting_model_override : currentSession?.meeting_model_override ?? null"
+      :space-options="composerSettings ? composerSettings.space_options : spaceOptions"
       :settings-saving="settingsSaving"
       :settings-error="settingsError"
       :runs="runsForComposer"
@@ -172,7 +182,8 @@ watch(hero, async () => {
       :panel-data-attrs="panelDataAttrs"
       @update:model-value="emit('update:draft', $event)"
       @update:permission="emit('update:permission', $event)"
-      @update:mode-version-id="selectMode"
+      @select-mode="selectModePreset"
+      @update:space-options="updateSpaceOptions"
       @update:meeting-model-override="emit('update:settings', $event ? { meeting_model_override: $event } : { clear_meeting_model_override: true })"
       @welcome-submit="onWelcomeSubmit"
       @submit="onComposerSubmit"
