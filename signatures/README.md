@@ -1,16 +1,16 @@
-# CLA Signatures
+# Historical CLA Signatures
 
-This directory stores the contributor signatures collected by the CLA Assistant
-workflow (`.github/workflows/cla.yml`).
+This directory preserves records from the former GitHub Actions-based CLA
+signing process. Current signing and checks are handled by CLA Assistant;
+these files are no longer updated automatically.
 
-- The workflows read and write `version1/cla.json` on the dedicated
-  `cla-signatures` branch. The `main` copy is a bootstrap seed for
+- Historical records are stored in `version1/cla.json` on the dedicated
+  `cla-signatures` branch. The `main` copy is the former bootstrap seed for
   **CLA.md / CLA.zh-CN.md (version 1)**.
 
-- `.github/workflows/cla-discussion.yml` records fixed statements posted to
+- The former process collected signatures from pull-request comments and
   [Discussion #67](https://github.com/Tinadec/TinadecOffice/discussions/67).
-  `.github/workflows/cla.yml` still accepts the legacy per-PR signature comment.
 
-Do **not** hand-edit `cla.json`; the workflows manage it. Keep the
-`cla-signatures` branch and this directory tracked in Git so signatures are
-durable and auditable.
+Do **not** hand-edit or delete historical signature records. Preserve this
+directory and the `cla-signatures` branch so existing evidence remains durable
+and auditable.
