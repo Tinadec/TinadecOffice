@@ -49,6 +49,10 @@ if (scopesEnabled) _ = app.Services.GetRequiredService<UserStorageHostLease>();
 // RFC 9457 + snake_case ProblemDetails with trace_id/code extension.
 app.UseTinadecCoreExceptionHandler();
 app.UseStatusCodePages();
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+});
 if (scopesEnabled) app.UseTinadecStorageScopes();
 
 // Core-internal OpenAPI is the source of truth; Gateway generates its own external OpenAPI.

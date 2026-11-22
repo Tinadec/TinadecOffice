@@ -69,6 +69,158 @@ const requestAuthContexts = new WeakMap<Request, AuthContext>();
 const requestPrincipals = new WeakMap<Request, AuthenticatedPrincipal>();
 const webAuthRuntime = createWebAuthRuntime();
 
+interface SpatialBoardWsBridge {
+  onClientMessage(raw: unknown): void;
+  close(): void;
+}
+
+const activeSpatialBoardWs = new Map<unknown, SpatialBoardWsBridge>();
+
+function resolveWsConnectionKey(ws: unknown): unknown {
+  if (ws && typeof ws === 'object') {
+    const candidate = ws as { raw?: unknown; id?: string };
+    if (candidate.raw !== undefined) return candidate.raw;
+    if (typeof candidate.id === 'string' && candidate.id.length > 0) return candidate.id;
+  }
+  return ws;
+}
+
+function serializeWsFrame(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString('utf8');
+  if (ArrayBuffer.isView(raw)) {
+    return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength).toString('utf8');
+  }
+  return JSON.stringify(raw ?? {});
+}
+
+function createSpatialBoardWsBridge(options: {
+  downstream: { send(data: string): unknown; close(code?: number, reason?: string): unknown };
+  sessionId: string;
+  request?: Request;
+}): SpatialBoardWsBridge {
+  const { downstream, sessionId, request } = options;
+  const reqUrl = request
+    ? new URL(request.url)
+    : new URL(`http://127.0.0.1/api/v1/sessions/${encodeURIComponent(sessionId)}/spatial-board/ws`);
+
+  const fwdHeaders: Record<string, string> = request
+    ? forwardHeaders(request)
+    : {
+        'x-request-id': ensureRequestId(null),
+        'x-tinadec-principal': PRINCIPAL_VALUE,
+      };
+
+  if (!fwdHeaders['x-tinadec-host-control'] && process.env.TINADEC_HOST_CONTROL_TOKEN) {
+    fwdHeaders['x-tinadec-host-control'] = process.env.TINADEC_HOST_CONTROL_TOKEN;
+  }
+
+  const queryStorageId = reqUrl.searchParams.get('storage_id')?.trim();
+  if (queryStorageId && !fwdHeaders['x-tinadec-storage-id']) {
+    fwdHeaders['x-tinadec-storage-id'] = queryStorageId;
+  }
+
+  const targetUrl = buildTargetWsUrl(
+    {
+      target: 'core',
+      path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/spatial-board/ws`,
+    },
+    reqUrl.searchParams,
+  );
+
+  let closed = false;
+  let upstream: WebSocket | null = null;
+  const pendingFrames: string[] = [];
+
+  try {
+    upstream = new WebSocket(targetUrl, { headers: fwdHeaders } as never);
+
+    upstream.onopen = () => {
+      if (closed || !upstream) return;
+      while (pendingFrames.length > 0 && upstream.readyState === WebSocket.OPEN) {
+        const next = pendingFrames.shift();
+        if (next !== undefined) upstream.send(next);
+      }
+    };
+
+    upstream.onmessage = (event) => {
+      if (closed) return;
+      try {
+        if (typeof event.data === 'string') {
+          downstream.send(event.data);
+        } else if (event.data instanceof ArrayBuffer) {
+          downstream.send(Buffer.from(event.data).toString('utf8'));
+        } else if (ArrayBuffer.isView(event.data)) {
+          downstream.send(
+            Buffer.from(event.data.buffer, event.data.byteOffset, event.data.byteLength).toString('utf8'),
+          );
+        } else {
+          downstream.send(String(event.data));
+        }
+      } catch {
+        // Downstream socket closed.
+      }
+    };
+
+    upstream.onclose = () => {
+      if (closed) return;
+      closed = true;
+      try {
+        downstream.close();
+      } catch {
+        // Already closed.
+      }
+    };
+
+    upstream.onerror = () => {
+      if (closed) return;
+      try {
+        downstream.send(
+          JSON.stringify({
+            type: 'error',
+            code: 'core_ws_unreachable',
+            message: 'Upstream Core spatial board WebSocket disconnected.',
+          }),
+        );
+      } catch {
+        // Ignore send failure on closing socket.
+      }
+    };
+  } catch {
+    closed = true;
+    try {
+      downstream.close(1011, 'Failed to connect to Core spatial board WebSocket');
+    } catch {
+      // Ignore close failure.
+    }
+  }
+
+  return {
+    onClientMessage(raw: unknown) {
+      if (closed || !upstream) return;
+      const frame = serializeWsFrame(raw);
+      if (upstream.readyState === WebSocket.OPEN) {
+        upstream.send(frame);
+      } else if (upstream.readyState === WebSocket.CONNECTING && pendingFrames.length < 128) {
+        pendingFrames.push(frame);
+      }
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      pendingFrames.length = 0;
+      if (upstream) {
+        try {
+          upstream.close();
+        } catch {
+          // Already closed.
+        }
+        upstream = null;
+      }
+    },
+  };
+}
+
 function setStatus(set: { status?: number | string }, status: number) {
   set.status = status;
 }
@@ -1778,6 +1930,21 @@ const app = new Elysia()
     const url = new URL(request.url);
     return proxyRaw(`/api/v1/fs/browse${url.search}`, { headers: forwardHeaders(request), signal: request.signal });
   }, { detail: { summary: 'Browse host filesystem directories (authenticated Web/Electron picker)', tags: ['System'] } })
+  .post('/api/v1/fs/mkdir', async ({ request }) => {
+    const body = await request.text();
+    const headers = forwardHeaders(request);
+    if (!headers['content-type']) headers['content-type'] = 'application/json';
+    return proxyRaw('/api/v1/fs/mkdir', { method: 'POST', headers, body, signal: request.signal });
+  }, { detail: { summary: 'Create a directory on the host filesystem (authenticated Web/Electron picker)', tags: ['System'] } })
+  .get('/api/v1/fs/media', ({ request }) => {
+    const url = new URL(request.url);
+    const headers = forwardHeaders(request);
+    const range = request.headers.get('range');
+    if (range) headers['range'] = range;
+    const ifRange = request.headers.get('if-range');
+    if (ifRange) headers['if-range'] = ifRange;
+    return proxyRaw(`/api/v1/fs/media${url.search}`, { headers, signal: request.signal });
+  }, { detail: { summary: 'Stream user-selected background image/video media safely', tags: ['System'] } })
   .post('/api/v1/mcp/tinadec', async ({ body, set, request, server }) => {
     if (!isLoopbackMcpRequest(request, server)) {
       setStatus(set, 403);
@@ -2622,6 +2789,160 @@ const app = new Elysia()
     },
     close(ws) {
       ws.unsubscribe('collaboration-proxy');
+    },
+  })
+  .get('/api/v1/sessions/:sessionId/spatial-board', async ({ params, query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const q = query as Record<string, unknown>;
+    const search = new URLSearchParams();
+    if (q.include_deleted !== undefined) search.set('include_deleted', String(q.include_deleted));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board${suffix}`;
+    const result = await proxyJson(path, { headers, signal: request.signal });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/spatial-board`);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Get multiplayer spatial board snapshot', tags: ['Sessions'] } })
+  .post('/api/v1/sessions/:sessionId/spatial-board/ops', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board/ops`;
+    const result = await proxyJson(path, {
+      method: 'POST',
+      body: (body as Record<string, unknown> | undefined) ?? {},
+      headers,
+      signal: request.signal,
+    });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Apply property-level LWW spatial board operations', tags: ['Sessions'] } })
+  .post('/api/v1/sessions/:sessionId/spatial-board/comments', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board/comments`;
+    const result = await proxyJson(path, {
+      method: 'POST',
+      body: (body as Record<string, unknown> | undefined) ?? {},
+      headers,
+      signal: request.signal,
+    });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Create spatial board comment pin', tags: ['Sessions'] } })
+  .post('/api/v1/sessions/:sessionId/spatial-board/comments/:pinId/replies', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board/comments/${encodeURIComponent(params.pinId)}/replies`;
+    const result = await proxyJson(path, {
+      method: 'POST',
+      body: (body as Record<string, unknown> | undefined) ?? {},
+      headers,
+      signal: request.signal,
+    });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Reply to a spatial board comment pin', tags: ['Sessions'] } })
+  .patch('/api/v1/sessions/:sessionId/spatial-board/comments/:pinId', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board/comments/${encodeURIComponent(params.pinId)}`;
+    const result = await proxyJson(path, {
+      method: 'PATCH',
+      body: (body as Record<string, unknown> | undefined) ?? {},
+      headers,
+      signal: request.signal,
+    });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Update or resolve a spatial board comment pin', tags: ['Sessions'] } })
+  .delete('/api/v1/sessions/:sessionId/spatial-board/comments/:pinId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board/comments/${encodeURIComponent(params.pinId)}`;
+    const result = await proxyJson(path, {
+      method: 'DELETE',
+      headers,
+      signal: request.signal,
+    });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Delete a spatial board comment pin', tags: ['Sessions'] } })
+  .ws('/api/v1/sessions/:sessionId/spatial-board/ws', {
+    async beforeHandle({ request, set, server }) {
+      if (!requestPrincipals.has(request)) {
+        const admission = await evaluateWebAdmission({
+          request,
+          server: server as ServerLike | null,
+          runtime: webAuthRuntime,
+          mode: config.mode,
+          authConfig: config.auth,
+          trustProxy: config.trustProxyMode,
+        });
+        if (!admission.admitted) {
+          setStatus(set, admission.status);
+          set.headers['content-type'] = 'application/problem+json';
+          return toProblemDetails(
+            admission.status,
+            admission.code,
+            admission.message,
+            new URL(request.url).pathname,
+          );
+        }
+        requestPrincipals.set(request, admission.principal);
+      }
+    },
+    open(ws) {
+      const wsCtx = ws as unknown as {
+        data?: { request?: Request; params?: { sessionId?: string } };
+        send(data: string): unknown;
+        close(code?: number, reason?: string): unknown;
+      };
+      const sessionId = wsCtx.data?.params?.sessionId ?? '';
+      const key = resolveWsConnectionKey(ws);
+      const bridge = createSpatialBoardWsBridge({
+        downstream: {
+          send: (data) => wsCtx.send(data),
+          close: (code, reason) => wsCtx.close(code, reason),
+        },
+        sessionId,
+        request: wsCtx.data?.request,
+      });
+      activeSpatialBoardWs.set(key, bridge);
+    },
+    message(ws, message) {
+      activeSpatialBoardWs.get(resolveWsConnectionKey(ws))?.onClientMessage(message);
+    },
+    close(ws) {
+      const key = resolveWsConnectionKey(ws);
+      const bridge = activeSpatialBoardWs.get(key);
+      if (bridge) {
+        bridge.close();
+        activeSpatialBoardWs.delete(key);
+      }
     },
   })
   /**
