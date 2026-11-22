@@ -46,7 +46,8 @@ internal static class CoreTaskDispatchTool
         "\"description\":\"Optional. Restricts the executor to exactly these tool ids; omit to give it its full tool set. Not used to choose the executor.\"}," +
         "\"follow_up_of\":{\"type\":\"string\",\"description\":\"Optional. dispatch_id or handle (e.g. search#1) of an earlier sub-task this one continues; its title, result and evidence are handed to the new executor as context.\"}," +
         "\"write_scope\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}," +
-        "\"description\":\"Optional, for sub-tasks that write. Paths inside the workspace (files or directories, absolute or relative to the workspace root) the sub-task will change. They are reserved for it right away: if another run already holds one, this call is refused and names the holder, so two agents never edit the same place. Omit for read-only work.\"}}," +
+        "\"description\":\"Optional, for sub-tasks that write. Paths inside the workspace (files or directories, absolute or relative to the workspace root) the sub-task will change. They are reserved for it right away: if another run already holds one, this call is refused and names the holder, so two agents never edit the same place. Omit for read-only work.\"}," +
+        "\"worktree\":{\"type\":\"boolean\",\"description\":\"Optional. When true in a Git project, provisions an isolated git worktree bound to this sub-task (inherited by any nested sub-tasks it dispatches).\"}}," +
         "\"required\":[\"agent\",\"title\",\"description\"],\"additionalProperties\":false}";
 
     public static ToolManifestEntryDto ManifestEntry() => new()

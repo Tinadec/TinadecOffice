@@ -84,6 +84,7 @@ public sealed class McpResourceRegistry(IDbContextFactory<ToolsSettingsDbContext
         row.Command = input.Command;
         row.Enabled = input.Enabled; row.ArgsJson = JsonSerializer.Serialize(input.Args); row.SecretReferencesJson = JsonSerializer.Serialize(references);
         row.HeaderReferencesJson = JsonSerializer.Serialize(headerReferences); row.Cwd = input.Cwd;
+        if (!string.IsNullOrWhiteSpace(input.ImportSource)) row.ImportSource = input.ImportSource.Trim()[..Math.Min(input.ImportSource.Trim().Length, 64)];
         row.Revision++; row.UpdatedAt = DateTimeOffset.UtcNow; row.UpdatedByPrincipalId = actor.PrincipalId;
         row.ConfigurationHash = ToolSettingsSchema.Hash(JsonSerializer.SerializeToElement(new { row.Id, row.ServerId, row.Name, row.Transport, row.Url, row.Command, row.ArgsJson, row.SecretReferencesJson, row.HeaderReferencesJson, row.Cwd, row.Enabled, row.Revision }));
         try { await db.SaveChangesAsync(cancellationToken); }

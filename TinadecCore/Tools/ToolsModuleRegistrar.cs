@@ -23,6 +23,7 @@ public sealed class ToolsModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IToolSettingsStore, ToolSettingsStore>();
         builder.Services.AddSingleton<IConfigurationDocumentValidator, ToolSettingsDocumentValidator>();
         builder.Services.AddSingleton<IMcpResourceRegistry, McpResourceRegistry>();
+        builder.Services.AddSingleton<IMcpServerService, McpServerService>();
         builder.Services.AddSingleton<IToolConfigurationResolver, ToolConfigurationResolver>();
         builder.Services.AddSingleton<IManagedMcpProgramService, ManagedMcpProgramService>();
         builder.Services.AddSingleton<TinadecToolsProcessManager>();

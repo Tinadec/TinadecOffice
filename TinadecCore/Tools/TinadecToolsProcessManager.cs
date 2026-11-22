@@ -99,7 +99,7 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IToolExecu
     /// <summary>
     /// Locates the TinadecTools apphost when no explicit path is configured: first
     /// next to the Core host (published or test layout), then inside a repository
-    /// ancestor under TinadecTools/bin/{Debug|Release}/net10.0/.
+    /// ancestor under TinadecTools/bin/{Debug|Release}/{net11.0|net10.0}/.
     /// </summary>
     private static string? ProbeDefaultExecutable()
     {
@@ -112,9 +112,12 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IToolExecu
             var toolsDirectory = Path.Combine(directory.FullName, "TinadecTools");
             if (Directory.Exists(toolsDirectory))
             {
-                foreach (var configuration in new[] { "Debug", "Release" })
+                foreach (var tfm in new[] { "net11.0", "net10.0" })
                 {
-                    candidates.Add(Path.Combine(toolsDirectory, "bin", configuration, "net10.0", executableName));
+                    foreach (var configuration in new[] { "Debug", "Release" })
+                    {
+                        candidates.Add(Path.Combine(toolsDirectory, "bin", configuration, tfm, executableName));
+                    }
                 }
             }
             directory = directory.Parent;

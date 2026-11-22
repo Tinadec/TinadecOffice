@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
@@ -82,6 +83,9 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
     private readonly ISessionOrganization? _organization;
     private readonly IToolConfigurationResolver? _toolSettings;
     private readonly IScopeStorageLocations? _storageLocations;
+    private readonly ILifecycleHookService? _lifecycleHooks;
+    private readonly WorkspaceDiagnosticsCollector _diagnostics;
+    private readonly IContextMemoryService? _contextMemory;
 
     public ToolDispatcher(
         IToolProvider provider,
@@ -111,7 +115,10 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         IRunTraceSearch? runTraceSearch = null,
         IRunDossier? runDossier = null,
         IToolSkillResourceService? skillResources = null,
-        ITinadecConfigToolGateway? tinadecConfig = null)
+        ITinadecConfigToolGateway? tinadecConfig = null,
+        ILifecycleHookService? lifecycleHooks = null,
+        WorkspaceDiagnosticsCollector? diagnostics = null,
+        IContextMemoryService? contextMemory = null)
     {
         _provider = provider;
         _scopeResolver = scopeResolver;
@@ -141,6 +148,9 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         _runDossier = runDossier;
         _skillResources = skillResources;
         _tinadecConfig = tinadecConfig;
+        _lifecycleHooks = lifecycleHooks;
+        _diagnostics = diagnostics ?? WorkspaceDiagnosticsCollector.Default;
+        _contextMemory = contextMemory;
     }
 
     public Task<ToolDispatchResultDto> ExecuteAsync(ToolDispatchRequestDto request, CancellationToken cancellationToken = default) =>
@@ -160,7 +170,15 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             if (descriptor.Entry is null) return Blocked(descriptor.Error!);
             if (scope.SpaceOptions is { MultiAgent: false } && CoreVirtualToolPolicy.IsTaskDispatch(request.ToolId))
                 return Blocked("Executor dispatch is disabled for this frozen spatial run.");
-            if (scope.SpaceOptions is { Worktree: false } && request.ToolId is "git_worktree_create" or "git_worktree_remove")
+            var isCoreTaskWorktreeProvisioning = string.Equals(request.ToolId, "git_worktree_create", StringComparison.OrdinalIgnoreCase)
+                && (request.ToolCallKey?.StartsWith("core-task-worktree", StringComparison.Ordinal) == true
+                    || request.ToolCallKey?.Contains(":call:core-task-worktree", StringComparison.Ordinal) == true
+                    || (request.Params is { ValueKind: JsonValueKind.Object } reqParams
+                        && reqParams.TryGetProperty("task_scoped", out var reqTaskScoped)
+                        && reqTaskScoped.ValueKind == JsonValueKind.True));
+            if (scope.SpaceOptions is { Worktree: false }
+                && !isCoreTaskWorktreeProvisioning
+                && request.ToolId is "git_worktree_create" or "git_worktree_remove")
                 return Blocked("Independent worktree isolation is disabled for this frozen spatial run.");
             if (CoreVirtualToolPolicy.IsSpecPropose(request.ToolId) && scope.SpaceOptions is not { SpecEnabled: true })
                 return Blocked("Specification review was not enabled for this run.");
@@ -169,6 +187,30 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
 
             var parametersJson = request.Params is { } parameters ? parameters.GetRawText() : "{}";
             if (!IsObjectOrNull(parametersJson)) return Blocked("Tool parameters must be a JSON object or null.");
+
+            if (_lifecycleHooks is not null)
+            {
+                var preHook = await _lifecycleHooks.EvaluatePreToolUseAsync(new LifecycleHookToolContext(
+                    scope.ExecutionRoot,
+                    descriptor.Entry.Id,
+                    0,
+                    scope.SessionId,
+                    scope.RunId,
+                    scope.TaskId,
+                    AgentSlug: null,
+                    TargetPath: WorkspaceDiagnosticsCollector.ResolveEditedFilePath(
+                        scope.ExecutionRoot,
+                        request.Params ?? default,
+                        null),
+                    ParametersJson: parametersJson), cancellationToken).ConfigureAwait(false);
+                if (!preHook.Allowed)
+                {
+                    var hookReason = string.IsNullOrWhiteSpace(preHook.Reason)
+                        ? $"Blocked by PreToolUse lifecycle hook{(string.IsNullOrWhiteSpace(preHook.HookId) ? string.Empty : $" '{preHook.HookId}'") }."
+                        : preHook.Reason!;
+                    return Blocked(hookReason, errorCategory: "lifecycle_hook_blocked");
+                }
+            }
 
             // Claim the resource before anything else this call does. A refusal here is correctable —
             // the model can wait or work elsewhere — so it goes back to the worker as a tool result
@@ -763,15 +805,79 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
 
                 if (response.IsSuccess)
                 {
-                    var resultJson = response.Result is { } result ? result.GetRawText() : "null";
-                    if (streams) RecordTerminalSession(response.Result, execution, scope);
+                    var effectiveResult = response.Result;
+                    var resultJson = effectiveResult is { } result ? result.GetRawText() : "null";
+                    if (streams) RecordTerminalSession(effectiveResult, execution, scope);
                     // TinadecTools responses commonly report business success inside
                     // the result payload. A wire-level success only means the provider
                     // returned a result; { success:false } is still a real tool failure
                     // (write_file validation, shell exit code, etc.). Record that fact
                     // without changing the completed dispatch outcome so the result can
                     // still flow back to the model for correction.
-                    var toolSuccess = ReadEmbeddedToolSuccess(descriptor.Id, response.Result);
+                    var toolSuccess = ReadEmbeddedToolSuccess(descriptor.Id, effectiveResult);
+
+                    if (toolSuccess != false && execution.MutatesWorkspace)
+                    {
+                        var diagItems = await _diagnostics.CollectAfterEditAsync(
+                            scope.ExecutionRoot,
+                            descriptor.Id,
+                            execution.MutatesWorkspace,
+                            parameters ?? default,
+                            effectiveResult,
+                            callToken).ConfigureAwait(false);
+                        if (diagItems.Count > 0)
+                        {
+                            var formatted = diagItems.Select(d => d.FormatConcise(scope.ExecutionRoot)).ToArray();
+                            effectiveResult = EnrichToolResultObject(
+                                effectiveResult,
+                                obj =>
+                                {
+                                    obj["diagnostics"] = new JsonArray(formatted.Select(line => (JsonNode)JsonValue.Create(line)!).ToArray());
+                                    obj["diagnostics_summary"] = $"Post-edit diagnostics ({formatted.Length} issue(s)):\n" + string.Join("\n", formatted);
+                                });
+                            resultJson = effectiveResult?.GetRawText() ?? resultJson;
+                        }
+                    }
+
+                    if (_lifecycleHooks is not null)
+                    {
+                        try
+                        {
+                            var postHook = await _lifecycleHooks.EvaluatePostToolUseAsync(new LifecycleHookToolContext(
+                                scope.ExecutionRoot,
+                                descriptor.Id,
+                                response.CallId,
+                                execution.SessionId,
+                                execution.RunId,
+                                execution.TaskId,
+                                AgentSlug: null,
+                                TargetPath: WorkspaceDiagnosticsCollector.ResolveEditedFilePath(scope.ExecutionRoot, parameters ?? default, effectiveResult),
+                                ParametersJson: execution.ParametersJson,
+                                IsSuccess: toolSuccess != false,
+                                ResultSummary: resultJson.Length <= 500 ? resultJson : resultJson[..500]), callToken).ConfigureAwait(false);
+                            if (postHook.Feedback.Count > 0 || postHook.Warnings is { Count: > 0 } || postHook.HasBlockingFailure)
+                            {
+                                effectiveResult = EnrichToolResultObject(
+                                    effectiveResult,
+                                    obj =>
+                                    {
+                                        if (postHook.Feedback.Count > 0)
+                                            obj["hook_feedback"] = new JsonArray(postHook.Feedback.Select(f => (JsonNode)JsonValue.Create(f)!).ToArray());
+                                        if (postHook.Warnings is { Count: > 0 })
+                                            obj["hook_warnings"] = new JsonArray(postHook.Warnings.Select(w => (JsonNode)JsonValue.Create(w)!).ToArray());
+                                        if (postHook.HasBlockingFailure)
+                                            obj["hook_blocked"] = true;
+                                    });
+                                resultJson = effectiveResult?.GetRawText() ?? resultJson;
+                                if (postHook.HasBlockingFailure) toolSuccess = false;
+                            }
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                        {
+                            _logger.TryLogWarning(ex, "PostToolUse lifecycle hook evaluation failed for {ToolId}.", descriptor.Id);
+                        }
+                    }
+
                     var completed = await _executions.CompleteAsync(execution.Id, resultJson, toolSuccess, cancellationToken,
                         toolSuccess == false
                             ? new ToolOutcomeAttribution(ToolOutcomes.Error, Retryable: false,
@@ -789,14 +895,14 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                     if (execution.MutatesWorkspace && execution.WorkspaceSnapshotId is { } observedSnapshot)
                         await ObserveUnclaimedChangesAsync(scope, descriptor.Id, execution, observedSnapshot, cancellationToken).ConfigureAwait(false);
                     if (toolSuccess != false && WorktreeTools.IsMutation(descriptor.Id))
-                        await StewardWorktreeAsync(scope, descriptor.Id, execution, response.Result, cancellationToken).ConfigureAwait(false);
+                        await StewardWorktreeAsync(scope, descriptor.Id, execution, effectiveResult, cancellationToken).ConfigureAwait(false);
                     return new ToolDispatchResultDto
                     {
                         Status = ToolDispatchStatus.Completed,
                         ExecutionId = completed.Id.ToString(),
                         ApprovalId = completed.ApprovalId?.ToString(),
                         Attempt = attempt,
-                        Result = response.Result,
+                        Result = effectiveResult,
                         Outcome = completed.Outcome,
                         Retryable = completed.Retryable,
                         PolicyRef = completed.PolicyRef,
@@ -910,6 +1016,13 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         if (CoreVirtualToolPolicy.IsLoadSkill(wire.ToolId))
         {
             return await CoreSkillLoadTool.ExecuteAsync(_skillResources, scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (CoreVirtualToolPolicy.IsRecallHistory(wire.ToolId))
+        {
+            return _contextMemory is null
+                ? new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "Context memory service is unavailable." }
+                : await CoreRecallHistoryTool.ExecuteAsync(_contextMemory, scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
         if (CoreVirtualToolPolicy.IsTinadecConfig(wire.ToolId))
@@ -1034,6 +1147,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         string[] requiredTools = [];
         string[] requiredCapabilities = [];
         string[] writeScope = [];
+        var worktree = false;
         if (wire.Params is { ValueKind: JsonValueKind.Object } parameters)
         {
             if (parameters.TryGetProperty("agent", out var agentElement) && agentElement.ValueKind == JsonValueKind.String)
@@ -1044,6 +1158,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 title = titleElement.GetString()?.Trim();
             if (parameters.TryGetProperty("description", out var descriptionElement) && descriptionElement.ValueKind == JsonValueKind.String)
                 description = descriptionElement.GetString()?.Trim();
+            if (parameters.TryGetProperty("worktree", out var wtElement) && wtElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                worktree = wtElement.GetBoolean();
             successCriteria = ReadStringArray(parameters, "success_criteria");
             requiredTools = ReadStringArray(parameters, "required_tools");
             requiredCapabilities = ReadStringArray(parameters, "required_capabilities");
@@ -1125,6 +1241,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             required_tools = requiredTools,
             required_capabilities = requiredCapabilities,
             write_scope = writeScope.Length == 0 ? null : writeScope,
+            worktree = worktree ? (bool?)true : null,
             dispatched_by_tool_call = wire.ToolCallId,
             task_id = scope.TaskId
         });
@@ -1278,10 +1395,14 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         {
             if (string.Equals(toolId, WorktreeTools.Create, StringComparison.OrdinalIgnoreCase))
             {
+                var isRunLevelRoot = await IsRunLevelRootWorktreeTaskAsync(scope, execution.ToolCallKey, payload, cancellationToken).ConfigureAwait(false);
+                Guid? boundTaskId = isRunLevelRoot ? null : scope.TaskId;
                 var claim = new ResourceClaim(ResourceLeaseKinds.Worktree, key, Exclusive: true);
                 var decision = await _resourceLeases.AcquireAsync(new ResourceAcquireRequest(claim, scope.SessionId, scope.RunId,
-                    TaskId: null, AgentInstanceId: scope.AgentInstanceId,
-                    Reason: $"Worktree {key}{(branch is null ? "" : $" on {branch}")}, assigned to the run that created it.",
+                    TaskId: boundTaskId, AgentInstanceId: scope.AgentInstanceId,
+                    Reason: boundTaskId is null
+                        ? $"Worktree {key}{(branch is null ? "" : $" on {branch}")}, assigned to the run that created it."
+                        : $"Worktree {key}{(branch is null ? "" : $" on {branch}")}, assigned to task {boundTaskId:N}.",
                     Purpose: ResourceLeasePurposes.Assignment), cancellationToken).ConfigureAwait(false);
                 if (decision.Granted)
                 {
@@ -1322,6 +1443,54 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         {
             _logger.TryLogWarning(ex, "Worktree steward could not record {ToolId} of {Path} for run {RunId}.", toolId, key, scope.RunId);
         }
+    }
+
+    private async Task<bool> IsRunLevelRootWorktreeTaskAsync(
+        ToolInvocationScope scope,
+        string? toolCallKey,
+        JsonElement payload,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(toolCallKey, "core-space-worktree", StringComparison.Ordinal)
+            || toolCallKey?.EndsWith(":call:core-space-worktree", StringComparison.Ordinal) == true
+            || scope.TaskId == Guid.Empty)
+            return true;
+        if (toolCallKey?.StartsWith("core-task-worktree", StringComparison.Ordinal) == true
+            || toolCallKey?.Contains(":call:core-task-worktree", StringComparison.Ordinal) == true
+            || (payload.TryGetProperty("task_scoped", out var ts) && ts.ValueKind == JsonValueKind.True))
+            return false;
+        try
+        {
+            var stored = await _lifecycle.GetCurrentRunCheckpointAsync(scope.RunId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(stored?.Content)) return true;
+            using var doc = JsonDocument.Parse(stored.Content);
+            if ((!doc.RootElement.TryGetProperty("tasks", out var tasks) && !doc.RootElement.TryGetProperty("Tasks", out tasks))
+                || tasks.ValueKind != JsonValueKind.Array)
+                return true;
+            foreach (var item in tasks.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                if ((!item.TryGetProperty("taskId", out var tid) && !item.TryGetProperty("TaskId", out tid))
+                    || !Guid.TryParse(tid.GetString(), out var parsed) || parsed != scope.TaskId)
+                    continue;
+                if ((item.TryGetProperty("isSpacePreparation", out var prep) || item.TryGetProperty("IsSpacePreparation", out prep))
+                    && prep.ValueKind == JsonValueKind.True)
+                    return true;
+                var key = (item.TryGetProperty("taskKey", out var tk) || item.TryGetProperty("TaskKey", out tk))
+                    && tk.ValueKind == JsonValueKind.String ? tk.GetString() : null;
+                var hasParent = (item.TryGetProperty("dispatchedByTaskId", out var parentEl) || item.TryGetProperty("DispatchedByTaskId", out parentEl))
+                    && parentEl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(parentEl.GetString());
+                if (!hasParent && string.Equals(key, "solo", StringComparison.Ordinal))
+                    return true;
+                return false;
+            }
+        }
+        catch
+        {
+            // Fall back to run-level lease when checkpoint state cannot be inspected.
+        }
+        return true;
     }
 
     /// <summary>
@@ -2532,6 +2701,26 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         "critical" => 4,
         _ => int.MaxValue
     };
+
+    private static JsonElement EnrichToolResultObject(JsonElement? current, Action<JsonObject> mutate)
+    {
+        JsonObject target;
+        if (current is { ValueKind: JsonValueKind.Object } obj)
+        {
+            target = JsonNode.Parse(obj.GetRawText()) as JsonObject ?? new JsonObject();
+        }
+        else
+        {
+            target = new JsonObject
+            {
+                ["value"] = current is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } val
+                    ? JsonNode.Parse(val.GetRawText())
+                    : null
+            };
+        }
+        mutate(target);
+        return JsonSerializer.Deserialize<JsonElement>(target.ToJsonString());
+    }
 }
 
 /// <summary>Canonical parameters hashing shared by dispatch and approval consumption.</summary>

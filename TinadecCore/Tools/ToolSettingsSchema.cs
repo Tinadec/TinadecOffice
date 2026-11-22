@@ -31,7 +31,7 @@ public static class ToolSettingsSchema
         ["browser.max_snapshot_chars"] = (2048,64000), ["browser.action_timeout_ms"] = (1000,60000), ["browser.wait_timeout_ms"] = (100,60000),
         ["mcp.timeout_ms"] = (1,1800000), ["skills.search_depth"] = (2,2), ["skills.max_skills"] = (0,1000), ["skills.max_index_chars"] = (0,1048576), ["skills.max_file_bytes"] = (262144,262144)
     };
-    private static readonly IReadOnlyList<string> GitTools = ["git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_conflict_resolve", "git_discard", "git_stage", "git_unstage", "git_worktree_create", "git_worktree_remove", "git_fetch", "git_push", "git_pull", "git_file_history", "git_log_list", "git_commit", "git_log_detail", "git_status", "git_push_readiness", "git_log", "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision", "git_conflict_preview", "git_merge", "git_rebase"];
+    private static readonly IReadOnlyList<string> GitTools = ["git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_conflict_resolve", "git_discard", "git_stage", "git_unstage", "git_worktree_create", "git_worktree_remove", "git_fetch", "git_push", "git_pull", "git_file_history", "git_log_list", "git_commit", "git_log_detail", "git_status", "git_push_readiness", "git_log", "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision", "git_conflict_preview", "git_merge", "git_rebase", "git_stash_list", "git_stash_show", "git_stash_push", "git_stash_apply", "git_stash_pop", "git_stash_drop"];
 
     public static JsonElement Schema()
     {

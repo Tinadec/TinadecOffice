@@ -10,6 +10,7 @@ public sealed class GitCommitArgs
     [JsonPropertyName("message")] public string Message { get; set; } = string.Empty;
     [JsonPropertyName("include_all")] public bool IncludeAll { get; set; }
     [JsonPropertyName("commit_staged_only")] public bool CommitStagedOnly { get; set; }
+    [JsonPropertyName("amend")] public bool Amend { get; set; }
     [JsonPropertyName("paths")] public List<string>? Paths { get; set; }
     [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_commit")] public string? ConfirmCommit { get; set; }
@@ -21,6 +22,7 @@ public sealed class GitCommitResult
     [JsonPropertyName("error")] public string? Error { get; set; }
     [JsonPropertyName("error_code")] public string? ErrorCode { get; set; }
     [JsonPropertyName("mode")] public string? Mode { get; set; }
+    [JsonPropertyName("amended")] public bool Amended { get; set; }
     [JsonPropertyName("staged_files")] public List<string> StagedFiles { get; set; } = new();
     [JsonPropertyName("commit_hash")] public string? CommitHash { get; set; }
     [JsonPropertyName("commit_output")] public string? CommitOutput { get; set; }
@@ -36,7 +38,7 @@ internal partial class GitCommitToolJsonContext : JsonSerializerContext { }
 
 internal static class GitCommitTool
 {
-    [ToolFunction("git_commit", RequiresApproval = true, ConfirmationFields = ["confirm_commit"], Description = "Commit changes in the run workspace repository. Choose exactly ONE mode: include_all=true (stage every change), commit_staged_only=true (commit only what is already staged), or paths=[...] (stage and commit only those files). message is required. confirm_commit must be a short non-empty note (e.g. restate the message); the user still approves the commit. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
+    [ToolFunction("git_commit", RequiresApproval = true, ConfirmationFields = ["confirm_commit"], Description = "Commit changes in the run workspace repository. Choose ONE mode: include_all=true (stage every change), commit_staged_only=true (commit only what is already staged), or paths=[...] (stage and commit only those files). Set amend=true to amend HEAD (commit_staged_only=true or omit staging mode to edit only the commit message). message is required. confirm_commit must be a short non-empty note; the user still approves the commit. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitCommitResult> CommitAsync(
         GitCommitArgs args,
         CancellationToken cancellationToken)
@@ -53,11 +55,33 @@ internal static class GitCommitTool
 
         var rawPaths = args.Paths?.Where(path => !string.IsNullOrWhiteSpace(path)).ToList() ?? [];
         var modeCount = (args.IncludeAll ? 1 : 0) + (args.CommitStagedOnly ? 1 : 0) + (rawPaths.Count > 0 ? 1 : 0);
-        if (modeCount != 1)
+        if (modeCount > 1 || (modeCount == 0 && !args.Amend))
             throw new InvalidOperationException("Choose exactly one commit mode: include_all, commit_staged_only, or paths.");
 
-        var mode = args.CommitStagedOnly ? "staged_only" : args.IncludeAll ? "include_all" : "paths";
-        if (!args.CommitStagedOnly)
+        var mode = args.CommitStagedOnly || modeCount == 0 ? "staged_only" : args.IncludeAll ? "include_all" : "paths";
+        if (args.Amend)
+        {
+            var headCheck = await GitCli.RunAsync(
+                repo,
+                ["rev-parse", "--verify", "HEAD"],
+                cancellationToken: cancellationToken,
+                timeoutMs: 10_000).ConfigureAwait(false);
+            if (!headCheck.Ok)
+            {
+                var unbornStatus = await ReadStatusAsync(args.RepositoryPath, cancellationToken).ConfigureAwait(false);
+                return new GitCommitResult
+                {
+                    Success = false,
+                    Error = "Cannot amend commit on an unborn HEAD (repository has no commits yet).",
+                    ErrorCode = "unborn_head",
+                    Mode = mode,
+                    Amended = true,
+                    Status = unbornStatus
+                };
+            }
+        }
+
+        if (!args.CommitStagedOnly && modeCount > 0)
         {
             var addArguments = new List<string> { "add" };
             if (args.IncludeAll)
@@ -85,7 +109,7 @@ internal static class GitCommitTool
         if (!staged.Ok) return Failure(staged.Stderr, staged.ExitCode, mode);
 
         var stagedFiles = staged.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToList();
-        if (stagedFiles.Count == 0)
+        if (stagedFiles.Count == 0 && !args.Amend)
         {
             var status = await ReadStatusAsync(args.RepositoryPath, cancellationToken).ConfigureAwait(false);
             return new GitCommitResult
@@ -98,9 +122,12 @@ internal static class GitCommitTool
             };
         }
 
+        IReadOnlyList<string> commitArgs = args.Amend
+            ? ["commit", "--amend", "-m", message]
+            : ["commit", "-m", message];
         var commit = await GitCli.RunAsync(
             repo,
-            ["commit", "-m", message],
+            commitArgs,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!commit.Ok) return Failure(commit.Stderr, commit.ExitCode, mode, stagedFiles);
 
@@ -114,6 +141,7 @@ internal static class GitCommitTool
         {
             Success = true,
             Mode = mode,
+            Amended = args.Amend,
             StagedFiles = stagedFiles,
             CommitHash = hash.Ok ? hash.Stdout.Trim() : null,
             CommitOutput = commit.Stdout.Trim(),
