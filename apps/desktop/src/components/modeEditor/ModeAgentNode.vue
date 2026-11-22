@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
 import { AlertCircle, Copy, Cpu, Crown, Trash2, Workflow, Wrench } from '@lucide/vue'
+import { runtimeChannelBadgeLabel, type RuntimeChannelKind } from '@/settings/agentCenter/directory/agentDirectoryHelpers'
 
 export interface ModeAgentNodeData {
   agentName: string
@@ -12,6 +13,7 @@ export interface ModeAgentNodeData {
   strategyBadge: string
   strategyKind: 'inherit' | 'route' | 'fixed'
   strategyOverridden?: boolean
+  runtimeChannel?: RuntimeChannelKind | null
   toolCount: number
   hasWildcardTools?: boolean
   isConversation: boolean
@@ -65,20 +67,21 @@ const toolsLabel = computed(() =>
   >
     <!-- Primary vertical target on execution lane -->
     <Handle
-      v-if="!data.readonly && data.lane === 'execution'"
+      v-if="data.lane === 'execution'"
       id="top-target"
       type="target"
       :position="Position.Top"
-      class="mode-handle mode-handle-v"
+      :connectable="!data.readonly"
+      :class="['mode-handle', 'mode-handle-v', { 'mode-handle-readonly': data.readonly }]"
     />
 
     <!-- Optional same-lane horizontal handles -->
     <Handle
-      v-if="!data.readonly"
       id="left-target"
       type="target"
       :position="Position.Left"
-      class="mode-handle mode-handle-h"
+      :connectable="!data.readonly"
+      :class="['mode-handle', 'mode-handle-h', { 'mode-handle-readonly': data.readonly }]"
     />
 
     <div class="node-head">
@@ -115,13 +118,22 @@ const toolsLabel = computed(() =>
     </div>
 
     <div class="node-pills">
-      <span
-        class="node-pill strategy"
-        :class="{ overridden: data.strategyOverridden, [data.strategyKind]: true }"
-        :title="data.strategyBadge"
-      >
-        {{ data.strategyBadge }}
-      </span>
+      <div class="node-strategy-group">
+        <span
+          v-if="data.runtimeChannel"
+          :class="['runtime-channel-badge', 'node-channel-badge', `channel-${data.runtimeChannel}`]"
+          :data-runtime-channel="data.runtimeChannel"
+        >
+          {{ runtimeChannelBadgeLabel(data.runtimeChannel) }}
+        </span>
+        <span
+          class="node-pill strategy"
+          :class="{ overridden: data.strategyOverridden, [data.strategyKind]: true }"
+          :title="data.strategyBadge"
+        >
+          {{ data.strategyBadge }}
+        </span>
+      </div>
       <span class="node-pill tools" :title="toolsLabel">
         <Wrench :size="10" />
         <span>{{ toolsLabel }}</span>
@@ -161,20 +173,20 @@ const toolsLabel = computed(() =>
     </div>
 
     <Handle
-      v-if="!data.readonly"
       id="right-source"
       type="source"
       :position="Position.Right"
-      class="mode-handle mode-handle-h"
+      :connectable="!data.readonly"
+      :class="['mode-handle', 'mode-handle-h', { 'mode-handle-readonly': data.readonly }]"
     />
 
     <!-- Primary vertical source (Governance -> Execution, Execution -> Execution) -->
     <Handle
-      v-if="!data.readonly"
       id="bottom-source"
       type="source"
       :position="Position.Bottom"
-      class="mode-handle mode-handle-v"
+      :connectable="!data.readonly"
+      :class="['mode-handle', 'mode-handle-v', { 'mode-handle-readonly': data.readonly }]"
     />
   </div>
 </template>
@@ -287,6 +299,7 @@ const toolsLabel = computed(() =>
   border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
+  white-space: nowrap;
   color: var(--accent-primary);
   background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-primary) 34%, transparent);
@@ -323,6 +336,19 @@ const toolsLabel = computed(() =>
   min-width: 0;
 }
 
+.node-strategy-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.node-channel-badge {
+  padding: 1px 5px;
+  font-size: 9px;
+}
+
 .node-pill {
   display: inline-flex;
   align-items: center;
@@ -334,6 +360,7 @@ const toolsLabel = computed(() =>
   background: var(--surface-section);
   border: 1px solid var(--border-muted);
   color: var(--text-secondary);
+  min-width: 0;
   max-width: 118px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -347,6 +374,7 @@ const toolsLabel = computed(() =>
 
 .node-pill.tools {
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .node-quick-actions {
@@ -394,6 +422,11 @@ const toolsLabel = computed(() =>
   color: var(--text-primary);
 }
 
+.node-qa-btn:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color, var(--accent-primary));
+  outline-offset: 1px;
+}
+
 .node-qa-btn.danger:hover {
   color: var(--accent-danger, #ef4444);
 }
@@ -406,6 +439,12 @@ const toolsLabel = computed(() =>
   border: 2px solid var(--accent-primary);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface-raised) 85%, transparent);
   transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.mode-agent-node.readonly :deep(.mode-handle),
+:deep(.mode-handle.mode-handle-readonly) {
+  opacity: 0;
+  pointer-events: none;
 }
 
 :deep(.mode-handle:hover) {

@@ -13,6 +13,9 @@ const doc = vi.hoisted(() => ({
   syncDocumentWorkspace: vi.fn(),
 }))
 
+const dock = vi.hoisted(() => ({ focusDockCard: vi.fn() }))
+vi.mock('@/lib/homeDockSync', () => ({ focusDockCard: dock.focusDockCard }))
+
 const controller = vi.hoisted(() => ({
   selectedProjectId: { value: 'p1' as string | null },
   currentProject: { value: { path: '/w' } as { path: string } | null },
@@ -48,7 +51,10 @@ function render() {
         locale: 'en',
         messages: { en: { context: { homeCodeEditor: 'Code editor' } } },
       })],
-      stubs: { DocumentEditorPane: PaneStub },
+      stubs: {
+        DocumentEditorPane: PaneStub,
+        SearchPanel: { template: '<div data-testid="search-panel-stub" />' },
+      },
     },
   })
 }
@@ -59,6 +65,7 @@ beforeEach(() => {
   doc.openInEditor.mockClear()
   doc.closeEditor.mockClear()
   doc.syncDocumentWorkspace.mockClear()
+  dock.focusDockCard.mockClear()
   // An unknown listing must never close the file: "not listed yet" is not "missing".
   files.listWorkspaceDir.mockReset()
   files.listWorkspaceDir.mockResolvedValue(null)
@@ -127,5 +134,54 @@ describe('CodeEditorCard', () => {
     await flushPromises()
 
     expect(doc.closeEditor).not.toHaveBeenCalled()
+  })
+
+  it('toggles inline workspace SearchPanel from the card toolbar', async () => {
+    const wrapper = render()
+    expect(wrapper.find('[data-testid="code-card-search-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('.pane-stub').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="code-card-search-toggle"]').trigger('click')
+    expect(wrapper.find('.pane-stub').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="search-panel-stub"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="code-card-search-toggle"]').trigger('click')
+    expect(wrapper.find('.pane-stub').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('routes active file Diff, File History, and Blame actions to the Git dock card', async () => {
+    doc.editorPath = ref('src/app.ts')
+    const wrapper = render()
+    expect(wrapper.get('[data-testid="code-card-breadcrumb"]').text()).toBe('src/app.ts')
+
+    await wrapper.get('[data-testid="code-git-diff-btn"]').trigger('click')
+    expect(dock.focusDockCard).toHaveBeenLastCalledWith({
+      card: 'git',
+      reason: 'code',
+      filePath: 'src/app.ts',
+      gitTab: 'changes',
+      gitSubView: 'diff',
+    })
+
+    await wrapper.get('[data-testid="code-git-history-btn"]').trigger('click')
+    expect(dock.focusDockCard).toHaveBeenLastCalledWith({
+      card: 'git',
+      reason: 'code',
+      filePath: 'src/app.ts',
+      gitTab: 'changes',
+      gitSubView: 'file_history',
+    })
+
+    await wrapper.get('[data-testid="code-git-blame-btn"]').trigger('click')
+    expect(dock.focusDockCard).toHaveBeenLastCalledWith({
+      card: 'git',
+      reason: 'code',
+      filePath: 'src/app.ts',
+      gitTab: 'changes',
+      gitSubView: 'blame',
+    })
+
+    wrapper.unmount()
   })
 })

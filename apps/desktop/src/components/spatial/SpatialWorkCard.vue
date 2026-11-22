@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue'
+import { computed, inject, onMounted, onBeforeUnmount, ref, shallowRef, watch, type ComputedRef } from 'vue'
 import { Bot, CheckCircle2, Circle, FileCode2, GitBranch, ListTodo, MessageSquare, ShieldCheck, Target, Wrench } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { approvalSummary } from '@/userToolAction'
@@ -11,9 +11,114 @@ import MarkdownRender from '@/components/MarkdownRender.vue'
 import ApprovalTab from '@/components/ApprovalTab.vue'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import { agentKeyFromHandle, instanceKeyOf } from '@/lib/avatarAssignment'
-import { api } from '@/api'
+import { api, type ModelProviderInstanceDto, type OrchestrationSnapshotDto } from '@/api'
+import { useAgentDirectory } from '@/composables/useAgentDirectory'
 import { readFileText, type ReadFileDataDto } from '@/lib/workspaceSearch'
 import type { useSpatialGit } from '@/composables/useSpatialGit'
+
+type RuntimeEngineKind = 'acp' | 'cli' | 'tui' | 'api'
+interface RuntimeEngineBadge {
+  label: string
+  kind: RuntimeEngineKind
+}
+interface RuntimeEngineMetaCandidate {
+  runtime_badge?: string | null
+  runtimeBadge?: string | null
+  protocol?: string | null
+  channel?: string | null
+  connection_kind?: string | null
+  provider?: string | null
+  provider_name?: string | null
+  provider_display_name?: string | null
+  driver?: string | null
+  model?: string | null
+  model_id?: string | null
+  provider_instance_id?: string | null
+  providerInstanceId?: string | null
+  recent_actual_model?: {
+    protocol?: string | null
+    provider_instance_id?: string | null
+    model?: string | null
+  } | null
+}
+
+const KNOWN_DRIVER_NAMES: Record<string, string> = {
+  antigravity: 'Antigravity',
+  'claude-code': 'Claude Code',
+  claude_code: 'Claude Code',
+  claude: 'Claude Code',
+  codex: 'Codex',
+  'codex-cli': 'Codex',
+  'gemini-cli': 'Gemini CLI',
+  gemini: 'Gemini CLI',
+  opencode: 'OpenCode',
+  openai: 'OpenAI',
+  'openai-chat': 'OpenAI',
+  'openai-responses': 'OpenAI',
+  anthropic: 'Anthropic',
+  'anthropic-messages': 'Anthropic',
+}
+
+function humanizeDriver(driver: string): string {
+  const key = driver.trim().toLowerCase()
+  if (!key) return ''
+  if (KNOWN_DRIVER_NAMES[key]) return KNOWN_DRIVER_NAMES[key]!
+  return driver
+    .trim()
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => (part.length <= 3 ? part.toUpperCase() : part[0]!.toUpperCase() + part.slice(1)))
+    .join(' ')
+}
+
+function classifyEngineKind(text: string): RuntimeEngineKind {
+  const head = text.trim().toLowerCase()
+  if (head.startsWith('acp') || head.includes('acp')) return 'acp'
+  if (head.startsWith('tui') || head.includes('tui')) return 'tui'
+  if (head.startsWith('cli') || head.includes('cli') || head.includes('headless')) return 'cli'
+  return 'api'
+}
+
+function formatEngineBadge(
+  meta?: RuntimeEngineMetaCandidate | null,
+  providers?: ReadonlyMap<string, ModelProviderInstanceDto>,
+): RuntimeEngineBadge | null {
+  if (!meta) return null
+  const explicit = (meta.runtime_badge ?? meta.runtimeBadge ?? '').trim()
+  if (explicit) {
+    const normalized = explicit.replace(/\s*[·•|/]\s*/g, ' · ')
+    return { label: normalized, kind: classifyEngineKind(normalized) }
+  }
+  const providerId = (meta.provider_instance_id ?? meta.providerInstanceId ?? meta.recent_actual_model?.provider_instance_id ?? '').trim()
+  const providerRow = providerId && providers ? providers.get(providerId) : undefined
+  const channel = (meta.channel ?? providerRow?.channel ?? '').trim().toLowerCase()
+  const protocol = (meta.protocol ?? meta.recent_actual_model?.protocol ?? providerRow?.protocol ?? '').trim().toLowerCase()
+  const connKind = (meta.connection_kind ?? providerRow?.connection_kind ?? '').trim().toLowerCase()
+  const driver = (meta.driver ?? providerRow?.driver ?? '').trim()
+  const displayName = (meta.provider_display_name ?? meta.provider_name ?? meta.provider ?? providerRow?.display_name ?? '').trim()
+  const model = (meta.model ?? meta.model_id ?? meta.recent_actual_model?.model ?? providerRow?.model ?? '').trim()
+
+  let prefix: string | null = null
+  let kind: RuntimeEngineKind = 'api'
+  if (channel === 'acp' || protocol === 'acp' || protocol.includes('acp')) {
+    prefix = 'ACP'
+    kind = 'acp'
+  } else if (channel === 'tui' || protocol === 'tui' || protocol.includes('tui')) {
+    prefix = 'TUI'
+    kind = 'tui'
+  } else if (channel === 'cli' || connKind === 'cli' || protocol === 'cli' || protocol.includes('cli') || protocol.includes('headless')) {
+    prefix = 'CLI'
+    kind = 'cli'
+  } else if (protocol || channel === 'http' || channel === 'api' || driver || displayName) {
+    prefix = 'API'
+    kind = 'api'
+  }
+  if (!prefix) return null
+  const name = displayName || humanizeDriver(driver) || model
+  if (!name) return { label: prefix, kind }
+  if (name.toUpperCase().startsWith(`${prefix} ·`) || name.toUpperCase() === prefix) return { label: name, kind }
+  return { label: `${prefix} · ${name}`, kind }
+}
 
 const props = withDefaults(defineProps<{ object?: SpatialObject; preview?: boolean; compact?: boolean; detail?: boolean }>(), { compact: undefined })
 const { t, te } = useI18n()
@@ -38,6 +143,96 @@ const ownerInstanceKey = computed(() => object.value?.runId && object.value?.tas
   : '')
 const ownerAgentKey = computed(() => agentKeyFromHandle(object.value?.owner))
 const ownerFocusable = computed(() => Boolean(object.value?.owner && !props.preview && object.value.instanceId && runId.value && focusInstance))
+
+const agentDirectory = typeof api?.listAgents === 'function' ? useAgentDirectory() : null
+const providerCatalog = shallowRef<ModelProviderInstanceDto[]>([])
+onMounted(() => {
+  if (!props.preview && typeof api?.listModelProviders === 'function') {
+    void api.listModelProviders().then((rows) => {
+      if (Array.isArray(rows)) providerCatalog.value = rows
+    }).catch(() => {})
+  }
+})
+const providerById = computed(() => {
+  const map = new Map<string, ModelProviderInstanceDto>()
+  for (const row of providerCatalog.value) {
+    if (row?.id) map.set(row.id, row)
+  }
+  return map
+})
+
+const runtimeBadge = computed<RuntimeEngineBadge | null>(() => {
+  const obj = object.value
+  if (!obj) return null
+  const direct = formatEngineBadge(obj as unknown as RuntimeEngineMetaCandidate, providerById.value)
+  if (direct) return direct
+
+  const snap = (c as unknown as { orchestration?: { value?: OrchestrationSnapshotDto | null } })?.orchestration?.value ?? null
+  if (snap && (!runId.value || !snap.run?.id || snap.run.id === runId.value)) {
+    const snapAny = snap as unknown as {
+      teammates?: Array<RuntimeEngineMetaCandidate & { handle?: string | null; agent_slug?: string | null; agentSlug?: string | null; task_id?: string | null; taskId?: string | null }>
+      agent_instances?: Array<RuntimeEngineMetaCandidate & { id?: string; instance_id?: string; task_id?: string | null; role?: string | null; agent_slug?: string | null }>
+    }
+    for (const tm of snapAny.teammates ?? []) {
+      const tmSlug = tm.agent_slug ?? tm.agentSlug
+      if (
+        (obj.taskId && (tm.task_id === obj.taskId || tm.taskId === obj.taskId))
+        || (obj.owner && (tm.handle === obj.owner || tmSlug === obj.owner || tmSlug === ownerAgentKey.value))
+      ) {
+        const hit = formatEngineBadge(tm, providerById.value)
+        if (hit) return hit
+      }
+    }
+    if (obj.taskId) {
+      const node = snap.nodes?.find((n) => n.id === obj.taskId) as (RuntimeEngineMetaCandidate & { id: string }) | undefined
+      const nodeHit = formatEngineBadge(node, providerById.value)
+      if (nodeHit) return nodeHit
+      const assign = snap.assignments?.find((a) => String(a.task_node_id) === obj.taskId) as RuntimeEngineMetaCandidate | undefined
+      const assignHit = formatEngineBadge(assign, providerById.value)
+      if (assignHit) return assignHit
+    }
+    for (const inst of snapAny.agent_instances ?? []) {
+      const instId = inst.instance_id ?? inst.id
+      if (
+        (obj.instanceId && instId && String(instId) === obj.instanceId)
+        || (obj.taskId && inst.task_id && String(inst.task_id) === obj.taskId)
+      ) {
+        const hit = formatEngineBadge(inst, providerById.value)
+        if (hit) return hit
+      }
+    }
+  }
+
+  const slug = ownerAgentKey.value
+  if (slug && agentDirectory) {
+    const agentRow = agentDirectory.items.value.find((row) => row.slug === slug || row.id === slug)
+    if (agentRow) {
+      if (agentRow.recent_invocation && (!runId.value || agentRow.recent_invocation.run_id === runId.value)) {
+        const hit = formatEngineBadge({
+          protocol: agentRow.recent_invocation.protocol,
+          provider_instance_id: agentRow.recent_invocation.provider_instance_id,
+          model: agentRow.recent_invocation.model ?? null,
+        }, providerById.value)
+        if (hit) return hit
+      }
+      if (agentRow.model_binding?.mode === 'fixed' && agentRow.model_binding.provider_instance_id) {
+        const hit = formatEngineBadge({
+          provider_instance_id: agentRow.model_binding.provider_instance_id,
+          model: agentRow.model_binding.model ?? null,
+        }, providerById.value)
+        if (hit) return hit
+      }
+      if (agentRow.configured_strategy?.kind === 'fixed' && agentRow.configured_strategy.provider_instance_id) {
+        return formatEngineBadge({
+          provider_instance_id: agentRow.configured_strategy.provider_instance_id,
+          model: agentRow.configured_strategy.model ?? null,
+        }, providerById.value)
+      }
+    }
+  }
+
+  return null
+})
 
 function focusOwner() {
   if (!runId.value || !object.value?.instanceId || !focusInstance) return
@@ -108,7 +303,7 @@ async function readFile(path: string) {
       <component :is="icons[object.kind]" :size="20" aria-hidden="true" />
       <h2>{{ object.title || kindTitle(object.kind) }}</h2>
     </header>
-    <div v-if="object.owner || runId || object.status" class="space-card-meta nodrag nopan">
+    <div v-if="object.owner || runtimeBadge || runId || object.status" class="space-card-meta nodrag nopan">
       <component
         :is="ownerFocusable ? 'button' : 'span'"
         v-if="object.owner"
@@ -120,6 +315,13 @@ async function readFile(path: string) {
         <AgentPetAvatar v-if="ownerInstanceKey" :instance-key="ownerInstanceKey" :agent-id="ownerAgentKey" :size="14" />
         {{ object.owner }}
       </component>
+      <span
+        v-if="runtimeBadge"
+        class="space-runtime-badge"
+        :data-engine-kind="runtimeBadge.kind"
+        :title="runtimeBadge.label"
+        data-testid="space-runtime-badge"
+      >{{ runtimeBadge.label }}</span>
       <button v-if="runId && !preview && locate && object.kind !== 'run'" type="button" class="space-run" :title="t('space.cluster.locateRun', { id: runId })" @click="locate(`tasks:${runId}`)">{{ t('space.cluster.runTag', { id: runId.slice(0, 8) }) }}</button>
       <span v-else-if="runId" class="space-run" :title="runId">{{ t('space.cluster.runTag', { id: runId.slice(0, 8) }) }}</span>
       <small v-if="object.status" class="space-card-status">{{ status(object.status) }}</small>
@@ -210,26 +412,30 @@ async function readFile(path: string) {
   </article>
 </template>
 <style scoped>
-.spatial-work-card { height: 100%; display: flex; flex-direction: column; min-width: 0; color: var(--text-primary); background: var(--surface-raised); backdrop-filter: var(--material-filter-raised, none); border-radius: 16px; overflow: hidden; }
+.spatial-work-card { height: 100%; display: flex; flex-direction: column; min-width: 0; color: var(--text-primary); background: var(--surface-raised); backdrop-filter: var(--material-filter-raised, none); border-radius: var(--radius-island, 12px); overflow: hidden; }
 .space-drag-handle { display: flex; align-items: flex-start; gap: 9px; padding: 14px 18px 10px; cursor: grab; flex-shrink: 0; }
 h2 { font-size: 17px; font-weight: 600; line-height: 1.25; margin: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 h3 { font-size: 13px; font-weight: 600; line-height: 1.6; margin: 16px 0 8px; }
 .space-drag-handle svg { flex-shrink: 0; }
 .is-detail .space-drag-handle { cursor: default; }
-.space-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 0 18px 10px; font-size: 11px; color: var(--text-secondary); }
-.space-owner { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 7px; border-radius: 5px; background: var(--surface-section); overflow-wrap: anywhere; }
-.space-run { font-family: var(--font-mono); }
-.space-card-status { margin-left: auto; font-size: 11px; }
+.space-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 0 18px 10px; font-size: 11px; color: var(--text-secondary); }
+.space-owner { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border-muted); background: var(--surface-section); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.space-runtime-badge { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border-card, var(--border-muted)); background: var(--surface-section); color: var(--text-secondary); font-size: 11px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+.space-runtime-badge[data-engine-kind='acp'] { border-color: color-mix(in srgb, var(--accent-primary) 32%, var(--border-muted)); background: color-mix(in srgb, var(--accent-primary) 10%, transparent); color: var(--accent-primary); }
+.space-runtime-badge[data-engine-kind='cli'],
+.space-runtime-badge[data-engine-kind='tui'] { border-color: color-mix(in srgb, var(--accent-info, var(--accent-primary)) 32%, var(--border-muted)); background: color-mix(in srgb, var(--accent-info, var(--accent-primary)) 10%, transparent); color: var(--accent-info, var(--text-primary)); }
+.space-run { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.space-card-status { margin-left: auto; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .space-work-body { padding: 4px 18px 14px; flex: 1; min-height: 0; overflow: auto; user-select: text; }
 .space-work-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; margin: 0 0 16px; }
-.space-muted { color: var(--text-muted); line-height: 1.7; font-size: 13px; overflow-wrap: anywhere; }
+.space-muted { color: var(--text-muted); line-height: 1.7; font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .space-summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0 0 8px; }
 .space-todo-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 16px; font-size: 14px; }
 .space-todo-row > div { min-width: 0; overflow-wrap: anywhere; }
 .space-todo-row svg { flex-shrink: 0; margin-top: 2px; }
-.space-todo-row small { display: block; margin-top: 7px; color: var(--text-muted); font: 12px var(--font-mono, monospace); overflow-wrap: anywhere; }
+.space-todo-row small { display: block; margin-top: 7px; color: var(--text-muted); font: 12px var(--font-mono, monospace); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .space-success { color: var(--accent-success); }
-footer { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 8px 18px 14px; font-size: 12px; color: var(--text-secondary); }
+footer { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 8px 18px 14px; font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 button { font: inherit; color: inherit; border: 0; background: transparent; cursor: pointer; }
 button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 button:hover:not(:disabled) { color: var(--accent-primary); }

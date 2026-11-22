@@ -212,7 +212,12 @@ function viewDetails() {
 }
 
 .tool-invocation-card.risky {
-  border-left: 3px solid var(--accent-warning);
+  border-color: color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-warning) 5%, var(--bg-secondary));
+}
+
+.tool-invocation-card.risky .tool-invocation-icon {
+  color: var(--accent-warning);
 }
 
 .tool-invocation-top {

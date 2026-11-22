@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Plus, Settings, Sparkles, Square, X } from '@lucide/vue'
+import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Layers, Plus, Settings, Sparkles, Square, TriangleAlert, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useStatusLabels } from '@/lib/statusLabels'
 import { errorCodeMessage } from '@/lib/apiError'
@@ -7,6 +7,7 @@ import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, use
 import { useRouter } from 'vue-router'
 import { UiButton, UiSelectField } from '@/components/ui'
 import ComposerCommandPanel from './ComposerCommandPanel.vue'
+import ImageLightbox, { type LightboxImageItem } from './chat/ImageLightbox.vue'
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from '@/components/ui/attachment'
 import { Spinner } from '@/components/ui/spinner'
 import { useDefaultModel } from '@/composables/useDefaultModel'
@@ -286,7 +287,6 @@ function consumeSettingsSlash() {
 function selectModePreset(payload: { mode_version_id: string | null; space_options: SpaceOptionsDto }) {
   consumeSettingsSlash()
   emit('update:modeVersionId', payload.mode_version_id)
-  emit('update:spaceOptions', payload.space_options)
   emit('select-mode', payload)
 }
 function changePermission(value: PermissionLevel) { consumeSettingsSlash(); emit('update:permission', value) }
@@ -300,28 +300,112 @@ function changeModel(value: MeetingModelOverrideDto | null) { consumeSettingsSla
  * in this workspace's own models.toml, it is named unavailable (Core already runs the
  * default route then) rather than shown as if it were in use.
  */
-const pinnedProviders = ref<ModelProviderInstanceDto[] | null>(null)
-let pinnedRead = 0
-watch(() => [props.meetingModelOverride?.provider_instance_id, selectedStorage.value] as const, async ([providerId]) => {
-  const read = ++pinnedRead
-  pinnedProviders.value = null
-  if (!providerId) return
-  try {
-    const rows = await api.listModelProviders()
-    if (read === pinnedRead) pinnedProviders.value = Array.isArray(rows) ? rows : []
-  } catch { /* unknown: shown as pinned, not as unavailable */ }
-}, { immediate: true })
+const providerCatalog = ref<ModelProviderInstanceDto[] | null>(null)
+let providerCatalogRead = 0
+let lastProviderStorage = selectedStorage.value
+let lastPinnedProviderId = props.meetingModelOverride?.provider_instance_id
+watch(
+  () => [
+    props.meetingModelOverride?.provider_instance_id,
+    conversationChoice.value?.provider_instance_id,
+    defaultModel.loaded.value,
+    defaultModel.busy.value,
+    selectedStorage.value,
+  ] as const,
+  async ([pinnedId, choiceProviderId, defaultLoaded, defaultBusy, storage]) => {
+    const read = ++providerCatalogRead
+    if (pinnedId !== lastPinnedProviderId || storage !== lastProviderStorage) {
+      providerCatalog.value = null
+    }
+    lastPinnedProviderId = pinnedId
+    lastProviderStorage = storage
+    if (!pinnedId && (!choiceProviderId && !defaultLoaded || defaultBusy)) return
+    try {
+      const rows = await api.listModelProviders()
+      if (read === providerCatalogRead) providerCatalog.value = Array.isArray(rows) ? rows : []
+    } catch {
+      /* unknown: keep pinned neutral and avoid false vision warnings while offline */
+      if (read === providerCatalogRead && pinnedId) providerCatalog.value = null
+    }
+  },
+  { immediate: true },
+)
 const pinnedUnavailable = computed(() => {
   const pinned = props.meetingModelOverride
-  if (!pinned || !pinnedProviders.value) return false
-  const provider = pinnedProviders.value.find(row => row.id === pinned.provider_instance_id)
+  if (!pinned || !providerCatalog.value) return false
+  const provider = providerCatalog.value.find(row => row.id === pinned.provider_instance_id)
   return !provider || !provider.enabled
 })
 const pinnedName = computed(() => {
   const pinned = props.meetingModelOverride
   if (!pinned) return ''
-  return pinned.model || pinnedProviders.value?.find(row => row.id === pinned.provider_instance_id)?.display_name || t('composer.pinnedModelUnknown')
+  return pinned.model || providerCatalog.value?.find(row => row.id === pinned.provider_instance_id)?.display_name || t('composer.pinnedModelUnknown')
 })
+
+function supportsVisionForChoice(
+  provider: ModelProviderInstanceDto | null | undefined,
+  modelId: string | null | undefined,
+): boolean | null {
+  if (!provider) return null
+  const resolvedModel = modelId?.trim() || provider.model?.trim() || ''
+  const profile = resolvedModel ? provider.model_profiles?.[resolvedModel] : undefined
+  const profileVision = Array.isArray(profile?.specialties)
+    ? profile!.specialties.includes('vision')
+    : null
+
+  const imageInput = provider.image_input
+  let protocolImageEnabled: boolean | null = null
+  if (imageInput) {
+    const override = resolvedModel ? imageInput.model_overrides?.[resolvedModel]?.enabled : undefined
+    if (imageInput.source === 'protocol_unsupported') protocolImageEnabled = false
+    else if (typeof override === 'boolean') protocolImageEnabled = override
+    else if (typeof imageInput.base_enabled === 'boolean' && resolvedModel && resolvedModel !== provider.model) protocolImageEnabled = imageInput.base_enabled
+    else protocolImageEnabled = Boolean(imageInput.enabled)
+  }
+
+  if (protocolImageEnabled === false || profileVision === false) return false
+  if (protocolImageEnabled === true || profileVision === true) return true
+  return null
+}
+
+function isRasterImageType(mediaType: string): boolean {
+  return mediaType.startsWith('image/') && mediaType !== 'image/svg+xml'
+}
+
+const activeModelProvider = computed(() => {
+  const choice = conversationChoice.value
+  if (!choice || !providerCatalog.value) return null
+  return providerCatalog.value.find(row => row.id === choice.provider_instance_id) ?? null
+})
+const visionSupported = computed(() =>
+  supportsVisionForChoice(activeModelProvider.value, conversationChoice.value?.model ?? null),
+)
+
+function insertCommandTemplate(template: string) {
+  showPlusMenu.value = false
+  commandsDismissed.value = true
+  const current = props.modelValue
+  const hasSlash = composerSlashQuery(current) !== null
+  const nextDraft = hasSlash || !current.trim()
+    ? template
+    : `${current.replace(/\s+$/, '')}\n\n${template}`
+  updateDraft(nextDraft)
+  void nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    const argToken = '$ARGUMENTS'
+    const argIdx = nextDraft.indexOf(argToken)
+    if (argIdx >= 0) {
+      el.setSelectionRange(argIdx, argIdx + argToken.length)
+      caretPos.value = argIdx
+    } else {
+      el.setSelectionRange(nextDraft.length, nextDraft.length)
+      caretPos.value = nextDraft.length
+    }
+    autoResize()
+  })
+}
 function changeSpaceOptions(value: SpaceOptionsDto) { consumeSettingsSlash(); emit('update:spaceOptions', value) }
 
 function updateDraft(value: string) {
@@ -498,14 +582,20 @@ function pickedFiles(event: Event): AttachableFile[] {
   return Array.from(input.files ?? [])
 }
 
-async function onFilesPicked(event: Event) {
-  const files = pickedFiles(event)
-  if (!files.length) return
+async function enqueueAttachableFiles(files: readonly AttachableFile[]) {
+  if (!files.length || !canAttach.value) return
   const projectId = props.selectedProjectId
   const spatial = props.spatial
   attachmentError.value = null
   attachmentPreparing.value = true
-  if (!props.sessionId) preparingFiles.value = files.map((file, index) => ({ key: `${index}:${file.name}`, name: file.name, size: file.size, type: file.type }))
+  if (!props.sessionId) {
+    preparingFiles.value = files.map((file, index) => ({
+      key: `${index}:${file.name}`,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+    }))
+  }
   try {
     const sessionId = props.sessionId ?? null
     if (disposed || projectId !== props.selectedProjectId || spatial !== props.spatial) return
@@ -518,6 +608,136 @@ async function onFilesPicked(event: Event) {
     attachmentPreparing.value = false
     preparingFiles.value = []
   }
+}
+
+async function onFilesPicked(event: Event) {
+  await enqueueAttachableFiles(pickedFiles(event))
+}
+
+let pastedImageSeq = 0
+const dragDepth = ref(0)
+const isDraggingFiles = computed(() => dragDepth.value > 0)
+
+function extensionForImageMime(mime: string): string {
+  const normalized = mime.toLowerCase().split(';')[0]!.trim()
+  if (normalized === 'image/jpeg') return 'jpg'
+  if (normalized === 'image/svg+xml') return 'svg'
+  if (normalized === 'image/webp') return 'webp'
+  if (normalized === 'image/gif') return 'gif'
+  if (normalized === 'image/bmp') return 'bmp'
+  return 'png'
+}
+
+function normalizeImageFile(file: File, index: number): AttachableFile {
+  const trimmed = file.name?.trim()
+  if (trimmed && trimmed !== 'image.png' && trimmed !== 'blob') return file
+  const ext = extensionForImageMime(file.type || 'image/png')
+  const seq = ++pastedImageSeq
+  const name = trimmed && trimmed !== 'blob'
+    ? trimmed.replace(/(\.[^.]+)?$/, `-${seq}.${ext}`)
+    : `pasted-image-${seq}${index > 0 ? `-${index + 1}` : ''}.${ext}`
+  if (typeof File === 'function' && file instanceof Blob) {
+    return new File([file], name, { type: file.type || `image/${ext}`, lastModified: file.lastModified || Date.now() })
+  }
+  return { name, type: file.type || `image/${ext}`, size: file.size, arrayBuffer: () => file.arrayBuffer() }
+}
+
+function extractClipboardImages(clipboard: DataTransfer | null | undefined): AttachableFile[] {
+  if (!clipboard) return []
+  const images: AttachableFile[] = []
+  const seen = new Set<File>()
+  if (clipboard.items?.length) {
+    for (let i = 0; i < clipboard.items.length; i++) {
+      const item = clipboard.items[i]
+      if (!item || item.kind !== 'file' || !item.type.startsWith('image/')) continue
+      const file = item.getAsFile()
+      if (!file || seen.has(file)) continue
+      seen.add(file)
+      images.push(normalizeImageFile(file, images.length))
+    }
+  }
+  if (!images.length && clipboard.files?.length) {
+    for (const file of Array.from(clipboard.files)) {
+      if (!file.type.startsWith('image/') || seen.has(file)) continue
+      seen.add(file)
+      images.push(normalizeImageFile(file, images.length))
+    }
+  }
+  return images
+}
+
+function onTextareaPaste(event: ClipboardEvent) {
+  const images = extractClipboardImages(event.clipboardData)
+  if (!images.length) return
+  event.preventDefault()
+  void enqueueAttachableFiles(images)
+}
+
+function hasDraggedFiles(event: DragEvent): boolean {
+  const dt = event.dataTransfer
+  if (!dt) return false
+  if (dt.files?.length) return true
+  if (dt.items?.length && Array.from(dt.items).some(item => item.kind === 'file')) return true
+  return Array.from(dt.types ?? []).includes('Files')
+}
+
+function onComposerDragEnter(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return
+  event.preventDefault()
+  dragDepth.value += 1
+}
+
+function onComposerDragOver(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+
+function onComposerDragLeave(event: DragEvent) {
+  if (dragDepth.value === 0) return
+  event.preventDefault()
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+}
+
+function onComposerDrop(event: DragEvent) {
+  dragDepth.value = 0
+  if (!hasDraggedFiles(event)) return
+  event.preventDefault()
+  const dt = event.dataTransfer
+  if (!dt) return
+  const picked: File[] = []
+  if (dt.files?.length) {
+    picked.push(...Array.from(dt.files))
+  } else if (dt.items?.length) {
+    for (const item of Array.from(dt.items)) {
+      if (item.kind !== 'file') continue
+      const file = item.getAsFile()
+      if (file) picked.push(file)
+    }
+  }
+  if (picked.length) void enqueueAttachableFiles(picked)
+}
+
+const hasQueuedImages = computed(() =>
+  attachments.value.some((item) => item.status !== 'failed' && isRasterImageType(item.mediaType))
+  || preparingFiles.value.some((file) => isRasterImageType(file.type)),
+)
+const showVisionNotice = computed(() => hasQueuedImages.value && visionSupported.value === false)
+
+const composerLightboxOpen = ref(false)
+const composerLightboxIndex = ref(0)
+const composerLightboxImages = computed<LightboxImageItem[]>(() =>
+  attachments.value
+    .filter((item): item is PendingAttachment & { previewUrl: string } => Boolean(item.previewUrl))
+    .map((item) => ({ src: item.previewUrl, name: item.fileName })),
+)
+
+function openComposerLightbox(clientId: string) {
+  const previewable = attachments.value.filter((item) => Boolean(item.previewUrl))
+  const idx = previewable.findIndex((item) => item.clientId === clientId)
+  if (idx < 0) return
+  composerLightboxIndex.value = idx
+  composerLightboxOpen.value = true
 }
 
 function dropAttachment(clientId: string) {
@@ -736,9 +956,17 @@ function confirmSteer(id: string, interrupt = false) {
       ref="composerBoxRef"
       class="composer-box welcome-dialog"
       :data-composer-active="modelValue.trim() ? 'true' : 'false'"
+      :data-dragging="isDraggingFiles ? 'true' : 'false'"
       :style="panelStyle"
       v-bind="panelDataAttrs"
+      @dragenter="onComposerDragEnter"
+      @dragover="onComposerDragOver"
+      @dragleave="onComposerDragLeave"
+      @drop="onComposerDrop"
     >
+      <div v-if="isDraggingFiles" class="composer-drop-hint" data-testid="composer-drop-hint">
+        {{ t('composer.dropFilesHint') }}
+      </div>
       <!-- queued cards sit inside dialog top when items are queued -->
       <div v-if="!hero && !spatial && queued.length" class="composer-queued">
         <div v-for="item in queued" :key="item.id" class="queued-card">
@@ -798,8 +1026,17 @@ function confirmSteer(id: string, interrupt = false) {
           data-testid="attachment-chip"
         >
           <AttachmentMedia :variant="item.previewUrl ? 'image' : 'icon'">
-            <img v-if="item.previewUrl" :src="item.previewUrl" alt="" />
+            <img v-if="item.previewUrl" :src="item.previewUrl" :alt="item.fileName" />
             <component :is="item.mediaType.startsWith('image/') ? Image : FileText" v-else aria-hidden="true" />
+            <button
+              v-if="item.previewUrl"
+              type="button"
+              class="attachment-preview-trigger"
+              :aria-label="t('composer.previewAttachment', { name: item.fileName })"
+              :title="t('composer.previewAttachment', { name: item.fileName })"
+              data-testid="attachment-preview"
+              @click.stop="openComposerLightbox(item.clientId)"
+            />
             <Spinner v-if="item.status === 'uploading'" decorative class="attachment-spinner" />
           </AttachmentMedia>
           <AttachmentContent class="attachment-content">
@@ -816,6 +1053,17 @@ function confirmSteer(id: string, interrupt = false) {
           </AttachmentActions>
         </Attachment>
       </AttachmentGroup>
+
+      <div
+        v-if="showVisionNotice"
+        class="composer-vision-notice"
+        role="status"
+        aria-live="polite"
+        data-testid="composer-vision-notice"
+      >
+        <TriangleAlert :size="13" aria-hidden="true" />
+        <span>{{ t('composer.visionUnsupportedNotice') }}</span>
+      </div>
 
       <div class="welcome-dialog-main">
         <div class="welcome-dialog-plus-wrapper">
@@ -873,6 +1121,7 @@ function confirmSteer(id: string, interrupt = false) {
           rows="1"
           @input="onDraftInput"
           @click="onCaretMove"
+          @paste="onTextareaPaste"
           @keydown="handleKeydown"
         />
 
@@ -965,11 +1214,13 @@ function confirmSteer(id: string, interrupt = false) {
       :settings-saving="settingsSaving"
       :settings-error="settingsError"
       :command-host="commandHost"
+      :workspace-root="selectedProject?.path ?? null"
       @close="closeCommandPanel"
       @focus-composer="textareaRef?.focus()"
       @attach="openFilePicker"
       @action="chooseCommand"
       @send-as-text="closeCommandPanel(); submit(undefined, true)"
+      @insert-template="insertCommandTemplate"
       @select-mode="selectModePreset"
       @update:permission="changePermission"
       @update:space-options="changeSpaceOptions"
@@ -1040,23 +1291,161 @@ function confirmSteer(id: string, interrupt = false) {
         </button>
       </div>
     </Teleport>
+
+    <ImageLightbox
+      :open="composerLightboxOpen"
+      :images="composerLightboxImages"
+      :initial-index="composerLightboxIndex"
+      @close="composerLightboxOpen = false"
+    />
   </div>
 </template>
 
 <style scoped>
+.composer {
+  container-type: inline-size;
+  container-name: composer;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.composer-box {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.welcome-dialog-main {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.welcome-dialog-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.welcome-dialog-toolbar {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.toolbar-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.toolbar-right {
+  flex-shrink: 0;
+  margin-left: auto;
+  max-width: 100%;
+}
+.mode-selector-trigger,
+.permission-selector-trigger,
+.project-dropdown-trigger,
+.toolbar-agent-config {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.welcome-dialog-plus:focus-visible,
+.mode-selector-trigger:focus-visible,
+.permission-selector-trigger:focus-visible,
+.project-dropdown-trigger:focus-visible,
+.toolbar-agent-config:focus-visible,
+.composer-settings-summary button:focus-visible,
+.queued-action:focus-visible,
+.ask-menu-item:focus-visible,
+.project-dropdown-item:focus-visible,
+.attachment-preview-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 65%, transparent);
+  outline-offset: 1px;
+}
+.mode-selector-label,
+.permission-selector-label,
+.project-dropdown-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-selector-trigger .permission-selector-label {
+  max-width: 168px;
+}
+@media (max-width: 1180px) {
+  .welcome-dialog-toolbar {
+    padding: 5px 8px;
+    gap: 4px 6px;
+  }
+  .mode-selector-trigger,
+  .permission-selector-trigger,
+  .project-dropdown-trigger,
+  .toolbar-agent-config {
+    padding: 4px 6px;
+  }
+  .mode-selector-label,
+  .permission-selector-label,
+  .project-dropdown-label {
+    max-width: 88px;
+  }
+  .model-selector-trigger .permission-selector-label {
+    max-width: 118px;
+  }
+}
+@container composer (max-width: 440px) {
+  .welcome-dialog-main {
+    padding: 8px 8px;
+    gap: 4px;
+  }
+  .welcome-dialog-toolbar {
+    padding: 5px 8px;
+    gap: 4px 6px;
+  }
+  .mode-selector-trigger,
+  .permission-selector-trigger,
+  .project-dropdown-trigger,
+  .toolbar-agent-config {
+    padding: 4px 6px;
+  }
+  .mode-selector-label,
+  .permission-selector-label,
+  .project-dropdown-label {
+    max-width: 76px;
+  }
+  .model-selector-trigger .permission-selector-label {
+    max-width: 92px;
+  }
+}
+@container composer (max-width: 390px) {
+  .toolbar-agent-config span {
+    display: none;
+  }
+}
 .mode-selector-chevron,
-.permission-selector-chevron { flex-shrink: 0; transition: transform 160ms ease; }
+.permission-selector-chevron,
+.project-dropdown-chevron { flex-shrink: 0; transition: transform 160ms ease; }
 .mode-selector-chevron.is-expanded,
-.permission-selector-chevron.is-expanded { transform: rotate(180deg); }
+.permission-selector-chevron.is-expanded,
+.project-dropdown-chevron.is-expanded { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) {
   .mode-selector-chevron,
-  .permission-selector-chevron { transition: none; }
+  .permission-selector-chevron,
+  .project-dropdown-chevron { transition: none; }
 }
 .composer-permission-icon[data-risk='low'] { color: color-mix(in srgb, var(--accent-info) 80%, var(--text-primary)); }
 .composer-permission-icon[data-risk='medium'] { color: var(--accent-warning); }
 .composer-permission-icon[data-risk='high'] { color: var(--accent-danger); }
-.composer-settings-summary { display: flex; align-items: center; gap: 6px; padding: 0 8px 6px; flex-wrap: wrap; }
-.composer-settings-summary button { background: var(--surface-section); border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 8px; font-size: 11px; color: var(--text-secondary); cursor: pointer; }
+.composer-settings-summary { display: flex; align-items: center; gap: 6px; padding: 0 8px 6px; flex-wrap: wrap; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.composer-settings-summary button { display: inline-flex; align-items: center; background: var(--surface-section); border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 8px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-secondary); cursor: pointer; max-width: 100%; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-settings-summary button:hover { background: var(--surface-hover); }
 .composer-settings-summary .composer-pinned-model.is-unavailable { color: var(--accent-warning); border-color: color-mix(in srgb, var(--accent-warning) 40%, transparent); }
 .composer-error {
@@ -1065,10 +1454,10 @@ function confirmSteer(id: string, interrupt = false) {
   gap: 8px;
   margin: 0 0 8px;
   padding: 8px 12px;
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  border-radius: 10px;
-  background: rgba(239, 68, 68, 0.08);
-  color: #ef4444;
+  border: 1px solid color-mix(in srgb, var(--accent-danger, #ef4444) 35%, transparent);
+  border-radius: var(--radius-card, 10px);
+  background: color-mix(in srgb, var(--accent-danger, #ef4444) 8%, transparent);
+  color: var(--accent-danger, #ef4444);
   font-size: 13px;
 }
 .composer-queued {
@@ -1187,6 +1576,53 @@ function confirmSteer(id: string, interrupt = false) {
   gap: 6px;
   padding: 8px 12px 0;
 }
+.composer-box {
+  position: relative;
+}
+.composer-box[data-dragging="true"] {
+  outline: 1.5px dashed var(--accent, var(--text-primary));
+  outline-offset: -2px;
+}
+.composer-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-raised, #16181f) 86%, transparent);
+  backdrop-filter: blur(4px);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+}
+.attachment-preview-trigger {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+}
+.composer-vision-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 12px 0;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warning, #d97706) 11%, transparent);
+  color: var(--warning-text, var(--text-muted));
+  font-size: 12px;
+  line-height: 1.35;
+}
+.composer-vision-notice svg {
+  flex-shrink: 0;
+}
 /* The picker is driven programmatically from the plus menu; it must not take up a row. */
 .composer-file-input {
   display: none;
@@ -1211,6 +1647,7 @@ function confirmSteer(id: string, interrupt = false) {
 }
 .attachment-meta {
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 .attachment-spinner {
   position: absolute;

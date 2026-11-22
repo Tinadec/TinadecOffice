@@ -5,22 +5,16 @@ import { useRouter } from 'vue-router'
 import {
   Archive,
   Bot,
-  CopyPlus,
-  Cpu,
   Info,
   LayoutGrid,
   List,
   PanelRight,
   Plus,
   RefreshCw,
-  Route,
   Save,
   Search,
   Send,
-  ShieldCheck,
-  Shuffle,
   Sparkles,
-  Workflow,
   X,
 } from '@lucide/vue'
 import {
@@ -43,15 +37,35 @@ import { scopedApi } from '@/lib/storageScope'
 import { pickLocalized } from '@/lib/packI18n'
 import { useNotifications } from '@/composables/useNotifications'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
+import { useAgentModesStore } from '@/composables/useAgentModesStore'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
-import { centerDiagnosticLabel as centerDiagnosticText, providerStatusLabel } from '@/settings/modelCenterLabels'
-import { useStatusLabels } from '@/lib/statusLabels'
+import { centerDiagnosticLabel as centerDiagnosticText } from '@/settings/modelCenterLabels'
 import { bindingFromModelStrategy, legacyRouteWarning, modelOptionKey, runtimeSourceSummary } from '@/runtimeCenterView'
 import { manifestTools } from '@/toolCatalog'
 import { clearDraft, markDraftStale, readDraft, writeDraft, type StoredDraft } from '@/settings/drafts/draftStore'
-import { requestToolAgent } from '@/lib/pageRequests'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
-import { UiBadge, UiButton, UiInput, UiLabel, UiSelectField, UiSheet, UiSkeleton, UiSwitch } from '@/components/ui'
+import { UiBadge, UiButton, UiInput, UiSelectField, UiSkeleton } from '@/components/ui'
+import AgentDirectoryList from './directory/AgentDirectoryList.vue'
+import AgentIdentitySection, { type UsedByModeChip } from './directory/AgentIdentitySection.vue'
+import AgentRuntimeSection from './directory/AgentRuntimeSection.vue'
+import AgentToolsSection from './directory/AgentToolsSection.vue'
+import AgentPromptPipelineSection from './directory/AgentPromptPipelineSection.vue'
+import AgentCreateSheet from './directory/AgentCreateSheet.vue'
+import {
+  agentDisplayDescription,
+  agentDisplayName,
+  agentLayerLabelKey,
+  agentSourceKindFor as resolveSourceKind,
+  agentSourceKindLabelKey,
+  agentTypeLabelKey,
+  isAgentReadOnly as checkAgentReadOnly,
+  isExternalHarnessChannel,
+  normalizeAgentLayer,
+  providerRuntimeChannel,
+  sourceBadgeVariant,
+  type AgentDirectoryViewMode,
+  type RuntimeChannelKind,
+} from './directory/agentDirectoryHelpers'
 
 const api = scopedApi(baseApi, () => 'user')
 
@@ -77,7 +91,7 @@ const props = defineProps<{
   canAccessBackend: boolean
   selectedAgentId: string
   configuringAgentId: string
-  viewMode: 'topology' | 'list'
+  viewMode: AgentDirectoryViewMode
   ensureAgentDefinition: (agentId: string) => Promise<AgentViewDto | null>
 }>()
 
@@ -86,118 +100,50 @@ const emit = defineEmits<{
   'update:selectedAgentId': [id: string]
   'update:configuringAgentId': [id: string]
   'patch-agent': [agent: AgentViewDto]
+  'open-mode': [modeId: string]
   reload: []
 }>()
 
-const { t, te, locale } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
-const { riskLabel } = useStatusLabels()
 const { notify, confirm, status } = useNotifications()
+const agentModesStore = useAgentModesStore()
 
-const definitionStatusLabel = (value: string) => (te(`agentCenter.filter.${value}`) ? t(`agentCenter.filter.${value}`) : value)
-const statusLabel = (value: string) => providerStatusLabel(t, value)
 const centerDiagnosticLabel = (diagnostic: CenterDiagnosticDto) => centerDiagnosticText(t, diagnostic)
-
 const directoryById = computed(() => new Map(props.agentDirectory.map((item) => [item.id, item])))
 
-function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
-  const v = String(layer ?? '').trim().toLowerCase()
-  if (v === 'planning' || v === 'operation') return 'operation'
-  return v === 'execution' ? 'execution' : 'operation'
-}
-
 function displayName(agent: AgentViewDto): string {
-  const item = directoryById.value.get(agent.id)
-  const baseline = agent.display_name || agent.name || agent.slug || agent.id
-  return pickLocalized(agent.i18n ?? item?.i18n, locale.value, 'display_name', baseline) ?? baseline
+  return agentDisplayName(agent, directoryById.value.get(agent.id), locale.value)
 }
 
 function displayDescription(agent: AgentViewDto): string {
-  const item = directoryById.value.get(agent.id)
-  const baseline = agent.description ?? ''
-  return pickLocalized(agent.i18n ?? item?.i18n, locale.value, 'description', baseline) ?? baseline
+  return agentDisplayDescription(agent, directoryById.value.get(agent.id), locale.value)
 }
 
 function agentSourceKindFor(agentId: string): string {
-  const item = directoryById.value.get(agentId)
-  if (item?.source_kind) return item.source_kind
-  return props.agents.find((a) => a.id === agentId)?.source_kind ?? 'custom'
+  return resolveSourceKind(agentId, directoryById.value, props.agents)
 }
 
 function isAgentReadOnly(agent: AgentViewDto | null): boolean {
-  if (!agent) return true
-  if (agent.is_built_in) return true
-  const sourceKind = agentSourceKindFor(agent.id)
-  return sourceKind === 'pack' || sourceKind === 'built_in'
+  return checkAgentReadOnly(agent, directoryById.value, props.agents)
 }
 
 function agentSourceKindLabel(kind: string): string {
-  if (kind === 'custom') return t('settings.agentSourceCustom')
-  if (kind === 'pack') return t('settings.agentSourcePack')
-  if (kind === 'agent_generated') return t('settings.agentSourceAgentGenerated')
-  if (kind === 'bootstrap') return t('settings.agentSourceBootstrap')
-  if (kind === 'missing_reference') return t('settings.agentSourceMissing')
-  return kind
-}
-
-function sourceBadgeVariant(kind: string): 'default' | 'secondary' | 'outline' {
-  if (kind === 'agent_generated') return 'default'
-  if (kind === 'custom') return 'secondary'
-  return 'outline'
+  const key = agentSourceKindLabelKey(kind)
+  return key ? t(key) : kind
 }
 
 function agentTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    session_coordinator: t('settings.agentTypeSessionCoordinator'),
-    task_executor: t('settings.agentTypeTaskExecutor'),
-    governance_reviewer: t('settings.agentTypeGovernanceReviewer'),
-    context_maintenance: t('settings.agentTypeContextCompressor'),
-    exploration_planner: t('settings.agentTypeExplorationPlanner'),
-    solo_master: t('settings.agentTypeSoloMaster'),
-    search: t('settings.agentTypeSearchSpecialist'),
-    global_engineering: t('settings.agentTypeCodeWriter'),
-    artex_director: t('settings.agentTypeArtexDirector'),
-    artex_planner: t('settings.agentTypeExplorationPlanner'),
-    artex_worker: t('settings.agentTypeTaskExecutor'),
-    artex_verifier: t('settings.agentTypeReviewExecutor'),
-    meeting: t('settings.agentTypeMeeting'),
-    'context-compressor': t('settings.agentTypeContextCompressor'),
-    'prompt-context-engineer': t('settings.agentTypePromptContextEngineer'),
-    evolver: t('settings.agentTypeEvolver'),
-    'tool-assistant': t('settings.agentTypeToolAssistant'),
-    supervisor: t('settings.agentTypeSupervisor'),
-    'skill-learner': t('settings.agentTypeSkillLearner'),
-    'task-planner': t('settings.agentTypeTaskPlanner'),
-    'test-multimodal': t('settings.agentTypeTestMultimodal'),
-    'code-explorer': t('settings.agentTypeCodeExplorer'),
-    'search-specialist': t('settings.agentTypeSearchSpecialist'),
-    'file-finder': t('settings.agentTypeFileFinder'),
-    'git-manager': t('settings.agentTypeGitManager'),
-    'code-writer': t('settings.agentTypeCodeWriter'),
-    designer: t('settings.agentTypeDesigner'),
-    'review-executor': t('settings.agentTypeReviewExecutor'),
-    'tool-packager': t('settings.agentTypeToolPackager'),
-    chair: t('settings.agentTypeMeeting'),
-    planner: t('settings.agentTypeTaskPlanner'),
-    'tool-manager': t('settings.agentTypeToolAssistant'),
-    'evolution-algorithm': t('settings.agentTypeEvolver'),
-    executor: t('settings.agentTypeCodeWriter'),
-    reviewer: t('settings.agentTypeSupervisor'),
-  }
-  return map[type] ?? type
+  const key = agentTypeLabelKey(type)
+  return key ? t(key) : type
 }
 
 function agentLayerLabel(layer: string): string {
-  const map: Record<string, string> = {
-    operation: t('settings.agentLayerPlanning'),
-    planning: t('settings.agentLayerPlanning'),
-    execution: t('settings.agentLayerExecution'),
-    evolution: t('settings.agentLayerEvolution'),
-  }
-  return map[layer] ?? layer
+  const key = agentLayerLabelKey(layer)
+  return key ? t(key) : layer
 }
 
-// ── Filters & Role Roster ──
+// ── Filters ──
 const agentQuery = ref('')
 const agentLayerFilter = ref<'all' | 'operation' | 'execution'>('all')
 const agentSourceFilter = ref('all')
@@ -254,12 +200,6 @@ const showProvenanceCard = computed(() =>
   Boolean(configuringAgent.value && (agentSourceKindFor(configuringAgent.value.id) === 'agent_generated' || configuringProvenance.value)),
 )
 
-function creatorAgentLabel(creatorId: string | null | undefined): string {
-  if (!creatorId) return '—'
-  const found = props.agents.find((a) => a.id === creatorId || a.slug === creatorId)
-  return found ? `${displayName(found)} (${found.slug ?? creatorId})` : creatorId
-}
-
 const agentEditName = ref('')
 const agentEditLayer = ref<'operation' | 'execution'>('operation')
 const agentEditRole = ref('')
@@ -269,10 +209,6 @@ const agentEditCapabilities = ref<string[]>([])
 const agentEditSystemPrompt = ref('')
 const agentEditDescription = ref('')
 const agentEditRevision = ref<number | null>(null)
-const agentNewCapability = ref('')
-const agentToolQuery = ref('')
-const agentToolSourceFilter = ref('all')
-const agentToolRiskFilter = ref('all')
 
 const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
 const agentRuntimeModelKey = ref('')
@@ -293,7 +229,6 @@ const pendingGovernanceCount = computed(() =>
   ).length,
 )
 
-// ── Pipeline Options ──
 const pipelineOptions = computed(() => [
   { value: '', label: t('settings.agentBasePipelineNone') },
   ...props.promptPipelines
@@ -309,77 +244,50 @@ const pipelineOptions = computed(() => [
     }),
 ])
 
-// ── Tools & Wildcard Handling ──
 const manifestToolList = computed(() => manifestTools(props.harnessManifest, props.availableTools))
-const hasWildcardTools = computed(() => agentEditTools.value.includes('*'))
 
-function isToolSelected(toolId: string): boolean {
-  return hasWildcardTools.value || agentEditTools.value.includes(toolId)
-}
-
-const filteredAgentTools = computed(() => {
-  const q = agentToolQuery.value.trim().toLowerCase()
-  return manifestToolList.value.filter((tool) => {
-    if (agentToolSourceFilter.value !== 'all' && tool.source !== agentToolSourceFilter.value) return false
-    if (agentToolRiskFilter.value !== 'all' && tool.risk !== agentToolRiskFilter.value) return false
-    if (!q) return true
-    return [tool.id, tool.display_name, tool.domain, tool.source, tool.risk].some((v) => v?.toLowerCase().includes(q))
-  })
+const usedByModes = computed<UsedByModeChip[]>(() => {
+  const agent = configuringAgent.value
+  if (!agent) return []
+  const dirUsages = configuringDirectoryItem.value?.mode_usages ?? []
+  const storeWithUsages = agentModesStore as typeof agentModesStore & {
+    modesUsingAgent?: (
+      target: string | { id?: string; slug?: string | null; mode_usages?: Array<{ mode_id: string; mode_slug: string; node_key?: string }> },
+      loc?: string,
+    ) => Array<{ id: string; slug: string; displayName: string; status?: string }>
+  }
+  if (typeof storeWithUsages.modesUsingAgent === 'function') {
+    const items = storeWithUsages.modesUsingAgent(
+      { id: agent.id, slug: agent.slug ?? configuringDirectoryItem.value?.slug, mode_usages: dirUsages },
+      locale.value,
+    )
+    return items.map((item) => {
+      const matchedUsage = dirUsages.find((u) => u.mode_id === item.id || u.mode_slug === item.slug)
+      return {
+        modeId: item.id,
+        label: item.displayName,
+        nodeKey: matchedUsage?.node_key ?? null,
+        status: item.status ?? null,
+      }
+    })
+  }
+  const modesById = new Map(agentModesStore.modes.value.map((m) => [m.id, m]))
+  const seen = new Set<string>()
+  const chips: UsedByModeChip[] = []
+  for (const usage of dirUsages) {
+    if (seen.has(usage.mode_id)) continue
+    seen.add(usage.mode_id)
+    const mode = modesById.get(usage.mode_id)
+    const label = mode ? agentModesStore.modeLocalizedName(mode, locale.value) : usage.mode_slug
+    chips.push({
+      modeId: usage.mode_id,
+      label,
+      nodeKey: usage.node_key ?? null,
+      status: mode?.status ?? null,
+    })
+  }
+  return chips
 })
-
-const groupedAgentTools = computed(() => {
-  const groups = new Map<string, typeof manifestToolList.value>()
-  for (const tool of filteredAgentTools.value) {
-    const key = tool.source || 'unknown'
-    const list = groups.get(key) ?? []
-    list.push(tool)
-    groups.set(key, list)
-  }
-  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-})
-
-const toolSourceOptions = computed(() => Array.from(new Set(manifestToolList.value.map((tool) => tool.source))).sort())
-const toolRiskOptions = computed(() => Array.from(new Set(manifestToolList.value.map((tool) => tool.risk))).sort())
-
-const agentToolSelectionSummary = computed(() => {
-  const total = manifestToolList.value.length
-  if (hasWildcardTools.value) {
-    const approval = manifestToolList.value.filter((t) => t.requires_approval).length
-    return { total, selected: total, approval, wildcard: true }
-  }
-  const selected = agentEditTools.value.length
-  const approval = manifestToolList.value.filter((t) => t.requires_approval && agentEditTools.value.includes(t.id)).length
-  return { total, selected, approval, wildcard: false }
-})
-
-function toggleAgentTool(toolId: string) {
-  if (hasWildcardTools.value) {
-    agentEditTools.value = manifestToolList.value.map((item) => item.id).filter((id) => id !== toolId)
-    return
-  }
-  const idx = agentEditTools.value.indexOf(toolId)
-  if (idx >= 0) agentEditTools.value.splice(idx, 1)
-  else agentEditTools.value.push(toolId)
-}
-
-function removeAgentCapability(cap: string) {
-  const idx = agentEditCapabilities.value.indexOf(cap)
-  if (idx >= 0) agentEditCapabilities.value.splice(idx, 1)
-}
-
-function addAgentCapability() {
-  const cap = agentNewCapability.value.trim()
-  if (cap && !agentEditCapabilities.value.includes(cap)) {
-    agentEditCapabilities.value.push(cap)
-    agentNewCapability.value = ''
-  }
-}
-
-function agentToolSummaryText(agent: AgentViewDto): string {
-  const tools = agent.allowed_tools ?? []
-  if (tools.includes('*')) return `* (${manifestToolList.value.length || '*'})`
-  return String(tools.length)
-}
 
 // ── Runtime Model Binding Helpers ──
 const agentRuntimeBindings = computed(() =>
@@ -390,52 +298,6 @@ const configuringRuntimeBinding = computed(() => {
   return agent ? bindingFromModelStrategy(agent, agent.model_binding) : null
 })
 const configuringLegacyWarning = computed(() => legacyRouteWarning(configuringRuntimeBinding.value))
-
-function runtimeQueryMatches(query: string, ...values: Array<string | null | undefined>) {
-  const normalized = query.trim().toLocaleLowerCase()
-  if (!normalized) return true
-  return values.some((value) => value?.toLocaleLowerCase().includes(normalized))
-}
-
-const filteredRuntimeModels = computed(() =>
-  props.runtimeModels.filter((model) =>
-    runtimeQueryMatches(
-      agentRuntimeModelQuery.value,
-      model.model_id,
-      model.provider_display_name,
-      model.provider_instance_id,
-      model.status,
-      ...model.configuration_sources,
-      ...model.route_purposes,
-    ),
-  ),
-)
-const filteredRuntimeCliOptions = computed(() =>
-  props.runtimeCliOptions.filter((runtime) =>
-    runtimeQueryMatches(
-      agentRuntimeModelQuery.value,
-      runtime.display_name,
-      runtime.runtime_id,
-      runtime.driver,
-      runtime.status,
-      runtime.binary_path,
-      runtime.home_path,
-    ),
-  ),
-)
-const filteredRuntimeAcpOptions = computed(() =>
-  props.runtimeAcpOptions.filter((runtime) =>
-    runtimeQueryMatches(
-      agentRuntimeModelQuery.value,
-      runtime.display_name,
-      runtime.runtime_id,
-      runtime.source,
-      runtime.driver,
-      runtime.status,
-      runtime.command,
-    ),
-  ),
-)
 
 function agentRuntimeSummary(agentId: string | null | undefined): string {
   if (!agentId) return ''
@@ -450,25 +312,19 @@ function agentRuntimeSummary(agentId: string | null | undefined): string {
   return runtimeSourceSummary(hydrated, item?.effective_previews ?? null, resolveName)
 }
 
-function agentPreviewLine(
-  modeSlug: string,
-  nodeKey: string,
-  preview: { expected_selection?: { provider_instance_id?: string; model?: string | null } | null },
-): string {
-  const selection = preview.expected_selection
-  const target = selection ? `${selection.provider_instance_id ?? '—'}${selection.model ? ` · ${selection.model}` : ''}` : '—'
-  return `${modeSlug}:${nodeKey} → ${target}`
-}
-
-function agentInvocationLine(invocation: {
-  provider_instance_id: string
-  model?: string | null
-  status: string
-  completed_at?: string | null
-}): string {
-  const model = invocation.model ? ` · ${invocation.model}` : ''
-  const time = invocation.completed_at ? ` · ${invocation.completed_at}` : ''
-  return `${invocation.provider_instance_id}${model} · ${invocation.status}${time}`
+function agentRuntimeChannel(agentId: string | null | undefined): RuntimeChannelKind | null {
+  if (!agentId) return null
+  const item = directoryById.value.get(agentId)
+  const binding = agentRuntimeBindings.value[agentId]
+  const providerId = binding?.provider_instance_id
+    ?? Object.values(item?.effective_previews ?? {})
+      .map((preview) => preview?.expected_selection?.provider_instance_id)
+      .find((id): id is string => Boolean(id))
+  if (!providerId) return null
+  if (props.runtimeAcpOptions.some((r) => r.provider_instance_id === providerId || r.runtime_id === providerId)) return 'acp'
+  if (props.runtimeCliOptions.some((r) => r.provider_instance_id === providerId)) return 'cli'
+  const provider = props.providers.find((p) => p.id === providerId)
+  return provider ? providerRuntimeChannel(provider) : null
 }
 
 // ── Avatars ──
@@ -726,10 +582,7 @@ function openAgentConfig(agent: AgentViewDto, forceSeed = false) {
   agentEditSystemPrompt.value = agent.system_prompt ?? ''
   agentEditDescription.value = agent.description ?? ''
   agentEditRevision.value = agent.revision ?? null
-  agentNewCapability.value = ''
-  agentToolQuery.value = ''
-  agentToolSourceFilter.value = 'all'
-  agentToolRiskFilter.value = 'all'
+  agentRuntimeModelQuery.value = ''
 
   const binding = bindingFromModelStrategy(agent, agent.model_binding)
   agentRuntimeSelection.value = binding?.selection_kind ?? 'inherit'
@@ -740,7 +593,6 @@ function openAgentConfig(agent: AgentViewDto, forceSeed = false) {
     : ''
   agentRuntimeRoutePurpose.value =
     binding?.route_purpose || (agent as AgentViewDto & { model_route_purpose?: string }).model_route_purpose || props.routes[0]?.purpose || ''
-  agentRuntimeModelQuery.value = ''
   restoreAgentDraft(agent)
   agentEditorBaseline = agentEditorSnapshot()
   void loadAgentVersionHistory(agent.id)
@@ -768,6 +620,7 @@ watch(
       openAgentConfig(agent)
     }
   },
+  { immediate: true },
 )
 
 // ── Errors & Saves (Draft vs Publish) ──
@@ -940,7 +793,13 @@ function agentModelStrategy(): Record<string, unknown> | null {
     const runtime = [...props.runtimeCliOptions, ...props.runtimeAcpOptions].find(
       (item) => item.provider_instance_id === agentRuntimeModelKey.value,
     )
-    return runtime ? { kind: 'fixed', provider_instance_id: runtime.provider_instance_id, model: null } : null
+    if (runtime) {
+      return { kind: 'fixed', provider_instance_id: runtime.provider_instance_id, model: null }
+    }
+    const provider = props.providers.find(
+      (item) => item.id === agentRuntimeModelKey.value && isExternalHarnessChannel(providerRuntimeChannel(item)),
+    )
+    return provider ? { kind: 'fixed', provider_instance_id: provider.id, model: null } : null
   }
   return { kind: 'inherit' }
 }
@@ -1128,19 +987,23 @@ defineExpose({
     <div class="ac-toolbar-row ac-agent-toolbar">
       <div class="agent-view-toggle">
         <button
-          :class="['agent-view-btn', { active: viewMode === 'topology' }]"
-          :title="t('settings.roleRosterView')"
-          :aria-label="t('settings.roleRosterView')"
-          :aria-pressed="viewMode === 'topology'"
+          type="button"
+          :class="['agent-view-btn', { active: viewMode !== 'list' }]"
+          :title="t('settings.agentViewGrouped')"
+          :aria-label="t('settings.agentViewGrouped')"
+          :aria-pressed="viewMode !== 'list'"
+          data-testid="agent-view-grouped-btn"
           @click="emit('update:viewMode', 'topology')"
         >
           <LayoutGrid :size="15" />
         </button>
         <button
+          type="button"
           :class="['agent-view-btn', { active: viewMode === 'list' }]"
-          :title="t('settings.listView')"
-          :aria-label="t('settings.listView')"
+          :title="t('settings.agentViewCompact')"
+          :aria-label="t('settings.agentViewCompact')"
           :aria-pressed="viewMode === 'list'"
+          data-testid="agent-view-list-btn"
           @click="emit('update:viewMode', 'list')"
         >
           <List :size="15" />
@@ -1258,204 +1121,25 @@ defineExpose({
     </div>
 
     <div class="center-workbench agent-workbench" :class="`view-${viewMode}`">
-      <!-- Compact Rail (List Mode) -->
-      <aside v-if="viewMode === 'list'" class="center-resource-rail" :aria-label="t('settings.centerResources')">
-        <div class="center-pane-heading">
-          <div>
-            <span>{{ t('settings.centerResources') }}</span>
-            <strong>{{ t('settings.agentProfiles') }}</strong>
-          </div>
-          <UiBadge v-if="agentGeneratedCount > 0" variant="default">{{ agentGeneratedCount }}</UiBadge>
-        </div>
-
-        <section v-if="agentLayerFilter !== 'execution'" class="agent-column compact">
-          <div class="model-section-header">
-            <h3>{{ t('settings.planningLayer') }}</h3>
-            <UiBadge variant="secondary">{{ filteredOperationAgents.length }}</UiBadge>
-          </div>
-          <article
-            v-for="agent in filteredOperationAgents"
-            :key="agent.id"
-            class="agent-card"
-            :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-          >
-            <button class="agent-card-select" @click="openAgentConfig(agent)">
-              <div class="agent-card-icon pet">
-                <AgentPetAvatar :pet-slug="agentAvatarSlug(agent)" :size="30" :alt="displayName(agent)" />
-              </div>
-              <div class="agent-card-main">
-                <div class="agent-card-title-row">
-                  <strong>{{ displayName(agent) || agentTypeLabel(agent.agent_type) }}</strong>
-                  <UiBadge :variant="sourceBadgeVariant(agentSourceKindFor(agent.id))" class="agent-source-pill">
-                    {{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }}
-                  </UiBadge>
-                </div>
-                <span>{{ displayDescription(agent) || agentTypeLabel(agent.role ?? agent.agent_type) }}</span>
-                <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
-              </div>
-              <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
-                {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
-              </UiBadge>
-            </button>
-          </article>
-        </section>
-
-        <section v-if="agentLayerFilter !== 'operation'" class="agent-column compact">
-          <div class="model-section-header">
-            <h3>{{ t('settings.executionLayer') }}</h3>
-            <UiBadge variant="secondary">{{ filteredExecutionAgents.length }}</UiBadge>
-          </div>
-          <article
-            v-for="agent in filteredExecutionAgents"
-            :key="agent.id"
-            class="agent-card"
-            :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-          >
-            <button class="agent-card-select" @click="openAgentConfig(agent)">
-              <div class="agent-card-icon pet execution">
-                <AgentPetAvatar :pet-slug="agentAvatarSlug(agent)" :size="30" :alt="displayName(agent)" />
-              </div>
-              <div class="agent-card-main">
-                <div class="agent-card-title-row">
-                  <strong>{{ displayName(agent) || agentTypeLabel(agent.agent_type) }}</strong>
-                  <UiBadge :variant="sourceBadgeVariant(agentSourceKindFor(agent.id))" class="agent-source-pill">
-                    {{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }}
-                  </UiBadge>
-                </div>
-                <span>{{ displayDescription(agent) || agentTypeLabel(agent.role ?? agent.agent_type) }}</span>
-                <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
-              </div>
-              <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
-                {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
-              </UiBadge>
-            </button>
-          </article>
-        </section>
-
-        <p v-if="!filteredOperationAgents.length && !filteredExecutionAgents.length" class="quiet">
-          {{ t('settings.noFilteredAgents') }}
-        </p>
-      </aside>
-
-      <!-- Role Roster Card View (Card Mode) -->
-      <main v-else class="center-resource-stage" data-testid="agent-role-roster">
-        <div class="roster-stage-head">
-          <div>
-            <h3>{{ t('settings.roleRosterTitle') }}</h3>
-            <p class="quiet">{{ t('settings.roleRosterHint') }}</p>
-          </div>
-          <UiButton variant="ghost" size="sm" :disabled="!canAccessBackend" @click="launchAgentArchitect">
-            <Sparkles :size="14" />
-            <span>{{ t('settings.agentArchitectHintShort') }}</span>
-          </UiButton>
-        </div>
-
-        <section v-if="agentLayerFilter !== 'execution'" class="roster-layer-section">
-          <div class="model-section-header">
-            <h3>{{ t('settings.planningLayer') }}</h3>
-            <UiBadge variant="secondary">{{ filteredOperationAgents.length }}</UiBadge>
-          </div>
-          <div class="roster-card-grid">
-            <article
-              v-for="agent in filteredOperationAgents"
-              :key="agent.id"
-              class="agent-card roster-card"
-              :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-            >
-              <button class="agent-card-select roster-card-select" @click="openAgentConfig(agent)">
-                <div class="roster-card-top">
-                  <div class="agent-card-icon pet">
-                    <AgentPetAvatar :pet-slug="agentAvatarSlug(agent)" :size="34" :alt="displayName(agent)" />
-                  </div>
-                  <div class="roster-card-identity">
-                    <strong>{{ displayName(agent) || agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agent.slug ?? agent.id.slice(0, 8) }} · {{ agentTypeLabel(agent.role ?? agent.agent_type) }}</span>
-                  </div>
-                  <UiBadge :variant="sourceBadgeVariant(agentSourceKindFor(agent.id))">
-                    {{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }}
-                  </UiBadge>
-                </div>
-                <p class="roster-card-desc">{{ displayDescription(agent) || t('settings.agentNoDescription') }}</p>
-                <div class="roster-card-foot">
-                  <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
-                  <div class="roster-card-badges">
-                    <UiBadge variant="outline">{{ agentToolSummaryText(agent) }}</UiBadge>
-                    <UiBadge :variant="agent.status === 'published' ? 'default' : 'secondary'">
-                      {{ definitionStatusLabel(agent.status ?? 'draft') }}
-                    </UiBadge>
-                  </div>
-                </div>
-              </button>
-              <button
-                v-if="isAgentReadOnly(agent)"
-                type="button"
-                class="roster-quick-clone"
-                :title="t('settings.cloneAgent')"
-                :disabled="agentCloneBusy"
-                @click.stop="cloneAgent(agent)"
-              >
-                <CopyPlus :size="13" />
-                <span>{{ t('settings.cloneAgent') }}</span>
-              </button>
-            </article>
-          </div>
-        </section>
-
-        <section v-if="agentLayerFilter !== 'operation'" class="roster-layer-section">
-          <div class="model-section-header">
-            <h3>{{ t('settings.executionLayer') }}</h3>
-            <UiBadge variant="secondary">{{ filteredExecutionAgents.length }}</UiBadge>
-          </div>
-          <div class="roster-card-grid">
-            <article
-              v-for="agent in filteredExecutionAgents"
-              :key="agent.id"
-              class="agent-card roster-card"
-              :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-            >
-              <button class="agent-card-select roster-card-select" @click="openAgentConfig(agent)">
-                <div class="roster-card-top">
-                  <div class="agent-card-icon pet execution">
-                    <AgentPetAvatar :pet-slug="agentAvatarSlug(agent)" :size="34" :alt="displayName(agent)" />
-                  </div>
-                  <div class="roster-card-identity">
-                    <strong>{{ displayName(agent) || agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agent.slug ?? agent.id.slice(0, 8) }} · {{ agentTypeLabel(agent.role ?? agent.agent_type) }}</span>
-                  </div>
-                  <UiBadge :variant="sourceBadgeVariant(agentSourceKindFor(agent.id))">
-                    {{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }}
-                  </UiBadge>
-                </div>
-                <p class="roster-card-desc">{{ displayDescription(agent) || t('settings.agentNoDescription') }}</p>
-                <div class="roster-card-foot">
-                  <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
-                  <div class="roster-card-badges">
-                    <UiBadge variant="outline">{{ agentToolSummaryText(agent) }}</UiBadge>
-                    <UiBadge :variant="agent.status === 'published' ? 'default' : 'secondary'">
-                      {{ definitionStatusLabel(agent.status ?? 'draft') }}
-                    </UiBadge>
-                  </div>
-                </div>
-              </button>
-              <button
-                v-if="isAgentReadOnly(agent)"
-                type="button"
-                class="roster-quick-clone"
-                :title="t('settings.cloneAgent')"
-                :disabled="agentCloneBusy"
-                @click.stop="cloneAgent(agent)"
-              >
-                <CopyPlus :size="13" />
-                <span>{{ t('settings.cloneAgent') }}</span>
-              </button>
-            </article>
-          </div>
-        </section>
-
-        <p v-if="!filteredOperationAgents.length && !filteredExecutionAgents.length" class="quiet">
-          {{ t('settings.noFilteredAgents') }}
-        </p>
-      </main>
+      <AgentDirectoryList
+        :view-mode="viewMode"
+        :agent-layer-filter="agentLayerFilter"
+        :filtered-operation-agents="filteredOperationAgents"
+        :filtered-execution-agents="filteredExecutionAgents"
+        :directory-by-id="directoryById"
+        :agents="agents"
+        :selected-agent-id="selectedAgentId"
+        :agent-generated-count="agentGeneratedCount"
+        :can-access-backend="canAccessBackend"
+        :agent-clone-busy="agentCloneBusy"
+        :manifest-tool-count="manifestToolList.length"
+        :agent-avatar-slug="agentAvatarSlug"
+        :agent-runtime-summary="agentRuntimeSummary"
+        :agent-runtime-channel="agentRuntimeChannel"
+        @select="openAgentConfig($event)"
+        @clone="cloneAgent($event)"
+        @launch-architect="launchAgentArchitect"
+      />
 
       <!-- Inspector -->
       <aside class="center-inspector agent-inspector" :aria-label="t('settings.centerInspector')">
@@ -1511,464 +1195,84 @@ defineExpose({
             </UiButton>
           </div>
 
-          <!-- Provenance (`agent_generated`) -->
-          <div v-if="showProvenanceCard" class="agent-config-section agent-provenance-box" data-testid="agent-provenance-section">
-            <div class="agent-config-section-title">
-              <Sparkles :size="14" />
-              <span>{{ t('settings.agentProvenanceTitle') }}</span>
-            </div>
-            <div class="agent-detail-grid">
-              <div>
-                <span>{{ t('settings.agentProvenanceCreator') }}</span>
-                <strong>{{ creatorAgentLabel(configuringProvenance?.created_by_agent_id) }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.agentProvenanceRun') }}</span>
-                <strong>{{ configuringProvenance?.created_by_run_id || '—' }}</strong>
-              </div>
-            </div>
-            <p v-if="configuringProvenance?.reason" class="agent-config-hint">
-              {{ t('settings.agentProvenanceReason') }}: {{ configuringProvenance.reason }}
-            </p>
-          </div>
+          <AgentIdentitySection
+            :configuring-agent="configuringAgent"
+            :configuring-directory-item="configuringDirectoryItem"
+            :configuring-runtime-binding="configuringRuntimeBinding"
+            :configuring-is-read-only="configuringIsReadOnly"
+            :show-provenance-card="showProvenanceCard"
+            :configuring-provenance="configuringProvenance"
+            :directory-by-id="directoryById"
+            :agents="agents"
+            :used-by-modes="usedByModes"
+            :edit-name="agentEditName"
+            :edit-layer="agentEditLayer"
+            :edit-role="agentEditRole"
+            :edit-description="agentEditDescription"
+            :busy="busy"
+            :agent-avatar-busy="agentAvatarBusy"
+            :configuring-avatar-preference="configuringAvatarPreference"
+            :agent-avatar-pool="agentAvatarPool"
+            @update:edit-name="agentEditName = $event"
+            @update:edit-layer="agentEditLayer = $event"
+            @update:edit-role="agentEditRole = $event"
+            @update:edit-description="agentEditDescription = $event"
+            @set-enabled="setAgentEnabled(configuringAgent, $event)"
+            @choose-avatar="chooseAgentAvatar"
+            @open-mode="emit('open-mode', $event)"
+          />
 
-          <!-- 身份与基础定义（名称 / 层级 / 角色 / 基础提示词管线） -->
-          <div class="agent-config-section">
-            <div class="agent-config-section-title">{{ t('settings.agentIdentitySection') }}</div>
-            <div class="agent-identity-grid">
-              <div>
-                <span>{{ t('settings.agentSlugLabel') }}</span>
-                <strong>{{ configuringAgent.slug ?? configuringAgent.id.slice(0, 8) }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.routePurpose') }}</span>
-                <strong>{{ configuringRuntimeBinding?.route_purpose ?? configuringAgent.model_route_purpose ?? '—' }}</strong>
-              </div>
-            </div>
+          <AgentRuntimeSection
+            :configuring-agent="configuringAgent"
+            :configuring-agent-id="configuringAgentId"
+            :configuring-directory-item="configuringDirectoryItem"
+            :configuring-runtime-binding="configuringRuntimeBinding"
+            :configuring-legacy-warning="configuringLegacyWarning"
+            :runtime-selection="agentRuntimeSelection"
+            :runtime-model-key="agentRuntimeModelKey"
+            :runtime-route-purpose="agentRuntimeRoutePurpose"
+            :runtime-model-query="agentRuntimeModelQuery"
+            :routes="routes"
+            :providers="providers"
+            :runtime-models="runtimeModels"
+            :runtime-cli-options="runtimeCliOptions"
+            :runtime-acp-options="runtimeAcpOptions"
+            :runtime-busy="agentRuntimeBusy"
+            :strategy-saveable="agentStrategySaveable()"
+            :runtime-summary="agentRuntimeSummary(configuringAgentId)"
+            @update:runtime-selection="agentRuntimeSelection = $event"
+            @update:runtime-model-key="agentRuntimeModelKey = $event"
+            @update:runtime-route-purpose="agentRuntimeRoutePurpose = $event"
+            @update:runtime-model-query="agentRuntimeModelQuery = $event"
+            @save="saveAgentModelStrategy(configuringAgent)"
+          />
 
-            <div class="agent-definition-fields">
-              <div class="settings-field">
-                <UiLabel>{{ t('settings.agentName') }}</UiLabel>
-                <UiInput
-                  v-model="agentEditName"
-                  data-testid="agent-edit-name"
-                  :disabled="configuringIsReadOnly"
-                  :placeholder="t('settings.agentName')"
-                />
-              </div>
-              <div class="agent-identity-grid">
-                <div class="settings-field">
-                  <UiLabel>{{ t('settings.agentLayer') }}</UiLabel>
-                  <UiSelectField
-                    v-model="agentEditLayer"
-                    data-testid="agent-edit-layer"
-                    :disabled="configuringIsReadOnly"
-                    :aria-label="t('settings.agentLayer')"
-                    :options="[
-                      { value: 'operation', label: t('settings.agentLayerPlanning') },
-                      { value: 'execution', label: t('settings.agentLayerExecution') },
-                    ]"
-                  />
-                </div>
-                <div class="settings-field">
-                  <UiLabel>{{ t('settings.agentRole') }}</UiLabel>
-                  <UiInput
-                    v-model="agentEditRole"
-                    data-testid="agent-edit-role"
-                    :disabled="configuringIsReadOnly"
-                    placeholder="session_coordinator / code_writer"
-                  />
-                </div>
-              </div>
-              <div class="settings-field">
-                <UiLabel>{{ t('settings.agentBasePipeline') }}</UiLabel>
-                <UiSelectField
-                  v-model="agentEditBasePromptPipelineId"
-                  data-testid="agent-edit-pipeline"
-                  :disabled="configuringIsReadOnly"
-                  :aria-label="t('settings.agentBasePipeline')"
-                  :options="pipelineOptions"
-                />
-              </div>
-            </div>
+          <AgentToolsSection
+            :configuring-agent="configuringAgent"
+            :configuring-is-read-only="configuringIsReadOnly"
+            :available-tools="availableTools"
+            :harness-manifest="harnessManifest"
+            :edit-tools="agentEditTools"
+            :edit-capabilities="agentEditCapabilities"
+            :pending-governance-count="pendingGovernanceCount"
+            @update:edit-tools="agentEditTools = $event"
+            @update:edit-capabilities="agentEditCapabilities = $event"
+          />
 
-            <div class="agent-config-switch">
-              <div>
-                <strong>{{ t('settings.agentEnabled') }}</strong>
-                <span>{{ configuringIsReadOnly ? t('settings.builtInAgent') : t('settings.agentEnabledHint') }}</span>
-                <small v-if="configuringIsReadOnly" class="agent-builtin-label">{{ t('settings.builtInCloneHint') }}</small>
-              </div>
-              <UiSwitch
-                :model-value="configuringAgent.enabled"
-                :disabled="busy || configuringIsReadOnly"
-                @update:model-value="setAgentEnabled(configuringAgent, $event)"
-              />
-            </div>
-          </div>
+          <AgentPromptPipelineSection
+            :configuring-agent="configuringAgent"
+            :configuring-is-read-only="configuringIsReadOnly"
+            :edit-base-prompt-pipeline-id="agentEditBasePromptPipelineId"
+            :edit-system-prompt="agentEditSystemPrompt"
+            :pipeline-options="pipelineOptions"
+            :version-history="agentVersionHistory"
+            :version-history-error="agentVersionHistoryError"
+            :versions-loading="agentVersionsLoading"
+            @update:edit-base-prompt-pipeline-id="agentEditBasePromptPipelineId = $event"
+            @update:edit-system-prompt="agentEditSystemPrompt = $event"
+            @reload-versions="loadAgentVersionHistory(configuringAgent.id)"
+          />
 
-          <!-- 形象 -->
-          <div class="agent-config-section" data-testid="agent-avatar-section">
-            <div class="agent-config-section-title">{{ t('settings.agentAvatarSection') }}</div>
-            <p class="agent-config-hint">{{ t('settings.agentAvatarHint') }}</p>
-            <div class="agent-avatar-choices" role="radiogroup" :aria-label="t('settings.agentAvatarSection')">
-              <button
-                type="button"
-                role="radio"
-                class="agent-avatar-choice"
-                :class="{ active: configuringAvatarPreference.mode !== 'fixed' }"
-                :aria-checked="configuringAvatarPreference.mode !== 'fixed'"
-                :disabled="agentAvatarBusy"
-                data-testid="agent-avatar-random"
-                @click="chooseAgentAvatar('random')"
-              >
-                <span class="agent-avatar-choice-glyph"><Shuffle :size="18" /></span>
-                <span class="agent-avatar-choice-name">{{ t('settings.agentAvatarRandom') }}</span>
-              </button>
-              <button
-                v-for="pet in agentAvatarPool"
-                :key="pet.slug"
-                type="button"
-                role="radio"
-                class="agent-avatar-choice"
-                :class="{ active: configuringAvatarPreference.mode === 'fixed' && configuringAvatarPreference.petSlug === pet.slug }"
-                :aria-checked="configuringAvatarPreference.mode === 'fixed' && configuringAvatarPreference.petSlug === pet.slug"
-                :disabled="agentAvatarBusy"
-                :data-testid="`agent-avatar-${pet.slug}`"
-                @click="chooseAgentAvatar('fixed', pet.slug)"
-              >
-                <AgentPetAvatar :pet-slug="pet.slug" :size="26" :alt="pet.displayName" />
-                <span class="agent-avatar-choice-name">{{ pet.displayName }}</span>
-              </button>
-            </div>
-            <p v-if="agentAvatarPool.length === 0" class="agent-config-hint">{{ t('settings.agentAvatarEmpty') }}</p>
-          </div>
-
-          <!-- 目录证据 -->
-          <div v-if="configuringDirectoryItem" class="agent-config-section">
-            <div class="agent-config-section-title">{{ t('settings.agentModeUsageSection') }}</div>
-            <div class="agent-detail-grid">
-              <div>
-                <span>{{ t('settings.agentSourceLabel') }}</span>
-                <strong>
-                  {{ agentSourceKindLabel(configuringDirectoryItem.source_kind) }}
-                  <template v-if="configuringDirectoryItem.managed"> · {{ t('settings.agentSourceManaged') }}</template>
-                </strong>
-              </div>
-              <div>
-                <span>{{ t('settings.agentStatus') }}</span>
-                <strong>{{ definitionStatusLabel(configuringDirectoryItem.status) }}</strong>
-              </div>
-            </div>
-            <div v-if="(configuringDirectoryItem.mode_usages ?? []).length > 0" class="agent-mode-usage-list">
-              <span v-for="usage in configuringDirectoryItem.mode_usages" :key="`${usage.mode_id}:${usage.node_key}`">
-                {{ usage.mode_slug }} · {{ usage.node_key }}
-              </span>
-            </div>
-            <p v-else class="agent-config-hint">{{ t('settings.agentNoModeUsage') }}</p>
-
-            <div class="agent-config-section-title secondary">{{ t('settings.agentEffectivePreviewSection') }}</div>
-            <div v-if="Object.keys(configuringDirectoryItem.effective_previews ?? {}).length > 0" class="agent-mode-usage-list">
-              <span v-for="(preview, key) in configuringDirectoryItem.effective_previews" :key="key" :title="key">
-                {{ agentPreviewLine(String(key).split(':')[0], String(key).split(':')[1] ?? '', preview) }}
-              </span>
-            </div>
-            <p v-else class="agent-config-hint">{{ t('settings.agentNoEffectivePreview') }}</p>
-
-            <div class="agent-config-section-title secondary">{{ t('settings.agentRecentInvocationSection') }}</div>
-            <p v-if="configuringDirectoryItem.recent_invocation" class="agent-config-hint">
-              {{ agentInvocationLine(configuringDirectoryItem.recent_invocation) }}
-            </p>
-            <p v-else class="agent-config-hint">{{ t('settings.agentNoRecentInvocation') }}</p>
-          </div>
-
-          <!-- 运行来源 -->
-          <div class="agent-config-section">
-            <div class="agent-config-section-title">{{ t('settings.agentRuntimeSource') }}</div>
-            <div class="agent-detail-grid">
-              <div>
-                <span>{{ t('settings.routePurpose') }}</span>
-                <strong>{{ configuringRuntimeBinding?.route_purpose ?? configuringAgent.model_route_purpose ?? '—' }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.effectiveRuntime') }}</span>
-                <strong>{{ agentRuntimeSummary(configuringAgentId) || t('settings.runtimeUnresolved') }}</strong>
-              </div>
-            </div>
-
-            <div v-if="configuringLegacyWarning" class="runtime-binding-warning">
-              <Info :size="16" />
-              <div>
-                <strong>{{ t('settings.sharedLegacyRoute', { purpose: configuringLegacyWarning.purpose }) }}</strong>
-                <span>{{ t('settings.sharedLegacyRouteHint', { count: configuringLegacyWarning.agent_ids.length }) }}</span>
-              </div>
-            </div>
-
-            <div class="runtime-source-grid">
-              <button :class="{ active: agentRuntimeSelection === 'inherit' }" :aria-pressed="agentRuntimeSelection === 'inherit'" @click="agentRuntimeSelection = 'inherit'">
-                <Workflow :size="16" />
-                <strong>{{ t('settings.runtimeInherit') }}</strong>
-                <span>{{ t('settings.runtimeInheritHint') }}</span>
-              </button>
-              <button :class="{ active: agentRuntimeSelection === 'route' }" :aria-pressed="agentRuntimeSelection === 'route'" @click="agentRuntimeSelection = 'route'">
-                <Route :size="16" />
-                <strong>{{ t('settings.runtimeRoute') }}</strong>
-                <span>{{ t('settings.runtimeRouteHint') }}</span>
-              </button>
-              <button :class="{ active: agentRuntimeSelection === 'fixed_model' }" :aria-pressed="agentRuntimeSelection === 'fixed_model'" @click="agentRuntimeSelection = 'fixed_model'">
-                <Cpu :size="16" />
-                <strong>{{ t('settings.runtimeFixedModel') }}</strong>
-                <span>{{ t('settings.runtimeFixedModelHint') }}</span>
-              </button>
-            </div>
-
-            <div v-if="agentRuntimeSelection === 'inherit'" class="runtime-source-current">
-              <ShieldCheck :size="16" />
-              <span>{{ t('settings.runtimeInheritedCurrent', { source: agentRuntimeSummary(configuringAgentId) || t('settings.runtimeUnresolved') }) }}</span>
-            </div>
-            <div v-else-if="agentRuntimeSelection === 'route'" class="settings-field runtime-source-picker">
-              <UiLabel>{{ t('settings.routePurpose') }}</UiLabel>
-              <UiSelectField
-                v-model="agentRuntimeRoutePurpose"
-                :aria-label="t('settings.routePurpose')"
-                :options="[
-                  { value: '', label: t('settings.routePurpose'), disabled: true },
-                  ...routes.map((route) => ({ value: route.purpose, label: `${route.purpose} · ${route.candidates.length}` })),
-                ]"
-              />
-              <p v-if="routes.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-            </div>
-            <div v-else class="settings-field runtime-source-picker">
-              <UiLabel>{{ t('settings.runtimeFixedModel') }}</UiLabel>
-              <div class="runtime-source-search">
-                <Search :size="14" />
-                <UiInput v-model="agentRuntimeModelQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: t('settings.centerModels') })" />
-              </div>
-              <UiSelectField
-                v-model="agentRuntimeModelKey"
-                :aria-label="t('settings.selectModel')"
-                :options="[
-                  { value: '', label: t('settings.selectModel'), disabled: true },
-                  ...filteredRuntimeModels.map((model) => ({
-                    value: modelOptionKey(model.provider_instance_id, model.model_id),
-                    label: `${model.model_id} · ${model.provider_display_name ?? model.provider_instance_id} · ${statusLabel(model.status)}`,
-                  })),
-                  ...filteredRuntimeCliOptions.map((runtime) => ({
-                    value: runtime.provider_instance_id,
-                    label: `${runtime.display_name} · CLI · ${statusLabel(runtime.status)}`,
-                  })),
-                  ...filteredRuntimeAcpOptions.map((runtime) => ({
-                    value: runtime.provider_instance_id ?? runtime.runtime_id,
-                    label: `${runtime.display_name} · ACP · ${statusLabel(runtime.status)}`,
-                  })),
-                ]"
-              />
-              <p v-if="filteredRuntimeModels.length === 0 && filteredRuntimeCliOptions.length === 0 && filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">
-                {{ t('settings.noRuntimeMatches') }}
-              </p>
-            </div>
-
-            <div class="runtime-binding-readonly">
-              <Info :size="16" />
-              <div>
-                <strong>{{ t('settings.agentStrategyVersioned') }}</strong>
-                <span>{{ t('settings.agentStrategyVersionedHint') }}</span>
-              </div>
-            </div>
-            <div class="modal-actions compact">
-              <UiButton :disabled="agentRuntimeBusy || !agentStrategySaveable()" size="sm" @click="saveAgentModelStrategy(configuringAgent)">
-                <Save :size="14" />
-                <span>{{ t('settings.saveRuntimeBinding') }}</span>
-              </UiButton>
-            </div>
-          </div>
-
-          <!-- 描述 -->
-          <div class="agent-config-section">
-            <div class="agent-config-section-title">{{ t('settings.agentDescription') }}</div>
-            <div class="settings-field">
-              <textarea
-                v-model="agentEditDescription"
-                class="settings-textarea"
-                rows="2"
-                :disabled="configuringIsReadOnly"
-                :placeholder="t('settings.agentDescriptionPlaceholder')"
-              ></textarea>
-            </div>
-          </div>
-
-          <!-- 工具绑定（支持 '*' 通配高亮与计数） -->
-          <div class="agent-config-section">
-            <div class="agent-config-section-title">
-              {{ t('settings.agentToolsPermissions') }}
-              <UiBadge v-if="agentToolSelectionSummary.wildcard" variant="default" data-testid="agent-wildcard-tools-badge">
-                {{ t('settings.allToolsWildcard', { total: agentToolSelectionSummary.total }) }}
-              </UiBadge>
-              <UiBadge v-else variant="outline">
-                {{ agentToolSelectionSummary.selected }}/{{ agentToolSelectionSummary.total }}
-              </UiBadge>
-              <UiBadge v-if="agentToolSelectionSummary.approval > 0" variant="secondary">
-                {{ t('settings.approvalRequired') }} {{ agentToolSelectionSummary.approval }}
-              </UiBadge>
-            </div>
-            <p class="agent-config-hint">{{ t('settings.agentToolsHint') }}</p>
-            <UiButton variant="outline" size="sm" @click="requestToolAgent(configuringAgent.id)">{{ t('toolsSettings.agentSettingsLink') }}</UiButton>
-            <div class="agent-tool-toolbar">
-              <div class="agent-tool-search">
-                <Search :size="14" />
-                <UiInput v-model="agentToolQuery" :placeholder="t('settings.toolSearchPlaceholder')" />
-              </div>
-              <UiSelectField
-                v-model="agentToolSourceFilter"
-                class="compact"
-                :aria-label="t('settings.allSources')"
-                :options="[
-                  { value: 'all', label: t('settings.allSources') },
-                  ...toolSourceOptions.map((src) => ({ value: src, label: src })),
-                ]"
-              />
-              <UiSelectField
-                v-model="agentToolRiskFilter"
-                class="compact"
-                :aria-label="t('settings.allRisks')"
-                :options="[
-                  { value: 'all', label: t('settings.allRisks') },
-                  ...toolRiskOptions.map((risk) => ({ value: risk, label: risk })),
-                ]"
-              />
-            </div>
-            <div v-if="configuringIsReadOnly" class="agent-builtin-hint">
-              <Info :size="14" />
-              <span>{{ t('settings.builtInCloneHint') }}</span>
-            </div>
-            <div v-for="[source, tools] in groupedAgentTools" :key="source" class="agent-tool-group">
-              <div class="agent-tool-group-head">
-                <strong>{{ source }}</strong>
-                <UiBadge variant="outline">{{ tools.length }}</UiBadge>
-              </div>
-              <div class="agent-tool-grid">
-                <button
-                  v-for="tool in tools"
-                  :key="tool.id"
-                  class="agent-tool-chip"
-                  :class="{
-                    active: isToolSelected(tool.id),
-                    risky: tool.requires_approval,
-                  }"
-                  :disabled="configuringIsReadOnly"
-                  :title="tool.display_name + ' · ' + riskLabel(tool.risk) + (tool.requires_approval ? ' · ' + t('settings.approvalRequired') : '')"
-                  @click="toggleAgentTool(tool.id)"
-                >
-                  <span class="agent-tool-name">{{ tool.display_name }}</span>
-                  <span class="agent-tool-meta">
-                    <span class="agent-tool-risk" :class="tool.risk">{{ riskLabel(tool.risk) }}</span>
-                    <span v-if="tool.requires_approval" class="agent-tool-approval">⚑ {{ t('settings.approvalRequired') }}</span>
-                  </span>
-                  <span class="agent-tool-id">{{ tool.id }}</span>
-                </button>
-              </div>
-            </div>
-            <p v-if="groupedAgentTools.length === 0" class="quiet">{{ t('settings.noTools') }}</p>
-            <div class="agent-tool-bulk">
-              <UiButton variant="ghost" size="sm" :disabled="configuringIsReadOnly" @click="agentEditTools = manifestToolList.filter((item) => !item.requires_approval).map((item) => item.id)">
-                {{ t('settings.selectReadOnlyTools') }}
-              </UiButton>
-              <UiButton variant="ghost" size="sm" :disabled="configuringIsReadOnly" @click="agentEditTools = manifestToolList.map((item) => item.id)">
-                {{ t('settings.selectAllReadWrite') }}
-              </UiButton>
-              <UiButton variant="ghost" size="sm" :disabled="configuringIsReadOnly" @click="agentEditTools = ['*']">
-                {{ t('settings.allowAllTools') }}
-              </UiButton>
-              <UiButton variant="ghost" size="sm" :disabled="configuringIsReadOnly" @click="agentEditTools = []">
-                {{ t('settings.clearSelection') }}
-              </UiButton>
-            </div>
-
-            <div class="runtime-binding-readonly agent-governance-card">
-              <ShieldCheck :size="16" />
-              <div>
-                <strong>{{ t('settings.agentGovernanceTitle') }}</strong>
-                <span>{{ t('settings.agentGovernanceHint') }}</span>
-              </div>
-              <UiBadge :variant="pendingGovernanceCount > 0 ? 'default' : 'outline'">
-                {{ t('settings.pendingGovernance', { count: pendingGovernanceCount }) }}
-              </UiBadge>
-            </div>
-          </div>
-
-          <!-- 能力标签 -->
-          <div class="agent-config-section">
-            <div class="agent-config-section-title">{{ t('settings.agentCapabilities') }}</div>
-            <p class="agent-config-hint">{{ t('settings.agentCapabilitiesHint') }}</p>
-            <div class="agent-capability-list">
-              <span v-for="cap in agentEditCapabilities" :key="cap" class="agent-cap-tag">
-                {{ cap }}
-                <button class="agent-cap-remove" :disabled="configuringIsReadOnly" @click="removeAgentCapability(cap)">×</button>
-              </span>
-            </div>
-            <div class="agent-cap-add-row">
-              <UiInput
-                v-model="agentNewCapability"
-                :disabled="configuringIsReadOnly"
-                :placeholder="t('settings.newCapabilityPlaceholder')"
-                @keydown.enter="addAgentCapability"
-              />
-              <UiButton variant="outline" size="sm" :disabled="configuringIsReadOnly || !agentNewCapability.trim()" @click="addAgentCapability">
-                <Plus :size="14" />
-                {{ t('settings.addCapability') }}
-              </UiButton>
-            </div>
-          </div>
-
-          <!-- System Prompt -->
-          <div class="agent-config-section">
-            <div class="agent-config-section-title">{{ t('settings.agentSystemPrompt') }}</div>
-            <p class="agent-config-hint">{{ t('settings.agentSystemPromptOverrideHint') }}</p>
-            <div class="settings-field">
-              <textarea
-                v-model="agentEditSystemPrompt"
-                class="settings-textarea prompt-editor"
-                rows="6"
-                :disabled="configuringIsReadOnly"
-                :placeholder="t('settings.agentSystemPromptPlaceholder')"
-              ></textarea>
-            </div>
-          </div>
-
-          <!-- 版本历史 -->
-          <div class="agent-config-section">
-            <div class="agent-config-section-title">
-              {{ t('settings.agentVersionHistory') }}
-              <UiBadge variant="outline">{{ agentVersionHistory.length }}</UiBadge>
-            </div>
-            <p class="agent-config-hint">{{ t('settings.agentVersionHistoryHint') }}</p>
-            <div v-if="agentVersionsLoading" class="center-loading-state" aria-live="polite">
-              <UiSkeleton v-for="index in 2" :key="index" class="center-loading-line agent-version-loading-line" />
-            </div>
-            <div v-else-if="agentVersionHistoryError" class="center-message" role="alert" data-testid="agent-version-read-failure">
-              <Info :size="16" aria-hidden="true" />
-              <div class="center-message-content">
-                <strong>{{ t('settings.centerLoadFailed') }}</strong>
-                <span>{{ agentVersionHistoryError.message }}</span>
-              </div>
-              <UiButton variant="outline" size="sm" @click="loadAgentVersionHistory(configuringAgent.id)">{{ t('settings.retry') }}</UiButton>
-            </div>
-            <div v-else-if="agentVersionHistory.length > 0" class="agent-version-list">
-              <div
-                v-for="version in [...agentVersionHistory].reverse()"
-                :key="version.id"
-                class="center-list-row agent-version-row"
-                :class="{ latest: version.version === configuringAgent.version }"
-              >
-                <strong>v{{ version.version }}</strong>
-                <span class="agent-version-hash">{{ (version as AgentVersionDto & { content_hash?: string }).content_hash?.slice(0, 8) ?? '—' }}</span>
-                <time>{{ new Date(version.created_at).toLocaleString(locale) }}</time>
-                <UiBadge v-if="version.version === configuringAgent.version" variant="default">{{ t('settings.agentVersionCurrent') }}</UiBadge>
-              </div>
-            </div>
-            <p v-else class="quiet">{{ t('settings.noVersionsPublished') }}</p>
-          </div>
-
-          <!-- 保存草稿 vs 保存并发布 / 克隆 -->
           <div class="agent-save-bar">
             <template v-if="configuringIsReadOnly">
               <UiButton :disabled="agentCloneBusy" @click="cloneAgent(configuringAgent)">
@@ -1997,216 +1301,17 @@ defineExpose({
       </aside>
     </div>
 
-    <!-- 新建智能体 Sheet -->
-    <UiSheet :open="showCreateAgent" side="right" @update:open="showCreateAgent = $event">
-      <div class="ac-sheet-body">
-        <h3>{{ t('settings.newAgent') }}</h3>
-        <div>
-          <UiLabel>{{ t('settings.agentName') }}</UiLabel>
-          <UiInput v-model="newAgentName" :placeholder="t('settings.agentName')" />
-        </div>
-        <div>
-          <UiLabel>{{ t('settings.agentSlugLabel') }}</UiLabel>
-          <UiInput v-model="newAgentSlug" :placeholder="t('settings.agentSlugOptionalPlaceholder')" />
-        </div>
-        <div>
-          <UiLabel>{{ t('settings.agentLayer') }}</UiLabel>
-          <UiSelectField
-            v-model="newAgentLayer"
-            :options="[
-              { value: 'operation', label: t('settings.agentLayerPlanning') },
-              { value: 'execution', label: t('settings.agentLayerExecution') },
-            ]"
-          />
-        </div>
-        <div>
-          <UiLabel>{{ t('settings.agentRole') }}</UiLabel>
-          <UiInput v-model="newAgentRole" :placeholder="newAgentLayer === 'operation' ? 'session_coordinator' : 'code_writer'" />
-        </div>
-        <div>
-          <UiLabel>{{ t('settings.agentBasePipeline') }}</UiLabel>
-          <UiSelectField v-model="newAgentPipelineId" :options="pipelineOptions" />
-        </div>
-        <div>
-          <UiLabel>{{ t('settings.agentDescription') }}</UiLabel>
-          <textarea
-            v-model="newAgentDescription"
-            class="settings-textarea"
-            rows="2"
-            :placeholder="t('settings.agentDescriptionPlaceholder')"
-          ></textarea>
-        </div>
-        <div class="ac-sheet-actions">
-          <UiButton variant="outline" @click="showCreateAgent = false">{{ t('common.cancel') }}</UiButton>
-          <UiButton variant="outline" :disabled="newAgentBusy || !newAgentName.trim()" @click="createAgent(false)">
-            {{ t('settings.saveAgentDraftOnly') }}
-          </UiButton>
-          <UiButton :disabled="newAgentBusy || !newAgentName.trim()" @click="createAgent(true)">
-            {{ t('settings.createAndPublishAgent') }}
-          </UiButton>
-        </div>
-      </div>
-    </UiSheet>
+    <AgentCreateSheet
+      v-model:open="showCreateAgent"
+      v-model:name="newAgentName"
+      v-model:slug="newAgentSlug"
+      v-model:layer="newAgentLayer"
+      v-model:role="newAgentRole"
+      v-model:pipeline-id="newAgentPipelineId"
+      v-model:description="newAgentDescription"
+      :busy="newAgentBusy"
+      :pipeline-options="pipelineOptions"
+      @create="createAgent"
+    />
   </div>
 </template>
-
-<style scoped>
-.roster-stage-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.roster-stage-head h3 {
-  margin: 0;
-  font-size: 14px;
-}
-
-.roster-stage-head p {
-  margin: 2px 0 0;
-  font-size: 12px;
-}
-
-.roster-layer-section {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.roster-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 10px;
-}
-
-.roster-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-}
-
-.roster-card-select {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  text-align: left;
-  width: 100%;
-}
-
-.roster-card-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.roster-card-identity {
-  flex: 1;
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.roster-card-identity strong {
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.roster-card-identity span {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.roster-card-desc {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  min-height: 32px;
-}
-
-.roster-card-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-muted);
-}
-
-.roster-card-foot small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.roster-card-badges {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.roster-quick-clone {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  margin: 0 12px 10px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-default);
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.roster-quick-clone:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-.agent-card-title-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.agent-card-title-row strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-source-pill {
-  flex-shrink: 0;
-}
-
-.agent-definition-fields {
-  display: grid;
-  gap: 10px;
-  margin: 10px 0;
-}
-
-.agent-provenance-box {
-  border-left: 3px solid var(--accent-primary);
-  padding-left: 10px;
-}
-</style>

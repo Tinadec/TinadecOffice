@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import {
   api as baseApi,
   type AgentDefinitionDto,
+  type AgentDirectoryItemDto,
   type AgentModeBindingDto,
   type AgentModeDraftUpdate,
   type AgentModeEdgeDto,
@@ -15,11 +16,13 @@ import {
   type ModelProviderInstanceDto,
   type ModelRouteDto,
   type PackI18n,
+  type SpaceOptionsDto,
 } from '@/api'
 import i18n from '@/i18n'
 import { useNotifications } from '@/composables/useNotifications'
 import { useHostAccess } from '@/lib/hostAccess'
 import { sortModes } from '@/lib/modePresentation'
+import { pendingModeId } from '@/lib/pageRequests'
 import { pickLocalized } from '@/lib/packI18n'
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { scopedApi } from '@/lib/storageScope'
@@ -41,6 +44,7 @@ export interface ModeDraftState {
   description: string
   instructions: string
   orchestrationTier: AgentOrchestrationTier | null
+  defaultOptions: SpaceOptionsDto | null
   runtimePolicyKind: 'none' | AgentModeRuntimePolicy['kind']
   runtimePolicyFeatures: string[]
   runtimePolicySettingsJson: string
@@ -55,6 +59,7 @@ export interface TeamDraftState {
   description: string
   instructions: string
   orchestrationTier: AgentOrchestrationTier | null
+  defaultOptions: SpaceOptionsDto | null
   selection: TeamSelection
   memberScopes: Record<string, MemberScope>
 }
@@ -64,8 +69,44 @@ export interface CommitDraftOptions {
   coalesceKey?: string
 }
 
+export type ModeWorkspaceView = 'team' | 'topology'
+
+export interface ModeAgentUsageItem {
+  id: string
+  slug: string
+  displayName: string
+  status?: string
+  managed: boolean
+  roles: Array<'leader' | 'node' | 'spawn'>
+}
+
 const MAX_HISTORY = 50
 const COALESCE_WINDOW_MS = 650
+
+export function emptySpaceOptions(): SpaceOptionsDto {
+  return {
+    plan_first: false,
+    spec_enabled: false,
+    multi_agent: false,
+    bulletin_board: false,
+    worktree: false,
+    workflow_mode_version_id: null,
+  }
+}
+
+export function normalizeDefaultOptions(raw?: SpaceOptionsDto | null): SpaceOptionsDto | null {
+  if (!raw || typeof raw !== 'object') return null
+  return {
+    plan_first: Boolean(raw.plan_first),
+    spec_enabled: Boolean(raw.spec_enabled),
+    multi_agent: Boolean(raw.multi_agent),
+    bulletin_board: Boolean(raw.bulletin_board),
+    worktree: Boolean(raw.worktree),
+    workflow_mode_version_id: typeof raw.workflow_mode_version_id === 'string' && raw.workflow_mode_version_id.trim()
+      ? raw.workflow_mode_version_id
+      : null,
+  }
+}
 
 function createEmptyModeDraft(): ModeDraftState {
   return {
@@ -73,6 +114,7 @@ function createEmptyModeDraft(): ModeDraftState {
     description: '',
     instructions: '',
     orchestrationTier: null,
+    defaultOptions: null,
     runtimePolicyKind: 'none',
     runtimePolicyFeatures: [],
     runtimePolicySettingsJson: '',
@@ -89,6 +131,7 @@ function createEmptyTeamDraft(): TeamDraftState {
     description: '',
     instructions: '',
     orchestrationTier: null,
+    defaultOptions: null,
     selection: { style: 'team', leaderId: '', memberIds: [] },
     memberScopes: {},
   }
@@ -100,6 +143,7 @@ function cloneModeDraft(state: ModeDraftState): ModeDraftState {
     description: state.description,
     instructions: state.instructions,
     orchestrationTier: state.orchestrationTier,
+    defaultOptions: state.defaultOptions ? { ...state.defaultOptions } : null,
     runtimePolicyKind: state.runtimePolicyKind,
     runtimePolicyFeatures: [...state.runtimePolicyFeatures],
     runtimePolicySettingsJson: state.runtimePolicySettingsJson,
@@ -154,23 +198,64 @@ export function normalizeOrchestrationTier(value: unknown): AgentOrchestrationTi
   return null
 }
 
-export function normalizeAgentDefinition(agent: AgentDefinitionDto): AgentDefinitionDto {
-  const scopeTools = agent.tool_scope === '*'
+function isFullAgentDefinition(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false
+  const rec = raw as Record<string, unknown>
+  return rec.tool_scope !== undefined || Array.isArray(rec.allowed_tools) || typeof rec.system_prompt === 'string'
+}
+
+export function normalizeAgentRecord(
+  raw: AgentDirectoryItemDto | AgentDefinitionDto,
+  prev?: AgentDefinitionDto,
+): AgentDefinitionDto {
+  const rec = raw as unknown as Record<string, unknown>
+  const rawToolScope = rec.tool_scope !== undefined ? (rec.tool_scope as string[] | '*' | null) : prev?.tool_scope
+  const bindingScopeOverride = (raw as AgentDirectoryItemDto).model_binding?.tool_scope_override
+  const effectiveScope = rawToolScope !== undefined
+    ? rawToolScope
+    : Array.isArray(bindingScopeOverride)
+      ? bindingScopeOverride
+      : undefined
+  const scopeTools = effectiveScope === '*'
     ? ['*']
-    : Array.isArray(agent.tool_scope)
-      ? agent.tool_scope
+    : Array.isArray(effectiveScope)
+      ? effectiveScope
       : []
-  const allowedTools = Array.isArray(agent.allowed_tools) && agent.allowed_tools.length > 0
-    ? agent.allowed_tools
+  const rawAllowed = Array.isArray(rec.allowed_tools) ? (rec.allowed_tools as string[]) : prev?.allowed_tools
+  const allowedTools = Array.isArray(rawAllowed) && rawAllowed.length > 0
+    ? rawAllowed
     : scopeTools
+  const displayName = String(rec.display_name ?? rec.name ?? prev?.display_name ?? rec.slug ?? rec.id ?? '')
+  const role = String(rec.role ?? rec.agent_type ?? prev?.role ?? prev?.agent_type ?? '')
+  const configuredStrategy = (rec.model_strategy ?? rec.configured_strategy ?? prev?.model_strategy ?? { kind: 'inherit' }) as Record<string, unknown>
   return {
-    ...agent,
-    name: agent.name ?? agent.display_name ?? agent.slug ?? agent.id,
-    display_name: agent.display_name ?? agent.name ?? agent.slug ?? agent.id,
-    description: agent.description ?? '',
+    ...(prev ?? {}),
+    ...(raw as unknown as AgentDefinitionDto),
+    id: String(rec.id),
+    slug: typeof rec.slug === 'string' ? rec.slug : prev?.slug,
+    name: typeof rec.name === 'string' && rec.name ? rec.name : displayName,
+    display_name: displayName,
+    layer: String(rec.layer ?? prev?.layer ?? 'operation'),
+    role,
+    agent_type: typeof rec.agent_type === 'string' && rec.agent_type ? rec.agent_type : role,
+    description: typeof rec.description === 'string' ? rec.description : (prev?.description ?? ''),
+    model_route_purpose: typeof rec.model_route_purpose === 'string'
+      ? rec.model_route_purpose
+      : typeof configuredStrategy.route_purpose === 'string'
+        ? configuredStrategy.route_purpose
+        : (prev?.model_route_purpose ?? ''),
+    model_strategy: configuredStrategy,
+    tool_scope: effectiveScope ?? prev?.tool_scope ?? null,
     allowed_tools: allowedTools,
-    capabilities: Array.isArray(agent.capabilities) ? agent.capabilities : [],
+    capabilities: Array.isArray(rec.capabilities) ? (rec.capabilities as string[]) : (prev?.capabilities ?? []),
+    enabled: typeof rec.enabled === 'boolean' ? rec.enabled : (prev?.enabled ?? true),
+    is_built_in: Boolean(rec.is_built_in ?? rec.managed ?? rec.pack_managed ?? prev?.is_built_in),
+    updated_at: typeof rec.updated_at === 'string' ? rec.updated_at : (prev?.updated_at ?? null),
   }
+}
+
+export function normalizeAgentDefinition(agent: AgentDefinitionDto): AgentDefinitionDto {
+  return normalizeAgentRecord(agent)
 }
 
 export function modeLocalizedName(mode: Pick<AgentModeTopologyDto, 'display_name' | 'i18n'>, locale = activeLocale()): string {
@@ -245,9 +330,13 @@ const teamBaselineSignal = ref('')
 
 const modeVersions = ref<ModeVersionDto[]>([])
 const modeVersionsLoading = ref(false)
+const activeWorkspaceView = ref<ModeWorkspaceView>('team')
+let workspaceViewPinnedByUser = false
 
 let modesReadPromise: Promise<void> | null = null
 let agentsReadPromise: Promise<void> | null = null
+const hydratedAgentIds = new Set<string>()
+const agentDetailInFlight = new Map<string, Promise<AgentDefinitionDto | null>>()
 let detailGeneration = 0
 
 const sortedModes = computed(() => sortModes(modes.value))
@@ -439,6 +528,7 @@ function mapTopologyToModeDraft(m: AgentModeTopologyDto): ModeDraftState {
     description: m.description ?? '',
     instructions: m.instructions ?? '',
     orchestrationTier: normalizeOrchestrationTier(m.orchestration_tier),
+    defaultOptions: normalizeDefaultOptions(m.default_options),
     runtimePolicyKind: policyKind,
     runtimePolicyFeatures: policyFeatures,
     runtimePolicySettingsJson: policySettingsJson,
@@ -475,6 +565,7 @@ function mapTopologyToTeamDraft(m: AgentModeTopologyDto, agentList: AgentDefinit
     description: m.description ?? '',
     instructions: m.instructions ?? '',
     orchestrationTier: normalizeOrchestrationTier(m.orchestration_tier),
+    defaultOptions: normalizeDefaultOptions(m.default_options),
     selection: {
       style: shape.style,
       leaderId,
@@ -499,6 +590,11 @@ function applyDetailToDrafts(detail: AgentModeTopologyDto) {
   const nextTeamDraft = mapTopologyToTeamDraft(detail, agents.value)
   teamDraft.value = nextTeamDraft
   teamBaselineSignal.value = serializeTeamDraft(nextTeamDraft)
+
+  if (!workspaceViewPinnedByUser) {
+    const shape = classifyTeamShape(detail, toAgentViews(agents.value))
+    activeWorkspaceView.value = shape.editable ? 'team' : 'topology'
+  }
 }
 
 function reseedTeamBaselineKeepingChangesIfClean() {
@@ -684,14 +780,25 @@ async function loadAgents(options: { force?: boolean } = {}): Promise<void> {
   if (!canAccessBackend.value) return
   if (agentsReadPromise && !options.force) return agentsReadPromise
   agentsLoading.value = true
-  const req = api.listAgentDefinitions()
-    .then((definitions) => {
-      const list = Array.isArray(definitions) ? definitions.map(normalizeAgentDefinition) : []
+  const fetchDirectory = typeof api.listAgents === 'function'
+    ? () => api.listAgents()
+    : () => api.listAgentDefinitions()
+  const req = fetchDirectory()
+    .then((rows) => {
+      const existingById = new Map(agents.value.map((a) => [a.id, a]))
+      const list = Array.isArray(rows)
+        ? rows
+            .filter((row) => (row as AgentDirectoryItemDto).source_kind !== 'missing_reference')
+            .map((row) => {
+              if (isFullAgentDefinition(row)) hydratedAgentIds.add(row.id)
+              return normalizeAgentRecord(row, existingById.get(row.id))
+            })
+        : []
       agents.value = list
       reseedTeamBaselineKeepingChangesIfClean()
     })
     .catch(() => {
-      // Keep any existing prop-seeded agents if definition fetch fails
+      // Keep any existing prop-seeded agents if directory fetch fails
     })
     .finally(() => {
       agentsLoading.value = false
@@ -699,6 +806,48 @@ async function loadAgents(options: { force?: boolean } = {}): Promise<void> {
     })
   agentsReadPromise = req
   return req
+}
+
+async function ensureAgentDetails(ids: readonly string[]): Promise<void> {
+  if (!canAccessBackend.value || typeof api.getAgent !== 'function') return
+  const uniqueIds = [...new Set(ids.filter((id) => Boolean(id) && !hydratedAgentIds.has(id)))]
+  if (uniqueIds.length === 0) return
+
+  const loaded = await Promise.all(uniqueIds.map((id) => {
+    const existingReq = agentDetailInFlight.get(id)
+    if (existingReq) return existingReq
+    const p = api.getAgent(id)
+      .then((def) => {
+        if (def && typeof def === 'object') {
+          hydratedAgentIds.add(id)
+          return def
+        }
+        return null
+      })
+      .catch(() => null)
+      .finally(() => {
+        agentDetailInFlight.delete(id)
+      })
+    agentDetailInFlight.set(id, p)
+    return p
+  }))
+
+  const updates = new Map<string, AgentDefinitionDto>()
+  for (const def of loaded) {
+    if (def?.id) updates.set(def.id, def)
+  }
+  if (updates.size === 0) return
+
+  const existingIds = new Set(agents.value.map((a) => a.id))
+  const nextAgents = agents.value.map((a) => {
+    const fresh = updates.get(a.id)
+    return fresh ? normalizeAgentRecord(fresh, a) : a
+  })
+  for (const [id, fresh] of updates) {
+    if (!existingIds.has(id)) nextAgents.push(normalizeAgentRecord(fresh))
+  }
+  agents.value = nextAgents
+  reseedTeamBaselineKeepingChangesIfClean()
 }
 
 function loadPoliciesAndRoutes(): void {
@@ -733,10 +882,13 @@ async function loadAll(): Promise<void> {
   await Promise.all([loadAgents(), loadModes(), loadWorkspaceDefaults()])
 }
 
-async function selectMode(id: string, options: { force?: boolean } = {}): Promise<boolean> {
+async function selectMode(id: string, options: { force?: boolean; preserveWorkspaceView?: boolean } = {}): Promise<boolean> {
   if (!id) return false
   if (!options.force && id !== selectedModeId.value && !(await discardOrConfirm())) {
     return false
+  }
+  if (!options.preserveWorkspaceView && id !== selectedModeId.value) {
+    workspaceViewPinnedByUser = false
   }
   const generation = ++detailGeneration
   selectedModeId.value = id
@@ -753,6 +905,7 @@ async function selectMode(id: string, options: { force?: boolean } = {}): Promis
             display_name: loaded.display_name ?? row.display_name,
             description: loaded.description ?? row.description,
             orchestration_tier: loaded.orchestration_tier ?? row.orchestration_tier,
+            default_options: loaded.default_options !== undefined ? loaded.default_options : row.default_options,
             managed: loaded.managed ?? row.managed,
             pack_managed: loaded.pack_managed ?? row.pack_managed,
             status: loaded.status ?? row.status,
@@ -761,6 +914,28 @@ async function selectMode(id: string, options: { force?: boolean } = {}): Promis
           }
         : row,
     )
+    const views = toAgentViews(agents.value)
+    const shape = classifyTeamShape(loaded, views)
+    const rawBindings = loaded.bindings ?? []
+    const rawNodes = loaded.nodes ?? []
+    const hasExplicitResources = (b?: AgentModeBindingDto) => {
+      if (!b?.envelope || typeof b.envelope !== 'object') return false
+      const res = (b.envelope as Record<string, unknown>).resources
+      return Boolean(res && typeof res === 'object')
+    }
+    const missingScopeIds = shape.memberIds.filter((memberId) => {
+      if (hydratedAgentIds.has(memberId)) return false
+      const memberView = views.find((a) => a.id === memberId)
+      const slug = (memberView?.slug || memberView?.agent_type || memberId).replace(/^agent:/, '')
+      const execNode = rawNodes.find((n) => (n.agent_definition_id ?? n.agent_id) === memberId && normalizeLayer(n.layer ?? n.lane) === 'execution')
+      const binding = execNode
+        ? rawBindings.find((b) => b.node_key === (execNode.node_key ?? execNode.id))
+        : rawBindings.find((b) => !b.node_key && typeof b.agent_ref === 'string' && b.agent_ref.replace(/^agent:/, '') === slug)
+      return !hasExplicitResources(binding)
+    })
+    if (missingScopeIds.length > 0) {
+      await ensureAgentDetails(missingScopeIds)
+    }
     return true
   } catch (error) {
     if (generation !== detailGeneration || selectedModeId.value !== id) return false
@@ -782,6 +957,7 @@ function toCoreTopologyWrite(state: ModeDraftState, bindings: AgentModeBindingDt
     description: state.description.trim() || null,
     instructions: state.instructions.trim() || null,
     orchestration_tier: state.orchestrationTier ?? null,
+    default_options: state.defaultOptions ?? null,
     nodes: state.nodes.map((n) => ({
       node_key: n.node_key ?? n.id,
       agent_definition_id: n.agent_id || n.agent_definition_id || '',
@@ -820,6 +996,7 @@ function syncSavedTopologyResponse(saved: AgentModeTopologyDto): void {
             display_name: saved.display_name ?? row.display_name,
             description: saved.description ?? row.description,
             orchestration_tier: saved.orchestration_tier ?? row.orchestration_tier,
+            default_options: saved.default_options !== undefined ? saved.default_options : row.default_options,
             revision: saved.revision ?? row.revision,
             status: saved.status ?? row.status,
             latest_published_mode_version_id: saved.latest_published_mode_version_id ?? row.latest_published_mode_version_id,
@@ -950,6 +1127,17 @@ async function cloneMode(id = selectedModeId.value, customName?: string): Promis
   }
 }
 
+function shouldFallbackToArchiveOnDelete(err: unknown): boolean {
+  const rec = err && typeof err === 'object' ? (err as Record<string, unknown>) : null
+  const code = typeof rec?.code === 'string' ? rec.code : ''
+  const msg = err instanceof Error ? err.message : String(rec?.message ?? err ?? '')
+  const combined = `${code} ${msg}`
+  if (/built_in_read_only|managed_resource_read_only|pack_managed|read[_\s-]?only/i.test(combined)) {
+    return false
+  }
+  return /published_version_exists|has_published_version|mode_has_versions|published version/i.test(combined)
+}
+
 async function deleteOrArchiveMode(id = selectedModeId.value): Promise<boolean> {
   if (!canAccessBackend.value || !id) return false
   const target = modes.value.find((m) => m.id === id) ?? selectedModeDetail.value
@@ -969,9 +1157,7 @@ async function deleteOrArchiveMode(id = selectedModeId.value): Promise<boolean> 
       try {
         await api.deleteAgentMode(id, modeEtag.value)
       } catch (err) {
-        // Fallback to archiving if the backend preserves versioned history via 409
-        const msg = err instanceof Error ? err.message : String(err)
-        if (/version|published|archive|409/i.test(msg)) {
+        if (shouldFallbackToArchiveOnDelete(err)) {
           await api.archiveAgentMode(id, modeEtag.value)
         } else {
           throw err
@@ -1017,6 +1203,7 @@ async function saveTeamDraft(): Promise<string | null> {
 
   modeBusy.value = true
   try {
+    await ensureAgentDetails(teamDraft.value.selection.memberIds)
     const views = toAgentViews(agents.value)
     const topology = buildTeamTopology({
       style: teamDraft.value.selection.style,
@@ -1025,6 +1212,7 @@ async function saveTeamDraft(): Promise<string | null> {
       memberScopes: teamDraft.value.memberScopes,
       instructions: teamDraft.value.instructions,
       orchestrationTier: teamDraft.value.orchestrationTier ?? naturalTierForStyle(teamDraft.value.selection.style),
+      defaultOptions: teamDraft.value.defaultOptions,
       displayName: name,
       description: teamDraft.value.description,
       existingDetail: selectedModeDetail.value,
@@ -1184,6 +1372,248 @@ async function restoreModeVersion(version: ModeVersionDto): Promise<boolean> {
   }
 }
 
+function stripAgentPrefixLocal(refStr: string): string {
+  return refStr.startsWith('agent:') ? refStr.slice('agent:'.length) : refStr
+}
+
+function synthesizeTopologyFromModeDraft(state: ModeDraftState, base: AgentModeTopologyDto | null): AgentModeTopologyDto {
+  let bindings: AgentModeBindingDto[] = base?.bindings ?? []
+  try {
+    const parsed = JSON.parse(state.bindingsDraft.trim() || '[]')
+    if (Array.isArray(parsed)) bindings = parsed as AgentModeBindingDto[]
+  } catch {
+    // Keep base bindings when draft JSON is temporarily invalid
+  }
+  return {
+    ...(base ?? { id: selectedModeId.value || 'draft' }),
+    display_name: state.displayName,
+    description: state.description || null,
+    instructions: state.instructions || null,
+    orchestration_tier: state.orchestrationTier,
+    default_options: state.defaultOptions,
+    nodes: state.nodes,
+    edges: state.edges,
+    bindings,
+    canvas_layout: state.canvasLayout,
+    runtime_policy: runtimePolicy.value,
+  }
+}
+
+const liveModeTopology = computed<AgentModeTopologyDto | null>(() => {
+  if (!selectedModeDetail.value && !selectedModeId.value) return null
+  if (modeDirty.value) {
+    return synthesizeTopologyFromModeDraft(draft.value, selectedModeDetail.value)
+  }
+  return selectedModeDetail.value
+})
+
+const teamShape = computed<TeamShape | null>(() => {
+  const topo = liveModeTopology.value
+  if (!topo) return null
+  return classifyTeamShape(topo, toAgentViews(agents.value))
+})
+
+function switchWorkspaceView(targetView: ModeWorkspaceView, options: { userInitiated?: boolean } = {}): void {
+  const prev = activeWorkspaceView.value
+  if (options.userInitiated) {
+    workspaceViewPinnedByUser = true
+  }
+  if (prev === targetView) return
+
+  if (prev === 'team' && targetView === 'topology') {
+    const currentShape = selectedModeDetail.value
+      ? classifyTeamShape(selectedModeDetail.value, toAgentViews(agents.value))
+      : null
+    if (teamDirty.value && !selectedModeReadOnly.value && (!currentShape || currentShape.editable)) {
+      const views = toAgentViews(agents.value)
+      if (teamDraft.value.selection.leaderId) {
+        const built = buildTeamTopology({
+          style: teamDraft.value.selection.style,
+          leaderId: teamDraft.value.selection.leaderId,
+          memberIds: teamDraft.value.selection.memberIds,
+          memberScopes: teamDraft.value.memberScopes,
+          instructions: teamDraft.value.instructions,
+          orchestrationTier: teamDraft.value.orchestrationTier ?? naturalTierForStyle(teamDraft.value.selection.style),
+          defaultOptions: teamDraft.value.defaultOptions,
+          displayName: teamDraft.value.displayName || selectedModeDetail.value?.display_name || 'Team',
+          description: teamDraft.value.description,
+          existingDetail: selectedModeDetail.value,
+        }, views)
+        const synthesized: AgentModeTopologyDto = {
+          ...(selectedModeDetail.value ?? { id: selectedModeId.value || 'draft' }),
+          display_name: built.display_name ?? teamDraft.value.displayName,
+          description: built.description ?? null,
+          instructions: built.instructions ?? null,
+          orchestration_tier: built.orchestration_tier ?? null,
+          default_options: built.default_options ?? teamDraft.value.defaultOptions,
+          nodes: built.nodes.map((n) => ({
+            id: n.node_key,
+            node_key: n.node_key,
+            agent_id: n.agent_definition_id,
+            agent_definition_id: n.agent_definition_id,
+            lane: n.layer,
+            layer: n.layer,
+            label: n.label ?? null,
+            position: n.position ?? { x: 80, y: n.layer === 'execution' ? 280 : 60 },
+            config: n.config ?? null,
+            relationship: n.relationship ?? null,
+            model_strategy_override: (n.model_strategy_override as AgentModeNodeDto['model_strategy_override']) ?? null,
+          })),
+          edges: built.edges.map((e, idx) => ({
+            id: e.edge_key ?? `edge-${idx + 1}`,
+            edge_key: e.edge_key,
+            source: e.source_node_key,
+            source_node_key: e.source_node_key,
+            target: e.target_node_key,
+            target_node_key: e.target_node_key,
+            condition: e.condition ?? null,
+          })),
+          bindings: built.bindings ?? [],
+          canvas_layout: built.canvas_layout ?? selectedModeDetail.value?.canvas_layout ?? null,
+          runtime_policy: built.runtime_policy ?? selectedModeDetail.value?.runtime_policy ?? null,
+        }
+        commitDraft(() => mapTopologyToModeDraft(synthesized))
+      }
+    }
+  } else if (prev === 'topology' && targetView === 'team') {
+    if (modeDirty.value && !selectedModeReadOnly.value) {
+      const synthesized = synthesizeTopologyFromModeDraft(draft.value, selectedModeDetail.value)
+      const shape = classifyTeamShape(synthesized, toAgentViews(agents.value))
+      if (shape.editable) {
+        teamDraft.value = mapTopologyToTeamDraft(synthesized, agents.value)
+      } else {
+        teamDraft.value = {
+          ...teamDraft.value,
+          displayName: draft.value.displayName,
+          description: draft.value.description,
+          instructions: draft.value.instructions,
+          orchestrationTier: draft.value.orchestrationTier,
+          defaultOptions: draft.value.defaultOptions ? { ...draft.value.defaultOptions } : null,
+        }
+      }
+    }
+  }
+
+  activeWorkspaceView.value = targetView
+}
+
+function modesUsingAgent(
+  agentOrIdOrSlug:
+    | string
+    | {
+        id?: string
+        slug?: string | null
+        mode_usages?: Array<{ mode_id: string; mode_slug: string; node_key?: string }>
+      },
+  locale = activeLocale(),
+): ModeAgentUsageItem[] {
+  const rawId = typeof agentOrIdOrSlug === 'string' ? agentOrIdOrSlug.trim() : (agentOrIdOrSlug?.id ?? '').trim()
+  const rawSlug = typeof agentOrIdOrSlug === 'string'
+    ? stripAgentPrefixLocal(agentOrIdOrSlug.trim())
+    : stripAgentPrefixLocal((agentOrIdOrSlug?.slug ?? '').trim())
+
+  const matchedAgent = agents.value.find(
+    (a) =>
+      (rawId && a.id === rawId)
+      || (rawSlug && a.slug && stripAgentPrefixLocal(a.slug) === rawSlug)
+      || (rawSlug && a.id === rawSlug),
+  )
+
+  const targetId = matchedAgent?.id || rawId
+  const targetSlug = stripAgentPrefixLocal(matchedAgent?.slug || matchedAgent?.agent_type || rawSlug || '')
+  if (!targetId && !targetSlug) return []
+
+  const explicitUsages = (typeof agentOrIdOrSlug === 'object' && Array.isArray(agentOrIdOrSlug?.mode_usages))
+    ? agentOrIdOrSlug.mode_usages
+    : Array.isArray((matchedAgent as unknown as { mode_usages?: Array<{ mode_id: string; mode_slug: string; node_key?: string }> })?.mode_usages)
+      ? (matchedAgent as unknown as { mode_usages: Array<{ mode_id: string; mode_slug: string; node_key?: string }> }).mode_usages
+      : []
+
+  const results: ModeAgentUsageItem[] = []
+  const seenModeIds = new Set<string>()
+
+  for (const row of sortedModes.value) {
+    const effective = row.id === selectedModeId.value && liveModeTopology.value
+      ? { ...row, ...liveModeTopology.value }
+      : row
+    const roleSet = new Set<'leader' | 'node' | 'spawn'>()
+
+    for (const node of effective.nodes ?? []) {
+      const nid = node.agent_definition_id ?? node.agent_id ?? ''
+      const matchesNode = (targetId && nid === targetId)
+        || (targetSlug && nid && stripAgentPrefixLocal(nid) === targetSlug)
+      if (matchesNode) {
+        roleSet.add(node.config?.conversation === true ? 'leader' : 'node')
+      }
+      const rel = node.relationship
+      if (rel && targetSlug) {
+        const types = Array.isArray(rel.agent_types) ? rel.agent_types : []
+        const targets = Array.isArray(rel.allowed_dispatch_targets) ? rel.allowed_dispatch_targets : []
+        if ([...types, ...targets].some((v) => typeof v === 'string' && stripAgentPrefixLocal(v.trim()) === targetSlug)) {
+          roleSet.add('spawn')
+        }
+      }
+    }
+
+    for (const binding of effective.bindings ?? []) {
+      if (!binding.node_key && typeof binding.agent_ref === 'string' && targetSlug) {
+        if (stripAgentPrefixLocal(binding.agent_ref.trim()) === targetSlug) {
+          roleSet.add('spawn')
+        }
+      }
+    }
+
+    if (explicitUsages.some((u) => u.mode_id === effective.id || (u.mode_slug && effective.slug && u.mode_slug === effective.slug))) {
+      if (roleSet.size === 0) roleSet.add('node')
+    }
+
+    if (roleSet.size > 0) {
+      seenModeIds.add(effective.id)
+      results.push({
+        id: effective.id,
+        slug: effective.slug ?? effective.id,
+        displayName: modeLocalizedName(effective, locale),
+        status: effective.status,
+        managed: isModePackManaged(effective),
+        roles: [...roleSet],
+      })
+    }
+  }
+
+  for (const usage of explicitUsages) {
+    if (usage.mode_id && !seenModeIds.has(usage.mode_id)) {
+      seenModeIds.add(usage.mode_id)
+      results.push({
+        id: usage.mode_id,
+        slug: usage.mode_slug || usage.mode_id,
+        displayName: usage.mode_slug || usage.mode_id,
+        managed: false,
+        roles: ['node'],
+      })
+    }
+  }
+
+  return results
+}
+
+async function selectModeAndOpen(modeId: string, preferredView?: ModeWorkspaceView): Promise<boolean> {
+  if (!modeId) return false
+  if (modeId !== selectedModeId.value && !(await discardOrConfirm())) {
+    return false
+  }
+  pendingModeId.value = modeId
+  if (modes.value.length === 0 && canAccessBackend.value) {
+    await loadModes()
+  }
+  if (preferredView) {
+    workspaceViewPinnedByUser = true
+    activeWorkspaceView.value = preferredView
+  } else {
+    workspaceViewPinnedByUser = false
+  }
+  return selectMode(modeId, { force: true, preserveWorkspaceView: Boolean(preferredView) })
+}
+
 /** Test-only reset to keep Vitest suites isolated. */
 export function __resetAgentModesStoreForTests(): void {
   modes.value = []
@@ -1212,8 +1642,12 @@ export function __resetAgentModesStoreForTests(): void {
   teamBaselineSignal.value = ''
   modeVersions.value = []
   modeVersionsLoading.value = false
+  activeWorkspaceView.value = 'team'
+  workspaceViewPinnedByUser = false
   modesReadPromise = null
   agentsReadPromise = null
+  hydratedAgentIds.clear()
+  agentDetailInFlight.clear()
   detailGeneration += 1
 }
 
@@ -1246,6 +1680,9 @@ export function useAgentModesStore() {
     // Draft & dirty tracking
     draft,
     teamDraft,
+    liveModeTopology,
+    teamShape,
+    activeWorkspaceView,
     modeDirty,
     teamDirty,
     isDirty,
@@ -1265,6 +1702,9 @@ export function useAgentModesStore() {
     agentLocalizedDescription,
     isModePackManaged,
     isModeReadOnly,
+    emptySpaceOptions,
+    normalizeDefaultOptions,
+    modesUsingAgent,
 
     // Actions
     mergeExternalModes,
@@ -1272,9 +1712,12 @@ export function useAgentModesStore() {
     loadAll,
     loadModes,
     loadAgents,
+    ensureAgentDetails,
     loadPoliciesAndRoutes,
     loadWorkspaceDefaults,
     selectMode,
+    selectModeAndOpen,
+    switchWorkspaceView,
     commitDraft,
     undo,
     redo,

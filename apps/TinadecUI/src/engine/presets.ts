@@ -137,39 +137,6 @@ function buildSettingsPreset(ctx: PresetContext): UieLayoutSnapshot {
   return snapshot
 }
 
-function buildMarketPreset(ctx: PresetContext): UieLayoutSnapshot {
-  return buildMarketSurface(ctx, 'market')
-}
-
-/**
- * The Skill and MCP pages are the same three-card surface with the kind locked. They are separate
- * pages, not a filter remembered across visits: a user who opens Skills expects Skills next time,
- * and a stored layout on one page must not rearrange the other.
- */
-function buildMarketKindPreset(ctx: PresetContext, pageId: 'marketSkills' | 'marketMcp'): UieLayoutSnapshot {
-  return buildMarketSurface(ctx, pageId)
-}
-
-function buildMarketSurface(ctx: PresetContext, pageId: 'market' | 'marketSkills' | 'marketMcp'): UieLayoutSnapshot {
-  const n = ctx.nextInstanceId
-  const snapshot = createEmptySnapshot(pageId)
-  snapshot.gap = 8
-  snapshot.edgeInset = 8
-
-  const filter = card(n(), 'marketFilter')
-  const catalog = card(n(), 'marketCatalog')
-  const detail = card(n(), 'marketDetail')
-
-  snapshot.cards = { [filter.id]: filter, [catalog.id]: catalog, [detail.id]: detail }
-  snapshot.columns = {
-    left: column('left', 260, 8, 'float', [filter.id], filter.id),
-    center: column('center', 0, 8, 'float', [catalog.id], catalog.id),
-    right: column('right', 380, 8, 'float', [detail.id], detail.id),
-  }
-  snapshot.focusedCardId = catalog.id
-  return snapshot
-}
-
 function buildCodePreset(ctx: PresetContext): UieLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('code')
@@ -238,69 +205,26 @@ function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
   snapshot.edgeInset = 8
 
   const nav = card(n(), 'nav')
-  const buddy = card(n(), 'companionBuddy')
-  const list = card(n(), 'companionList')
-  const supervision = card(n(), 'companionSupervision')
-  const profile = card(n(), 'companionProfile')
-  const feed = card(n(), 'companionFeed')
-  const groups = card(n(), 'companionGroups')
-  const connections = card(n(), 'companionConnections')
-
-  snapshot.cards = {
-    [nav.id]: nav,
-    [buddy.id]: buddy,
-    [list.id]: list,
-    [supervision.id]: supervision,
-    [profile.id]: profile,
-    [feed.id]: feed,
-    [groups.id]: groups,
-    [connections.id]: connections,
-  }
-  // The left rail is the shared nav card and nothing else: one island, so it gets no tab strip.
-  //
-  // The centre is the buddy timeline — the page is a chat app first, and the one conversation a
-  // user has with their buddy is what they come here for. Everything waiting on the user is pinned
-  // above it inside that card, so an empty queue costs no space.
-  //
-  // The right panel leads with the roster, then the supervision board: who is on the team, then
-  // what the ones with a window out are doing. Groups, the activity feed and the connections
-  // overview stay reachable as tabs.
+  snapshot.cards = { [nav.id]: nav }
   snapshot.columns = {
     left: column('left', 260, 8, 'float', [nav.id], nav.id),
-    center: column('center', 0, 8, 'immersive', [buddy.id], buddy.id),
-    right: column('right', 380, HOME_GEOMETRY.rightTopInset, 'float',
-      [list.id, supervision.id, profile.id, groups.id, feed.id, connections.id], list.id),
+    center: column('center', 0, 8, 'immersive', [], null),
+    right: column('right', 380, HOME_GEOMETRY.rightTopInset, 'float', [], null),
   }
-  snapshot.focusedCardId = buddy.id
+  snapshot.focusedCardId = nav.id
   return snapshot
 }
 
 export const PRESET_BUILDERS: Record<UiePageId, (ctx: PresetContext) => UieLayoutSnapshot> = {
   home: buildHomePreset,
   settings: buildSettingsPreset,
-  market: buildMarketPreset,
-  marketSkills: (ctx) => buildMarketKindPreset(ctx, 'marketSkills'),
-  marketMcp: (ctx) => buildMarketKindPreset(ctx, 'marketMcp'),
   code: buildCodePreset,
   debug: buildDebugPreset,
   companionCenter: buildCompanionCenterPreset,
 }
 
-/**
- * Bumped when a page's authored layout changes enough that a stored snapshot should be replaced.
- * Pages with no entry never migrate, which is the safe default: a preset edit is otherwise only
- * felt by fresh installs.
- */
 export const PRESET_REVISIONS: Partial<Record<UiePageId, number>> = {
-  // The companion centre went from four unrelated panels to a selection-driven centre; a stored
-  // snapshot would keep the old reading of it with no way back.
-  // 3 adds the shared nav card to the left rail, so the centre stops drawing its own sidebar.
-  // 4 moves the roster into the right feature panel: the left rail must stay a single card, or the
-  //   column grows a tab strip above the brand.
-  // 5 makes the centre a chat app: the buddy timeline takes the centre column, the supervision
-  //   board joins the roster, and the activity feed moves from the centre to a right-hand tab.
-  //   A stored snapshot would keep the feed where the conversation now belongs.
-  companionCenter: 5,
+  companionCenter: 6,
 }
 
 export function buildPreset(pageId: UiePageId, ctx: PresetContext): UieLayoutSnapshot {

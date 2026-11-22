@@ -71,7 +71,7 @@ async function mountSettings() {
 
 async function openModels() {
   const wrapper = await mountSettings()
-  await wrapper.findAll('.model-center-tabs button').find(button => button.text().includes(en.settings.centerModels))!.trigger('click')
+  await wrapper.get('#model-center-tab-models').trigger('click')
   await flushPromises()
   return wrapper
 }
@@ -295,7 +295,7 @@ describe('settings model configuration through the shipping page', () => {
     expect((wrapper.get('.model-provider-form input').element as HTMLInputElement).value).toBe('Renamed provider')
 
     mocks.confirm.mockResolvedValueOnce(false)
-    await wrapper.findAll('.model-center-tabs button').find(button => button.text().includes(en.settings.centerRoutes))!.trigger('click')
+    await wrapper.get('#model-center-tab-routes').trigger('click')
     await flushPromises()
     // Still on the supplier page: the tab switch was refused, so the draft survived.
     expect(wrapper.find('.model-provider-form').exists()).toBe(true)
@@ -426,6 +426,114 @@ describe('settings model configuration through the shipping page', () => {
     await nextStep.findAll('button').find(button => button.text().includes(en.settings.addModel))!.trigger('click')
     await flushPromises()
     expect(wrapper.find('.model-manual-row').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('edits and saves a model specialty profile with non-destructive default suggestions', async () => {
+    mocks.providers.mockResolvedValue([
+      {
+        ...provider,
+        model: 'claude-sonnet-4-6',
+        models: ['claude-sonnet-4-6'],
+        model_parameters: {},
+        model_profiles: {},
+      },
+    ])
+    const wrapper = await openModels()
+    await wrapper.findAll('.model-group-model button').find(button => button.text().includes(en.settings.modelParameters))!.trigger('click')
+    await flushPromises()
+
+    const editor = wrapper.get('[data-testid="model-profile-editor"]')
+    expect(editor.text()).toContain(en.settings.modelProfileTitle)
+    // Non-destructive family suggestion pre-selects coding/review/tool_calling for claude-sonnet
+    expect(wrapper.get('[data-specialty="coding"]').classes()).toContain('active')
+
+    await wrapper.get('[data-specialty="research"]').trigger('click')
+    await wrapper.get('[data-tier="deep"]').trigger('click')
+    await editor.get('textarea').setValue('Best for multi-file refactoring and review')
+    await wrapper.get('[data-testid="save-model-profile-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.save).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({
+        model_profiles: {
+          'claude-sonnet-4-6': expect.objectContaining({
+            specialties: expect.arrayContaining(['coding', 'research']),
+            tier: 'deep',
+            notes: 'Best for multi-file refactoring and review',
+          }),
+        },
+      }),
+      { expected_revision: 7 },
+    )
+    wrapper.unmount()
+  })
+
+  it('consolidates Model Center into 3 tabs with local runtimes grouped under Connections & Providers', async () => {
+    const wrapper = await mountSettings()
+    const tabs = wrapper.findAll('.model-center-tabs [role="tab"]')
+    expect(tabs).toHaveLength(3)
+    expect(tabs.map((tab) => tab.attributes('id'))).toEqual([
+      'model-center-tab-connections',
+      'model-center-tab-models',
+      'model-center-tab-routes',
+    ])
+
+    // Local runtimes (CLI / TUI / ACP) live inside Connections & Providers
+    const localBlock = wrapper.get('[data-testid="model-center-local-runtimes"]')
+    expect(localBlock.findAll('[role="tab"]').map((tab) => tab.attributes('data-runtime-channel'))).toEqual(['cli', 'tui', 'acp'])
+
+    await localBlock.get('[data-runtime-channel="tui"]').trigger('click')
+    expect(localBlock.text()).toContain(en.settings.tuiBackendUnavailable)
+    await localBlock.get('[data-runtime-channel="acp"]').trigger('click')
+    expect(localBlock.text()).toContain(en.settings.acpPermissionWarning)
+    wrapper.unmount()
+  })
+
+  it('filters Model Capability Library by specialty/tier/cost, shows referencing-agent counts, and opens docked inspector', async () => {
+    mocks.providers.mockResolvedValue([
+      {
+        ...provider,
+        model: 'claude-sonnet-4-6',
+        models: ['claude-sonnet-4-6', 'gpt-4o-mini'],
+        model_parameters: {},
+        model_profiles: {
+          'claude-sonnet-4-6': { specialties: ['coding', 'architecture'], tier: 'deep', cost_tier: 'high', context_window: 200000 },
+          'gpt-4o-mini': { specialties: ['fast_qa'], tier: 'fast', cost_tier: 'low', context_window: 128000 },
+        },
+      },
+    ])
+    mocks.references.mockResolvedValue([
+      { reference_kind: 'agent_default', reference_id: 'agent-1', provider_instance_id: 'p1', model: 'claude-sonnet-4-6' },
+      { reference_kind: 'mode_override', reference_id: 'mode-1', provider_instance_id: 'p1', model: 'claude-sonnet-4-6' },
+    ])
+
+    const wrapper = await openModels()
+    expect(wrapper.findAll('[data-model-card]')).toHaveLength(2)
+    expect(wrapper.get('[data-model-card="claude-sonnet-4-6"] [data-testid="model-agent-ref-count"]').text()).toContain('2')
+
+    // Filter by specialty = architecture + cost_tier = high -> only claude-sonnet-4-6 remains
+    await wrapper.get('[data-filter-specialty="architecture"]').trigger('click')
+    await wrapper.get('[data-filter-cost="high"]').trigger('click')
+    expect(wrapper.findAll('[data-model-card]')).toHaveLength(1)
+    expect(wrapper.get('[data-model-card]').attributes('data-model-card')).toBe('claude-sonnet-4-6')
+
+    // Clicking the card opens the right docked inspector
+    await wrapper.get('[data-model-card="claude-sonnet-4-6"]').trigger('click')
+    await flushPromises()
+    const inspector = wrapper.get('[data-testid="model-capability-inspector"]')
+    expect(inspector.text()).toContain('claude-sonnet-4-6')
+    expect(inspector.find('[data-testid="model-profile-editor"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders the Budget & Cost Policy slot on Routing & Defaults tab', async () => {
+    const wrapper = await mountSettings()
+    await wrapper.get('#model-center-tab-routes').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="model-center-routing-tab"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="model-budget-policy-slot"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

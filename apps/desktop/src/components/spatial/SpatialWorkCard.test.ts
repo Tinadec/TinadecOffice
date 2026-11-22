@@ -249,4 +249,20 @@ describe('SpatialWorkCard summaries and detail', () => {
     expect(wrapper.get('[role="status"]').text()).toBe('space.fileReadFailed')
     expect(wrapper.get('[role="status"]').attributes('title')).toBe('File unavailable')
   })
+
+  it('renders crisp runtime engine badge when spatial task carries runtime metadata while keeping preview button-free', () => {
+    const taskWithEngine = {
+      ...task,
+      runtime_badge: 'ACP · Antigravity',
+    } as SpatialObject
+    const wrapper = render({ object: taskWithEngine })
+    expect(wrapper.get('.space-owner').text()).toBe('engineering#2')
+    const badge = wrapper.get('[data-testid="space-runtime-badge"]')
+    expect(badge.text()).toBe('ACP · Antigravity')
+    expect(badge.attributes('data-engine-kind')).toBe('acp')
+
+    const preview = render({ object: taskWithEngine, preview: true })
+    expect(preview.get('[data-testid="space-runtime-badge"]').text()).toBe('ACP · Antigravity')
+    expect(preview.findAll('button')).toHaveLength(0)
+  })
 })

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { watch, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, watch, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useBackground } from '@/composables/useBackground'
 import {
@@ -11,12 +11,18 @@ import {
 import { useNotifications, startStatusSync } from '@/composables/useNotifications'
 import { setHostAccessStatus, useHostAccess } from '@/lib/hostAccess'
 import { ensureGraphSeedPack, setGraphSeedPackTranslator } from '@/agentPacks/graphSeedPackBootstrap'
+import { evaluateOobeAdmission } from '@/composables/useOobe'
 import AppSplash from '@/components/AppSplash.vue'
 import HostAvailabilityBanner from '@/components/HostAvailabilityBanner.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
 import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
 import SelectionContextMenu from '@/components/SelectionContextMenu.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
+import OobeWizardModal from '@/components/oobe/OobeWizardModal.vue'
+import GovernanceDrawer from '@/components/governance/GovernanceDrawer.vue'
+import RecoveryCheckDialog from '@/components/governance/RecoveryCheckDialog.vue'
+import WebLoginPage from '@/components/web/WebLoginPage.vue'
+import ServerDirectoryPickerModal from '@/components/web/ServerDirectoryPickerModal.vue'
 import { installPaletteKeybinding } from '@/composables/useCommandPalette'
 import { homeController } from '@/controllers/HomeController'
 
@@ -69,14 +75,52 @@ const route = useRoute()
 const router = useRouter()
 // Startup happens once. Retrying a lost backend must preserve the live page.
 const entryReady = ref(isChildWindow)
+const recoveryDialogOpen = ref(false)
+const recoveryActionId = ref<string | null>(null)
+
+function onOpenRecoveryCheck(event: Event) {
+  const detail = (event as CustomEvent<{ actionId?: string }>).detail
+  if (!detail?.actionId) return
+  recoveryActionId.value = detail.actionId
+  recoveryDialogOpen.value = true
+}
 
 // The gate starts empty, and an empty gate reads as "no host has refused anything yet" — every
 // business read would then go out before the host was verified. Publishing "checking" here (App's
 // setup runs before the routed page's) keeps those reads closed until useConnection reports the real
 // state, and it is what makes HostAvailabilityBanner visible during startup. A preview renderer
 // already published "preview" before mount, so it keeps its own reason.
-const { status: hostAccessStatus } = useHostAccess()
+const hostAccess = useHostAccess()
+const { status: hostAccessStatus } = hostAccess
+const isAuthRequired = computed(
+  () => hostAccess.isAuthRequired?.value ?? hostAccessStatus.value?.state === 'auth_required',
+)
+const isElectron = computed(() => {
+  if (hostAccess.isElectron) return hostAccess.isElectron.value
+  if (typeof window === 'undefined') return false
+  const bridge = window.tinadec as (typeof window.tinadec & { isWebShim?: boolean }) | undefined
+  return Boolean(
+    bridge &&
+      !bridge.isWebShim &&
+      hostAccessStatus.value?.state !== 'preview' &&
+      typeof bridge.minimizeWindow === 'function',
+  )
+})
 if (!isStandaloneWindow && hostAccessStatus.value === null) setHostAccessStatus({ state: 'checking', managed: true })
+
+watch(
+  isElectron,
+  (electron) => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.tinadecPlatform = electron ? 'electron' : 'web'
+    }
+  },
+  { immediate: true },
+)
+
+watch(isAuthRequired, (required) => {
+  if (required) dismissByKey(CONNECTION_BANNER_KEY)
+})
 
 function onPageReady() {
   entryReady.value = true
@@ -89,6 +133,17 @@ function onRouteMounted() {
     && route.name !== 'marketMcp' && route.name !== 'space') onPageReady()
 }
 
+// OOBE admission runs ONLY after AppSplash has left (entryReady) AND backend is connected.
+watch(
+  [entryReady, connectionState],
+  ([ready, state]) => {
+    if (isStandaloneWindow || isChildWindow) return
+    if (ready && state === 'connected') {
+      void evaluateOobeAdmission()
+    }
+  },
+)
+
 watch(connectionState, (state) => {
   if (isStandaloneWindow || isChildWindow) return
   if (state === 'connected') {
@@ -99,7 +154,16 @@ watch(connectionState, (state) => {
     }
     return
   }
-  if (state === 'host_unavailable' || state === 'host_rejected' || state === 'host_restart_required') { dismissByKey(CONNECTION_BANNER_KEY); return }
+  if (
+    state === 'host_unavailable' ||
+    state === 'host_rejected' ||
+    state === 'host_restart_required' ||
+    (state as string) === 'auth_required' ||
+    isAuthRequired.value
+  ) {
+    dismissByKey(CONNECTION_BANNER_KEY)
+    return
+  }
   if (state === 'preview') { dismissByKey(CONNECTION_BANNER_KEY); return }
   if (state === 'timeout') {
     status.error({
@@ -133,6 +197,7 @@ onMounted(() => {
       void homeController.setSelectedSession(sessionId)
       void router.push('/')
     })
+    window.addEventListener('tinadec:open-recovery-check', onOpenRecoveryCheck)
   }
 })
 
@@ -140,6 +205,7 @@ onBeforeUnmount(() => {
   unsubscribeStatusSync?.()
   uninstallPaletteKeys?.()
   unsubscribeFocusSession?.()
+  window.removeEventListener('tinadec:open-recovery-check', onOpenRecoveryCheck)
 })
 </script>
 
@@ -217,10 +283,26 @@ onBeforeUnmount(() => {
       <component :is="Component" @ready="onPageReady" @vue:mounted="onRouteMounted" />
     </RouterView>
   </div>
-  <HostAvailabilityBanner v-if="!isChildWindow" />
+  <HostAvailabilityBanner v-if="!isChildWindow && !isAuthRequired" />
   <NotificationIslandHost v-if="entryReady" />
   <NotificationDetailDialog v-if="entryReady" />
   <SelectionContextMenu />
   <CommandPalette />
+  <GovernanceDrawer v-if="entryReady && !isChildWindow" />
+  <RecoveryCheckDialog
+    v-if="recoveryDialogOpen && !isChildWindow"
+    v-model:open="recoveryDialogOpen"
+    :action-id="recoveryActionId"
+  />
+  <OobeWizardModal v-if="entryReady && !isChildWindow && !isAuthRequired" />
+  <ServerDirectoryPickerModal v-if="!isChildWindow" />
+  <WebLoginPage v-if="isAuthRequired && !isChildWindow" @authenticated="retryConnection" />
   </template>
 </template>
+
+<style>
+:root[data-tinadec-platform='web'] .window-btn,
+:root[data-tinadec-platform='web'] .detached-titlebar-btn {
+  display: none !important;
+}
+</style>

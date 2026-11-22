@@ -54,10 +54,16 @@ export interface paths {
   "/api/v1/agent-modes/{id}": {
     /** Get agent mode */
     get: operations["getApiV1Agent-modesById"];
+    /** Delete custom agent mode */
+    delete: operations["deleteApiV1Agent-modesById"];
   };
   "/api/v1/agent-modes/{id}/archive": {
     /** Archive agent mode */
     post: operations["postApiV1Agent-modesByIdArchive"];
+  };
+  "/api/v1/agent-modes/{id}/clone": {
+    /** Clone agent mode */
+    post: operations["postApiV1Agent-modesByIdClone"];
   };
   "/api/v1/agent-modes/{id}/draft": {
     /** Update agent mode draft (nodes/edges/layout in body) */
@@ -205,6 +211,22 @@ export interface paths {
     /** Import a model directory (Core copies it into its own storage root) */
     post: operations["postApiV1Companion-avatarsImport"];
   };
+  "/api/v1/companion-avatars/sdk": {
+    /** Read BYO Cubism Core SDK status */
+    get: operations["getApiV1Companion-avatarsSdk"];
+    /** Import BYO Cubism Core SDK */
+    post: operations["postApiV1Companion-avatarsSdk"];
+    /** Delete BYO Cubism Core SDK */
+    delete: operations["deleteApiV1Companion-avatarsSdk"];
+  };
+  "/api/v1/companion-avatars/sdk/import": {
+    /** Import BYO Cubism Core SDK (alias) */
+    post: operations["postApiV1Companion-avatarsSdkImport"];
+  };
+  "/api/v1/companion-avatars/sdk/{asset}": {
+    /** Serve BYO Cubism Core SDK script or wasm binary */
+    get: operations["getApiV1Companion-avatarsSdkByAsset"];
+  };
   "/api/v1/companion-avatars/{avatarId}": {
     /** Delete an imported model and its copied directory */
     delete: operations["deleteApiV1Companion-avatarsByAvatarId"];
@@ -327,6 +349,34 @@ export interface paths {
     /** Edit a private memory (If-Match revision) */
     patch: operations["patchApiV1CompanionsByCompanionIdMemoriesByMemoryId"];
   };
+  "/api/v1/companions/{companionId}/plans": {
+    /** List companion plans */
+    get: operations["getApiV1CompanionsByCompanionIdPlans"];
+    /** Create companion plan */
+    post: operations["postApiV1CompanionsByCompanionIdPlans"];
+  };
+  "/api/v1/companions/{companionId}/plans/{planId}": {
+    /** Delete companion plan */
+    delete: operations["deleteApiV1CompanionsByCompanionIdPlansByPlanId"];
+    /** Update companion plan */
+    patch: operations["patchApiV1CompanionsByCompanionIdPlansByPlanId"];
+  };
+  "/api/v1/companions/{companionId}/schedules": {
+    /** List companion schedules */
+    get: operations["getApiV1CompanionsByCompanionIdSchedules"];
+    /** Create companion schedule */
+    post: operations["postApiV1CompanionsByCompanionIdSchedules"];
+  };
+  "/api/v1/companions/{companionId}/schedules/{scheduleId}": {
+    /** Delete companion schedule */
+    delete: operations["deleteApiV1CompanionsByCompanionIdSchedulesByScheduleId"];
+    /** Update companion schedule */
+    patch: operations["patchApiV1CompanionsByCompanionIdSchedulesByScheduleId"];
+  };
+  "/api/v1/companions/{companionId}/schedules/{scheduleId}/trigger": {
+    /** Trigger a companion schedule immediately */
+    post: operations["postApiV1CompanionsByCompanionIdSchedulesByScheduleIdTrigger"];
+  };
   "/api/v1/companions/{companionId}/skills": {
     /** List companion skill bindings */
     get: operations["getApiV1CompanionsByCompanionIdSkills"];
@@ -338,6 +388,18 @@ export interface paths {
     delete: operations["deleteApiV1CompanionsByCompanionIdSkillsByBindingId"];
     /** Update a skill binding (If-Match revision) */
     patch: operations["patchApiV1CompanionsByCompanionIdSkillsByBindingId"];
+  };
+  "/api/v1/companions/{companionId}/todos": {
+    /** List companion todos */
+    get: operations["getApiV1CompanionsByCompanionIdTodos"];
+    /** Create companion todo */
+    post: operations["postApiV1CompanionsByCompanionIdTodos"];
+  };
+  "/api/v1/companions/{companionId}/todos/{todoId}": {
+    /** Delete companion todo */
+    delete: operations["deleteApiV1CompanionsByCompanionIdTodosByTodoId"];
+    /** Update companion todo */
+    patch: operations["patchApiV1CompanionsByCompanionIdTodosByTodoId"];
   };
   "/api/v1/configuration/documents": {
     /** GET /api/v1/configuration/documents */
@@ -352,6 +414,12 @@ export interface paths {
   "/api/v1/configuration/documents/{documentId}/validate": {
     /** POST /api/v1/configuration/documents/:documentId/validate */
     post: operations["postApiV1ConfigurationDocumentsByDocumentIdValidate"];
+  };
+  "/api/v1/context-memory/policy": {
+    /** GET /api/v1/context-memory/policy */
+    get: operations["getApiV1Context-memoryPolicy"];
+    /** PUT /api/v1/context-memory/policy */
+    put: operations["putApiV1Context-memoryPolicy"];
   };
   "/api/v1/debug/breakpoints": {
     /** List breakpoints */
@@ -457,6 +525,10 @@ export interface paths {
     /** Update extension */
     post: operations["postApiV1ExtensionsByExtensionIdUpdate"];
   };
+  "/api/v1/fs/browse": {
+    /** Browse host filesystem directories (authenticated Web/Electron picker) */
+    get: operations["getApiV1FsBrowse"];
+  };
   "/api/v1/governance/approval-delegations": {
     /** Create approval delegation */
     post: operations["postApiV1GovernanceApproval-delegations"];
@@ -513,53 +585,67 @@ export interface paths {
     /** Prove the managed Gateway endpoint identity without sending a credential */
     get: operations["getApiV1Host-challenge"];
   };
-  "/api/v1/market/catalog": {
-    /** Get market catalog */
-    get: operations["getApiV1MarketCatalog"];
-  };
-  "/api/v1/market/catalog/{catalogId}": {
-    /** Get catalog item */
-    get: operations["getApiV1MarketCatalogByCatalogId"];
-  };
-  "/api/v1/market/catalog/{catalogId}/install-preview": {
-    /** Preview a market install */
-    post: operations["postApiV1MarketCatalogByCatalogIdInstall-preview"];
-  };
-  "/api/v1/market/install-proposals/{proposalId}/apply": {
-    /** Queue an approved market write */
-    post: operations["postApiV1MarketInstall-proposalsByProposalIdApply"];
-  };
-  "/api/v1/market/installations": {
-    /** List installed market entries */
-    get: operations["getApiV1MarketInstallations"];
-  };
-  "/api/v1/market/installations/{installationId}/uninstall-preview": {
-    /** Preview removing an installed market entry */
-    post: operations["postApiV1MarketInstallationsByInstallationIdUninstall-preview"];
-  };
-  "/api/v1/market/sources": {
-    /** List market sources */
-    get: operations["getApiV1MarketSources"];
-    /** Create market source */
-    post: operations["postApiV1MarketSources"];
-  };
-  "/api/v1/market/sources/{sourceId}": {
-    /** Delete a market source */
-    delete: operations["deleteApiV1MarketSourcesBySourceId"];
-    /** Enable or disable a market source */
-    patch: operations["patchApiV1MarketSourcesBySourceId"];
-  };
-  "/api/v1/market/sources/{sourceId}/refresh": {
-    /** Refresh market source */
-    post: operations["postApiV1MarketSourcesBySourceIdRefresh"];
+  "/api/v1/lifecycle-hooks": {
+    /** Get workspace or global lifecycle hooks */
+    get: operations["getApiV1Lifecycle-hooks"];
+    /** Save workspace or global lifecycle hooks */
+    put: operations["putApiV1Lifecycle-hooks"];
   };
   "/api/v1/mcp/servers": {
     /** List MCP servers (Core-owned) */
     get: operations["getApiV1McpServers"];
+    /** Create MCP server configuration */
+    post: operations["postApiV1McpServers"];
+  };
+  "/api/v1/mcp/servers/configured": {
+    /** List configured MCP server resources (secrets masked) */
+    get: operations["getApiV1McpServersConfigured"];
+  };
+  "/api/v1/mcp/servers/import-json": {
+    /** Import MCP servers from .mcp.json / Codex / Claude JSON */
+    post: operations["postApiV1McpServersImport-json"];
+  };
+  "/api/v1/mcp/servers/{serverId}": {
+    /** Update MCP server configuration */
+    put: operations["putApiV1McpServersByServerId"];
+    /** Delete MCP server configuration */
+    delete: operations["deleteApiV1McpServersByServerId"];
+  };
+  "/api/v1/mcp/servers/{serverId}/enabled": {
+    /** Toggle MCP server enabled state */
+    patch: operations["patchApiV1McpServersByServerIdEnabled"];
+  };
+  "/api/v1/mcp/servers/{serverId}/test": {
+    /** Test MCP server connectivity and list discovered tools */
+    post: operations["postApiV1McpServersByServerIdTest"];
   };
   "/api/v1/mcp/servers/{serverId}/tools": {
     /** List MCP server tools */
     get: operations["getApiV1McpServersByServerIdTools"];
+  };
+  "/api/v1/mcp/tinadec": {
+    /** Loopback MCP JSON-RPC 2.0 server for Tinadec self-configuration */
+    post: operations["postApiV1McpTinadec"];
+  };
+  "/api/v1/memories/documents/{scope}": {
+    /** GET /api/v1/memories/documents/:scope */
+    get: operations["getApiV1MemoriesDocumentsByScope"];
+    /** PUT /api/v1/memories/documents/:scope */
+    put: operations["putApiV1MemoriesDocumentsByScope"];
+  };
+  "/api/v1/memories/items": {
+    /** GET /api/v1/memories/items */
+    get: operations["getApiV1MemoriesItems"];
+    /** POST /api/v1/memories/items */
+    post: operations["postApiV1MemoriesItems"];
+  };
+  "/api/v1/memories/items/{id}": {
+    /** DELETE /api/v1/memories/items/:id */
+    delete: operations["deleteApiV1MemoriesItemsById"];
+  };
+  "/api/v1/memories/items/{id}/revert": {
+    /** POST /api/v1/memories/items/:id/revert */
+    post: operations["postApiV1MemoriesItemsByIdRevert"];
   };
   "/api/v1/memory-candidates": {
     /** List memory candidates */
@@ -916,6 +1002,22 @@ export interface paths {
     get: operations["getApiV1SessionsBySessionIdOrganizationRoomsByRoomIdMessages"];
     post: operations["postApiV1SessionsBySessionIdOrganizationRoomsByRoomIdMessages"];
   };
+  "/api/v1/sessions/{sessionId}/plan": {
+    /** Get session structured plan */
+    get: operations["getApiV1SessionsBySessionIdPlan"];
+    /** Replace session structured plan */
+    put: operations["putApiV1SessionsBySessionIdPlan"];
+    /** Patch session structured plan */
+    patch: operations["patchApiV1SessionsBySessionIdPlan"];
+  };
+  "/api/v1/sessions/{sessionId}/plan/approve": {
+    /** Approve session structured plan */
+    post: operations["postApiV1SessionsBySessionIdPlanApprove"];
+  };
+  "/api/v1/sessions/{sessionId}/recall": {
+    /** POST /api/v1/sessions/:sessionId/recall */
+    post: operations["postApiV1SessionsBySessionIdRecall"];
+  };
   "/api/v1/sessions/{sessionId}/restore": {
     /** Restore session */
     post: operations["postApiV1SessionsBySessionIdRestore"];
@@ -1118,17 +1220,37 @@ export interface paths {
     /** List tools (Core registry) */
     get: operations["getApiV1Tools"];
   };
+  "/api/v1/tools/external-cli/discover": {
+    /** GET external-cli/discover */
+    get: operations["getApiV1ToolsExternal-cliDiscover"];
+  };
   "/api/v1/tools/mcp/servers": {
     /** GET mcp/servers */
     get: operations["getApiV1ToolsMcpServers"];
     /** POST mcp/servers */
     post: operations["postApiV1ToolsMcpServers"];
   };
+  "/api/v1/tools/mcp/servers/import-json": {
+    /** POST mcp/servers/import-json */
+    post: operations["postApiV1ToolsMcpServersImport-json"];
+  };
   "/api/v1/tools/mcp/servers/{resourceId}": {
     /** PUT mcp/servers/:resourceId */
     put: operations["putApiV1ToolsMcpServersByResourceId"];
     /** DELETE mcp/servers/:resourceId */
     delete: operations["deleteApiV1ToolsMcpServersByResourceId"];
+  };
+  "/api/v1/tools/mcp/servers/{resourceId}/enabled": {
+    /** PATCH mcp/servers/:resourceId/enabled */
+    patch: operations["patchApiV1ToolsMcpServersByResourceIdEnabled"];
+  };
+  "/api/v1/tools/mcp/servers/{resourceId}/install": {
+    /** POST mcp/servers/:resourceId/install */
+    post: operations["postApiV1ToolsMcpServersByResourceIdInstall"];
+  };
+  "/api/v1/tools/mcp/servers/{resourceId}/install-preview": {
+    /** POST mcp/servers/:resourceId/install-preview */
+    post: operations["postApiV1ToolsMcpServersByResourceIdInstall-preview"];
   };
   "/api/v1/tools/mcp/servers/{resourceId}/test": {
     /** POST mcp/servers/:resourceId/test */
@@ -1172,9 +1294,21 @@ export interface paths {
     /** GET skills */
     get: operations["getApiV1ToolsSkills"];
   };
+  "/api/v1/tools/skills/diagnostics": {
+    /** GET skills/diagnostics */
+    get: operations["getApiV1ToolsSkillsDiagnostics"];
+  };
   "/api/v1/tools/skills/import": {
     /** POST skills/import */
     post: operations["postApiV1ToolsSkillsImport"];
+  };
+  "/api/v1/tools/skills/install": {
+    /** POST skills/install */
+    post: operations["postApiV1ToolsSkillsInstall"];
+  };
+  "/api/v1/tools/skills/reload": {
+    /** POST skills/reload */
+    post: operations["postApiV1ToolsSkillsReload"];
   };
   "/api/v1/tools/skills/{resourceId}": {
     /** GET skills/:resourceId */
@@ -1183,6 +1317,14 @@ export interface paths {
     put: operations["putApiV1ToolsSkillsByResourceId"];
     /** DELETE skills/:resourceId */
     delete: operations["deleteApiV1ToolsSkillsByResourceId"];
+  };
+  "/api/v1/tools/skills/{resourceId}/copy-to-project": {
+    /** POST skills/:resourceId/copy-to-project */
+    post: operations["postApiV1ToolsSkillsByResourceIdCopy-to-project"];
+  };
+  "/api/v1/tools/skills/{resourceId}/enabled": {
+    /** PATCH skills/:resourceId/enabled */
+    patch: operations["patchApiV1ToolsSkillsByResourceIdEnabled"];
   };
   "/api/v1/tools/skills/{resourceId}/files": {
     /** GET skills/:resourceId/files */
@@ -1209,6 +1351,36 @@ export interface paths {
   "/api/v1/user/tool-actions/{actionId}/snapshot-override": {
     /** Override failed user action snapshot */
     post: operations["postApiV1UserTool-actionsByActionIdSnapshot-override"];
+  };
+  "/api/v1/web-auth/login": {
+    /** Authenticate web browser session with owner credentials */
+    post: operations["postApiV1Web-authLogin"];
+  };
+  "/api/v1/web-auth/logout": {
+    /** Clear the current web browser session */
+    post: operations["postApiV1Web-authLogout"];
+  };
+  "/api/v1/web-auth/oidc/callback": {
+    /** Complete OIDC login callback and establish BFF session cookie */
+    get: operations["getApiV1Web-authOidcCallback"];
+  };
+  "/api/v1/web-auth/oidc/login": {
+    /** Initiate OIDC login redirect for web browser sessions */
+    get: operations["getApiV1Web-authOidcLogin"];
+  };
+  "/api/v1/web-auth/settings": {
+    /** Read web access & authentication settings (owner only) */
+    get: operations["getApiV1Web-authSettings"];
+    /** Update web access & authentication settings (owner only) */
+    put: operations["putApiV1Web-authSettings"];
+  };
+  "/api/v1/web-auth/status": {
+    /** Inspect web admission status and available authentication providers */
+    get: operations["getApiV1Web-authStatus"];
+  };
+  "/api/v1/web-terminal/shells": {
+    /** List host shell profiles available to the web terminal */
+    get: operations["getApiV1Web-terminalShells"];
   };
   "/api/v1/workspace-defaults": {
     /** Get workspace defaults */
@@ -1579,6 +1751,7 @@ export interface components {
       capabilities: components["schemas"]["CompanionCapabilities"];
       /** Format: date-time */
       created_at: string;
+      entry_model_json?: string | null;
       /** Format: uuid */
       id: string;
       /** @enum {string} */
@@ -1693,7 +1866,7 @@ export interface components {
       persona_document?: string | null;
       revision: number;
       /** @enum {string} */
-      role: "autonomous" | "buddy";
+      role: "autonomous" | "session_partner";
       skill_count: number;
       /** @enum {string} */
       status: "active" | "archived" | "paused";
@@ -1703,6 +1876,19 @@ export interface components {
       [key: string]: unknown;
     };
     CompanionList: components["schemas"]["CompanionSummary"][];
+    CompanionLive2dSdkStatus: {
+      file_name?: string | null;
+      has_wasm: boolean;
+      installed: boolean;
+      ready: boolean;
+      script_url?: string | null;
+      sha256?: string | null;
+      size_bytes?: number;
+      /** Format: date-time */
+      updated_at?: string | null;
+      wasm_url?: string | null;
+      [key: string]: unknown;
+    };
     CompanionMandate: {
       action: string;
       /** Format: uuid */
@@ -1778,6 +1964,26 @@ export interface components {
       [key: string]: unknown;
     };
     CompanionMessageList: components["schemas"]["CompanionMessage"][];
+    CompanionPlan: {
+      /** Format: uuid */
+      companion_id: string;
+      /** Format: date-time */
+      created_at?: string;
+      /** Format: uuid */
+      id: string;
+      revision: number;
+      /** @enum {string} */
+      status: "active" | "completed" | "paused" | "archived";
+      steps: {
+          [key: string]: unknown;
+        }[];
+      summary?: string | null;
+      title: string;
+      /** Format: date-time */
+      updated_at?: string;
+      [key: string]: unknown;
+    };
+    CompanionPlanList: components["schemas"]["CompanionPlan"][];
     CompanionRecruitment: {
       /** Format: date-time */
       created_at: string;
@@ -1801,6 +2007,7 @@ export interface components {
     };
     CompanionRecruitmentList: components["schemas"]["CompanionRecruitment"][];
     CompanionRun: {
+      channel_kind?: string;
       /** Format: uuid */
       companion_id: string;
       config_revision: number;
@@ -1813,6 +2020,7 @@ export interface components {
       error_message?: string | null;
       /** Format: date-time */
       finished_at?: string | null;
+      hop_depth?: number;
       /** Format: uuid */
       id: string;
       loaded_memory_ids: string[];
@@ -1826,6 +2034,40 @@ export interface components {
       status: "queued" | "running" | "completed" | "failed";
       /** Format: uuid */
       trigger_message_id?: string | null;
+      [key: string]: unknown;
+    };
+    CompanionSchedule: {
+      /** Format: uuid */
+      companion_id: string;
+      /** Format: date-time */
+      created_at?: string;
+      cron_expression?: string | null;
+      enabled: boolean;
+      /** Format: uuid */
+      id: string;
+      /** Format: date-time */
+      last_run_at?: string | null;
+      /** Format: date-time */
+      next_run_at?: string | null;
+      one_shot: boolean;
+      prompt: string;
+      revision: number;
+      /** Format: date-time */
+      run_at?: string | null;
+      status: string;
+      /** Format: uuid */
+      target_conversation_id?: string | null;
+      title: string;
+      /** Format: date-time */
+      updated_at?: string;
+      [key: string]: unknown;
+    };
+    CompanionScheduleList: components["schemas"]["CompanionSchedule"][];
+    CompanionScheduleTriggerResult: {
+      /** Format: uuid */
+      conversation_id: string;
+      run_ids: string[];
+      schedule: components["schemas"]["CompanionSchedule"];
       [key: string]: unknown;
     };
     CompanionSendMessageResult: {
@@ -1843,9 +2085,8 @@ export interface components {
     CompanionSettings: {
       autonomy_paused: boolean;
       /** Format: uuid */
-      buddy_companion_id: string | null;
-      /** Format: uuid */
       main_companion_id: string | null;
+      max_bot_hop_depth: number;
       recruit_limit: number;
       revision: number;
       [key: string]: unknown;
@@ -1891,7 +2132,7 @@ export interface components {
       name: string;
       revision: number;
       /** @enum {string} */
-      role: "autonomous" | "buddy";
+      role: "autonomous" | "session_partner";
       skill_count: number;
       /** @enum {string} */
       status: "active" | "archived" | "paused";
@@ -1900,6 +2141,29 @@ export interface components {
       updated_at: string;
       [key: string]: unknown;
     };
+    CompanionTodo: {
+      /** Format: uuid */
+      companion_id: string;
+      /** Format: date-time */
+      created_at?: string;
+      /** Format: date-time */
+      due_at?: string | null;
+      /** Format: uuid */
+      id: string;
+      note?: string | null;
+      /** Format: uuid */
+      plan_id?: string | null;
+      /** @enum {string} */
+      priority: "low" | "medium" | "high";
+      revision: number;
+      /** @enum {string} */
+      status: "pending" | "in_progress" | "done" | "cancelled";
+      title: string;
+      /** Format: date-time */
+      updated_at?: string;
+      [key: string]: unknown;
+    };
+    CompanionTodoList: components["schemas"]["CompanionTodo"][];
     ConfigurationDocument: {
       content_hash: string;
       diagnostics: {
@@ -1919,6 +2183,32 @@ export interface components {
         }[];
       valid: boolean;
     };
+    ContextMemoryPolicy: {
+      allow_cross_session_recall: boolean;
+      allowed_kinds: string[];
+      allowed_scopes: string[];
+      always_on_primitives: string[];
+      candidate_only: boolean;
+      compaction_trigger_ratio: number;
+      companion_can_write_project_memory: boolean;
+      content_hash?: string | null;
+      core_markdown_max_tokens: number;
+      default_token_budget: number;
+      /** @enum {string} */
+      evolution_mode: "auto_evolve" | "candidate_review" | "frozen";
+      micro_compact_stale_tool_outputs: boolean;
+      offload_large_tool_payload_bytes: number;
+      project_markdown_projection: boolean;
+      project_memory_path: string;
+      /** @enum {string} */
+      recall_fidelity: "summary_only" | "balanced" | "verbatim_first";
+      recent_message_limit: number;
+      retrieval_limit: number;
+      source_path?: string | null;
+      /** @enum {string} */
+      strategy: "direct" | "managed" | "deep_curator";
+      version: number;
+    };
     ContextVersion: {
       base_revision: number | null;
       created_at: string | null;
@@ -1931,6 +2221,26 @@ export interface components {
       [key: string]: unknown;
     };
     ContextVersionList: components["schemas"]["ContextVersion"][];
+    ConversationRecallRequest: {
+      cross_session?: boolean | null;
+      fidelity?: string | null;
+      limit?: number | null;
+      query: string;
+      [key: string]: unknown;
+    };
+    ConversationRecallResult: {
+      cross_session_allowed: boolean;
+      cross_session_used: boolean;
+      fidelity: string;
+      note?: string | null;
+      query: string;
+      searched_sessions: number;
+      /** Format: uuid */
+      session_id: string;
+      summary: string;
+      total_matches: number;
+      verbatim_snippets: components["schemas"]["RecallVerbatimSnippet"][];
+    };
     CreateSessionRequest: {
       conversation_node_key?: string | null;
       meeting_model_override?: components["schemas"]["MeetingModelOverride"] | null;
@@ -2014,6 +2324,47 @@ export interface components {
       mode: string;
       note: string | null;
     };
+    ExternalCliDiscoveredItem: {
+      already_imported: boolean;
+      args: string[];
+      command?: string | null;
+      content_preview?: string | null;
+      default_enabled: boolean;
+      description?: string | null;
+      display_name: string;
+      ecosystem: string;
+      env_keys: string[];
+      has_secrets: boolean;
+      header_keys: string[];
+      item_id: string;
+      /** @enum {string} */
+      kind: "mcp-server" | "skill" | "command";
+      name: string;
+      source_path: string;
+      transport?: string | null;
+      url?: string | null;
+    };
+    ExternalCliDiscovery: {
+      ecosystems: components["schemas"]["ExternalCliEcosystemStatus"][];
+      items: components["schemas"]["ExternalCliDiscoveredItem"][];
+      user_home: string;
+      workspace_root?: string | null;
+    };
+    ExternalCliEcosystemStatus: {
+      detected: boolean;
+      id: string;
+      label: string;
+      paths_scanned: string[];
+    };
+    ExternalCliImportedCommand: {
+      ecosystem: string;
+      name: string;
+      path: string;
+    };
+    ExternalCliSkippedItem: {
+      item_id: string;
+      reason: string;
+    };
     /** @description Gateway health fingerprint with forwarded Core health fields. */
     Health: {
       /** @enum {string} */
@@ -2041,133 +2392,87 @@ export interface components {
       waiting_task: string;
       [key: string]: unknown;
     };
-    MarketCatalogEntry: {
-      catalog_id: string;
-      description?: string;
-      display_name: string;
-      expires_at: string;
-      extension_id: string;
-      homepage?: string;
-      install_blocker?: string;
-      install_blocker_code?: string;
-      install_blocker_data?: {
-        [key: string]: string;
-      };
-      installable: boolean;
-      kind: string;
-      manifest_hash: string;
-      refreshed_at: string;
-      registry_type?: string;
-      source_id: string;
-      source_name: string;
-      transports: string[];
-      version: string;
-      [key: string]: unknown;
-    };
-    MarketCatalogPage: {
-      as_of?: string;
-      has_more: boolean;
-      items: unknown[];
-      total_available: number;
-      [key: string]: unknown;
-    };
-    MarketInstallProposal: {
-      action: string;
-      args: string[];
-      availability?: string | null;
-      catalog_id?: string;
-      command?: string;
-      content: string;
-      digest: string;
-      environment: {
-          description?: string;
-          name: string;
-          required: boolean;
-          secret: boolean;
-        }[];
-      expected_file_hash?: string;
-      expires_at: string;
-      extension_id: string;
-      id: string;
-      installation_id?: string;
-      kind: string;
-      package_files?: ({
-          content_hash: string;
-          path: string;
-          size_bytes: string | number;
-        })[];
-      package_hash?: string | null;
-      project_id?: string | null;
-      replaces_command?: string;
-      resource_id?: string | null;
-      scope?: "shared" | "project";
-      server_id: string;
-      source_name: string;
-      target_path: string;
-      version: string;
-      warnings: string[];
-      [key: string]: unknown;
-    };
-    MarketInstallation: {
-      action_status?: string;
-      availability?: string | null;
-      catalog_id: string;
-      config_path: string;
-      created_at: string;
-      extension_id: string;
-      id: string;
-      install_action_id: string;
-      kind: string;
-      package_files?: ({
-          content_hash: string;
-          path: string;
-          size_bytes: string | number;
-        })[];
-      package_hash?: string | null;
-      project_id?: string | null;
-      resource_id?: string | null;
-      scope?: "shared" | "project";
-      server_id: string;
-      source_name: string;
-      state: string;
-      uninstall_action_id?: string;
-      updated_at: string;
-      version: string;
-      [key: string]: unknown;
-    };
-    MarketInstallationList: {
-      installations: components["schemas"]["MarketInstallation"][];
-      [key: string]: unknown;
-    };
-    MarketRefresh: {
-      fetched_rows: number;
-      outcome: string;
-      pages_fetched: number;
-      reason?: string;
-      refreshed_at?: string;
-      refused_rows: number;
-      removed_rows: number;
-      retained_rows: number;
-      source_id: string;
-      truncated_pages: boolean;
-      [key: string]: unknown;
-    };
-    MarketSource: {
+    LifecycleHookEntry: {
+      blocking: boolean;
+      command: string;
       enabled: boolean;
-      entry_count: number;
+      event: string;
       id: string;
-      kind: string;
-      last_error?: string;
-      last_refreshed_at?: string;
-      location: string;
-      name: string;
-      revision: number;
+      matcher?: string;
+      name?: string;
+      timeout_ms: string | number;
       [key: string]: unknown;
     };
-    MarketSourceList: {
-      sources: unknown[];
-      supported_kinds: string[];
+    LifecycleHooksDocument: {
+      hooks: ({
+          blocking: boolean;
+          command: string;
+          enabled: boolean;
+          event: string;
+          id: string;
+          matcher?: string;
+          name?: string;
+          timeout_ms: string | number;
+          [key: string]: unknown;
+        })[];
+      revision: string | number;
+      scope: string;
+      workspace_root?: string;
       [key: string]: unknown;
+    };
+    LifecycleHooksWriteRequest: {
+      expected_revision?: string | number;
+      hooks: ({
+          blocking: boolean;
+          command: string;
+          enabled: boolean;
+          event: string;
+          id: string;
+          matcher?: string;
+          name?: string;
+          timeout_ms: string | number;
+          [key: string]: unknown;
+        })[];
+      scope?: string;
+      workspace_root?: string;
+      [key: string]: unknown;
+    };
+    ManagedMcpProgramPreview: {
+      action: string;
+      expected_revision: number;
+      manager: string;
+      package: string;
+      package_root: string;
+      plan_hash: string;
+      preview_id: string;
+      program_status: string;
+      project_id?: string | null;
+      resource_id: string;
+      server_arguments?: string[];
+      version: string;
+      [key: string]: unknown;
+    };
+    McpImportJsonRequest: {
+      config?: {
+        [key: string]: unknown;
+      } | null;
+      default_enabled?: boolean | null;
+      import_source?: string | null;
+      json?: string | null;
+      overwrite?: boolean;
+      /** Format: uuid */
+      project_id?: string | null;
+      [key: string]: unknown;
+    };
+    McpImportJsonResult: {
+      imported: components["schemas"]["ToolMcpResource"][];
+      imported_count: number;
+      skipped: components["schemas"]["McpImportJsonSkipped"][];
+      skipped_count: number;
+    };
+    McpImportJsonSkipped: {
+      id: string;
+      reason: string;
     };
     McpInventory: {
       config_path?: string;
@@ -2177,6 +2482,23 @@ export interface components {
       source: string;
       workspace_root?: string;
       [key: string]: unknown;
+    };
+    McpServerEnabledRequest: {
+      enabled: boolean;
+      /** Format: uuid */
+      project_id?: string | null;
+    };
+    McpServerTestResult: {
+      enabled: boolean;
+      id: string;
+      name: string;
+      reason?: string | null;
+      resource_id: string;
+      status: string;
+      tool_count: number;
+      tools: {
+          [key: string]: unknown;
+        }[];
     };
     McpServerTools: {
       config_path?: string;
@@ -2191,6 +2513,89 @@ export interface components {
       model: string | null;
       provider_instance_id: string;
       [key: string]: unknown;
+    };
+    MemoryDocument: {
+      active_hot_count: number;
+      active_item_count: number;
+      cold_archive_count: number;
+      /** Format: uuid */
+      companion_id?: string | null;
+      content_hash: string;
+      core_markdown_max_tokens: number;
+      estimated_tokens: number;
+      file_path: string;
+      items: components["schemas"]["MemoryItemLedger"][];
+      markdown: string;
+      /** Format: uuid */
+      project_id?: string | null;
+      scope: string;
+      sections: components["schemas"]["MemoryDocumentSection"][];
+      /** Format: date-time */
+      updated_at: string;
+    };
+    MemoryDocumentSection: {
+      estimated_tokens: number;
+      heading: string;
+      item_count: number;
+      key: string;
+    };
+    MemoryItemLedger: {
+      action: string;
+      applicability?: string | null;
+      /** Format: uuid */
+      companion_id?: string | null;
+      content: string;
+      /** Format: date-time */
+      created_at: string;
+      current_version: number;
+      estimated_tokens: number;
+      expiry_condition?: string | null;
+      /** Format: uuid */
+      id: string;
+      in_hot_markdown: boolean;
+      kind: string;
+      previous_content?: string | null;
+      /** Format: uuid */
+      project_id?: string | null;
+      revocation_reason?: string | null;
+      /** Format: date-time */
+      revoked_at?: string | null;
+      scope: string;
+      section?: string | null;
+      source_message_seq?: number | null;
+      /** Format: uuid */
+      source_run_id?: string | null;
+      /** Format: uuid */
+      source_session_id?: string | null;
+      status: string;
+      /** Format: uuid */
+      superseded_by_id?: string | null;
+      /** Format: date-time */
+      updated_at: string;
+      versions: components["schemas"]["MemoryVersionLedger"][];
+    };
+    MemoryItemListResult: {
+      active_count: number;
+      cold_count: number;
+      hot_count: number;
+      items: components["schemas"]["MemoryItemLedger"][];
+      total_count: number;
+    };
+    MemoryVersionLedger: {
+      action: string;
+      content: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      previous_content?: string | null;
+      reason?: string | null;
+      source_message_seq?: number | null;
+      /** Format: uuid */
+      source_run_id?: string | null;
+      /** Format: uuid */
+      source_session_id?: string | null;
+      version: number;
     };
     Message: {
       attachments: components["schemas"]["MessageAttachmentSummary"][];
@@ -2238,8 +2643,95 @@ export interface components {
       [key: string]: unknown;
     };
     MessageList: components["schemas"]["Message"][];
+    ModelInvocationItem: {
+      /** Format: uuid */
+      agent_definition_id: string;
+      /** Format: uuid */
+      agent_instance_id?: string;
+      /** Format: uuid */
+      agent_version_id: string;
+      attempt: string | number;
+      /** Format: uuid */
+      call_id: string;
+      /** Format: date-time */
+      completed_at?: string;
+      error_category?: string;
+      fallback_position: string | number;
+      /** Format: uuid */
+      id: string;
+      input_tokens?: number;
+      /** Format: uuid */
+      mode_version_id: string;
+      model?: string;
+      output_tokens?: number;
+      protocol: string;
+      /** Format: uuid */
+      provider_instance_id: string;
+      /** Format: uuid */
+      provider_version_id: string;
+      /** Format: uuid */
+      route_id?: string;
+      /** Format: uuid */
+      route_version_id?: string;
+      /** Format: uuid */
+      run_id: string;
+      safe_error_message?: string;
+      /** Format: uuid */
+      session_id: string;
+      /** Format: date-time */
+      started_at: string;
+      status: string;
+      strategy_source: string;
+      total_tokens?: number;
+      /** Format: uuid */
+      turn_id?: string;
+      [key: string]: unknown;
+    };
     ModelInvocationPage: {
-      items: unknown[];
+      items: ({
+          /** Format: uuid */
+          agent_definition_id: string;
+          /** Format: uuid */
+          agent_instance_id?: string;
+          /** Format: uuid */
+          agent_version_id: string;
+          attempt: string | number;
+          /** Format: uuid */
+          call_id: string;
+          /** Format: date-time */
+          completed_at?: string;
+          error_category?: string;
+          fallback_position: string | number;
+          /** Format: uuid */
+          id: string;
+          input_tokens?: number;
+          /** Format: uuid */
+          mode_version_id: string;
+          model?: string;
+          output_tokens?: number;
+          protocol: string;
+          /** Format: uuid */
+          provider_instance_id: string;
+          /** Format: uuid */
+          provider_version_id: string;
+          /** Format: uuid */
+          route_id?: string;
+          /** Format: uuid */
+          route_version_id?: string;
+          /** Format: uuid */
+          run_id: string;
+          safe_error_message?: string;
+          /** Format: uuid */
+          session_id: string;
+          /** Format: date-time */
+          started_at: string;
+          status: string;
+          strategy_source: string;
+          total_tokens?: number;
+          /** Format: uuid */
+          turn_id?: string;
+          [key: string]: unknown;
+        })[];
       next_cursor?: string;
       [key: string]: unknown;
     };
@@ -2463,6 +2955,22 @@ export interface components {
       [key: string]: unknown;
     };
     ProjectList: components["schemas"]["Project"][];
+    RecallVerbatimSnippet: {
+      /** Format: date-time */
+      created_at: string;
+      excerpt: string;
+      message_seq: number;
+      role: string;
+      score: number;
+      /** Format: uuid */
+      session_id: string;
+      session_title?: string | null;
+    };
+    RevertMemoryItemRequest: {
+      reason?: string | null;
+      target_version?: number | null;
+      [key: string]: unknown;
+    };
     Run: {
       completed_at: string | null;
       created_at: string | null;
@@ -2520,6 +3028,59 @@ export interface components {
       target_run_id?: string | null;
     };
     SessionList: components["schemas"]["Session"][];
+    SessionPlan: {
+      approved_at?: string | null;
+      goal?: string | null;
+      id: string;
+      last_run_id?: string | null;
+      phases: components["schemas"]["SessionPlanPhase"][];
+      progress: components["schemas"]["SessionPlanProgress"];
+      revision: string | number;
+      session_id: string;
+      status: "draft" | "approved" | "active" | "completed" | "blocked";
+      title: string;
+      updated_at: string;
+      [key: string]: unknown;
+    };
+    SessionPlanArtifact: {
+      kind: "file" | "worktree" | "summary" | "attachment";
+      label: string;
+      path?: string | null;
+      ref_id?: string | null;
+      [key: string]: unknown;
+    };
+    SessionPlanPhase: {
+      description?: string | null;
+      id: string;
+      order: string | number;
+      status: "pending" | "in_progress" | "completed" | "blocked" | "failed" | "skipped";
+      steps: components["schemas"]["SessionPlanStep"][];
+      title: string;
+      [key: string]: unknown;
+    };
+    SessionPlanProgress: {
+      blocked_steps: string | number;
+      completed_steps: string | number;
+      failed_steps: string | number;
+      in_progress_steps: string | number;
+      pending_steps: string | number;
+      total_steps: string | number;
+      [key: string]: unknown;
+    };
+    SessionPlanStep: {
+      artifacts: components["schemas"]["SessionPlanArtifact"][];
+      assigned_agent_slug?: string | null;
+      bound_task_key?: string | null;
+      depends_on: string[];
+      description?: string | null;
+      id: string;
+      status: "pending" | "in_progress" | "completed" | "blocked" | "failed" | "skipped";
+      summary?: string | null;
+      title: string;
+      updated_at?: string | null;
+      verification_criteria: string[];
+      [key: string]: unknown;
+    };
     SessionTopologyDto: {
       /** Format: date-time */
       generated_at: string;
@@ -3118,14 +3679,20 @@ export interface components {
       env: ({
         [key: string]: string | null;
       }) | null;
+      headers?: ({
+        [key: string]: string | null;
+      }) | null;
       id: string;
       import_source?: string | null;
       name: string;
       project_id?: string | null;
       resource_id: string;
       revision: number;
+      /** @enum {string} */
+      transport: "stdio" | "http" | "sse";
       /** Format: date-time */
       updated_at?: string;
+      url?: string | null;
     };
     ToolMcpResourceList: components["schemas"]["ToolMcpResource"][];
     ToolPreviewEntry: {
@@ -3220,12 +3787,54 @@ export interface components {
       skills: components["schemas"]["ToolSkillResource"][];
       source: string;
     };
+    ToolSkillDiagnostics: {
+      diagnostics: string[];
+      skills: {
+          [key: string]: unknown;
+        }[];
+      source: string;
+    };
+    ToolSkillEnabledRequest: {
+      enabled: boolean;
+      /** Format: uuid */
+      project_id?: string | null;
+    };
     ToolSkillFile: {
       base64?: string | null;
       content?: string | null;
       content_hash: string;
       path: string;
       size_bytes: number;
+    };
+    ToolSkillInstallRequest: {
+      content?: string | null;
+      ecosystems?: string[] | null;
+      enable_stdio_mcp?: boolean | null;
+      enabled?: boolean | null;
+      files?: {
+        [key: string]: string;
+      } | null;
+      git_url?: string | null;
+      governed?: boolean;
+      item_ids?: string[] | null;
+      local_path?: string | null;
+      name?: string | null;
+      overwrite?: boolean;
+      /** Format: uuid */
+      project_id?: string | null;
+      /** @enum {string} */
+      scope?: "shared" | "project";
+      /** @enum {string} */
+      source_type: "inline" | "local_dir" | "git_url" | "external_cli_import";
+      subpath?: string | null;
+      [key: string]: unknown;
+    };
+    ToolSkillInstallResult: {
+      installed_commands: components["schemas"]["ExternalCliImportedCommand"][];
+      installed_mcp_servers: components["schemas"]["ToolMcpResource"][];
+      installed_skills: components["schemas"]["ToolSkillResource"][];
+      skipped: components["schemas"]["ExternalCliSkippedItem"][];
+      source_type: string;
     };
     ToolSkillPackageFile: {
       content_hash: string;
@@ -3261,6 +3870,41 @@ export interface components {
       version?: string | null;
       [key: string]: unknown;
     };
+    UpdateContextMemoryPolicyRequest: {
+      allow_cross_session_recall?: boolean | null;
+      candidate_only?: boolean | null;
+      compaction_trigger_ratio?: number | null;
+      companion_can_write_project_memory?: boolean | null;
+      core_markdown_max_tokens?: number | null;
+      default_token_budget?: number | null;
+      evolution_mode?: string | null;
+      expected_content_hash?: string | null;
+      expected_hash?: string | null;
+      offload_large_tool_payload_bytes?: number | null;
+      project_markdown_projection?: boolean | null;
+      project_memory_path?: string | null;
+      recall_fidelity?: string | null;
+      recent_message_limit?: number | null;
+      retrieval_limit?: number | null;
+      strategy?: string | null;
+      [key: string]: unknown;
+    };
+    UpdateMemoryDocumentRequest: {
+      /** Format: uuid */
+      companion_id?: string | null;
+      expected_content_hash?: string | null;
+      expected_hash?: string | null;
+      is_companion_writer?: boolean;
+      markdown: string;
+      /** Format: uuid */
+      project_id?: string | null;
+      reason?: string | null;
+      source_message_seq?: number | null;
+      /** Format: uuid */
+      source_session_id?: string | null;
+      workspace_root?: string | null;
+      [key: string]: unknown;
+    };
     UpdateSessionRequest: {
       clear_meeting_model_override?: boolean;
       clear_mode_version?: boolean;
@@ -3270,6 +3914,32 @@ export interface components {
       permission_mode?: string | null;
       space_options?: components["schemas"]["SpaceOptions"] | null;
       title?: string | null;
+    };
+    UpsertMemoryItemRequest: {
+      applicability?: string | null;
+      /** Format: uuid */
+      companion_id?: string | null;
+      content: string;
+      expiry_condition?: string | null;
+      is_companion_writer?: boolean;
+      kind?: string | null;
+      /** Format: uuid */
+      project_id?: string | null;
+      reason?: string | null;
+      respect_evolution_mode?: boolean;
+      scope: string;
+      section?: string | null;
+      source_message_seq?: number | null;
+      /** Format: uuid */
+      source_run_id?: string | null;
+      /** Format: uuid */
+      source_session_id?: string | null;
+      /** Format: uuid */
+      supersede_item_id?: string | null;
+      /** Format: uuid */
+      supersedes_id?: string | null;
+      workspace_root?: string | null;
+      [key: string]: unknown;
     };
     WorkspaceDefinition: {
       color: string;
@@ -3449,8 +4119,34 @@ export interface operations {
       };
     };
   };
+  /** Delete custom agent mode */
+  "deleteApiV1Agent-modesById": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
   /** Archive agent mode */
   "postApiV1Agent-modesByIdArchive": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Clone agent mode */
+  "postApiV1Agent-modesByIdClone": {
     parameters: {
       path: {
         id: string;
@@ -4199,6 +4895,62 @@ export interface operations {
       };
     };
   };
+  /** Read BYO Cubism Core SDK status */
+  "getApiV1Companion-avatarsSdk": {
+    responses: {
+      /** @description Read BYO Cubism Core SDK status */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionLive2dSdkStatus"];
+        };
+      };
+    };
+  };
+  /** Import BYO Cubism Core SDK */
+  "postApiV1Companion-avatarsSdk": {
+    responses: {
+      /** @description Import BYO Cubism Core SDK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionLive2dSdkStatus"];
+        };
+      };
+    };
+  };
+  /** Delete BYO Cubism Core SDK */
+  "deleteApiV1Companion-avatarsSdk": {
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Import BYO Cubism Core SDK (alias) */
+  "postApiV1Companion-avatarsSdkImport": {
+    responses: {
+      /** @description Import BYO Cubism Core SDK (alias) */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionLive2dSdkStatus"];
+        };
+      };
+    };
+  };
+  /** Serve BYO Cubism Core SDK script or wasm binary */
+  "getApiV1Companion-avatarsSdkByAsset": {
+    parameters: {
+      path: {
+        asset: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
   /** Delete an imported model and its copied directory */
   "deleteApiV1Companion-avatarsByAvatarId": {
     parameters: {
@@ -4714,6 +5466,151 @@ export interface operations {
       };
     };
   };
+  /** List companion plans */
+  getApiV1CompanionsByCompanionIdPlans: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List companion plans */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionPlanList"];
+        };
+      };
+    };
+  };
+  /** Create companion plan */
+  postApiV1CompanionsByCompanionIdPlans: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Create companion plan */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionPlan"];
+        };
+      };
+    };
+  };
+  /** Delete companion plan */
+  deleteApiV1CompanionsByCompanionIdPlansByPlanId: {
+    parameters: {
+      path: {
+        companionId: string;
+        planId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Update companion plan */
+  patchApiV1CompanionsByCompanionIdPlansByPlanId: {
+    parameters: {
+      path: {
+        companionId: string;
+        planId: string;
+      };
+    };
+    responses: {
+      /** @description Update companion plan */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionPlan"];
+        };
+      };
+    };
+  };
+  /** List companion schedules */
+  getApiV1CompanionsByCompanionIdSchedules: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List companion schedules */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionScheduleList"];
+        };
+      };
+    };
+  };
+  /** Create companion schedule */
+  postApiV1CompanionsByCompanionIdSchedules: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Create companion schedule */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSchedule"];
+        };
+      };
+    };
+  };
+  /** Delete companion schedule */
+  deleteApiV1CompanionsByCompanionIdSchedulesByScheduleId: {
+    parameters: {
+      path: {
+        companionId: string;
+        scheduleId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Update companion schedule */
+  patchApiV1CompanionsByCompanionIdSchedulesByScheduleId: {
+    parameters: {
+      path: {
+        companionId: string;
+        scheduleId: string;
+      };
+    };
+    responses: {
+      /** @description Update companion schedule */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionSchedule"];
+        };
+      };
+    };
+  };
+  /** Trigger a companion schedule immediately */
+  postApiV1CompanionsByCompanionIdSchedulesByScheduleIdTrigger: {
+    parameters: {
+      path: {
+        companionId: string;
+        scheduleId: string;
+      };
+    };
+    responses: {
+      /** @description Trigger a companion schedule immediately */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionScheduleTriggerResult"];
+        };
+      };
+    };
+  };
   /** List companion skill bindings */
   getApiV1CompanionsByCompanionIdSkills: {
     parameters: {
@@ -4774,6 +5671,70 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["CompanionSkill"];
+        };
+      };
+    };
+  };
+  /** List companion todos */
+  getApiV1CompanionsByCompanionIdTodos: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description List companion todos */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionTodoList"];
+        };
+      };
+    };
+  };
+  /** Create companion todo */
+  postApiV1CompanionsByCompanionIdTodos: {
+    parameters: {
+      path: {
+        companionId: string;
+      };
+    };
+    responses: {
+      /** @description Create companion todo */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionTodo"];
+        };
+      };
+    };
+  };
+  /** Delete companion todo */
+  deleteApiV1CompanionsByCompanionIdTodosByTodoId: {
+    parameters: {
+      path: {
+        companionId: string;
+        todoId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Update companion todo */
+  patchApiV1CompanionsByCompanionIdTodosByTodoId: {
+    parameters: {
+      path: {
+        companionId: string;
+        todoId: string;
+      };
+    };
+    responses: {
+      /** @description Update companion todo */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CompanionTodo"];
         };
       };
     };
@@ -4864,6 +5825,33 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ConfigurationValidation"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/context-memory/policy */
+  "getApiV1Context-memoryPolicy": {
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextMemoryPolicy"];
+        };
+      };
+    };
+  };
+  /** PUT /api/v1/context-memory/policy */
+  "putApiV1Context-memoryPolicy": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateContextMemoryPolicyRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextMemoryPolicy"];
         };
       };
     };
@@ -5143,6 +6131,14 @@ export interface operations {
       };
     };
   };
+  /** Browse host filesystem directories (authenticated Web/Electron picker) */
+  getApiV1FsBrowse: {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
   /** Create approval delegation */
   "postApiV1GovernanceApproval-delegations": {
     responses: {
@@ -5320,172 +6316,29 @@ export interface operations {
       };
     };
   };
-  /** Get market catalog */
-  getApiV1MarketCatalog: {
+  /** Get workspace or global lifecycle hooks */
+  "getApiV1Lifecycle-hooks": {
     responses: {
-      /** @description A page of stored claims, with total_available and as_of so a short page cannot be read as a small market. */
+      /** @description Lifecycle hook definitions and optimistic revision. */
       200: {
         content: {
-          "application/json": components["schemas"]["MarketCatalogPage"];
+          "application/json": components["schemas"]["LifecycleHooksDocument"];
         };
       };
     };
   };
-  /** Get catalog item */
-  getApiV1MarketCatalogByCatalogId: {
-    parameters: {
-      path: {
-        catalogId: string;
-      };
-    };
-    responses: {
-      /** @description One entry as its source described it, including the metadata digest Core computed over that description. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketCatalogEntry"];
-        };
-      };
-    };
-  };
-  /** Preview a market install */
-  "postApiV1MarketCatalogByCatalogIdInstall-preview": {
-    parameters: {
-      path: {
-        catalogId: string;
-      };
-    };
+  /** Save workspace or global lifecycle hooks */
+  "putApiV1Lifecycle-hooks": {
     requestBody: {
       content: {
-        "application/json": {
-          /**
-           * Format: uuid
-           * @description Required for project Skills and MCP installation.
-           */
-          project_id?: string;
-          /**
-           * @description Skills default to shared. A shared skill does not require project_id.
-           * @default shared
-           * @enum {string}
-           */
-          scope?: "shared" | "project";
-        };
+        "application/json": components["schemas"]["LifecycleHooksWriteRequest"];
       };
     };
     responses: {
-      /** @description Frozen scope, stable resource ID, complete package files and digest or pinned MCP command. Nothing was written by asking. */
+      /** @description Saved lifecycle hook definitions and updated revision. */
       200: {
         content: {
-          "application/json": components["schemas"]["MarketInstallProposal"];
-        };
-      };
-    };
-  };
-  /** Queue an approved market write */
-  "postApiV1MarketInstall-proposalsByProposalIdApply": {
-    parameters: {
-      path: {
-        proposalId: string;
-      };
-    };
-    responses: {
-      /** @description The installation and the user tool action awaiting a human. The write happens when that action is approved, never here. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketInstallation"];
-        };
-      };
-    };
-  };
-  /** List installed market entries */
-  getApiV1MarketInstallations: {
-    responses: {
-      /** @description What this workspace approved, with the live status of the action that writes it. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketInstallationList"];
-        };
-      };
-    };
-  };
-  /** Preview removing an installed market entry */
-  "postApiV1MarketInstallationsByInstallationIdUninstall-preview": {
-    parameters: {
-      path: {
-        installationId: string;
-      };
-    };
-    responses: {
-      /** @description The same config file with this one entry taken back out; downloaded package bytes are not touched. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketInstallProposal"];
-        };
-      };
-    };
-  };
-  /** List market sources */
-  getApiV1MarketSources: {
-    responses: {
-      /** @description Durable sources plus the kinds this build has an adapter for; an empty list here really does mean nothing is configured, because these are Core rows. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketSourceList"];
-        };
-      };
-    };
-  };
-  /** Create market source */
-  postApiV1MarketSources: {
-    responses: {
-      /** @description The stored source. Core builds the request from kind+location; a url, command, or path in this body is not read. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketSource"];
-        };
-      };
-    };
-  };
-  /** Delete a market source */
-  deleteApiV1MarketSourcesBySourceId: {
-    parameters: {
-      path: {
-        sourceId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-    };
-  };
-  /** Enable or disable a market source */
-  patchApiV1MarketSourcesBySourceId: {
-    parameters: {
-      path: {
-        sourceId: string;
-      };
-    };
-    responses: {
-      /** @description The only editable field is enabled; name, kind, and location are not, so a source cannot be re-pointed under existing rows. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketSource"];
-        };
-      };
-    };
-  };
-  /** Refresh market source */
-  postApiV1MarketSourcesBySourceIdRefresh: {
-    parameters: {
-      path: {
-        sourceId: string;
-      };
-    };
-    responses: {
-      /** @description `outcome` separates a completed read from a blocked or unreachable one; only the first changed the catalog. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["MarketRefresh"];
+          "application/json": components["schemas"]["LifecycleHooksDocument"];
         };
       };
     };
@@ -5497,6 +6350,111 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["McpInventory"];
+        };
+      };
+    };
+  };
+  /** Create MCP server configuration */
+  postApiV1McpServers: {
+    responses: {
+      /** @description Created MCP server configuration with masked secrets. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolMcpResource"];
+        };
+      };
+    };
+  };
+  /** List configured MCP server resources (secrets masked) */
+  getApiV1McpServersConfigured: {
+    responses: {
+      /** @description Configured MCP server registrations with masked secrets. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolMcpResourceList"];
+        };
+      };
+    };
+  };
+  /** Import MCP servers from .mcp.json / Codex / Claude JSON */
+  "postApiV1McpServersImport-json": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["McpImportJsonRequest"];
+      };
+    };
+    responses: {
+      /** @description Imported and skipped MCP server registrations. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["McpImportJsonResult"];
+        };
+      };
+    };
+  };
+  /** Update MCP server configuration */
+  putApiV1McpServersByServerId: {
+    parameters: {
+      path: {
+        serverId: string;
+      };
+    };
+    responses: {
+      /** @description Updated MCP server configuration with masked secrets. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolMcpResource"];
+        };
+      };
+    };
+  };
+  /** Delete MCP server configuration */
+  deleteApiV1McpServersByServerId: {
+    parameters: {
+      path: {
+        serverId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted; Core returned no content. */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** Toggle MCP server enabled state */
+  patchApiV1McpServersByServerIdEnabled: {
+    parameters: {
+      path: {
+        serverId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["McpServerEnabledRequest"];
+      };
+    };
+    responses: {
+      /** @description Updated MCP server configuration. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolMcpResource"];
+        };
+      };
+    };
+  };
+  /** Test MCP server connectivity and list discovered tools */
+  postApiV1McpServersByServerIdTest: {
+    parameters: {
+      path: {
+        serverId: string;
+      };
+    };
+    responses: {
+      /** @description Live handshake probe outcome and discovered tools. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["McpServerTestResult"];
         };
       };
     };
@@ -5513,6 +6471,123 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["McpServerTools"];
+        };
+      };
+    };
+  };
+  /** Loopback MCP JSON-RPC 2.0 server for Tinadec self-configuration */
+  postApiV1McpTinadec: {
+    responses: {
+      /** @description JSON-RPC 2.0 response from the loopback Tinadec self-configuration MCP server. */
+      200: {
+        content: {
+          "application/json": {
+            error?: Record<string, never>;
+            id?: unknown;
+            jsonrpc: string;
+            result?: unknown;
+          };
+        };
+      };
+    };
+  };
+  /** GET /api/v1/memories/documents/:scope */
+  getApiV1MemoriesDocumentsByScope: {
+    parameters: {
+      path: {
+        scope: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MemoryDocument"];
+        };
+      };
+    };
+  };
+  /** PUT /api/v1/memories/documents/:scope */
+  putApiV1MemoriesDocumentsByScope: {
+    parameters: {
+      path: {
+        scope: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateMemoryDocumentRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MemoryDocument"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/memories/items */
+  getApiV1MemoriesItems: {
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MemoryItemListResult"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/memories/items */
+  postApiV1MemoriesItems: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpsertMemoryItemRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      201: {
+        content: {
+          "application/json": components["schemas"]["MemoryItemLedger"];
+        };
+      };
+    };
+  };
+  /** DELETE /api/v1/memories/items/:id */
+  deleteApiV1MemoriesItemsById: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MemoryItemLedger"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/memories/items/:id/revert */
+  postApiV1MemoriesItemsByIdRevert: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["RevertMemoryItemRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MemoryItemLedger"];
         };
       };
     };
@@ -6854,6 +7929,91 @@ export interface operations {
       };
     };
   };
+  /** Get session structured plan */
+  getApiV1SessionsBySessionIdPlan: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Persistent session-scoped phased plan. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SessionPlan"];
+        };
+      };
+    };
+  };
+  /** Replace session structured plan */
+  putApiV1SessionsBySessionIdPlan: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Saved session plan with updated revision. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SessionPlan"];
+        };
+      };
+    };
+  };
+  /** Patch session structured plan */
+  patchApiV1SessionsBySessionIdPlan: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Updated session plan. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SessionPlan"];
+        };
+      };
+    };
+  };
+  /** Approve session structured plan */
+  postApiV1SessionsBySessionIdPlanApprove: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Approved session plan. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SessionPlan"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/sessions/:sessionId/recall */
+  postApiV1SessionsBySessionIdRecall: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ConversationRecallRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ConversationRecallResult"];
+        };
+      };
+    };
+  };
   /** Restore session */
   postApiV1SessionsBySessionIdRestore: {
     parameters: {
@@ -7928,8 +9088,25 @@ export interface operations {
       };
     };
   };
+  /** GET external-cli/discover */
+  "getApiV1ToolsExternal-cliDiscover": {
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ExternalCliDiscovery"];
+        };
+      };
+    };
+  };
   /** GET mcp/servers */
   getApiV1ToolsMcpServers: {
+    parameters: {
+      header: {
+        /** @description Quoted revision returned by Core */
+        "If-Match": string;
+      };
+    };
     responses: {
       /** @description Core-owned configuration and resource result */
       200: {
@@ -7952,6 +9129,22 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ToolMcpResource"];
+        };
+      };
+    };
+  };
+  /** POST mcp/servers/import-json */
+  "postApiV1ToolsMcpServersImport-json": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["McpImportJsonRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["McpImportJsonResult"];
         };
       };
     };
@@ -7994,6 +9187,57 @@ export interface operations {
       };
     };
   };
+  /** PATCH mcp/servers/:resourceId/enabled */
+  patchApiV1ToolsMcpServersByResourceIdEnabled: {
+    parameters: {
+      path: {
+        resourceId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["McpServerEnabledRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolMcpResource"];
+        };
+      };
+    };
+  };
+  /** POST mcp/servers/:resourceId/install */
+  postApiV1ToolsMcpServersByResourceIdInstall: {
+    parameters: {
+      path: {
+        resourceId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** POST mcp/servers/:resourceId/install-preview */
+  "postApiV1ToolsMcpServersByResourceIdInstall-preview": {
+    parameters: {
+      path: {
+        resourceId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ManagedMcpProgramPreview"];
+        };
+      };
+    };
+  };
   /** POST mcp/servers/:resourceId/test */
   postApiV1ToolsMcpServersByResourceIdTest: {
     parameters: {
@@ -8004,7 +9248,9 @@ export interface operations {
     responses: {
       /** @description Core-owned configuration and resource result */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["McpServerTestResult"];
+        };
       };
     };
   };
@@ -8162,6 +9408,17 @@ export interface operations {
       };
     };
   };
+  /** GET skills/diagnostics */
+  getApiV1ToolsSkillsDiagnostics: {
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolSkillDiagnostics"];
+        };
+      };
+    };
+  };
   /** POST skills/import */
   postApiV1ToolsSkillsImport: {
     parameters: {
@@ -8175,6 +9432,33 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ToolSkillResource"];
+        };
+      };
+    };
+  };
+  /** POST skills/install */
+  postApiV1ToolsSkillsInstall: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ToolSkillInstallRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolSkillInstallResult"];
+        };
+      };
+    };
+  };
+  /** POST skills/reload */
+  postApiV1ToolsSkillsReload: {
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolSkillCatalog"];
         };
       };
     };
@@ -8224,6 +9508,43 @@ export interface operations {
       };
       path: {
         resourceId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolSkillResource"];
+        };
+      };
+    };
+  };
+  /** POST skills/:resourceId/copy-to-project */
+  "postApiV1ToolsSkillsByResourceIdCopy-to-project": {
+    parameters: {
+      path: {
+        resourceId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned configuration and resource result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ToolSkillResource"];
+        };
+      };
+    };
+  };
+  /** PATCH skills/:resourceId/enabled */
+  patchApiV1ToolsSkillsByResourceIdEnabled: {
+    parameters: {
+      path: {
+        resourceId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ToolSkillEnabledRequest"];
       };
     };
     responses: {
@@ -8318,6 +9639,129 @@ export interface operations {
         actionId: string;
       };
     };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Authenticate web browser session with owner credentials */
+  "postApiV1Web-authLogin": {
+    requestBody: {
+      content: {
+        "application/json": {
+          password?: string;
+          provider?: string;
+        };
+        "multipart/form-data": {
+          password?: string;
+          provider?: string;
+        };
+        "text/plain": {
+          password?: string;
+          provider?: string;
+        };
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Clear the current web browser session */
+  "postApiV1Web-authLogout": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Complete OIDC login callback and establish BFF session cookie */
+  "getApiV1Web-authOidcCallback": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Initiate OIDC login redirect for web browser sessions */
+  "getApiV1Web-authOidcLogin": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Read web access & authentication settings (owner only) */
+  "getApiV1Web-authSettings": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Update web access & authentication settings (owner only) */
+  "putApiV1Web-authSettings": {
+    requestBody: {
+      content: {
+        "application/json": {
+          allow_loopback_auto_login?: boolean;
+          allowed_emails?: string[];
+          allowed_subjects?: string[];
+          clear_password?: boolean;
+          cloudflare_access_aud?: string;
+          cloudflare_access_enabled?: boolean;
+          cloudflare_access_team_domain?: string;
+          new_password?: string;
+          oidc_enabled?: boolean;
+          revoke_existing_sessions?: boolean;
+          session_ttl_seconds?: number;
+        };
+        "multipart/form-data": {
+          allow_loopback_auto_login?: boolean;
+          allowed_emails?: string[];
+          allowed_subjects?: string[];
+          clear_password?: boolean;
+          cloudflare_access_aud?: string;
+          cloudflare_access_enabled?: boolean;
+          cloudflare_access_team_domain?: string;
+          new_password?: string;
+          oidc_enabled?: boolean;
+          revoke_existing_sessions?: boolean;
+          session_ttl_seconds?: number;
+        };
+        "text/plain": {
+          allow_loopback_auto_login?: boolean;
+          allowed_emails?: string[];
+          allowed_subjects?: string[];
+          clear_password?: boolean;
+          cloudflare_access_aud?: string;
+          cloudflare_access_enabled?: boolean;
+          cloudflare_access_team_domain?: string;
+          new_password?: string;
+          oidc_enabled?: boolean;
+          revoke_existing_sessions?: boolean;
+          session_ttl_seconds?: number;
+        };
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Inspect web admission status and available authentication providers */
+  "getApiV1Web-authStatus": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** List host shell profiles available to the web terminal */
+  "getApiV1Web-terminalShells": {
     responses: {
       200: {
         content: never;

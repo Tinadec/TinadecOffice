@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { ArrowLeft, Bot, Check, ChevronRight, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, Sparkles, Users, Workflow, X } from '@lucide/vue'
+import { ArrowLeft, Bot, Check, ChevronRight, FileCode2, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, Sparkles, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { api as baseApi, type AgentModeTopologyDto, type SpaceOptionsDto } from '@/api'
 import { selectedStorage } from '@/lib/storageScope'
 import type { PermissionLevel } from '@/types/mode'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } from '@/lib/appCommands'
+import { renderWorkspaceCommandTemplate, useWorkspaceCommands } from '@/composables/useWorkspaceCommands'
 import { composerSettings, pageDepth, parentPage, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
 import { resolveModeDefaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
@@ -16,7 +17,9 @@ import type { DefaultModel } from '@/composables/useDefaultModel'
 import type { AgentModels, ModelChoice, NamedStrategy } from '@/composables/useAgentModels'
 import type { AgentDirectoryItemDto } from '@/api'
 import type { ReasoningEffortChoice } from '@/lib/reasoningEffort'
+import type { ContextPolicyParams, ContextStrategyTier } from '@/lib/contextMemoryApi'
 import ReasoningEffortSlider from './ReasoningEffortSlider.vue'
+import ModeContextStrategySection from './modeEditor/ModeContextStrategySection.vue'
 
 const props = defineProps<{
   open: boolean
@@ -38,6 +41,7 @@ const props = defineProps<{
   modelPinned?: boolean
   settingsSaving?: boolean
   settingsError?: string | null
+  workspaceRoot?: string | null
   commandHost: CommandHost
 }>()
 const emit = defineEmits<{
@@ -45,6 +49,7 @@ const emit = defineEmits<{
   'focus-composer': []
   attach: [accept: string]
   action: [command: AppCommand]
+  'insert-template': [template: string]
   'send-as-text': []
   'update:modeVersionId': [value: string | null]
   'update:permission': [value: PermissionLevel]
@@ -58,6 +63,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const { commands: workspaceCommands, refresh: refreshWorkspaceCommands } = useWorkspaceCommands(() => props.workspaceRoot ?? null)
 
 const modeName = (mode: AgentModeTopologyDto) =>
   pickLocalized(mode.i18n, locale.value, 'display_name', mode.display_name) ?? mode.display_name
@@ -382,15 +388,41 @@ const allRows = computed<Row[]>(() => {
       keywords: `${command.slash} ${(command.keywordKeys ?? []).map(key => t(key)).join(' ')}`, value: `/${command.slash}`, icon: Network,
       testId: `composer-command-${command.id}`, run: () => emit('action', command) })
   }
+  const builtInSlashes = new Set(slashCommands().map(command => command.slash?.toLowerCase()).filter(Boolean))
+  for (const wsCmd of workspaceCommands.value) {
+    const effectiveSlash = builtInSlashes.has(wsCmd.slash) ? `ws:${wsCmd.slash}` : wsCmd.slash
+    rows.push({
+      id: wsCmd.id,
+      label: wsCmd.name,
+      hint: wsCmd.description || t('palette.workspaceCommandHint'),
+      keywords: `${effectiveSlash} ${wsCmd.slash} ${wsCmd.path} ${wsCmd.hint ?? ''}`,
+      value: `/${effectiveSlash}`,
+      icon: FileCode2,
+      testId: `composer-workspace-command-${wsCmd.slash}`,
+      run: () => {
+        const raw = activeQuery.value.trim().replace(/^\/+/, '')
+        const parts = raw.split(/\s+/)
+        const trailingArg = props.slashQuery != null && parts.length > 1 ? parts.slice(1).join(' ').trim() : ''
+        emit('insert-template', renderWorkspaceCommandTemplate(wsCmd, trailingArg))
+      },
+    })
+  }
   return rows
 })
 const rows = computed(() => {
-  const search = activeQuery.value.trim().replace(/^\/+/, '').toLowerCase()
+  const rawSearch = activeQuery.value.trim().replace(/^\/+/, '').toLowerCase()
+  const firstToken = rawSearch.split(/\s+/)[0] ?? ''
   return allRows.value
-    .filter(row => !search || `${row.label} ${row.hint ?? ''} ${row.keywords ?? ''} ${row.value ?? ''}`.toLowerCase().includes(search))
+    .filter(row => {
+      if (!rawSearch) return true
+      const hay = `${row.label} ${row.hint ?? ''} ${row.keywords ?? ''} ${row.value ?? ''}`.toLowerCase()
+      if (hay.includes(rawSearch)) return true
+      if (props.slashQuery != null && firstToken && row.value?.toLowerCase().startsWith(`/${firstToken}`)) return true
+      return false
+    })
     .sort((a, b) => {
-      if (!search) return 0
-      const exact = (row: Row) => row.id === search || row.value === `/${search}` ? 0 : 1
+      if (!rawSearch) return 0
+      const exact = (row: Row) => row.id === firstToken || row.value?.toLowerCase() === `/${firstToken}` ? 0 : 1
       return exact(a) - exact(b)
     })
 })
@@ -497,6 +529,7 @@ watch(() => props.open, async open => {
   rootQuery.value = ''
   index.value = 0
   void loadCatalogs()
+  void refreshWorkspaceCommands()
   await nextTick()
   place()
   animateContent(0)
@@ -593,6 +626,18 @@ defineExpose({ keydown, activate, page, selectPage })
         <ReasoningEffortSlider id="command-panel-reasoning-slider" v-model="reasoningDraft" :label="t('composer.reasoning.label')"
           :hint="t('composer.reasoning.hint', { model: defaultModel?.reasoningTarget.value?.model ?? defaultModel?.current.value?.model ?? '' })"
           @commit="defaultModel?.setReasoningEffort($event)" />
+      </div>
+      <div v-if="page === 'mode'" class="command-panel-reasoning" data-testid="command-panel-context-strategy" @keydown.stop>
+        <ModeContextStrategySection
+          compact
+          allow-inherit
+          :readonly="settingsSaving"
+          :strategy="((space as unknown as { context_strategy?: ContextStrategyTier | null })?.context_strategy ?? null)"
+          :advanced="((space as unknown as { context_advanced?: Partial<ContextPolicyParams> | null })?.context_advanced ?? null)"
+          @update:strategy="(v) => emit('update:spaceOptions', { ...space, context_strategy: v } as SpaceOptionsDto)"
+          @update:advanced="(v) => emit('update:spaceOptions', { ...space, context_advanced: v } as SpaceOptionsDto)"
+          @reset="emit('update:spaceOptions', { ...space, context_strategy: null, context_advanced: {} } as SpaceOptionsDto)"
+        />
       </div>
       </div>
       <footer class="command-panel-footer" :class="{ 'has-error': settingsError }" :role="settingsError ? 'alert' : 'status'">{{ settingsError || (settingsSaving ? t('commandPanel.saving') : t(page === 'model' || page === 'model-agents' || page === 'model-agent' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask')) }}</footer>

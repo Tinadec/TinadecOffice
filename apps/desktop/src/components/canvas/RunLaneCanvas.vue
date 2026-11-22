@@ -194,11 +194,32 @@ function nodeStyleClass(layer: string, status: string): string {
 }
 
 .lane-node--operation {
-  border-left: 3px solid var(--accent-recovery, #b18aff);
+  border-color: color-mix(in srgb, var(--accent-recovery, #b18aff) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-recovery, #b18aff) 4%, var(--surface-raised));
 }
 
 .lane-node--execution {
-  border-left: 3px solid var(--accent-info, #4a9eff);
+  border-color: color-mix(in srgb, var(--accent-info, #4a9eff) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-info, #4a9eff) 4%, var(--surface-raised));
+}
+
+.lane-node--operation .lane-node__role::before,
+.lane-node--execution .lane-node__role::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.lane-node--operation .lane-node__role::before {
+  background: var(--accent-recovery, #b18aff);
+}
+
+.lane-node--execution .lane-node__role::before {
+  background: var(--accent-info, #4a9eff);
 }
 
 .lane-node.is-done {

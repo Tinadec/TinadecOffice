@@ -40,13 +40,11 @@ function clampWidth(w: unknown, fallback: number): number {
 
 /** Float pages keep an 8px window-edge gap; app pages stay flush. */
 function defaultEdgeInset(pageId: UiePageId): number {
-  return pageId === 'home' || pageId === 'settings' || pageId === 'market'
-    || pageId === 'marketSkills' || pageId === 'marketMcp' || pageId === 'companionCenter' ? 8 : 0
+  return pageId === 'home' || pageId === 'settings' || pageId === 'companionCenter' ? 8 : 0
 }
 
 function isValidPageId(p: unknown): p is UiePageId {
-  return p === 'home' || p === 'settings' || p === 'market' || p === 'marketSkills' || p === 'marketMcp'
-    || p === 'code' || p === 'debug' || p === 'companionCenter'
+  return p === 'home' || p === 'settings' || p === 'code' || p === 'debug' || p === 'companionCenter'
 }
 
 function repairStack(
@@ -289,13 +287,8 @@ export function repairLayout(
       }
     }
   }
-  // Market was added after layout persistence shipped, so an older page entry can
-  // be structurally valid while containing no cards at all. Recover that one page
-  // from its preset; other pages keep their existing unknown-card repair semantics.
-  const hasNoRenderableMarketCards = (pageId === 'market' || pageId === 'marketSkills' || pageId === 'marketMcp')
-    && (Object.keys(cards).length === 0 || referenced.size === 0)
   const orphaned = Object.values(cards).some((c) => !referenced.has(c.id))
-  if (hasNoRenderableMarketCards || orphaned) return buildPreset(pageId, preset)
+  if (orphaned) return buildPreset(pageId, preset)
 
   const gap = typeof r.gap === 'number' && r.gap >= 0 && r.gap <= 32 ? r.gap : 8
   const edgeInset =

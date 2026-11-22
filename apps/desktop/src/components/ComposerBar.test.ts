@@ -1084,13 +1084,13 @@ describe('ComposerBar unified command panel', () => {
     expect(document.querySelectorAll('[role="switch"]')).toHaveLength(5)
     expect(document.querySelector('[data-testid="command-panel-overrides"]')).toBeNull()
 
-    // Selecting Team pre-fills space_options with Team's default_options.
+    // Selecting Team pre-fills space_options via atomic select-mode without emitting a separate update:spaceOptions.
     click('[data-testid="command-panel-mode"]')
     await flushPromises()
     click('[data-testid="command-panel-mv-team"]')
     await flushPromises()
     expect(wrapper.emitted('update:modeVersionId')?.at(-1)?.[0]).toBe('mv-team')
-    expect(wrapper.emitted('update:spaceOptions')?.at(-1)?.[0]).toEqual(teamDefaults)
+    expect(wrapper.emitted('update:spaceOptions')).toBeUndefined()
     expect(wrapper.emitted('select-mode')?.at(-1)?.[0]).toEqual({ mode_version_id: 'mv-team', space_options: teamDefaults })
 
     await wrapper.setProps({ modeVersionId: 'mv-team', spaceOptions: teamDefaults })
@@ -1106,6 +1106,7 @@ describe('ComposerBar unified command panel', () => {
     await flushPromises()
 
     const overridden = { ...teamDefaults, worktree: true }
+    expect(wrapper.emitted('update:spaceOptions')).toHaveLength(1)
     expect(wrapper.emitted('update:spaceOptions')?.at(-1)?.[0]).toEqual(overridden)
     await wrapper.setProps({ spaceOptions: overridden, modelValue: 'run flat task' })
     await flushPromises()
@@ -1122,6 +1123,7 @@ describe('ComposerBar unified command panel', () => {
     expect(document.querySelector('[data-testid="command-panel-overrides"]')).not.toBeNull()
     click('[data-testid="command-panel-reset-options"]')
     await flushPromises()
+    expect(wrapper.emitted('update:spaceOptions')).toHaveLength(2)
     expect(wrapper.emitted('update:spaceOptions')?.at(-1)?.[0]).toEqual(teamDefaults)
     expect(document.querySelector('.composer-command-panel')).not.toBeNull()
 
@@ -1130,12 +1132,13 @@ describe('ComposerBar unified command panel', () => {
     expect(document.querySelector('[data-testid="command-panel-overrides"]')).toBeNull()
     expect(wrapper.find('.composer-settings-summary').exists()).toBe(false)
 
-    // Switching to Solo (default_options: null) falls back cleanly to defaultSpaceOptions().
+    // Switching to Solo (default_options: null) falls back cleanly to defaultSpaceOptions() without extra update:spaceOptions.
     click('[data-testid="command-panel-mode"]')
     await flushPromises()
     click('[data-testid="command-panel-mv-solo"]')
     await flushPromises()
     expect(wrapper.emitted('select-mode')?.at(-1)?.[0]).toEqual({ mode_version_id: 'mv-solo', space_options: spaceOptions })
+    expect(wrapper.emitted('update:spaceOptions')).toHaveLength(2)
     wrapper.unmount()
   })
 })
@@ -1434,6 +1437,143 @@ describe('ComposerBar attachments', () => {
       expect(wrapper.emitted('submit')).toBeUndefined()
       wrapper.unmount()
       attachMock.list.value = []
+    })
+  })
+
+  describe('multimodal input, vision notice, and custom template insertion', () => {
+    afterEach(() => {
+      attachMock.list.value = []
+      attachMock.attachFiles.mockClear()
+      apiMock.api.listModelProviders.mockResolvedValue([])
+      apiMock.api.listModelRoutes.mockResolvedValue([])
+      document.body.innerHTML = ''
+    })
+
+    it('attaches clipboard images on paste without blocking plain text paste', async () => {
+      const wrapper = mountComposer({ sessionId: 'sess-1', modelValue: '' })
+      await flushPromises()
+      const textarea = wrapper.find('textarea').element
+
+      const textPaste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(textPaste, 'clipboardData', {
+        value: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }], files: [] },
+      })
+      textarea.dispatchEvent(textPaste)
+      expect(textPaste.defaultPrevented).toBe(false)
+      expect(attachMock.attachFiles).not.toHaveBeenCalled()
+
+      const screenshot = new File([new Uint8Array([137, 80, 78, 71])], 'image.png', { type: 'image/png' })
+      const imgPaste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(imgPaste, 'clipboardData', {
+        value: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => screenshot }], files: [screenshot] },
+      })
+      textarea.dispatchEvent(imgPaste)
+      await flushPromises()
+
+      expect(imgPaste.defaultPrevented).toBe(true)
+      expect(attachMock.attachFiles).toHaveBeenCalledTimes(1)
+      expect(attachMock.attachFiles.mock.calls[0]![0][0]!.name).toMatch(/^image-\d+\.png$/)
+      wrapper.unmount()
+    })
+
+    it('shows drop hint and attaches multiple dropped images cleanly', async () => {
+      const wrapper = mountComposer({ sessionId: 'sess-1' })
+      await flushPromises()
+      const box = wrapper.find('.composer-box').element
+      const fileA = new File(['a'], 'first.png', { type: 'image/png' })
+      const fileB = new File(['b'], 'second.jpg', { type: 'image/jpeg' })
+      const dt = { types: ['Files'], files: [fileA, fileB], items: [{ kind: 'file', getAsFile: () => fileA }, { kind: 'file', getAsFile: () => fileB }], dropEffect: 'none' }
+
+      const enter = new Event('dragenter', { bubbles: true, cancelable: true })
+      Object.defineProperty(enter, 'dataTransfer', { value: dt })
+      box.dispatchEvent(enter)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="composer-drop-hint"]').exists()).toBe(true)
+
+      const drop = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(drop, 'dataTransfer', { value: dt })
+      box.dispatchEvent(drop)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="composer-drop-hint"]').exists()).toBe(false)
+      expect(attachMock.attachFiles).toHaveBeenCalledWith(
+        [fileA, fileB],
+        'sess-1',
+        { projectId: undefined },
+      )
+      wrapper.unmount()
+    })
+
+    it('opens zoomable Lightbox when clicking a pending image thumbnail preview', async () => {
+      attachMock.list.value = [
+        row({ clientId: 'img-1', fileName: 'one.png', mediaType: 'image/png', previewUrl: 'blob:local/one', storedRow: { id: 'att-1' } as PendingAttachment['storedRow'] }),
+        row({ clientId: 'img-2', fileName: 'two.png', mediaType: 'image/png', previewUrl: 'blob:local/two', storedRow: { id: 'att-2' } as PendingAttachment['storedRow'] }),
+      ]
+      const wrapper = mountComposer({ sessionId: 'sess-1' })
+      await flushPromises()
+
+      const previews = wrapper.findAll('[data-testid="attachment-preview"]')
+      expect(previews).toHaveLength(2)
+      await previews[0]!.trigger('click')
+      await flushPromises()
+
+      expect(document.querySelector('[data-testid="image-lightbox"]')).not.toBeNull()
+      expect((document.querySelector('[data-testid="lightbox-image"]') as HTMLImageElement).getAttribute('src')).toBe('blob:local/one')
+      ;(document.querySelector('[data-testid="lightbox-zoom-in"]') as HTMLButtonElement).click()
+      await flushPromises()
+      expect((document.querySelector('[data-testid="lightbox-image"]') as HTMLImageElement).style.transform).toContain('scale(1.25)')
+      ;(document.querySelector('[data-testid="lightbox-next"]') as HTMLButtonElement).click()
+      await flushPromises()
+      expect((document.querySelector('[data-testid="lightbox-image"]') as HTMLImageElement).getAttribute('src')).toBe('blob:local/two')
+      ;(document.querySelector('[data-testid="lightbox-close"]') as HTMLButtonElement).click()
+      await flushPromises()
+      expect(document.querySelector('[data-testid="image-lightbox"]')).toBeNull()
+      wrapper.unmount()
+    })
+
+    it('shows gentle non-blocking vision notice only when images are queued on a non-vision model', async () => {
+      apiMock.api.listModelProviders.mockResolvedValue([
+        {
+          id: 'p-text', display_name: 'Text Provider', enabled: true, connection_kind: 'api-key',
+          driver: 'openai', model: 'deepseek-chat', models: ['deepseek-chat', 'gpt-4o'], capabilities: ['chat'],
+          image_input: { enabled: true, max_image_bytes: 1024, max_images_per_turn: 4, base_enabled: true, base_max_image_bytes: 1024, base_max_images_per_turn: 4, editable: true, source: 'config' },
+          model_profiles: {
+            'deepseek-chat': { specialties: ['coding'], tier: 'balanced' },
+            'gpt-4o': { specialties: ['coding', 'vision'], tier: 'balanced' },
+          },
+          has_api_key: true, status: 'ready', status_message: '', created_at: '', updated_at: '',
+        },
+      ] as never)
+      attachMock.list.value = [
+        row({ clientId: 'img-1', fileName: 'shot.png', mediaType: 'image/png', previewUrl: 'blob:local/shot', storedRow: { id: 'att-1' } as PendingAttachment['storedRow'] }),
+      ]
+      const wrapper = mountComposer({
+        sessionId: 'sess-1',
+        meetingModelOverride: { provider_instance_id: 'p-text', model: 'deepseek-chat' },
+      })
+      await flushPromises()
+
+      const notice = wrapper.find('[data-testid="composer-vision-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('composer.visionUnsupportedNotice')
+      expect(wrapper.find('.welcome-dialog-send').attributes('disabled')).toBeUndefined()
+
+      await wrapper.setProps({ meetingModelOverride: { provider_instance_id: 'p-text', model: 'gpt-4o' } })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="composer-vision-notice"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('replaces leading slash trigger cleanly when ComposerCommandPanel emits insert-template', async () => {
+      const wrapper = mountComposer({ sessionId: 'sess-1', modelValue: '/review' })
+      await flushPromises()
+      const panel = wrapper.findComponent({ name: 'ComposerCommandPanel' })
+      panel.vm.$emit('insert-template', 'Inspect $ARGUMENTS carefully')
+      await flushPromises()
+
+      expect(homeMock.updateDraft).toHaveBeenCalledWith('Inspect $ARGUMENTS carefully')
+      expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toBe('Inspect $ARGUMENTS carefully')
+      wrapper.unmount()
     })
   })
 })

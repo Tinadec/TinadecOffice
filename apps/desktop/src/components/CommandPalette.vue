@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
-  Search, X, FolderKanban, MessageSquare, BrainCircuit, Bot, Workflow,
-  FileText, FileCode2, FileJson, Image, Wrench, Settings2, Command,
+  Search, X, FolderKanban, MessageSquare, MessageSquareText, BrainCircuit, Bot, Workflow,
+  FileText, FileCode2, FileJson, Image, Wrench, Settings2, Command, Paperclip, ListChecks,
   Layers3, ChevronDown, ChevronRight, ArrowUpRight, Maximize2, Minimize2, LoaderCircle,
   TriangleAlert, RefreshCw,
 } from '@lucide/vue'
@@ -11,11 +11,12 @@ import { useRouter } from 'vue-router'
 import { UiButton } from '@/components/ui'
 import AppHeader from '@/components/AppHeader.vue'
 import { homeController } from '@/controllers/HomeController'
-import { codeController } from '@/controllers/CodeController'
 import { selectionKey } from '@/lib/storageScope'
+import { focusDockCard } from '@/lib/homeDockSync'
 import { closePalette, useCommandPalette } from '@/composables/useCommandPalette'
 import { usePanelStyles } from '@/composables/usePanelStyles'
-import { availableCommands, implicitArgument, type AppCommand, type CommandHost } from '@/lib/appCommands'
+import { availableCommands, implicitArgument, resolveCommandHint, resolveCommandLabel, type AppCommand, type CommandHost } from '@/lib/appCommands'
+import { setActiveWorkspaceCommandsRoot, useWorkspaceCommands } from '@/composables/useWorkspaceCommands'
 import { toggleSessionPartner as togglePartnerWindow } from '@/lib/sessionPartner'
 import {
   requestConversation, requestModelProvider, requestSettingsSection,
@@ -48,6 +49,7 @@ const listId = 'command-palette-list'
 
 const kindIcons: Record<SpotlightKind, Component> = {
   command: Command, project: FolderKanban, conversation: MessageSquare,
+  message: MessageSquareText, artifact: Paperclip, task: ListChecks,
   model: BrainCircuit, agent: Bot, mode: Workflow, prompt: FileText,
   tool: Wrench, setting: Settings2, resource: FileCode2,
 }
@@ -82,19 +84,31 @@ function runCommand(command: AppCommand) {
   command.run(commandHost, argument)
 }
 
-const commandItems = computed<SpotlightItem[]>(() => availableCommands(commandHost).map((command) => ({
-  id: command.id, kind: 'command', label: t(command.labelKey),
-  detail: command.slash ? `/${command.slash}` : undefined,
-  keywords: (command.keywordKeys ?? []).map((key) => t(key)).join(' '),
-  action: () => runCommand(command),
-})))
+const searchProject = computed(() => homeController.currentProject.value)
+
+watch(() => searchProject.value?.path ?? '', (path) => {
+  setActiveWorkspaceCommandsRoot(path)
+}, { immediate: true })
+
+const { appCommands: workspaceAppCommands, refresh: refreshWorkspaceCommands } = useWorkspaceCommands(
+  () => searchProject.value?.path ?? '',
+)
+
+const commandItems = computed<SpotlightItem[]>(() => availableCommands(commandHost, workspaceAppCommands.value).map((command) => {
+  const hint = resolveCommandHint(command, (key) => t(key))
+  return {
+    id: command.id,
+    kind: 'command',
+    label: resolveCommandLabel(command, (key) => t(key)),
+    detail: command.slash ? (hint ? `/${command.slash} · ${hint}` : `/${command.slash}`) : hint,
+    keywords: [...(command.keywordKeys ?? []).map((key) => t(key)), ...(command.keywords ?? [])].join(' '),
+    action: () => runCommand(command),
+  }
+}))
 
 function navigate(routeName: string) {
   if (router.currentRoute.value.name !== routeName) void router.push({ name: routeName })
 }
-const searchProject = computed(() => router.currentRoute.value.name === 'code-editor'
-  ? codeController.currentProject.value
-  : homeController.currentProject.value)
 const spotlightHost: SpotlightHost = {
   navigate,
   navigateSettings: (section) => { requestSettingsSection(section); navigate('settings') },
@@ -107,7 +121,8 @@ const spotlightHost: SpotlightHost = {
   selectProvider: (id) => { requestModelProvider(id); navigate('settings') },
   openWorkspacePath: (path, projectId) => {
     requestWorkspaceFile({ path, projectId })
-    navigate('code-editor')
+    navigate('home')
+    focusDockCard({ card: 'workspace', filePath: path })
   },
   loadedSessions: () => homeController.sessions.value,
   workspaceRoot: () => searchProject.value?.path ?? '',
@@ -208,6 +223,7 @@ watch([open, dialogRef], async ([isOpen, element]) => {
   collapsedGroups.value = new Set()
   groups.value = []
   refreshSpotlight()
+  void refreshWorkspaceCommands()
   element.showModal()
   await nextTick()
   if (!open.value) return

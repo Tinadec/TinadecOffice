@@ -2,55 +2,136 @@
  * webShim.ts — Browser implementation of the `window.tinadec` global.
  *
  * Installed BEFORE the desktop renderer's main.ts so that every call site
- * sees a valid API object. All Electron-only capabilities degrade to
- * safe no-ops or empty values.
- *
- * DO NOT modify this file to add new platform features — keep all platform
- * difference concentrated here.
+ * sees a valid API object. Web mode connects to the same-origin Gateway BFF
+ * using 3-tier admission (loopback auto-login or mandatory remote auth) and
+ * delegates host folder picking to ServerDirectoryPickerModal.
  */
 import i18n from '@/i18n'
+import {
+  openServerDirectoryPicker,
+  probeWebAuthStatus,
+  type HostConnectionStatus,
+} from '@/lib/hostConnection'
 
 const noop = () => {}
 
-/** The reason is a locale key, read when the call is made so it follows the interface language. */
 function rejectNotAvailable(reasonKey: string): Promise<never> {
   return Promise.reject(new Error(i18n.global.t(reasonKey)))
 }
 
-// ponytail: terminal is intentionally left undefined so useTerminal.ts
-// isTerminalAvailable() returns false and the UI shows terminal-unavailable.
-// If terminal is ever defined here, every call site that does `window.tinadec.terminal.*`
-// without a guard would execute — that is a larger surface than just hiding the UI.
+async function resolveWebHostStatus(): Promise<HostConnectionStatus> {
+  const probed = await probeWebAuthStatus(window.location.origin)
+  if (probed) return probed
+  return {
+    state: 'unavailable',
+    managed: true,
+    error: {
+      code: 'host_unavailable',
+      message: i18n.global.t('host.notReady'),
+    },
+  }
+}
+
+function webAppConfig() {
+  return {
+    gateway_url: window.location.origin,
+    source: 'environment' as const,
+    managed: true,
+    debug_studio_enabled: localStorage.getItem('tinadec.web.debug-studio-enabled') === 'true',
+    close_to_tray: false,
+    companion_mode_enabled: false,
+  }
+}
 
 ;(window as any).tinadec = {
-  // -- Gateway / config --
+  isWebShim: true,
+
+  // -- Gateway / config / host admission --
   gatewayUrl: () => window.location.origin,
+  getHostStatus: () => resolveWebHostStatus(),
+  retryHostConnection: () => resolveWebHostStatus(),
+  onHostStatusChanged: () => noop,
 
-  getAppConfig: () =>
-    Promise.resolve({
-      gateway_url: window.location.origin,
-      source: 'environment' as const,
-      managed: true,
-    }),
+  getAppConfig: () => Promise.resolve(webAppConfig()),
 
-  saveGatewayUrl: () =>
-    rejectNotAvailable('web.gatewayManaged'),
+  saveGatewayUrl: () => rejectNotAvailable('web.gatewayManaged'),
+  resetGatewayUrl: () => rejectNotAvailable('web.gatewayManaged'),
 
-  resetGatewayUrl: () =>
-    rejectNotAvailable('web.gatewayManaged'),
+  saveDebugStudioEnabled: (enabled: boolean) => {
+    localStorage.setItem('tinadec.web.debug-studio-enabled', String(enabled))
+    return Promise.resolve({ debug_studio_enabled: enabled })
+  },
+  onDebugStudioEnabledChanged: () => noop,
+  saveCloseToTray: (enabled: boolean) => Promise.resolve({ close_to_tray: enabled }),
+  onCloseToTrayChanged: () => noop,
+  saveLaunchAtLogin: (enabled: boolean) => Promise.resolve({ launch_at_login: enabled }),
+  onLaunchAtLoginChanged: () => noop,
+  saveCompanionSpeakReplies: (enabled: boolean) => Promise.resolve({ companion_speak_replies: enabled }),
+  onCompanionSpeakRepliesChanged: () => noop,
+  saveCompanionMode: (enabled: boolean) => Promise.resolve({ companion_mode_enabled: enabled }),
+
+  setInterfaceLocale: noop,
 
   restartApp: () => {
     window.location.reload()
     return Promise.resolve()
   },
 
-  // -- Window chrome (no-ops in browser) --
+  // -- Window chrome (hidden in web via !isElectron; kept safe no-ops for callers) --
   minimizeWindow: noop,
   maximizeWindow: noop,
   closeWindow: noop,
 
-  // -- Project dialog --
-  openProjectDialog: () => Promise.resolve(null),
+  // -- Server-side Directory Pickers (backed by GET /api/v1/fs/browse) --
+  openProjectDialog: async () => {
+    const picked = await openServerDirectoryPicker({
+      multiple: false,
+      title: i18n.global.t('webDirPicker.selectProjectTitle'),
+    })
+    return picked[0] ?? null
+  },
+
+  selectWorkspaceFolders: (title?: string) =>
+    openServerDirectoryPicker({
+      multiple: true,
+      title: title || i18n.global.t('webDirPicker.selectWorkspaceTitle'),
+    }),
+
+  selectCompanionAvatarDirectory: async (title?: string) => {
+    const picked = await openServerDirectoryPicker({
+      multiple: false,
+      title: title || i18n.global.t('webDirPicker.selectAvatarTitle'),
+    })
+    return picked[0] ?? null
+  },
+
+  pathForFile: () => '',
+  importWorkspaceFiles: () => rejectNotAvailable('web.filesDropHint'),
+  selectBackgroundFile: () => Promise.resolve(null),
+
+  // -- Web Auth state bridge --
+  openLogin: async () => null,
+  logout: async () => {
+    await fetch(`${window.location.origin}/api/v1/web-auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => undefined)
+    window.location.reload()
+    return { loggedIn: false }
+  },
+  getAuthState: async () => {
+    const status = await probeWebAuthStatus(window.location.origin)
+    const principal = status?.webAuth?.principal
+    if (status?.state === 'ready' && principal) {
+      return {
+        loggedIn: true,
+        nickname: principal.display_name || principal.user_id,
+        avatar_url: principal.avatar_url || '',
+      }
+    }
+    return { loggedIn: false }
+  },
+  updateProfile: () => rejectNotAvailable('web.profileDesktopOnly'),
 
   // -- Debug Studio --
   openDebugStudio: () => {
@@ -58,7 +139,7 @@ function rejectNotAvailable(reasonKey: string): Promise<never> {
     return Promise.resolve(true)
   },
 
-  // -- Pets (local-only transparent OS windows, not available in web) --
+  // -- Pets (Electron-only transparent OS window; hidden/no-op in Web) --
   pets: {
     list: () => Promise.resolve([]),
     listDownloaded: () => Promise.resolve([]),
@@ -77,10 +158,17 @@ function rejectNotAvailable(reasonKey: string): Promise<never> {
     remove: () => rejectNotAvailable('web.petsUnavailable'),
   },
 
-  // -- Terminal (left undefined — see note above) --
-
-  // -- Detachable panels (no-ops in browser) --
-  detachPanel: () => Promise.resolve(null),
+  // -- Detachable panels (in Web mode, opens a new browser tab) --
+  detachPanel: (tabId: string, type: string, title: string, state: Record<string, unknown>) => {
+    const params = new URLSearchParams({
+      tabId,
+      type,
+      title,
+      state: JSON.stringify(state ?? {}),
+    })
+    window.open(`#/panel?${params.toString()}`, '_blank')
+    return Promise.resolve(null)
+  },
   reattachPanel: () => rejectNotAvailable('web.panelsUnavailable'),
   closePanelWindow: noop,
   focusPanelWindow: noop,
@@ -88,20 +176,18 @@ function rejectNotAvailable(reasonKey: string): Promise<never> {
   getCursorScreen: () => Promise.resolve({ x: 0, y: 0 }),
   getMainBounds: () => Promise.resolve(null),
 
-  // -- Theme broadcast (no other windows to notify) --
   broadcastTheme: noop,
-
-  // -- Clipboard (browser fallback: the menu uses navigator.clipboard when these are absent) --
   clipboardReadText: undefined,
   clipboardWriteText: undefined,
-
-  // -- Status notification broadcast (no-op for stage 1) --
   broadcastStatusNotification: noop,
   onStatusNotification: () => noop,
-
-  // -- Panel lifecycle listeners (must return unsubscribe function) --
   onPanelDetached: () => noop,
   onPanelReattach: () => noop,
   onPanelClosed: () => noop,
   onPanelThemeChanged: () => noop,
+
+  layout: {
+    load: () => Promise.resolve(null),
+    save: () => Promise.resolve({ ok: false }),
+  },
 }

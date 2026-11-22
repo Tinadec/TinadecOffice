@@ -17,6 +17,7 @@
 
 import type { EventEnvelope } from '@/api'
 import i18n from '@/i18n'
+import { resolveWebGatewayBase, toWebSocketUrl } from '@/lib/hostConnection'
 
 export type TerminalSourceKind = 'local' | 'agent'
 
@@ -257,6 +258,141 @@ export function createAgentTerminalSource(options: AgentTerminalOptions): Termin
       handlers?.onData(`\r\n${dim(i18n.global.t('terminal.output.terminated'))}\r\n`)
       handlers?.onStatus?.('killed')
       this.detach()
+    },
+  }
+}
+
+// ── Web: Authenticated same-origin Gateway WebSocket (/ws/terminal) ──────────
+
+export interface WebTerminalOptions {
+  shellId?: string
+  cwd?: string
+  terminalSessionId?: string
+  runId?: string | null
+  gatewayBaseUrl?: string
+  onReady?: (meta: { shell?: string; title?: string }) => void
+}
+
+/**
+ * Interactive shell or Core-bridged terminal over authenticated Gateway WebSocket `/ws/terminal`.
+ * Used in Web ready mode when Electron's local `node-pty` bridge is absent.
+ */
+export function createWebTerminalSource(options: WebTerminalOptions = {}): TerminalSource {
+  let socket: WebSocket | null = null
+  let handlers: TerminalSourceHandlers | null = null
+  let disposed = false
+  let exited = false
+  const pendingWrites: string[] = []
+
+  function buildUrl(): string {
+    const params = new URLSearchParams()
+    if (options.terminalSessionId) {
+      params.set('terminal_session_id', options.terminalSessionId)
+      if (options.runId) params.set('run_id', options.runId)
+    } else {
+      if (options.shellId) params.set('shell', options.shellId)
+      if (options.cwd) params.set('cwd', options.cwd)
+    }
+    const qs = params.toString()
+    const base = options.gatewayBaseUrl ?? resolveWebGatewayBase()
+    return toWebSocketUrl(base, qs ? `/ws/terminal?${qs}` : '/ws/terminal')
+  }
+
+  function ensureSocket() {
+    if (socket || disposed || typeof WebSocket === 'undefined') return
+    socket = new WebSocket(buildUrl())
+    socket.onopen = () => {
+      while (pendingWrites.length > 0 && socket?.readyState === WebSocket.OPEN) {
+        const chunk = pendingWrites.shift()!
+        socket.send(JSON.stringify({ type: 'input', data: chunk }))
+      }
+    }
+    socket.onmessage = (event) => {
+      if (typeof event.data !== 'string') return
+      try {
+        const msg = JSON.parse(event.data) as {
+          type?: string
+          data?: string
+          code?: number | null
+          message?: string
+          shell?: string
+          title?: string
+        }
+        if (msg.type === 'ready') {
+          options.onReady?.({ shell: msg.shell, title: msg.title })
+        } else if (msg.type === 'data' && typeof msg.data === 'string') {
+          handlers?.onData(msg.data)
+        } else if (msg.type === 'exit') {
+          exited = true
+          const code = msg.code ?? '?'
+          handlers?.onData(`\r\n${dim(i18n.global.t('terminal.output.exited', { code }))}\r\n`)
+          handlers?.onStatus?.('exited', String(code))
+        } else if (msg.type === 'error' && msg.message) {
+          handlers?.onData(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`)
+        }
+      } catch {
+        handlers?.onData(event.data)
+      }
+    }
+    socket.onerror = () => {
+      if (!exited && !disposed) {
+        handlers?.onData(`\r\n\x1b[31m${i18n.global.t('terminal.output.inputLost')}\x1b[0m\r\n`)
+      }
+    }
+    socket.onclose = () => {
+      if (!exited && !disposed) {
+        exited = true
+        handlers?.onStatus?.('exited', 'closed')
+      }
+    }
+  }
+
+  return {
+    kind: options.terminalSessionId ? 'agent' : 'local',
+    interactive: true,
+    attach(next) {
+      handlers = next
+      ensureSocket()
+      if (exited) handlers.onStatus?.('exited')
+    },
+    write(data) {
+      if (disposed || exited) return
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'input', data }))
+      } else {
+        pendingWrites.push(data)
+        ensureSocket()
+      }
+    },
+    resize(cols, rows) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'resize', cols, rows }))
+      }
+    },
+    detach() {
+      handlers = null
+    },
+    dispose() {
+      disposed = true
+      handlers = null
+      if (socket) {
+        if (socket.readyState === WebSocket.OPEN) {
+          try {
+            socket.send(JSON.stringify({ type: 'kill' }))
+          } catch {
+            // ignore
+          }
+        }
+        try {
+          socket.close()
+        } catch {
+          // ignore
+        }
+        socket = null
+      }
+    },
+    kill() {
+      this.dispose()
     },
   }
 }

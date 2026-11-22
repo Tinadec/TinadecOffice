@@ -1,16 +1,29 @@
 <script setup lang="ts">
 /**
- * Connection bindings for one companion. Configuration is not a connection: without a handshake
- * the runtime status is `unsupported` (「尚未支持」) or `unknown` (「未探测」), and this panel never
- * renders a configured binding as online.
+ * Connection bindings for one companion.
+ * - External connectors (`mcp`, `server`, `phone`, `external_agent`) do not perform handshakes here,
+ *   so their runtime status stays honestly `unsupported` or `unknown`.
+ * - Local governed connectors (`work_session`, `browser`) honestly display `connected` / `active`
+ *   when Core reports them as live.
  */
-import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Trash2 } from '@lucide/vue'
+import { api, type ProjectDto } from '@/api'
 import { UiBadge, UiButton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
-import { companionApi, type CompanionConnection } from '@/lib/companionApi'
+import {
+  companionApi,
+  type CompanionBrowserDriver,
+  type CompanionBrowserProfile,
+  type CompanionConnection,
+  type CompanionConnectionKind,
+} from '@/lib/companionApi'
+import {
+  encodeBrowserConnectionEndpoint,
+  parseBrowserConnectionEndpoint,
+} from '@/lib/companionWorkSession'
 import { isCompanionRevisionConflict } from '@/lib/companionConflict'
 
 const props = defineProps<{ companionId: string }>()
@@ -19,24 +32,42 @@ const emit = defineEmits<{ conflict: [] }>()
 const { t } = useI18n()
 const { confirm, notify } = useNotifications()
 
-type ConnectionKind = 'mcp' | 'server' | 'phone' | 'external_agent'
+type ConnectionKind = CompanionConnectionKind
 
 const connections = ref<CompanionConnection[]>([])
+const projects = ref<ProjectDto[]>([])
+const browserProfiles = ref<CompanionBrowserProfile[]>([])
 const loading = ref(false)
 const failure = ref<ErrorState | null>(null)
 const busy = ref(false)
-const form = reactive({ kind: 'mcp' as ConnectionKind, name: '', endpoint: '' })
+const form = reactive({
+  kind: 'work_session' as ConnectionKind,
+  name: '',
+  endpoint: '',
+  scope: '*',
+  browserDriver: 'builtin_electron' as CompanionBrowserDriver,
+  browserProfileId: '',
+})
 let readGeneration = 0
 
-const kinds: ConnectionKind[] = ['mcp', 'server', 'phone', 'external_agent']
+const kinds: ConnectionKind[] = ['work_session', 'browser', 'mcp', 'server', 'phone', 'external_agent']
+const browserDrivers: CompanionBrowserDriver[] = ['builtin_electron', 'ego_lite']
 
 function kindLabel(kind: string): string {
   switch (kind) {
+    case 'work_session': return t('settings.companions.connection.kindWorkSession')
+    case 'browser': return t('settings.companions.connection.kindBrowser')
     case 'server': return t('settings.companions.connection.kindServer')
     case 'phone': return t('settings.companions.connection.kindPhone')
     case 'external_agent': return t('settings.companions.connection.kindExternalAgent')
     default: return t('settings.companions.connection.kindMcp')
   }
+}
+
+function browserDriverLabel(driver: string): string {
+  if (driver === 'ego_lite') return t('settings.companions.connection.driverEgoLite')
+  if (driver === 'builtin_electron') return t('settings.companions.connection.driverBuiltinElectron')
+  return driver
 }
 
 function authorizationLabel(authorization: string): string {
@@ -51,15 +82,106 @@ function authorizationVariant(authorization: string): 'default' | 'secondary' | 
   return 'outline'
 }
 
-/** Only the two statuses Core can honestly report exist here; nothing maps to "online". */
+function isLiveRuntimeStatus(status: string | null | undefined): boolean {
+  return status === 'connected' || status === 'active'
+}
+
+/** Reports Core's exact status honestly: local connectors may report `connected` / `active`; external ones never fake online. */
 function runtimeLabel(status: string): string {
+  if (status === 'connected') return t('settings.companions.connection.runtimeConnected')
+  if (status === 'active') return t('settings.companions.connection.runtimeActive')
+  if (status === 'disconnected') return t('settings.companions.connection.runtimeDisconnected')
+  if (status === 'configured') return t('settings.companions.connection.runtimeConfigured')
+  if (status === 'unavailable') return t('settings.companions.connection.runtimeUnavailable')
   return status === 'unsupported'
     ? t('settings.companions.connection.runtimeUnsupported')
     : t('settings.companions.connection.runtimeUnknown')
 }
 
+function runtimeVariant(status: string): 'default' | 'secondary' {
+  return isLiveRuntimeStatus(status) ? 'default' : 'secondary'
+}
+
+const projectNameById = computed(() => {
+  const map = new Map<string, string>()
+  for (const project of projects.value) {
+    map.set(project.id, project.name)
+  }
+  return map
+})
+
+const filteredBrowserProfiles = computed(() =>
+  browserProfiles.value.filter((profile) => profile.driver === form.browserDriver))
+
+const scopeLabelText = computed(() => t('settings.companions.connection.workspaceScope'))
+const allWorkspacesLabel = computed(() => t('settings.companions.connection.scopeAllWorkspaces'))
+const browserDriverFieldLabel = computed(() => t('settings.companions.connection.browserDriver'))
+const browserProfileFieldLabel = computed(() => t('settings.companions.connection.browserProfile'))
+const browserDefaultProfileLabel = computed(() => t('settings.companions.connection.browserProfileDefault'))
+const namePlaceholder = computed(() => {
+  if (form.kind === 'work_session') return defaultWorkSessionName()
+  if (form.kind === 'browser') return defaultBrowserName()
+  return ''
+})
+
+function defaultWorkSessionName(): string {
+  const prefix = t('settings.companions.connection.kindWorkSession')
+  if (form.scope === '*') return `${prefix} · ${allWorkspacesLabel.value}`
+  const projectName = projectNameById.value.get(form.scope) ?? form.scope
+  return `${prefix} · ${projectName}`
+}
+
+function defaultBrowserName(): string {
+  const driverText = form.browserDriver === 'ego_lite' ? 'Ego Lite' : t('settings.companions.connection.driverBuiltinShort')
+  if (!form.browserProfileId) return driverText
+  const profile = browserProfiles.value.find((item) => item.id === form.browserProfileId)
+  return `${driverText} · ${profile?.name ?? form.browserProfileId}`
+}
+
+function endpointDisplay(connection: CompanionConnection): string | null {
+  if (connection.kind === 'work_session') {
+    const scope = connection.endpoint?.trim()
+    if (!scope || scope === '*') return allWorkspacesLabel.value
+    return projectNameById.value.get(scope) ?? scope
+  }
+  if (connection.kind === 'browser') {
+    const extra = connection as unknown as { driver?: unknown; profile_id?: unknown }
+    const parsed = parseBrowserConnectionEndpoint(connection.endpoint, extra)
+    const driverText = browserDriverLabel(parsed.driver)
+    if (!parsed.profileId) return driverText
+    const profile = browserProfiles.value.find((item) => item.id === parsed.profileId)
+    return `${driverText} · ${profile?.name ?? parsed.profileId}`
+  }
+  return connection.endpoint ?? null
+}
+
+const canSubmit = computed(() => {
+  if (busy.value) return false
+  if (form.kind === 'work_session' || form.kind === 'browser') return true
+  return form.name.trim().length > 0
+})
+
 function time(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString() : ''
+}
+
+async function loadAuxiliaries() {
+  const tasks: Array<Promise<void>> = []
+  if (typeof api.listProjects === 'function') {
+    tasks.push(
+      api.listProjects({ lifecycleStatus: 'active' })
+        .then((rows) => { projects.value = Array.isArray(rows) ? rows : [] })
+        .catch(() => { projects.value = [] }),
+    )
+  }
+  if (typeof companionApi.listBrowserProfiles === 'function') {
+    tasks.push(
+      companionApi.listBrowserProfiles()
+        .then((rows) => { browserProfiles.value = Array.isArray(rows) ? rows : [] })
+        .catch(() => { browserProfiles.value = [] }),
+    )
+  }
+  await Promise.all(tasks)
 }
 
 async function load() {
@@ -78,13 +200,24 @@ async function load() {
   }
 }
 
-onMounted(() => { void load() })
+onMounted(() => {
+  void load()
+  void loadAuxiliaries()
+})
 onBeforeUnmount(() => { readGeneration++ })
 watch(() => props.companionId, () => {
-  form.kind = 'mcp'
+  form.kind = 'work_session'
   form.name = ''
   form.endpoint = ''
+  form.scope = '*'
+  form.browserDriver = 'builtin_electron'
+  form.browserProfileId = ''
   void load()
+})
+watch(() => form.browserDriver, () => {
+  if (form.browserProfileId && !filteredBrowserProfiles.value.some((item) => item.id === form.browserProfileId)) {
+    form.browserProfileId = ''
+  }
 })
 
 function reportWriteFailure(error: unknown, title: string) {
@@ -97,18 +230,42 @@ function replaceRow(updated: CompanionConnection) {
 }
 
 async function addConnection() {
-  const name = form.name.trim()
-  if (!name || busy.value) return
+  if (!canSubmit.value) return
   busy.value = true
   try {
-    await companionApi.addConnection(props.companionId, {
-      kind: form.kind,
-      name,
-      endpoint: form.endpoint.trim() || null,
-      authorization: 'configured',
-    })
+    if (form.kind === 'work_session') {
+      const name = form.name.trim() || defaultWorkSessionName()
+      await companionApi.addConnection(props.companionId, {
+        kind: 'work_session',
+        name,
+        endpoint: form.scope || '*',
+        authorization: 'authorized',
+      })
+    } else if (form.kind === 'browser') {
+      const name = form.name.trim() || defaultBrowserName()
+      const profileId = form.browserProfileId.trim() || null
+      await companionApi.addConnection(props.companionId, {
+        kind: 'browser',
+        name,
+        endpoint: encodeBrowserConnectionEndpoint(form.browserDriver, profileId),
+        driver: form.browserDriver,
+        profile_id: profileId,
+        authorization: 'authorized',
+      })
+    } else {
+      const name = form.name.trim()
+      if (!name) return
+      await companionApi.addConnection(props.companionId, {
+        kind: form.kind,
+        name,
+        endpoint: form.endpoint.trim() || null,
+        authorization: 'configured',
+      })
+    }
     form.name = ''
     form.endpoint = ''
+    form.scope = '*'
+    form.browserProfileId = ''
     await load()
   } catch (error) {
     reportWriteFailure(error, t('settings.companions.connection.saveFailed'))
@@ -203,7 +360,7 @@ async function remove(connection: CompanionConnection) {
           <UiBadge :variant="authorizationVariant(connection.authorization)" :data-testid="`companion-connection-auth-${connection.id}`">
             {{ authorizationLabel(connection.authorization) }}
           </UiBadge>
-          <UiBadge variant="secondary" :data-testid="`companion-connection-runtime-${connection.id}`">
+          <UiBadge :variant="runtimeVariant(connection.runtime_status)" :data-testid="`companion-connection-runtime-${connection.id}`">
             {{ runtimeLabel(connection.runtime_status) }}
           </UiBadge>
           <UiBadge :variant="connection.enabled ? 'default' : 'secondary'">
@@ -211,7 +368,9 @@ async function remove(connection: CompanionConnection) {
           </UiBadge>
         </p>
         <p class="companion-row-meta">
-          <span v-if="connection.endpoint">{{ connection.endpoint }}</span>
+          <span v-if="endpointDisplay(connection)" :data-testid="`companion-connection-endpoint-display-${connection.id}`">
+            {{ endpointDisplay(connection) }}
+          </span>
           <span>{{ t('settings.companions.connection.runtime') }}: {{ runtimeLabel(connection.runtime_status) }}</span>
           <span>
             {{ connection.last_checked_at
@@ -221,7 +380,7 @@ async function remove(connection: CompanionConnection) {
         </p>
         <div class="companion-inline companion-inline-end">
           <UiButton
-            v-if="connection.authorization === 'configured'"
+            v-if="connection.authorization !== 'authorized'"
             variant="outline"
             size="sm"
             :disabled="busy"
@@ -259,16 +418,74 @@ async function remove(connection: CompanionConnection) {
           <option v-for="kind in kinds" :key="kind" :value="kind">{{ kindLabel(kind) }}</option>
         </select>
       </div>
+
+      <template v-if="form.kind === 'work_session'">
+        <div class="companion-field">
+          <label for="companion-connection-scope">{{ scopeLabelText }}</label>
+          <select id="companion-connection-scope" v-model="form.scope" class="settings-select" data-testid="companion-connection-scope">
+            <option value="*">{{ allWorkspacesLabel }}</option>
+            <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+          </select>
+        </div>
+      </template>
+
+      <template v-else-if="form.kind === 'browser'">
+        <div class="companion-field">
+          <label for="companion-connection-browser-driver">{{ browserDriverFieldLabel }}</label>
+          <select
+            id="companion-connection-browser-driver"
+            v-model="form.browserDriver"
+            class="settings-select"
+            data-testid="companion-connection-browser-driver"
+          >
+            <option v-for="driver in browserDrivers" :key="driver" :value="driver">{{ browserDriverLabel(driver) }}</option>
+          </select>
+        </div>
+        <div class="companion-field">
+          <label for="companion-connection-browser-profile">{{ browserProfileFieldLabel }}</label>
+          <select
+            v-if="filteredBrowserProfiles.length > 0"
+            id="companion-connection-browser-profile"
+            v-model="form.browserProfileId"
+            class="settings-select"
+            data-testid="companion-connection-browser-profile"
+          >
+            <option value="">{{ browserDefaultProfileLabel }}</option>
+            <option v-for="profile in filteredBrowserProfiles" :key="profile.id" :value="profile.id">
+              {{ profile.name }}
+            </option>
+          </select>
+          <input
+            v-else
+            id="companion-connection-browser-profile"
+            v-model="form.browserProfileId"
+            class="settings-select"
+            data-testid="companion-connection-browser-profile"
+            type="text"
+            :placeholder="browserDefaultProfileLabel"
+          />
+        </div>
+      </template>
+
       <div class="companion-field">
         <label for="companion-connection-name">{{ t('settings.companions.connection.name') }}</label>
-        <input id="companion-connection-name" v-model="form.name" class="settings-select" data-testid="companion-connection-name" type="text" />
+        <input
+          id="companion-connection-name"
+          v-model="form.name"
+          class="settings-select"
+          data-testid="companion-connection-name"
+          type="text"
+          :placeholder="namePlaceholder"
+        />
       </div>
-      <div class="companion-field">
+
+      <div v-if="form.kind !== 'work_session' && form.kind !== 'browser'" class="companion-field">
         <label for="companion-connection-endpoint">{{ t('settings.companions.connection.endpoint') }}</label>
         <input id="companion-connection-endpoint" v-model="form.endpoint" class="settings-select" data-testid="companion-connection-endpoint" type="text" />
       </div>
+
       <div class="companion-inline companion-inline-end">
-        <UiButton size="sm" data-testid="companion-connection-add" :disabled="busy || !form.name.trim()" @click="addConnection">
+        <UiButton size="sm" data-testid="companion-connection-add" :disabled="!canSubmit" @click="addConnection">
           <Plus :size="14" />
           <span>{{ t('settings.companions.connection.add') }}</span>
         </UiButton>
@@ -348,8 +565,9 @@ async function remove(connection: CompanionConnection) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-card, 10px);
+  border: 1px solid var(--border-muted);
   background: var(--surface-chrome, transparent);
 }
 

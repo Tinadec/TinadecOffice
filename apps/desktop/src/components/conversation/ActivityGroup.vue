@@ -104,6 +104,7 @@ function toolText(entry: ToolEntry): string {
 </template>
 
 <style scoped>
+.conversation-group :deep([data-testid="group-label"]) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .conversation-group-lines { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0 0 4px 20px; list-style: none; color: var(--text-secondary); font-size: 12px; }
 .conversation-group-line { min-width: 0; overflow-wrap: anywhere; }
 .conversation-group-wait { display: inline-flex; align-items: center; gap: 4px; }

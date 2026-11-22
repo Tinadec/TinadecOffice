@@ -100,14 +100,16 @@ const phaseLabel = computed(() => t(`conversation.correction.phase.${props.trace
 </template>
 
 <style scoped>
-.conversation-correction { border-left: 2px solid var(--accent-info, #58a6ff); padding-left: 8px; color: var(--text-secondary); font-size: 12px; }
-.conversation-correction-summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; min-width: 0; }
+.conversation-correction { border: 1px solid color-mix(in srgb, var(--accent-info, #58a6ff) 28%, var(--border-muted)); border-radius: 8px; padding: 6px 10px; background: color-mix(in srgb, var(--accent-info, #58a6ff) 5%, transparent); color: var(--text-secondary); font-size: 12px; }
+.conversation-correction-summary > svg { color: var(--accent-info, #58a6ff); flex-shrink: 0; }
+.conversation-correction-summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; min-width: 0; border-radius: 4px; }
+.conversation-correction-summary:focus-visible { outline: 1px solid hsl(var(--ring)); }
 .conversation-correction-summary::-webkit-details-marker { display: none; }
 .conversation-correction-summary > span { min-width: 0; }
 .conversation-correction-muted { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-correction-spacer { flex: 1; }
-.conversation-correction-badge { border: 1px solid var(--border-subtle); border-radius: 4px; padding: 1px 4px; color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
-.conversation-correction-body { display: grid; gap: 6px; margin-top: 8px; }
+.conversation-correction-badge { border: 1px solid var(--border-subtle); border-radius: 4px; padding: 1px 5px; color: var(--text-muted); font-size: 10px; text-transform: uppercase; white-space: nowrap; flex-shrink: 0; }
+.conversation-correction-body { display: grid; gap: 6px; margin-top: 8px; font-variant-numeric: tabular-nums; }
 .conversation-correction-body p { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
 .conversation-correction-body strong { margin-right: 5px; color: var(--text-primary); font-weight: 600; }
 .conversation-correction-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }

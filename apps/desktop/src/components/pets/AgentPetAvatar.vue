@@ -3,7 +3,8 @@ import { Layers, PawPrint } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
-import { planAvatar, type AvatarKind } from '@/pets/avatarKind'
+import { hasCubismCoreGlobal, planAvatar, type AvatarKind } from '@/pets/avatarKind'
+import { live2dSdkState } from '@/pets/live2dRuntimeLoader'
 
 /**
  * One agent's face.
@@ -60,7 +61,8 @@ watch(
 )
 
 const url = computed(() => urlForSlug(resolvedSlug.value))
-const plan = computed(() => planAvatar(props.avatarKind, resolvedSlug.value))
+const sdkReady = computed(() => hasCubismCoreGlobal() || live2dSdkState.value.ready)
+const plan = computed(() => planAvatar(props.avatarKind, resolvedSlug.value, null, { live2dSdkReady: sdkReady.value }))
 const glyphSize = computed(() => Math.max(10, Math.round(props.size * 0.58)))
 </script>
 
@@ -78,7 +80,7 @@ const glyphSize = computed(() => Math.max(10, Math.round(props.size * 0.58)))
       v-else-if="plan.kind === 'live2d'"
       :size="glyphSize"
       class="agent-pet-avatar-live2d"
-      :title="t('settings.companions.live2d.unavailableShort')"
+      :title="plan.ready ? (alt || 'Live2D') : t('settings.companions.live2d.unavailableShort')"
     />
     <PawPrint v-else :size="glyphSize" class="agent-pet-avatar-fallback" />
   </span>

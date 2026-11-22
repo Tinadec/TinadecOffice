@@ -235,6 +235,7 @@ async function ensureComposerSession(): Promise<string> {
     if (viewMode.value === view && selectedProjectId.value === projectId && selectedStorageId() === storageId && !selectedSessionId.value) {
       selectedSessionId.value = session.id
       pendingSessionId.value = session.id
+      newSessionSettings.value = { ...newSessionSettings.value, [view]: newComposerSettings(view) }
     }
     return session.id
   })()
@@ -1102,6 +1103,7 @@ async function handleSend(content: string, opts?: ComposerSubmitOptions) {
       if (selectedStorageId() === requestedStorage && viewMode.value === requestedView && selectedSessionId.value === requestedSession) {
         selectedSessionId.value = session.id
         pendingSessionId.value = session.id
+        newSessionSettings.value = { ...newSessionSettings.value, [requestedView]: newComposerSettings(requestedView) }
       }
     }
     await flushStagedAttachments(sessionId, requestedProject)

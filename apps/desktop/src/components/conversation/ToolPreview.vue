@@ -58,9 +58,9 @@ const diffLines = computed(() => (body.value?.kind === 'text' ? (body.value.text
 
 <style scoped>
 .conversation-preview { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.conversation-preview-caption { margin: 0; font-size: 11px; color: var(--text-muted); }
+.conversation-preview-caption { margin: 0; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .conversation-preview-entries { margin: 0; padding: 0; list-style: none; columns: 2; font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); }
-.conversation-code-gutter { display: inline-block; min-width: 2.5em; margin-right: 0.75em; color: var(--text-muted); user-select: none; text-align: right; }
+.conversation-code-gutter { display: inline-block; min-width: 2.5em; margin-right: 0.75em; color: var(--text-muted); font-variant-numeric: tabular-nums; user-select: none; text-align: right; }
 .is-context { color: var(--text-muted); }
 .is-added { color: var(--accent-success); }
 .is-removed { color: var(--accent-danger); }

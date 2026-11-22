@@ -348,5 +348,5 @@ defineExpose({ load })
 }
 .defaults-policy-row { display: flex; align-items: center; gap: 6px; font-size: 11px; min-width: 0; }
 .defaults-policy-label { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
-.defaults-policy-value { font-family: var(--font-mono); color: var(--text-primary); margin-left: auto; }
+.defaults-policy-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-primary); margin-left: auto; white-space: nowrap; }
 </style>

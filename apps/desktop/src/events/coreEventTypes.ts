@@ -120,6 +120,8 @@ export const ORCHESTRATION_EVENT_TYPES = [
   'task.wait_resolved',
   // An agent's own step-by-step plan (plan_update), resent whole on every change.
   'plan.updated',
+  // Persistent session-scoped structured plan synced with tasks & artifacts.
+  'session.plan.updated',
   'correction.trace.updated',
   'correction.question.requested',
   'correction.question.answered',

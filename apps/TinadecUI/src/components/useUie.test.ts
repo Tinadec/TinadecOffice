@@ -5,7 +5,7 @@ import { createCardRegistry } from '../engine/registry'
 import { createLayerStore } from '../engine/persistence/layerStore'
 import type { LayoutStorageBlob } from '../engine/persistence/types'
 
-// A registry with both home and market cards so page presets can be applied.
+// A registry with both home and settings cards so page presets can be applied.
 function makeFullRegistry() {
   const reg = createCardRegistry()
   reg.register({
@@ -17,23 +17,19 @@ function makeFullRegistry() {
     singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '聊天',
   })
   reg.register({
-    type: 'marketFilter', component: {} as never, minWidth: 240, minHeight: 160,
-    singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '筛选',
+    type: 'settingsNav', component: {} as never, minWidth: 220, minHeight: 160,
+    singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '设置导航',
   })
   reg.register({
-    type: 'marketCatalog', component: {} as never, minWidth: 280, minHeight: 160,
-    singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '目录',
-  })
-  reg.register({
-    type: 'marketDetail', component: {} as never, minWidth: 280, minHeight: 160,
-    singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '详情',
+    type: 'settingsContent', component: {} as never, minWidth: 320, minHeight: 200,
+    singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '设置内容',
   })
   return reg
 }
 
 // Mirror the route pages: every UIE route enters through `useUiePage(page)`,
 // which calls `showPage(page)` on mount.
-function enterPage(uie: ReturnType<typeof createUie>, page: 'home' | 'market') {
+function enterPage(uie: ReturnType<typeof createUie>, page: 'home' | 'settings') {
   uie.showPage(page)
 }
 
@@ -77,7 +73,7 @@ describe('initial layout readiness', () => {
   })
 })
 
-describe('useUie page preset switching (market → home navigation)', () => {
+describe('useUie page preset switching (settings -> home navigation)', () => {
   beforeEach(() => {
     __resetUieForTests()
   })
@@ -92,34 +88,31 @@ describe('useUie page preset switching (market → home navigation)', () => {
     expect(uie.snapshot.value.pageId).toBe('home')
   })
 
-  it('entering market switches the singleton snapshot to the market layout', () => {
+  it('entering settings switches the singleton snapshot to the settings layout', () => {
     const opts: UieStoreOptions = { registry: makeFullRegistry() }
     const uie = createUie(opts)
-    enterPage(uie, 'market')
-    expect(uie.pageId.value).toBe('market')
+    enterPage(uie, 'settings')
+    expect(uie.pageId.value).toBe('settings')
     expect(uie.snapshot.value.columns.center.surfaceMode).toBe('float')
-    // Market cards present, home chat card gone.
     const cards = Object.values(uie.snapshot.value.cards).map((c) => c.descriptorId)
-    expect(cards).toContain('marketCatalog')
+    expect(cards).toContain('settingsContent')
     expect(cards).not.toContain('chat')
   })
 
-  it('returning home re-applies the home layout (fixes "stuck on market")', () => {
+  it('returning home re-applies the home layout', () => {
     const opts: UieStoreOptions = { registry: makeFullRegistry() }
     const uie = createUie(opts)
-    enterPage(uie, 'market')
+    enterPage(uie, 'settings')
     enterPage(uie, 'home')
-    // The regression: without HomePage's showPage('home') entry, pageId
-    // stays 'market' and the shell renders market columns.
     expect(uie.pageId.value).toBe('home')
     expect(uie.snapshot.value.pageId).toBe('home')
     expect(uie.snapshot.value.columns.center.surfaceMode).toBe('immersive')
     const cards = Object.values(uie.snapshot.value.cards).map((c) => c.descriptorId)
     expect(cards).toContain('chat')
-    expect(cards).not.toContain('marketCatalog')
+    expect(cards).not.toContain('settingsContent')
   })
 
-  it('round-tripping market keeps the customised home layout', async () => {
+  it('round-tripping settings keeps the customised home layout', async () => {
     const store = memoryLayerStore()
     await store.hydrate()
     const uie = createUie({ registry: makeFullRegistry(), persistence: { store } })
@@ -131,7 +124,7 @@ describe('useUie page preset switching (market → home navigation)', () => {
     })
     const customised = uie.snapshot.value.columns.left.width
     expect(customised).toBe(333)
-    enterPage(uie, 'market')
+    enterPage(uie, 'settings')
     enterPage(uie, 'home')
     expect(uie.pageId.value).toBe('home')
     expect(uie.snapshot.value.columns.left.width).toBe(customised)
@@ -139,15 +132,15 @@ describe('useUie page preset switching (market → home navigation)', () => {
 
   it('cold deep link hydrates the page being shown, not the initial home page', async () => {
     const seeded = createUie({ registry: makeFullRegistry() })
-    seeded.showPage('market')
-    const market = seeded.snapshot.value
-    const store = memoryLayerStore({ version: 1, pageByPageId: { market } } as LayoutStorageBlob)
+    seeded.showPage('settings')
+    const settingsSnapshot = seeded.snapshot.value
+    const store = memoryLayerStore({ version: 1, pageByPageId: { settings: settingsSnapshot } } as LayoutStorageBlob)
     __resetUieForTests()
     const uie = createUie({ registry: makeFullRegistry(), persistence: { store } })
-    enterPage(uie, 'market') // route mounts before the async disk read resolves
+    enterPage(uie, 'settings') // route mounts before the async disk read resolves
     await new Promise((r) => setTimeout(r, 0))
-    expect(uie.pageId.value).toBe('market')
-    expect(uie.snapshot.value.cards).toEqual(market.cards)
+    expect(uie.pageId.value).toBe('settings')
+    expect(uie.snapshot.value.cards).toEqual(settingsSnapshot.cards)
   })
 })
 
@@ -207,17 +200,17 @@ describe('useUie per-project layouts', () => {
     expect(leftWidth()).toBe(350) // still following the page-wide layout
   })
 
-  it('keeps market page-wide regardless of the active project', async () => {
+  it('keeps settings page-wide regardless of the active project', async () => {
     const { uie, store, resizeLeft, leftWidth } = setup()
     await store.hydrate()
     uie.setActiveProjectId('p1')
-    uie.showPage('market')
-    expect(uie.scope.value).toEqual({ kind: 'page', pageId: 'market' })
+    uie.showPage('settings')
+    expect(uie.scope.value).toEqual({ kind: 'page', pageId: 'settings' })
     resizeLeft(310)
     const edited = leftWidth()
 
     uie.setActiveProjectId('p2')
-    expect(uie.pageId.value).toBe('market')
+    expect(uie.pageId.value).toBe('settings')
     expect(leftWidth()).toBe(edited)
   })
 
@@ -256,13 +249,6 @@ describe('preset revisions for redesigned pages', () => {
       type: 'nav', component: {} as never, minWidth: 220, minHeight: 120,
       singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '',
     })
-    for (const type of ['companionList', 'companionFeed', 'companionGroups', 'companionConnections',
-      'companionBuddy', 'companionSupervision', 'companionProfile']) {
-      reg.register({
-        type, component: {} as never, minWidth: 200, minHeight: 160,
-        singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '',
-      })
-    }
     return reg
   }
 
@@ -280,7 +266,7 @@ describe('preset revisions for redesigned pages', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     // Presets alone only reach fresh installs; the stored arrangement was replaced instead.
-    expect(uie.snapshot.value.presetRevision).toBe(5)
+    expect(uie.snapshot.value.presetRevision).toBe(6)
   })
 
   it('keeps a stored layout that already matches the page preset revision', async () => {

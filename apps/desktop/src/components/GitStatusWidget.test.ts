@@ -19,7 +19,7 @@ const state = {
 const hostStatus = ref({ state: 'ready' })
 vi.mock('@/composables/useHomeGitStatus', () => ({ useHomeGitStatus: () => state }))
 vi.mock('@/composables/useConnection', () => ({ useConnection: () => ({ hostStatus }) }))
-vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key, locale: ref('zh-CN') }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key, te: () => true, locale: ref('zh-CN') }) }))
 import GitStatusWidget from '../../../TinadecUI/src/components/cards/home/GitStatusWidget.vue'
 
 const project = { id: 'a', path: 'C:/repo', name: 'Workspace', created_at: '' }
@@ -61,7 +61,7 @@ describe('Home Git widget visible states', () => {
     expect(wrapper.text()).toContain('context.gitWidgetPrevious')
     expect(wrapper.text()).not.toContain('src/long-file.ts')
   })
-  it('shows up to three actual files, an overflow count and a recent commit without Git write controls', () => {
+  it('shows up to three clickable changed files, quick nav links and a recent commit without Git write controls', async () => {
     state.summary.value = { ...summary, total: 4, files: [
       { path: 'src/first.ts', mark: 'M', kind: 'staged' },
       { path: 'src/second.ts', mark: 'M', kind: 'changed' },
@@ -75,7 +75,14 @@ describe('Home Git widget visible states', () => {
     expect(wrapper.text()).toContain('context.gitWidgetMoreFiles')
     expect(wrapper.text()).toContain('fix: widget polish')
     expect(wrapper.text()).not.toContain('src/fourth.ts')
-    expect(wrapper.findAll('button')).toHaveLength(2) // refresh + open only
+    // Read-only navigation controls only (refresh + 3 file rows + 3 quick tab links + open); zero write controls.
+    const buttons = wrapper.findAll('button')
+    expect(buttons).toHaveLength(8)
+    expect(buttons.map((b) => b.text()).join(' ')).not.toMatch(/commit|push|discard|stage|unstage/i)
+    await wrapper.findAll('.git-widget-file')[0].trigger('click')
+    expect(wrapper.emitted('open-file')?.[0]).toEqual(['src/first.ts'])
+    await wrapper.get('[data-testid="git-quick-log"]').trigger('click')
+    expect(wrapper.emitted('open-tab')?.[0]).toEqual(['history'])
   })
 
   it('separates no project, non-repo and preview' , async () => {

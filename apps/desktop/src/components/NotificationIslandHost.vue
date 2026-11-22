@@ -35,8 +35,8 @@ const dismissibleLiveCount = computed(
 
 const routeKind = computed(() => {
   if (route.name === 'detached-panel') return 'detached'
-  if (route.name === 'debug-studio') return 'debug'
   if (route.name === 'desktop-pet') return 'pet'
+  if (route.name === 'companion-center') return 'companion'
   return 'standard'
 })
 
@@ -413,6 +413,7 @@ function taskLabel(item: NotificationItem) {
   --island-spring: cubic-bezier(0.34, 1.45, 0.42, 1);
 }
 .island-host--standard { top: 6px; --island-inset-start: 200px; --island-inset-end: 140px; }
+.island-host--companion { top: 6px; --island-inset-start: 286px; --island-inset-end: 140px; }
 .island-host--detached { top: 42px; --island-inset-start: 8px; --island-inset-end: 8px; }
 .island-host--debug { top: 78px; --island-inset-start: 12px; --island-inset-end: 12px; }
 
@@ -708,11 +709,16 @@ function taskLabel(item: NotificationItem) {
 .island-stack__header .island-card__icon-btn { margin-left: auto; }
 .island-stack__list { list-style: none; margin: 0; padding: 0 0 4px; overflow-y: auto; flex: 1; }
 .island-stack__row {
+  --level: var(--accent-primary, #d2bdf5);
   display: flex; align-items: center; gap: 8px; padding: 8px 13px;
   font-size: 11px; cursor: pointer; transition: background 120ms ease;
 }
+.island-stack__row--success { --level: var(--accent-success, #3fb950); }
+.island-stack__row--warning { --level: var(--accent-warning, #d29922); }
+.island-stack__row--error { --level: var(--accent-danger, #f85149); }
+.island-stack__row--info { --level: var(--accent-primary, #d2bdf5); }
+.island-stack__row--hero { background: color-mix(in srgb, var(--level) 10%, transparent); }
 .island-stack__row:hover { background: var(--bg-hover, #231f29); }
-.island-stack__row--hero { box-shadow: inset 3px 0 0 var(--level); }
 .island-stack__icon {
   flex: none; display: grid; place-items: center; width: 22px; height: 22px;
   border-radius: 5px; background: color-mix(in srgb, var(--accent-primary, #d2bdf5) 12%, transparent);

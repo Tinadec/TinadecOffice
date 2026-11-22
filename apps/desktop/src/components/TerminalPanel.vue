@@ -261,6 +261,15 @@ watch(shown, (isShown) => {
   })
 }, { immediate: true })
 
+// When Web auth / loopback auto-login finishes after mount, load shells & start a Web terminal if visible.
+watch(localTerminalAvailable, (available, prev) => {
+  if (!available || prev) return
+  void loadShells()
+  if (shown.value && terminals.value.length === 0) {
+    void handleNewTerminal()
+  }
+})
+
 // Auto-fit when active terminal changes
 watch(activeTerminalId, (id) => {
   if (id && shown.value) {

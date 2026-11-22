@@ -4,23 +4,23 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { computed } from 'vue'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--radius-control,6px)] text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-color,var(--accent-primary))] focus-visible:ring-offset-1 focus-visible:ring-offset-transparent disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow hover:bg-primary/90',
-        destructive: 'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90',
-        outline: 'border border-input bg-[var(--surface-button)] shadow-sm hover:bg-[var(--surface-button-hover)] hover:text-accent-foreground',
-        secondary: 'bg-[var(--surface-button)] text-secondary-foreground shadow-sm hover:bg-[var(--surface-button-hover)]',
-        ghost: 'hover:bg-[var(--surface-hover)] hover:text-accent-foreground',
-        link: 'text-primary underline-offset-4 hover:underline',
+        default: 'bg-[var(--bg-primary-button,hsl(var(--primary)))] text-white shadow-xs hover:bg-[var(--bg-primary-button-hover,hsl(var(--primary)/0.9))]',
+        destructive: 'bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90',
+        outline: 'border border-[var(--border-default)] bg-[var(--surface-button)] text-[var(--text-primary)] hover:bg-[var(--surface-button-hover)] hover:border-[var(--border-input-focus)]',
+        secondary: 'border border-[var(--border-muted)] bg-[var(--surface-button)] text-[var(--text-primary)] hover:bg-[var(--surface-button-hover)]',
+        ghost: 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+        link: 'text-[var(--accent-primary)] underline-offset-4 hover:underline',
       },
       size: {
-        default: 'h-9 px-4 py-2',
-        xs: 'h-7 rounded px-2 text-xs',
-        sm: 'h-8 rounded-md px-3 text-sm',
-        lg: 'h-10 rounded-md px-8',
-        icon: 'h-9 w-9',
+        default: 'h-[var(--control-height-md,34px)] px-3.5 py-1.5',
+        xs: 'h-[var(--control-height-xs,26px)] rounded-[var(--radius-control,6px)] px-2 text-[11px]',
+        sm: 'h-[var(--control-height-sm,30px)] rounded-[var(--radius-control,6px)] px-3 text-xs',
+        lg: 'h-[var(--control-height-lg,40px)] rounded-[var(--radius-control-md,8px)] px-6 text-[13px]',
+        icon: 'h-[var(--control-height-md,34px)] w-[var(--control-height-md,34px)] rounded-[var(--radius-control,6px)]',
       },
     },
     defaultVariants: {

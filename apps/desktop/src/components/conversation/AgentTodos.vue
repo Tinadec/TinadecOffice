@@ -51,8 +51,8 @@ const who = computed(() => (props.entry.handle ? nameFor(props.entry.handle) : '
 
 <style scoped>
 .conversation-todos { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-secondary); }
-.conversation-todos-head { display: flex; gap: 8px; margin: 0; }
-.conversation-todos-owner { color: var(--text-muted); font-size: 11px; }
+.conversation-todos-head { display: flex; align-items: baseline; gap: 8px; margin: 0; min-width: 0; font-variant-numeric: tabular-nums; }
+.conversation-todos-owner { color: var(--text-muted); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-todos-explanation { margin: 0; color: var(--text-muted); font-size: 11px; }
 .conversation-todos-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0 0 0 20px; list-style: none; }
 .conversation-todo { display: flex; align-items: center; gap: 6px; }

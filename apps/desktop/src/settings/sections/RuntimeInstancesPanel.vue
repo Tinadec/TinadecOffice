@@ -289,8 +289,8 @@ defineExpose({ loadRuntimeInstances })
     </div>
 
     <div class="model-provider-toolbar ac-runtime-toolbar">
-      <div class="model-provider-search">
-        <Search :size="15" />
+      <div class="model-provider-search ac-runtime-search">
+        <Search :size="15" class="ac-runtime-search-icon" aria-hidden="true" />
         <UiInput v-model="runtimeSessionFilter" :placeholder="t('agentCenter.filter.searchInstances')" />
       </div>
       <div class="model-provider-filters" role="group" :aria-label="t('settings.runtimeStatusFilter')">
@@ -488,6 +488,30 @@ defineExpose({ loadRuntimeInstances })
 }
 .ac-policy-source code {
   font-family: var(--font-mono);
+}
+.ac-runtime-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ac-runtime-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.ac-runtime-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+  z-index: 1;
+}
+.ac-runtime-search :deep(input) {
+  padding-left: 32px;
+  width: 100%;
 }
 .ac-runtime-list {
   display: grid;

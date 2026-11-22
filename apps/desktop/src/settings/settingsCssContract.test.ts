@@ -113,9 +113,9 @@ describe('settings integrated material contract', () => {
     expectSelectorDeclarations(css, '.settings-textarea:focus', /border-color\s*:\s*var\(--border-input-focus\)\s*;/)
     expect(inputSource).toContain('focus-visible:ring-1')
 
-    expectSelectorDeclarations(css, '.tool-discovery-card.risky', /box-shadow\s*:\s*inset\s+3px\s+0[^;]*var\(--accent-danger\)/)
-    expectSelectorDeclarations(css, '.model-provider-row.issue', /box-shadow\s*:\s*inset\s+3px\s+0[^;]*var\(--accent-danger\)/)
-    expectSelectorDeclarations(css, '.runtime-binding-warning', /box-shadow\s*:\s*inset\s+3px\s+0[^;]*var\(--accent-warning\)/)
+    expectSelectorDeclarations(css, '.tool-discovery-card.risky', /box-shadow\s*:\s*inset\s+0\s+0\s+0\s+1px[^;]*var\(--accent-danger\)/)
+    expectSelectorDeclarations(css, '.model-provider-row.issue', /box-shadow\s*:\s*inset\s+0\s+0\s+0\s+1px[^;]*var\(--accent-danger\)/)
+    expectSelectorDeclarations(css, '.runtime-binding-warning', /box-shadow\s*:\s*inset\s+0\s+0\s+0\s+1px[^;]*var\(--accent-warning\)/)
     expectSelectorDeclarations(css, '.model-health-alert', /border\s*:\s*1px\s+solid[^;]*var\(--accent-danger\)/)
 
     expectSelectorDeclarations(css, '.model-provider-modal-content', /\bborder\s*:\s*0\s*;/)

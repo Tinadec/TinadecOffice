@@ -22,10 +22,8 @@ export function installPreviewShimIfNeeded(): void {
   if (w.tinadec) return
 
   // Preview-only UI state never writes the real user's desktop.toml.
-  const previewDebugKey = 'tinadec.preview.debug-studio-enabled'
   const previewCloseToTrayKey = 'tinadec.preview.close-to-tray'
   const previewCompanionModeKey = 'tinadec.preview.companion-mode-enabled'
-  function previewDebugEnabled(): boolean { return localStorage.getItem(previewDebugKey) === 'true' }
   function previewCloseToTray(): boolean { return localStorage.getItem(previewCloseToTrayKey) === 'true' }
   function previewCompanionMode(): boolean { return localStorage.getItem(previewCompanionModeKey) === 'true' }
 
@@ -47,16 +45,7 @@ export function installPreviewShimIfNeeded(): void {
     retryHostConnection: () => Promise.resolve(hostStatus),
     storageAction: () => rejectNotAvailable(hostStatus.error.message),
     gatewayUrl: () => 'http://127.0.0.1:48730',
-    getAppConfig: () => Promise.resolve({ gateway_url: 'http://127.0.0.1:48730', source: 'environment', managed: true, debug_studio_enabled: previewDebugEnabled(), close_to_tray: previewCloseToTray(), companion_mode_enabled: previewCompanionMode() }),
-    saveDebugStudioEnabled: (enabled: boolean) => {
-      localStorage.setItem(previewDebugKey, String(enabled))
-      return Promise.resolve({ debug_studio_enabled: enabled })
-    },
-    onDebugStudioEnabledChanged: (callback: () => void) => {
-      const listener = (event: StorageEvent) => { if (event.key === previewDebugKey) callback() }
-      window.addEventListener('storage', listener)
-      return () => window.removeEventListener('storage', listener)
-    },
+    getAppConfig: () => Promise.resolve({ gateway_url: 'http://127.0.0.1:48730', source: 'environment', managed: true, close_to_tray: previewCloseToTray(), companion_mode_enabled: previewCompanionMode() }),
     // A browser tab has no tray, so the preference is stored locally instead of asking a main process.
     saveCloseToTray: (enabled: boolean) => {
       localStorage.setItem(previewCloseToTrayKey, String(enabled))
@@ -101,11 +90,6 @@ export function installPreviewShimIfNeeded(): void {
     minimizeWindow: noop,
     maximizeWindow: noop,
     closeWindow: noop,
-    openDebugStudio: () => {
-      if (!previewDebugEnabled()) return Promise.resolve(false)
-      window.location.hash = '/debug-studio'
-      return Promise.resolve(true)
-    },
     openLogin: () => Promise.resolve(null),
     logout: () => Promise.resolve({ loggedIn: false }),
     getAuthState: () => Promise.resolve({ loggedIn: false }),

@@ -2,8 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, Copy, ExternalLink, FileText, FolderGit2, RefreshCw, Tag } from '@lucide/vue'
-import { UiButton, UiSwitch } from '@/components/ui'
-import { useDebugStudio } from '@/composables/useDebugStudio'
+import { UiButton } from '@/components/ui'
 import { api as baseApi } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 import { version as desktopVersion } from '../../../package.json'
@@ -18,17 +17,6 @@ const api = scopedApi(baseApi, () => 'user')
 const { t } = useI18n()
 const development = import.meta.env.DEV
 const repository = 'https://github.com/Tinadec/TinadecOffice'
-
-const { enabled: debugStudioEnabled, loaded: debugStudioLoaded, error: debugStudioLoadError, load: loadDebugStudio, saveEnabled } = useDebugStudio()
-const debugStudioSaving = ref(false)
-const debugStudioSaveError = ref('')
-async function changeDebugStudio(value: boolean): Promise<void> {
-  debugStudioSaving.value = true
-  debugStudioSaveError.value = ''
-  try { await saveEnabled(value) }
-  catch (error) { debugStudioSaveError.value = error instanceof Error ? error.message : String(error) }
-  finally { debugStudioSaving.value = false }
-}
 
 type ServiceState = 'checking' | 'running' | 'unreachable'
 const gatewayState = ref<ServiceState>('checking')
@@ -95,7 +83,6 @@ function openExternal(url: string): void {
 }
 
 onMounted(checkHealth)
-onMounted(loadDebugStudio)
 </script>
 
 <template>
@@ -164,22 +151,6 @@ onMounted(loadDebugStudio)
         </li>
       </ul>
       <p class="about-note">&copy; {{ new Date().getFullYear() }} Lincube</p>
-    </section>
-
-    <section class="general-settings-group" aria-labelledby="about-developer-title">
-      <div class="general-settings-group-heading">
-        <div><h3 id="about-developer-title">{{ t('aboutPage.developerTools') }}</h3></div>
-      </div>
-      <div class="about-developer-row">
-        <div>
-          <label for="about-debug-studio">{{ t('aboutPage.showDebugStudio') }}</label>
-          <p id="about-debug-studio-hint">{{ t('aboutPage.debugStudioHint') }}</p>
-        </div>
-        <UiSwitch id="about-debug-studio" :model-value="debugStudioEnabled" :disabled="!debugStudioLoaded || Boolean(debugStudioLoadError) || debugStudioSaving" aria-describedby="about-debug-studio-hint" @update:model-value="changeDebugStudio" />
-      </div>
-      <p v-if="debugStudioLoadError || debugStudioSaveError" class="about-developer-error" role="alert">
-        {{ t(debugStudioLoadError ? 'aboutPage.debugStudioLoadFailed' : 'aboutPage.debugStudioSaveFailed') }}: {{ debugStudioSaveError || String(debugStudioLoadError) }}
-      </p>
     </section>
   </div>
 </template>

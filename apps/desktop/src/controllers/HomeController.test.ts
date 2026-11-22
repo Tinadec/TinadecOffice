@@ -822,6 +822,27 @@ describe('HomeController composer settings', () => {
       space_options: { plan_first: false, spec_enabled: false, multi_agent: false, workflow_mode_version_id: null, bulletin_board: false, worktree: false },
       expected_settings_revision: 6,
     })
+
+    // Draft ephemeral overrides materialize on the created session without leaking into a subsequent new conversation.
+    homeController.sessions.value = []
+    homeController.selectedSessionId.value = null
+    await flushPromises()
+    await homeController.selectMode('mv-team', { default_options: teamDefaults })
+    await homeController.updateComposerSettings({ space_options: overridden })
+    homeController.updateDraft('draft first turn')
+    h.createSession.mockResolvedValueOnce({
+      id: 'draft-created',
+      view_mode: 'flat',
+      mode_version_id: 'mv-team',
+      permission_mode: 'default',
+      space_options: overridden,
+      settings_revision: 0,
+    } as never)
+    await homeController.sendMessage({ dispatch_mode: 'parallel' })
+    expect(h.createSession.mock.calls.at(-1)?.[4]).toMatchObject({ space_options: overridden })
+    homeController.startNewConversation(null)
+    await flushPromises()
+    expect(homeController.composerSettings.value.space_options).toBeNull()
   })
 })
 

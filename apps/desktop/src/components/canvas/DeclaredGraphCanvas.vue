@@ -164,7 +164,19 @@ function layerLabel(layer: string): string {
 }
 
 .graph-node--conversation {
-  border-left: 3px solid var(--accent-recovery, #b18aff);
+  border-color: color-mix(in srgb, var(--accent-recovery, #b18aff) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-recovery, #b18aff) 5%, var(--surface-raised));
+}
+
+.graph-node--conversation .graph-node__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-node--conversation .graph-node__meta span:last-child {
+  color: var(--accent-recovery, #b18aff);
+  font-weight: 600;
 }
 
 .graph-node__label {

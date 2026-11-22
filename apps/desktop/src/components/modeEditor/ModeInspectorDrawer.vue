@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { History, Plus, Settings2, Sliders, Trash2, X } from '@lucide/vue'
+import { History, Plus, RotateCcw, Settings2, Sliders, Terminal, Trash2, X } from '@lucide/vue'
 import { UiBadge, UiButton, UiCheckbox, UiInput, UiLabel, UiSelectField, UiTextarea } from '@/components/ui'
 import {
   api as baseApi,
   type AgentDefinitionDto,
+  type AgentModeBindingDto,
   type AgentModeEdgeDto,
   type AgentModeNodeDto,
   type AgentModeRuntimePolicyDefinition,
@@ -19,6 +20,14 @@ import { scopedApi } from '@/lib/storageScope'
 import { useNotifications } from '@/composables/useNotifications'
 import { pickLocalized } from '@/lib/packI18n'
 import type { ModeDraftState } from '@/composables/useAgentModesStore'
+import type { ContextPolicyParams, ContextStrategyTier } from '@/lib/contextMemoryApi'
+import {
+  isExternalHarnessChannel,
+  providerRuntimeChannel,
+  runtimeChannelBadgeLabel,
+  type RuntimeChannelKind,
+} from '@/settings/agentCenter/directory/agentDirectoryHelpers'
+import ModeContextStrategySection from './ModeContextStrategySection.vue'
 import type { ModeLane } from './modeDagreLayout'
 
 export type InspectorPanelMode = 'overview' | 'node' | 'edge' | 'add-node' | 'versions'
@@ -102,6 +111,74 @@ const selectedPolicyDefinition = computed(() =>
   props.runtimePolicyDefinitions.find((def) => def.kind === props.draft.runtimePolicyKind) ?? null,
 )
 
+type DefaultOptionKey = 'plan_first' | 'spec_enabled' | 'multi_agent' | 'bulletin_board' | 'worktree'
+
+const DEFAULT_OPTION_ITEMS: ReadonlyArray<{ key: DefaultOptionKey; labelKey: string }> = [
+  { key: 'plan_first', labelKey: 'commandPanel.plan' },
+  { key: 'spec_enabled', labelKey: 'commandPanel.spec' },
+  { key: 'multi_agent', labelKey: 'commandPanel.agents' },
+  { key: 'bulletin_board', labelKey: 'commandPanel.bulletin' },
+  { key: 'worktree', labelKey: 'commandPanel.worktree' },
+]
+
+function isDefaultOptionEnabled(key: DefaultOptionKey): boolean {
+  return Boolean(props.draft.defaultOptions?.[key])
+}
+
+function toggleDefaultOption(key: DefaultOptionKey, checked: boolean): void {
+  if (props.readonly) return
+  const base = props.draft.defaultOptions ?? {
+    plan_first: false,
+    spec_enabled: false,
+    multi_agent: false,
+    bulletin_board: false,
+    worktree: false,
+    workflow_mode_version_id: null,
+  }
+  emit(
+    'update-overview',
+    { defaultOptions: { ...base, [key]: Boolean(checked) } },
+    `mode-default-opt:${key}`,
+  )
+}
+
+const modeContextStrategy = computed<ContextStrategyTier | null>(() => {
+  const raw = props.draft.canvasLayout?.context_strategy
+  return raw === 'direct' || raw === 'managed' || raw === 'deep_curator' ? raw : null
+})
+
+const modeContextAdvanced = computed<Partial<ContextPolicyParams> | null>(() => {
+  const raw = props.draft.canvasLayout?.context_advanced
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<ContextPolicyParams>) : null
+})
+
+function updateModeContextStrategy(next: ContextStrategyTier | null): void {
+  if (props.readonly) return
+  emit(
+    'update-overview',
+    { canvasLayout: { ...(props.draft.canvasLayout ?? {}), context_strategy: next } },
+    'mode-ctx-strategy',
+  )
+}
+
+function updateModeContextAdvanced(next: Partial<ContextPolicyParams>): void {
+  if (props.readonly) return
+  emit(
+    'update-overview',
+    { canvasLayout: { ...(props.draft.canvasLayout ?? {}), context_advanced: next } },
+    'mode-ctx-adv',
+  )
+}
+
+function resetModeContextStrategy(): void {
+  if (props.readonly) return
+  emit(
+    'update-overview',
+    { canvasLayout: { ...(props.draft.canvasLayout ?? {}), context_strategy: null, context_advanced: {} } },
+    'mode-ctx-reset',
+  )
+}
+
 const policyKindOptions = computed(() => [
   { value: 'none', label: t('settings.runtimePolicyNone') },
   ...props.runtimePolicyDefinitions.map((def) => ({
@@ -120,6 +197,7 @@ const nodeRelationshipJson = ref('{}')
 const nodeRelationshipError = ref<string | null>(null)
 const nodePreviewSummary = ref('')
 const nodePreviewBusy = ref(false)
+const nodeChannelFilter = ref<'all' | RuntimeChannelKind>('all')
 
 watch(
   () => props.selectedNode?.id,
@@ -127,6 +205,7 @@ watch(
     nodeRelationshipJson.value = JSON.stringify(props.selectedNode?.relationship ?? {}, null, 2)
     nodeRelationshipError.value = null
     nodePreviewSummary.value = ''
+    nodeChannelFilter.value = 'all'
   },
   { immediate: true },
 )
@@ -163,6 +242,56 @@ const nodeFixedModel = computed(() =>
   props.selectedNode?.model_strategy_override?.model ?? '',
 )
 
+const selectedFixedProvider = computed<ModelProviderInstanceDto | null>(() =>
+  props.providers.find((provider) => provider.id === nodeFixedProviderId.value) ?? null,
+)
+
+const selectedFixedChannel = computed<RuntimeChannelKind | null>(() =>
+  selectedFixedProvider.value ? providerRuntimeChannel(selectedFixedProvider.value) : null,
+)
+
+const selectedFixedIsHarness = computed(() =>
+  Boolean(selectedFixedChannel.value && isExternalHarnessChannel(selectedFixedChannel.value)),
+)
+
+const nodeProviderChannelTabs = computed(() => {
+  const counts: Record<RuntimeChannelKind, number> = { api: 0, http: 0, acp: 0, cli: 0, tui: 0 }
+  for (const provider of props.providers) {
+    counts[providerRuntimeChannel(provider)] += 1
+  }
+  const tabs: Array<{ key: 'all' | RuntimeChannelKind; label: string; count: number }> = [
+    { key: 'all', label: t('settings.runtimeChannelAll'), count: props.providers.length },
+    { key: 'api', label: t('settings.runtimeChannelApi'), count: counts.api },
+  ]
+  if (counts.http > 0) {
+    tabs.push({ key: 'http', label: t('settings.runtimeChannelHttp'), count: counts.http })
+  }
+  tabs.push(
+    { key: 'acp', label: t('settings.runtimeChannelAcp'), count: counts.acp },
+    { key: 'cli', label: t('settings.runtimeChannelCli'), count: counts.cli },
+    { key: 'tui', label: t('settings.runtimeChannelTui'), count: counts.tui },
+  )
+  return tabs
+})
+
+const filteredNodeProviderOptions = computed(() => {
+  const list = props.providers.filter((provider) => {
+    if (provider.id === nodeFixedProviderId.value) return true
+    if (nodeChannelFilter.value === 'all') return true
+    return providerRuntimeChannel(provider) === nodeChannelFilter.value
+  })
+  return [
+    { value: '', label: t('settings.selectProvider'), disabled: true },
+    ...list.map((provider) => {
+      const channel = providerRuntimeChannel(provider)
+      return {
+        value: provider.id,
+        label: `[${runtimeChannelBadgeLabel(channel)}] ${provider.display_name}`,
+      }
+    }),
+  ]
+})
+
 const nodeDuty = computed(() => {
   const rel = props.selectedNode?.relationship
   return rel && typeof rel.duty === 'string' ? rel.duty : ''
@@ -179,6 +308,188 @@ const nodeAgentTypesText = computed(() => {
   const arr = rel?.agent_types
   return Array.isArray(arr) ? arr.filter((v): v is string => typeof v === 'string').join(', ') : ''
 })
+
+// ── Inheritance vs Override Layering ─────────────────────────────────────────
+
+const boundNodeAgent = computed<AgentDefinitionDto | null>(() => {
+  const agentId = props.selectedNode?.agent_id || props.selectedNode?.agent_definition_id
+  if (!agentId) return null
+  return props.agents.find((a) => a.id === agentId || a.slug === agentId) ?? null
+})
+
+const agentDefaultLabel = computed(() =>
+  boundNodeAgent.value ? agentDisplayName(boundNodeAgent.value) : '',
+)
+
+const isLabelOverridden = computed(() => {
+  const raw = (props.selectedNode?.label ?? '').trim()
+  return Boolean(raw) && raw !== agentDefaultLabel.value.trim()
+})
+
+function restoreInheritedLabel(): void {
+  if (!props.selectedNode || props.readonly) return
+  emit('update-node', { id: props.selectedNode.id, patch: { label: null } })
+}
+
+const isStrategyOverridden = computed(() =>
+  Boolean(props.selectedNode?.model_strategy_override?.kind && props.selectedNode.model_strategy_override.kind !== 'inherit'),
+)
+
+const agentInheritedStrategySummary = computed(() => {
+  const agent = boundNodeAgent.value
+  if (!agent) return t('settings.runtimeInherit')
+  const binding = agent.model_binding
+  if (binding && binding.mode && binding.mode !== 'inherit') {
+    if (binding.mode === 'fixed') {
+      const providerName = binding.provider_instance_id
+        ? props.providers.find((p) => p.id === binding.provider_instance_id)?.display_name
+        : null
+      return binding.model || providerName || binding.provider_instance_id || t('settings.runtimeFixedModel')
+    }
+    if (binding.mode === 'route') return binding.route_purpose || t('settings.runtimeRoute')
+  }
+  const strat = (agent.model_strategy && typeof agent.model_strategy === 'object')
+    ? (agent.model_strategy as Record<string, unknown>)
+    : null
+  const kind = typeof strat?.kind === 'string' ? strat.kind : 'inherit'
+  if (kind === 'fixed') {
+    const providerId = typeof strat?.provider_instance_id === 'string' ? strat.provider_instance_id : null
+    const providerName = providerId ? props.providers.find((p) => p.id === providerId)?.display_name : null
+    return String(strat?.model || providerName || providerId || t('settings.runtimeFixedModel'))
+  }
+  if (kind === 'route') return String(strat?.route_purpose || agent.model_route_purpose || t('settings.runtimeRoute'))
+  return t('settings.runtimeInherit')
+})
+
+const agentInheritedChannel = computed<RuntimeChannelKind | null>(() => {
+  const agent = boundNodeAgent.value
+  if (!agent) return null
+  const bindingProviderId = agent.model_binding?.mode === 'fixed' ? agent.model_binding.provider_instance_id : null
+  const strat = (agent.model_strategy && typeof agent.model_strategy === 'object')
+    ? (agent.model_strategy as Record<string, unknown>)
+    : null
+  const stratProviderId = strat?.kind === 'fixed' && typeof strat.provider_instance_id === 'string'
+    ? strat.provider_instance_id
+    : null
+  const providerId = bindingProviderId || stratProviderId
+  if (!providerId) return null
+  const provider = props.providers.find((p) => p.id === providerId)
+  return provider ? providerRuntimeChannel(provider) : null
+})
+
+function restoreInheritedStrategy(): void {
+  if (!props.selectedNode || props.readonly) return
+  emit('update-node', { id: props.selectedNode.id, patch: { model_strategy_override: null } })
+}
+
+const parsedDraftBindings = computed<AgentModeBindingDto[] | null>(() => {
+  try {
+    const parsed = JSON.parse(props.draft.bindingsDraft.trim() || '[]')
+    return Array.isArray(parsed) ? (parsed as AgentModeBindingDto[]) : null
+  } catch {
+    return null
+  }
+})
+
+const selectedNodeKey = computed(() => props.selectedNode?.node_key ?? props.selectedNode?.id ?? '')
+
+const selectedNodeBinding = computed<AgentModeBindingDto | null>(() => {
+  if (!selectedNodeKey.value || !parsedDraftBindings.value) return null
+  return parsedDraftBindings.value.find((b) => b.node_key === selectedNodeKey.value) ?? null
+})
+
+const isToolsOverridden = computed(() => {
+  const b = selectedNodeBinding.value
+  if (!b) return false
+  const hasSwitches = Boolean(b.tool_switches && Object.keys(b.tool_switches).length > 0)
+  const hasEnvelope = Boolean(b.envelope && Object.keys(b.envelope).length > 0)
+  return hasSwitches || hasEnvelope
+})
+
+const isWildcardToolsDisabled = computed(() =>
+  selectedNodeBinding.value?.tool_switches?.['*'] === false,
+)
+
+const agentInheritedToolsSummary = computed(() => {
+  const agent = boundNodeAgent.value
+  if (!agent) return '—'
+  if (agent.tool_scope === '*' || agent.allowed_tools?.includes('*')) {
+    return t('settings.modeAllTools')
+  }
+  const list = agent.allowed_tools ?? []
+  if (list.length === 0) return '0'
+  return list.length <= 3 ? list.join(', ') : `${list.slice(0, 3).join(', ')} (+${list.length - 3})`
+})
+
+function toggleWildcardToolsDisabled(disabled: boolean): void {
+  if (!props.selectedNode || props.readonly || !parsedDraftBindings.value) return
+  const key = selectedNodeKey.value
+  const current = [...parsedDraftBindings.value]
+  const idx = current.findIndex((b) => b.node_key === key)
+  if (disabled) {
+    if (idx >= 0) {
+      const existing = current[idx]!
+      current[idx] = {
+        ...existing,
+        tool_switches: { ...(existing.tool_switches ?? {}), '*': false },
+      }
+    } else {
+      current.push({
+        node_key: key,
+        tool_switches: { '*': false },
+        includes_core_reserved: false,
+      })
+    }
+  } else if (idx >= 0) {
+    const existing = current[idx]!
+    const nextSwitches = { ...(existing.tool_switches ?? {}) }
+    delete nextSwitches['*']
+    const cleaned: AgentModeBindingDto = {
+      ...existing,
+      tool_switches: Object.keys(nextSwitches).length > 0 ? nextSwitches : undefined,
+    }
+    const hasOtherFields = Boolean(
+      (cleaned.tool_switches && Object.keys(cleaned.tool_switches).length > 0)
+      || (cleaned.envelope && Object.keys(cleaned.envelope).length > 0)
+      || cleaned.duty_description_ref,
+    )
+    if (hasOtherFields) current[idx] = cleaned
+    else current.splice(idx, 1)
+  }
+  emit('update-overview', { bindingsDraft: JSON.stringify(current, null, 2) }, `node-tools:${key}`)
+}
+
+function restoreInheritedTools(): void {
+  if (!props.selectedNode || props.readonly || !parsedDraftBindings.value) return
+  const key = selectedNodeKey.value
+  const nextBindings = parsedDraftBindings.value.flatMap((b) => {
+    if (b.node_key !== key) return [b]
+    const { tool_switches: _ts, envelope: _env, ...rest } = b
+    return rest.duty_description_ref ? [rest] : []
+  })
+  emit('update-overview', { bindingsDraft: JSON.stringify(nextBindings, null, 2) }, `node-tools-reset:${key}`)
+}
+
+const agentDefaultDuty = computed(() => {
+  const agent = boundNodeAgent.value
+  if (!agent) return ''
+  return pickLocalized(agent.i18n, locale.value, 'description', agent.description) ?? agent.description ?? ''
+})
+
+const isDutyOverridden = computed(() => {
+  const raw = nodeDuty.value.trim()
+  return Boolean(raw) && raw !== agentDefaultDuty.value.trim()
+})
+
+function restoreInheritedDuty(): void {
+  if (!props.selectedNode || props.readonly) return
+  const nextRel: Record<string, unknown> = { ...(props.selectedNode.relationship ?? {}) }
+  delete nextRel.duty
+  emit('update-node', {
+    id: props.selectedNode.id,
+    patch: { relationship: Object.keys(nextRel).length > 0 ? nextRel : null },
+  })
+}
 
 function handleNodeAgentChange(nextAgentId: string): void {
   if (!props.selectedNode || props.readonly) return
@@ -285,13 +596,15 @@ function handleRoutePurposeChange(purpose: string): void {
 
 function handleFixedProviderChange(providerId: string): void {
   if (!props.selectedNode || props.readonly) return
+  const nextProvider = props.providers.find((provider) => provider.id === providerId)
+  const nextIsHarness = Boolean(nextProvider && isExternalHarnessChannel(providerRuntimeChannel(nextProvider)))
   emit('update-node', {
     id: props.selectedNode.id,
     patch: {
       model_strategy_override: {
         kind: 'fixed',
         provider_instance_id: providerId,
-        model: nodeFixedModel.value || null,
+        model: nextIsHarness ? null : (nodeFixedModel.value || null),
       },
     },
   })
@@ -635,17 +948,61 @@ function submitAddNode(): void {
         </label>
 
         <div class="drawer-field">
-          <UiLabel>{{ t('settings.nodeLabelField') }}</UiLabel>
+          <div class="drawer-inherit-row">
+            <UiLabel>{{ t('settings.nodeLabelField') }}</UiLabel>
+            <span
+              :class="['drawer-state-pill', isLabelOverridden ? 'overridden' : 'inherited']"
+              data-testid="node-label-state"
+            >
+              {{ isLabelOverridden ? t('settings.nodeOverriddenBadge') : t('settings.nodeInheritedBadge') }}
+            </span>
+            <button
+              v-if="isLabelOverridden && !readonly"
+              type="button"
+              class="drawer-restore-btn"
+              data-testid="restore-inherit-label"
+              @click="restoreInheritedLabel"
+            >
+              <RotateCcw :size="11" />{{ t('settings.nodeRestoreInherit') }}
+            </button>
+          </div>
           <UiInput
             :model-value="selectedNode.label ?? ''"
             :disabled="readonly"
-            :placeholder="t('settings.nodeLabelPlaceholder')"
+            :placeholder="agentDefaultLabel || t('settings.nodeLabelPlaceholder')"
             @update:model-value="handleNodeLabelInput"
           />
         </div>
 
-        <div class="drawer-section">
-          <UiLabel>{{ t('settings.nodeStrategyOverride') }}</UiLabel>
+        <div :class="['drawer-section', { 'is-overridden': isStrategyOverridden }]" data-testid="node-strategy-section">
+          <div class="drawer-inherit-row">
+            <UiLabel>{{ t('settings.nodeStrategyOverride') }}</UiLabel>
+            <span
+              :class="['drawer-state-pill', isStrategyOverridden ? 'overridden' : 'inherited']"
+              data-testid="node-strategy-state"
+            >
+              {{ isStrategyOverridden ? t('settings.nodeOverriddenBadge') : t('settings.nodeInheritedBadge') }}
+            </span>
+            <button
+              v-if="isStrategyOverridden && !readonly"
+              type="button"
+              class="drawer-restore-btn"
+              data-testid="restore-inherit-strategy"
+              @click="restoreInheritedStrategy"
+            >
+              <RotateCcw :size="11" />{{ t('settings.nodeRestoreInherit') }}
+            </button>
+          </div>
+          <div class="drawer-inherited-line">
+            <span
+              v-if="agentInheritedChannel"
+              :class="['runtime-channel-badge', `channel-${agentInheritedChannel}`]"
+              data-testid="node-inherited-channel-badge"
+            >
+              {{ runtimeChannelBadgeLabel(agentInheritedChannel) }}
+            </span>
+            <small class="quiet">{{ t('settings.nodeInheritedStrategySummary', { summary: agentInheritedStrategySummary }) }}</small>
+          </div>
           <UiSelectField
             :model-value="nodeStrategyKind"
             :disabled="readonly"
@@ -669,20 +1026,57 @@ function submitAddNode(): void {
             />
           </div>
           <div v-else-if="nodeStrategyKind === 'fixed'" class="drawer-field">
-            <UiLabel>{{ t('settings.selectProvider') }}</UiLabel>
+            <div class="drawer-provider-head">
+              <UiLabel>{{ t('settings.selectProvider') }}</UiLabel>
+              <span
+                v-if="selectedFixedChannel"
+                :class="['runtime-channel-badge', `channel-${selectedFixedChannel}`]"
+                data-testid="node-selected-channel-badge"
+              >
+                {{ runtimeChannelBadgeLabel(selectedFixedChannel) }}
+              </span>
+            </div>
+            <div
+              v-if="providers.length > 0"
+              class="drawer-channel-filter"
+              role="group"
+              :aria-label="t('settings.runtimeChannelFilter')"
+              data-testid="node-runtime-channel-filter"
+            >
+              <button
+                v-for="tab in nodeProviderChannelTabs"
+                :key="tab.key"
+                type="button"
+                class="drawer-channel-btn"
+                :class="{ active: nodeChannelFilter === tab.key }"
+                :aria-pressed="nodeChannelFilter === tab.key"
+                :data-channel-filter="tab.key"
+                @click="nodeChannelFilter = tab.key"
+              >
+                <span>{{ tab.label }}</span>
+                <em>{{ tab.count }}</em>
+              </button>
+            </div>
             <UiSelectField
               :model-value="nodeFixedProviderId"
               :disabled="readonly"
-              :options="[
-                { value: '', label: t('settings.selectProvider'), disabled: true },
-                ...providers.map((provider) => ({ value: provider.id, label: provider.display_name })),
-              ]"
+              :options="filteredNodeProviderOptions"
+              data-testid="node-fixed-provider-select"
               @update:model-value="handleFixedProviderChange"
             />
+            <div v-if="selectedFixedIsHarness && selectedFixedProvider" class="drawer-harness-meta" data-testid="node-harness-meta">
+              <Terminal :size="12" aria-hidden="true" />
+              <span :class="['runtime-channel-badge', `channel-${selectedFixedChannel}`]">
+                {{ runtimeChannelBadgeLabel(selectedFixedChannel!) }}
+              </span>
+              <code :title="selectedFixedProvider.binary_path || selectedFixedProvider.driver">
+                {{ selectedFixedProvider.binary_path || selectedFixedProvider.driver }}
+              </code>
+            </div>
             <UiInput
               :model-value="nodeFixedModel"
               :disabled="readonly"
-              :placeholder="t('settings.routeModel')"
+              :placeholder="selectedFixedIsHarness ? t('settings.runtimeHarnessModelOptional') : t('settings.routeModel')"
               @update:model-value="handleFixedModelInput"
             />
           </div>
@@ -697,13 +1091,62 @@ function submitAddNode(): void {
           </UiButton>
         </div>
 
-        <div class="drawer-section">
+        <div :class="['drawer-section', { 'is-overridden': isToolsOverridden }]" data-testid="node-tools-section">
+          <div class="drawer-inherit-row">
+            <UiLabel>{{ t('settings.nodeToolSwitchesTitle') }}</UiLabel>
+            <span
+              :class="['drawer-state-pill', isToolsOverridden ? 'overridden' : 'inherited']"
+              data-testid="node-tools-state"
+            >
+              {{ isToolsOverridden ? t('settings.nodeOverriddenBadge') : t('settings.nodeInheritedBadge') }}
+            </span>
+            <button
+              v-if="isToolsOverridden && !readonly"
+              type="button"
+              class="drawer-restore-btn"
+              data-testid="restore-inherit-tools"
+              @click="restoreInheritedTools"
+            >
+              <RotateCcw :size="11" />{{ t('settings.nodeRestoreInherit') }}
+            </button>
+          </div>
+          <small class="quiet">{{ t('settings.nodeInheritedToolsSummary', { summary: agentInheritedToolsSummary }) }}</small>
+          <label class="drawer-checkbox-row" data-testid="node-wildcard-tools-switch">
+            <UiCheckbox
+              :model-value="isWildcardToolsDisabled"
+              :disabled="readonly || !parsedDraftBindings"
+              @update:model-value="toggleWildcardToolsDisabled"
+            />
+            <span>{{ t('settings.nodeDisableWildcardTools') }}</span>
+          </label>
+        </div>
+
+        <div :class="['drawer-section', { 'is-overridden': isDutyOverridden }]" data-testid="node-duty-section">
           <div class="drawer-field">
-            <UiLabel>{{ t('settings.nodeDutyField') }}</UiLabel>
+            <div class="drawer-inherit-row">
+              <UiLabel>{{ t('settings.nodeDutyField') }}</UiLabel>
+              <span
+                :class="['drawer-state-pill', isDutyOverridden ? 'overridden' : 'inherited']"
+                data-testid="node-duty-state"
+              >
+                {{ isDutyOverridden ? t('settings.nodeOverriddenBadge') : t('settings.nodeInheritedBadge') }}
+              </span>
+              <button
+                v-if="isDutyOverridden && !readonly"
+                type="button"
+                class="drawer-restore-btn"
+                data-testid="restore-inherit-duty"
+                @click="restoreInheritedDuty"
+              >
+                <RotateCcw :size="11" />{{ t('settings.nodeRestoreInherit') }}
+              </button>
+            </div>
+            <small v-if="agentDefaultDuty" class="quiet">{{ t('settings.nodeInheritedDutySummary', { summary: agentDefaultDuty }) }}</small>
             <UiTextarea
               :model-value="nodeDuty"
               :rows="2"
               :disabled="readonly"
+              :placeholder="agentDefaultDuty || undefined"
               @update:model-value="(val: string) => updateStructuredRelationship({ duty: val }, `node-duty:${selectedNode!.id}`)"
             />
           </div>
@@ -863,6 +1306,40 @@ function submitAddNode(): void {
           <small class="quiet">{{ draft.instructions.length }} / 4000</small>
         </div>
 
+        <div class="drawer-section" data-testid="mode-default-options">
+          <UiLabel>{{ t('settings.modeDefaultOptions') }}</UiLabel>
+          <p class="quiet">{{ t('settings.modeDefaultOptionsHint') }}</p>
+          <div class="drawer-features">
+            <label
+              v-for="opt in DEFAULT_OPTION_ITEMS"
+              :key="opt.key"
+              class="drawer-checkbox-row"
+              :data-testid="`mode-default-opt-${opt.key}`"
+            >
+              <UiCheckbox
+                :model-value="isDefaultOptionEnabled(opt.key)"
+                :disabled="readonly"
+                :aria-label="t(opt.labelKey)"
+                @update:model-value="(checked: boolean) => toggleDefaultOption(opt.key, checked)"
+              />
+              <span>{{ t(opt.labelKey) }}</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="drawer-section" data-testid="mode-context-strategy-host">
+          <ModeContextStrategySection
+            compact
+            allow-inherit
+            :readonly="readonly"
+            :strategy="modeContextStrategy"
+            :advanced="modeContextAdvanced"
+            @update:strategy="updateModeContextStrategy"
+            @update:advanced="updateModeContextAdvanced"
+            @reset="resetModeContextStrategy"
+          />
+        </div>
+
         <div class="drawer-section">
           <UiLabel>{{ t('settings.runtimePolicy') }}</UiLabel>
           <UiSelectField
@@ -1005,6 +1482,99 @@ function submitAddNode(): void {
   color: var(--text-primary);
 }
 
+.drawer-close:focus-visible,
+.drawer-restore-btn:focus-visible,
+.drawer-channel-btn:focus-visible,
+.drawer-advanced summary:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color, var(--accent-primary));
+  outline-offset: 2px;
+}
+
+.drawer-inherited-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.drawer-provider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.drawer-channel-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.drawer-channel-btn {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: var(--radius-control, 6px);
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.drawer-channel-btn:hover {
+  border-color: var(--border-input-focus);
+  color: var(--text-primary);
+}
+
+.drawer-channel-btn.active {
+  border-color: color-mix(in srgb, var(--accent-primary) 50%, var(--border-muted));
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.drawer-channel-btn em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.drawer-harness-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: var(--radius-control, 6px);
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.drawer-harness-meta > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.drawer-harness-meta code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .drawer-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1035,6 +1605,66 @@ function submitAddNode(): void {
   border-radius: 8px;
   border: 1px solid var(--border-muted);
   background: var(--surface-section);
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.drawer-section.is-overridden {
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-primary) 4%, var(--surface-section));
+}
+
+.drawer-inherit-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.drawer-state-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: nowrap;
+  border: 1px solid var(--border-muted);
+}
+
+.drawer-state-pill.inherited {
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
+
+.drawer-state-pill.overridden {
+  border-color: color-mix(in srgb, var(--accent-primary) 50%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-raised));
+  color: var(--accent-primary);
+  font-weight: 500;
+}
+
+.drawer-restore-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-control, 6px);
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.drawer-restore-btn:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  background: var(--surface-hover);
 }
 
 .drawer-features {
@@ -1075,14 +1705,20 @@ function submitAddNode(): void {
   width: 100%;
   margin-top: 6px;
   padding: 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 7px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control, 6px);
   background: var(--surface-input);
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
   resize: vertical;
+}
+
+.drawer-json:focus-visible {
+  outline: none;
+  border-color: var(--border-input-focus);
+  box-shadow: var(--focus-ring, 0 0 0 2px color-mix(in srgb, var(--accent-primary) 28%, transparent));
 }
 
 .drawer-error {
@@ -1133,15 +1769,18 @@ function submitAddNode(): void {
 
 .drawer-version-row strong {
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .drawer-version-row small {
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
 
 .quiet {
   color: var(--text-muted);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 </style>

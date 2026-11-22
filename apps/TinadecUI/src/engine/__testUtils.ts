@@ -51,13 +51,6 @@ export function makeRegistry(): CardRegistry {
   reg.register(makeCard('terminal', { singleton: true }))
   reg.register(makeCard('settingsNav', { singleton: true, movable: false, closable: false, detachable: false }))
   reg.register(makeCard('settingsContent', { singleton: true, movable: false, closable: false, detachable: false }))
-  reg.register(makeCard('companionList', { singleton: true }))
-  reg.register(makeCard('companionFeed', { singleton: true }))
-  reg.register(makeCard('companionGroups', { singleton: true }))
-  reg.register(makeCard('companionConnections', { singleton: true }))
-  reg.register(makeCard('companionBuddy', { singleton: true, movable: false, closable: false }))
-  reg.register(makeCard('companionSupervision', { singleton: true }))
-  reg.register(makeCard('companionProfile', { singleton: true }))
   return reg
 }
 

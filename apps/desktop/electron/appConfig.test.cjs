@@ -15,7 +15,6 @@ const {
   saveCompanionCapsuleReveal,
   saveCompanionCapsuleStyle,
   saveCompanionMode,
-  saveDebugStudioEnabled,
 } = require('./appConfig.cjs');
 const {
   CAPSULE_REVEALS,
@@ -35,96 +34,6 @@ function temporaryConfig(run) {
   try { return run(path.join(root, 'desktop.toml')); }
   finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
-
-test('Debug Studio defaults off and rejects nonboolean preferences, including managed Gateway mode', () => {
-  temporaryConfig((file) => {
-    const env = { TINADEC_GATEWAY_URL: 'https://managed.example.com' };
-    assert.equal(loadAppConfig(file, {}).debug_studio_enabled, false);
-    assert.equal(loadAppConfig(file, env).debug_studio_enabled, false);
-    fs.writeFileSync(file, '[developer]\ndebug_studio_enabled = true\n');
-    assert.equal(loadAppConfig(file, {}).debug_studio_enabled, true);
-    const managed = loadAppConfig(file, env);
-    assert.equal(managed.gateway_url, 'https://managed.example.com');
-    assert.equal(managed.source, 'environment');
-    assert.equal(managed.managed, true);
-    assert.equal(managed.debug_studio_enabled, true);
-    for (const value of ['"true"', '1', '[true]', '{ value = true }']) {
-      fs.writeFileSync(file, `[developer]\ndebug_studio_enabled = ${value}\n`);
-      assert.throws(() => loadAppConfig(file, {}), /debug_studio_enabled must be a boolean/);
-      assert.throws(() => loadAppConfig(file, env), /debug_studio_enabled must be a boolean/);
-    }
-    fs.writeFileSync(file, 'developer = false\n');
-    assert.throws(() => loadAppConfig(file, env), /developer must be a table/);
-    fs.writeFileSync(file, '[developer\n');
-    assert.throws(() => loadAppConfig(file, env));
-  });
-});
-
-test('saving a local Debug Studio preference preserves fields and source comments', () => {
-  temporaryConfig((file) => {
-    const original = '# connection\r\ngateway_url = "https://stored.example.com"\r\n'
-      + 'user_root = "C:/TinadecData"\r\n# debug_studio_enabled = false is only an example\r\n'
-      + '[appearance]\r\nmode = "dark" # keep theme\r\n'
-      + '[developer] # local preferences\r\n# explicit opt-in\r\n'
-      + 'debug_studio_enabled = false # actual preference\r\nother_flag = true\r\n';
-    fs.writeFileSync(file, original);
-    const env = { TINADEC_GATEWAY_URL: 'https://managed.example.com' };
-    assert.equal(saveDebugStudioEnabled(file, true, env).debug_studio_enabled, true);
-    const expected = original.replace('false # actual preference', 'true # actual preference');
-    assert.equal(fs.readFileSync(file, 'utf8'), expected);
-    assert.equal(parse(expected).user_root, 'C:/TinadecData');
-    assert.equal(saveDebugStudioEnabled(file, false, env).managed, true);
-    assert.equal(fs.readFileSync(file, 'utf8'), original);
-    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['desktop.toml']);
-  });
-});
-
-test('new table, quoted table, dotted and inline preferences preserve their existing content', () => {
-  temporaryConfig((file) => {
-    const sources = [
-      '# unchanged heading\ngateway_url = "https://stored.example.com"\n[appearance]\nmode = "dark"\n',
-      '# unchanged heading\n["developer"] # quoted table\nother_flag = true\n',
-      '# unchanged heading\ndeveloper.other_flag = true\n',
-      '# unchanged heading\ndeveloper = { other_flag = true } # inline table\n',
-      '# unchanged heading\ndeveloper = { debug_studio_enabled = false, other_flag = true } # inline table\n',
-      '# unchanged heading\n[developer]\nnotes = """\n[developer]\ndebug_studio_enabled = false\n"""\n',
-    ];
-    for (const source of sources) {
-      fs.writeFileSync(file, source);
-      const before = parse(source);
-      assert.equal(saveDebugStudioEnabled(file, true, {}).debug_studio_enabled, true);
-      const written = fs.readFileSync(file, 'utf8');
-      assert.ok(written.includes('# unchanged heading'));
-      if (source.includes('# inline table')) assert.ok(written.includes('# inline table'));
-      if (source.includes('# quoted table')) assert.ok(written.includes('# quoted table'));
-      const after = parse(written);
-      assert.equal(after.gateway_url, before.gateway_url);
-      assert.deepEqual(after.appearance, before.appearance);
-      assert.equal(after.developer.other_flag, before.developer?.other_flag);
-      assert.equal(after.developer.notes, before.developer?.notes);
-      assert.equal(after.developer.debug_studio_enabled, true);
-    }
-  });
-});
-
-test('invalid saves and a failed atomic replacement leave the existing file intact', () => {
-  temporaryConfig((file) => {
-    const original = '# retained\n[developer]\ndebug_studio_enabled = false\n';
-    fs.writeFileSync(file, original);
-    assert.throws(() => saveDebugStudioEnabled(file, 'true', {}), /must be a boolean/);
-    assert.equal(fs.readFileSync(file, 'utf8'), original);
-    const rename = fs.renameSync;
-    fs.renameSync = () => { throw new Error('simulated atomic rename failure'); };
-    try { assert.throws(() => saveDebugStudioEnabled(file, true, {}), /atomic rename failure/); }
-    finally { fs.renameSync = rename; }
-    assert.equal(fs.readFileSync(file, 'utf8'), original);
-    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['desktop.toml']);
-    fs.writeFileSync(file, '[developer]\ndebug_studio_enabled = "false"\n');
-    const invalid = fs.readFileSync(file, 'utf8');
-    assert.throws(() => saveDebugStudioEnabled(file, true, {}), /must be a boolean/);
-    assert.equal(fs.readFileSync(file, 'utf8'), invalid);
-  });
-});
 
 test('close-to-tray follows the unset default and rejects non-boolean values', () => {
   temporaryConfig((file) => {
@@ -319,7 +228,7 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
   const disposed = makeWindow(4, true);
   const env = { TINADEC_RESOLVED_GATEWAY_URL: DEFAULT_GATEWAY_URL };
   const nodeProcess = { platform: process.platform, env };
-  const hostPaths = { desktopConfig: configFile, root: path.dirname(configFile), source: 'default', hostLogs: 'unused-test-log' };
+  const hostPaths = { desktopConfig: configFile, root: path.dirname(configFile), state: path.dirname(configFile), source: 'default', hostLogs: 'unused-test-log' };
   const fakeElectron = {
     app: { on() {}, whenReady: () => ({ then() {} }), setAppUserModelId() {} },
     BrowserWindow: { getAllWindows: () => [main, panel, state.debug, disposed].filter(Boolean) },
@@ -332,7 +241,6 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
     './logSink.cjs': { createLogSink: () => ({ write() {} }) },
     './appConfig.cjs': {
       loadAppConfig: (file) => loadAppConfig(file, env),
-      saveDebugStudioEnabled: (file, enabled) => saveDebugStudioEnabled(file, enabled, env),
       saveCloseToTray: (file, enabled) => saveCloseToTray(file, enabled, env),
       saveCompanionMode: (file, enabled) => saveCompanionMode(file, enabled, env),
       saveCompanionCapsuleStyle: (file, style) => saveCompanionCapsuleStyle(file, style, env),
@@ -373,10 +281,6 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
       isTrustedHostSender: (event) => state.trusted && event.mainFrame === true,
     },
     './layoutStore.cjs': {},
-    './debug-studio.cjs': {
-      getDebugStudioWindow: () => state.debug,
-      createDebugStudioWindow: async () => { state.opened++; state.debug = makeWindow(3); return state.debug; },
-    },
     './panelWindow.cjs': { getMainWindow: () => main },
     './tray.cjs': { createTrayController: () => ({ refresh() {}, destroy() {}, isActive: () => false }), trayIconPath: () => 'unused-test-icon' },
     './terminalManager.cjs': { registerTerminalIpc() {} },
@@ -393,9 +297,14 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
     './appBundle.cjs': {},
     './localMedia.cjs': {},
     './externalLinks.cjs': {},
+    './agentBrowser.cjs': { createAgentBrowserManager: () => ({ register() {}, dispose() {} }) },
+    './browserBridge.cjs': { createBrowserBridge: () => ({ register() {}, dispose() {} }) },
+    './agentBrowserStrings.cjs': { stringsForLocale: () => ({}) },
+    './petAgentApi.cjs': { createPetAgentApiBridge: () => ({ dispose() {} }) },
     // Logto auth (1eb448b4): no case here exercises the account channels, the stub
     // only satisfies main.cjs's destructuring at load time with the real shapes.
     './auth.cjs': {
+      configureAuth() {},
       openLogin: async () => null,
       logout: async () => {},
       getAuthState: async () => ({ loggedIn: false, nickname: '', avatar_url: '' }),
@@ -419,64 +328,6 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
     companionEvent: { sender: { id: 5, isDestroyed: () => false }, mainFrame: true },
   };
 }
-
-test('actual main IPC opens Debug Studio only for a trusted main window with fresh opt-in', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tinadec-debug-ipc-'));
-  try {
-    const file = path.join(root, 'desktop.toml');
-    const fixture = mainConfigFixture(file);
-    const open = fixture.handlers.get('tinadec:open-debug-studio');
-    assert.equal(await open(fixture.event), false);
-    saveDebugStudioEnabled(file, true, {});
-    assert.equal(await open(fixture.panelEvent), false);
-    fixture.state.trusted = false;
-    assert.equal(await open(fixture.event), false);
-    fixture.state.trusted = true;
-    assert.equal(await open({ ...fixture.event, mainFrame: false }), false);
-    assert.equal(fixture.state.opened, 0);
-    assert.equal(await open(fixture.event), true);
-    assert.equal(fixture.state.opened, 1);
-    saveDebugStudioEnabled(file, false, {});
-    assert.equal(await open(fixture.event), false);
-    assert.equal(fixture.state.opened, 1);
-    fs.writeFileSync(file, '[developer]\ndebug_studio_enabled = "true"\n');
-    await assert.rejects(() => open(fixture.event), /must be a boolean/);
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test('actual main IPC restricts saves, broadcasts without payload and closes Debug Studio on disable', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tinadec-debug-ipc-save-'));
-  try {
-    const file = path.join(root, 'desktop.toml');
-    const original = '# local preference\n[appearance]\nmode = "dark"\n';
-    fs.writeFileSync(file, original);
-    const fixture = mainConfigFixture(file);
-    const save = fixture.handlers.get('tinadec:debug-studio-enabled-save');
-    assert.throws(() => save(fixture.panelEvent, true), /trusted main host page/);
-    fixture.state.trusted = false;
-    assert.throws(() => save(fixture.event, true), /trusted main host page/);
-    fixture.state.trusted = true;
-    assert.throws(() => save({ ...fixture.event, mainFrame: false }, true), /trusted main host page/);
-    assert.throws(() => save(fixture.event, 'true'), /must be a boolean/);
-    assert.equal(fs.readFileSync(file, 'utf8'), original);
-    assert.equal(fixture.state.messages.length, 0);
-    const enabled = save(fixture.event, true);
-    assert.equal(enabled.debug_studio_enabled, true);
-    assert.deepEqual(enabled, fixture.handlers.get('tinadec:app-config')());
-    assert.ok(enabled.storage.root);
-    assert.deepEqual(fixture.state.messages.map((message) => message.id), [1, 2]);
-    assert.ok(fixture.state.messages.every((message) => message.args.length === 1
-      && message.args[0] === 'tinadec:debug-studio-enabled-changed'));
-    await fixture.handlers.get('tinadec:open-debug-studio')(fixture.event);
-    fixture.state.messages.length = 0;
-    const disabled = save(fixture.event, false);
-    assert.equal(disabled.debug_studio_enabled, false);
-    assert.equal(fixture.state.closed, 1);
-    assert.deepEqual(fixture.state.messages.map((message) => message.id), [1, 2, 3]);
-    assert.ok(fixture.state.messages.every((message) => message.args.length === 1));
-    assert.equal(parse(fs.readFileSync(file, 'utf8')).appearance.mode, 'dark');
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
 
 test('actual main IPC stores close-to-tray only for the trusted main page and rebroadcasts it', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tinadec-close-to-tray-'));
@@ -695,37 +546,6 @@ test('actual main IPC trusts only the companion window for its five geometry cha
     assert.equal(fixture.state.companion.expanded, 1);
     assert.equal(fixture.state.companion.collapsed, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test('actual preload bridges Debug Studio save and disposes no-payload change listeners', async () => {
-  let bridge;
-  const calls = [];
-  const listeners = new Map();
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'preload.cjs'), 'utf8'), {
-    require: (name) => {
-      assert.equal(name, 'electron');
-      return {
-        contextBridge: { exposeInMainWorld: (_name, value) => { bridge = value; } },
-        ipcRenderer: {
-          invoke: (...args) => { calls.push(args); return Promise.resolve({ debug_studio_enabled: args[1] }); },
-          on: (channel, handler) => listeners.set(channel, handler),
-          removeListener: (channel, handler) => {
-            if (listeners.get(channel) === handler) listeners.delete(channel);
-          },
-        },
-      };
-    },
-    process: { env: {} },
-  }, { filename: 'preload.cjs' });
-  const saved = await bridge.saveDebugStudioEnabled(false);
-  assert.equal(saved.debug_studio_enabled, false);
-  assert.deepEqual(calls, [['tinadec:debug-studio-enabled-save', false]]);
-  const received = [];
-  const dispose = bridge.onDebugStudioEnabledChanged((...args) => received.push(args));
-  listeners.get('tinadec:debug-studio-enabled-changed')({}, { ignored: true });
-  assert.deepEqual(received, [[]]);
-  dispose();
-  assert.equal(listeners.size, 0);
 });
 
 test('persists a Gateway URL while the environment remains authoritative', () => {

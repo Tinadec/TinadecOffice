@@ -1,37 +1,73 @@
 /**
  * The companion feed's event names, in one place.
  *
- * Core writes NAMED SSE frames on `GET /api/v1/companion-events` (`event: companion.activity`,
- * `companion.run`, `companion.settings`) and a browser only dispatches a named frame to a listener
- * registered for exactly that name — every other frame is dropped silently. This is the lesson
- * already paid for in `coreEventTypes.ts`, where eleven of eighteen registered names had no
- * producer and the facts Core really recorded had no listener, so a whole tool timeline stayed
- * invisible no matter what the server sent.
- *
- * Rule for new events: add the name here first, then subscribe. The producer is
- * `TinadecCore/AspNetCore/Endpoints/CompanionEventEndpoints.cs`; grep the literal before adding an
- * entry and delete the entry when the producer goes away. Subscribing to an event Core never sends
- * is pure dead weight, and it hides the fact that a real fact is unrendered.
+ * Core writes NAMED SSE frames on `GET /api/v1/companion-events`:
+ * - durable journal rows: `companion.activity`, `companion.run`, `companion.settings`
+ * - real-time stream frames (`ICompanionStreamBroker`): `companion.delta`,
+ *   `companion.tool_call`, `companion.proposal`, `companion.stage_cue`, `companion.work_session`
  */
 
-/** One journal row of the companion domain: messages, group membership, autonomy. */
+/** One durable journal row of the companion domain: messages, group membership, autonomy. */
 export const COMPANION_ACTIVITY_EVENT = 'companion.activity'
 /** A run transition (`run_started` / `run_completed` / `run_failed`), projected from the same rows. */
 export const COMPANION_RUN_EVENT = 'companion.run'
-/** A user-wide settings change (main companion, buddy, global pause). */
+/** A user-wide settings change (main companion, max_bot_hop_depth, global pause). */
 export const COMPANION_SETTINGS_EVENT = 'companion.settings'
+/** Incremental reply token chunk for a running companion turn. */
+export const COMPANION_DELTA_EVENT = 'companion.delta'
+/** Live tool invocation status inside an active companion turn. */
+export const COMPANION_TOOL_CALL_EVENT = 'companion.tool_call'
+/** Live autonomy mandate / recruitment proposal waiting on user confirmation. */
+export const COMPANION_PROPOSAL_EVENT = 'companion.proposal'
+/** Expressive stage cue (emotion / speaking / intensity / gesture) for avatar & voice sync. */
+export const COMPANION_STAGE_CUE_EVENT = 'companion.stage_cue'
+/** Live work-session milestone & pending-approval backflow pushed from Core's run engine. */
+export const COMPANION_WORK_SESSION_EVENT = 'companion.work_session'
 
 export const COMPANION_EVENT_TYPES = [
   COMPANION_ACTIVITY_EVENT,
   COMPANION_RUN_EVENT,
   COMPANION_SETTINGS_EVENT,
+  COMPANION_DELTA_EVENT,
+  COMPANION_TOOL_CALL_EVENT,
+  COMPANION_PROPOSAL_EVENT,
+  COMPANION_STAGE_CUE_EVENT,
+  COMPANION_WORK_SESSION_EVENT,
 ] as const
 
 export type CompanionEventType = (typeof COMPANION_EVENT_TYPES)[number]
 
+export interface CompanionWorkSessionApprovalNotice {
+  approval_id: string
+  tool_id: string
+  summary: string | null
+  risk_level: string | null
+  created_at: string
+}
+
+export interface CompanionWorkSessionNotice {
+  sessionId: string
+  sessionTitle: string
+  workspaceId: string | null
+  projectId: string | null
+  projectName: string | null
+  runId: string | null
+  status: string
+  modeName: string | null
+  viewMode: 'flat' | 'space' | null
+  summary: string | null
+  planSummary: string | null
+  pendingApprovals: CompanionWorkSessionApprovalNotice[]
+  browserSpaceId: string | null
+  browserUrl: string | null
+  browserDriver: string | null
+  browserHandoffReason: string | null
+  updatedAt: string | null
+}
+
 /**
- * The `data:` body of one frame. Field names are Core's snake_case wire shape; `payload` is the
- * row's own JSON blob (a run id, a message id, an error code) parsed by Core, not by us.
+ * The `data:` body of one SSE frame. Field names match Core's snake_case wire shape across both
+ * durable journal rows and ephemeral `ICompanionStreamBroker` frames.
  */
 export interface CompanionEventPayload {
   seq?: number
@@ -39,10 +75,41 @@ export interface CompanionEventPayload {
   kind?: string
   companion_id?: string | null
   conversation_id?: string | null
+  run_id?: string | null
   summary?: string | null
   detail?: string | null
   payload?: Record<string, unknown> | null
   created_at?: string
+  delta?: string | null
+  call_id?: string | null
+  tool_name?: string | null
+  status?: string | null
+  arguments_preview?: string | null
+  result_preview?: string | null
+  proposal_id?: string | null
+  action?: string | null
+  emotion?: string | null
+  speaking?: boolean | null
+  intensity?: number | null
+  gesture?: string | null
+  workspace_id?: string | null
+  project_id?: string | null
+  project_name?: string | null
+  session_id?: string | null
+  session_title?: string | null
+  title?: string | null
+  mode_name?: string | null
+  view_mode?: 'flat' | 'space' | string | null
+  plan_summary?: string | null
+  pending_approvals?: Array<Record<string, unknown>> | null
+  browser_space_id?: string | null
+  space_id?: string | null
+  browser_url?: string | null
+  url?: string | null
+  browser_driver?: string | null
+  driver?: string | null
+  handoff_reason?: string | null
+  updated_at?: string | null
 }
 
 /** `event: heartbeat` carries the cursor the subscriber stands at, nothing else. */
@@ -51,8 +118,7 @@ export interface CompanionHeartbeatPayload {
 }
 
 /**
- * What a subscriber acts on: the frame name plus just enough identity to decide what to reread.
- * The full row is not needed — every consumer already knows how to read the authoritative list.
+ * Projected frame dispatched across companion UI surfaces and relayed to the satellite window.
  */
 export interface CompanionEventNotice {
   type: CompanionEventType
@@ -60,18 +126,27 @@ export interface CompanionEventNotice {
   kind: string | null
   companionId: string | null
   conversationId: string | null
-  /** The run a `companion.run` row names, when the row carries one. */
+  /** The run named by `companion.run` or a live stream frame, when present. */
   runId: string | null
+  delta?: string
+  callId?: string | null
+  toolName?: string | null
+  toolStatus?: 'started' | 'completed' | 'failed'
+  argumentsPreview?: string | null
+  resultPreview?: string | null
+  proposalKind?: 'mandate' | 'recruitment'
+  proposalId?: string | null
+  proposalAction?: string | null
+  proposalStatus?: string | null
+  proposalSummary?: string | null
+  proposalPayload?: Record<string, unknown> | null
+  emotion?: string | null
+  speaking?: boolean
+  intensity?: number | null
+  gesture?: string | null
+  workSession?: CompanionWorkSessionNotice | null
 }
 
-/**
- * The satellite companion window cannot hold this stream: it is not a trusted host, so the main
- * process withholds the host credential and its only Gateway path is the whitelist proxy, which
- * carries request/response pairs, not a long-lived body. The trusted main window therefore owns the
- * one subscription and relays each notice to the other renderers of the same app over a
- * BroadcastChannel — same origin, no credential, and no new IPC surface for a window that is
- * deliberately not trusted.
- */
 export const COMPANION_EVENT_CHANNEL = 'tinadec.companion-events'
 
 export interface CompanionEventBroadcast {

@@ -1,44 +1,131 @@
 <script setup lang="ts">
 /**
- * A pet standing on a stage, animated frame by frame.
+ * Unified companion avatar stage: renders either an 8-column pixel sprite atlas OR a pure-data
+ * Live2D WebGL model powered by the user's BYO `live2dcubismcore.min.js` runtime.
  *
- * The atlas is an 8-column grid of 192x208 frames. The stage shows one frame at a time by scaling
- * the whole sheet to `height * rows` tall and walking `background-position` across the row — the
- * same pixels `DesktopPetPage` draws to a canvas, without the canvas. That matters here: the
- * companion window is `app://` while pets come from `tinadec-pet://`, so a canvas would be tainted
- * and its pixels unreadable, whereas CSS background positioning has no such restriction.
- *
- * The frame sequence comes from `petFrameAt`, the one place that knows each state's row, frame count
- * and duration. Nothing about the animation is re-derived here.
+ * When a Live2D avatar is selected and the BYO Cubism Core SDK is not yet imported, the stage
+ * renders an explicit `companion-stage-live2d-unavailable` pill rather than masquerading as a
+ * sprite. When the SDK IS loaded, it mounts `mountLive2dStage` with lip-sync (`speaking` /
+ * `mouthOpen`), state/emotion cues, and automatic offscreen/hidden WebGL loop pause + release.
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
-import { planAvatar, type AvatarKind } from '@/pets/avatarKind'
+import { hasCubismCoreGlobal, planAvatar, type AvatarKind } from '@/pets/avatarKind'
+import {
+  checkLive2dSdkStatus,
+  live2dSdkState,
+  mountLive2dStage,
+  type Live2dStageController,
+} from '@/pets/live2dRuntimeLoader'
 import { PET_STATES, petFrameAt, parsePetSprite, type PetState } from '@/pets/petRuntime'
+
+export type StagePetState = PetState | 'working' | 'celebrate' | 'sleep'
 
 const props = withDefaults(defineProps<{
   petSlug: string
-  /** Which renderer this avatar needs; sprite is the only one this build can draw. */
+  /** Which renderer this avatar needs: sprite atlas or imported Live2D model. */
   avatarKind?: AvatarKind
-  /** Which row of the atlas to play. */
-  state?: PetState
-  /** Rendered height of one frame in px; the width follows the 192:208 aspect. */
+  /** Which row of the atlas to play, or state cue for Live2D parameters. */
+  state?: StagePetState
+  /** Whether the companion is actively speaking / streaming tokens (drives lip-sync). */
+  speaking?: boolean
+  /** Optional explicit lip-sync mouth openness in [0, 1]. */
+  mouthOpen?: number
+  /** Optional emotion cue ('idle' | 'happy' | 'thinking' | 'sleep'). */
+  emotion?: string | null
+  /** Optional Live2D motion group hint. */
+  motionGroup?: string | null
+  /** Optional model3.json relative entry path. */
+  entryModelJson?: string | null
+  /** Rendered height of one frame in px; sprite width follows the 192:208 aspect. */
   height?: number
   alt?: string
 }>(), {
   avatarKind: 'sprite',
   state: 'idle',
+  speaking: false,
+  mouthOpen: undefined,
+  emotion: null,
+  motionGroup: null,
+  entryModelJson: null,
   height: 160,
   alt: '',
 })
 
 const { t } = useI18n()
-const plan = computed(() => planAvatar(props.avatarKind, props.petSlug))
-const live2d = computed(() => (plan.value.kind === 'live2d' ? plan.value : null))
+
+const sdkReady = computed(() => hasCubismCoreGlobal() || live2dSdkState.value.ready)
+const plan = computed(() =>
+  planAvatar(props.avatarKind, props.petSlug, null, { live2dSdkReady: sdkReady.value }),
+)
+const isLive2d = computed(() => plan.value.kind === 'live2d')
+const live2dLoadFailed = ref(false)
+const live2dReadyToRender = computed(
+  () => plan.value.kind === 'live2d' && plan.value.ready && !live2dLoadFailed.value,
+)
+const live2dCanvasRef = ref<HTMLCanvasElement | null>(null)
+let live2dController: Live2dStageController | null = null
+
+function disposeLive2d(): void {
+  live2dController?.dispose()
+  live2dController = null
+}
+
+watch(
+  () => [props.petSlug, props.avatarKind, sdkReady.value] as const,
+  () => {
+    live2dLoadFailed.value = false
+    if (props.avatarKind === 'live2d' && !sdkReady.value && !live2dSdkState.value.checked) {
+      void checkLive2dSdkStatus()
+    }
+  },
+)
+
+onMounted(() => {
+  if (props.avatarKind === 'live2d' && !sdkReady.value && !live2dSdkState.value.checked) {
+    void checkLive2dSdkStatus()
+  }
+})
+
+watch(
+  [
+    live2dCanvasRef,
+    () => (live2dReadyToRender.value && plan.value.kind === 'live2d' ? plan.value.modelId : ''),
+    () => props.entryModelJson,
+  ] as const,
+  ([canvasEl, modelId, entryJson]) => {
+    disposeLive2d()
+    if (!canvasEl || !modelId) return
+    live2dController = mountLive2dStage(canvasEl, {
+      modelId,
+      entryModelJson: entryJson,
+      getDynamicState: () => ({
+        state: props.state,
+        speaking: props.speaking,
+        mouthOpen: props.mouthOpen,
+        emotion: props.emotion,
+        motionGroup: props.motionGroup,
+      }),
+      onError: () => {
+        live2dLoadFailed.value = true
+      },
+    })
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [props.state, props.speaking, props.mouthOpen, props.emotion, props.motionGroup] as const,
+  () => {
+    live2dController?.notifyStateChange()
+  },
+)
+
+// ── Sprite Atlas Frame Stepping ──────────────────────────────────────
 
 const { urlForSlug } = useAgentAvatars()
-const url = computed(() => urlForSlug(props.petSlug))
+const url = computed(() => (props.avatarKind === 'live2d' ? '' : urlForSlug(props.petSlug)))
 
 interface StageLayout {
   frameWidth: number
@@ -52,11 +139,8 @@ let probe: HTMLImageElement | null = null
 let raf = 0
 let startedAt = 0
 
-/** Measure the atlas once per URL; a missing sprite degrades to nothing rather than a broken box. */
 watch([url, () => props.avatarKind] as const, ([next, kind]) => {
   layout.value = null
-  // A Live2D avatar has no sprite to measure, and loading one would be the exact fallback the
-  // seam exists to prevent.
   if (kind === 'live2d' || !next) return
   const image = new Image()
   probe = image
@@ -66,7 +150,6 @@ watch([url, () => props.avatarKind] as const, ([next, kind]) => {
       const parsed = parsePetSprite(image.naturalWidth, image.naturalHeight)
       layout.value = { frameWidth: parsed.frameWidth, rows: parsed.rows }
     } catch {
-      // Not a valid atlas: leave the stage empty instead of showing a slice of the wrong grid.
       layout.value = null
     }
   }
@@ -76,41 +159,43 @@ watch([url, () => props.avatarKind] as const, ([next, kind]) => {
   image.src = next
 }, { immediate: true })
 
-function stop(): void {
+function stopSpriteLoop(): void {
   if (raf) cancelAnimationFrame(raf)
   raf = 0
 }
 
-/**
- * Only write when the frame actually changes. `petFrameAt` runs at display rate, but a six-frame
- * row over 1.1s only changes about five times a second — reassigning every tick would re-render
- * the stage sixty times a second to show the same picture.
- */
-function tick(now: number): void {
-  const animation = PET_STATES[props.state] ?? PET_STATES.idle
+function resolveSpriteState(state: StagePetState): PetState {
+  if (state in PET_STATES) return state as PetState
+  if (state === 'working') return 'running'
+  if (state === 'celebrate') return 'jumping'
+  return 'idle'
+}
+
+function tickSprite(now: number): void {
   const elapsed = Math.max(0, now - startedAt)
-  const next = petFrameAt(props.state, elapsed)
+  const next = petFrameAt(resolveSpriteState(props.state), elapsed)
   if (next.column !== frame.value.column || next.row !== frame.value.row) {
     frame.value = { row: next.row, column: next.column }
   }
-  raf = requestAnimationFrame(tick)
+  raf = requestAnimationFrame(tickSprite)
 }
 
 watch(
-  () => [props.state, url.value] as const,
-  () => {
-    // Start on frame 0 of the requested row so a state change lands immediately instead of waiting
-    // out the previous row's cycle.
-    frame.value = { row: (PET_STATES[props.state] ?? PET_STATES.idle).row, column: 0 }
-    stop()
+  () => [props.state, url.value, props.avatarKind] as const,
+  ([, nextUrl, kind]) => {
+    stopSpriteLoop()
+    if (kind === 'live2d' || !nextUrl) return
+    const spriteState = resolveSpriteState(props.state)
+    frame.value = { row: PET_STATES[spriteState].row, column: 0 }
     startedAt = performance.now()
-    raf = requestAnimationFrame(tick)
+    raf = requestAnimationFrame(tickSprite)
   },
   { immediate: true },
 )
 
 onBeforeUnmount(() => {
-  stop()
+  stopSpriteLoop()
+  disposeLive2d()
   if (probe) {
     probe.onload = null
     probe.onerror = null
@@ -130,21 +215,31 @@ const style = computed(() => {
     backgroundPosition: `${-frame.value.column * renderedFrameWidth}px ${-frame.value.row * props.height}px`,
   }
 })
+
+const live2dCanvasStyle = computed(() => ({
+  width: `${Math.round(props.height * 0.92)}px`,
+  height: `${props.height}px`,
+}))
 </script>
 
 <template>
   <div
     class="companion-stage"
-    :class="`companion-stage--${state}`"
-    :style="live2d ? { height: `${height}px` } : undefined"
+    :class="[`companion-stage--${state}`, { 'companion-stage--speaking': speaking }]"
+    :style="isLive2d ? { height: `${height}px` } : undefined"
     role="img"
     :aria-label="alt"
     data-testid="companion-stage"
   >
-    <!-- The model was imported and its capabilities are readable, but this build has no Live2D
-         renderer; saying so is the honest state, drawing a sprite here would be a lie. -->
+    <canvas
+      v-if="live2dReadyToRender"
+      ref="live2dCanvasRef"
+      class="companion-stage-live2d-canvas"
+      :style="live2dCanvasStyle"
+      data-testid="companion-stage-live2d-canvas"
+    />
     <div
-      v-if="live2d"
+      v-else-if="isLive2d"
       class="companion-stage-live2d"
       data-testid="companion-stage-live2d-unavailable"
     >
@@ -155,10 +250,6 @@ const style = computed(() => {
 </template>
 
 <style scoped>
-/*
- * The stage paints the character's shadow itself: the window is transparent and has no system
- * shadow, so without this the pet floats on the desktop with nothing holding it down.
- */
 .companion-stage {
   position: relative;
   display: flex;
@@ -175,8 +266,11 @@ const style = computed(() => {
   filter: drop-shadow(0 6px 10px rgb(0 0 0 / 28%));
 }
 
-/* Compact and non-interactive: the full explanation lives in settings, the stage only admits
-   that this avatar cannot be drawn here. */
+.companion-stage-live2d-canvas {
+  display: block;
+  filter: drop-shadow(0 6px 12px rgb(0 0 0 / 24%));
+}
+
 .companion-stage-live2d {
   display: flex;
   align-items: center;
@@ -192,9 +286,8 @@ const style = computed(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* The frames still advance — that is the character, not decoration — but the drop shadow's
-     soft edge goes away with the rest of the motion budget. */
-  .companion-stage-pet {
+  .companion-stage-pet,
+  .companion-stage-live2d-canvas {
     filter: none;
   }
 }

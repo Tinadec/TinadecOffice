@@ -36,6 +36,15 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    proxy: {
+      '/api': 'http://127.0.0.1:48730',
+      '/auth': 'http://127.0.0.1:48730',
+      '/docs': 'http://127.0.0.1:48730',
+      '/ws': {
+        target: 'http://127.0.0.1:48730',
+        ws: true,
+      },
+    },
     watch: {
       // release/（约 2.8GB）与 runtime/（约 419MB，内含 PortableGit）都是打包产物，不是源。
       // 它们默认落在 project root 之内，chokidar 启动时会把 36467 个文件全爬一遍，

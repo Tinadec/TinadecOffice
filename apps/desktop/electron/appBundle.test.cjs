@@ -63,7 +63,7 @@ test('the packaged URL keeps the hash route and the splash flag', () => {
     `${APP_ORIGIN}/index.html?splash=0#/pet?instanceId=abc`,
   )
   assert.equal(
-    appBundleUrl({ hash: '/debug-studio', query: { splash: '0', skip: null, drop: undefined } }),
-    `${APP_ORIGIN}/index.html?splash=0#/debug-studio`,
+    appBundleUrl({ hash: '/settings', query: { splash: '0', skip: null, drop: undefined } }),
+    `${APP_ORIGIN}/index.html?splash=0#/settings`,
   )
 })

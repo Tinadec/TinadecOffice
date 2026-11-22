@@ -51,9 +51,10 @@ import settingsPageSource from './SettingsPage.vue?raw'
 // The model centre's read/write seam moved into a composable: the route-ref regression it guards
 // lives there now, so the assertion has to read that file rather than the page.
 import modelCenterSource from '@/composables/useModelCenter.ts?raw'
-// The channel panes themselves moved into their own section; pin them against that source.
+// The channel panes themselves moved into their own section & local-runtimes subcomponent; pin them there.
 import modelCenterSectionSource from '@/settings/sections/ModelCenterSection.vue?raw'
-// AgentPacksPanel moved inside the extracted Agent Center section; pin it there.
+import modelCenterLocalRuntimesSource from '@/settings/modelCenter/ModelCenterLocalRuntimes.vue?raw'
+// AgentPacksPanel and TeamsModesMerged moved inside the extracted Agent Center section; pin them there.
 import agentCenterSectionSource from '@/settings/agentCenter/AgentCenterSection.vue?raw'
 
 describe('SettingsPage smoke (D7 safety net)', () => {
@@ -116,10 +117,11 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       'AboutSection',
       'AppearanceSection',
       'PetsSection',
+      'WebAccessSection',
+      'MemoryContextSection',
       'ToolCenterSection',
       // The Agent Center panels were extracted rather than written here, so they
       // are exactly as easy to orphan as a section.
-      'AgentModesPanel',
       'PromptEngineeringMerged',
       'CompanionSection',
       'ModelCenterSection',
@@ -129,18 +131,23 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       // `<Name` rather than `<Name />`: a panel that declares props never closes its tag.
       expect(settingsPageSource).toContain(`<${name}`)
     }
-    // AgentCenterSection and AgentsDirectoryPanel live one directory deeper; the packs and
-    // governance/advanced panels render inside AgentCenterSection.
+    // AgentCenterSection and AgentsDirectoryPanel live one directory deeper; TeamsModesMerged, packs pill,
+    // and governance/advanced panels render inside AgentCenterSection.
     expect(settingsPageSource).toContain(`import AgentCenterSection, { type AgentCenterTabKey } from '@/settings/agentCenter/AgentCenterSection.vue'`)
     expect(settingsPageSource).toContain(`<AgentCenterSection`)
     expect(settingsPageSource).toContain(`import AgentsDirectoryPanel from '@/settings/agentCenter/AgentsDirectoryPanel.vue'`)
     expect(settingsPageSource).toContain(`<AgentsDirectoryPanel`)
+    expect(agentCenterSectionSource).toContain(`import TeamsModesMerged from './TeamsModesMerged.vue'`)
+    expect(agentCenterSectionSource).toContain(`<TeamsModesMerged`)
+    expect(agentCenterSectionSource).toContain(`data-testid="agent-packs-pill"`)
     expect(agentCenterSectionSource).toContain(`import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'`)
     expect(agentCenterSectionSource).toContain(`<AgentPacksPanel`)
     expect(agentCenterSectionSource).toContain(`import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'`)
     expect(agentCenterSectionSource).toContain(`<AgentEvolutionPanel`)
     expect(agentCenterSectionSource).toContain(`import GovernanceRolesPanel from '@/components/agentCenter/GovernanceRolesPanel.vue'`)
     expect(agentCenterSectionSource).toContain(`<GovernanceRolesPanel`)
+    expect(agentCenterSectionSource).toContain(`import LifecycleHooksPanel from './LifecycleHooksPanel.vue'`)
+    expect(agentCenterSectionSource).toContain(`<LifecycleHooksPanel`)
   })
 
   it('assigns the routes ref from loadModelCenter (regression: route writes sent no If-Match)', () => {
@@ -164,10 +171,13 @@ describe('SettingsPage smoke (D7 safety net)', () => {
     // default does not forward its slot, so every pane renders as an empty DOM here — a wrapper
     // assertion would pass against nothing. Overriding the stub is not available either: this repo's
     // tests use Vue's runtime-only build, so a `{ template }` stub cannot compile and the mount throws.
-    const sections = modelCenterSectionSource.match(
-      /const modelCenterSections = computed\(\(\) => \[([\s\S]*?)\n\]\)/,
+    expect(modelCenterSectionSource).toContain(`import ModelCenterLocalRuntimes`)
+    expect(modelCenterSectionSource).toContain(`<ModelCenterLocalRuntimes`)
+
+    const sections = modelCenterLocalRuntimesSource.match(
+      /const runtimeChannels = computed\(\(\) => \[([\s\S]*?)\n\]\)/,
     )?.[1]
-    expect(sections, 'modelCenterSections declaration').toBeTruthy()
+    expect(sections, 'runtimeChannels declaration').toBeTruthy()
 
     // One tab per channel, each labelled through the locale bundle and counted from its own bucket,
     // so a provider stored on `tui` cannot silently fall into the CLI count.
@@ -183,12 +193,13 @@ describe('SettingsPage smoke (D7 safety net)', () => {
     // A literal 'CLI'/'ACP' tab would satisfy the loop above by accident, so pin that it is gone.
     expect(settingsPageSource).not.toMatch(/label: '(CLI|ACP)'/)
     expect(modelCenterSectionSource).not.toMatch(/label: '(CLI|ACP)'/)
+    expect(modelCenterLocalRuntimesSource).not.toMatch(/label: '(CLI|ACP)'/)
 
     const pane = (key: string) => {
-      const start = modelCenterSectionSource.indexOf(`v-if="modelCenterSection === '${key}'"`)
+      const start = modelCenterLocalRuntimesSource.indexOf(`v-if="activeChannel === '${key}'"`)
       expect(start, `pane for '${key}'`).toBeGreaterThan(-1)
-      const next = modelCenterSectionSource.indexOf('<section v-if="modelCenterSection ===', start + 1)
-      return modelCenterSectionSource.slice(start, next === -1 ? modelCenterSectionSource.length : next)
+      const next = modelCenterLocalRuntimesSource.indexOf('<section v-if="activeChannel ===', start + 1)
+      return modelCenterLocalRuntimesSource.slice(start, next === -1 ? modelCenterLocalRuntimesSource.length : next)
     }
 
     // The ACP pane states the permission consequence before the user connects, because Core answers

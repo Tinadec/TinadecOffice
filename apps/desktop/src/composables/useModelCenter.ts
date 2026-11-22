@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import {
   api as baseApi,
   type AcpAdapterDto,
+  type AgentRuntimePolicyDto,
   type CliDiscoveryCandidateDto,
   type HarnessChannelDto,
   type ModelCatalogReadinessReceiptDto,
@@ -424,14 +425,23 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
   ): Promise<boolean> {
     modelCenterBusy.value = true
     try {
+      const fullProvider = providers.value.find((item) => item.id === provider.id)
+      const seededProfiles: Record<string, ModelProfileDto> = { ...(fullProvider?.model_profiles ?? {}) }
+      for (const modelId of models) {
+        if (modelId && !seededProfiles[modelId]) {
+          seededProfiles[modelId] = suggestModelProfile(modelId)
+        }
+      }
       const payload: SaveModelProviderInstanceInput = {
         id: provider.id,
         driver: provider.driver,
+        protocol: fullProvider?.protocol ?? null,
         display_name: provider.display_name,
         connection_kind: provider.connection_kind,
         base_url: provider.base_url ?? null,
         model,
         models,
+        model_profiles: seededProfiles,
         server_url: provider.server_url ?? null,
         capabilities: provider.capabilities,
         enabled: provider.enabled,
@@ -602,6 +612,62 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
     return api.listModelReferences({ provider_instance_id: providerInstanceId, model: modelId })
   }
 
+  /** Cross-model reference index loaded lazily when entering the Model Capability Library. */
+  const allModelReferences = ref<ModelReferenceDto[]>([])
+  const allModelReferencesLoading = ref(false)
+  const allModelReferencesLoaded = ref(false)
+
+  async function loadAllModelReferences(): Promise<void> {
+    if (allModelReferencesLoading.value) return
+    allModelReferencesLoading.value = true
+    try {
+      const rows = await api.listModelReferences({})
+      allModelReferences.value = Array.isArray(rows) ? rows : []
+      allModelReferencesLoaded.value = true
+    } catch {
+      // Keep previous index if the read fails; cards stay usable without reference badges.
+    } finally {
+      allModelReferencesLoading.value = false
+    }
+  }
+
+  const referencesByModelKey = computed<Record<string, ModelReferenceDto[]>>(() => {
+    const map: Record<string, ModelReferenceDto[]> = {}
+    for (const row of allModelReferences.value) {
+      const key = `${row.provider_instance_id}:${row.model ?? ''}`
+      if (!map[key]) map[key] = []
+      map[key].push(row)
+    }
+    return map
+  })
+
+  function referencesForModel(providerInstanceId: string, modelId: string): ModelReferenceDto[] {
+    return referencesByModelKey.value[`${providerInstanceId}:${modelId}`] ?? []
+  }
+
+  function agentReferenceCountForModel(providerInstanceId: string, modelId: string): number {
+    const refs = referencesForModel(providerInstanceId, modelId)
+    return refs.filter((item) => item.reference_kind === 'agent_default' || item.reference_kind === 'mode_override').length
+  }
+
+  /** Optional read-only runtime token ceilings shown in the Routing & Budget policy slot. */
+  const runtimePolicy = ref<AgentRuntimePolicyDto | null>(null)
+  const runtimePolicyLoaded = ref(false)
+
+  async function loadRuntimePolicy(): Promise<void> {
+    if (typeof (api as { getAgentRuntimePolicy?: unknown }).getAgentRuntimePolicy !== 'function') {
+      runtimePolicyLoaded.value = true
+      return
+    }
+    try {
+      runtimePolicy.value = await api.getAgentRuntimePolicy()
+    } catch {
+      runtimePolicy.value = null
+    } finally {
+      runtimePolicyLoaded.value = true
+    }
+  }
+
   const cliDiscoveryCandidates = ref<CliDiscoveryCandidateDto[]>([])
   const cliDiscoveryLoading = ref(false)
   const cliDiscoveryLoaded = ref(false)
@@ -628,16 +694,26 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
     if (!candidate.binary_path || !channel) return
     cliDiscoveryLoading.value = true
     try {
+      const ext = candidate as CliDiscoveryCandidateDto & {
+        home_path?: string | null
+        config_home?: string | null
+        launch_args?: string | null
+        default_launch_args?: string | null
+        detected_models?: string[] | null
+      }
+      const homePath = ext.home_path || ext.config_home || null
+      const launchArgs = ext.launch_args || ext.default_launch_args || null
+      const detectedModels = Array.isArray(ext.detected_models) ? ext.detected_models.filter(Boolean) : []
       const created = await api.connectHarness({
         driver: candidate.driver,
         binary_path: candidate.binary_path,
         channel: channel.channel ?? null,
         protocol: channel.protocol,
         display_name: candidate.display_name || undefined,
-        // No home_path, server_url or launch_args: discovery reports those as "what this harness would
-        // be started with", and a quick connect that writes them would store a HOME, an endpoint and an
-        // argv Core never measured. The process host picks the port it can actually bind.
-      })
+        ...(homePath ? { home_path: homePath } : {}),
+        ...(launchArgs ? { launch_args: launchArgs } : {}),
+        ...(detectedModels.length > 0 ? { model: detectedModels[0], models: detectedModels } : {}),
+      } as Parameters<typeof api.connectHarness>[0])
       await loadModelCenter()
       notify.success(created.display_name)
     } catch (error) {
@@ -677,6 +753,15 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
     saveModelProfile,
     saveRouteCandidates,
     fetchModelReferences,
+    allModelReferences,
+    allModelReferencesLoading,
+    allModelReferencesLoaded,
+    loadAllModelReferences,
+    referencesForModel,
+    agentReferenceCountForModel,
+    runtimePolicy,
+    runtimePolicyLoaded,
+    loadRuntimePolicy,
     cliDiscoveryCandidates,
     cliDiscoveryLoading,
     cliDiscoveryLoaded,

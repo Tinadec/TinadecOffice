@@ -9,6 +9,7 @@ import { formatClock } from '@/lib/conversation/format'
 import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle, AttachmentTrigger } from '@/components/ui/attachment'
+import ImageLightbox, { type LightboxImageItem } from '../chat/ImageLightbox.vue'
 
 /**
  * The user's side of a turn: a soft tinted bubble, the files it carried, and copy / edit /
@@ -72,6 +73,29 @@ function url(attachment: MessageAttachmentSummaryDto): string {
 function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
   return attachment.media_type.startsWith('image/') && attachment.media_type !== 'image/svg+xml'
 }
+
+const lightboxOpen = ref(false)
+const lightboxIndex = ref(0)
+const lightboxImages = computed<LightboxImageItem[]>(() =>
+  attachments.value
+    .filter(isThumbnail)
+    .map((attachment) => ({
+      src: url(attachment),
+      name: attachment.file_name,
+      downloadUrl: url(attachment),
+    })),
+)
+
+function onAttachmentClick(event: MouseEvent, attachment: MessageAttachmentSummaryDto) {
+  if (!isThumbnail(attachment)) return
+  // Keep Ctrl/Cmd/Shift/middle clicks working as direct download/new-tab links.
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const index = attachments.value.filter(isThumbnail).findIndex((item) => item.id === attachment.id)
+  if (index < 0) return
+  event.preventDefault()
+  lightboxIndex.value = index
+  lightboxOpen.value = true
+}
 </script>
 
 <template>
@@ -112,9 +136,24 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
             <AttachmentTitle class="conversation-attachment-name"><span class="conversation-attachment-stem">{{ fileNameParts(attachment.file_name).stem }}</span>{{ fileNameParts(attachment.file_name).extension }}</AttachmentTitle>
             <AttachmentDescription>{{ formatAttachmentBytes(attachment.content_length) }}</AttachmentDescription>
           </AttachmentContent>
-          <AttachmentTrigger as="a" :href="url(attachment)" :download="attachment.file_name" :title="attachment.file_name" :aria-label="attachment.file_name" />
+          <AttachmentTrigger
+            as="a"
+            :href="url(attachment)"
+            :download="attachment.file_name"
+            :class="{ 'is-image-preview': isThumbnail(attachment) }"
+            :title="isThumbnail(attachment) ? t('chat.previewImage', { name: attachment.file_name }) : attachment.file_name"
+            :aria-label="isThumbnail(attachment) ? t('chat.previewImage', { name: attachment.file_name }) : attachment.file_name"
+            @click="onAttachmentClick($event, attachment)"
+          />
         </Attachment>
       </AttachmentGroup>
+
+      <ImageLightbox
+        :open="lightboxOpen"
+        :images="lightboxImages"
+        :initial-index="lightboxIndex"
+        @close="lightboxOpen = false"
+      />
     </MessageContent>
 
     <MessageFooter v-if="!editing" class="conversation-hover-meta">
@@ -135,12 +174,14 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
 .conversation-user-content { display: flex; flex-direction: column; align-items: flex-end; width: 100%; }
 .conversation-user-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .conversation-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.is-image-preview { cursor: zoom-in; }
 .conversation-attachment-name { display: flex; max-width: 14rem; min-width: 0; white-space: nowrap; }
 .conversation-attachment-stem { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.conversation-hover-meta { display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1); }
+.conversation-hover-meta { display: flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1); }
 .conversation-user:hover .conversation-hover-meta,
 .conversation-user:focus-within .conversation-hover-meta { opacity: 1; }
-.conversation-edit-input { width: min(100%, 36rem); min-height: 4.5rem; padding: 8px 10px; border: 1px solid var(--border-card); border-radius: 10px; color: var(--text-primary); background: var(--surface-input); font: inherit; font-size: 13px; resize: vertical; }
+.conversation-edit-input { width: min(100%, 36rem); min-height: 4.5rem; padding: 8px 10px; box-sizing: border-box; border: 1px solid var(--border-card); border-radius: 8px; color: var(--text-primary); background: var(--surface-input, var(--surface-raised)); font: inherit; font-size: 13px; resize: vertical; }
+.conversation-edit-input:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent-primary) 65%, transparent); outline-offset: 1px; border-color: var(--accent-primary); }
 .conversation-edit-actions { display: flex; justify-content: flex-end; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .conversation-hover-meta { transition: none; } }
 </style>

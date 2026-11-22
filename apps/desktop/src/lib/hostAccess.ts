@@ -1,7 +1,7 @@
 import { computed, shallowRef } from 'vue'
 import { ApiError } from './apiError'
 import i18n from '@/i18n'
-import { readHostStatus, type HostConnectionStatus } from './hostConnection'
+import { isElectronHost, readHostStatus, type HostConnectionStatus } from './hostConnection'
 
 const status = shallowRef<HostConnectionStatus | null>(null)
 let revision = 0
@@ -15,10 +15,10 @@ export function hostAccessState(): string | null { return status.value?.state ??
 
 export function setHostAccessStatus(next: HostConnectionStatus): void {
   const previous = status.value
-  revision++;
+  revision++
   status.value = next
   // Same state arriving again is the normal per-request revalidation; only a real move
-  // (revoked, restart required, preview) may retire what was already read.
+  // (revoked, restart required, preview, auth_required) may retire what was already read.
   if (previous?.state === next.state && previous?.error?.code === next.error?.code) return
   for (const invalidate of accessInvalidators) invalidate()
 }
@@ -26,17 +26,21 @@ export function useHostAccess() {
   return {
     status,
     isPreview: computed(() => status.value?.state === 'preview'),
+    isAuthRequired: computed(() => status.value?.state === 'auth_required'),
+    isElectron: computed(() => isElectronHost() && !status.value?.webAuth),
     canAccessBackend: computed(() => !status.value || status.value.state === 'ready'),
     reason: computed(() => status.value?.state === 'preview'
       ? i18n.global.t('host.previewReason')
-      : status.value?.error?.message ?? i18n.global.t('host.verifyingReason')),
+      : status.value?.state === 'auth_required'
+        ? i18n.global.t('host.authRequiredReason')
+        : status.value?.error?.message ?? i18n.global.t('host.verifyingReason')),
   }
 }
 
 /** Capture the storage identity before awaiting this gate. No credential crosses IPC. */
 export async function assertHostAccess(path: string, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted()
-  if (/^\/api\/v1\/(health|host-challenge)(?:[/?]|$)/.test(path)) return
+  if (/^\/api\/v1\/(health|host-challenge|web-auth\/(?:status|login|logout|oidc\/))/.test(path)) return
   const host = typeof window === 'undefined' ? undefined : window.tinadec
   // Standalone injected transports have their own authentication; an existing preload does not.
   if (!host) return
@@ -52,9 +56,6 @@ export async function assertHostAccess(path: string, signal?: AbortSignal): Prom
     signal?.throwIfAborted()
     if (readRevision === revision) setHostAccessStatus(snapshot)
   }
-  // Neither source guarantees a value: a pushing bridge may not have broadcast yet, and a polling
-  // bridge in preview mode has no status at all. Current code used to fall through to `null.state`.
-  // An unknown host is not a ready host — refuse, and let the caller's retry settle it.
   const current = status.value ?? pushed
   if (current?.state === 'ready') return
   if (!current) {
@@ -67,6 +68,12 @@ export async function assertHostAccess(path: string, signal?: AbortSignal): Prom
 }
 
 function throwHostUnavailable(current: HostConnectionStatus): never {
+  if (current.state === 'auth_required') {
+    const message = current.error?.message ?? i18n.global.t('host.authRequiredReason')
+    throw new ApiError(message, 401, {
+      code: 'web_auth_required', detail: message, category: 'user_action_required', retryable: false, actions: ['retry'],
+    })
+  }
   const preview = current.state === 'preview'
   const code = preview ? 'desktop_host_required' : current.error?.code ?? 'host_unavailable'
   const message = preview ? i18n.global.t('host.previewAction') : current.error?.message ?? i18n.global.t('host.notReady')

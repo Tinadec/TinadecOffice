@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
- * Companion settings section (spec: add-companion-mode, Task 8).
+ * Dedicated Companion Settings section (strictly distinct from Agent Center).
  *
- * Two surfaces in one section: the user-wide switchboard (main companion, global autonomy
- * pause) and a per-companion editor. The section is mounted the first time the user enters it
- * and then kept alive by SettingsPage, so switching away and back does not re-read; every save
- * is conditional on the revision Core returned last and a 412 is reported, never papered over.
+ * Surfaces:
+ * 1. User-wide switchboard: default main companion, global autonomy pause, recruitment ceiling,
+ *    and `max_bot_hop_depth` (`0..10`, default `3`; `0` disables bot-to-bot auto-relay).
+ *    (`buddy_companion_id` is purged per Phase 7 unification.)
+ * 2. Unified Companion Avatar Library (`PetsSection` embedded: pixel sprites + Live2D + BYO SDK).
+ * 3. Companion Bots directory + inline editor + `CompanionEditorDrawer` slide-over support.
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Bot, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { Archive, Bot, PanelRightOpen, Plus, RefreshCw } from '@lucide/vue'
 import { UiBadge, UiButton, UiSwitch } from '@/components/ui'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import { useNotifications } from '@/composables/useNotifications'
@@ -21,16 +23,19 @@ import type { CompanionSettingsTab } from '@/lib/pageRequests'
 import {
   companionApi,
   type CompanionAvatar,
+  type CompanionDetail,
   type CompanionSettings,
   type CompanionSummary,
 } from '@/lib/companionApi'
 import CompanionEditor from './companion/CompanionEditor.vue'
+import CompanionEditorDrawer from './CompanionEditorDrawer.vue'
+import PetsSection from './PetsSection.vue'
+
+type CompanionSettingsWithHop = CompanionSettings & {
+  max_bot_hop_depth?: number
+}
 
 const props = defineProps<{
-  /**
-   * A deep link from the companion centre: which companion to open, the request's sequence, and
-   * the editor tab when the caller meant a specific panel ("memories", not "the companion").
-   */
   companionRequest?: { id: string; seq: number; tab?: CompanionSettingsTab } | null
 }>()
 
@@ -38,7 +43,7 @@ const { t } = useI18n()
 const { canAccessBackend, reason: hostReason } = useHostAccess()
 const { confirm, notify } = useNotifications()
 
-const settings = ref<CompanionSettings | null>(null)
+const settings = ref<CompanionSettingsWithHop | null>(null)
 const companions = ref<CompanionSummary[]>([])
 const selectedId = ref<string | null>(null)
 const loading = ref(false)
@@ -47,31 +52,28 @@ const settingsFailure = ref<ErrorState | null>(null)
 const settingsConflict = ref(false)
 const savingGlobal = ref(false)
 const busyId = ref<string | null>(null)
+
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref('')
 const createForm = reactive({ name: '', tagline: '' })
-/** Imported Live2D models; the list is Core's answer, so every mutation re-reads it. */
+
+const drawerOpen = ref(false)
+const drawerCompanionId = ref<string | null>(null)
+
 const avatars = ref<CompanionAvatar[]>([])
 const avatarsLoading = ref(false)
 const avatarsFailure = ref<ErrorState | null>(null)
-const importingAvatar = ref(false)
-const avatarBusyId = ref<string | null>(null)
-/** The id a deep link or a fresh creation should land on once the list is known. */
+
 const pendingSelectId = ref<string | null>(props.companionRequest?.id ?? null)
-/** Which editor panel a deep link asked for; the editor opens on it and follows later requests. */
 const editorTab = ref<CompanionSettingsTab>(props.companionRequest?.tab ?? 'identity')
-/**
- * Bumped on every deep link. It keys the editor so a link to the same companion still lands on
- * the requested panel even when the user had clicked away from it in between.
- */
 const editorRequestSeq = ref(0)
 let readGeneration = 0
 
 const activeCompanions = computed(() => companions.value.filter((item) => item.status !== 'archived'))
 const archivedCompanions = computed(() => companions.value.filter((item) => item.status === 'archived'))
 const mainCompanion = computed(() => settings.value?.main_companion_id ?? '')
-const buddyCompanion = computed(() => settings.value?.buddy_companion_id ?? '')
+const maxBotHopDepth = computed(() => settings.value?.max_bot_hop_depth ?? 3)
 const live2dIds = computed(() => avatars.value.map((model) => model.id))
 
 function selectFromList() {
@@ -98,7 +100,7 @@ async function loadList() {
 async function loadSettings() {
   const read = readGeneration
   try {
-    settings.value = await companionApi.getSettings()
+    settings.value = (await companionApi.getSettings()) as CompanionSettingsWithHop
     if (read !== readGeneration) return
     settingsFailure.value = null
   } catch (error) {
@@ -107,10 +109,6 @@ async function loadSettings() {
   }
 }
 
-/**
- * The Live2D list is a separate read with its own failure: a Core without the avatar routes must
- * not turn the whole companion section into an error page.
- */
 async function loadAvatars() {
   if (!canAccessBackend.value) return
   const read = readGeneration
@@ -148,7 +146,6 @@ watch(canAccessBackend, (ready) => { if (ready) void load() })
 watch(() => props.companionRequest, (request) => {
   if (!request?.id) return
   pendingSelectId.value = request.id
-  // A link without a tab means "the companion", not "leave the last panel open".
   editorTab.value = request.tab ?? 'identity'
   editorRequestSeq.value++
   if (companions.value.length === 0) { void load(); return }
@@ -160,13 +157,36 @@ function selectCompanion(id: string) {
   selectedId.value = id
 }
 
-async function patchGlobal(patch: { main_companion_id?: string | null; buddy_companion_id?: string | null; recruit_limit?: number; autonomy_paused?: boolean }) {
+function openDrawerForCompanion(id: string | null) {
+  drawerCompanionId.value = id
+  drawerOpen.value = true
+}
+
+async function onDrawerCreated(created: CompanionDetail) {
+  pendingSelectId.value = created.id
+  await loadList()
+  selectedId.value = created.id
+}
+
+async function onDrawerSaved() {
+  await loadList()
+}
+
+async function patchGlobal(patch: {
+  main_companion_id?: string | null
+  recruit_limit?: number
+  max_bot_hop_depth?: number
+  autonomy_paused?: boolean
+}) {
   const current = settings.value
   if (!current || savingGlobal.value) return
   savingGlobal.value = true
   settingsConflict.value = false
   try {
-    settings.value = await companionApi.patchSettings(current.revision, patch)
+    settings.value = (await companionApi.patchSettings(
+      current.revision,
+      patch as Parameters<typeof companionApi.patchSettings>[1],
+    )) as CompanionSettingsWithHop
   } catch (error) {
     if (isCompanionRevisionConflict(error)) {
       settingsConflict.value = true
@@ -183,16 +203,19 @@ function onMainCompanionChange(event: Event) {
   void patchGlobal({ main_companion_id: value || null })
 }
 
-function onBuddyCompanionChange(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
-  void patchGlobal({ buddy_companion_id: value || null })
-}
-
-/** The recruit ceiling is the team's own growth budget; 0 turns recruiting off. */
 function onRecruitLimitChange(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
   if (!Number.isInteger(value) || value < 0) return
   void patchGlobal({ recruit_limit: Math.min(value, 20) })
+}
+
+function onMaxBotHopDepthChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const raw = Number(input.value)
+  if (!Number.isFinite(raw)) return
+  const clamped = Math.max(0, Math.min(10, Math.trunc(raw)))
+  input.value = String(clamped)
+  void patchGlobal({ max_bot_hop_depth: clamped })
 }
 
 function openCreate() {
@@ -238,60 +261,6 @@ async function createCompanion() {
   }
 }
 
-function motionCount(model: CompanionAvatar): number {
-  return Object.values(model.capabilities.motions ?? {}).reduce(
-    (total, names) => total + (Array.isArray(names) ? names.length : 0),
-    0,
-  )
-}
-
-/**
- * Picking is a renderer concern (native dialog), importing is Core's: the absolute path is handed
- * over and Core copies the directory, so this surface never touches the user's files again.
- */
-async function importAvatar() {
-  if (importingAvatar.value) return
-  const pick = window.tinadec?.selectCompanionAvatarDirectory
-  if (typeof pick !== 'function') {
-    notify.error(new Error(t('settings.companions.live2d.hostUnavailable')), {
-      title: t('settings.companions.live2d.importFailed'),
-      key: 'companion-avatar-import',
-    })
-    return
-  }
-  importingAvatar.value = true
-  try {
-    const path = await pick(t('settings.companions.live2d.importPickTitle'))
-    if (!path) return
-    await companionApi.importCompanionAvatar({ path })
-    await loadAvatars()
-  } catch (error) {
-    notify.error(error, { title: t('settings.companions.live2d.importFailed'), key: 'companion-avatar-import' })
-  } finally {
-    importingAvatar.value = false
-  }
-}
-
-async function removeAvatar(model: CompanionAvatar) {
-  const confirmed = await confirm({
-    title: t('settings.companions.live2d.deleteTitle', { name: model.name }),
-    message: t('settings.companions.live2d.deleteMessage'),
-    confirmLabel: t('settings.companions.live2d.deleteConfirm'),
-    cancelLabel: t('common.cancel'),
-    destructive: true,
-  })
-  if (!confirmed) return
-  avatarBusyId.value = model.id
-  try {
-    await companionApi.deleteCompanionAvatar(model.id)
-    await loadAvatars()
-  } catch (error) {
-    notify.error(error, { title: t('settings.companions.live2d.deleteFailed'), key: `companion-avatar-delete-${model.id}` })
-  } finally {
-    avatarBusyId.value = null
-  }
-}
-
 async function archiveCompanion(companion: CompanionSummary) {
   const confirmed = await confirm({
     title: t('settings.companions.archiveTitle', { name: companion.name }),
@@ -303,7 +272,6 @@ async function archiveCompanion(companion: CompanionSummary) {
   if (!confirmed) return
   busyId.value = companion.id
   try {
-    // Archive is conditional on the companion's current revision, which only the detail carries.
     const detail = await companionApi.getCompanion(companion.id)
     await companionApi.archiveCompanion(companion.id, detail.revision)
     await loadList()
@@ -367,23 +335,6 @@ async function archiveCompanion(companion: CompanionSummary) {
         </select>
         <p class="companion-hint">{{ t('settings.companions.mainCompanionHint') }}</p>
       </div>
-      <div class="companion-field">
-        <label for="companion-buddy-companion">{{ t('settings.companions.buddyCompanion') }}</label>
-        <select
-          id="companion-buddy-companion"
-          class="settings-select"
-          data-testid="companion-buddy-companion"
-          :value="buddyCompanion"
-          :disabled="!settings || savingGlobal"
-          @change="onBuddyCompanionChange"
-        >
-          <option value="">{{ t('settings.companions.buddyCompanionNone') }}</option>
-          <option v-for="companion in activeCompanions" :key="companion.id" :value="companion.id">
-            {{ companion.name }}
-          </option>
-        </select>
-        <p class="companion-hint">{{ t('settings.companions.buddyCompanionHint') }}</p>
-      </div>
       <div class="companion-switch-row">
         <div class="companion-switch-copy">
           <strong>{{ t('settings.companions.globalPause') }}</strong>
@@ -413,78 +364,53 @@ async function archiveCompanion(companion: CompanionSummary) {
           @change="onRecruitLimitChange"
         />
       </div>
+      <div class="companion-switch-row">
+        <div class="companion-switch-copy">
+          <strong>{{ t('settings.companions.maxBotHopDepth') }}</strong>
+          <p class="companion-hint">{{ t('settings.companions.maxBotHopDepthHint') }}</p>
+        </div>
+        <input
+          class="companion-recruit-limit"
+          type="number"
+          min="0"
+          max="10"
+          step="1"
+          data-testid="companion-max-hop-depth"
+          :value="maxBotHopDepth"
+          :disabled="!settings || savingGlobal"
+          @change="onMaxBotHopDepthChange"
+        />
+      </div>
     </section>
 
-    <section class="companion-global" data-testid="companion-avatars">
-      <div class="companion-list-head">
-        <h3>{{ t('settings.companions.live2d.title') }}</h3>
-        <UiButton
-          size="sm"
-          data-testid="companion-avatar-import"
-          :disabled="!canAccessBackend || importingAvatar"
-          @click="importAvatar"
-        >
-          <Plus :size="14" />
-          <span>{{ importingAvatar ? t('settings.companions.live2d.importing') : t('settings.companions.live2d.importAction') }}</span>
-        </UiButton>
-      </div>
-      <p class="companion-hint" data-testid="companion-live2d-renderer-note">
-        {{ t('settings.companions.live2d.rendererNote') }}
-      </p>
-      <div v-if="avatarsFailure" role="alert" class="companion-error" data-testid="companion-avatar-error">
-        <p>{{ avatarsFailure.message }}</p>
-        <UiButton variant="outline" size="sm" :disabled="avatarsLoading || !canAccessBackend" @click="loadAvatars">
-          {{ t('common.retry') }}
-        </UiButton>
-      </div>
-      <div
-        v-else-if="avatarsLoading && avatars.length === 0"
-        class="companion-skeleton"
-        role="status"
-        :aria-label="t('settings.companions.live2d.loading')"
-      >
-        <span />
-        <span />
-      </div>
-      <p v-else-if="avatars.length === 0" class="companion-empty" data-testid="companion-avatar-empty">
-        {{ t('settings.companions.live2d.empty') }}
-      </p>
-      <ul v-else class="companion-rows">
-        <li
-          v-for="model in avatars"
-          :key="model.id"
-          class="companion-row"
-          :data-testid="`companion-avatar-row-${model.id}`"
-        >
-          <span class="companion-row-copy">
-            <strong>{{ model.name }}</strong>
-            <span class="companion-row-meta" data-testid="companion-avatar-caps">
-              {{ t('settings.companions.live2d.motionCount', { count: motionCount(model) }) }}
-              ·
-              {{ t('settings.companions.live2d.expressionCount', { count: model.capabilities.expressions.length }) }}
-            </span>
-          </span>
-          <UiButton
-            variant="ghost"
-            size="sm"
-            :disabled="avatarBusyId !== null"
-            :data-testid="`companion-avatar-delete-${model.id}`"
-            @click="removeAvatar(model)"
-          >
-            <Trash2 :size="14" />
-            <span>{{ t('settings.companions.live2d.deleteAction') }}</span>
-          </UiButton>
-        </li>
-      </ul>
-    </section>
+    <PetsSection
+      embedded
+      :live2d-avatars="avatars"
+      :loading-avatars="avatarsLoading"
+      :avatars-failure="avatarsFailure"
+      @avatars-changed="loadAvatars"
+    />
 
     <section class="companion-list-section">
       <div class="companion-list-head">
         <h3>{{ t('settings.companions.listTitle') }}</h3>
-        <UiButton size="sm" data-testid="companion-create-open" :disabled="!canAccessBackend" @click="openCreate">
-          <Plus :size="14" />
-          <span>{{ t('settings.companions.createAction') }}</span>
-        </UiButton>
+        <div class="companion-list-head-actions">
+          <UiButton
+            v-if="selectedId"
+            variant="outline"
+            size="sm"
+            data-testid="companion-open-drawer"
+            :disabled="!canAccessBackend"
+            @click="openDrawerForCompanion(selectedId)"
+          >
+            <PanelRightOpen :size="14" />
+            <span>{{ t('settings.companions.openDrawerEdit') }}</span>
+          </UiButton>
+          <UiButton size="sm" data-testid="companion-create-open" :disabled="!canAccessBackend" @click="openCreate">
+            <Plus :size="14" />
+            <span>{{ t('settings.companions.createAction') }}</span>
+          </UiButton>
+        </div>
       </div>
 
       <div v-if="loading && companions.length === 0" class="companion-skeleton" role="status" :aria-label="t('settings.companions.loading')">
@@ -561,14 +487,24 @@ async function archiveCompanion(companion: CompanionSummary) {
     </div>
 
     <CompanionEditor
-      v-if="selectedId"
+      v-if="selectedId && !drawerOpen"
       :key="`${selectedId}:${editorRequestSeq}`"
       :companion-id="selectedId"
       :initial-tab="editorTab"
       :live2d-avatars="avatars"
       class="companion-editor-host"
+      @saved="loadList"
     />
-    <p v-else-if="!loading" class="companion-empty">{{ t('settings.companions.selectCompanion') }}</p>
+    <p v-else-if="!selectedId && !loading" class="companion-empty">{{ t('settings.companions.selectCompanion') }}</p>
+
+    <CompanionEditorDrawer
+      v-model:open="drawerOpen"
+      :companion-id="drawerCompanionId"
+      :initial-tab="editorTab"
+      :live2d-avatars="avatars"
+      @created="onDrawerCreated"
+      @saved="onDrawerSaved"
+    />
   </div>
 </template>
 
@@ -627,11 +563,13 @@ async function archiveCompanion(companion: CompanionSummary) {
 }
 
 .companion-conflict {
-  box-shadow: inset 3px 0 0 var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 8%, var(--surface-section, var(--surface-raised)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-warning) 32%, transparent);
 }
 
 .companion-error {
-  box-shadow: inset 3px 0 0 var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 8%, var(--surface-section, var(--surface-raised)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-danger) 32%, transparent);
 }
 
 .companion-error-text {
@@ -683,11 +621,28 @@ async function archiveCompanion(companion: CompanionSummary) {
   color: var(--text-primary);
 }
 
+.companion-recruit-limit {
+  width: 72px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--surface-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: right;
+}
+
 .companion-list-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.companion-list-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .companion-rows {
@@ -709,7 +664,8 @@ async function archiveCompanion(companion: CompanionSummary) {
 }
 
 .companion-row.selected {
-  box-shadow: inset 2px 0 0 var(--accent-primary);
+  background: var(--surface-selected);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 32%, transparent);
 }
 
 .companion-row.archived .companion-row-main {
@@ -800,7 +756,7 @@ async function archiveCompanion(companion: CompanionSummary) {
   padding: 18px;
   border-radius: 12px;
   background: var(--surface-raised);
-  box-shadow: 0 20px 60px rgb(0 0 0 / 35%);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
 }
 
 .companion-modal-head {

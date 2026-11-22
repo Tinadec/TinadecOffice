@@ -26,7 +26,14 @@ import type { Terminal } from '@xterm/xterm'
 import type { ITheme as XtermTheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { createLocalTerminalSource, type TerminalSource, type TerminalSourceKind } from '@/composables/useTerminalSource'
+import {
+  createLocalTerminalSource,
+  createWebTerminalSource,
+  type TerminalSource,
+  type TerminalSourceKind,
+} from '@/composables/useTerminalSource'
+import { useHostAccess } from '@/lib/hostAccess'
+import { resolveWebGatewayBase } from '@/lib/hostConnection'
 
 // ---- Types ----
 
@@ -180,16 +187,35 @@ function plainText(value: string | undefined | null): string | undefined {
 const ipcCleanup = new Map<string, Array<() => void>>()
 
 /**
- * Check if the Electron terminal API is available.
+ * Check if the Electron terminal IPC API is available.
  */
-function isTerminalAvailable(): boolean {
+function isElectronTerminalAvailable(): boolean {
   return typeof window !== 'undefined'
     && !!window.tinadec
     && !!window.tinadec.terminal
 }
 
 /**
- * Load available shell profiles from Electron IPC.
+ * Check if WebSocket-backed Web Terminal (/ws/terminal) is available in Web ready mode.
+ */
+function isWebTerminalAvailable(): boolean {
+  if (isElectronTerminalAvailable()) return false
+  if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return false
+  const { status, canAccessBackend } = useHostAccess()
+  const tinadec = (window as unknown as { tinadec?: { isWebShim?: boolean } }).tinadec
+  if (!tinadec?.isWebShim && !status.value?.webAuth) return false
+  return canAccessBackend.value
+}
+
+/**
+ * Check if any interactive terminal backend (Electron PTY or WebSocket /ws/terminal) is available.
+ */
+function isTerminalAvailable(): boolean {
+  return isElectronTerminalAvailable() || isWebTerminalAvailable()
+}
+
+/**
+ * Load available shell profiles from Electron IPC or Gateway Web Terminal API.
  *
  * The reply is frozen on the way in: a deep-reactive copy would hand
  * `terminal:create` a Proxy for `args`, which Electron's serializer refuses.
@@ -197,6 +223,32 @@ function isTerminalAvailable(): boolean {
 async function loadShells(): Promise<void> {
   if (!isTerminalAvailable()) {
     availableShells.value = []
+    return
+  }
+  if (!isElectronTerminalAvailable() && isWebTerminalAvailable()) {
+    try {
+      const res = await fetch(`${resolveWebGatewayBase()}/api/v1/web-terminal/shells`, {
+        credentials: 'include',
+        headers: { accept: 'application/json' },
+      })
+      if (!res.ok) {
+        availableShells.value = []
+        return
+      }
+      const data = (await res.json()) as { shells?: ShellProfile[] }
+      const shells = Array.isArray(data?.shells) ? data.shells : []
+      availableShells.value = Object.freeze(
+        shells.map((s) => Object.freeze({
+          id: String(s.id),
+          label: String(s.label),
+          shell: String(s.shell),
+          args: Object.freeze(plainStringArray(s.args) ?? []),
+        })),
+      ) as ShellProfile[]
+      shellsLoaded.value = true
+    } catch {
+      availableShells.value = []
+    }
     return
   }
   try {
@@ -249,7 +301,39 @@ async function createTerminalInstance(
       shellId = plainText(profile.id) ?? 'default'
     }
 
-    const result = isTerminalAvailable()
+    if (!isElectronTerminalAvailable() && isWebTerminalAvailable()) {
+      const id = `web-${globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36)}`
+      const webSource = createWebTerminalSource({
+        shellId,
+        cwd: plainText(options.cwd),
+        onReady: (meta) => {
+          const target = terminalInstances.value.find((entry) => entry.id === id)
+          if (!target) return
+          if (meta.shell) target.shell = meta.shell
+          if (meta.title && !options.title) target.title = meta.title
+        },
+      })
+      const instance: TerminalInstance = {
+        id,
+        shell: shell || shellId || 'shell',
+        title: options.title || shell || shellId || i18n.global.t('terminal.defaultTitle'),
+        term: null,
+        fitAddon: null,
+        exited: false,
+        ready: false,
+        cwd: options.cwd || '',
+        shellId,
+        sourceKind: 'local',
+        terminalSessionId: null,
+        runId: null,
+        source: webSource,
+      }
+      terminalInstances.value = [...terminalInstances.value, instance]
+      activeTerminalId.value = instance.id
+      return instance
+    }
+
+    const result = isElectronTerminalAvailable()
       ? await window.tinadec.terminal.create({
         shell,
         args,
@@ -340,9 +424,9 @@ function attachTerminal(
 
   instance.ready = true
 
-  // Agent sessions have no local PTY: the xterm widget is fed by the Core-owned
-  // session stream (replay + follow) and keystrokes go back as audited stdin.
-  if (instance.sourceKind === 'agent' && instance.source) {
+  // Agent sessions and WebSocket-backed Web terminals use the unified TerminalSource plug:
+  // output arrives asynchronously and keystrokes/resizes travel through instance.source.
+  if (instance.source && (instance.sourceKind === 'agent' || !isElectronTerminalAvailable())) {
     instance.source.attach({
       onData: (data) => {
         if (instance.term && !instance.exited) instance.term.write(data)
@@ -352,17 +436,17 @@ function attachTerminal(
       },
     })
 
-    const agentInputDisposable = term.onData((data) => {
+    const sourceInputDisposable = term.onData((data) => {
       instance.source?.write(data)
     })
-    const agentResizeDisposable = term.onResize(({ cols, rows }) => {
+    const sourceResizeDisposable = term.onResize(({ cols, rows }) => {
       instance.source?.resize(cols, rows)
     })
 
     ipcCleanup.set(id, [
       instance.source.detach,
-      () => agentInputDisposable.dispose(),
-      () => agentResizeDisposable.dispose(),
+      () => sourceInputDisposable.dispose(),
+      () => sourceResizeDisposable.dispose(),
     ])
     return
   }
@@ -472,9 +556,11 @@ function closeTerminal(id: string): void {
     // Closing the tab detaches the view; the session Core owns keeps running
     // until it exits or the user kills it explicitly (killTerminal).
     instance.source?.dispose()
-  } else if (isTerminalAvailable()) {
+  } else if (isElectronTerminalAvailable()) {
     // Tell main process to destroy the PTY
     window.tinadec.terminal.destroy(id)
+  } else {
+    instance?.source?.dispose()
   }
 
   // Remove from instances list

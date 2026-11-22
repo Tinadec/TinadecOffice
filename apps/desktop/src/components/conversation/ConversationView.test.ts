@@ -229,6 +229,30 @@ describe('ConversationView attachment strip', () => {
     wrapper.unmount()
   })
 
+  it('opens ImageLightbox when clicking a sent message image thumbnail', async () => {
+    const wrapper = mountView(carrying([
+      attachment({ id: 'att-1', file_name: 'first.png', media_type: 'image/png' }),
+      attachment({ id: 'att-2', file_name: 'second.webp', media_type: 'image/webp' }),
+    ]))
+    const links = wrapper.findAll('[data-testid="message-attachments"] a')
+    expect(links).toHaveLength(2)
+
+    await links[0]!.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const overlay = document.body.querySelector('[data-testid="image-lightbox"]')
+    expect(overlay).not.toBeNull()
+    expect(overlay!.querySelector('[data-testid="lightbox-image"]')?.getAttribute('src')).toBe(apiMock.attachmentContentUrl('att-1'))
+    expect(overlay!.querySelector('[data-testid="lightbox-download"]')?.getAttribute('href')).toBe(apiMock.attachmentContentUrl('att-1'))
+    ;(overlay!.querySelector('[data-testid="lightbox-next"]') as HTMLButtonElement).click()
+    await wrapper.vm.$nextTick()
+    expect(overlay!.querySelector('[data-testid="lightbox-image"]')?.getAttribute('src')).toBe(apiMock.attachmentContentUrl('att-2'))
+    ;(overlay!.querySelector('[data-testid="lightbox-close"]') as HTMLButtonElement).click()
+    await wrapper.vm.$nextTick()
+    expect(document.body.querySelector('[data-testid="image-lightbox"]')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('will not render svg as an image, because svg can carry script', () => {
     const wrapper = mountView(carrying([attachment({ file_name: 'diagram.svg', media_type: 'image/svg+xml' })]))
     const strip = wrapper.get('[data-testid="message-attachments"]')

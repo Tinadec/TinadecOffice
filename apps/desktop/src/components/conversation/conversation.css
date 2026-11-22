@@ -25,6 +25,7 @@
     justify-content: center;
     width: 22px;
     height: 22px;
+    flex-shrink: 0;
     border: 0;
     border-radius: 6px;
     color: var(--text-muted);
@@ -36,6 +37,10 @@
   .conversation-icon-button:focus-visible { outline: 1px solid hsl(var(--ring)); }
 
   .conversation-text-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
     min-height: 26px;
     padding: 3px 10px;
     border: 1px solid var(--border-card);
@@ -43,6 +48,9 @@
     color: var(--text-primary);
     background: var(--surface-raised);
     font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-shrink: 0;
     cursor: pointer;
   }
   .conversation-text-button:hover { background: var(--surface-hover); }
@@ -54,6 +62,25 @@
   }
   .conversation-text-button.is-primary:hover { background: color-mix(in srgb, var(--accent-primary) 88%, black); }
   .conversation-text-button:disabled { opacity: 0.5; cursor: default; }
+
+  .conversation-edit-input {
+    width: min(100%, 36rem);
+    min-height: 4rem;
+    padding: 8px 10px;
+    box-sizing: border-box;
+    border: 1px solid var(--border-card);
+    border-radius: 8px;
+    color: var(--text-primary);
+    background: var(--surface-input, var(--surface-raised));
+    font: inherit;
+    font-size: 13px;
+    resize: vertical;
+  }
+  .conversation-edit-input:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-primary) 65%, transparent);
+    outline-offset: 1px;
+    border-color: var(--accent-primary);
+  }
 
   /* A fold: trigger line + reka collapsible content that unmounts when closed. */
   .conversation-fold-trigger {
@@ -111,14 +138,17 @@
     align-self: flex-start;
     padding: 0;
     border: 0;
+    border-radius: 4px;
     color: var(--text-secondary);
     background: transparent;
     font-size: 11px;
+    font-variant-numeric: tabular-nums;
     text-decoration: underline;
     text-underline-offset: 3px;
     cursor: pointer;
   }
   .conversation-link-button:hover { color: var(--text-primary); }
+  .conversation-link-button:focus-visible { outline: 1px solid hsl(var(--ring)); color: var(--text-primary); }
 
   /* Code island: the one other card-like surface in a turn. */
   .conversation-code {

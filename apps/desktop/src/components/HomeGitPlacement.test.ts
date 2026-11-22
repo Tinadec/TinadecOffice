@@ -7,7 +7,15 @@ const dispatch = vi.fn()
 vi.mock('../../../TinadecUI/src/components/useUie', () => ({ useUie: () => ({ dispatch, scope: ref({ kind: 'page', pageId: 'home' }), snapshot: ref({ revision: 1 }) }) }))
 vi.mock('@/composables/useElementSize', () => ({ useResponsiveMode: () => ({ isCompact: ref(false) }) }))
 vi.mock('@/controllers/HomeController', () => ({ homeController: {
-  currentProject: ref(null), currentSession: ref(null), approvals: ref([]),
+  currentProject: ref(null),
+  currentSession: ref(null),
+  approvals: ref([]),
+  readiness: ref({ status: 'ready', items: [] }),
+  recentEvents: ref([]),
+  working: ref(false),
+  activeRuns: ref([]),
+  orchestration: ref(null),
+  workspaceRoots: ref([]),
 } }))
 vi.mock('@/composables/useConnection', () => ({ useConnection: () => ({ hostStatus: ref({ state: 'preview' }), businessReady: ref(false) }) }))
 vi.mock('@/composables/useHomeGitStatus', () => ({ useHomeGitStatus: () => ({
@@ -15,10 +23,13 @@ vi.mock('@/composables/useHomeGitStatus', () => ({ useHomeGitStatus: () => ({
   recentCommit: ref(null), historyLoaded: ref(false), historyError: ref(false),
   businessReady: ref(false), refresh: vi.fn(),
 }) }))
-vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: () => ({ t: (key: string) => key, te: () => true }),
+}))
 import HomePickerCard from '../../../TinadecUI/src/components/cards/home/HomePickerCard.vue'
 
-describe('Home feature panel Git widget placement', () => {
+describe('Home feature panel Bento & Git widget placement', () => {
   it('opens Git from the real widget through the Home card, not just a stub', async () => {
     dispatch.mockClear()
     const wrapper = mount(HomePickerCard, { global: { stubs: {
@@ -28,17 +39,28 @@ describe('Home feature panel Git widget placement', () => {
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ descriptorId: 'git' }) }))
   })
 
-  it('replaces only the Home grid Git entry; keeps the menu catalog and opens singleton Git card', async () => {
+  it('renders 3-tier Bento deck, grouped launchers without Git/system tiles, and bottom status pill', async () => {
+    dispatch.mockClear()
     const wrapper = mount(HomePickerCard, { global: { stubs: {
-      GitStatusWidget: { template: '<button class="git-status-widget" @click="$emit(\'open\')" />', emits: ['open'] },
+      UiIslandCard: { template: '<article><slot /></article>' },
+      GitStatusWidget: { template: '<button class="git-status-widget" @click="$emit(\'open\')" />', emits: ['open', 'open-file', 'open-tab'] },
     } } })
     expect(FEATURE_CATALOG.find(entry => entry.descriptorId === 'git')).toBeTruthy()
-    // Every Home entry except Git, which the status widget replaces on the grid. Counting the whole
-    // catalog would break the moment another page (the companion centre) adds its own cards.
-    expect(wrapper.findAll('.panel-home-card')).toHaveLength(catalogEntriesForPage('home').length - 1)
+    const nonGitLauncherCount = catalogEntriesForPage('home')
+      .filter((entry) => entry.descriptorId !== 'git' && entry.group !== 'system')
+      .length
+    expect(wrapper.findAll('.panel-home-card')).toHaveLength(nonGitLauncherCount)
+    expect(wrapper.find('[data-testid="session-run-widget"]').exists()).toBe(true)
     expect(wrapper.find('.git-status-widget').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workspace-quick-widget"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="home-attention-approvals"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="home-status-pill"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('context.homeGit')
+
     await wrapper.find('.git-status-widget').trigger('click')
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'openCard', descriptorId: 'git' }) }))
+
+    await wrapper.get('[data-testid="home-status-events-btn"]').trigger('click')
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'openCard', descriptorId: 'doctor' }) }))
   })
 })

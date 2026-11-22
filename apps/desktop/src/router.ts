@@ -1,10 +1,9 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { watch } from 'vue'
-import { loadDebugStudioPreference, useDebugStudio } from './composables/useDebugStudio'
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
+    // Primary user-facing surfaces: Home (Flat / Space / Companion Center) & Settings
     {
       path: '/',
       name: 'home',
@@ -16,72 +15,17 @@ const router = createRouter({
       component: () => import('./pages/SpatialPage.vue'),
     },
     {
+      path: '/companion-center',
+      name: 'companion-center',
+      component: () => import('./pages/CompanionCenterPage.vue'),
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('./pages/SettingsPage.vue'),
     },
-    {
-      // Legacy standalone agent-center page was merged into Settings (agents tab).
-      path: '/agent-center',
-      redirect: '/settings',
-    },
-    {
-      path: '/market',
-      name: 'market',
-      component: () => import('./pages/MarketPage.vue'),
-    },
-    {
-      path: '/market/skills',
-      name: 'marketSkills',
-      component: () => import('./pages/MarketPage.vue'),
-      meta: { uiePage: 'marketSkills', marketKind: 'skill' },
-    },
-    {
-      path: '/market/mcp',
-      name: 'marketMcp',
-      component: () => import('./pages/MarketPage.vue'),
-      meta: { uiePage: 'marketMcp', marketKind: 'mcp-server' },
-    },
-    {
-      path: '/debug-studio',
-      name: 'debug-studio',
-      component: () => import('./pages/DebugStudioPage.vue'),
-    },
-    {
-      path: '/code-editor',
-      name: 'code-editor',
-      component: () => import('./pages/CodePage.vue'),
-    },
-    {
-      path: '/workbench',
-      name: 'workbench',
-      redirect: '/space',
-    },
-    {
-      path: '/recovery/:actionId',
-      name: 'recovery-check',
-      component: () => import('./pages/RecoveryCheckPage.vue'),
-    },
-    {
-      path: '/governance',
-      name: 'governance-board',
-      component: () => import('./pages/GovernanceBoardPage.vue'),
-    },
-    {
-      path: '/memory',
-      name: 'memory',
-      component: () => import('./pages/MemoryPage.vue'),
-    },
-    {
-      path: '/snapshots',
-      name: 'snapshots',
-      component: () => import('./pages/SnapshotsPage.vue'),
-    },
-    {
-      path: '/library',
-      name: 'library',
-      component: () => import('./pages/LibraryPage.vue'),
-    },
+
+    // Electron child-window-only routes
     {
       path: '/panel',
       name: 'detached-panel',
@@ -97,24 +41,22 @@ const router = createRouter({
       name: 'companion',
       component: () => import('./pages/CompanionPage.vue'),
     },
-    {
-      path: '/companion-center',
-      name: 'companion-center',
-      component: () => import('./pages/CompanionCenterPage.vue'),
-    },
-    {
-      path: '/buddy',
-      name: 'buddy',
-      component: () => import('./pages/BuddyPage.vue'),
-    },
-  ],
-})
 
-router.beforeEach(async (to) => {
-  if (to.name === 'debug-studio' && !(await loadDebugStudioPreference())) return { name: 'home', replace: true }
-})
-watch(useDebugStudio().enabled, (enabled) => {
-  if (!enabled && router.currentRoute.value.name === 'debug-studio') void router.replace({ name: 'home' })
+    // Legacy deep-link redirects -> unified Home / Settings
+    { path: '/agent-center', redirect: '/settings' },
+    { path: '/workbench', redirect: '/space' },
+    { path: '/code-editor', redirect: '/' },
+    { path: '/snapshots', redirect: '/' },
+    { path: '/governance', redirect: '/' },
+    { path: '/recovery/:actionId', redirect: '/' },
+    { path: '/library', redirect: '/' },
+    { path: '/memory', redirect: '/' },
+    { path: '/market', redirect: '/' },
+    { path: '/market/skills', redirect: '/' },
+    { path: '/market/mcp', redirect: '/' },
+    { path: '/buddy', redirect: '/companion-center' },
+    { path: '/debug-studio', redirect: '/' },
+  ],
 })
 
 export default router

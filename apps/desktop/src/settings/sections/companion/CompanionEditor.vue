@@ -14,7 +14,8 @@ import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import { useAgentAvatars } from '@/composables/useAgentAvatars'
 import { api } from '@/api'
 import { companionApi, type CompanionAvatar, type CompanionDetail } from '@/lib/companionApi'
-import { avatarKindOf } from '@/pets/avatarKind'
+import { avatarKindOf, hasCubismCoreGlobal } from '@/pets/avatarKind'
+import { live2dSdkState } from '@/pets/live2dRuntimeLoader'
 import { isCompanionRevisionConflict } from '@/lib/companionConflict'
 import CompanionMemoryPanel from './CompanionMemoryPanel.vue'
 import CompanionSkillPanel from './CompanionSkillPanel.vue'
@@ -32,7 +33,12 @@ const props = defineProps<{
   live2dAvatars?: CompanionAvatar[]
 }>()
 
+const emit = defineEmits<{
+  saved: [companion: CompanionDetail]
+}>()
+
 const { t } = useI18n()
+const sdkReady = computed(() => hasCubismCoreGlobal() || live2dSdkState.value.ready)
 const { notify } = useNotifications()
 
 type EditorTab = 'identity' | 'memory' | 'skills' | 'connections' | 'autonomy'
@@ -105,6 +111,10 @@ const modelOptions = ref<ModelOption[]>([])
 const modelOptionsFailed = ref(false)
 
 async function loadModelOptions() {
+  if (typeof api.listModelProviders !== 'function') {
+    modelOptions.value = []
+    return
+  }
   try {
     const providers = await api.listModelProviders()
     const options: ModelOption[] = []
@@ -188,6 +198,7 @@ async function saveIdentity() {
     })
     detail.value = updated
     seedIdentity(updated)
+    emit('saved', updated)
     notify.success({ title: t('settings.companions.saved'), message: t('settings.companions.saved') })
   } catch (error) {
     reportWriteFailure(error, t('settings.companions.saveFailed'))
@@ -199,6 +210,7 @@ async function saveIdentity() {
 function applyUpdatedCompanion(updated: CompanionDetail) {
   detail.value = updated
   seedIdentity(updated)
+  emit('saved', updated)
 }
 </script>
 
@@ -214,7 +226,13 @@ function applyUpdatedCompanion(updated: CompanionDetail) {
 
     <template v-else-if="detail">
       <header class="companion-editor-head">
-        <AgentPetAvatar class="companion-editor-avatar" :pet-slug="detail.avatar ?? ''" :size="34" :alt="detail.name" />
+        <AgentPetAvatar
+          class="companion-editor-avatar"
+          :pet-slug="detail.avatar ?? ''"
+          :avatar-kind="avatarKindOf(detail.avatar, live2dAvatars.map((model) => model.id)) ?? 'sprite'"
+          :size="34"
+          :alt="detail.name"
+        />
         <div class="companion-editor-copy">
           <h3 data-testid="companion-editor-name">{{ detail.name }}</h3>
           <p class="companion-editor-meta">
@@ -293,7 +311,7 @@ function applyUpdatedCompanion(updated: CompanionDetail) {
             v-if="avatarKindOf(identity.avatar, live2dAvatars.map((model) => model.id)) === 'live2d'"
             class="companion-hint"
             data-testid="companion-avatar-live2d-note"
-          >{{ t('settings.companions.avatarLive2dNote') }}</p>
+          >{{ sdkReady ? t('settings.companions.live2d.sdkReady') : t('settings.companions.avatarLive2dNote') }}</p>
         </div>
         <div class="companion-field">
           <label for="companion-identity-model">{{ t('settings.companions.model') }}</label>
@@ -453,8 +471,8 @@ function applyUpdatedCompanion(updated: CompanionDetail) {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: var(--surface-chrome, transparent);
-  box-shadow: inset 3px 0 0 var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 8%, var(--surface-chrome, var(--surface-raised)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-warning) 32%, transparent);
   font-size: 12px;
   color: var(--text-secondary);
 }

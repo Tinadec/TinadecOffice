@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   MarkerType,
-  Panel,
   VueFlow,
   useVueFlow,
   type Connection,
@@ -20,9 +19,10 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { AlertTriangle, CheckCircle2, Cpu, LayoutGrid, Maximize2, Plus, Workflow, ZoomIn, ZoomOut } from '@lucide/vue'
-import type { AgentDefinitionDto, AgentModeEdgeDto, AgentModeNodeDto } from '@/api'
+import type { AgentDefinitionDto, AgentModeEdgeDto, AgentModeNodeDto, ModelProviderInstanceDto } from '@/api'
 import { validateMode, type ModeIssue, type ModeIssueCode } from '@/components/canvas/modeValidation'
 import { pickLocalized, pickNodeLabel } from '@/lib/packI18n'
+import { providerRuntimeChannel, type RuntimeChannelKind } from '@/settings/agentCenter/directory/agentDirectoryHelpers'
 import ModeAgentNode, { type ModeAgentNodeData } from './ModeAgentNode.vue'
 import {
   clampToLane,
@@ -42,6 +42,7 @@ const props = defineProps<{
   nodes: AgentModeNodeDto[]
   edges: AgentModeEdgeDto[]
   agents: AgentDefinitionDto[]
+  providers?: ModelProviderInstanceDto[]
   /** Pack-managed/archived modes render inspect-only: no drag, no connect, no delete. */
   readonly?: boolean
   selectedNodeId?: string | null
@@ -111,10 +112,16 @@ function localizedRoleLabel(agent: AgentDefinitionDto | undefined): string {
   return raw
 }
 
+function providerFor(id?: string | null): ModelProviderInstanceDto | undefined {
+  if (!id || !props.providers?.length) return undefined
+  return props.providers.find((provider) => provider.id === id)
+}
+
 function strategyDisplay(node: AgentModeNodeDto, agent: AgentDefinitionDto | undefined): {
   kind: 'inherit' | 'route' | 'fixed'
   badge: string
   overridden: boolean
+  runtimeChannel: RuntimeChannelKind | null
 } {
   const override = node.model_strategy_override
   if (override && override.kind && override.kind !== 'inherit') {
@@ -124,13 +131,39 @@ function strategyDisplay(node: AgentModeNodeDto, agent: AgentDefinitionDto | und
         kind: 'route',
         badge: purpose ? `${t('settings.modeStrategyRouteBadge')}: ${purpose}` : t('settings.modeStrategyRouteBadge'),
         overridden: true,
+        runtimeChannel: null,
       }
     }
     if (override.kind === 'fixed') {
+      const provider = providerFor(override.provider_instance_id)
+      const labelTarget = override.model || provider?.display_name || override.provider_instance_id || ''
       return {
         kind: 'fixed',
-        badge: override.model ? `${t('settings.modeStrategyFixedBadge')}: ${override.model}` : t('settings.modeStrategyFixedBadge'),
+        badge: labelTarget ? `${t('settings.modeStrategyFixedBadge')}: ${labelTarget}` : t('settings.modeStrategyFixedBadge'),
         overridden: true,
+        runtimeChannel: provider ? providerRuntimeChannel(provider) : null,
+      }
+    }
+  }
+  const binding = agent?.model_binding
+  if (binding && binding.mode && binding.mode !== 'inherit') {
+    if (binding.mode === 'route') {
+      const purpose = binding.route_purpose ?? ''
+      return {
+        kind: 'route',
+        badge: purpose ? `${t('settings.modeStrategyRouteBadge')}: ${purpose}` : t('settings.modeStrategyRouteBadge'),
+        overridden: false,
+        runtimeChannel: null,
+      }
+    }
+    if (binding.mode === 'fixed') {
+      const provider = providerFor(binding.provider_instance_id)
+      const labelTarget = binding.model || provider?.display_name || binding.provider_instance_id || ''
+      return {
+        kind: 'fixed',
+        badge: labelTarget ? `${t('settings.modeStrategyFixedBadge')}: ${labelTarget}` : t('settings.modeStrategyFixedBadge'),
+        overridden: false,
+        runtimeChannel: provider ? providerRuntimeChannel(provider) : null,
       }
     }
   }
@@ -138,18 +171,22 @@ function strategyDisplay(node: AgentModeNodeDto, agent: AgentDefinitionDto | und
   if (base && typeof base === 'object') {
     const record = base as Record<string, unknown>
     if (record.kind === 'route' && typeof record.route_purpose === 'string') {
-      return { kind: 'route', badge: `${t('settings.modeStrategyRouteBadge')}: ${record.route_purpose}`, overridden: false }
+      return { kind: 'route', badge: `${t('settings.modeStrategyRouteBadge')}: ${record.route_purpose}`, overridden: false, runtimeChannel: null }
     }
     if (record.kind === 'fixed') {
+      const providerId = typeof record.provider_instance_id === 'string' ? record.provider_instance_id : null
+      const provider = providerFor(providerId)
       const model = typeof record.model === 'string' && record.model ? record.model : ''
+      const labelTarget = model || provider?.display_name || providerId || ''
       return {
         kind: 'fixed',
-        badge: model ? `${t('settings.modeStrategyFixedBadge')}: ${model}` : t('settings.modeStrategyFixedBadge'),
+        badge: labelTarget ? `${t('settings.modeStrategyFixedBadge')}: ${labelTarget}` : t('settings.modeStrategyFixedBadge'),
         overridden: false,
+        runtimeChannel: provider ? providerRuntimeChannel(provider) : null,
       }
     }
   }
-  return { kind: 'inherit', badge: t('settings.modeStrategyInheritBadge'), overridden: false }
+  return { kind: 'inherit', badge: t('settings.modeStrategyInheritBadge'), overridden: false, runtimeChannel: null }
 }
 
 const issues = computed<ModeIssue[]>(() => validateMode(
@@ -240,6 +277,7 @@ const vfNodes = computed<Array<Node<ModeAgentNodeData>>>(() =>
         strategyBadge: strategy.badge,
         strategyKind: strategy.kind,
         strategyOverridden: strategy.overridden,
+        runtimeChannel: strategy.runtimeChannel,
         toolCount,
         hasWildcardTools,
         isConversation: node.config?.conversation === true,
@@ -268,10 +306,10 @@ function resolveHandlesForEdge(edge: AgentModeEdgeDto): { sourceHandle: string; 
   if (sourceLane === 'operation' && targetLane === 'execution') {
     return { sourceHandle: 'bottom-source', targetHandle: 'top-target' }
   }
-  if (sourceLane === 'operation' && targetLane === 'operation') {
+  if (targetLane === 'operation') {
     return { sourceHandle: 'right-source', targetHandle: 'left-target' }
   }
-  if (sourceNode && targetNode && Math.abs(targetNode.position.y - sourceNode.position.y) >= 48) {
+  if (sourceNode && targetNode && targetNode.position.y - sourceNode.position.y >= 48) {
     return { sourceHandle: 'bottom-source', targetHandle: 'top-target' }
   }
   return { sourceHandle: 'right-source', targetHandle: 'left-target' }
@@ -331,16 +369,22 @@ const dividerStyle = computed(() => ({
   top: `${splitScreenY.value}px`,
 }))
 
-const operationHeaderStyle = computed(() => ({
-  top: `${Math.max(-44, Math.min(12, splitScreenY.value - 38))}px`,
-}))
-
-const executionHeaderStyle = computed(() => {
-  const maxTop = Math.max(12, wrapHeight.value - 38)
+const operationHeaderStyle = computed(() => {
+  const offset = Math.min(0, Math.max(-44, splitScreenY.value - 46))
   return {
-    top: `${Math.max(12, Math.min(maxTop, splitScreenY.value + 12))}px`,
+    transform: offset < 0 ? `translateY(${offset}px)` : undefined,
+    opacity: offset <= -36 ? '0' : undefined,
   }
 })
+
+const executionHeaderStyle = computed(() => {
+  const maxTop = Math.max(42, wrapHeight.value - 36)
+  return {
+    top: `${Math.max(42, Math.min(maxTop, splitScreenY.value + 8))}px`,
+  }
+})
+
+const canvasHintText = computed(() => (props.readonly ? t('canvas.readonlyHint') : t('canvas.modeHint')))
 
 const operationCount = computed(() => props.nodes.filter((node) => normalizeLane(node.lane) === 'operation').length)
 const executionCount = computed(() => props.nodes.filter((node) => normalizeLane(node.lane) === 'execution').length)
@@ -349,7 +393,7 @@ function runFitView(options?: { nodes?: string[]; padding?: number; maxZoom?: nu
   void nextTick(() => {
     const exec = () => {
       void fitView({
-        padding: options?.padding ?? 0.22,
+        padding: options?.padding ?? 0.26,
         maxZoom: options?.maxZoom ?? 1,
         ...(options?.nodes ? { nodes: options.nodes } : {}),
         ...(options?.duration ? { duration: options.duration } : {}),
@@ -775,12 +819,22 @@ defineExpose({
         <div class="lane-divider" :style="dividerStyle" />
       </div>
 
-      <!-- Viewport-fixed left swimlane headers ("治理层" / "执行层") -->
+      <!-- Viewport-fixed swimlane headers + non-overlapping canvas hint bar -->
       <div class="lane-chrome" aria-hidden="true">
-        <div class="lane-header op" :style="operationHeaderStyle">
-          <Workflow :size="12" />
-          <span>{{ t('agentCenter.filter.operationLayer') }}</span>
-          <em>{{ operationCount }}</em>
+        <div class="lane-top-bar" data-testid="canvas-top-bar">
+          <div class="lane-header op" :style="operationHeaderStyle">
+            <Workflow :size="12" />
+            <span>{{ t('agentCenter.filter.operationLayer') }}</span>
+            <em>{{ operationCount }}</em>
+          </div>
+          <div
+            class="vf-panel canvas-hint-pill"
+            :class="{ 'is-readonly': readonly }"
+            :title="canvasHintText"
+            data-testid="canvas-hint-pill"
+          >
+            {{ canvasHintText }}
+          </div>
         </div>
         <div class="lane-header ex" :style="executionHeaderStyle">
           <Cpu :size="12" />
@@ -827,9 +881,6 @@ defineExpose({
           mask-color="color-mix(in srgb, var(--surface-canvas, #0f1116) 55%, transparent)"
           class="vf-minimap"
         />
-        <Panel position="top-right" class="vf-panel">
-          {{ readonly ? t('canvas.readonlyHint') : t('canvas.modeHint') }}
-        </Panel>
         <template #node-agentNode="{ id, data }">
           <ModeAgentNode
             :id="id"
@@ -907,9 +958,10 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: var(--radius-control, 6px);
   border: 1px solid var(--border-muted);
   background: var(--surface-raised);
   color: var(--text-secondary);
@@ -921,6 +973,14 @@ defineExpose({
   color: var(--text-primary);
 }
 
+.canvas-tool:focus-visible,
+.canvas-tool-pill:focus-visible,
+.canvas-issue:focus-visible,
+.canvas-empty-action:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color, var(--accent-primary));
+  outline-offset: 2px;
+}
+
 .canvas-tool:disabled {
   opacity: 0.4;
   cursor: default;
@@ -929,15 +989,17 @@ defineExpose({
 .canvas-tool-pill {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 5px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: var(--radius-control, 6px);
   border: 1px solid var(--border-muted);
   background: var(--surface-raised);
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -962,6 +1024,8 @@ defineExpose({
   padding: 3px 8px;
   border-radius: 999px;
   font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
   color: var(--accent-warning, #d97706);
   background: color-mix(in srgb, var(--accent-warning, #d97706) 10%, var(--surface-section));
   border: 1px solid color-mix(in srgb, var(--accent-warning, #d97706) 35%, var(--border-muted));
@@ -971,10 +1035,13 @@ defineExpose({
 .canvas-issues-pill {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 5px;
   padding: 3px 9px;
   border-radius: 999px;
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   border: 1px solid var(--border-muted);
   background: var(--surface-section);
 }
@@ -1074,16 +1141,30 @@ defineExpose({
   border-top: 1px dashed color-mix(in srgb, var(--border-default) 70%, transparent);
 }
 
-.lane-header {
+.lane-top-bar {
   position: absolute;
+  top: 8px;
   left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.lane-header {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 6px;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: 999px;
   font-size: 11px;
+  line-height: 1.3;
   font-weight: 600;
+  white-space: nowrap;
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
   backdrop-filter: blur(6px);
@@ -1091,17 +1172,29 @@ defineExpose({
 }
 
 .lane-header.op {
-  border-left: 3px solid var(--accent-primary);
+  position: relative;
+  border-color: color-mix(in srgb, var(--accent-primary) 28%, var(--border-muted));
+}
+
+.lane-header.op svg {
+  color: var(--accent-primary);
 }
 
 .lane-header.ex {
-  border-left: 3px solid var(--accent-warning, #d97706);
+  position: absolute;
+  left: 12px;
+  border-color: color-mix(in srgb, var(--accent-warning, #d97706) 28%, var(--border-muted));
+}
+
+.lane-header.ex svg {
+  color: var(--accent-warning, #d97706);
 }
 
 .lane-header em {
   font-style: normal;
   color: var(--text-primary);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .vf {
@@ -1126,12 +1219,26 @@ defineExpose({
 }
 
 .vf-panel {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
+  line-height: 1.3;
   color: var(--text-muted);
   background: color-mix(in srgb, var(--surface-raised) 90%, transparent);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--border-muted);
-  padding: 4px 8px;
-  border-radius: 6px;
+  padding: 3px 9px;
+  border-radius: var(--radius-control, 6px);
+  pointer-events: auto;
+}
+
+.vf-panel.is-readonly {
+  color: var(--text-secondary);
+  border-color: color-mix(in srgb, var(--accent-primary) 26%, var(--border-muted));
 }
 
 .vf :deep(.vue-flow__controls) {

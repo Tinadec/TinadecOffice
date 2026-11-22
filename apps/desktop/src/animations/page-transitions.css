@@ -1,91 +1,80 @@
 /* ===================================================================
-   SPATIAL PAGE TRANSITION ANIMATION SYSTEM
-   Progressive, spatial design leveraging Workbench layout engine
+   UNIFIED SYMMETRIC PAGE TRANSITION & MOTION SYSTEM
+   Covers all 4 primary routes: Home (/), Space (/space),
+   Companion Center (/companion-center), and Settings (/settings).
 ====================================================================
 
-DESIGN PRINCIPLES:
-1. Background layer ALWAYS outside transitions (App.vue line 122-165)
-2. Only opacity + transform on animated elements - NO color/background
-3. Parent chain MUST NOT have transform when child has backdrop-filter
-4. Staggered animations for depth perception
-5. Entry easing: cubic-bezier(0.2, 0, 0, 1) - visible acceleration and landing
+DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
+1. Background layer ALWAYS outside transitions (App.vue)
+2. Only opacity + transform on animated island roots — NO color/background
+3. Parent wrapper chain MUST NEVER have transform above backdrop-filter children!
+   Animate ONLY leaf blur/material root islands directly.
+4. Asymmetric M3/HIG timing:
+   - Exit is fast & decisive: 190ms total budget, ease-in cubic-bezier(0.4, 0, 1, 1)
+   - Enter decelerates smoothly: 280ms per island + 35ms stagger, cubic-bezier(0.2, 0, 0, 1)
+5. Settled (.route-idle) clears animation & will-change so zero transform
+   stacking contexts remain on resting islands.
+==================================================================== */
 
-ARCHITECTURE CONTRACT:
-- This file contains ONLY declarative CSS rules: @keyframes + class-driven
-  rules toggled by HomePage.vue (.home-entering / .home-exiting) and
-  SettingsPage.vue (.settings-exiting). No JavaScript inline-style
-  manipulation of engine nodes.
-- The UIE layout engine (apps/TinadecUI/src/engine/) is the single authority
-  for geometry (left/top/width/height). These rules only animate
-  transform + opacity, which the engine's patchStyle diff never touches.
-- HomePage.vue supplies preparation/entry/exit classes on a plain wrapper;
-  the transforms stay on the material roots so their blur keeps working.
+:root {
+  --motion-enter-duration: 280ms;
+  --motion-enter-ease: cubic-bezier(0.2, 0, 0, 1);
+  --motion-exit-duration: 190ms;
+  --motion-exit-ease: cubic-bezier(0.4, 0, 1, 1);
+  --motion-stagger-step: 35ms;
+}
 
-ANIMATION LAYERS (stacked order, lowest z-index first):
-Layer 0: .background-layer (static, z-index: 0) - backdrop-filter applied here
-Layer 1: .main-content (transparent container, z-index: 1)
-Layer 2: Page transition containers (z-index: 2)
-Layer 3: Panel materials with data-panel-effect (z-index: 3)
-Layer 4: Floating UI (notifications, dialogs, z-index: 10+)
+/* ----------------------------------------------------------------------------
+   1. HOME PAGE (/) — Staggered Column Stack Rise / Exit
+   Wrapper: .home-page-container (.home-preparing/.home-entering/.home-exiting
+   and unified .route-preparing/.route-entering/.route-exiting).
+   Animated blur/material roots: .uie-stack and .uie-column-rail.
+   ---------------------------------------------------------------------------- */
 
-----------------------------------------------------------------------------
-HOME PAGE UPWARD EXIT / ENTRY ANIMATION
-Class-driven keyframes (no Vue <Transition>) — same mechanism as the Settings
-page. HomePage.vue toggles .home-entering / .home-exiting on the classic
-.home-page-container wrapper; these rules animate the blur roots (.uie-stack)
-themselves. Columns fly upward with scale-down and stagger on exit, and rise
-from below with stagger on entry.
----------------------------------------------------------------------------- */
-
-/* During the animation let the clipped box overflow so a rising/flying stack is not
-   cut by .uie-column-clip's overflow:hidden (the column itself never clips — its
-   drag handle has to straddle the edge). !important is required because that
-   overflow:hidden lives in a Vue <style scoped> block whose [data-v-xxx] attribute
-   selector wins over plain global specificity (0,2,0).
-   overflow does NOT create a backdrop root, so blur is unaffected;
-   .uie-canvas stays overflow:hidden and clips at the window edge. */
-.home-page-container.home-preparing .uie-column-clip,
-.home-page-container.home-entering .uie-column-clip,
-.home-page-container.home-exiting .uie-column-clip {
+/* Let .uie-column-clip overflow during transitions so rising/exiting stacks
+   are not sliced at column bounds (.uie-canvas still clips at window edge). */
+.home-page-container:is(
+  .home-preparing,
+  .home-entering,
+  .home-exiting,
+  .route-preparing,
+  .route-entering,
+  .route-exiting
+) .uie-column-clip {
   overflow: visible !important;
 }
 
-/* EXIT: stacks fly upward and scale down, staggered per column.
-   CSS animations override the scoped .uie-stack transition (animation wins over
-   transition for the animated properties), so no !important is needed here —
-   unlike the old <Transition> rule, which had to fight a competing transition. */
 @keyframes home-up-exit {
   from {
     transform: translateY(0) scale(1);
     opacity: 1;
   }
   to {
-    transform: translateY(-80px) scale(0.92);
+    transform: translateY(-28px) scale(0.97);
     opacity: 0;
   }
 }
 
-.home-page-container.home-exiting .uie-stack {
-  animation: home-up-exit 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+/* 150ms + 0/20/40ms stagger completes all 3 columns cleanly within 190ms. */
+.home-page-container:is(.home-exiting, .route-exiting) :is(.uie-stack, .uie-column-rail) {
+  will-change: transform, opacity;
+  pointer-events: none;
+  animation: home-up-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
 }
 
-/* Stagger: first column exits/enters earlier, last column later. */
-.home-page-container.home-exiting .uie-column:nth-child(1) .uie-stack {
-  animation-delay: 0s;
+.home-page-container:is(.home-exiting, .route-exiting) .uie-column:nth-child(1) :is(.uie-stack, .uie-column-rail) {
+  animation-delay: 0ms;
 }
-.home-page-container.home-exiting .uie-column:nth-child(2) .uie-stack {
-  animation-delay: 0.05s;
+.home-page-container:is(.home-exiting, .route-exiting) .uie-column:nth-child(2) :is(.uie-stack, .uie-column-rail) {
+  animation-delay: 20ms;
 }
-.home-page-container.home-exiting .uie-column:nth-child(3) .uie-stack {
-  animation-delay: 0.1s;
+.home-page-container:is(.home-exiting, .route-exiting) .uie-column:nth-child(3) :is(.uie-stack, .uie-column-rail) {
+  animation-delay: 40ms;
 }
 
-/* ENTRY: stacks rise from below with stagger. ease-out for a natural landing.
-   'both' fill-mode holds the from-state during the stagger delay, so columns
-   start below and rise in sequence instead of popping in late. */
 @keyframes home-up-enter {
   from {
-    transform: translateY(40px) scale(0.96);
+    transform: translateY(28px) scale(0.97);
     opacity: 0;
   }
   to {
@@ -94,73 +83,422 @@ from below with stagger on entry.
   }
 }
 
-.home-page-container.home-preparing :is(.uie-stack, .uie-column-rail) {
+.home-page-container:is(.home-preparing, .route-preparing) :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
-  transform: translateY(40px) scale(0.96);
+  transform: translateY(28px) scale(0.97);
   opacity: 0;
   pointer-events: none;
   transition: none;
 }
 
-.home-page-container.home-entering :is(.uie-stack, .uie-column-rail) {
+.home-page-container:is(.home-entering, .route-entering) :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
-  animation: home-up-enter 0.35s cubic-bezier(0.2, 0, 0, 1) both;
+  animation: home-up-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
 }
 
-.home-page-container.home-entering .uie-column:nth-child(1) :is(.uie-stack, .uie-column-rail) {
-  animation-delay: 0s;
+.home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(1) :is(.uie-stack, .uie-column-rail) {
+  animation-delay: 0ms;
 }
-.home-page-container.home-entering .uie-column:nth-child(2) :is(.uie-stack, .uie-column-rail) {
-  animation-delay: 0.05s;
+.home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(2) :is(.uie-stack, .uie-column-rail) {
+  animation-delay: var(--motion-stagger-step);
 }
-.home-page-container.home-entering .uie-column:nth-child(3) :is(.uie-stack, .uie-column-rail) {
-  animation-delay: 0.1s;
+.home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(3) :is(.uie-stack, .uie-column-rail) {
+  animation-delay: calc(var(--motion-stagger-step) * 2);
 }
 
 /* ----------------------------------------------------------------------------
-   SETTINGS PAGE DUAL-SLIDE ANIMATIONS
-   Entry: CSS @keyframes in settings.css (settings-nav-enter /
-   settings-content-enter) with translateX(±100%).
-   Exit: class-driven keyframes in settings.css (settings-nav-exit /
-   settings-content-exit), toggled via a template ref class binding in
-   SettingsPage.vue — no document.querySelector, no inline style.
+   2. COMPANION CENTER (/companion-center) — 3-Island Staggered Choreography
+   Wrapper: .companion-center-page (NEVER transformed).
+   Animated blur/material roots ONLY:
+   .companion-center-rail, .companion-thread, .companion-dock.
    ---------------------------------------------------------------------------- */
 
+.companion-center-page:is(.route-preparing, .route-entering, .route-exiting) :is(.companion-center-shell, .companion-center-body) {
+  overflow: visible !important;
+}
+
+@keyframes companion-island-enter {
+  from {
+    transform: translateY(24px) scale(0.975);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes companion-island-exit {
+  from {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-24px) scale(0.975);
+    opacity: 0;
+  }
+}
+
+.companion-center-page.route-preparing :is(.companion-center-rail, .companion-thread, .companion-dock) {
+  will-change: transform, opacity;
+  transform: translateY(24px) scale(0.975);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+.companion-center-page.route-entering :is(.companion-center-rail, .companion-thread, .companion-dock) {
+  will-change: transform, opacity;
+  animation: companion-island-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+}
+
+.companion-center-page.route-entering .companion-center-rail {
+  animation-delay: 0ms;
+}
+.companion-center-page.route-entering .companion-thread {
+  animation-delay: var(--motion-stagger-step);
+}
+.companion-center-page.route-entering .companion-dock {
+  animation-delay: calc(var(--motion-stagger-step) * 2);
+}
+
+.companion-center-page.route-exiting :is(.companion-center-rail, .companion-thread, .companion-dock) {
+  will-change: transform, opacity;
+  pointer-events: none;
+  animation: companion-island-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+}
+
+.companion-center-page.route-exiting .companion-center-rail {
+  animation-delay: 0ms;
+}
+.companion-center-page.route-exiting .companion-thread {
+  animation-delay: 20ms;
+}
+.companion-center-page.route-exiting .companion-dock {
+  animation-delay: 40ms;
+}
+
 /* ----------------------------------------------------------------------------
-   BLUR EFFECT PRESERVATION PATTERNS
-   Ensures backdrop-filter works correctly during animations.
-   .background-layer and .main-content are already defined in styles.css
-   with proper z-index and transform:none guarantees.
-   The key rule: the BACKGROUND LAYER must never be inside a transformed
-   ancestor, which is guaranteed by App.vue architecture.
-   backdrop-filter on elements with transform still works in Chromium/Electron
-   as long as the element itself is the blur root (not an ancestor issue).
+   3. SPATIAL VIEW (/space) — Spatial Canvas, HUD Bars & Leaf Islands
+   Wrapper chain (.spatial-page, .shell, .uie-canvas, .uie-space-stage,
+   .space-surface, .space-flow-area, .space-composer-dock) NEVER carries
+   transform so backdrop-filter works on every leaf island!
    ---------------------------------------------------------------------------- */
 
-/* Child surfaces inherit blur via CSS custom properties */
+.spatial-page:is(.route-preparing, .route-entering, .route-exiting) .uie-column-clip {
+  overflow: visible !important;
+}
+
+@keyframes space-island-enter {
+  from {
+    transform: translateY(22px) scale(0.975);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes space-island-exit {
+  from {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-22px) scale(0.975);
+    opacity: 0;
+  }
+}
+
+@keyframes space-hud-enter {
+  from {
+    transform: translateY(-14px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes space-hud-exit {
+  from {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-14px) scale(0.98);
+    opacity: 0;
+  }
+}
+
+@keyframes space-card-enter {
+  from {
+    transform: translateY(16px) scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes space-card-exit {
+  from {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-16px) scale(0.96);
+    opacity: 0;
+  }
+}
+
+@keyframes space-side-enter {
+  from {
+    transform: translateX(18px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes space-side-exit {
+  from {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(18px) scale(0.98);
+    opacity: 0;
+  }
+}
+
+@keyframes space-fade-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes space-fade-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Spatial preparing state on leaf islands */
+.spatial-page.route-preparing :is(.uie-stack, .uie-column-rail),
+.spatial-page.route-preparing :is(.space-index-button, .space-composer-dock .composer-box) {
+  will-change: transform, opacity;
+  transform: translateY(22px) scale(0.975);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+.spatial-page.route-preparing :is(.space-goal-controls, .space-controls, .space-data-status) {
+  will-change: transform, opacity;
+  transform: translateY(-14px) scale(0.98);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+.spatial-page.route-preparing .space-flow-area .spatial-work-card {
+  will-change: transform, opacity;
+  transform: translateY(16px) scale(0.96);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+.spatial-page.route-preparing :is(.space-detail, .space-plan-drawer, .space-hide-terminal) {
+  will-change: transform, opacity;
+  transform: translateX(18px) scale(0.98);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+.spatial-page.route-preparing .space-flow-area :is(.vue-flow__background, .vue-flow__edges) {
+  opacity: 0;
+}
+
+/* Spatial entering state */
+.spatial-page.route-entering :is(.uie-stack, .uie-column-rail) {
+  will-change: transform, opacity;
+  animation: space-island-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: 0ms;
+}
+
+.spatial-page.route-entering :is(.space-goal-controls, .space-controls, .space-data-status) {
+  will-change: transform, opacity;
+  animation: space-hud-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: 20ms;
+}
+
+.spatial-page.route-entering .space-flow-area :is(.vue-flow__background, .vue-flow__edges) {
+  animation: space-fade-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: 20ms;
+}
+
+.spatial-page.route-entering .space-flow-area .spatial-work-card {
+  will-change: transform, opacity;
+  animation: space-card-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: var(--motion-stagger-step);
+}
+
+.spatial-page.route-entering :is(.space-detail, .space-plan-drawer, .space-hide-terminal) {
+  will-change: transform, opacity;
+  animation: space-side-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: 50ms;
+}
+
+.spatial-page.route-entering :is(.space-index-button, .space-composer-dock .composer-box) {
+  will-change: transform, opacity;
+  animation: space-island-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: calc(var(--motion-stagger-step) * 2);
+}
+
+/* Spatial exiting state (completes cleanly within 190ms) */
+.spatial-page.route-exiting :is(.uie-stack, .uie-column-rail) {
+  will-change: transform, opacity;
+  pointer-events: none;
+  animation: space-island-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 0ms;
+}
+
+.spatial-page.route-exiting :is(.space-goal-controls, .space-controls, .space-data-status) {
+  will-change: transform, opacity;
+  pointer-events: none;
+  animation: space-hud-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 15ms;
+}
+
+.spatial-page.route-exiting .space-flow-area :is(.vue-flow__background, .vue-flow__edges) {
+  animation: space-fade-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 15ms;
+}
+
+.spatial-page.route-exiting .space-flow-area .spatial-work-card {
+  will-change: transform, opacity;
+  pointer-events: none;
+  animation: space-card-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 20ms;
+}
+
+.spatial-page.route-exiting :is(.space-detail, .space-plan-drawer, .space-hide-terminal) {
+  will-change: transform, opacity;
+  pointer-events: none;
+  animation: space-side-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 25ms;
+}
+
+.spatial-page.route-exiting :is(.space-index-button, .space-composer-dock .composer-box) {
+  will-change: transform, opacity;
+  pointer-events: none;
+  animation: space-island-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 40ms;
+}
 
 /* ----------------------------------------------------------------------------
-   REDUCED MOTION ACCESSIBILITY
-   Respects user's prefers-reduced-motion preference
+   4. SETTINGS PAGE (/settings) — Harmonized Dual-Island Motion Hooks
+   Keyframes (settings-nav-enter/exit, settings-content-enter/exit) live in
+   settings.css. These hooks synchronize Settings timing with :root motion
+   tokens and clear fill-mode/will-change once settled (.route-idle) so nested
+   backdrop-filter cards inside .settings-content sample cleanly.
+   ---------------------------------------------------------------------------- */
+
+.settings-page:is(.route-preparing, .route-entering) .settings-nav {
+  animation-duration: var(--motion-enter-duration);
+  animation-timing-function: var(--motion-enter-ease);
+  animation-delay: 0ms;
+}
+
+.settings-page:is(.route-preparing, .route-entering) :is(.settings-content, .settings-main) {
+  animation-duration: var(--motion-enter-duration);
+  animation-timing-function: var(--motion-enter-ease);
+  animation-delay: var(--motion-stagger-step);
+}
+
+.settings-page.route-idle :is(.settings-nav, .settings-content, .settings-main) {
+  animation: none;
+  will-change: auto;
+}
+
+.settings-page.route-exiting .settings-nav {
+  pointer-events: none;
+  animation-duration: calc(var(--motion-exit-duration) - 25ms);
+  animation-timing-function: var(--motion-exit-ease);
+  animation-delay: 0ms;
+}
+
+.settings-page.route-exiting :is(.settings-content, .settings-main) {
+  pointer-events: none;
+  animation-duration: calc(var(--motion-exit-duration) - 25ms);
+  animation-timing-function: var(--motion-exit-ease);
+  animation-delay: 25ms;
+}
+
+/* ----------------------------------------------------------------------------
+   5. REDUCED MOTION ACCESSIBILITY — Instant Zero-Motion Bypass
    ---------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .home-page-container.home-entering :is(.uie-stack, .uie-column-rail),
-  .home-page-container.home-exiting .uie-stack {
-    animation: none !important;
+  :root {
+    --motion-enter-duration: 0ms;
+    --motion-exit-duration: 0ms;
+    --motion-stagger-step: 0ms;
   }
 
-  /* Settings page animations are handled by settings.css reduced motion rules */
+  .home-page-container:is(.home-preparing, .route-preparing) :is(.uie-stack, .uie-column-rail),
+  .home-page-container:is(.home-entering, .route-entering, .home-exiting, .route-exiting) :is(.uie-stack, .uie-column-rail),
+  .companion-center-page:is(.route-preparing, .route-entering, .route-exiting) :is(.companion-center-rail, .companion-thread, .companion-dock),
+  .spatial-page:is(.route-preparing, .route-entering, .route-exiting) :is(
+    .uie-stack,
+    .uie-column-rail,
+    .space-goal-controls,
+    .space-controls,
+    .space-data-status,
+    .space-detail,
+    .space-plan-drawer,
+    .space-hide-terminal,
+    .space-index-button
+  ),
+  .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-flow-area :is(
+    .spatial-work-card,
+    .vue-flow__background,
+    .vue-flow__edges
+  ),
+  .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-composer-dock .composer-box,
+  .settings-page:is(.route-preparing, .route-entering, .route-exiting) :is(.settings-nav, .settings-content, .settings-main) {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+    will-change: auto !important;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
 }
 
 /* ----------------------------------------------------------------------------
    VIEW TRANSITIONS API OPTIMIZATION
-   Modern browsers can animate between states natively.
-   NOTE: Element-level view-transition-name tags can be added to specific
-   panels (e.g. .settings-nav) when document.startViewTransition() is used.
    ---------------------------------------------------------------------------- */
 
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-timing-function: var(--motion-enter-ease);
 }

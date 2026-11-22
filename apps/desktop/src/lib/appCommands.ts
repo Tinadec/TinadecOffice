@@ -15,10 +15,10 @@
  * owner for application state.
  */
 
-export type CommandGroup = 'run' | 'session' | 'view'
+export type CommandGroup = 'run' | 'session' | 'view' | 'workspace'
 
 /** Order the palette lists groups in. Unlisted groups sort last, in declaration order. */
-export const commandGroupOrder: readonly CommandGroup[] = ['session', 'run', 'view']
+export const commandGroupOrder: readonly CommandGroup[] = ['session', 'run', 'workspace', 'view']
 
 /**
  * Everything a command may ask the surface to do. Each method is called at most once
@@ -51,16 +51,28 @@ export interface AppCommand {
   id: string
   group: CommandGroup
   labelKey: string
+  /** Optional direct display label for dynamic workspace commands not backed by an i18n key. */
+  label?: string
   hintKey?: string
+  /** Optional direct description/hint for dynamic workspace commands. */
+  hint?: string
   /** Slash form shown in the composer, without the leading slash. */
   slash?: string
   /** The command consumes the rest of the line as its payload. */
   needsArgument?: boolean
+  /** Markdown template payload for `.tinadec/commands/*.md` workspace commands. */
+  template?: string
+  /** Whether the template declares a `$ARGUMENTS` placeholder. */
+  hasArgumentsPlaceholder?: boolean
+  /** Origin of this command entry. */
+  source?: 'builtin' | 'workspace'
   /**
    * Extra search terms for the palette, as i18n keys. A palette that only matched
    * English would be unusable in the other locale, and zh-CN is this app's default.
    */
   keywordKeys?: string[]
+  /** Optional direct search keywords for dynamic workspace commands. */
+  keywords?: string[]
   /**
    * Route the command jumps to, declared as data rather than only inside `run`: the
    * test that proves no palette entry points at a route the router never registered
@@ -152,14 +164,40 @@ export const appCommands: readonly AppCommand[] = [
     run: (host, argument) => host.send(argument, 'parallel'),
   },
   go('view.goChat', 'palette.goChat', 'home'),
-  go('view.goCode', 'palette.goCode', 'code-editor'),
-  go('view.goLibrary', 'palette.goLibrary', 'library'),
-  go('view.goSnapshots', 'palette.goSnapshots', 'snapshots'),
-  go('view.goGovernance', 'palette.goGovernance', 'governance-board'),
-  go('view.goMemory', 'palette.goMemory', 'memory', ['palette.keywordMemory']),
-  go('view.goMarket', 'palette.goMarket', 'market'),
-  go('view.goMarketSkills', 'market.kindSkill', 'marketSkills'),
-  go('view.goMarketMcp', 'market.kindMcpServer', 'marketMcp'),
+  go('view.goSpace', 'space.title', 'space'),
+  go('view.goCompanionCenter', 'space.companionCenter', 'companion-center'),
+  {
+    id: 'view.goCode',
+    group: 'view',
+    labelKey: 'palette.goCode',
+    run: (host) => {
+      if (host.routeName() !== 'home') host.navigate('home')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tinadec:focus-home-dock', { detail: { card: 'workspace' } }))
+      }
+    },
+  },
+  {
+    id: 'view.goSnapshots',
+    group: 'view',
+    labelKey: 'palette.goSnapshots',
+    run: (host) => {
+      if (host.routeName() !== 'home') host.navigate('home')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tinadec:focus-home-dock', { detail: { card: 'git' } }))
+      }
+    },
+  },
+  {
+    id: 'view.goGovernance',
+    group: 'view',
+    labelKey: 'palette.goGovernance',
+    run: () => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tinadec:open-governance-drawer', { detail: { tab: 'decisions' } }))
+      }
+    },
+  },
   go('view.goSettings', 'palette.goSettings', 'settings', ['palette.keywordPreferences']),
 ]
 
@@ -177,8 +215,45 @@ export function implicitArgument(command: AppCommand, host: CommandHost): string
   return command.needsArgument ? host.draft().trim() : ''
 }
 
-export function availableCommands(host: CommandHost): AppCommand[] {
-  return appCommands.filter((command) => isCommandAvailable(command, host))
+export function resolveCommandLabel(command: AppCommand, t: (key: string) => string): string {
+  return command.label ?? (command.labelKey ? t(command.labelKey) : command.slash ?? command.id)
+}
+
+export function resolveCommandHint(command: AppCommand, t: (key: string) => string): string | undefined {
+  if (command.hint) return command.hint
+  return command.hintKey ? t(command.hintKey) : undefined
+}
+
+/** Merge workspace `.tinadec/commands/*.md` entries without colliding on built-in slash triggers. */
+export function mergeWorkspaceCommands(
+  baseCommands: readonly AppCommand[],
+  workspaceCommands: readonly AppCommand[],
+): AppCommand[] {
+  if (!workspaceCommands.length) return [...baseCommands]
+  const usedSlashes = new Set(baseCommands.map((cmd) => cmd.slash?.toLowerCase()).filter(Boolean))
+  const usedIds = new Set(baseCommands.map((cmd) => cmd.id))
+  const merged = [...baseCommands]
+  for (const cmd of workspaceCommands) {
+    if (usedIds.has(cmd.id)) continue
+    const slash = cmd.slash?.toLowerCase()
+    if (slash && usedSlashes.has(slash)) {
+      const prefixed = `ws:${slash}`
+      if (!usedSlashes.has(prefixed)) {
+        usedSlashes.add(prefixed)
+        usedIds.add(cmd.id)
+        merged.push({ ...cmd, slash: prefixed })
+      }
+      continue
+    }
+    if (slash) usedSlashes.add(slash)
+    usedIds.add(cmd.id)
+    merged.push(cmd)
+  }
+  return merged
+}
+
+export function availableCommands(host: CommandHost, extra: readonly AppCommand[] = []): AppCommand[] {
+  return mergeWorkspaceCommands(appCommands, extra).filter((command) => isCommandAvailable(command, host))
 }
 
 /**
@@ -240,23 +315,27 @@ export type SlashParse =
   | { kind: 'incomplete'; command: AppCommand }
   | { kind: 'not-a-command' }
 
-export function slashCommands(): AppCommand[] {
-  return appCommands.filter((command) => command.slash)
+export function slashCommands(extra: readonly AppCommand[] = []): AppCommand[] {
+  return mergeWorkspaceCommands(appCommands, extra).filter((command) => command.slash)
 }
 
-export function filterSlashCommands(text: string, host: CommandHost): AppCommand[] {
+export function filterSlashCommands(
+  text: string,
+  host: CommandHost,
+  extra: readonly AppCommand[] = [],
+): AppCommand[] {
   if (!text.startsWith('/')) return []
   const query = text.slice(1).trimStart().split(/\s+/)[0]?.toLowerCase() ?? ''
-  return slashCommands().filter(
+  return slashCommands(extra).filter(
     (command) => command.slash!.startsWith(query) && isCommandAvailable(command, host),
   )
 }
 
-export function parseSlashCommand(text: string): SlashParse {
+export function parseSlashCommand(text: string, extra: readonly AppCommand[] = []): SlashParse {
   const trimmed = text.trim()
   if (!trimmed.startsWith('/')) return { kind: 'not-a-command' }
   const [token, ...rest] = trimmed.slice(1).split(/\s+/)
-  const command = slashCommands().find((item) => item.slash === token?.toLowerCase())
+  const command = slashCommands(extra).find((item) => item.slash === token?.toLowerCase())
   if (!command) return { kind: 'not-a-command' }
   const argument = rest.join(' ').trim()
   if (command.needsArgument && !argument) return { kind: 'incomplete', command }

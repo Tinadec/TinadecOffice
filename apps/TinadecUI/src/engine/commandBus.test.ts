@@ -107,7 +107,7 @@ describe('command bus', () => {
     const bus = createCommandBus(preset, { registry: reg, onChanged: (_s, { persist }) => { changes.push(persist) } })
     bus.dispatch({ command: openBrowser(bus.getSnapshot().revision), source: 'user', expectedRevision: bus.getSnapshot().revision })
     expect(bus.canUndo()).toBe(true)
-    bus.loadSnapshot(buildPreset('market', { nextInstanceId: () => 'm' }))
+    bus.loadSnapshot(buildPreset('settings', { nextInstanceId: () => 's' }))
     expect(bus.canUndo()).toBe(false)
     expect(bus.canRedo()).toBe(false)
     expect(changes).toEqual([true, false])

@@ -37,19 +37,19 @@ function select(value: string) {
     <button
       type="button"
       :class="cn(
-        'flex h-9 w-full items-center justify-between rounded-md border border-input bg-[var(--surface-input)] px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+        'flex h-[var(--control-height-md,34px)] w-full min-w-0 items-center justify-between gap-2 rounded-[var(--radius-control,6px)] border border-[var(--border-input)] bg-[var(--surface-input)] px-3 py-1.5 text-[13px] text-[var(--text-primary)] transition-colors placeholder:text-[var(--text-muted)] hover:bg-[var(--surface-hover)] focus-visible:border-[var(--border-input-focus)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring-color,var(--accent-primary))] disabled:cursor-not-allowed disabled:opacity-50',
         props.class,
       )"
       :aria-label="ariaLabel"
       @click="isOpen = !isOpen"
     >
-      <span v-if="selectedValue" class="truncate">{{ displayValue || selectedValue }}</span>
-      <span v-else class="text-muted-foreground">{{ placeholder || i18n.global.t('common.selectPlaceholder') }}</span>
-      <ChevronDown class="h-4 w-4 opacity-50" />
+      <span v-if="selectedValue" class="min-w-0 truncate">{{ displayValue || selectedValue }}</span>
+      <span v-else class="min-w-0 truncate text-[var(--text-muted)]">{{ placeholder || i18n.global.t('common.selectPlaceholder') }}</span>
+      <ChevronDown class="h-4 w-4 shrink-0 opacity-60" />
     </button>
     <div
       v-if="isOpen"
-      class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-[var(--surface-raised)] text-popover-foreground shadow-md"
+      class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-[var(--radius-control-md,8px)] border border-[var(--border-muted)] bg-[var(--surface-raised)] text-[var(--text-primary)] shadow-[var(--shadow-panel)]"
     >
       <slot :select="select" :selected-value="selectedValue" />
     </div>

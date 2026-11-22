@@ -1,4 +1,13 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
+import {
+  PAGE_ENTER_DURATION_MS,
+  PAGE_EXIT_DURATION_MS,
+  PAGE_STAGGER_STEP_MS,
+} from './usePageTransition'
+
+export { PAGE_ENTER_DURATION_MS, PAGE_EXIT_DURATION_MS, PAGE_STAGGER_STEP_MS }
+
+export type HomeEntrancePhase = 'preparing' | 'entering' | 'settled'
 
 /** Prepare and paint the measured layout before starting the column animations. */
 export function useHomeEntrance(
@@ -7,7 +16,7 @@ export function useHomeEntrance(
   onReady: () => void,
 ) {
   const contentReady = ref(false)
-  const phase = ref<'preparing' | 'entering' | 'settled'>('preparing')
+  const phase = ref<HomeEntrancePhase>('preparing')
   let alive = true
   let frameId: number | undefined
   let releaseFrame: ((painted: boolean) => void) | undefined

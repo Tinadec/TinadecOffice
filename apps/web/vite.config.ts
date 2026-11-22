@@ -19,6 +19,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': 'http://127.0.0.1:48730',
+      '/auth': 'http://127.0.0.1:48730',
       '/docs': 'http://127.0.0.1:48730',
       '/ws': {
         target: 'http://127.0.0.1:48730',

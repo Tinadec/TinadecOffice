@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { UieShell } from '@tinadec/ui'
 import { homeController } from '@/controllers/HomeController'
 import { consumeRequest, pendingConversationId, pendingProjectId } from '@/lib/pageRequests'
 import { useUiePage } from '@/lib/uiEngine'
 import { useHomeEntrance } from '@/composables/useHomeEntrance'
+import { usePageTransition } from '@/composables/usePageTransition'
 import { useNotifications } from '@/composables/useNotifications'
 import { selectionKey } from '@/lib/storageScope'
-import { closeBuddyView } from '@/lib/buddyView'
+import {
+  activeDockFocus,
+  ensureHomeDockCardOpen,
+  highlightedDockCard,
+  type HomeDockCardId,
+} from '@/lib/homeDockSync'
 
 // The UIE store is a module singleton shared by every UIE route; entering Home
 // switches it back to the home layout (restoring the user's saved home layout).
@@ -34,11 +40,26 @@ const { contentReady, phase } = useHomeEntrance(root, uie.ready, () => emit('rea
 // the rise-from-below keyframes on the freshly mounted stacks — on both
 // initial load and when returning from settings (fresh stacks replay the
 // keyframes, exactly like the Settings nav/content do on every mount).
-const homeExiting = ref(false)
-
-// Exit duration must match page-transitions.css (@keyframes home-up-exit:
-// 0.2s per column + 0.1s max stagger delay).
-const EXIT_DURATION_MS = 300
+const { isExiting: homeExiting } = usePageTransition({
+  skipEnterLifecycle: true,
+  skipExitWhen: () => !contentReady.value || homeController.viewMode.value !== 'flat',
+})
+const pageTransitionClasses = computed(() => {
+  const exiting = homeExiting.value
+  const currentPhase = phase.value as string
+  const preparing = !exiting && currentPhase === 'preparing'
+  const entering = !exiting && currentPhase === 'entering'
+  const idle = !exiting && !preparing && !entering
+  return {
+    'home-preparing': preparing,
+    'home-entering': entering,
+    'home-exiting': exiting,
+    'route-preparing': preparing,
+    'route-entering': entering,
+    'route-idle': idle,
+    'route-exiting': exiting,
+  }
+})
 const controllerStarted = ref(false)
 const { t } = useI18n()
 const { notify } = useNotifications()
@@ -60,14 +81,11 @@ consumeRequest(pendingProjectId, (projectId) => {
   navigationGeneration++
   requestedConversationId.value = null
   requestedProjectId.value = projectId
-  // A search hit is a request for the work surface; leaving the buddy view up would hide it.
-  closeBuddyView()
 })
 consumeRequest(pendingConversationId, (sessionId) => {
   navigationGeneration++
   requestedProjectId.value = null
   requestedConversationId.value = sessionId
-  closeBuddyView()
 })
 watch([requestedProjectId, homeController.projects], () => {
   const projectId = requestedProjectId.value
@@ -102,24 +120,84 @@ watch([controllerStarted, homeController.busy, requestedProjectId, requestedConv
   notify.error(t('app.loadFailedMessage'), { title: t('app.loadFailed'), key: 'search-navigation' })
 })
 
-// Spatial exit: toggle .home-exiting so the exit keyframes drive the staggered
-// upward flight declaratively, then complete the navigation once the CSS
-// animation settles. Mirrors SettingsPage.vue's onBeforeRouteLeave guard.
-onBeforeRouteLeave((_to, _from, next) => {
-  if (homeExiting.value) {
-    next()
-    return
-  }
-  homeExiting.value = true
-  setTimeout(() => next(), EXIT_DURATION_MS)
+const focusedWorkerAttr = computed(() => {
+  const focus = activeDockFocus.value
+  return focus?.workerHandle ?? focus?.taskId ?? focus?.workerLabel ?? undefined
 })
+
+function dockCardTitle(card: HomeDockCardId): string {
+  return t(`uie.cardTitle.${card}`)
+}
+
+let highlightPulseTimer: ReturnType<typeof setTimeout> | null = null
+let activeHighlightHost: HTMLElement | null = null
+
+function clearHostHighlight(): void {
+  if (highlightPulseTimer !== null) {
+    clearTimeout(highlightPulseTimer)
+    highlightPulseTimer = null
+  }
+  if (activeHighlightHost) {
+    activeHighlightHost.classList.remove('is-dock-focus-highlight')
+    activeHighlightHost = null
+  }
+}
+
+onUnmounted(() => {
+  clearHostHighlight()
+})
+
+watch(
+  () => activeDockFocus.value?.nonce,
+  async () => {
+    const focus = activeDockFocus.value
+    if (!focus) return
+    ensureHomeDockCardOpen(focus.card, { uie, title: dockCardTitle(focus.card) })
+    await nextTick()
+    const container = root.value
+    if (!container) return
+
+    clearHostHighlight()
+    const explicitCard = container.querySelector<HTMLElement>(`[data-dock-card="${focus.card}"]`)
+    const host = explicitCard?.closest<HTMLElement>('.uie-card-host')
+      ?? container.querySelector<HTMLElement>('.uie-slot-right .uie-card-host:not(.uie-card-host--hidden)')
+      ?? container.querySelector<HTMLElement>('.uie-card-host:not(.uie-card-host--hidden)')
+    if (host) {
+      host.classList.add('is-dock-focus-highlight')
+      activeHighlightHost = host
+      highlightPulseTimer = setTimeout(() => {
+        host.classList.remove('is-dock-focus-highlight')
+        if (activeHighlightHost === host) activeHighlightHost = null
+        highlightPulseTimer = null
+      }, 2200)
+    }
+
+    const searchRoot = explicitCard ?? host ?? container
+    const selectors: string[] = []
+    if (focus.taskId) selectors.push(`[data-worker-task-id="${focus.taskId}"]`, `[data-task-id="${focus.taskId}"]`)
+    if (focus.approvalId) selectors.push(`[data-approval-id="${focus.approvalId}"]`)
+    if (focus.worktreePath) selectors.push(`[data-worktree-path="${focus.worktreePath.replace(/"/g, '\\"')}"]`)
+    for (const selector of selectors) {
+      const targetEl = searchRoot.querySelector<HTMLElement>(selector)
+      if (targetEl) {
+        if (typeof targetEl.scrollIntoView === 'function') {
+          targetEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }
+        break
+      }
+    }
+  },
+)
+
 </script>
 
 <template>
   <div
     ref="root"
     class="home-page-container"
-    :class="{ 'home-preparing': phase === 'preparing', 'home-entering': phase === 'entering', 'home-exiting': homeExiting }"
+    :class="pageTransitionClasses"
+    :data-dock-focused-card="highlightedDockCard ?? undefined"
+    :data-dock-focused-worker="focusedWorkerAttr"
   >
     <UieShell v-if="contentReady && homeController.viewMode.value === 'flat'" />
   </div>
@@ -131,5 +209,30 @@ onBeforeRouteLeave((_to, _from, next) => {
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+.home-page-container :deep(.uie-card-host.is-dock-focus-highlight),
+.home-page-container :deep([data-dock-highlighted='true']) {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 75%, transparent);
+  outline-offset: -2px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  animation: home-dock-pulse 1.2s ease-out;
+}
+
+@keyframes home-dock-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary) 42%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-page-container :deep(.uie-card-host.is-dock-focus-highlight),
+  .home-page-container :deep([data-dock-highlighted='true']) {
+    animation: none;
+  }
 }
 </style>

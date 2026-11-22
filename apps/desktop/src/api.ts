@@ -774,167 +774,6 @@ export interface EventEnvelope {
 }
 
 /**
- * A market source as Core stores it. There is no `created_at`: the row has one, the route does
- * not send it, and this interface used to promise it — which is how a UI ends up rendering a
- * field that is undefined on every machine.
- */
-export interface ExtensionSourceDto {
-  id: string;
-  name: string;
-  kind: string;
-  location: string;
-  enabled: boolean;
-  revision: number;
-  last_refreshed_at?: string;
-  /** Why the last refresh did not land. Present alongside the row so an empty catalog can be read as an outage. */
-  last_error?: string;
-  entry_count: number;
-}
-
-/** The list is an envelope because `supported_kinds` decides what the picker may offer at all. */
-export interface MarketSourceListDto {
-  sources: ExtensionSourceDto[];
-  supported_kinds: string[];
-}
-
-/** One refresh's answer. `outcome` is the field to branch on, not `fetched_rows`. */
-export interface MarketRefreshDto {
-  source_id: string;
-  outcome: 'fetched' | 'blocked' | 'unavailable' | string;
-  fetched_rows: number;
-  refused_rows: number;
-  removed_rows: number;
-  /** Rows a running install still references, so a dropped listing kept them instead of deleting. */
-  retained_rows: number;
-  pages_fetched: number;
-  truncated_pages: boolean;
-  reason?: string;
-  refreshed_at?: string;
-}
-
-/**
- * One catalog row: what a source claimed, not what is installed. `publisher`, `capabilities`,
- * `permissions`, `status`, and `installed_extension_id` used to be declared here and sent by
- * nobody — the registry publishes no such fields, and an install surface that does will carry them
- * with its own source.
- */
-export interface MarketCatalogItemDto {
-  catalog_id: string;
-  source_id: string;
-  source_name: string;
-  extension_id: string;
-  kind: 'mcp-server' | 'skill' | 'acp-adapter' | 'tool-pack' | string;
-  version: string;
-  display_name: string;
-  description?: string;
-  homepage?: string;
-  registry_type?: string;
-  transports: string[];
-  manifest_hash: string;
-  refreshed_at: string;
-  expires_at: string;
-  /** False is not a defect in the entry — `install_blocker` says which case this is. */
-  installable: boolean;
-  install_blocker?: string;
-  /** What `install_blocker` is about; the UI words it from `market.installBlocker.*` and `install_blocker_data`. */
-  install_blocker_code?: string;
-  install_blocker_data?: Record<string, string>;
-}
-
-export interface MarketCatalogPageDto {
-  items: MarketCatalogItemDto[];
-  total_available: number;
-  has_more: boolean;
-  /** Newest refresh among the matching rows; absent means nothing matched. */
-  as_of?: string;
-}
-
-/** One environment variable a package asks for. Core's shape carries names and flags, never values. */
-export interface MarketEnvironmentRequestDto {
-  name: string;
-  required: boolean;
-  secret: boolean;
-  description?: string;
-}
-
-/**
- * What a human says yes or no to: the command, the file, the exact bytes, and the instant after
- * which Core refuses to act. Nothing here is recomputed at apply time, so what was reviewed is
- * what lands. Field list is `MarketInstallProposalDto` in Core, keyed to the wire.
- */
-export interface MarketInstallProposalDto {
-  id: string;
-  action: string;
-  project_id?: string | null;
-  catalog_id?: string | null;
-  installation_id?: string | null;
-  source_name: string;
-  extension_id: string;
-  kind: string;
-  /** The exact version pinned. Never a range, never `latest`. */
-  version: string;
-  server_id: string;
-  /** The command line this write overwrites, when the config already named this server. */
-  replaces_command?: string | null;
-  command?: string | null;
-  args: string[];
-  environment: MarketEnvironmentRequestDto[];
-  target_path: string;
-  content: string;
-  /** Absent when the file could not be read as well as when it does not exist: create, never clobber. */
-  expected_file_hash?: string | null;
-  digest: string;
-  expires_at: string;
-  /** What this phase cannot guarantee, stated for the reader of the approval. */
-  warnings: string[];
-  scope?: 'shared' | 'project';
-  resource_id?: string | null;
-  package_hash?: string | null;
-  package_files?: { path: string; content_hash: string; size_bytes: number }[];
-  availability?: string | null;
-}
-
-/**
- * An entry this workspace approved, and where the write for it stands. The status is read live from
- * the linked user tool action rather than copied into Core's row, so a failed or still-pending
- * approval can never be reported as an install.
- */
-export interface MarketInstallationDto {
-  id: string;
-  project_id?: string | null;
-  catalog_id: string;
-  source_name: string;
-  extension_id: string;
-  kind: string;
-  version: string;
-  server_id: string;
-  config_path: string;
-  /** `installing` or `removing`; a removal that finished is reported as gone. */
-  state: string;
-  install_action_id: string;
-  uninstall_action_id?: string | null;
-  /** Live status of whichever action is in front of the user; absent means none is running. */
-  action_status?: string | null;
-  created_at: string;
-  updated_at: string;
-  scope?: 'shared' | 'project';
-  resource_id?: string | null;
-  package_hash?: string | null;
-  package_files?: { path: string; content_hash: string; size_bytes: number }[];
-  availability?: string | null;
-  reason?: string | null;
-}
-
-/** Vocabulary for `MarketInstallProposalDto.action`; Core owns the words, this mirrors them. */
-export const MARKET_INSTALL_ACTION_INSTALL = 'install'
-export const MARKET_INSTALL_ACTION_UNINSTALL = 'uninstall'
-
-/** An envelope, not a bare array: the row count alone cannot say the surface was never used. */
-export interface MarketInstallationListDto {
-  installations: MarketInstallationDto[];
-}
-
-/**
  * The two answers `source` can carry. Kept as constants because the whole point of the field is
  * that a page must branch on it: an empty `servers` list under `tool_provider` means nothing is
  * configured, and under `tool_provider_unavailable` means Core could not ask the Tool Provider.
@@ -1467,6 +1306,7 @@ export interface AgentDefinitionDto {
   model_route_purpose?: string | null;
   /** Versioned shape: { kind: inherit|route|fixed, ... }. */
   model_strategy?: Record<string, unknown> | 'inherit' | 'route' | 'fixed' | string | null;
+  model_binding?: AgentModelBindingDto | null;
   /** Legacy flat shape. */
   allowed_tools?: string[];
   /** Versioned shape: string[] or "*". */
@@ -2440,14 +2280,216 @@ export interface HarnessManifestDto {
   design_notes: string[];
 }
 
-export interface CodeToolExecuteResultDto {
+export interface CodeToolExecuteResultDto<TData = Record<string, unknown>> {
   tool_id: string;
   status: string;
   summary: string;
   evidence: string[];
-  data: Record<string, unknown>;
+  data: TData;
   requires_approval: boolean;
   approval_summary?: string | null;
+}
+
+export interface GitRefDto {
+  name: string;
+  type: 'head' | 'branch' | 'tag' | 'remote' | string;
+  is_head: boolean;
+}
+
+export interface GitGraphEdgeDto {
+  parent_hash: string;
+  from_lane: number;
+  to_lane: number;
+}
+
+export interface GitCommitSummaryDto {
+  hash: string;
+  short_hash: string;
+  parents: string[];
+  author: string;
+  author_email: string;
+  author_date: string;
+  committer_date: string;
+  subject: string;
+  refs: GitRefDto[];
+  lane_index: number;
+  edges: GitGraphEdgeDto[];
+}
+
+export interface GitFileChangeDto {
+  status: 'A' | 'D' | 'M' | 'R' | 'C' | 'T' | 'U' | string;
+  score: number;
+  old_path?: string | null;
+  new_path: string;
+  additions: number;
+  deletions: number;
+  is_binary: boolean;
+  blob_hash?: string | null;
+  byte_size?: number | null;
+}
+
+export interface GitDiffLineDto {
+  type: 'context' | 'add' | 'delete' | string;
+  old_line_number?: number | null;
+  new_line_number?: number | null;
+  content: string;
+}
+
+export interface GitDiffHunkDto {
+  old_start: number;
+  old_count: number;
+  new_start: number;
+  new_count: number;
+  lines: GitDiffLineDto[];
+}
+
+export interface GitPatchFileDto {
+  old_path: string;
+  new_path: string;
+  status: string;
+  is_binary: boolean;
+  blob_hash?: string | null;
+  byte_size?: number | null;
+  hunks: GitDiffHunkDto[];
+  truncated?: boolean;
+  truncation_reason?: string | null;
+}
+
+export interface GitLogListResultDto {
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  commits: GitCommitSummaryDto[];
+  truncated: boolean;
+  next_cursor?: string | null;
+}
+
+export interface GitLogDetailResultDto {
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  commits: GitCommitSummaryDto[];
+  files: GitFileChangeDto[];
+  patches?: GitPatchFileDto[] | null;
+  truncated: boolean;
+  truncation_reason?: string | null;
+  diff_mode?: string;
+  next_cursor?: string | null;
+}
+
+export interface GitFileHistoryEntryDto {
+  commit: GitCommitSummaryDto;
+  change: GitFileChangeDto;
+  patch?: GitPatchFileDto | null;
+}
+
+export interface GitFileHistoryResultDto {
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  entries: GitFileHistoryEntryDto[];
+  truncated: boolean;
+  truncation_reason?: string | null;
+  next_cursor?: string | null;
+}
+
+export interface GitBlameLineDto {
+  commit: string;
+  author: string;
+  author_time?: string | null;
+  line_number: number;
+  content: string;
+}
+
+export interface GitBlameResultDto {
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  lines: GitBlameLineDto[];
+  truncated: boolean;
+  truncation_reason?: string | null;
+}
+
+export interface GitFileAtRevisionResultDto {
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  path?: string | null;
+  rev?: string | null;
+  content?: string | null;
+  is_binary: boolean;
+  blob_hash?: string | null;
+  byte_size?: number | null;
+  truncated: boolean;
+  truncation_reason?: string | null;
+}
+
+export interface GitStashEntryDto {
+  index: number;
+  ref_name: string;
+  hash: string;
+  subject: string;
+  branch?: string | null;
+  message: string;
+  created_at: string;
+  author: string;
+}
+
+export interface GitStashListResultDto {
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  entries: GitStashEntryDto[];
+  truncated: boolean;
+}
+
+export interface GitStashShowResultDto {
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  stash_ref: string;
+  files: GitFileChangeDto[];
+  patches?: GitPatchFileDto[] | null;
+  truncated: boolean;
+  truncation_reason?: string | null;
+}
+
+export interface GitCommitAmendArgs {
+  repository_path?: string;
+  message?: string;
+  paths?: string[];
+  commit_staged_only?: boolean;
+  include_all?: boolean;
+  amend?: boolean;
+}
+
+export interface GitStashPushArgs {
+  repository_path?: string;
+  message?: string;
+  include_untracked?: boolean;
+  keep_index?: boolean;
+  paths?: string[];
+  confirm_stash_push: boolean;
+}
+
+export interface GitStashApplyArgs {
+  repository_path?: string;
+  stash_ref?: string;
+  reinstate_index?: boolean;
+  confirm_stash_apply: boolean;
+}
+
+export interface GitStashPopArgs {
+  repository_path?: string;
+  stash_ref?: string;
+  reinstate_index?: boolean;
+  confirm_stash_pop: boolean;
+}
+
+export interface GitStashDropArgs {
+  repository_path?: string;
+  stash_ref: string;
+  confirm_stash_drop: boolean;
 }
 
 export interface CodeToolExecuteRequestDto {
@@ -3622,48 +3664,6 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(settings)
   }),
-  listExtensionSources: () => request<MarketSourceListDto>('/api/v1/market/sources'),
-  createExtensionSource: (source: { name: string; kind: string; location: string; enabled?: boolean }) => request<ExtensionSourceDto>('/api/v1/market/sources', {
-    method: 'POST',
-    body: JSON.stringify(source)
-  }),
-  setExtensionSourceEnabled: (sourceId: string, enabled: boolean) => request<ExtensionSourceDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ enabled })
-  }),
-  deleteExtensionSource: (sourceId: string) => request<void>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}`, {
-    method: 'DELETE'
-  }),
-  refreshExtensionSource: (sourceId: string) => request<MarketRefreshDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}/refresh`, {
-    method: 'POST'
-  }),
-  // `q`, not `query`: this used to send a parameter name Core has never read, so the search box
-  // narrowed nothing over the wire while every mocked test passed.
-  listMarketCatalog: (params: { kind?: string; q?: string; source_id?: string; limit?: number; offset?: number } = {}) => {
-    const search = new URLSearchParams();
-    if (params.kind && params.kind !== 'all') search.set('kind', params.kind);
-    if (params.q) search.set('q', params.q);
-    if (params.source_id) search.set('source_id', params.source_id);
-    if (params.limit !== undefined) search.set('limit', String(params.limit));
-    if (params.offset) search.set('offset', String(params.offset));
-    const suffix = search.toString() ? `?${search.toString()}` : '';
-    return request<MarketCatalogPageDto>(`/api/v1/market/catalog${suffix}`);
-  },
-  getMarketCatalogItem: (catalogId: string) => request<MarketCatalogItemDto>(`/api/v1/market/catalog/${encodeURIComponent(catalogId)}`),
-  // The project is the approval context; Skills can target the shared resource library.
-  previewMarketInstall: (catalogId: string, projectId?: string | null, scope?: 'shared' | 'project') => request<MarketInstallProposalDto>(`/api/v1/market/catalog/${encodeURIComponent(catalogId)}/install-preview`, {
-    method: 'POST',
-    body: JSON.stringify({ ...(projectId ? { project_id: projectId } : {}), ...(scope ? { scope } : {}) })
-  }),
-  previewMarketUninstall: (installationId: string) => request<MarketInstallProposalDto>(`/api/v1/market/installations/${encodeURIComponent(installationId)}/uninstall-preview`, {
-    method: 'POST'
-  }),
-  // Queues the governed write and nothing more. The bytes land when a human approves the user tool
-  // action this returns, on the approval surface — never here.
-  applyMarketInstallProposal: (proposalId: string) => request<MarketInstallationDto>(`/api/v1/market/install-proposals/${encodeURIComponent(proposalId)}/apply`, {
-    method: 'POST'
-  }),
-  listMarketInstallations: () => request<MarketInstallationListDto>('/api/v1/market/installations'),
   listMcpServers: (projectId?: string) => request<McpInventoryDto>(`/api/v1/mcp/servers${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   listMcpServerTools: (serverId: string) =>
     request<McpServerToolsDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools`),
@@ -3909,11 +3909,16 @@ export const api = {
     }
   },
   /** Current v1 user tool transport. Gateway forwards this request to the Tool Provider. */
-  executeCodeTool: (toolId: string, payload: CodeToolExecuteRequestDto = {}, options?: { signal?: AbortSignal }) => request<CodeToolExecuteResultDto>(`/api/v1/code/tools/${encodeURIComponent(toolId)}/execute`, {
-    signal: options?.signal,
-    method: 'POST',
-    body: JSON.stringify(payload)
-  }),
+  executeCodeTool: <TData = Record<string, unknown>>(
+    toolId: string,
+    payload: CodeToolExecuteRequestDto = {},
+    options?: { signal?: AbortSignal },
+  ) =>
+    request<CodeToolExecuteResultDto<TData>>(`/api/v1/code/tools/${encodeURIComponent(toolId)}/execute`, {
+      signal: options?.signal,
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   /** Explicit provider transport alias for clients that use the Tool Runtime surface. */
   executeToolRuntime: (toolId: string, payload: CodeToolExecuteRequestDto = {}) => request<CodeToolExecuteResultDto>(`/api/v1/tool-runtime/tools/${encodeURIComponent(toolId)}/execute`, {
     method: 'POST',
@@ -3945,6 +3950,76 @@ export const api = {
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
   gitLog: (cwd: string, limit?: number, ref?: string) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
+  gitLogList: (
+    cwd: string,
+    options?: { repository_path?: string; revs?: string[]; skip?: number; after_commit?: string; limit?: number },
+    transport?: { signal?: AbortSignal },
+  ) =>
+    api.executeCodeTool<GitLogListResultDto>('git_log_list', { cwd, arguments: { ...(options ?? {}) } }, transport),
+  gitLogDetail: (
+    cwd: string,
+    rev: string,
+    options?: {
+      repository_path?: string;
+      skip?: number;
+      after_commit?: string;
+      limit?: number;
+      include_patch?: boolean;
+      max_files?: number;
+      max_patch_bytes?: number;
+    },
+    transport?: { signal?: AbortSignal },
+  ) =>
+    api.executeCodeTool<GitLogDetailResultDto>('git_log_detail', { cwd, arguments: { rev, ...(options ?? {}) } }, transport),
+  gitFileHistory: (
+    cwd: string,
+    filePath: string,
+    options?: {
+      repository_path?: string;
+      follow?: boolean;
+      include_patch?: boolean;
+      skip?: number;
+      after_commit?: string;
+      limit?: number;
+      max_patch_bytes?: number;
+    },
+    transport?: { signal?: AbortSignal },
+  ) =>
+    api.executeCodeTool<GitFileHistoryResultDto>('git_file_history', { cwd, arguments: { path: filePath, ...(options ?? {}) } }, transport),
+  gitBlame: (
+    cwd: string,
+    filePath: string,
+    options?: {
+      repository_path?: string;
+      rev?: string;
+      start_line?: number;
+      end_line?: number;
+      max_output_bytes?: number;
+    },
+    transport?: { signal?: AbortSignal },
+  ) =>
+    api.executeCodeTool<GitBlameResultDto>('git_blame', { cwd, arguments: { path: filePath, ...(options ?? {}) } }, transport),
+  gitFileAtRevision: (
+    cwd: string,
+    filePath: string,
+    rev = 'HEAD',
+    options?: { repository_path?: string; max_output_bytes?: number },
+    transport?: { signal?: AbortSignal },
+  ) =>
+    api.executeCodeTool<GitFileAtRevisionResultDto>('git_file_at_revision', { cwd, arguments: { path: filePath, rev, ...(options ?? {}) } }, transport),
+  gitStashList: (
+    cwd: string,
+    options?: { repository_path?: string; limit?: number },
+    transport?: { signal?: AbortSignal },
+  ) =>
+    api.executeCodeTool<GitStashListResultDto>('git_stash_list', { cwd, arguments: { ...(options ?? {}) } }, transport),
+  gitStashShow: (
+    cwd: string,
+    stashRef = 'stash@{0}',
+    options?: { repository_path?: string; include_patch?: boolean; max_files?: number; max_patch_bytes?: number },
+    transport?: { signal?: AbortSignal },
+  ) =>
+    api.executeCodeTool<GitStashShowResultDto>('git_stash_show', { cwd, arguments: { stash_ref: stashRef, ...(options ?? {}) } }, transport),
   listAgentCandidates: (options?: { signal?: AbortSignal }) => cachedRead(catalogKey('agent-candidates'), () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'), options?.signal),
 
   // --- Memory review (candidates are never retrieval-visible; only promoted items are) ---
@@ -4104,7 +4179,392 @@ export const api = {
       },
     );
   },
+
+  /** List lifecycle hooks for workspace or global scope. */
+  async listLifecycleHooks(options?: {
+    scope?: LifecycleHookScope;
+    workspaceRoot?: string | null;
+    signal?: AbortSignal;
+  }): Promise<LifecycleHooksDocumentDto> {
+    const query = new URLSearchParams();
+    if (options?.scope) query.set('scope', options.scope);
+    if (options?.workspaceRoot) query.set('workspace_root', options.workspaceRoot);
+    const qs = query.toString();
+    return request<LifecycleHooksDocumentDto>(
+      `/api/v1/lifecycle-hooks${qs ? `?${qs}` : ''}`,
+      options?.signal ? { signal: options.signal } : undefined,
+    );
+  },
+
+  /** Save lifecycle hooks for workspace or global scope with optimistic concurrency. */
+  async saveLifecycleHooks(
+    payload: SaveLifecycleHooksInput,
+    etag?: string | number | null,
+  ): Promise<LifecycleHooksDocumentDto> {
+    const rev = etag ?? payload.expected_revision;
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    };
+    if (rev != null && rev !== '') {
+      headers['if-match'] = String(rev);
+    }
+    return request<LifecycleHooksDocumentDto>('/api/v1/lifecycle-hooks', {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Minimal real 1-token model connectivity probe. */
+  probeModel(force = true): Promise<ModelProbeResultDto> {
+    return request<ModelProbeResultDto>(`/api/v1/model-probe${force ? '?force=true' : ''}`, {
+      method: 'POST',
+    });
+  },
+
+  /** Fetch the persistent structured session plan (empty draft when not yet created). */
+  getSessionPlan(sessionId: string, options?: { signal?: AbortSignal }): Promise<SessionPlanDto> {
+    return request<SessionPlanDto>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`,
+      options?.signal ? { signal: options.signal } : undefined,
+    );
+  },
+
+  /** Replace the persistent structured session plan with optimistic concurrency. */
+  saveSessionPlan(
+    sessionId: string,
+    payload: PutSessionPlanInput,
+    etag?: string | number | null,
+  ): Promise<SessionPlanDto> {
+    const rev = etag ?? payload.expected_revision;
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    };
+    if (rev != null && rev !== '') {
+      headers['if-match'] = String(rev);
+    }
+    return request<SessionPlanDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Incrementally update steps or add steps on the session plan. */
+  patchSessionPlan(
+    sessionId: string,
+    payload: PatchSessionPlanInput,
+    etag?: string | number | null,
+  ): Promise<SessionPlanDto> {
+    const rev = etag ?? payload.expected_revision;
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    };
+    if (rev != null && rev !== '') {
+      headers['if-match'] = String(rev);
+    }
+    return request<SessionPlanDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Approve a draft session plan (`draft` -> `approved`). */
+  approveSessionPlan(
+    sessionId: string,
+    payload?: ApproveSessionPlanInput,
+    etag?: string | number | null,
+  ): Promise<SessionPlanDto> {
+    const rev = etag ?? payload?.expected_revision;
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    };
+    if (rev != null && rev !== '') {
+      headers['if-match'] = String(rev);
+    }
+    return request<SessionPlanDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan/approve`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
+
+  /** Canonical configured MCP servers list (`GET /api/v1/mcp/servers/configured`). */
+  listConfiguredMcpServers(projectId?: string, options?: { signal?: AbortSignal }): Promise<ToolMcpResource[]> {
+    const query = new URLSearchParams();
+    if (projectId) query.set('project_id', projectId);
+    const qs = query.toString();
+    return request<ToolMcpResource[]>(
+      `/api/v1/mcp/servers/configured${qs ? `?${qs}` : ''}`,
+      options?.signal ? { signal: options.signal } : undefined,
+    );
+  },
+
+  /** Create an MCP server entry (`stdio` / `http` / `sse`). */
+  createMcpServer(body: ToolMcpInput, projectId?: string): Promise<ToolMcpResource> {
+    const query = new URLSearchParams();
+    if (projectId) query.set('project_id', projectId);
+    const qs = query.toString();
+    return request<ToolMcpResource>(`/api/v1/mcp/servers${qs ? `?${qs}` : ''}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** Update an MCP server entry by GUID resource_id or server id. */
+  updateMcpServer(
+    serverId: string,
+    body: ToolMcpInput,
+    revision?: number | null,
+    projectId?: string,
+  ): Promise<ToolMcpResource> {
+    const query = new URLSearchParams();
+    if (projectId) query.set('project_id', projectId);
+    const qs = query.toString();
+    return request<ToolMcpResource>(
+      `/api/v1/mcp/servers/${encodeURIComponent(serverId)}${qs ? `?${qs}` : ''}`,
+      {
+        method: 'PUT',
+        ...(revision != null ? { headers: { 'if-match': `"${revision}"` } } : {}),
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  /** Import one or more MCP servers from `.mcp.json` / Claude / Codex / QwenPaw config JSON or TOML. */
+  importMcpServersJson(body: ImportMcpJsonInput): Promise<ImportMcpJsonResultDto> {
+    return request<ImportMcpJsonResultDto>('/api/v1/mcp/servers/import-json', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** Toggle an MCP server enabled state without requiring full PUT + If-Match. */
+  setMcpServerEnabled(serverId: string, enabled: boolean, projectId?: string): Promise<ToolMcpResource> {
+    return request<ToolMcpResource>(
+      `/api/v1/mcp/servers/${encodeURIComponent(serverId)}/enabled`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled, ...(projectId ? { project_id: projectId } : {}) }),
+      },
+    );
+  },
+
+  /** Run live handshake probe on a configured MCP server and return discovered tools. */
+  testMcpServer(serverId: string, projectId?: string): Promise<McpServerTestResultDto> {
+    const query = new URLSearchParams();
+    if (projectId) query.set('project_id', projectId);
+    const qs = query.toString();
+    return request<McpServerTestResultDto>(
+      `/api/v1/mcp/servers/${encodeURIComponent(serverId)}/test${qs ? `?${qs}` : ''}`,
+      { method: 'POST' },
+    );
+  },
+
+  /** Delete an MCP server configuration by resource_id or server id. */
+  deleteMcpServer(serverId: string, projectId?: string): Promise<void> {
+    const query = new URLSearchParams();
+    if (projectId) query.set('project_id', projectId);
+    const qs = query.toString();
+    return request<void>(
+      `/api/v1/mcp/servers/${encodeURIComponent(serverId)}${qs ? `?${qs}` : ''}`,
+      { method: 'DELETE' },
+    );
+  },
+
+  /** Discover local external CLI ecosystems (`~/.claude`, `~/.codex`, `~/.zcode`, `~/.minimax`, `~/.pi`) with redacted secrets. */
+  discoverExternalCliTools(options?: {
+    projectId?: string;
+    ecosystems?: string[];
+    signal?: AbortSignal;
+  }): Promise<ExternalCliDiscoveryDto> {
+    const query = new URLSearchParams();
+    if (options?.projectId) query.set('project_id', options.projectId);
+    if (options?.ecosystems?.length) query.set('ecosystems', options.ecosystems.join(','));
+    const qs = query.toString();
+    return request<ExternalCliDiscoveryDto>(
+      `/api/v1/tools/external-cli/discover${qs ? `?${qs}` : ''}`,
+      options?.signal ? { signal: options.signal } : undefined,
+    );
+  },
+
+  /** Install a skill from inline, local directory, git URL, or external CLI import. */
+  installToolSkill(body: InstallToolSkillInput): Promise<InstallToolSkillResultDto> {
+    return request<InstallToolSkillResultDto>('/api/v1/tools/skills/install', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** Toggle a skill's enabled state without requiring full PUT. */
+  setToolSkillEnabled(resourceId: string, enabled: boolean, projectId?: string): Promise<ToolSkillResource> {
+    return request<ToolSkillResource>(
+      `/api/v1/tools/skills/${encodeURIComponent(resourceId)}/enabled`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled, ...(projectId ? { project_id: projectId } : {}) }),
+      },
+    );
+  },
+
+  /** Reload and re-index skills for global or project scope. */
+  reloadToolSkills(projectId?: string): Promise<{ skills: ToolSkillResource[]; diagnostics: string[]; source: string }> {
+    const query = new URLSearchParams();
+    if (projectId) query.set('project_id', projectId);
+    const qs = query.toString();
+    return request<{ skills: ToolSkillResource[]; diagnostics: string[]; source: string }>(
+      `/api/v1/tools/skills/reload${qs ? `?${qs}` : ''}`,
+      { method: 'POST' },
+    );
+  },
 };
+
+export type ModelProbeResultDto = ReadinessItemDto;
+
+export type SessionPlanStatus = 'draft' | 'approved' | 'active' | 'completed' | 'blocked';
+export type SessionPlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'failed' | 'skipped';
+export type SessionPlanArtifactKind = 'file' | 'worktree' | 'summary' | 'attachment';
+
+export interface SessionPlanArtifactDto {
+  kind: SessionPlanArtifactKind;
+  label: string;
+  path?: string | null;
+  ref_id?: string | null;
+}
+
+export interface SessionPlanStepDto {
+  id: string;
+  title: string;
+  description?: string | null;
+  status: SessionPlanStepStatus;
+  depends_on: string[];
+  bound_task_key?: string | null;
+  assigned_agent_slug?: string | null;
+  verification_criteria: string[];
+  artifacts: SessionPlanArtifactDto[];
+  summary?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SessionPlanPhaseDto {
+  id: string;
+  title: string;
+  description?: string | null;
+  order: number;
+  status: SessionPlanStepStatus;
+  steps: SessionPlanStepDto[];
+}
+
+export interface SessionPlanProgressDto {
+  total_steps: number;
+  completed_steps: number;
+  in_progress_steps: number;
+  blocked_steps: number;
+  failed_steps: number;
+  pending_steps: number;
+}
+
+export interface SessionPlanDto {
+  id: string;
+  session_id: string;
+  title: string;
+  goal?: string | null;
+  status: SessionPlanStatus;
+  revision: number;
+  approved_at?: string | null;
+  last_run_id?: string | null;
+  updated_at: string;
+  phases: SessionPlanPhaseDto[];
+  progress: SessionPlanProgressDto;
+}
+
+export interface PutSessionPlanInput {
+  title?: string | null;
+  goal?: string | null;
+  status?: SessionPlanStatus | null;
+  phases: SessionPlanPhaseDto[];
+  expected_revision?: number | null;
+}
+
+export interface SessionPlanStepUpdateInput {
+  id: string;
+  status?: SessionPlanStepStatus | null;
+  title?: string | null;
+  description?: string | null;
+  summary?: string | null;
+  assigned_agent_slug?: string | null;
+  bound_task_key?: string | null;
+  verification_criteria?: string[] | null;
+  depends_on?: string[] | null;
+  artifacts?: SessionPlanArtifactDto[] | null;
+}
+
+export interface SessionPlanAddStepInput {
+  phase_id?: string | null;
+  id?: string | null;
+  title: string;
+  status?: SessionPlanStepStatus | null;
+  depends_on?: string[] | null;
+  assigned_agent_slug?: string | null;
+  bound_task_key?: string | null;
+  verification_criteria?: string[] | null;
+}
+
+export interface PatchSessionPlanInput {
+  title?: string | null;
+  goal?: string | null;
+  status?: SessionPlanStatus | null;
+  phases?: SessionPlanPhaseDto[] | null;
+  step_updates?: SessionPlanStepUpdateInput[] | null;
+  add_steps?: SessionPlanAddStepInput[] | null;
+  expected_revision?: number | null;
+}
+
+export interface ApproveSessionPlanInput {
+  expected_revision?: number | null;
+}
+
+export const getSessionPlan = api.getSessionPlan;
+export const saveSessionPlan = api.saveSessionPlan;
+export const patchSessionPlan = api.patchSessionPlan;
+export const approveSessionPlan = api.approveSessionPlan;
+export const probeModel = api.probeModel;
+
+export const listLifecycleHooks = api.listLifecycleHooks;
+export const saveLifecycleHooks = api.saveLifecycleHooks;
+
+export type LifecycleHookEvent = 'PreToolUse' | 'PostToolUse' | 'OnTaskComplete' | 'OnSessionIdle';
+export type LifecycleHookScope = 'workspace' | 'global';
+
+export interface LifecycleHookEntryDto {
+  id: string;
+  name?: string | null;
+  event: LifecycleHookEvent;
+  matcher?: string | null;
+  command: string;
+  timeout_ms: number;
+  blocking: boolean;
+  enabled: boolean;
+}
+
+export interface LifecycleHooksDocumentDto {
+  scope: LifecycleHookScope;
+  workspace_root?: string | null;
+  hooks: LifecycleHookEntryDto[];
+  revision: number;
+}
+
+export interface SaveLifecycleHooksInput {
+  scope?: LifecycleHookScope;
+  workspace_root?: string | null;
+  hooks: LifecycleHookEntryDto[];
+  expected_revision?: number | null;
+}
 
 /** One Core-owned terminal session projection. */
 export interface TerminalSessionDto {
@@ -4121,3 +4581,118 @@ export interface TerminalSessionDto {
   exit_code?: number | null;
   timed_out?: boolean;
 }
+
+export interface ImportMcpJsonInput {
+  json?: string;
+  config?: Record<string, unknown>;
+  project_id?: string;
+  overwrite?: boolean;
+  default_enabled?: boolean;
+  import_source?: string;
+}
+
+export interface ImportMcpJsonResultDto {
+  imported: ToolMcpResource[];
+  skipped: Array<{ id: string; reason: string }>;
+  imported_count: number;
+  skipped_count: number;
+}
+
+export interface McpDiscoveredToolDto {
+  id: string;
+  name: string;
+  description?: string | null;
+  input_schema?: unknown;
+}
+
+export interface McpServerTestResultDto {
+  resource_id: string;
+  id: string;
+  name: string;
+  enabled: boolean;
+  status: string;
+  reason?: string | null;
+  tool_count: number;
+  tools: McpDiscoveredToolDto[];
+}
+
+export interface ExternalCliEcosystemDto {
+  id: string;
+  label: string;
+  detected: boolean;
+  paths_scanned: string[];
+}
+
+export interface ExternalCliDiscoveredItemDto {
+  item_id: string;
+  ecosystem: string;
+  kind: 'mcp-server' | 'skill' | 'command';
+  name: string;
+  display_name: string;
+  description?: string | null;
+  source_path: string;
+  transport?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  url?: string | null;
+  env_keys?: string[] | null;
+  header_keys?: string[] | null;
+  has_secrets: boolean;
+  default_enabled: boolean;
+  already_imported: boolean;
+  content_preview?: string | null;
+}
+
+export interface ExternalCliDiscoveryDto {
+  user_home: string;
+  workspace_root?: string | null;
+  ecosystems: ExternalCliEcosystemDto[];
+  items: ExternalCliDiscoveredItemDto[];
+}
+
+export type ToolSkillInstallSourceType = 'inline' | 'local_dir' | 'git_url' | 'external_cli_import';
+
+export interface InstallToolSkillInput {
+  source_type: ToolSkillInstallSourceType;
+  scope?: 'shared' | 'project';
+  project_id?: string;
+  name?: string;
+  content?: string;
+  files?: Record<string, string>;
+  local_path?: string;
+  git_url?: string;
+  subpath?: string;
+  item_ids?: string[];
+  ecosystems?: string[];
+  enabled?: boolean;
+  enable_stdio_mcp?: boolean;
+  overwrite?: boolean;
+  governed?: boolean;
+}
+
+export interface InstallToolSkillResultDto {
+  source_type: string;
+  installed_skills: ToolSkillResource[];
+  installed_mcp_servers: ToolMcpResource[];
+  installed_commands: string[];
+  skipped: Array<{ id?: string; name?: string; reason: string }>;
+}
+
+export const listConfiguredMcpServers = api.listConfiguredMcpServers;
+export const createMcpServer = api.createMcpServer;
+export const updateMcpServer = api.updateMcpServer;
+export const importMcpServersJson = api.importMcpServersJson;
+export const setMcpServerEnabled = api.setMcpServerEnabled;
+export const testMcpServer = api.testMcpServer;
+export const deleteMcpServer = api.deleteMcpServer;
+export const discoverExternalCliTools = api.discoverExternalCliTools;
+export const installToolSkill = api.installToolSkill;
+export const setToolSkillEnabled = api.setToolSkillEnabled;
+export const reloadToolSkills = api.reloadToolSkills;
+export const gitLogList = api.gitLogList;
+export const gitLogDetail = api.gitLogDetail;
+export const gitFileHistory = api.gitFileHistory;
+export const gitBlame = api.gitBlame;
+export const gitFileAtRevision = api.gitFileAtRevision;
+export const gitStashList = api.gitStashList;
+export const gitStashShow = api.gitStashShow;

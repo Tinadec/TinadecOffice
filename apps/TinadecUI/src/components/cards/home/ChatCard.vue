@@ -1,39 +1,130 @@
 <script setup lang="ts">
 import ChatPanel from '@/components/ChatPanel.vue'
-import BuddyChatPanel from '@/components/companion/BuddyChatPanel.vue'
-import { computed, onMounted, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
-import { Bot, Settings, X } from '@lucide/vue'
-import { UiButton } from '@/components/ui'
+import { Bot, GitBranch, Send, ShieldAlert } from '@lucide/vue'
+import { api } from '@/api'
+import { useAgentDirectory } from '@/composables/useAgentDirectory'
+import { useSessionWorktrees } from '@/composables/useSessionWorktrees'
 import { homeController } from '@/controllers/HomeController'
-import { buddyCompanion, failures as companionFailures, loading as companionsLoading, refreshCompanionCenter } from '@/lib/companionStore'
-import { buddyViewActive, closeBuddyView } from '@/lib/buddyView'
-import { useHostAccess } from '@/lib/hostAccess'
-import { requestSettingsSection } from '@/lib/pageRequests'
+import { focusDockCard, type InlineDockCardItem } from '@/lib/homeDockSync'
 
 const c = homeController
 const { t } = useI18n()
-const router = useRouter()
-const { canAccessBackend } = useHostAccess()
+const resolveAgentName = typeof api?.listAgents === 'function'
+  ? useAgentDirectory().nameFor
+  : ((slugOrHandle: string | null | undefined) => slugOrHandle ?? '')
 
-// The buddy is a second occupant of the same card, not a second card: the chat card is singleton
-// and not closable, so the buddy view swaps its content and the sidebar entry toggles it back.
-// The sidebar already reads the companion domain once; the card only asks again when the buddy
-// view is actually opened, so an ordinary chat card costs no companion reads.
-const refreshBuddy = () => { if (buddyViewActive.value && canAccessBackend.value) void refreshCompanionCenter() }
-onMounted(refreshBuddy)
-watch(buddyViewActive, (active) => { if (active) refreshBuddy() })
-watch(canAccessBackend, (ready) => { if (ready) refreshBuddy() })
+const { isolatedGroups } = useSessionWorktrees({
+  projectPath: () => c.currentProject.value?.path ?? null,
+  sessionId: () => c.selectedSessionId.value ?? null,
+  runs: () => c.runs.value,
+  feed: () => c.conversationFeed,
+  orchestration: () => c.orchestration.value,
+  toolExecutions: () => c.toolExecutions.value,
+  resolveAgentName,
+})
 
-function openBuddySettings() {
-  requestSettingsSection('companions')
-  void router.push('/settings')
+const streamDockCards = computed<InlineDockCardItem[]>(() => {
+  if (!c.selectedSessionId.value) return []
+  const cards: InlineDockCardItem[] = []
+  for (const approval of c.approvals.value) {
+    if (approval.status !== 'pending') continue
+    cards.push({
+      id: `approval:${approval.id}`,
+      kind: 'approval',
+      card: 'approval',
+      title: t('worktreeDock.pendingApproval'),
+      subtitle: approval.summary,
+      approvalId: approval.id,
+      runId: approval.run_id ?? null,
+      worktreePath: approval.cwd ?? null,
+      urgent: true,
+    })
+  }
+
+  for (const wt of isolatedGroups.value) {
+    if (!wt.taskId && !wt.workerHandle && !wt.runId) continue
+    cards.push({
+      id: `wt:${wt.id}`,
+      kind: 'worktree',
+      card: 'git',
+      title: t('worktreeDock.worktreeSwitched'),
+      badge: wt.branch || null,
+      subtitle: t('worktreeDock.diffSummary', {
+        added: wt.counts.added,
+        modified: wt.counts.modified,
+        deleted: wt.counts.deleted,
+      }),
+      runId: wt.runId,
+      taskId: wt.taskId,
+      taskKey: wt.taskKey,
+      workerHandle: wt.workerHandle,
+      workerLabel: wt.workerLabel,
+      agentSlug: wt.agentSlug,
+      worktreePath: wt.worktreePath,
+      branch: wt.branch,
+    })
+  }
+
+  void c.conversationFeed.revision.value
+  const recentRuns = [...c.runs.value].slice(-2).reverse()
+  for (const run of recentRuns) {
+    const runState = c.conversationFeed.state.value.runs.get(run.id)
+    if (!runState) continue
+    for (const sub of runState.tasks.values()) {
+      if (sub.isMain) continue
+      const label = resolveAgentName(sub.handle ?? sub.agentSlug) || sub.taskKey || sub.taskId
+      cards.push({
+        id: `dispatch:${run.id}:${sub.taskId}`,
+        kind: 'dispatch',
+        card: 'orchestration',
+        title: t('worktreeDock.subtaskDispatched'),
+        subtitle: sub.title,
+        badge: sub.status,
+        runId: run.id,
+        taskId: sub.taskId,
+        taskKey: sub.taskKey,
+        workerHandle: sub.handle,
+        workerLabel: label,
+        agentSlug: sub.agentSlug,
+      })
+    }
+  }
+
+  return cards.slice(0, 6)
+})
+
+function openStreamDockCard(item: InlineDockCardItem): void {
+  focusDockCard({
+    card: item.card,
+    reason: item.kind,
+    runId: item.runId,
+    taskId: item.taskId,
+    taskKey: item.taskKey,
+    workerHandle: item.workerHandle,
+    workerLabel: item.workerLabel,
+    agentSlug: item.agentSlug,
+    worktreePath: item.worktreePath,
+    branch: item.branch,
+    approvalId: item.approvalId,
+  }, { title: t(`uie.cardTitle.${item.card}`) })
 }
 
-// "No buddy designated" is a fact only when the reads that decide it succeeded; a failed read
-// must not be reported as "you never chose one".
-const buddyReadFailed = computed(() => Boolean(companionFailures.value.companions || companionFailures.value.settings))
+function openStreamWorkerBadge(item: InlineDockCardItem): void {
+  focusDockCard({
+    card: 'agent',
+    reason: 'worker',
+    runId: item.runId,
+    taskId: item.taskId,
+    taskKey: item.taskKey,
+    workerHandle: item.workerHandle,
+    workerLabel: item.workerLabel,
+    agentSlug: item.agentSlug,
+    worktreePath: item.worktreePath,
+    branch: item.branch,
+  }, { title: t('uie.cardTitle.agent') })
+}
 
 // `busy` means "the send is still on its way", not "a run is working". A run's progress is the
 // transcript's job (live work rows, answer drafting); folding `working` in here made the send
@@ -55,112 +146,205 @@ const conversation = computed(() => ({
 </script>
 
 <template>
-  <div v-if="buddyViewActive" class="buddy-view">
-    <UiButton
-      variant="ghost"
-      size="icon"
-      class="buddy-view-close"
-      :aria-label="t('common.close')"
-      :title="t('common.close')"
-      @click="closeBuddyView()"
+  <div class="chat-card-shell">
+    <aside
+      v-if="streamDockCards.length > 0"
+      class="chat-dock-sync-bar"
+      data-testid="chat-stream-dock-bar"
     >
-      <X :size="16" />
-    </UiButton>
-    <BuddyChatPanel v-if="buddyCompanion" :companion="buddyCompanion" />
-    <div v-else-if="!canAccessBackend" class="buddy-view-empty" role="status">
-      <p>{{ t('host.previewReason') }}</p>
-    </div>
-    <div v-else-if="companionsLoading" class="buddy-view-empty" role="status">{{ t('buddy.loading') }}</div>
-    <div v-else-if="buddyReadFailed" class="buddy-view-empty" role="alert">
-      <p>{{ t('buddy.loadFailed') }}</p>
-      <UiButton variant="outline" size="sm" @click="refreshBuddy">{{ t('buddy.retry') }}</UiButton>
-    </div>
-    <div v-else class="buddy-view-empty">
-      <Bot :size="28" aria-hidden="true" />
-      <h2>{{ t('buddy.empty') }}</h2>
-      <p>{{ t('buddy.emptyHint') }}</p>
-      <UiButton size="sm" @click="openBuddySettings">
-        <Settings :size="14" />
-        <span>{{ t('buddy.openSettings') }}</span>
-      </UiButton>
-    </div>
+      <div
+        v-for="item in streamDockCards"
+        :key="item.id"
+        class="chat-dock-card"
+        :class="[`is-${item.kind}`, { 'is-urgent': item.urgent }]"
+        :data-dock-kind="item.kind"
+        data-testid="chat-stream-dock-card"
+      >
+        <button type="button" class="chat-dock-card-main" @click="openStreamDockCard(item)">
+          <Send v-if="item.kind === 'dispatch'" :size="11" aria-hidden="true" />
+          <GitBranch v-else-if="item.kind === 'worktree'" :size="11" aria-hidden="true" />
+          <ShieldAlert v-else :size="11" aria-hidden="true" />
+          <span class="chat-dock-card-title">{{ item.title }}</span>
+          <span v-if="item.badge" class="chat-dock-card-badge">{{ item.badge }}</span>
+          <span v-if="item.subtitle" class="chat-dock-card-sub">{{ item.subtitle }}</span>
+        </button>
+        <button
+          v-if="item.workerLabel || item.workerHandle || item.taskId"
+          type="button"
+          class="chat-dock-worker-badge"
+          data-testid="chat-stream-worker-badge"
+          @click.stop="openStreamWorkerBadge(item)"
+        >
+          <Bot :size="10" aria-hidden="true" />
+          <span>{{ item.workerLabel ?? item.workerHandle ?? item.taskId }}</span>
+        </button>
+      </div>
+    </aside>
+    <ChatPanel
+      class="chat-card-panel"
+      :messages="c.messages.value"
+      :sessions="c.sessions.value"
+      :projects="c.projects.value"
+      :current-session="c.currentSession.value"
+      :current-project="c.currentProject.value"
+      :selected-project-id="c.selectedProjectId.value"
+      :model-name="c.modelName.value"
+      :orchestration="c.orchestration.value"
+      :busy="c.busy.value"
+      :draft="c.draft.value"
+      :permission="c.currentPermission.value"
+      :composer-settings="c.composerSettings.value"
+      :settings-saving="c.settingsSaving.value"
+      :settings-error="c.settingsError.value"
+      :runs-for-composer="c.runs.value"
+      :can-stop="Boolean(c.stoppableRunId.value)"
+      :conversation="conversation"
+      :loading="c.transcriptLoading.value"
+      @update:draft="c.updateDraft($event)"
+      @update:permission="c.updatePermission($event)"
+      @update:settings="c.updateComposerSettings($event)"
+      @send="c.sendMessage($event)"
+      @welcome-send="c.handleWelcomeSend($event)"
+      @create-project="c.openProject()"
+      @select-project="c.setSelectedProject($event)"
+      @edit-message="c.editAndResend($event)"
+      @stop="c.stopRun()"
+    />
   </div>
-  <ChatPanel
-    v-else
-    :messages="c.messages.value"
-    :sessions="c.sessions.value"
-    :projects="c.projects.value"
-    :current-session="c.currentSession.value"
-    :current-project="c.currentProject.value"
-    :selected-project-id="c.selectedProjectId.value"
-    :model-name="c.modelName.value"
-    :orchestration="c.orchestration.value"
-    :busy="c.busy.value"
-    :draft="c.draft.value"
-    :permission="c.currentPermission.value"
-    :composer-settings="c.composerSettings.value"
-    :settings-saving="c.settingsSaving.value"
-    :settings-error="c.settingsError.value"
-    :runs-for-composer="c.runs.value"
-    :can-stop="Boolean(c.stoppableRunId.value)"
-    :conversation="conversation"
-    :loading="c.transcriptLoading.value"
-    @update:draft="c.updateDraft($event)"
-    @update:permission="c.updatePermission($event)"
-    @update:settings="c.updateComposerSettings($event)"
-    @send="c.sendMessage($event)"
-    @welcome-send="c.handleWelcomeSend($event)"
-    @create-project="c.openProject()"
-    @select-project="c.setSelectedProject($event)"
-    @edit-message="c.editAndResend($event)"
-    @stop="c.stopRun()"
-  />
 </template>
 
 <style scoped>
-.buddy-view {
-  position: relative;
+.chat-card-shell {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
-  padding: 18px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-.buddy-view-close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 1;
-}
-
-/* The panel's own header starts at the left edge; keep the close button off its name/tagline. */
-.buddy-view :deep(.buddy-chat-head) {
-  padding-right: 34px;
-}
-
-.buddy-view-empty {
-  display: flex;
+.chat-card-panel {
   flex: 1;
-  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
+}
+
+.chat-dock-sync-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 40px 12px 4px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  max-height: 88px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.chat-dock-card {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 24px;
-  text-align: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-card);
+  background: var(--surface-section);
+  font-size: 11px;
+}
+
+.chat-dock-card.is-dispatch {
+  border-color: color-mix(in srgb, var(--accent-primary) 28%, var(--border-card));
+  background: color-mix(in srgb, var(--accent-primary) 6%, var(--surface-section));
+}
+
+.chat-dock-card.is-worktree {
+  border-color: color-mix(in srgb, var(--accent-success) 28%, var(--border-card));
+  background: color-mix(in srgb, var(--accent-success) 6%, var(--surface-section));
+}
+
+.chat-dock-card.is-approval {
+  border-color: color-mix(in srgb, var(--accent-warning) 34%, var(--border-card));
+  background: color-mix(in srgb, var(--accent-warning) 9%, var(--surface-section));
+}
+
+.chat-dock-card.is-dispatch .chat-dock-card-main > svg {
+  color: var(--accent-primary);
+}
+
+.chat-dock-card.is-worktree .chat-dock-card-main > svg {
+  color: var(--accent-success);
+}
+
+.chat-dock-card.is-approval .chat-dock-card-main > svg {
+  color: var(--accent-warning);
+}
+
+.chat-dock-card-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-dock-card-main:hover {
+  color: var(--accent-primary);
+}
+
+.chat-dock-card-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-dock-card-badge {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-dock-card-sub {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
   color: var(--text-muted);
 }
 
-.buddy-view-empty h2 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text-primary);
+.chat-dock-worker-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  color: var(--accent-primary);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.buddy-view-empty p {
-  margin: 0;
-  max-width: 420px;
-  font-size: 13px;
-  line-height: 1.6;
+.chat-dock-worker-badge:hover {
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
 }
 </style>

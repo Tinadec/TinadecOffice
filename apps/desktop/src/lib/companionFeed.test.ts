@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   isCompanionEventBroadcast,
   COMPANION_ACTIVITY_EVENT,
+  COMPANION_DELTA_EVENT,
   COMPANION_RUN_EVENT,
   COMPANION_SETTINGS_EVENT,
+  COMPANION_STAGE_CUE_EVENT,
+  COMPANION_WORK_SESSION_EVENT,
 } from '@/events/companionEventTypes'
 
 /**
@@ -62,7 +65,13 @@ describe('companion journal subscription', () => {
     expect(stream.url).toContain('/api/v1/companion-events?after_seq=12')
     // Core pins companion routes to the user scope; inventing a project header would be refused.
     expect(stream.storageId).toBe('user')
-    for (const type of [COMPANION_ACTIVITY_EVENT, COMPANION_RUN_EVENT, COMPANION_SETTINGS_EVENT]) {
+    for (const type of [
+      COMPANION_ACTIVITY_EVENT,
+      COMPANION_DELTA_EVENT,
+      COMPANION_RUN_EVENT,
+      COMPANION_SETTINGS_EVENT,
+      COMPANION_STAGE_CUE_EVENT,
+    ]) {
       expect(stream.listeners.has(type)).toBe(true)
     }
   })
@@ -101,6 +110,69 @@ describe('companion journal subscription', () => {
     latest().emit(COMPANION_ACTIVITY_EVENT, '{not json')
     expect(notices).toEqual([])
     expect(handle.cursor).toBe(0)
+  })
+
+  it('forwards ephemeral delta and stage cue frames without overwriting cursor', () => {
+    const notices: Array<{ type: string; delta?: string; emotion?: string | null }> = []
+    const handle = connectCompanionEvents({
+      onNotice: (notice) => notices.push(notice),
+    }, 5)
+    latest().emit(COMPANION_DELTA_EVENT, JSON.stringify({
+      companion_id: 'c-1', conversation_id: 'conv-1', run_id: 'run-1', delta: 'hello ',
+    }))
+    latest().emit(COMPANION_STAGE_CUE_EVENT, JSON.stringify({
+      companion_id: 'c-1', emotion: 'happy', speaking: true,
+    }))
+    expect(handle.cursor).toBe(5)
+    expect(notices[0]).toMatchObject({ type: COMPANION_DELTA_EVENT, delta: 'hello ' })
+    expect(notices[1]).toMatchObject({ type: COMPANION_STAGE_CUE_EVENT, emotion: 'happy' })
+  })
+
+  it('parses companion.work_session SSE frames with pending approvals without advancing durable cursor', () => {
+    const notices: Array<{ type: string; runId: string | null; workSession?: unknown }> = []
+    const handle = connectCompanionEvents({
+      onNotice: (notice) => notices.push(notice),
+    }, 8)
+    latest().emit(COMPANION_WORK_SESSION_EVENT, JSON.stringify({
+      companion_id: 'c-1',
+      conversation_id: 'conv-1',
+      session_id: 'sess-1',
+      session_title: 'Fix auth redirect',
+      project_id: 'proj-1',
+      project_name: 'TinadecOffice',
+      run_id: 'run-9',
+      status: 'awaiting_approval',
+      mode_name: 'Team',
+      plan_summary: '2/4 · Run integration tests',
+      pending_approvals: [
+        {
+          approval_id: 'appr-1',
+          tool_id: 'shell',
+          summary: 'Run dotnet test',
+          risk_level: 'high',
+          created_at: '2026-11-22T04:00:00Z',
+        },
+      ],
+    }))
+    expect(handle.cursor).toBe(8)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatchObject({
+      type: COMPANION_WORK_SESSION_EVENT,
+      runId: 'run-9',
+      workSession: {
+        sessionId: 'sess-1',
+        sessionTitle: 'Fix auth redirect',
+        projectId: 'proj-1',
+        projectName: 'TinadecOffice',
+        runId: 'run-9',
+        status: 'awaiting_approval',
+        modeName: 'Team',
+        planSummary: '2/4 · Run integration tests',
+        pendingApprovals: [
+          expect.objectContaining({ approval_id: 'appr-1', tool_id: 'shell', risk_level: 'high' }),
+        ],
+      },
+    })
   })
 
   it('closes the underlying stream', () => {

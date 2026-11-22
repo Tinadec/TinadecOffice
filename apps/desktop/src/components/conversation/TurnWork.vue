@@ -184,7 +184,9 @@ const summary = computed(() => {
 </template>
 
 <style scoped>
-.conversation-work-trigger { color: var(--text-secondary); }
+.conversation-work-trigger { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.conversation-work-trigger > [data-testid="turn-status"],
+.conversation-work-trigger > [data-testid="turn-summary"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .conversation-glyph--waiting { color: var(--accent-warning, #e3b341); }
 .conversation-fold-waiting { color: var(--accent-warning, #e3b341); font-size: 12px; }
 .conversation-correction-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 12px; }

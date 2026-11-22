@@ -318,4 +318,66 @@ describe('team shape', () => {
     expect(solo.orchestration_tier).toBe('solo_dispatch')
     expect(solo.bindings?.[0].tool_switches).toEqual({ custom_tool: true })
   })
+
+  it('preserves unknown relationship fields and default_options across team updates and clones', () => {
+    const presetOptions = {
+      plan_first: true,
+      spec_enabled: false,
+      multi_agent: true,
+      bulletin_board: true,
+      worktree: false,
+      workflow_mode_version_id: null,
+    }
+    const existing = detail({
+      default_options: presetOptions,
+      nodes: [
+        {
+          id: 'leader',
+          node_key: 'leader',
+          agent_id: leader.id,
+          agent_definition_id: leader.id,
+          lane: 'operation',
+          position: { x: 140, y: 60 },
+          config: { conversation: true },
+          relationship: {
+            duty: 'Coordinate release',
+            escalation_policy: 'strict',
+            custom_meta: { tier: 2 },
+          },
+        },
+        {
+          id: 'member-1',
+          node_key: 'member-1',
+          agent_id: search.id,
+          agent_definition_id: search.id,
+          lane: 'execution',
+          position: { x: 200, y: 300 },
+          relationship: {
+            duty: 'Audit repository',
+            handoff_contract: 'evidence-bundle',
+            agent_types: ['global_engineering'],
+          },
+        },
+      ],
+      edges: [{ id: 'e1', source: 'leader', target: 'member-1' }],
+      bindings: [],
+    })
+
+    const updated = buildTeamTopology({
+      style: 'pipeline',
+      leaderId: leader.id,
+      memberIds: [search.id, engineering.id],
+      displayName: 'Pipeline With Custom Rel',
+      existingDetail: existing,
+    }, agents)
+
+    expect(updated.default_options).toEqual(presetOptions)
+    expect((updated.nodes[0].relationship as Record<string, unknown>).escalation_policy).toBe('strict')
+    expect((updated.nodes[0].relationship as Record<string, unknown>).custom_meta).toEqual({ tier: 2 })
+    expect((updated.nodes[1].relationship as Record<string, unknown>).handoff_contract).toBe('evidence-bundle')
+    expect((updated.nodes[1].relationship as Record<string, unknown>).agent_types).toEqual(['global_engineering'])
+
+    const cloned = cloneModeTopology(existing)
+    expect(cloned.default_options).toEqual(presetOptions)
+  })
 })

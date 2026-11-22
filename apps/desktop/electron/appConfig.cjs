@@ -42,8 +42,7 @@ function normalizeGatewayUrl(value) {
  */
 function loadAppConfig(configFile, env = process.env, options = {}) {
   const stored = readDocument(configFile);
-  const debugStudioEnabled = readDebugStudioEnabled(stored);
-  const preferences = { debug_studio_enabled: debugStudioEnabled,
+  const preferences = {
     close_to_tray: readCloseToTray(stored) ?? options.defaultCloseToTray ?? false,
     launch_at_login: readLaunchAtLogin(stored),
     companion_mode_enabled: readCompanionModeEnabled(stored),
@@ -68,19 +67,6 @@ function readDocumentSource(configFile) {
 
 function readDocument(configFile) {
   return parse(readDocumentSource(configFile));
-}
-
-function readDebugStudioEnabled(document) {
-  const developer = document.developer;
-  if (developer !== undefined && (!developer || typeof developer !== 'object'
-      || Array.isArray(developer) || developer instanceof Date)) {
-    throw new Error('desktop.toml developer must be a table.');
-  }
-  const value = developer?.debug_studio_enabled;
-  if (value !== undefined && typeof value !== 'boolean') {
-    throw new Error('desktop.toml developer.debug_studio_enabled must be a boolean.');
-  }
-  return value ?? false;
 }
 
 /** The window preferences table; a missing table or key leaves the decision to the caller. */
@@ -243,17 +229,6 @@ function tableScalarDocumentSource(source, expected, table, key) {
   return stringify(expected);
 }
 
-function saveDebugStudioEnabled(configFile, enabled, env = process.env) {
-  if (typeof enabled !== 'boolean') throw new Error('Debug Studio enabled must be a boolean.');
-  const source = readDocumentSource(configFile);
-  const document = parse(source);
-  readDebugStudioEnabled(document);
-  document.developer ??= Object.create(null);
-  document.developer.debug_studio_enabled = enabled;
-  writeDocumentSource(configFile, tableScalarDocumentSource(source, document, 'developer', 'debug_studio_enabled'));
-  return loadAppConfig(configFile, env);
-}
-
 /** Closing the main window hides it to the tray instead of quitting the app. */
 function saveCloseToTray(configFile, enabled, env = process.env) {
   if (typeof enabled !== 'boolean') throw new Error('Close to tray must be a boolean.');
@@ -387,6 +362,5 @@ module.exports = {
   saveCompanionSpeakReplies,
   saveCompanionCapsuleStyle,
   saveCompanionMode,
-  saveDebugStudioEnabled,
   saveUserStorageRoot,
 };

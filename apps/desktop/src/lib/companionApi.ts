@@ -1,47 +1,121 @@
 import i18n from '@/i18n'
 import type { components } from '@/generated/schema'
 import {
+  COMPANION_ACTIVITY_EVENT,
+  COMPANION_DELTA_EVENT,
   COMPANION_EVENT_CHANNEL,
   COMPANION_EVENT_TYPES,
+  COMPANION_PROPOSAL_EVENT,
+  COMPANION_RUN_EVENT,
+  COMPANION_SETTINGS_EVENT,
+  COMPANION_STAGE_CUE_EVENT,
+  COMPANION_TOOL_CALL_EVENT,
+  COMPANION_WORK_SESSION_EVENT,
   isCompanionEventBroadcast,
   type CompanionEventBroadcast,
   type CompanionEventNotice,
   type CompanionEventPayload,
   type CompanionEventType,
   type CompanionHeartbeatPayload,
+  type CompanionWorkSessionApprovalNotice,
+  type CompanionWorkSessionNotice,
 } from '@/events/companionEventTypes'
 import { ApiError, apiErrorMessage } from './apiError'
 import { assertHostAccess } from './hostAccess'
 import { ScopedEventSource } from './scopedEventSource'
+import { captureStorageId } from './storageScope'
+import {
+  asNonEmptyString,
+  asRecord,
+  asViewMode,
+  encodeBrowserConnectionEndpoint,
+  normalizeBrowserProfile,
+  normalizeConnectedWorkSession,
+  normalizeWorkSessionApproval,
+  parseBrowserConnectionEndpoint,
+  parseWorkSessionPlanProgress,
+  type CompanionBrowserDriver,
+  type CompanionBrowserProfile,
+  type CompanionConnectedWorkSession,
+  type CompanionConnectionAuthorization,
+  type CompanionConnectionKind,
+  type CompanionConnectionRuntimeStatus,
+  type CompanionWorkSessionPendingApproval,
+  type CompanionWorkSessionPlanProgress,
+  type CompanionWorkSessionRunSummary,
+} from './companionWorkSession'
+
+export {
+  encodeBrowserConnectionEndpoint,
+  normalizeBrowserProfile,
+  normalizeConnectedWorkSession,
+  normalizeWorkSessionApproval,
+  parseBrowserConnectionEndpoint,
+  parseWorkSessionPlanProgress,
+  type CompanionBrowserDriver,
+  type CompanionBrowserProfile,
+  type CompanionConnectedWorkSession,
+  type CompanionConnectionAuthorization,
+  type CompanionConnectionKind,
+  type CompanionConnectionRuntimeStatus,
+  type CompanionWorkSessionPendingApproval,
+  type CompanionWorkSessionPlanProgress,
+  type CompanionWorkSessionRunSummary,
+}
 
 /**
- * Companion domain client (spec: add-companion-mode, Task 5).
- *
- * Two callers, one contract:
- * - `companionApi` runs in the trusted main window and talks to the Gateway directly, exactly like
- *   `api.ts` (same origin, same host-access gate, no storage identity: Core pins the companion
- *   surface to the user scope).
- * - `companionBridge` runs in the companion window, which is NOT a trusted host. It reaches the
- *   Gateway only through the main-process whitelist proxy and exposes the chat subset.
+ * Companion domain client:
+ * - `companionApi` runs in the trusted main window and talks directly to the Gateway.
+ * - `companionBridge` runs in the satellite companion window over the main-process proxy.
  */
 
-export type CompanionSummary = components['schemas']['CompanionSummary']
-export type CompanionDetail = components['schemas']['CompanionDetail']
+export type CompanionRole = 'autonomous' | 'session_partner'
+export type CompanionChannelKind = 'desktop_chat' | 'session_partner' | 'schedule_tick' | 'external_im'
+
+type SchemaCompanionSummary = components['schemas']['CompanionSummary']
+type SchemaCompanionDetail = components['schemas']['CompanionDetail']
+type SchemaCompanionRun = components['schemas']['CompanionRun']
+type SchemaCompanionSettings = components['schemas']['CompanionSettings']
+type SchemaCompanionSendMessageResult = components['schemas']['CompanionSendMessageResult']
+type SchemaCompanionConnection = components['schemas']['CompanionConnection']
+type SchemaCompanionConnectionOverview = components['schemas']['CompanionConnectionOverview']
+
+type StripIndex<T> = { [K in keyof T as string extends K ? never : number extends K ? never : K]: T[K] }
+
+export interface CompanionSummary extends Omit<StripIndex<SchemaCompanionSummary>, 'role'> {
+  role: CompanionRole | string
+}
+export interface CompanionDetail extends Omit<StripIndex<SchemaCompanionDetail>, 'role'> {
+  role: CompanionRole | string
+}
 export type CompanionAutonomy = components['schemas']['CompanionAutonomy']
 export type CompanionMemory = components['schemas']['CompanionMemory']
 export type CompanionSkill = components['schemas']['CompanionSkill']
-export type CompanionConnection = components['schemas']['CompanionConnection']
-export type CompanionConnectionOverview = components['schemas']['CompanionConnectionOverview']
+export interface CompanionConnection extends Omit<StripIndex<SchemaCompanionConnection>, 'kind' | 'runtime_status'> {
+  kind: CompanionConnectionKind | string
+  runtime_status: CompanionConnectionRuntimeStatus
+}
+export interface CompanionConnectionOverview extends Omit<StripIndex<SchemaCompanionConnectionOverview>, 'kind' | 'runtime_status'> {
+  kind: CompanionConnectionKind | string
+  runtime_status: CompanionConnectionRuntimeStatus
+}
 export type CompanionMember = components['schemas']['CompanionMember']
 export type CompanionConversation = components['schemas']['CompanionConversation']
 export type CompanionMessage = components['schemas']['CompanionMessage']
-export type CompanionRun = components['schemas']['CompanionRun']
+export interface CompanionRun extends StripIndex<SchemaCompanionRun> {
+  hop_depth?: number
+  channel_kind?: string
+  dispatched_session_id?: string | null
+}
 export type CompanionActivity = components['schemas']['CompanionActivity']
-export type CompanionSettings = components['schemas']['CompanionSettings']
-export type CompanionSendMessageResult = components['schemas']['CompanionSendMessageResult']
+export interface CompanionSettings extends Omit<StripIndex<SchemaCompanionSettings>, 'buddy_companion_id' | 'max_bot_hop_depth'> {
+  max_bot_hop_depth?: number
+}
+export interface CompanionSendMessageResult extends Omit<StripIndex<SchemaCompanionSendMessageResult>, 'skipped_runs'> {
+  skipped_runs?: Array<{ companion_id: string; reason: string }>
+}
 export type CompanionAutonomyTickResult = components['schemas']['CompanionAutonomyTickResult']
 
-/** Request bodies are not in the external OpenAPI (the Gateway forwards Core's bytes verbatim). */
 export interface CompanionAutonomyInput {
   enabled?: boolean
   paused?: boolean
@@ -49,14 +123,6 @@ export interface CompanionAutonomyInput {
   daily_action_budget?: number
 }
 
-/**
- * A standing authorization for one class of autonomous action. `proposed` is a question the user
- * has not answered yet; only `approved` lets that action run unattended.
- */
-/**
- * A companion asking for a long-lived helper. Approving is what creates it, and only within the
- * tenant's recruit limit — the proposer can never create a companion itself.
- */
 export interface CompanionRecruitment {
   id: string
   proposer_id: string
@@ -92,7 +158,7 @@ export interface CompanionCreateInput {
   model_purpose?: string
   /** "<providerInstanceId>|<model>"; empty clears the pin back to the route purpose. */
   model?: string | null
-  role?: 'autonomous' | 'buddy'
+  role?: CompanionRole
   autonomy?: CompanionAutonomyInput | null
 }
 
@@ -124,16 +190,44 @@ export interface CompanionSkillPatchInput {
 }
 
 export interface CompanionConnectionCreateInput {
-  kind?: 'mcp' | 'server' | 'phone' | 'external_agent'
+  kind?: CompanionConnectionKind
   name?: string
   endpoint?: string | null
   credential_ref?: string | null
-  authorization?: 'configured' | 'authorized' | 'revoked'
+  authorization?: CompanionConnectionAuthorization
+  /** Optional browser connector driver (`builtin_electron` | `ego_lite`) when `kind === 'browser'`. */
+  driver?: CompanionBrowserDriver | string | null
+  /** Optional browser profile id when `kind === 'browser'`. */
+  profile_id?: string | null
 }
 
 export interface CompanionConnectionPatchInput {
-  authorization?: 'configured' | 'authorized' | 'revoked'
+  authorization?: CompanionConnectionAuthorization
   enabled?: boolean
+}
+
+export interface CompanionApprovalDecisionResult {
+  id: string
+  session_id?: string | null
+  run_id?: string | null
+  tool_id?: string | null
+  status?: string | null
+  decision?: string | null
+  decision_reason?: string | null
+}
+
+export interface CompanionRunCancelResult {
+  run_id: string
+  status: string
+  action: string
+  accepted: boolean
+  killed_terminal_sessions?: number
+}
+
+export interface CompanionProjectSummary {
+  id: string
+  name: string
+  path?: string | null
 }
 
 export interface CompanionGroupConversationInput {
@@ -150,15 +244,115 @@ export interface CompanionMessagePostInput {
   body?: string
   addressed_to?: string[]
   idempotency_key?: string
+  channel_kind?: CompanionChannelKind
+  thread_key?: string | null
 }
 
 export interface CompanionSettingsPatchInput {
   main_companion_id?: string | null
-  buddy_companion_id?: string | null
   /** How many companions other companions may recruit; 0 turns recruiting off. */
   recruit_limit?: number
+  /** Maximum consecutive bot-to-bot auto-relay replies in group/IM threads (0..10, default 3). */
+  max_bot_hop_depth?: number
   autonomy_paused?: boolean
 }
+
+export interface CompanionSchedule {
+  id: string
+  companion_id: string
+  title: string
+  prompt: string
+  cron_expression: string | null
+  run_at: string | null
+  next_run_at: string | null
+  last_run_at: string | null
+  target_conversation_id: string | null
+  one_shot: boolean
+  enabled: boolean
+  status: string
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CompanionScheduleInput {
+  title: string
+  prompt: string
+  cron_expression?: string | null
+  run_at?: string | null
+  target_conversation_id?: string | null
+  one_shot?: boolean
+  enabled?: boolean
+}
+
+export interface CompanionSchedulePatchInput {
+  title?: string
+  prompt?: string
+  cron_expression?: string | null
+  run_at?: string | null
+  target_conversation_id?: string | null
+  one_shot?: boolean
+  enabled?: boolean
+}
+
+export interface CompanionScheduleTriggerResult {
+  schedule: CompanionSchedule
+  run_ids: string[]
+  conversation_id: string
+}
+
+export interface CompanionPlanStep {
+  id: string
+  title: string
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked'
+  note?: string | null
+}
+
+export interface CompanionPlan {
+  id: string
+  companion_id: string
+  title: string
+  summary: string | null
+  status: 'active' | 'completed' | 'paused' | 'archived'
+  steps: CompanionPlanStep[]
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CompanionPlanInput {
+  title: string
+  summary?: string | null
+  status?: 'active' | 'completed' | 'paused' | 'archived'
+  steps?: CompanionPlanStep[]
+}
+
+export type CompanionPlanPatchInput = Partial<CompanionPlanInput>
+
+export interface CompanionTodo {
+  id: string
+  companion_id: string
+  title: string
+  note: string | null
+  priority: 'low' | 'medium' | 'high'
+  status: 'pending' | 'in_progress' | 'done' | 'cancelled'
+  due_at: string | null
+  plan_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CompanionTodoInput {
+  title: string
+  note?: string | null
+  priority?: 'low' | 'medium' | 'high'
+  status?: 'pending' | 'in_progress' | 'done' | 'cancelled'
+  due_at?: string | null
+  plan_id?: string | null
+}
+
+export type CompanionTodoPatchInput = Partial<CompanionTodoInput>
 
 /**
  * Capabilities parsed from a Live2D `model3.json`. Sections the file does not declare stay empty;
@@ -178,8 +372,21 @@ export interface CompanionAvatar {
   name: string
   kind: 'live2d'
   source_path: string
+  entry_model_json?: string | null
   capabilities: CompanionAvatarCapabilities
   created_at: string
+}
+
+export interface CompanionLive2dSdkStatus {
+  ready: boolean
+  installed?: boolean
+  file_name?: string | null
+  sha256?: string | null
+  size_bytes?: number
+  has_wasm?: boolean
+  script_url?: string | null
+  wasm_url?: string | null
+  updated_at?: string | null
 }
 
 const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
@@ -202,8 +409,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('accept', 'application/json')
   if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
-  // Same host gate as `api.ts`. No storage identity is attached: Core pins the companion domain
-  // to the user scope, so a scope header here would be a second, wrong answer.
   await assertHostAccess(path, init?.signal ?? undefined)
   let response: Response
   try {
@@ -235,10 +440,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const companionApi = {
   gatewayUrl,
-  /**
-   * Imported Live2D models. Import copies the directory into Core's own storage, so the returned
-   * `source_path` is the stored copy rather than the folder the user picked.
-   */
   listCompanionAvatars: () => request<CompanionAvatar[]>('/api/v1/companion-avatars'),
   importCompanionAvatar: (input: { path: string }) =>
     request<CompanionAvatar>('/api/v1/companion-avatars/import', {
@@ -246,6 +447,16 @@ export const companionApi = {
     }),
   deleteCompanionAvatar: (id: string) =>
     request<void>(`/api/v1/companion-avatars/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  getLive2dSdkStatus: () => request<CompanionLive2dSdkStatus>('/api/v1/companion-avatars/sdk'),
+  importLive2dSdk: (input: { path?: string; file_name?: string; content_base64?: string; wasm_base64?: string | null }) =>
+    request<CompanionLive2dSdkStatus>('/api/v1/companion-avatars/sdk', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  deleteLive2dSdk: () => request<void>('/api/v1/companion-avatars/sdk', { method: 'DELETE' }),
+  live2dSdkScriptUrl: () => `${gatewayUrl}/api/v1/companion-avatars/sdk/live2dcubismcore.min.js`,
+  companionAvatarAssetUrl: (avatarId: string, relativePath: string) =>
+    `${gatewayUrl}/api/v1/companion-avatars/${encodeURIComponent(avatarId)}/assets/${relativePath.split('/').filter(Boolean).map(encodeURIComponent).join('/')}`,
+
   listCompanions: (includeArchived?: boolean) =>
     request<CompanionSummary[]>(`/api/v1/companions${query({ include_archived: includeArchived })}`),
   getCompanion: (id: string) => request<CompanionDetail>(`/api/v1/companions/${encodeURIComponent(id)}`),
@@ -303,13 +514,120 @@ export const companionApi = {
       method: 'DELETE', headers: ifMatch(revision),
     }),
 
+  listWorkSessions: async (companionId: string): Promise<CompanionConnectedWorkSession[]> => {
+    const raw = await request<unknown>(`/api/v1/companions/${encodeURIComponent(companionId)}/work-sessions`)
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as { sessions?: unknown } | null)?.sessions)
+        ? (raw as { sessions: unknown[] }).sessions
+        : Array.isArray((raw as { items?: unknown } | null)?.items)
+          ? (raw as { items: unknown[] }).items
+          : []
+    return list
+      .map(normalizeConnectedWorkSession)
+      .filter((item): item is CompanionConnectedWorkSession => item !== null)
+  },
+
+  /** Discover available built-in Electron and external ego-lite browser profiles. */
+  listBrowserProfiles: async (): Promise<CompanionBrowserProfile[]> => {
+    const raw = await request<unknown>('/api/v1/companions/browser-profiles')
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as { profiles?: unknown } | null)?.profiles)
+        ? (raw as { profiles: unknown[] }).profiles
+        : Array.isArray((raw as { items?: unknown } | null)?.items)
+          ? (raw as { items: unknown[] }).items
+          : []
+    return list
+      .map(normalizeBrowserProfile)
+      .filter((item): item is CompanionBrowserProfile => item !== null)
+  },
+
+  /** Active project workspaces available for work_session connector scoping. */
+  listProjects: () => request<CompanionProjectSummary[]>('/api/v1/projects?lifecycle_status=active'),
+
+  /** Decide a pending engineering Work Session tool approval directly via Core ControlPlaneEndpoints. */
+  decideApproval: (approvalId: string, approved: boolean, note?: string | null) => {
+    const path = `/api/v1/approvals/${encodeURIComponent(approvalId)}/decision`
+    const body: Record<string, string> = { decision: approved ? 'approved' : 'rejected' }
+    if (note && note.trim()) body.reason = note.trim()
+    return request<CompanionApprovalDecisionResult>(path, {
+      method: 'POST',
+      headers: { 'x-tinadec-storage-id': captureStorageId(path) },
+      body: JSON.stringify(body),
+    })
+  },
+
+  /** Cancel/interrupt an active Work Session run directly via Core DmaeaEndpoints. */
+  cancelRun: (runId: string) => {
+    const path = `/api/v1/runs/${encodeURIComponent(runId)}/control`
+    const clientControlId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? `companion-cancel-${crypto.randomUUID()}`
+      : `companion-cancel-${Date.now()}`
+    return request<CompanionRunCancelResult>(path, {
+      method: 'POST',
+      headers: { 'x-tinadec-storage-id': captureStorageId(path) },
+      body: JSON.stringify({ action: 'cancel', client_control_id: clientControlId }),
+    })
+  },
+
+  listSchedules: (id: string) =>
+    request<CompanionSchedule[]>(`/api/v1/companions/${encodeURIComponent(id)}/schedules`),
+  createSchedule: (id: string, input: CompanionScheduleInput) =>
+    request<CompanionSchedule>(`/api/v1/companions/${encodeURIComponent(id)}/schedules`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  patchSchedule: (id: string, scheduleId: string, revision: number | null | undefined, patch: CompanionSchedulePatchInput) =>
+    request<CompanionSchedule>(`/api/v1/companions/${encodeURIComponent(id)}/schedules/${encodeURIComponent(scheduleId)}`, {
+      method: 'PATCH',
+      headers: typeof revision === 'number' ? ifMatch(revision) : undefined,
+      body: JSON.stringify(patch),
+    }),
+  deleteSchedule: (id: string, scheduleId: string) =>
+    request<void>(`/api/v1/companions/${encodeURIComponent(id)}/schedules/${encodeURIComponent(scheduleId)}`, {
+      method: 'DELETE',
+    }),
+  triggerSchedule: (id: string, scheduleId: string) =>
+    request<CompanionScheduleTriggerResult>(`/api/v1/companions/${encodeURIComponent(id)}/schedules/${encodeURIComponent(scheduleId)}/trigger`, {
+      method: 'POST',
+    }),
+
+  listPlans: (id: string) =>
+    request<CompanionPlan[]>(`/api/v1/companions/${encodeURIComponent(id)}/plans`),
+  createPlan: (id: string, input: CompanionPlanInput) =>
+    request<CompanionPlan>(`/api/v1/companions/${encodeURIComponent(id)}/plans`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  patchPlan: (id: string, planId: string, revision: number | null | undefined, patch: CompanionPlanPatchInput) =>
+    request<CompanionPlan>(`/api/v1/companions/${encodeURIComponent(id)}/plans/${encodeURIComponent(planId)}`, {
+      method: 'PATCH',
+      headers: typeof revision === 'number' ? ifMatch(revision) : undefined,
+      body: JSON.stringify(patch),
+    }),
+  deletePlan: (id: string, planId: string) =>
+    request<void>(`/api/v1/companions/${encodeURIComponent(id)}/plans/${encodeURIComponent(planId)}`, {
+      method: 'DELETE',
+    }),
+
+  listTodos: (id: string) =>
+    request<CompanionTodo[]>(`/api/v1/companions/${encodeURIComponent(id)}/todos`),
+  createTodo: (id: string, input: CompanionTodoInput) =>
+    request<CompanionTodo>(`/api/v1/companions/${encodeURIComponent(id)}/todos`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  patchTodo: (id: string, todoId: string, revision: number | null | undefined, patch: CompanionTodoPatchInput) =>
+    request<CompanionTodo>(`/api/v1/companions/${encodeURIComponent(id)}/todos/${encodeURIComponent(todoId)}`, {
+      method: 'PATCH',
+      headers: typeof revision === 'number' ? ifMatch(revision) : undefined,
+      body: JSON.stringify(patch),
+    }),
+  deleteTodo: (id: string, todoId: string) =>
+    request<void>(`/api/v1/companions/${encodeURIComponent(id)}/todos/${encodeURIComponent(todoId)}`, {
+      method: 'DELETE',
+    }),
+
   listConversations: (id: string) =>
     request<CompanionConversation[]>(`/api/v1/companions/${encodeURIComponent(id)}/conversations`),
-  /**
-   * One page of conversations across every companion. The centre used to ask once per companion
-   * and merge client-side, which cost one request per companion on every poll and let two panels
-   * disagree inside a single refresh.
-   */
   listAllConversations: (params?: { companionId?: string; kind?: 'private' | 'group'; origin?: 'user' | 'companion'; limit?: number }) =>
     request<CompanionConversation[]>(`/api/v1/companion-conversations${query({
       companion_id: params?.companionId,
@@ -363,7 +681,6 @@ export const companionApi = {
     }),
   tickAutonomy: (id: string) =>
     request<CompanionAutonomyTickResult>(`/api/v1/companions/${encodeURIComponent(id)}/autonomy/tick`, { method: 'POST' }),
-  /** Records a gesture at the companion; it never writes a message into any conversation. */
   recordEmote: (id: string, emote: 'wave' | 'pat') =>
     request<CompanionActivity>(`/api/v1/companions/${encodeURIComponent(id)}/emote`, {
       method: 'POST', body: JSON.stringify({ emote }),
@@ -383,29 +700,17 @@ export const companionApi = {
 
 // ── Live feed ────────────────────────────────────────────────────────
 
-/**
- * Whether this renderer can hold `GET /api/v1/companion-events` open.
- *
- * The transport itself is fetch-based (`ScopedEventSource`), but a test environment that exposes
- * no `EventSource` also has no Gateway behind it: the desktop suites run under happy-dom, and the
- * absence is what lets them exercise the polling fallback instead of hanging on a stream that can
- * never deliver a frame. Probing `fetch` would be dishonest there — Node has one, and it would
- * claim a live feed the page cannot actually use.
- */
 export function companionStreamSupported(): boolean {
   return typeof EventSource !== 'undefined'
 }
 
 export interface CompanionFeedHandlers {
-  /** One durable journal row, already projected to the event name Core sent it under. */
   onNotice: (notice: CompanionEventNotice) => void
-  /** The first heartbeat of a connection: everything up to this cursor has been replayed. */
   onHeartbeat?: (cursor: number) => void
   onError?: () => void
 }
 
 export interface CompanionFeedHandle {
-  /** Where the stream stands; pass it back as `afterSeq` to resume without replaying the journal. */
   readonly cursor: number
   close(): void
 }
@@ -415,15 +720,21 @@ function parseEventPayload(text: string): CompanionEventPayload | null {
     const parsed: unknown = JSON.parse(text)
     return parsed && typeof parsed === 'object' ? parsed as CompanionEventPayload : null
   } catch {
-    // A malformed frame is one dropped row, not a broken feed: the fallback refresh still runs.
     return null
   }
 }
 
+function isDurableJournalEvent(type: CompanionEventType): boolean {
+  return type === COMPANION_ACTIVITY_EVENT
+    || type === COMPANION_RUN_EVENT
+    || type === COMPANION_SETTINGS_EVENT
+}
+
 function noticeOf(type: CompanionEventType, payload: CompanionEventPayload, cursor: number): CompanionEventNotice {
   const seq = typeof payload.seq === 'number' && Number.isFinite(payload.seq) ? payload.seq : cursor
-  const runId = payload.payload && typeof payload.payload.run_id === 'string' ? payload.payload.run_id : null
-  return {
+  const nestedRunId = payload.payload && typeof payload.payload.run_id === 'string' ? payload.payload.run_id : null
+  const runId = typeof payload.run_id === 'string' ? payload.run_id : nestedRunId
+  const base: CompanionEventNotice = {
     type,
     seq,
     kind: typeof payload.kind === 'string' ? payload.kind : null,
@@ -431,15 +742,69 @@ function noticeOf(type: CompanionEventType, payload: CompanionEventPayload, curs
     conversationId: typeof payload.conversation_id === 'string' ? payload.conversation_id : null,
     runId,
   }
+  if (type === COMPANION_DELTA_EVENT) {
+    base.delta = typeof payload.delta === 'string' ? payload.delta : ''
+  } else if (type === COMPANION_TOOL_CALL_EVENT) {
+    base.callId = typeof payload.call_id === 'string' ? payload.call_id : null
+    base.toolName = typeof payload.tool_name === 'string' ? payload.tool_name : null
+    if (payload.status === 'started' || payload.status === 'completed' || payload.status === 'failed') {
+      base.toolStatus = payload.status
+    }
+    base.argumentsPreview = typeof payload.arguments_preview === 'string' ? payload.arguments_preview : null
+    base.resultPreview = typeof payload.result_preview === 'string' ? payload.result_preview : null
+  } else if (type === COMPANION_PROPOSAL_EVENT) {
+    if (payload.kind === 'mandate' || payload.kind === 'recruitment') base.proposalKind = payload.kind
+    base.proposalId = typeof payload.proposal_id === 'string' ? payload.proposal_id : null
+    base.proposalAction = typeof payload.action === 'string' ? payload.action : null
+    base.proposalStatus = typeof payload.status === 'string' ? payload.status : null
+    base.proposalSummary = typeof payload.summary === 'string' ? payload.summary : null
+    base.proposalPayload = payload.payload && typeof payload.payload === 'object' ? payload.payload : null
+  } else if (type === COMPANION_STAGE_CUE_EVENT) {
+    base.emotion = typeof payload.emotion === 'string' ? payload.emotion : null
+    if (typeof payload.speaking === 'boolean') base.speaking = payload.speaking
+    base.intensity = typeof payload.intensity === 'number' && Number.isFinite(payload.intensity) ? payload.intensity : null
+    base.gesture = typeof payload.gesture === 'string' ? payload.gesture : null
+  } else if (type === COMPANION_WORK_SESSION_EVENT) {
+    const source = asRecord(payload.payload) ? { ...asRecord(payload.payload)!, ...payload } : (payload as unknown as Record<string, unknown>)
+    const sessionId = asNonEmptyString(source.session_id ?? source.sessionId ?? source.id)
+    if (sessionId) {
+      const rawApprovals = Array.isArray(source.pending_approvals)
+        ? source.pending_approvals
+        : Array.isArray(source.pendingApprovals)
+          ? source.pendingApprovals
+          : []
+      const pendingApprovals: CompanionWorkSessionApprovalNotice[] = rawApprovals
+        .map(normalizeWorkSessionApproval)
+        .filter((item): item is CompanionWorkSessionApprovalNotice => item !== null)
+      const wsRunId = asNonEmptyString(source.run_id ?? source.runId ?? source.latest_run_id ?? source.latestRunId) ?? base.runId
+      if (wsRunId && !base.runId) base.runId = wsRunId
+      const ws: CompanionWorkSessionNotice = {
+        sessionId,
+        sessionTitle: asNonEmptyString(source.session_title ?? source.sessionTitle ?? source.title) ?? sessionId.slice(0, 8),
+        workspaceId: asNonEmptyString(source.workspace_id ?? source.workspaceId),
+        projectId: asNonEmptyString(source.project_id ?? source.projectId),
+        projectName: asNonEmptyString(source.project_name ?? source.projectName),
+        runId: wsRunId,
+        status: asNonEmptyString(source.status ?? source.latest_run_status ?? source.latestRunStatus) ?? 'running',
+        modeName: asNonEmptyString(source.mode_name ?? source.modeName),
+        viewMode: asViewMode(source.view_mode ?? source.viewMode),
+        summary: asNonEmptyString(source.summary ?? source.latest_run_summary ?? source.latestRunSummary),
+        planSummary: asNonEmptyString(source.plan_summary ?? source.planSummary),
+        pendingApprovals,
+        browserSpaceId: asNonEmptyString(source.browser_space_id ?? source.browserSpaceId ?? source.space_id ?? source.spaceId),
+        browserUrl: asNonEmptyString(source.browser_url ?? source.browserUrl ?? source.url),
+        browserDriver: asNonEmptyString(source.browser_driver ?? source.browserDriver ?? source.driver),
+        browserHandoffReason: asNonEmptyString(source.browser_handoff_reason ?? source.browserHandoffReason ?? source.handoff_reason ?? source.handoffReason),
+        updatedAt: asNonEmptyString(source.updated_at ?? source.updatedAt ?? source.created_at),
+      }
+      base.workSession = ws
+    } else {
+      base.workSession = null
+    }
+  }
+  return base
 }
 
-/**
- * Subscribe to the companion journal from `afterSeq`. The server replays what the cursor missed and
- * then follows, so a reconnect resumes exactly where the previous subscription stopped.
- *
- * No storage header value is invented here: Core pins every `/api/v1/companion*` route to the user
- * scope, so `user` is the only honest identity this stream can carry.
- */
 export function connectCompanionEvents(
   handlers: CompanionFeedHandlers,
   afterSeq = 0,
@@ -455,7 +820,9 @@ export function connectCompanionEvents(
     const payload = parseEventPayload(message.data)
     if (!payload) return
     const notice = noticeOf(type, payload, cursor)
-    cursor = Math.max(cursor, notice.seq)
+    if (isDurableJournalEvent(type)) {
+      cursor = Math.max(cursor, notice.seq)
+    }
     handlers.onNotice(notice)
   }
   for (const type of COMPANION_EVENT_TYPES) source.addEventListener(type, handle as EventListener)
@@ -473,11 +840,6 @@ export function connectCompanionEvents(
   }
 }
 
-/**
- * Relay a notice to the other renderers of this app (the satellite companion window). It is not a
- * second subscription: the trusted main window holds the one stream, and this channel carries the
- * already-parsed notice so a window that cannot reach the Gateway still updates on the event.
- */
 export function broadcastCompanionNotice(notice: CompanionEventNotice): void {
   if (typeof BroadcastChannel === 'undefined') return
   try {
@@ -494,20 +856,6 @@ function relayChannel(): BroadcastChannel {
   return relay
 }
 
-/**
- * One stream per renderer, however many surfaces need it.
- *
- * The centre and the buddy panel both want the same journal; opening one subscription each would
- * multiply the connection and parse every frame twice (the same duplication `sessionEventBus`
- * exists to prevent). The satellite cannot open one at all — it is not a trusted host — so it
- * listens on the relay channel instead, and the trusted window is the only subscriber.
- *
- * The connection is closed while the document is hidden and resumed from the last cursor when it
- * comes back: a background window has nothing to draw, and the cursor makes the resume exact
- * rather than a replay of everything that happened overnight. In the main window that also pauses
- * the relay to the satellite, which then falls back to its own low-frequency read — an honest
- * degradation, and the reason that fallback must never be removed.
- */
 const feedHandlers = new Set<(notice: CompanionEventNotice) => void>()
 let feedSource: CompanionFeedHandle | null = null
 let feedCursor = 0
@@ -524,15 +872,15 @@ function openFeed(): void {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
   feedSource = connectCompanionEvents({
     onNotice: (notice) => {
-      feedCursor = Math.max(feedCursor, notice.seq)
+      if (isDurableJournalEvent(notice.type)) {
+        feedCursor = Math.max(feedCursor, notice.seq)
+      }
       broadcastCompanionNotice(notice)
       for (const handler of [...feedHandlers]) {
         try { handler(notice) } catch { /* One consumer must not take the shared feed down. */ }
       }
     },
     onHeartbeat: (cursor) => { feedCursor = Math.max(feedCursor, cursor) },
-    // `ScopedEventSource` reconnects on its own from the cursor it captured; nothing to do here
-    // but keep the last good cursor, which it already sends as `last-event-id`.
     onError: () => {},
   }, feedCursor)
 }
@@ -561,10 +909,6 @@ export function subscribeCompanionFeed(handler: (notice: CompanionEventNotice) =
   }
 }
 
-/**
- * Listen for relayed notices. Returns a no-op unsubscribe where BroadcastChannel does not exist
- * (the happy-dom test environment), which is exactly the case the polling fallback covers.
- */
 export function subscribeCompanionEventRelay(handler: (notice: CompanionEventNotice) => void): () => void {
   if (typeof BroadcastChannel === 'undefined') return () => {}
   const relay = new BroadcastChannel(COMPANION_EVENT_CHANNEL)
@@ -601,9 +945,7 @@ async function bridged<T>(method: CompanionBridgeMethod, path: string, body?: un
 }
 
 /**
- * The companion window's chat subset. The main process owns the credential and the path
- * whitelist; nothing here may read or write memories, skills or connection bindings, and every
- * path is relative so the proxy can never be aimed at another origin.
+ * The satellite companion window's chat subset over the main-process proxy.
  */
 export const companionBridge = {
   listCompanions: (includeArchived?: boolean) =>
@@ -645,4 +987,10 @@ export const companionBridge = {
     bridged<CompanionAutonomyTickResult>('POST', `/api/v1/companions/${encodeURIComponent(id)}/autonomy/tick`),
   recordEmote: (id: string, emote: 'wave' | 'pat') =>
     bridged<CompanionActivity>('POST', `/api/v1/companions/${encodeURIComponent(id)}/emote`, { emote }),
+  listMandates: (id: string) =>
+    bridged<CompanionMandate[]>('GET', `/api/v1/companions/${encodeURIComponent(id)}/mandates`),
+  decideMandate: (id: string, mandateId: string, revision: number, decision: 'approved' | 'denied') =>
+    bridged<CompanionMandate>('POST', `/api/v1/companions/${encodeURIComponent(id)}/mandates/${encodeURIComponent(mandateId)}/decision`, {
+      revision, decision,
+    }),
 }

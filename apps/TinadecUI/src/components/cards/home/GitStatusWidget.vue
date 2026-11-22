@@ -8,9 +8,14 @@ import { useConnection } from '@/composables/useConnection'
 import { UiIslandCard } from '@/components/ui'
 
 const props = defineProps<{ project: ProjectDto | null }>()
-const emit = defineEmits<{ open: [] }>()
+const emit = defineEmits<{
+  open: []
+  'open-file': [filePath: string]
+  'open-tab': [tab: 'changes' | 'history' | 'branches']
+}>()
 const active = inject<MaybeRefOrGetter<boolean>>('uie:active', true)
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+const label = (key: string, fallback: string) => (te(key) ? String(t(key)) : fallback)
 const { hostStatus } = useConnection()
 const { summary, updatedAt, error, loading, busy, recentCommit, historyLoaded, historyError, businessReady, refresh } = useHomeGitStatus(
   () => props.project, () => toValue(active),
@@ -63,11 +68,29 @@ const lastRead = computed(() => updatedAt.value == null ? ''
         </div>
         <div v-if="summary.files.length" class="git-widget-files">
           <span class="git-widget-section-title">{{ t('context.gitWidgetFileHeading') }}</span>
-          <div v-for="file in summary.files.slice(0, 3)" :key="file.path" class="git-widget-file">
+          <button
+            v-for="file in summary.files.slice(0, 3)"
+            :key="file.path"
+            type="button"
+            class="git-widget-file git-widget-file-btn"
+            :title="file.path"
+            @click="emit('open-file', file.path)"
+          >
             <span class="git-widget-file-mark" :class="`kind-${file.kind}`">{{ file.mark }}</span>
-            <span class="git-widget-truncate" :title="file.path">{{ file.path }}</span>
-          </div>
+            <span class="git-widget-truncate">{{ file.path }}</span>
+          </button>
           <span v-if="summary.total > 3" class="git-widget-more">{{ t('context.gitWidgetMoreFiles', { count: summary.total - 3 }) }}</span>
+        </div>
+        <div class="git-widget-quick-links" role="group" :aria-label="t('context.homeGit')">
+          <button type="button" class="git-widget-quick-link" data-testid="git-quick-changes" @click="emit('open-tab', 'changes')">
+            {{ label('context.gitQuickChanges', 'Changes') }}
+          </button>
+          <button type="button" class="git-widget-quick-link" data-testid="git-quick-log" @click="emit('open-tab', 'history')">
+            {{ label('context.gitQuickLog', 'Log') }}
+          </button>
+          <button type="button" class="git-widget-quick-link" data-testid="git-quick-branches" @click="emit('open-tab', 'branches')">
+            {{ label('context.gitQuickBranches', 'Branches') }}
+          </button>
         </div>
         <div class="git-widget-history">
           <span class="git-widget-section-title"><GitCommit :size="13" aria-hidden="true" />{{ t('context.gitWidgetLatestCommit') }}</span>
@@ -122,6 +145,11 @@ const lastRead = computed(() => updatedAt.value == null ? ''
 .git-widget-files, .git-widget-history { display: flex; flex-direction: column; gap: 5px; padding-top: 7px; border-top: 1px solid var(--border-default); min-width: 0; }
 .git-widget-section-title { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-muted); }
 .git-widget-file { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11px; color: var(--text-secondary); line-height: 1.3; }
+.git-widget-file-btn { width: 100%; border: 0; border-radius: 6px; padding: 3px 5px; background: transparent; cursor: pointer; text-align: left; }
+.git-widget-file-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+.git-widget-quick-links { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding-top: 4px; }
+.git-widget-quick-link { border: 1px solid var(--border-muted); border-radius: 6px; padding: 2px 7px; background: var(--surface-section); color: var(--text-secondary); font-size: 10.5px; cursor: pointer; }
+.git-widget-quick-link:hover { background: var(--surface-hover); color: var(--text-primary); border-color: var(--accent-primary); }
 .git-widget-file-mark { flex: none; width: 14px; font-weight: 700; color: var(--accent-warning); }
 .git-widget-file-mark.kind-conflict { color: var(--accent-danger); }
 .git-widget-file-mark.kind-untracked { color: var(--text-muted); }

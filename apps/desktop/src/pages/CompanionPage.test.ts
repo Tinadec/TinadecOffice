@@ -478,7 +478,7 @@ function createChatApi(options: ChatApiOptions = {}) {
   ]
   const settings: CompanionSettings = options.settings ?? {
     main_companion_id: companions[0]?.id ?? null,
-    buddy_companion_id: null, recruit_limit: 3,
+    max_bot_hop_depth: 3, recruit_limit: 3,
     autonomy_paused: false,
     revision: 1,
   }
@@ -623,7 +623,7 @@ describe('companion chat', () => {
   it('shows the empty state when no active companion exists', async () => {
     const harness = createChatApi({
       companions: [],
-      settings: { main_companion_id: null, buddy_companion_id: null, recruit_limit: 3, autonomy_paused: false, revision: 1 },
+      settings: { main_companion_id: null, max_bot_hop_depth: 3, recruit_limit: 3, autonomy_paused: false, revision: 1 },
     })
     const wrapper = mountChat(harness.api)
     await flushPromises()
@@ -762,6 +762,7 @@ describe('companion chat', () => {
 
     const pause = apiCalls(harness.calls, 'POST', '/pause')[0]
     expect((pause.body as { paused: boolean }).paused).toBe(true)
+    await wrapper.get(`[aria-label="${zh.companion.chat.options}"]`).trigger('click')
     expect(wrapper.get('.companion-menu-item').text()).toBe(zh.companion.chat.resume)
     expect(wrapper.get('.companion-run--paused').text()).toBe(zh.companion.chat.pausedBadge)
   })
@@ -855,32 +856,50 @@ describe('companion chat', () => {
       .toContain('hello back')
   })
 
-  it('falls back to polling when the window cannot hear journal events', async () => {
-    // A renderer the relay cannot reach: nothing may depend on an event that never arrives.
-    vi.stubGlobal('BroadcastChannel', undefined)
+  it('streams live delta bubbles from relayed SSE notices and catches up on visibility return without polling', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    vi.stubGlobal('EventSource', class {})
+    FakeBroadcastChannel.all = []
     vi.useFakeTimers()
     const harness = createChatApi({
       messages: { 'conv-companion-a': [] },
       sendRuns: [runFixture('run-live', 'companion-a', 'conv-companion-a')],
     })
     const wrapper = mountChat(harness.api)
-    await vi.runOnlyPendingTimersAsync()
     await flushPromises()
 
     await wrapper.get('.companion-input').setValue('hello')
     await wrapper.get('.companion-composer').trigger('submit')
     await flushPromises()
 
+    const mainWindow = new BroadcastChannel('tinadec.companion-events')
+    mainWindow.postMessage({
+      type: 'notice',
+      notice: {
+        type: 'companion.delta', seq: 0, kind: null,
+        companionId: 'companion-a', conversationId: 'conv-companion-a', runId: 'run-live',
+        delta: 'streaming token',
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.companion-streaming-bubble').text()).toContain('streaming token')
+
+    // Even when a relay notice arrives only on visibility return, no 800ms poll loop runs.
+    const callsBeforeWait = harness.calls.length
+    await vi.advanceTimersByTimeAsync(1500)
+    await flushPromises()
+    expect(harness.calls.length).toBe(callsBeforeWait)
+
     harness.messages['conv-companion-a'] = [
       ...(harness.messages['conv-companion-a'] ?? []),
-      messageFixture('m-reply', 'conv-companion-a', 2, 'companion', 'Aria', 'polled back', 'companion-a'),
+      messageFixture('m-reply', 'conv-companion-a', 2, 'companion', 'Aria', 'final reply', 'companion-a'),
     ]
-    // No event exists here, so only the timer can bring the reply in.
-    await vi.advanceTimersByTimeAsync(900)
+    document.dispatchEvent(new Event('visibilitychange'))
     await flushPromises()
 
     expect(wrapper.findAll('.companion-msg--companion').map((node) => node.text()).join(' '))
-      .toContain('polled back')
+      .toContain('final reply')
   })
 })
 

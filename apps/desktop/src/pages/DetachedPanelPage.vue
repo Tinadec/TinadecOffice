@@ -17,6 +17,7 @@ import OrchestrationTab from '@/components/OrchestrationTab.vue'
 import OrganizationPanel from '@/components/organization/OrganizationPanel.vue'
 import PreviewBrowserPanel from '@/components/PreviewBrowserPanel.vue'
 import AgentActivityPanel from '@/components/AgentActivityPanel.vue'
+import CodeEditorCard from '@/components/code/CodeEditorCard.vue'
 import TerminalPanel from '@/components/TerminalPanel.vue'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 
@@ -345,6 +346,8 @@ watch(sessionId, () => {
           :cwd="projectPath"
           :visible="true"
         />
+
+        <CodeEditorCard v-else-if="tabType === 'codeEditor'" />
 
         <div v-else class="detached-panel-unknown">
           <p>{{ t('context.unknownPanelType') }}: {{ tabType }}</p>

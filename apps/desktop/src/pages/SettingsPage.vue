@@ -3,8 +3,10 @@ import {
   Archive,
   ArrowLeft,
   Bot,
+  Brain,
   Database,
   FileText,
+  Globe,
   Info,
   KeyRound,
   MessagesSquare,
@@ -12,6 +14,7 @@ import {
   Palette,
   PawPrint,
   Settings2,
+  Sparkles,
   Square,
   Terminal,
   UserRound,
@@ -19,7 +22,7 @@ import {
   X,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AboutSection from '@/settings/sections/AboutSection.vue'
 import ArchiveTrashSection from '@/settings/sections/ArchiveTrashSection.vue'
@@ -33,6 +36,8 @@ import PetsSection from '@/settings/sections/PetsSection.vue'
 import ToolCenterSection from '@/settings/sections/ToolCenterSection.vue'
 import TinaChatSection from '@/settings/sections/TinaChatSection.vue'
 import CompanionSection from '@/settings/sections/CompanionSection.vue'
+import MemoryContextSection from '@/settings/sections/MemoryContextSection.vue'
+import WebAccessSection from '@/settings/sections/WebAccessSection.vue'
 import {
   api as baseApi,
   type AgentCenterOverviewDto,
@@ -51,7 +56,6 @@ const api = scopedApi(baseApi, () => 'user')
 import { manifestTools } from '../toolCatalog'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
 import { UiButton } from '@/components/ui'
-import AgentModesPanel from '@/settings/sections/AgentModesPanel.vue'
 import AgentCenterSection, { type AgentCenterTabKey } from '@/settings/agentCenter/AgentCenterSection.vue'
 import AgentsDirectoryPanel from '@/settings/agentCenter/AgentsDirectoryPanel.vue'
 import PromptEngineeringMerged from '@/settings/sections/PromptEngineeringMerged.vue'
@@ -68,53 +72,77 @@ import {
   type CompanionSettingsTab,
 } from '@/lib/pageRequests'
 import { usePanelStyles } from '@/composables/usePanelStyles'
-import { createSettingsLeaveGuard } from './settingsNavigation'
+import { usePageTransition } from '@/composables/usePageTransition'
 import { useNotifications } from '@/composables/useNotifications'
 import { useHostAccess } from '@/lib/hostAccess'
 import { useRecoverableRead, type ReadContext } from '@/composables/useRecoverableRead'
 import { useModelCenter } from '@/composables/useModelCenter'
 import { useAgentModesStore } from '@/composables/useAgentModesStore'
+import { replayOobeWizard } from '@/composables/useOobe'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { isAbortError } from '@/lib/isAbortError'
 import { patchAgentCenterUi, readCenterUiState } from '@/settings/drafts/uiState'
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 
-type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'companionAvatar' | 'apiDocs' | 'about'
+type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'memoryContext' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'companionAvatar' | 'webAccess' | 'apiDocs' | 'about'
 
 type AgentCenterTab = AgentCenterTabKey
 
 const agentCenterSectionRef = ref<InstanceType<typeof AgentCenterSection> | null>(null)
 const agentsPanelRef = ref<InstanceType<typeof AgentsDirectoryPanel> | null>(null)
-const modePanelRef = ref<InstanceType<typeof AgentModesPanel> | null>(null)
 const promptsPanelRef = ref<InstanceType<typeof PromptEngineeringMerged> | null>(null)
 const agentModesStore = useAgentModesStore()
 
 /** Switch Agent Center sub-tab while guarding unsaved mode/team edits. */
 async function switchAgentCenterTab(tab: AgentCenterTab) {
-  if (tab === agentCenterTab.value) return
+  const normalized: AgentCenterTab = tab === 'modes' ? 'teams' : tab
+  if (normalized === agentCenterTab.value) return
   if ((agentCenterTab.value === 'teams' || agentCenterTab.value === 'modes') && !(await agentModesStore.discardOrConfirm())) {
     return
   }
-  agentCenterTab.value = tab
+  agentCenterTab.value = normalized
 }
 
-/** A team is opened in the deep graph editor by reusing the existing mode deep-link. */
+/** A team or agent reverse-reference chip opens the unified Teams & Modes tab on that entry. */
+async function openModeFromDirectory(id: string) {
+  if (!id) return
+  const storeWithHelper = agentModesStore as typeof agentModesStore & {
+    selectModeAndOpen?: (modeId: string, preferredView?: 'team' | 'topology') => Promise<boolean>
+  }
+  if (typeof storeWithHelper.selectModeAndOpen === 'function') {
+    if (!(await storeWithHelper.selectModeAndOpen(id))) return
+    agentCenterTab.value = 'teams'
+    return
+  }
+  if (agentCenterTab.value !== 'teams' && !(await agentModesStore.discardOrConfirm())) return
+  agentCenterTab.value = 'teams'
+  await agentModesStore.selectMode(id)
+}
+
+/** A team is opened in the deep graph editor inside the unified Teams & Modes tab. */
 async function openModeInGraph(id: string) {
-  if (agentCenterTab.value !== 'modes' && !(await agentModesStore.discardOrConfirm())) return
-  agentCenterTab.value = 'modes'
+  const storeWithHelper = agentModesStore as typeof agentModesStore & {
+    selectModeAndOpen?: (modeId: string, preferredView?: 'team' | 'topology') => Promise<boolean>
+  }
+  if (typeof storeWithHelper.selectModeAndOpen === 'function') {
+    if (!(await storeWithHelper.selectModeAndOpen(id, 'topology'))) return
+    agentCenterTab.value = 'teams'
+    return
+  }
+  if (agentCenterTab.value !== 'teams' && !(await agentModesStore.discardOrConfirm())) return
+  agentCenterTab.value = 'teams'
   pendingModeId.value = id
 }
 
 /** Single refresh entry for the whole Agent Center: reloads the active sub-tab. */
 function refreshAgentCenterTab(tab: AgentCenterTab = agentCenterTab.value) {
-  if (tab === 'modes') void modePanelRef.value?.loadModes()
-  else if (tab === 'prompts') void promptsPanelRef.value?.refreshAll()
+  if (tab === 'prompts') void promptsPanelRef.value?.refreshAll()
   else void loadAgentCenter()
 }
 
 const { t } = useI18n()
-const { canAccessBackend } = useHostAccess()
+const { canAccessBackend, isElectron } = useHostAccess()
 const router = useRouter()
 const { notify, status, dismissByKey } = useNotifications()
 
@@ -160,6 +188,7 @@ async function closeWindow() {
   if (activeSection.value === 'storage' && storageRef.value && !await storageRef.value.canLeave()) return
   if (activeSection.value === 'tools' && toolCenterRef.value && !await toolCenterRef.value.canLeave()) return
   if (activeSection.value === 'model' && modelCenterRef.value && !await modelCenterRef.value.canLeave()) return
+  if (activeSection.value === 'memoryContext' && memoryContextRef.value && !await memoryContextRef.value.canLeave()) return
   if (activeSection.value === 'agentCenter' && !await agentModesStore.discardOrConfirm()) return
   window.tinadec?.closeWindow?.()
 }
@@ -167,12 +196,12 @@ async function closeWindow() {
 const activeSection = ref<SettingsSection>('personal')
 const toolCenterRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
 const storageRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
+const memoryContextRef = ref<{ canLeave(): Promise<boolean> } | null>(null)
 const storedCenterUi = readCenterUiState()
 
 function initialAgentCenterTab(): AgentCenterTab {
   const tab = storedCenterUi.agentCenter.tab
-  if (tab === 'teams') return 'teams'
-  if (tab === 'modes' || tab === 'graph') return 'modes'
+  if (tab === 'teams' || tab === 'modes' || tab === 'graph') return 'teams'
   if (tab === 'prompts') return 'prompts'
   if (tab === 'advanced' || tab === 'evolution' || tab === 'runtime') return 'advanced'
   return 'agents'
@@ -203,6 +232,7 @@ async function selectSettingsSection(section: SettingsSection) {
   if (section !== 'storage' && activeSection.value === 'storage' && storageRef.value && !await storageRef.value.canLeave()) return false
   if (section !== 'tools' && activeSection.value === 'tools' && toolCenterRef.value && !await toolCenterRef.value.canLeave()) return false
   if (section !== 'model' && activeSection.value === 'model' && modelCenterRef.value && !await modelCenterRef.value.canLeave()) return false
+  if (section !== 'memoryContext' && activeSection.value === 'memoryContext' && memoryContextRef.value && !await memoryContextRef.value.canLeave()) return false
   if (section !== 'agentCenter' && activeSection.value === 'agentCenter' && !await agentModesStore.discardOrConfirm()) return false
   // Mounting is the first read; `v-show` afterwards keeps the already-read section alive.
   if (section === 'companions') companionsMounted.value = true
@@ -210,26 +240,26 @@ async function selectSettingsSection(section: SettingsSection) {
   return true
 }
 
-// Spatial exit animation — declarative, class-driven.
-const settingsExiting = ref(false)
-const SETTINGS_EXIT_DURATION_MS = 530
-
-onBeforeRouteLeave(createSettingsLeaveGuard({
-  isTools: () =>
-    activeSection.value === 'tools'
-    || activeSection.value === 'storage'
-    || activeSection.value === 'model'
-    || activeSection.value === 'agentCenter',
-  canLeave: () => {
+// Unified symmetric page transition — declarative, class-driven (190ms exit, 280ms enter).
+const { isExiting: settingsExiting, transitionClasses } = usePageTransition({
+  canLeave: async () => {
+    const guarded =
+      activeSection.value === 'tools'
+      || activeSection.value === 'storage'
+      || activeSection.value === 'model'
+      || activeSection.value === 'memoryContext'
+      || activeSection.value === 'agentCenter'
+    if (!guarded) return true
     if (activeSection.value === 'agentCenter') return agentModesStore.discardOrConfirm()
     return (activeSection.value === 'storage'
       ? storageRef.value
-      : activeSection.value === 'model' ? modelCenterRef.value : toolCenterRef.value)?.canLeave() ?? Promise.resolve(true)
+      : activeSection.value === 'model'
+        ? modelCenterRef.value
+        : activeSection.value === 'memoryContext'
+          ? memoryContextRef.value
+          : toolCenterRef.value)?.canLeave() ?? true
   },
-  isExiting: () => settingsExiting.value,
-  markExiting: () => { settingsExiting.value = true },
-  durationMs: SETTINGS_EXIT_DURATION_MS,
-}))
+})
 
 // ---- About section moved to settings/sections/AboutSection.vue (D7.2) ----
 // One read/write seam for the model catalog. The agent center consumes the same refs, and the
@@ -287,12 +317,14 @@ const navItems = computed(() => [
   { key: 'storage' as const, icon: Database, label: t('settings.storage') },
   { key: 'model' as const, icon: KeyRound, label: t('settings.model') },
   { key: 'agentCenter' as const, icon: Workflow, label: t('settings.agentCenter') },
+  { key: 'memoryContext' as const, icon: Brain, label: t('settings.memoryContext') },
   { key: 'companions' as const, icon: Bot, label: t('settings.companions.title') },
   { key: 'tools' as const, icon: Terminal, label: t('settings.toolLayer') },
   { key: 'tinachat' as const, icon: MessagesSquare, label: t('tinaChat.manage') },
   { key: 'archive' as const, icon: Archive, label: t('settings.archiveTrash') },
   { key: 'appearance' as const, icon: Palette, label: t('settings.appearance') },
   { key: 'companionAvatar' as const, icon: PawPrint, label: t('settings.pets') },
+  { key: 'webAccess' as const, icon: Globe, label: t('settings.webAccess') },
   { key: 'apiDocs' as const, icon: FileText, label: t('settings.apiDocs') },
   { key: 'about' as const, icon: Info, label: t('settings.about') },
 ])
@@ -484,14 +516,10 @@ function mergeAgentDefinition(row: AgentViewDto, definition: AgentDefinitionDto)
         : row.allowed_tools ?? []
   return {
     ...row,
-    display_name: definition.display_name ?? row.display_name,
-    name: definition.display_name ?? definition.name ?? row.name,
-    layer: definition.layer ?? row.layer,
-    role: definition.role ?? definition.agent_type ?? row.role,
-    agent_type: definition.role ?? definition.agent_type ?? row.agent_type,
-    source_kind: definition.source_kind ?? row.source_kind,
-    provenance: definition.provenance ?? row.provenance ?? null,
-    base_prompt_pipeline_id: definition.base_prompt_pipeline_id ?? row.base_prompt_pipeline_id ?? null,
+    display_name: row.display_name || definition.display_name,
+    name: row.name || definition.display_name || definition.name || row.id,
+    provenance: row.provenance ?? definition.provenance ?? null,
+    base_prompt_pipeline_id: row.base_prompt_pipeline_id ?? definition.base_prompt_pipeline_id ?? null,
     description: definition.description ?? row.description ?? '',
     allowed_tools: tools,
     capabilities: definition.capabilities ?? row.capabilities ?? [],
@@ -578,7 +606,7 @@ consumeRequest(pendingAgentId, async (agentId) => {
 watch(pendingModeId, async (id) => {
   if (!id) return
   if (!await selectSettingsSection('agentCenter')) return
-  await switchAgentCenterTab('modes')
+  await switchAgentCenterTab('teams')
 }, { immediate: true })
 watch(pendingPromptId, async (id) => {
   if (!id) return
@@ -596,22 +624,24 @@ import '../settings/settings.css'
 </script>
 
 <template>
-<div class="settings-page" :class="{ 'settings-exiting': settingsExiting }" :style="settingsPageMaterialStyle" v-bind="settingsPageDataAttrs">
+<div class="settings-page" :class="[transitionClasses, { 'settings-exiting': settingsExiting }]" :style="settingsPageMaterialStyle" v-bind="settingsPageDataAttrs">
 <!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
 
 <!-- Full-width draggable bar for window dragging -->
 <div class="top-drag-bar" />
 <div class="settings-window-controls">
       <CommandPaletteButton />
-      <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" :aria-label="t('app.minimize')" @click="minimizeWindow">
-        <Minus :size="14" aria-hidden="true" />
-      </UiButton>
-      <UiButton variant="ghost" size="icon" class="window-btn maximize" :title="t('app.maximize')" :aria-label="t('app.maximize')" @click="maximizeWindow">
-        <Square :size="12" aria-hidden="true" />
-      </UiButton>
-      <UiButton variant="ghost" size="icon" class="window-btn close" :title="t('app.close')" :aria-label="t('app.close')" @click="closeWindow">
-        <X :size="14" aria-hidden="true" />
-      </UiButton>
+      <template v-if="isElectron">
+        <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" :aria-label="t('app.minimize')" @click="minimizeWindow">
+          <Minus :size="14" aria-hidden="true" />
+        </UiButton>
+        <UiButton variant="ghost" size="icon" class="window-btn maximize" :title="t('app.maximize')" :aria-label="t('app.maximize')" @click="maximizeWindow">
+          <Square :size="12" aria-hidden="true" />
+        </UiButton>
+        <UiButton variant="ghost" size="icon" class="window-btn close" :title="t('app.close')" :aria-label="t('app.close')" @click="closeWindow">
+          <X :size="14" aria-hidden="true" />
+        </UiButton>
+      </template>
     </div>
     <div class="settings-shell">
       <nav class="settings-nav" :style="settingsNavStyle" v-bind="settingsNavDataAttrs">
@@ -636,6 +666,20 @@ import '../settings/settings.css'
           <component :is="item.icon" :size="16" />
           {{ item.label }}
         </UiButton>
+        <div class="settings-nav-footer">
+          <UiButton
+            variant="ghost"
+            size="sm"
+            class="settings-nav-item settings-nav-oobe w-full justify-start"
+            data-testid="replay-oobe-btn"
+            :title="t('oobe.replay')"
+            :aria-label="t('oobe.replay')"
+            @click="replayOobeWizard()"
+          >
+            <Sparkles :size="16" />
+            {{ t('oobe.replay') }}
+          </UiButton>
+        </div>
       </nav>
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
@@ -714,20 +758,25 @@ import '../settings/settings.css'
                 @update:selected-agent-id="selectedAgentId = $event"
                 @update:configuring-agent-id="configuringAgentId = $event"
                 @patch-agent="handlePatchAgent"
+                @open-mode="openModeFromDirectory"
                 @reload="loadAgentCenter"
               />
             </template>
             <template #prompts>
               <PromptEngineeringMerged ref="promptsPanelRef" />
             </template>
-            <template #modes>
-              <AgentModesPanel ref="modePanelRef" />
-            </template>
           </AgentCenterSection>
         </template>
 
         <template v-if="activeSection === 'tools'">
           <ToolCenterSection ref="toolCenterRef" />
+        </template>
+
+        <template v-if="activeSection === 'memoryContext'">
+          <MemoryContextSection
+            ref="memoryContextRef"
+            @open-runtime-toml="switchAgentCenterTab('advanced'); selectSettingsSection('agentCenter')"
+          />
         </template>
 
         <template v-if="activeSection === 'tinachat'">
@@ -744,6 +793,10 @@ import '../settings/settings.css'
 
         <template v-if="activeSection === 'companionAvatar'">
           <PetsSection />
+        </template>
+
+        <template v-if="activeSection === 'webAccess'">
+          <WebAccessSection />
         </template>
 
         <template v-if="activeSection === 'apiDocs'">

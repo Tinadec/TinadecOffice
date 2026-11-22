@@ -15,6 +15,8 @@ import type {
   CompanionSummary,
 } from '@/lib/companionApi'
 import CompanionSection from './CompanionSection.vue'
+import CompanionEditorDrawer from './CompanionEditorDrawer.vue'
+import { __resetLive2dLoaderForTests } from '@/pets/live2dRuntimeLoader'
 
 /**
  * The companion settings surface: one read on entry, conditional writes on every save, and a
@@ -45,8 +47,10 @@ const mocks = vi.hoisted(() => ({
   addConnection: vi.fn(),
   patchConnection: vi.fn(),
   deleteConnection: vi.fn(),
+  listBrowserProfiles: vi.fn(),
   tickAutonomy: vi.fn(),
   listAgentPacks: vi.fn(),
+  listProjects: vi.fn(),
   confirm: vi.fn(),
   notifyError: vi.fn(),
   notifySuccess: vi.fn(),
@@ -76,11 +80,17 @@ vi.mock('@/lib/companionApi', () => ({
     addConnection: mocks.addConnection,
     patchConnection: mocks.patchConnection,
     deleteConnection: mocks.deleteConnection,
+    listBrowserProfiles: mocks.listBrowserProfiles,
     tickAutonomy: mocks.tickAutonomy,
   },
 }))
 
-vi.mock('@/api', () => ({ api: { listAgentPacks: mocks.listAgentPacks } }))
+vi.mock('@/api', () => ({
+  api: {
+    listAgentPacks: mocks.listAgentPacks,
+    listProjects: mocks.listProjects,
+  },
+}))
 
 // UiBadge is a vapor SFC; the vapor-in-vdom interop crashes under VTU's CJS runtime, so the
 // badge renders as a span here. Its slot text is all these assertions read.
@@ -105,8 +115,15 @@ vi.mock('@/composables/useNotifications', () => ({
 
 /** UiBadge is mocked to a span above; no vapor component is rendered by this suite. */
 
-function settings(over: Partial<CompanionSettings> = {}): CompanionSettings {
-  return { main_companion_id: 'c1', buddy_companion_id: null, recruit_limit: 3, autonomy_paused: false, revision: 1, ...over }
+function settings(over: Record<string, unknown> = {}): CompanionSettings {
+  return {
+    main_companion_id: 'c1',
+    recruit_limit: 3,
+    max_bot_hop_depth: 3,
+    autonomy_paused: false,
+    revision: 1,
+    ...over,
+  } as unknown as CompanionSettings
 }
 
 function summary(id: string, name: string, over: Partial<CompanionSummary> = {}): CompanionSummary {
@@ -244,13 +261,18 @@ beforeEach(() => {
   mocks.listMemories.mockResolvedValue([])
   mocks.listSkills.mockResolvedValue([])
   mocks.listConnections.mockResolvedValue([])
+  mocks.listBrowserProfiles.mockResolvedValue([])
   mocks.listCompanionAvatars.mockResolvedValue([])
   mocks.listAgentPacks.mockResolvedValue([])
+  mocks.listProjects.mockResolvedValue([])
   mocks.confirm.mockResolvedValue(true)
 })
 
 afterEach(() => {
   mounted.splice(0).forEach((wrapper) => wrapper.unmount())
+  delete (window as unknown as { Live2DCubismCore?: unknown }).Live2DCubismCore
+  __resetLive2dLoaderForTests()
+  vi.restoreAllMocks()
 })
 
 describe('companion settings section', () => {
@@ -373,6 +395,99 @@ describe('companion settings section', () => {
     expect(wrapper.get('[data-testid="companion-connection-auth-x1"]').text()).not.toContain(zh.companion.center.connectionRuntimeOnline)
   })
 
+  it('grants work_session scoped to all workspaces (*) or a project and shows honest connected/active status', async () => {
+    mocks.listProjects.mockResolvedValue([
+      { id: 'proj-alpha', name: 'TinadecOffice', path: 'C:/git/TinadecOffice', created_at: '2026-01-01T00:00:00Z' },
+    ])
+    let rows: CompanionConnection[] = [
+      connection({
+        id: 'ws-1',
+        kind: 'work_session',
+        name: 'All Workspaces',
+        endpoint: '*',
+        authorization: 'authorized',
+        runtime_status: 'connected',
+      }),
+    ]
+    mocks.listConnections.mockImplementation(async () => rows)
+    mocks.addConnection.mockImplementation(async (_id: string, input: Record<string, unknown>) => {
+      const created = connection({
+        id: `ws-${rows.length + 1}`,
+        kind: String(input.kind ?? 'work_session'),
+        name: String(input.name ?? 'Work Session'),
+        endpoint: (input.endpoint as string | null) ?? '*',
+        authorization: 'authorized',
+        runtime_status: 'active',
+      })
+      rows = [...rows, created]
+      return created
+    })
+
+    const wrapper = mountSection()
+    await flushPromises()
+    await wrapper.get('[data-testid="companion-tab-connections"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="companion-connection-runtime-ws-1"]').text()).toMatch(/已连接|Connected/)
+    expect(wrapper.get('[data-testid="companion-connection-endpoint-display-ws-1"]').text()).toContain('*')
+
+    // Grant work_session scoped to a specific project workspace
+    await wrapper.get('[data-testid="companion-connection-kind"]').setValue('work_session')
+    await wrapper.get('[data-testid="companion-connection-scope"]').setValue('proj-alpha')
+    await wrapper.get('[data-testid="companion-connection-add"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addConnection).toHaveBeenCalledWith('c1', expect.objectContaining({
+      kind: 'work_session',
+      endpoint: 'proj-alpha',
+      authorization: 'authorized',
+    }))
+    expect(wrapper.get('[data-testid="companion-connection-runtime-ws-2"]').text()).toMatch(/活跃|Active/)
+    expect(wrapper.get('[data-testid="companion-connection-endpoint-display-ws-2"]').text()).toContain('TinadecOffice')
+  })
+
+  it('grants browser connector with builtin_electron or ego_lite driver and optional profile', async () => {
+    mocks.listBrowserProfiles.mockResolvedValue([
+      { id: 'work', name: 'Work Chrome', driver: 'ego_lite' },
+    ])
+    let rows: CompanionConnection[] = []
+    mocks.listConnections.mockImplementation(async () => rows)
+    mocks.addConnection.mockImplementation(async (_id: string, input: Record<string, unknown>) => {
+      const created = connection({
+        id: 'br-1',
+        kind: 'browser',
+        name: String(input.name ?? 'Ego Lite'),
+        endpoint: String(input.endpoint ?? 'ego_lite:work'),
+        authorization: 'authorized',
+        runtime_status: 'connected',
+      })
+      rows = [created]
+      return created
+    })
+
+    const wrapper = mountSection()
+    await flushPromises()
+    await wrapper.get('[data-testid="companion-tab-connections"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-connection-kind"]').setValue('browser')
+    await wrapper.get('[data-testid="companion-connection-browser-driver"]').setValue('ego_lite')
+    await flushPromises()
+    await wrapper.get('[data-testid="companion-connection-browser-profile"]').setValue('work')
+    await wrapper.get('[data-testid="companion-connection-add"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addConnection).toHaveBeenCalledWith('c1', expect.objectContaining({
+      kind: 'browser',
+      endpoint: 'ego_lite:work',
+      driver: 'ego_lite',
+      profile_id: 'work',
+      authorization: 'authorized',
+    }))
+    expect(wrapper.get('[data-testid="companion-connection-runtime-br-1"]').text()).toMatch(/已连接|Connected/)
+    expect(wrapper.get('[data-testid="companion-connection-endpoint-display-br-1"]').text()).toContain('Work Chrome')
+  })
+
   it('clamps the autonomy interval and budget before saving, and shows Core\'s refusal reason', async () => {
     const tick: CompanionAutonomyTickResult = {
       acted: false,
@@ -480,5 +595,56 @@ describe('companion settings section', () => {
     expect(mocks.confirm).toHaveBeenCalled()
     expect(mocks.deleteCompanionAvatar).toHaveBeenCalledWith('model-1')
     expect(wrapper.find('[data-testid="companion-avatar-row-model-1"]').exists()).toBe(false)
+  })
+
+  it('purges buddy_companion_id UI and clamps max_bot_hop_depth into 0..10 on save', async () => {
+    const wrapper = mountSection()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="companion-buddy-companion"]').exists()).toBe(false)
+    const hopInput = wrapper.get('[data-testid="companion-max-hop-depth"]')
+    expect((hopInput.element as HTMLInputElement).value).toBe('3')
+
+    await hopInput.setValue('99')
+    await flushPromises()
+    expect(mocks.patchSettings).toHaveBeenCalledWith(1, { max_bot_hop_depth: 10 })
+    expect((hopInput.element as HTMLInputElement).value).toBe('10')
+
+    await hopInput.setValue('0')
+    await flushPromises()
+    expect(mocks.patchSettings).toHaveBeenLastCalledWith(2, { max_bot_hop_depth: 0 })
+  })
+
+  it('creates a companion bot via CompanionEditorDrawer and emits created + saved', async () => {
+    mocks.createCompanion.mockResolvedValue(detail('c3', 'Nova', { tagline: 'Ops buddy' }))
+    const createdEvents: CompanionDetail[] = []
+    const drawer = mount(CompanionEditorDrawer, {
+      props: {
+        open: true,
+        companionId: null,
+        live2dAvatars: [avatar()],
+        onCreated: (c: CompanionDetail) => createdEvents.push(c),
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': zh } })],
+      },
+    })
+    mounted.push(drawer)
+    await flushPromises()
+
+    await drawer.get('[data-testid="drawer-create-name"]').setValue('Nova')
+    await drawer.get('[data-testid="drawer-create-tagline"]').setValue('Ops buddy')
+    await drawer.get('[data-testid="drawer-avatar-live2d-model-1"] input').setValue(true)
+    await drawer.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createCompanion).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Nova',
+      tagline: 'Ops buddy',
+      avatar: 'model-1',
+      model_purpose: 'chat',
+    }))
+    expect(createdEvents).toHaveLength(1)
+    expect(createdEvents[0]?.id).toBe('c3')
   })
 })

@@ -13,7 +13,18 @@ import {
   requestAgent, requestConversation, requestMode, requestProject, requestPrompt, requestTool, requestWorkspaceFile,
 } from '@/lib/pageRequests'
 
-const mocks = vi.hoisted(() => ({ home: null as any, code: null as any, listAgents: vi.fn(), error: vi.fn(), push: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  home: null as any,
+  code: null as any,
+  listAgents: vi.fn(),
+  listDirectory: vi.fn(async (_root?: unknown, _dir?: unknown): Promise<{ status: string; data: { entries: Array<{ name: string; is_dir: boolean }> } }> => ({ status: 'ok', data: { entries: [] } })),
+  readFile: vi.fn(async (_root?: unknown, _path?: unknown) => ({ status: 'ok', data: { content: '' } })),
+  listMessages: vi.fn(async () => [] as any[]),
+  listAttachments: vi.fn(async () => [] as any[]),
+  getOrchestrationSnapshot: vi.fn(async () => null as any),
+  error: vi.fn(),
+  push: vi.fn(),
+}))
 vi.mock('@/controllers/HomeController', () => ({ get homeController() { return mocks.home } }))
 vi.mock('@/controllers/CodeController', () => ({ get codeController() { return mocks.code } }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }), useRoute: () => ({ query: {}, params: {} }), onBeforeRouteLeave: vi.fn() }))
@@ -40,6 +51,11 @@ vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api')>()
   return { ...actual, api: new Proxy({}, { get(_target, key) {
   if (key === 'listAgents') return mocks.listAgents
+  if (key === 'listDirectory') return mocks.listDirectory
+  if (key === 'readFile') return mocks.readFile
+  if (key === 'listMessages') return mocks.listMessages
+  if (key === 'listAttachments') return mocks.listAttachments
+  if (key === 'getOrchestrationSnapshot') return mocks.getOrchestrationSnapshot
   if (key === 'getAgent') return vi.fn(async (id: string) => ({ id, description: `Profile ${id}`, system_prompt: '', capabilities: [], tool_scope: [], revision: 1 }))
   if (key === 'listAgentModeTopologies') return vi.fn(async () => [{ id: 'mode-a', display_name: 'First mode' }, { id: 'mode-b', display_name: 'Target mode' }])
   if (key === 'getAgentModeTopology') return vi.fn(async (id: string) => ({ id, nodes: [], edges: [], revision: 1 }))
@@ -53,8 +69,14 @@ vi.mock('@/api', async (importOriginal) => {
 })
 
 import HomePage from './HomePage.vue'
-import CodePage from './CodePage.vue'
 import SettingsPage from './SettingsPage.vue'
+import ComposerCommandPanel from '@/components/ComposerCommandPanel.vue'
+import {
+  invalidateWorkspaceCommands,
+  loadWorkspaceCommands,
+  parseWorkspaceCommandMarkdown,
+  renderWorkspaceCommandTemplate,
+} from '@/composables/useWorkspaceCommands'
 
 const projects = [{ id: 'project-a', name: 'First', path: 'C:/first' }, { id: 'project-b', name: 'Target', path: 'C:/target' }]
 const fragments = ['prompt-a', 'prompt-b'].map(id => ({
@@ -76,6 +98,12 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   refreshSpotlight()
+  invalidateWorkspaceCommands()
+  mocks.listDirectory.mockResolvedValue({ status: 'ok', data: { entries: [] } })
+  mocks.readFile.mockResolvedValue({ status: 'ok', data: { content: '' } })
+  mocks.listMessages.mockResolvedValue([])
+  mocks.listAttachments.mockResolvedValue([])
+  mocks.getOrchestrationSnapshot.mockResolvedValue(null)
   vi.stubGlobal('fetch', vi.fn(async (url) => new Response(JSON.stringify(String(url).includes('/prompt-fragments') ? fragments : ['read_file', 'read_file_other'].map(id => ({
     id, description: 'Read file', requires_approval: false, input_schema: {}, risk: 'low', mutates_workspace: false,
     retry_safety: 'safe', confirmation_fields: [],
@@ -132,28 +160,6 @@ describe('search navigation through the shipping pages', () => {
     expect(mocks.home.selectedSessionId.value).toBe('free-session')
     expect(pendingConversationId.value).toBe(null)
     expect(mocks.error).not.toHaveBeenCalled()
-  })
-
-  it('waits for the file project, then opens its actual tab and handles another result on the same page', async () => {
-    requestWorkspaceFile({ path: 'C:/target/a.ts', projectId: 'project-b' })
-    wrappers.push(mount(CodePage, { global: global() }))
-    await flushPromises()
-    expect(mocks.code.handleFileSelect).not.toHaveBeenCalled()
-    mocks.code.projects.value = projects
-    mocks.code.selectedProjectId.value = 'project-a'
-    mocks.code.busy.value = false
-    await flushPromises()
-    expect(mocks.code.setProject).toHaveBeenCalledWith('project-b')
-    expect(mocks.code.handleFileSelect).toHaveBeenCalledWith('C:/target/a.ts')
-    requestWorkspaceFile({ path: 'C:/first/b.ts', projectId: 'project-a' })
-    await flushPromises()
-    expect(mocks.code.selectedProjectId.value).toBe('project-a')
-    expect(mocks.code.openTabs.value[0].path).toBe('C:/first/b.ts')
-    requestWorkspaceFile({ path: 'gone.ts', projectId: 'removed-project' })
-    await flushPromises()
-    expect(mocks.error).toHaveBeenCalledOnce()
-    expect(mocks.code.loadProjects).toHaveBeenCalledOnce()
-    expect(mocks.code.handleFileSelect).toHaveBeenCalledTimes(2)
   })
 
   it('refreshes a stale roster once and keeps a newer navigation request ahead of the old read', async () => {
@@ -276,5 +282,166 @@ describe('search navigation through the shipping pages', () => {
     expect(wrapper.get('.agent-detail-panel').text()).toContain('agent-b')
     expect(mocks.listAgents).toHaveBeenCalledTimes(3)
     expect(mocks.error).not.toHaveBeenCalled()
+  })
+
+  it('discovers .tinadec/commands/*.md with YAML frontmatter & $ARGUMENTS and emits insert-template from ComposerCommandPanel', async () => {
+    const parsed = parseWorkspaceCommandMarkdown(
+      '.tinadec/commands/review-pr.md',
+      '---\ndescription: Review PR diff carefully\nhint: Pass PR number\n---\nPlease review PR $ARGUMENTS for edge cases.',
+    )
+    expect(parsed.slash).toBe('review-pr')
+    expect(parsed.description).toBe('Review PR diff carefully')
+    expect(parsed.hasArgumentsPlaceholder).toBe(true)
+    expect(renderWorkspaceCommandTemplate(parsed, '#42')).toBe('Please review PR #42 for edge cases.')
+
+    mocks.listDirectory.mockResolvedValueOnce({
+      status: 'ok',
+      data: { entries: [{ name: 'review-pr.md', is_dir: false }] },
+    })
+    mocks.readFile.mockResolvedValueOnce({
+      status: 'ok',
+      data: {
+        all_contents: [
+          { content: { Content: '---', LineNumber: 1 } },
+          { content: { Content: 'description: Review PR diff', LineNumber: 2 } },
+          { content: { Content: '---', LineNumber: 3 } },
+          { content: { Content: 'Review target: $ARGUMENTS', LineNumber: 4 } },
+        ],
+      } as any,
+    })
+
+    const anchor = document.createElement('div')
+    document.body.appendChild(anchor)
+    const inserted: string[] = []
+    const wrapper = mount(ComposerCommandPanel, {
+      attachTo: document.body,
+      props: {
+        open: true,
+        anchor,
+        canAttach: true,
+        permission: 'default',
+        workspaceRoot: 'C:/workspace/demo',
+        slashQuery: 'review-pr auth.ts',
+        commandHost: {
+          canStop: () => false, draft: () => '', setDraft: vi.fn(), send: vi.fn(),
+          stopRun: vi.fn(), newSession: vi.fn(), navigate: vi.fn(), routeName: () => 'home',
+        },
+        'onInsert-template': (tpl: string) => inserted.push(tpl),
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const row = document.querySelector<HTMLElement>('[data-testid="composer-workspace-command-review-pr"]')
+    expect(row).not.toBeNull()
+    row!.click()
+    await flushPromises()
+    expect(inserted).toEqual(['Review target: auth.ts'])
+    anchor.remove()
+  })
+
+  it('discovers .apm/prompts/*.prompt.md with ${input:...} placeholders and prioritizes .tinadec/commands on collision', async () => {
+    const parsedApm = parseWorkspaceCommandMarkdown(
+      '.apm/prompts/code-review.prompt.md',
+      '---\ndescription: Run APM security code review\n---\nAudit ${input:target:File or module} and inspect ${input:focus}.',
+    )
+    expect(parsedApm.slash).toBe('code-review')
+    expect(parsedApm.name).toBe('code-review')
+    expect(parsedApm.description).toBe('Run APM security code review')
+    expect(parsedApm.sourceKind).toBe('apm')
+    expect(parsedApm.hasArgumentsPlaceholder).toBe(true)
+    expect(renderWorkspaceCommandTemplate(parsedApm, 'src/auth.ts')).toBe('Audit src/auth.ts and inspect src/auth.ts.')
+    expect(renderWorkspaceCommandTemplate(parsedApm, '')).toBe('Audit ${input:target:File or module} and inspect ${input:focus}.')
+
+    mocks.listDirectory.mockImplementation(async (_root: unknown, dir: unknown) => {
+      if (dir === '.tinadec/commands') {
+        return { status: 'ok', data: { entries: [{ name: 'code-review.md', is_dir: false }] } }
+      }
+      if (dir === '.apm/prompts') {
+        return {
+          status: 'ok',
+          data: {
+            entries: [
+              { name: 'code-review.prompt.md', is_dir: false },
+              { name: 'security-audit.prompt.md', is_dir: false },
+              { name: 'README.md', is_dir: false },
+            ],
+          },
+        }
+      }
+      return { status: 'ok', data: { entries: [] } }
+    })
+    mocks.readFile.mockImplementation(async (_root: unknown, relPath: unknown) => {
+      if (relPath === '.tinadec/commands/code-review.md') {
+        return { status: 'ok', data: { content: '---\ndescription: Tinadec native review\n---\nNative review: $ARGUMENTS' } }
+      }
+      if (relPath === '.apm/prompts/code-review.prompt.md') {
+        return { status: 'ok', data: { content: '---\ndescription: APM shadowed review\n---\nAPM review: ${input:target}' } }
+      }
+      if (relPath === '.apm/prompts/security-audit.prompt.md') {
+        return { status: 'ok', data: { content: '---\ndescription: APM supply chain audit\n---\nInspect ${input:package} for hidden Unicode.' } }
+      }
+      return { status: 'ok', data: { content: '' } }
+    })
+
+    const discovered = await loadWorkspaceCommands('C:/workspace/apm-demo', { force: true })
+    expect(discovered.map(cmd => cmd.slash)).toEqual(['code-review', 'security-audit'])
+    expect(discovered.find(cmd => cmd.slash === 'code-review')?.description).toBe('Tinadec native review')
+    expect(discovered.find(cmd => cmd.slash === 'code-review')?.sourceKind).toBe('tinadec')
+    const apmCmd = discovered.find(cmd => cmd.slash === 'security-audit')
+    expect(apmCmd?.sourceKind).toBe('apm')
+    expect(apmCmd?.hasArgumentsPlaceholder).toBe(true)
+    expect(renderWorkspaceCommandTemplate(apmCmd!, 'apm.yml')).toBe('Inspect apm.yml for hidden Unicode.')
+  })
+
+  it('searches cross-session messages, artifacts, and task records in Spotlight and jumps cleanly', async () => {
+    mocks.listMessages.mockResolvedValueOnce([
+      { id: 'msg-9', session_id: 'sess-alpha', role: 'assistant', content: 'Deployed quantum-cache patch cleanly.', created_at: '2026-11-20T00:00:00Z' },
+    ])
+    mocks.listAttachments.mockResolvedValueOnce([
+      { id: 'att-7', file_name: 'quantum-cache-report.pdf', media_type: 'application/pdf', source_path: 'docs/quantum-cache-report.pdf' },
+    ])
+    mocks.getOrchestrationSnapshot.mockResolvedValueOnce({
+      nodes: [
+        { id: 'task-42', title: 'Verify quantum-cache latency', description: 'Check p99', lane_key: 'qa', status: 'completed', success_criteria: [] },
+      ],
+      step_results: [],
+    })
+
+    const openedSessions: string[] = []
+    const openedPaths: Array<[string, string | undefined]> = []
+    const focusEvents: CustomEvent[] = []
+    const onFocus = (e: Event) => focusEvents.push(e as CustomEvent)
+    window.addEventListener('tinadec:focus-orchestration-node', onFocus)
+    try {
+      const host: SpotlightHost = {
+        navigate: vi.fn(), navigateSettings: vi.fn(),
+        openSession: (id) => openedSessions.push(id),
+        openProject: vi.fn(), openAgent: vi.fn(), openMode: vi.fn(), openPrompt: vi.fn(), openTool: vi.fn(), selectProvider: vi.fn(),
+        openWorkspacePath: (p, pid) => openedPaths.push([p, pid]),
+        loadedSessions: () => [{ id: 'sess-alpha', project_id: 'project-a', title: 'Alpha rollout', updated_at: '2026-11-20T00:00:00Z' } as any],
+        workspaceRoot: () => '',
+      }
+      const results = await searchSpotlight('quantum-cache', host, key => key, [])
+      const msgHit = results.find(g => g.kind === 'message')?.items[0]
+      const artHit = results.find(g => g.kind === 'artifact')?.items[0]
+      const taskHit = results.find(g => g.kind === 'task')?.items[0]
+
+      expect(msgHit?.label).toContain('quantum-cache')
+      expect(artHit?.label).toBe('quantum-cache-report.pdf')
+      expect(taskHit?.label).toBe('Verify quantum-cache latency')
+
+      msgHit!.action()
+      artHit!.action()
+      taskHit!.action()
+
+      expect(openedSessions).toEqual(['sess-alpha', 'sess-alpha'])
+      expect(openedPaths).toEqual([['docs/quantum-cache-report.pdf', 'project-a']])
+      expect(focusEvents).toHaveLength(1)
+      expect(focusEvents[0]!.detail.taskId).toBe('task-42')
+    } finally {
+      window.removeEventListener('tinadec:focus-orchestration-node', onFocus)
+    }
   })
 })

@@ -24,8 +24,22 @@ import { scoreMatch } from '@/lib/appCommands'
 import { selectionKey } from '@/lib/storageScope'
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { searchedFilePaths, toWorkspaceRelative, type FileSearchDataDto } from '@/lib/workspaceSearch'
+import { resetGlobalSearchCache, searchGlobalRecords } from '@/composables/useGlobalSearch'
 
-export type SpotlightKind = 'command' | 'project' | 'conversation' | 'model' | 'agent' | 'mode' | 'prompt' | 'tool' | 'setting' | 'resource'
+export type SpotlightKind =
+  | 'command'
+  | 'project'
+  | 'conversation'
+  | 'message'
+  | 'artifact'
+  | 'task'
+  | 'model'
+  | 'agent'
+  | 'mode'
+  | 'prompt'
+  | 'tool'
+  | 'setting'
+  | 'resource'
 
 export interface SpotlightItem {
   id: string
@@ -53,6 +67,9 @@ export const spotlightKindOrder: readonly SpotlightKind[] = [
   'command',
   'project',
   'conversation',
+  'message',
+  'artifact',
+  'task',
   'resource',
   'agent',
   'mode',
@@ -173,6 +190,7 @@ export function refreshSpotlight(): void {
   snapshotGeneration += 1
   catalogCache.clear()
   catalogRequests.clear()
+  resetGlobalSearchCache(snapshotGeneration)
 }
 
 // ── item builders ────────────────────────────────────────────────────
@@ -431,20 +449,45 @@ export async function searchSpotlight(
     const result = await loadCatalog(key, load, options.signal)
     push({ kind, items: rank(query, build(result.rows)), error: result.error })
   })
+  const sessionsPromise = source('conversation', async () => {
+    sessions = await loadCatalog('sessions', async signal => {
+      const result = await loadSessionCatalog({ signal, previous: host.loadedSessions() })
+      return { rows: result.rows, error: result.failures.map(failure => failure.source.storageId + ': ' + failure.error.message).join('; ') || undefined }
+    }, options.signal)
+    updateConversations()
+  })
+  const projectsPromise = source('project', async () => {
+    const result = await loadCatalog('projects', (signal) => api.listProjects({ signal }), options.signal)
+    projects = result.rows
+    push({ kind: 'project', items: rank(query, projectItems(projects, host)), error: result.error })
+    updateConversations()
+  })
+  const deepSearchPromise = (async () => {
+    if (query.trim().length < 2) return
+    await Promise.all([sessionsPromise, projectsPromise])
+    if (options.signal?.aborted) return
+    const sessionRows = sessions?.rows.length ? sessions.rows : host.loadedSessions()
+    if (!sessionRows.length && !projects.length) return
+    try {
+      const deep = await boundedSource(
+        (sourceSignal) => searchGlobalRecords(query, sessionRows, projects, host, t, { signal: sourceSignal }),
+        options.signal,
+      )
+      if (!options.signal?.aborted) {
+        push(deep.messages)
+        push(deep.artifacts)
+        push(deep.tasks)
+        publish()
+      }
+    } catch {
+      // Aborted or timed-out deep scan must not discard already-found catalog hits.
+    }
+  })()
+
   await Promise.all([
-    source('conversation', async () => {
-      sessions = await loadCatalog('sessions', async signal => {
-        const result = await loadSessionCatalog({ signal, previous: host.loadedSessions() })
-        return { rows: result.rows, error: result.failures.map(failure => failure.source.storageId + ': ' + failure.error.message).join('; ') || undefined }
-      }, options.signal)
-      updateConversations()
-    }),
-    source('project', async () => {
-      const result = await loadCatalog('projects', (signal) => api.listProjects({ signal }), options.signal)
-      projects = result.rows
-      push({ kind: 'project', items: rank(query, projectItems(projects, host)), error: result.error })
-      updateConversations()
-    }),
+    sessionsPromise,
+    projectsPromise,
+    deepSearchPromise,
     catalog('providers', 'model', (signal) => api.listModelProviders({ signal }), (rows) => modelItems(rows, host, t)),
     catalog('agents', 'agent', (signal) => api.listAgents({ signal }), (rows) => agentItems(rows, host)),
     catalog('modes', 'mode', (signal) => api.listAgentModes({ signal }), (rows) => modeItems(rows, host)),

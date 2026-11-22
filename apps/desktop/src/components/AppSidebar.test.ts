@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppSidebar from './AppSidebar.vue'
 import sidebarSource from './AppSidebar.vue?raw'
 import type { ProjectDto, SessionDto } from '../api'
-import { useDebugStudio } from '@/composables/useDebugStudio'
 import { freeWorkspaceKey, workspaceListStorageKey } from '@/composables/useWorkspaceList'
 import { auth } from '@/lib/auth'
 import { setNickname } from '@/lib/userProfile'
@@ -85,7 +84,7 @@ describe('companion domain', () => {
     expect(wrapper.find('.workspace-section').exists()).toBe(false)
     // No work entry points leak into the companion centre.
     expect(wrapper.find('[title="sidebar.newChat"]').exists()).toBe(false)
-    expect(wrapper.find('[title="sidebar.market"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sidebar-governance"]').exists()).toBe(false)
 
     const entries = wrapper.findAll('.sidebar-nav-companion .sidebar-nav-item')
     expect(entries.map((entry) => entry.attributes('data-testid'))).toEqual([
@@ -106,31 +105,6 @@ describe('companion domain', () => {
     // Projects and sessions are supplied but unrendered: the centre observes companions, not work.
     expect(wrapper.findAll('.session-row')).toHaveLength(0)
     expect(wrapper.emitted('select-session')).toBeUndefined()
-  })
-})
-
-describe('Debug Studio opt-in navigation', () => {
-  it('hides the entry by default and follows the host preference after an explicit save', async () => {
-    const getAppConfig = vi.fn(async () => ({ debug_studio_enabled: false }))
-    const saveDebugStudioEnabled = vi.fn(async (value: boolean) => ({ debug_studio_enabled: value }))
-    const openDebugStudio = vi.fn(async () => true)
-    const previousHost = window.tinadec
-    Object.defineProperty(window, 'tinadec', { configurable: true, value: { getAppConfig, saveDebugStudioEnabled, openDebugStudio } })
-    const wrapper = factory()
-    try {
-      await flushPromises()
-      expect(wrapper.find('[title="sidebar.debugStudio"]').exists()).toBe(false)
-      await useDebugStudio().saveEnabled(true)
-      await flushPromises()
-      await wrapper.get('[title="sidebar.debugStudio"]').trigger('click')
-      expect(openDebugStudio).toHaveBeenCalledOnce()
-      await useDebugStudio().saveEnabled(false)
-      await flushPromises()
-      expect(wrapper.find('[title="sidebar.debugStudio"]').exists()).toBe(false)
-    } finally {
-      wrapper.unmount()
-      Object.defineProperty(window, 'tinadec', { configurable: true, value: previousHost })
-    }
   })
 })
 
@@ -488,15 +462,13 @@ describe('AppSidebar lifecycle management', () => {
   })
 
   it('keeps the observer-side navigation clickable while a run is busy', async () => {
-    // 这条原本是聊天室的用例（它是唯一刻意不接 :disabled="busy" 的按钮）；聊天室界面删除后，
-    // 同一个保证落在市场按钮上——busy 期间挡住导航就是运行中连页面都切不了。
     const wrapper = factory({ busy: true, collapsed: true })
     expect(wrapper.find('[title="sidebar.commandCenter"]').exists()).toBe(false)
     expect(wrapper.find('[title="space.switchView"]').exists()).toBe(true)
-    const button = wrapper.get('[title="sidebar.market"]')
-    expect(button.attributes('disabled')).toBeUndefined()
-    await button.trigger('click')
-    expect(wrapper.emitted('go-market')).toHaveLength(1)
+    const settingsBtn = wrapper.get('[title="sidebar.settings"]')
+    expect(settingsBtn.attributes('disabled')).toBeUndefined()
+    await settingsBtn.trigger('click')
+    expect(wrapper.emitted('go-settings')).toHaveLength(1)
     wrapper.unmount()
   })
 

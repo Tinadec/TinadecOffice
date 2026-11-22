@@ -15,6 +15,7 @@ import {
   GitCommitHorizontal,
   List,
   FolderTree,
+  History,
   Loader2,
   Minus,
   Plus,
@@ -26,6 +27,8 @@ import {
   Upload,
   RefreshCw,
   ExternalLink,
+  UserCheck,
+  FileCode2,
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -117,6 +120,17 @@ interface Props {
   canDecideDiscardApproval: boolean
   canDecideResolveConflictApproval: boolean
   recentCommits: string[]
+  // JetBrains #32 1-click governed human flow + responsive split props
+  compact?: boolean
+  initialSelectedFile?: string | null
+  amendCommit?: boolean
+  useQuickFlow?: boolean
+  canQuickStage?: boolean
+  canQuickCommit?: boolean
+  canQuickDiscard?: boolean
+  canQuickPush?: boolean
+  canQuickPull?: boolean
+  canQuickFetch?: boolean
 }
 
 const props = defineProps<Props>()
@@ -124,6 +138,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   'update:commitMessage': [value: string]
   'update:pullStrategy': [value: 'ff-only' | 'merge' | 'rebase']
+  'update:amendCommit': [value: boolean]
   'refresh': []
   'toggle-path': [path: string]
   'toggle-select-all': []
@@ -143,9 +158,22 @@ const emit = defineEmits<{
   'request-resolve-conflict': [path: string, strategy: 'ours' | 'theirs' | 'both']
   'execute-resolve-conflict': []
   'decide-approval': [approval: ApprovalDto, decision: 'approved' | 'rejected']
+  // #32 1-click governed human flow + file inspector bridge
+  'quick-stage': [selection?: { patch?: string; paths?: string[] }]
+  'quick-unstage': [selection?: { patch?: string; paths?: string[] }]
+  'quick-commit': [opts?: { amend?: boolean; pushAfter?: boolean }]
+  'quick-discard': [paths: string[], includeUntracked: boolean]
+  'quick-resolve-conflict': [path: string, strategy: 'ours' | 'theirs' | 'both']
+  'quick-fetch': []
+  'quick-pull': []
+  'quick-push': []
+  'show-history': [path: string]
+  'annotate-blame': [path: string]
+  'open-in-editor': [path: string]
 }>()
 
 const { t, te } = useI18n()
+const lbl = (key: string, fallback: string) => (typeof te === 'function' && te(key) ? t(key) : fallback)
 const { approvalStatusLabel } = useStatusLabels()
 
 // ---- Diff preview ----
@@ -192,9 +220,19 @@ const diffEntries = computed<DiffFileEntry[]>(() => {
 })
 
 watch(diffEntries, (entries) => {
-  if (!entries.some((e) => e.path === selectedDiffFile.value)) {
-    selectedDiffFile.value = entries[0]?.path ?? null
+  if (props.initialSelectedFile && entries.some((e) => e.path === props.initialSelectedFile)) {
+    selectedDiffFile.value = props.initialSelectedFile
+    return
   }
+  if (!entries.some((e) => e.path === selectedDiffFile.value)) {
+    selectedDiffFile.value = entries[0]?.path ?? props.initialSelectedFile ?? null
+  }
+}, { immediate: true })
+
+watch(() => props.initialSelectedFile, (file) => {
+  if (!file) return
+  selectedDiffFile.value = file
+  showDiffPreview.value = true
 }, { immediate: true })
 
 watch(indexDiffText, () => {
@@ -224,6 +262,11 @@ function toggleHunk(hunkId: string) {
 
 function requestSelectedLines() {
   if (!selectedTextPatch.value) return
+  if (props.useQuickFlow) {
+    if (indexMode.value === 'stage') emit('quick-stage', { patch: selectedTextPatch.value })
+    else emit('quick-unstage', { patch: selectedTextPatch.value })
+    return
+  }
   if (indexMode.value === 'stage') emit('request-stage', { patch: selectedTextPatch.value })
   else emit('request-unstage', { patch: selectedTextPatch.value })
 }
@@ -237,7 +280,9 @@ function requestFileHunks(path: string) {
   }
   selectedLineIds.value = next
   const patch = buildGitIndexPatch(parsedDiff.value, next)
-  if (patch) emit('request-stage', { patch })
+  if (!patch) return
+  if (props.useQuickFlow) emit('quick-stage', { patch })
+  else emit('request-stage', { patch })
 }
 
 // ---- AI commit message ----
@@ -366,21 +411,33 @@ const filesExpanded = ref(true)
 const commitExpanded = ref(true)
 const pushExpanded = ref(true)
 
-// ---- Discard inline confirm (second explicit step before approval) ----
+// ---- Quick-flow effective capability flags ----
+const canStageNow = computed(() => (props.useQuickFlow ? (props.canQuickStage ?? props.canRequestIndexApproval) : props.canRequestIndexApproval))
+const canCommitNow = computed(() => (props.useQuickFlow ? (props.canQuickCommit ?? props.canRequestCommitApproval) : props.canRequestCommitApproval))
+const canDiscardNow = computed(() => (props.useQuickFlow ? (props.canQuickDiscard ?? props.canRequestDiscardApproval) : props.canRequestDiscardApproval))
+const canPushNow = computed(() => (props.useQuickFlow ? (props.canQuickPush ?? props.canRequestPushApproval) : props.canRequestPushApproval))
+const canPullNow = computed(() => (props.useQuickFlow ? (props.canQuickPull ?? props.canRequestPullApproval) : props.canRequestPullApproval))
+const canFetchNow = computed(() => (props.useQuickFlow ? (props.canQuickFetch ?? props.canRequestFetchApproval) : props.canRequestFetchApproval))
+
+// ---- Discard inline confirm (legacy two-step) or direct panel confirm (quick flow) ----
 const discardConfirm = ref<{ paths: string[]; includeUntracked: boolean } | null>(null)
 
 function isUntrackedTarget(path: string): boolean {
   const file = props.statusFiles.find((item) => item.path === path)
-  return file?.is_untracked === true || (file?.status ?? file?.unstaged_status) === '?'
+  return file?.is_untracked === true || (file?.status ?? file?.unstaged_status) === '?' || file?.status === 'untracked'
 }
 
 function openDiscardConfirm(paths: string[]) {
   const targets = [...new Set(paths.map((p) => p.trim()).filter(Boolean))]
   if (targets.length === 0 || props.operationLoading) return
+  const hasUntracked = targets.some((p) => isUntrackedTarget(p))
+  if (props.useQuickFlow) {
+    emit('quick-discard', targets, hasUntracked)
+    return
+  }
   discardConfirm.value = {
     paths: targets,
-    // 未跟踪文件必须勾选才会删除：默认按目标是否含未跟踪自动勾选。
-    includeUntracked: targets.some((p) => isUntrackedTarget(p)),
+    includeUntracked: hasUntracked,
   }
 }
 
@@ -394,19 +451,32 @@ const sortedStatusFiles = computed(() => {
 })
 
 function stageSingleFile(path: string) {
-  emit('toggle-path', path)
+  if (props.useQuickFlow) {
+    emit('quick-stage', { paths: [path] })
+    return
+  }
   if (!props.selectedPaths.has(path)) {
-    // will be added
+    emit('toggle-path', path)
   }
   emit('request-stage')
 }
 
 function unstageSingleFile(path: string) {
-  emit('toggle-path', path)
+  if (props.useQuickFlow) {
+    emit('quick-unstage', { paths: [path] })
+    return
+  }
+  if (!props.selectedPaths.has(path)) {
+    emit('toggle-path', path)
+  }
   emit('request-unstage')
 }
 
 function stageAllUnstaged() {
+  if (props.useQuickFlow) {
+    emit('quick-stage', { paths: unstagedFiles.value.map((f) => f.path) })
+    return
+  }
   unstagedFiles.value.forEach((f) => {
     if (!props.selectedPaths.has(f.path)) {
       emit('toggle-path', f.path)
@@ -416,6 +486,10 @@ function stageAllUnstaged() {
 }
 
 function unstageAllStaged() {
+  if (props.useQuickFlow) {
+    emit('quick-unstage', { paths: stagedFiles.value.map((f) => f.path) })
+    return
+  }
   stagedFiles.value.forEach((f) => {
     if (!props.selectedPaths.has(f.path)) {
       emit('toggle-path', f.path)
@@ -425,6 +499,10 @@ function unstageAllStaged() {
 }
 
 function stageFolder(paths: string[]) {
+  if (props.useQuickFlow) {
+    emit('quick-stage', { paths })
+    return
+  }
   paths.forEach((p) => {
     if (!props.selectedPaths.has(p)) {
       emit('toggle-path', p)
@@ -434,12 +512,40 @@ function stageFolder(paths: string[]) {
 }
 
 function unstageFolder(paths: string[]) {
+  if (props.useQuickFlow) {
+    emit('quick-unstage', { paths })
+    return
+  }
   paths.forEach((p) => {
     if (!props.selectedPaths.has(p)) {
       emit('toggle-path', p)
     }
   })
   emit('request-unstage')
+}
+
+function triggerStageSelected() {
+  if (props.useQuickFlow) {
+    emit('quick-stage')
+    return
+  }
+  emit('request-stage')
+}
+
+function triggerUnstageSelected() {
+  if (props.useQuickFlow) {
+    emit('quick-unstage')
+    return
+  }
+  emit('request-unstage')
+}
+
+function triggerResolveConflict(path: string, strategy: 'ours' | 'theirs' | 'both') {
+  if (props.useQuickFlow) {
+    emit('quick-resolve-conflict', path, strategy)
+    return
+  }
+  emit('request-resolve-conflict', path, strategy)
 }
 
 function selectAndOpenDiff(path: string) {
@@ -452,7 +558,7 @@ function selectAndOpenDiff(path: string) {
 const hasDirtyTree = computed(() => props.statusFiles.length > 0)
 const pullDisabledReason = computed(() => {
   if (props.operationLoading) return ''
-  if (!props.canRequestPullApproval) {
+  if (!canPullNow.value) {
     if (hasDirtyTree.value) return t('context.gitPullDirtyHint')
     if (props.behind <= 0) return t('context.gitPullUpToDate')
     return t('context.gitPullNeedsSession')
@@ -469,13 +575,22 @@ function toggleViewMode() {
   localStorage.setItem('git_changes_view_mode', viewMode.value)
 }
 
+const conflictsExpanded = ref(true)
 const stagedExpanded = ref(true)
 const unstagedExpanded = ref(true)
+const untrackedExpanded = ref(true)
 const stagedFiles = computed(() => props.statusFiles.filter(isStagedFile))
 const unstagedFiles = computed(() => props.statusFiles.filter(isUnstagedFile))
+const trackedUnstagedFiles = computed(() =>
+  unstagedFiles.value.filter((f) => !f.is_conflicted && !isUntrackedTarget(f.path)),
+)
+const untrackedFiles = computed(() =>
+  unstagedFiles.value.filter((f) => !f.is_conflicted && isUntrackedTarget(f.path)),
+)
 
 const stagedTreeRoots = computed(() => buildFileTree(stagedFiles.value))
-const unstagedTreeRoots = computed(() => buildFileTree(unstagedFiles.value))
+const unstagedTreeRoots = computed(() => buildFileTree(trackedUnstagedFiles.value))
+const untrackedTreeRoots = computed(() => buildFileTree(untrackedFiles.value))
 
 const collapsedFolders = ref<Set<string>>(new Set())
 function toggleFolder(path: string) {
@@ -496,6 +611,7 @@ function collapseAllFolders() {
   }
   collect(stagedTreeRoots.value)
   collect(unstagedTreeRoots.value)
+  collect(untrackedTreeRoots.value)
   collapsedFolders.value = allFolders
 }
 function expandAllFolders() {
@@ -508,6 +624,10 @@ function toggleSplitMenu() {
   splitMenuOpen.value = !splitMenuOpen.value
 }
 function handlePrimaryCommit() {
+  if (props.useQuickFlow) {
+    emit('quick-commit', { amend: !!props.amendCommit })
+    return
+  }
   if (props.commitApproval?.status === 'approved') {
     emit('execute-commit')
   } else {
@@ -516,6 +636,10 @@ function handlePrimaryCommit() {
 }
 function handleCommitAndPush() {
   splitMenuOpen.value = false
+  if (props.useQuickFlow) {
+    emit('quick-commit', { amend: !!props.amendCommit, pushAfter: true })
+    return
+  }
   if (props.commitApproval?.status === 'approved') {
     emit('execute-commit')
     emit('request-push')
@@ -534,7 +658,8 @@ function handleCommitKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="git-changes-view">
+  <div class="git-changes-view" :class="{ 'is-split': !compact }">
+    <div class="git-changes-main-col">
     <!-- File changes section -->
     <UiIslandCard padding="none">
       <button class="git-section-header" @click="filesExpanded = !filesExpanded">
@@ -596,6 +721,74 @@ function handleCommitKeydown(e: KeyboardEvent) {
           {{ t('context.gitNoChanges') }}
         </div>
         <div v-else class="git-sections-container">
+          <!-- MERGE CONFLICTS SECTION -->
+          <div v-if="conflictedFiles.length > 0" class="git-sub-section conflicts-sub-section">
+            <div class="git-sub-header" @click="conflictsExpanded = !conflictsExpanded">
+              <component :is="conflictsExpanded ? ChevronDown : ChevronRight" :size="13" />
+              <span class="git-sub-title">{{ lbl('context.gitMergeConflicts', 'Merge Conflicts') }}</span>
+              <span class="git-sub-count">{{ conflictedFiles.length }}</span>
+            </div>
+            <div v-show="conflictsExpanded" class="git-sub-body">
+              <div class="git-file-list">
+                <div
+                  v-for="file in conflictedFiles"
+                  :key="`conflict-${file.path}`"
+                  class="git-file-row status-conflicted"
+                  :class="{ 'is-active-diff': selectedDiffFile === file.path }"
+                >
+                  <div class="git-file-row-main" @click="selectAndOpenDiff(file.path)">
+                    <AlertTriangle :size="13" class="git-file-icon" />
+                    <span class="git-file-path" :title="file.path">{{ file.path }}</span>
+                    <div class="git-row-hover-actions is-visible" @click.stop>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitShowHistory', 'Show History')"
+                        @click.stop="emit('show-history', file.path)"
+                      >
+                        <History :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitOpenInEditor', 'Open in Editor')"
+                        @click.stop="emit('open-in-editor', file.path)"
+                      >
+                        <FileCode2 :size="12" />
+                      </button>
+                    </div>
+                  </div>
+                  <div class="git-conflict-actions">
+                    <button
+                      class="git-conflict-btn"
+                      :disabled="operationLoading"
+                      :title="t('context.gitConflictOurs')"
+                      @click="triggerResolveConflict(file.path, 'ours')"
+                    >
+                      {{ t('context.gitConflictOurs') }}
+                    </button>
+                    <button
+                      class="git-conflict-btn"
+                      :disabled="operationLoading"
+                      :title="t('context.gitConflictTheirs')"
+                      @click="triggerResolveConflict(file.path, 'theirs')"
+                    >
+                      {{ t('context.gitConflictTheirs') }}
+                    </button>
+                    <button
+                      class="git-conflict-btn"
+                      :disabled="operationLoading"
+                      :title="t('context.gitConflictBoth')"
+                      @click="triggerResolveConflict(file.path, 'both')"
+                    >
+                      {{ t('context.gitConflictBoth') }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- STAGED CHANGES SECTION -->
           <div class="git-sub-section staged-sub-section">
             <div class="git-sub-header" @click="stagedExpanded = !stagedExpanded">
@@ -608,7 +801,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
                   class="git-sub-action-btn"
                   :title="t('context.gitUnstageAll')"
                   :disabled="operationLoading || stagedFiles.length === 0"
-                  @click.stop="emit('request-unstage')"
+                  @click.stop="unstageAllStaged"
                 >
                   <Minus :size="12" />
                 </button>
@@ -631,11 +824,14 @@ function handleCommitKeydown(e: KeyboardEvent) {
                   :operation-loading="operationLoading"
                   @toggle-select="emit('toggle-path', $event)"
                   @select-diff="selectAndOpenDiff($event)"
-                  @stage-file="emit('toggle-path', $event); emit('request-stage')"
-                  @unstage-file="emit('toggle-path', $event); emit('request-unstage')"
+                  @stage-file="stageSingleFile($event)"
+                  @unstage-file="unstageSingleFile($event)"
                   @discard-file="openDiscardConfirm([$event])"
                   @stage-folder="stageFolder($event)"
                   @unstage-folder="unstageFolder($event)"
+                  @show-history="emit('show-history', $event)"
+                  @annotate-blame="emit('annotate-blame', $event)"
+                  @open-in-editor="emit('open-in-editor', $event)"
                 />
               </div>
               <!-- Staged Flat List -->
@@ -657,14 +853,14 @@ function handleCommitKeydown(e: KeyboardEvent) {
                     <component :is="statusIcon(file.status ?? file.unstaged_status)" :size="13" class="git-file-icon" />
                     <span class="git-file-path" :title="file.path">{{ file.path }}</span>
                     <span class="git-file-status-badge">{{ statusToLabel(file.status ?? file.unstaged_status) }}</span>
-                    
+
                     <div class="git-row-hover-actions" @click.stop>
                       <button
                         type="button"
                         class="git-hover-btn"
-                        :title="t('context.gitUnstageSelected')"
+                        :title="lbl('context.gitUnstageAction', t('context.gitUnstageSelected'))"
                         :disabled="operationLoading"
-                        @click.stop="emit('toggle-path', file.path); emit('request-unstage')"
+                        @click.stop="unstageSingleFile(file.path)"
                       >
                         <Minus :size="12" />
                       </button>
@@ -672,11 +868,35 @@ function handleCommitKeydown(e: KeyboardEvent) {
                         v-if="!file.is_conflicted"
                         type="button"
                         class="git-hover-btn is-discard"
-                        :title="t('context.gitDiscardFile')"
+                        :title="lbl('context.gitRollback', t('context.gitDiscardFile'))"
                         :disabled="operationLoading"
                         @click.stop="openDiscardConfirm([file.path])"
                       >
                         <RotateCcw :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitShowHistory', 'Show History')"
+                        @click.stop="emit('show-history', file.path)"
+                      >
+                        <History :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitAnnotateBlame', 'Annotate')"
+                        @click.stop="emit('annotate-blame', file.path)"
+                      >
+                        <UserCheck :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitOpenInEditor', 'Open in Editor')"
+                        @click.stop="emit('open-in-editor', file.path)"
+                      >
+                        <FileCode2 :size="12" />
                       </button>
                       <button
                         type="button"
@@ -698,23 +918,23 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <div class="git-sub-header" @click="unstagedExpanded = !unstagedExpanded">
               <component :is="unstagedExpanded ? ChevronDown : ChevronRight" :size="13" />
               <span class="git-sub-title">{{ t('context.gitUnstagedChanges') }}</span>
-              <span class="git-sub-count">{{ unstagedFiles.length }}</span>
+              <span class="git-sub-count">{{ trackedUnstagedFiles.length }}</span>
               <div class="git-sub-actions" @click.stop>
                 <button
                   type="button"
                   class="git-sub-action-btn"
                   :title="t('context.gitStageAll')"
-                  :disabled="operationLoading || unstagedFiles.length === 0"
-                  @click.stop="emit('request-stage')"
+                  :disabled="operationLoading || trackedUnstagedFiles.length === 0"
+                  @click.stop="stageFolder(trackedUnstagedFiles.map((f) => f.path))"
                 >
                   <Plus :size="12" />
                 </button>
                 <button
                   type="button"
                   class="git-sub-action-btn is-discard"
-                  :title="t('context.gitDiscardAll')"
-                  :disabled="operationLoading || unstagedFiles.length === 0"
-                  @click.stop="openDiscardConfirm(unstagedFiles.map((f) => f.path))"
+                  :title="lbl('context.gitRollback', t('context.gitDiscardAll'))"
+                  :disabled="operationLoading || trackedUnstagedFiles.length === 0"
+                  @click.stop="openDiscardConfirm(trackedUnstagedFiles.map((f) => f.path))"
                 >
                   <RotateCcw :size="12" />
                 </button>
@@ -722,7 +942,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             </div>
 
             <div v-show="unstagedExpanded" class="git-sub-body">
-              <div v-if="unstagedFiles.length === 0" class="git-sub-empty">
+              <div v-if="trackedUnstagedFiles.length === 0" class="git-sub-empty">
                 {{ t('context.gitNoneUncommitted') }}
               </div>
               <!-- Unstaged Tree View -->
@@ -737,17 +957,20 @@ function handleCommitKeydown(e: KeyboardEvent) {
                   :operation-loading="operationLoading"
                   @toggle-select="emit('toggle-path', $event)"
                   @select-diff="selectAndOpenDiff($event)"
-                  @stage-file="emit('toggle-path', $event); emit('request-stage')"
-                  @unstage-file="emit('toggle-path', $event); emit('request-unstage')"
+                  @stage-file="stageSingleFile($event)"
+                  @unstage-file="unstageSingleFile($event)"
                   @discard-file="openDiscardConfirm([$event])"
                   @stage-folder="stageFolder($event)"
                   @unstage-folder="unstageFolder($event)"
+                  @show-history="emit('show-history', $event)"
+                  @annotate-blame="emit('annotate-blame', $event)"
+                  @open-in-editor="emit('open-in-editor', $event)"
                 />
               </div>
               <!-- Unstaged Flat List -->
               <div v-else class="git-file-list">
                 <div
-                  v-for="file in unstagedFiles"
+                  v-for="file in trackedUnstagedFiles"
                   :key="file.path"
                   class="git-file-row"
                   :class="[statusColorClass(file.status ?? file.unstaged_status), { 'is-active-diff': selectedDiffFile === file.path }]"
@@ -768,9 +991,9 @@ function handleCommitKeydown(e: KeyboardEvent) {
                       <button
                         type="button"
                         class="git-hover-btn"
-                        :title="t('context.gitStageSelected')"
+                        :title="lbl('context.gitStageAction', t('context.gitStageSelected'))"
                         :disabled="operationLoading"
-                        @click.stop="emit('toggle-path', file.path); emit('request-stage')"
+                        @click.stop="stageSingleFile(file.path)"
                       >
                         <Plus :size="12" />
                       </button>
@@ -778,11 +1001,35 @@ function handleCommitKeydown(e: KeyboardEvent) {
                         v-if="!file.is_conflicted"
                         type="button"
                         class="git-hover-btn is-discard"
-                        :title="t('context.gitDiscardFile')"
+                        :title="lbl('context.gitRollback', t('context.gitDiscardFile'))"
                         :disabled="operationLoading"
                         @click.stop="openDiscardConfirm([file.path])"
                       >
                         <RotateCcw :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitShowHistory', 'Show History')"
+                        @click.stop="emit('show-history', file.path)"
+                      >
+                        <History :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitAnnotateBlame', 'Annotate')"
+                        @click.stop="emit('annotate-blame', file.path)"
+                      >
+                        <UserCheck :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitOpenInEditor', 'Open in Editor')"
+                        @click.stop="emit('open-in-editor', file.path)"
+                      >
+                        <FileCode2 :size="12" />
                       </button>
                       <button
                         type="button"
@@ -794,32 +1041,107 @@ function handleCommitKeydown(e: KeyboardEvent) {
                       </button>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
-                  <div v-if="file.is_conflicted" class="git-conflict-actions">
-                    <button
-                      class="git-conflict-btn"
-                      :disabled="operationLoading"
-                      :title="t('context.gitConflictOurs')"
-                      @click="emit('request-resolve-conflict', file.path, 'ours')"
-                    >
-                      {{ t('context.gitConflictOurs') }}
-                    </button>
-                    <button
-                      class="git-conflict-btn"
-                      :disabled="operationLoading"
-                      :title="t('context.gitConflictTheirs')"
-                      @click="emit('request-resolve-conflict', file.path, 'theirs')"
-                    >
-                      {{ t('context.gitConflictTheirs') }}
-                    </button>
-                    <button
-                      class="git-conflict-btn"
-                      :disabled="operationLoading"
-                      :title="t('context.gitConflictBoth')"
-                      @click="emit('request-resolve-conflict', file.path, 'both')"
-                    >
-                      {{ t('context.gitConflictBoth') }}
-                    </button>
+          <!-- UNVERSIONED FILES SECTION -->
+          <div v-if="untrackedFiles.length > 0" class="git-sub-section untracked-sub-section">
+            <div class="git-sub-header" @click="untrackedExpanded = !untrackedExpanded">
+              <component :is="untrackedExpanded ? ChevronDown : ChevronRight" :size="13" />
+              <span class="git-sub-title">{{ lbl('context.gitUnversionedFiles', 'Unversioned Files') }}</span>
+              <span class="git-sub-count">{{ untrackedFiles.length }}</span>
+              <div class="git-sub-actions" @click.stop>
+                <button
+                  type="button"
+                  class="git-sub-action-btn"
+                  :title="t('context.gitStageAll')"
+                  :disabled="operationLoading"
+                  @click.stop="stageFolder(untrackedFiles.map((f) => f.path))"
+                >
+                  <Plus :size="12" />
+                </button>
+                <button
+                  type="button"
+                  class="git-sub-action-btn is-discard"
+                  :title="lbl('context.gitRollback', t('context.gitDiscardAll'))"
+                  :disabled="operationLoading"
+                  @click.stop="openDiscardConfirm(untrackedFiles.map((f) => f.path))"
+                >
+                  <RotateCcw :size="12" />
+                </button>
+              </div>
+            </div>
+
+            <div v-show="untrackedExpanded" class="git-sub-body">
+              <div v-if="viewMode === 'tree'" class="git-tree-container">
+                <GitTreeNodeRow
+                  v-for="rootNode in untrackedTreeRoots"
+                  :key="rootNode.path"
+                  :node="rootNode"
+                  :depth="0"
+                  :selected-paths="selectedPaths"
+                  :active-diff-path="selectedDiffFile"
+                  :operation-loading="operationLoading"
+                  @toggle-select="emit('toggle-path', $event)"
+                  @select-diff="selectAndOpenDiff($event)"
+                  @stage-file="stageSingleFile($event)"
+                  @unstage-file="unstageSingleFile($event)"
+                  @discard-file="openDiscardConfirm([$event])"
+                  @stage-folder="stageFolder($event)"
+                  @unstage-folder="unstageFolder($event)"
+                  @show-history="emit('show-history', $event)"
+                  @annotate-blame="emit('annotate-blame', $event)"
+                  @open-in-editor="emit('open-in-editor', $event)"
+                />
+              </div>
+              <div v-else class="git-file-list">
+                <div
+                  v-for="file in untrackedFiles"
+                  :key="file.path"
+                  class="git-file-row status-added"
+                  :class="{ 'is-active-diff': selectedDiffFile === file.path }"
+                >
+                  <div class="git-file-row-main" @click="selectAndOpenDiff(file.path)">
+                    <UiCheckbox
+                      :model-value="selectedPaths.has(file.path)"
+                      :aria-label="file.path"
+                      class="git-checkbox"
+                      @click.stop
+                      @update:model-value="emit('toggle-path', file.path)"
+                    />
+                    <FilePlus :size="13" class="git-file-icon" />
+                    <span class="git-file-path" :title="file.path">{{ file.path }}</span>
+                    <span class="git-file-status-badge">?</span>
+                    <div class="git-row-hover-actions" @click.stop>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitStageAction', t('context.gitStageSelected'))"
+                        :disabled="operationLoading"
+                        @click.stop="stageSingleFile(file.path)"
+                      >
+                        <Plus :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn is-discard"
+                        :title="lbl('context.gitRollback', t('context.gitDiscardFile'))"
+                        :disabled="operationLoading"
+                        @click.stop="openDiscardConfirm([file.path])"
+                      >
+                        <RotateCcw :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="lbl('context.gitOpenInEditor', 'Open in Editor')"
+                        @click.stop="emit('open-in-editor', file.path)"
+                      >
+                        <FileCode2 :size="12" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -827,8 +1149,8 @@ function handleCommitKeydown(e: KeyboardEvent) {
           </div>
         </div>
 
-        <!-- Conflict resolution approval -->
-        <div v-if="resolveConflictApproval" class="git-conflict-approval">
+        <!-- Conflict resolution approval (legacy flow only) -->
+        <div v-if="!useQuickFlow && resolveConflictApproval" class="git-conflict-approval">
           <div class="git-conflict-approval-info">
             <ShieldCheck :size="13" />
             <span>{{ approvalSummary(resolveConflictApproval, { t, te }) }}</span>
@@ -855,9 +1177,9 @@ function handleCommitKeydown(e: KeyboardEvent) {
           </div>
         </div>
 
-        <!-- Diff preview toggle -->
+        <!-- Compact diff preview toggle (when compact width, full split pane handles !compact) -->
         <button
-          v-if="diffEntries.length > 0"
+          v-if="compact && diffEntries.length > 0"
           class="git-diff-toggle"
           @click="showDiffPreview = !showDiffPreview"
         >
@@ -865,7 +1187,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
           <span>{{ t('context.gitDiffPreview') }}</span>
           <small>{{ diffEntries.length }} {{ t('context.gitDiffFiles') }}</small>
         </button>
-        <div v-if="showDiffPreview && diffEntries.length > 0" class="git-diff-preview">
+        <div v-if="compact && showDiffPreview && diffEntries.length > 0" class="git-diff-preview">
           <DiffViewer
             :files="diffEntries"
             :selected-file-path="selectedDiffFile"
@@ -923,22 +1245,22 @@ function handleCommitKeydown(e: KeyboardEvent) {
         <div class="git-stage-actions">
           <button
             class="secondary-button git-action-btn"
-            :disabled="operationLoading || !canRequestIndexApproval"
-            @click="emit('request-stage')"
+            :disabled="operationLoading || !canStageNow"
+            @click="triggerStageSelected"
           >
             <Plus :size="13" />
             <span>{{ t('context.gitStage') }}</span>
           </button>
           <button
             class="secondary-button git-action-btn"
-            :disabled="operationLoading || !canRequestIndexApproval"
-            @click="emit('request-unstage')"
+            :disabled="operationLoading || !canStageNow"
+            @click="triggerUnstageSelected"
           >
             <span>{{ t('context.gitUnstage') }}</span>
           </button>
           <button
             class="secondary-button git-action-btn git-discard-btn"
-            :disabled="operationLoading || !canRequestDiscardApproval"
+            :disabled="operationLoading || !canDiscardNow"
             :title="t('context.gitDiscardSelectedHint')"
             @click="openDiscardConfirm([...selectedPaths])"
           >
@@ -946,7 +1268,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <span>{{ t('context.gitDiscardSelected') }}</span>
           </button>
           <button
-            v-if="indexApproval?.status === 'approved'"
+            v-if="!useQuickFlow && indexApproval?.status === 'approved'"
             class="secondary-button git-action-btn git-execute-btn"
             :disabled="operationLoading"
             @click="emit('execute-index')"
@@ -954,7 +1276,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <CheckCircle2 :size="13" />
             <span>{{ t('context.gitExecuteIndexUpdate') }}</span>
           </button>
-          <div v-if="canDecideIndexApproval" class="git-approval-decide">
+          <div v-if="!useQuickFlow && canDecideIndexApproval" class="git-approval-decide">
             <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', indexApproval!, 'approved')">
               <CheckCircle2 :size="14" />
             </button>
@@ -963,7 +1285,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             </button>
           </div>
           <button
-            v-if="canDecideIndexApproval"
+            v-if="!useQuickFlow && canDecideIndexApproval"
             class="secondary-button git-action-btn git-execute-btn"
             :disabled="operationLoading"
             @click="emit('decide-approval', indexApproval!, 'approved'); $nextTick(() => emit('execute-index'))"
@@ -1099,15 +1421,15 @@ function handleCommitKeydown(e: KeyboardEvent) {
     </UiIslandCard>
 
     <!-- Commit message section -->
-    <UiIslandCard padding="none">
+    <UiIslandCard padding="none" class="git-commit-composer-card">
       <button class="git-section-header" @click="commitExpanded = !commitExpanded">
         <component :is="commitExpanded ? ChevronDown : ChevronRight" :size="14" />
         <GitCommitHorizontal :size="14" />
         <span>{{ t('context.gitCommitMessage') }}</span>
       </button>
 
-      <div v-show="commitExpanded" class="git-section-body">
-        <!-- AI generation panel -->
+      <div v-show="commitExpanded" class="git-section-body" @keydown="handleCommitKeydown">
+        <!-- AI generation panel + Amend checkbox -->
         <div class="git-ai-bar">
           <button
             class="secondary-button git-ai-btn"
@@ -1117,6 +1439,15 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <component :is="aiGenerating ? Loader2 : Sparkles" :size="13" :class="{ spinning: aiGenerating }" />
             <span>{{ aiGenerating ? t('context.gitAiGenerating') : t('context.gitAiGenerate') }}</span>
           </button>
+          <label class="git-amend-toggle" :title="lbl('context.gitAmendHint', 'Amend the last commit')">
+            <UiCheckbox
+              :model-value="!!amendCommit"
+              :aria-label="lbl('context.gitAmend', 'Amend')"
+              class="git-checkbox"
+              @update:model-value="emit('update:amendCommit', $event)"
+            />
+            <span>{{ lbl('context.gitAmend', 'Amend') }}</span>
+          </label>
         </div>
 
         <CommitMessageEditor
@@ -1141,13 +1472,14 @@ function handleCommitKeydown(e: KeyboardEvent) {
           <span>{{ t('context.gitCommitStagedHint', { count: stagedCount }) }}</span>
         </div>
 
-        <!-- Split Commit Action (VSCode/openchamber/t3code style) -->
+        <!-- Split Commit Action (JetBrains Commit / Commit & Push) -->
         <div class="git-commit-split-wrapper">
           <div class="git-split-button-group">
             <button
               type="button"
               class="git-split-main-btn"
-              :disabled="operationLoading || !canRequestCommitApproval"
+              data-testid="git-primary-commit-btn"
+              :disabled="operationLoading || !canCommitNow"
               @click="handlePrimaryCommit"
             >
               <GitCommitHorizontal :size="13" />
@@ -1167,7 +1499,8 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <button
               type="button"
               class="git-split-menu-item"
-              :disabled="operationLoading || !canRequestCommitApproval"
+              data-testid="git-commit-and-push-btn"
+              :disabled="operationLoading || !canCommitNow"
               @click="handleCommitAndPush"
             >
               <Upload :size="13" />
@@ -1176,7 +1509,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <button
               type="button"
               class="git-split-menu-item"
-              :disabled="operationLoading || !canRequestCommitApproval"
+              :disabled="operationLoading || !canCommitNow"
               @click="handlePrimaryCommit"
             >
               <CheckCircle2 :size="13" />
@@ -1185,8 +1518,8 @@ function handleCommitKeydown(e: KeyboardEvent) {
           </div>
         </div>
 
-        <!-- Commit actions -->
-        <div class="git-commit-actions">
+        <!-- Legacy Commit approval actions (shown only outside 1-click flow) -->
+        <div v-if="!useQuickFlow" class="git-commit-actions">
           <button
             class="secondary-button git-action-btn"
             :disabled="operationLoading || !canRequestCommitApproval"
@@ -1204,7 +1537,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <span>{{ t('context.gitExecuteCommit') }}</span>
           </button>
         </div>
-        <div v-if="canDecideCommitApproval" class="git-approval-decide">
+        <div v-if="!useQuickFlow && canDecideCommitApproval" class="git-approval-decide">
           <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', commitApproval!, 'approved')">
             <CheckCircle2 :size="14" />
           </button>
@@ -1213,7 +1546,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
           </button>
         </div>
         <button
-          v-if="canDecideCommitApproval"
+          v-if="!useQuickFlow && canDecideCommitApproval"
           class="secondary-button git-action-btn git-execute-btn"
           :disabled="operationLoading"
           @click="emit('decide-approval', commitApproval!, 'approved'); $nextTick(() => emit('execute-commit'))"
@@ -1263,15 +1596,15 @@ function handleCommitKeydown(e: KeyboardEvent) {
           <div class="git-sync-actions">
             <button
               class="secondary-button git-action-btn"
-              :disabled="operationLoading || !canRequestFetchApproval"
+              :disabled="operationLoading || !canFetchNow"
               :title="t('context.gitFetchHint')"
-              @click="emit('request-fetch')"
+              @click="useQuickFlow ? emit('quick-fetch') : emit('request-fetch')"
             >
               <RefreshCw :size="13" />
-              <span>{{ t('context.gitRequestFetchApproval') }}</span>
+              <span>{{ useQuickFlow ? t('context.gitFetchTitle') : t('context.gitRequestFetchApproval') }}</span>
             </button>
             <button
-              v-if="fetchApproval?.status === 'approved'"
+              v-if="!useQuickFlow && fetchApproval?.status === 'approved'"
               class="secondary-button git-action-btn git-execute-btn"
               :disabled="operationLoading"
               @click="emit('execute-fetch')"
@@ -1280,7 +1613,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
               <span>{{ t('context.gitExecuteFetch') }}</span>
             </button>
           </div>
-          <div v-if="canDecideFetchApproval" class="git-approval-decide">
+          <div v-if="!useQuickFlow && canDecideFetchApproval" class="git-approval-decide">
             <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', fetchApproval!, 'approved')">
               <CheckCircle2 :size="14" />
             </button>
@@ -1299,12 +1632,12 @@ function handleCommitKeydown(e: KeyboardEvent) {
           <div class="git-sync-actions">
             <button
               class="secondary-button git-action-btn git-pull-btn"
-              :disabled="operationLoading || !canRequestPullApproval"
+              :disabled="operationLoading || !canPullNow"
               :title="pullDisabledReason || t('context.gitPullOnlyHintShort')"
-              @click="emit('request-pull')"
+              @click="useQuickFlow ? emit('quick-pull') : emit('request-pull')"
             >
               <Download :size="13" />
-              <span>{{ t('context.gitRequestPullApproval') }}</span>
+              <span>{{ useQuickFlow ? t('context.gitPullOnlyTitle') : t('context.gitRequestPullApproval') }}</span>
             </button>
             <label class="git-strategy-select" :title="t('context.gitPullStrategyHint')">
               <span>{{ t('context.gitPullStrategy') }}</span>
@@ -1324,7 +1657,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
           <small v-if="pullDisabledReason" class="git-sync-hint">{{ pullDisabledReason }}</small>
           <small v-else class="git-sync-hint">{{ t('context.gitPullStrategyFfNote') }}</small>
           <button
-            v-if="pullApproval?.status === 'approved'"
+            v-if="!useQuickFlow && pullApproval?.status === 'approved'"
             class="secondary-button git-action-btn git-execute-btn"
             :disabled="operationLoading"
             @click="emit('execute-pull')"
@@ -1332,7 +1665,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             <Download :size="13" />
             <span>{{ t('context.gitExecutePull') }}</span>
           </button>
-          <div v-if="canDecidePullApproval" class="git-approval-decide">
+          <div v-if="!useQuickFlow && canDecidePullApproval" class="git-approval-decide">
             <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', pullApproval!, 'approved')">
               <CheckCircle2 :size="14" />
             </button>
@@ -1342,20 +1675,20 @@ function handleCommitKeydown(e: KeyboardEvent) {
           </div>
         </div>
 
-        <!-- 3) Push: local -> remote -->
+        <!-- 3) Push: local -> remote (always confirmed before pushing) -->
         <div class="git-sync-group">
           <div class="git-sync-group-title">{{ t('context.gitPushTitle') }}</div>
           <div class="git-sync-actions">
             <button
               class="secondary-button git-action-btn"
-              :disabled="operationLoading || !canRequestPushApproval"
-              @click="emit('request-push')"
+              :disabled="operationLoading || !canPushNow"
+              @click="useQuickFlow ? emit('quick-push') : emit('request-push')"
             >
               <Upload :size="13" />
-              <span>{{ t('context.gitRequestPushApproval') }}</span>
+              <span>{{ useQuickFlow ? t('context.gitPushTitle') : t('context.gitRequestPushApproval') }}</span>
             </button>
             <button
-              v-if="pushApproval?.status === 'approved'"
+              v-if="!useQuickFlow && pushApproval?.status === 'approved'"
               class="secondary-button git-action-btn git-execute-btn"
               :disabled="operationLoading"
               @click="emit('execute-push')"
@@ -1365,7 +1698,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
             </button>
           </div>
         </div>
-        <div v-if="canDecidePushApproval" class="git-approval-decide">
+        <div v-if="!useQuickFlow && canDecidePushApproval" class="git-approval-decide">
           <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', pushApproval!, 'approved')">
             <CheckCircle2 :size="14" />
           </button>
@@ -1374,7 +1707,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
           </button>
         </div>
         <button
-          v-if="canDecidePushApproval"
+          v-if="!useQuickFlow && canDecidePushApproval"
           class="secondary-button git-action-btn git-execute-btn"
           :disabled="operationLoading"
           @click="emit('decide-approval', pushApproval!, 'approved'); $nextTick(() => emit('execute-push'))"
@@ -1384,6 +1717,82 @@ function handleCommitKeydown(e: KeyboardEvent) {
         </button>
       </div>
     </UiIslandCard>
+    </div>
+
+    <!-- Wide Split Diff Column (Side-by-Side JetBrains layout when !compact) -->
+    <div v-if="!compact" class="git-changes-diff-col" data-testid="git-changes-split-diff">
+      <UiIslandCard padding="none" class="git-diff-col-card">
+        <div class="git-diff-pane-head">
+          <span class="git-diff-pane-path" :title="selectedDiffFile ?? ''">
+            {{ selectedDiffFile ?? t('context.gitDiffPreview') }}
+          </span>
+          <div class="git-diff-pane-mode">
+            <button type="button" :class="{ active: indexMode === 'stage' }" @click="indexMode = 'stage'">
+              {{ t('context.gitWorkingTree') }}
+            </button>
+            <button type="button" :class="{ active: indexMode === 'unstage' }" :disabled="!stagedDiffText" @click="indexMode = 'unstage'">
+              {{ t('context.gitStagedIndex') }}
+            </button>
+          </div>
+          <div v-if="selectedDiffFile" class="git-diff-pane-actions">
+            <button
+              type="button"
+              class="git-hover-btn"
+              :title="lbl('context.gitShowHistory', 'Show History')"
+              @click="emit('show-history', selectedDiffFile)"
+            >
+              <History :size="12" />
+            </button>
+            <button
+              type="button"
+              class="git-hover-btn"
+              :title="lbl('context.gitAnnotateBlame', 'Annotate')"
+              @click="emit('annotate-blame', selectedDiffFile)"
+            >
+              <UserCheck :size="12" />
+            </button>
+            <button
+              type="button"
+              class="git-hover-btn"
+              :title="lbl('context.gitOpenInEditor', 'Open in Editor')"
+              @click="emit('open-in-editor', selectedDiffFile)"
+            >
+              <FileCode2 :size="12" />
+            </button>
+          </div>
+        </div>
+        <div v-if="diffEntries.length === 0" class="git-empty-state">
+          {{ t('context.gitNoChanges') }}
+        </div>
+        <div v-else class="git-diff-preview git-split-diff-body">
+          <DiffViewer
+            :files="diffEntries"
+            :selected-file-path="selectedDiffFile"
+            :enable-hunk-actions="indexMode === 'stage'"
+            @update:selected-file-path="selectedDiffFile = $event"
+            @stage-hunk="(payload) => requestFileHunks(payload.filePath)"
+            @discard-hunk="(payload) => openDiscardConfirm([payload.filePath])"
+          />
+          <div v-if="parsedDiff.files.length > 0" class="git-line-shelf">
+            <div class="git-line-shelf-head">
+              <div class="git-line-shelf-mode">
+                <button type="button" :class="{ active: indexMode === 'stage' }" @click="indexMode = 'stage'">{{ t('context.gitWorkingTree') }}</button>
+                <button type="button" :class="{ active: indexMode === 'unstage' }" :disabled="!stagedDiffText" @click="indexMode = 'unstage'">{{ t('context.gitStagedIndex') }}</button>
+              </div>
+              <button
+                type="button"
+                class="secondary-button git-action-btn"
+                :disabled="operationLoading || !selectedTextPatch"
+                @click="requestSelectedLines"
+              >
+                <Plus :size="13" />
+                <span>{{ indexMode === 'stage' ? t('context.gitStageLines') : t('context.gitUnstageLines') }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </UiIslandCard>
+    </div>
 
   </div>
 </template>
@@ -1393,6 +1802,93 @@ function handleCommitKeydown(e: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.git-changes-view.is-split {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.92fr) minmax(300px, 1.25fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.git-changes-main-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.git-changes-diff-col {
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+
+.git-diff-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.git-diff-pane-path {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.git-diff-pane-mode {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.git-diff-pane-mode button {
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.git-diff-pane-mode button.active {
+  color: var(--text-primary);
+  background: var(--surface-button);
+}
+
+.git-diff-pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.git-split-diff-body {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.git-amend-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-left: auto;
+  user-select: none;
+}
+
+.git-row-hover-actions.is-visible {
+  opacity: 1;
 }
 
 /* Section islands (UiIslandCard) */

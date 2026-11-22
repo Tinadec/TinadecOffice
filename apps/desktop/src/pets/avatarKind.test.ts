@@ -7,15 +7,25 @@ describe('avatar kind seam', () => {
     expect(planCompanionAvatar('panda')).toEqual({ kind: 'sprite', slug: 'panda', ready: true })
   })
 
-  it('recognizes an imported Live2D model and refuses to pretend it is a sprite', () => {
+  it('recognizes an imported Live2D model and reports sdk_not_loaded until Cubism Core is ready', () => {
     const models = [{ id: 'model-1', name: 'Haru' }]
     expect(avatarKindOf('model-1', ['model-1'])).toBe('live2d')
-    expect(planCompanionAvatar('model-1', models)).toEqual({
+    expect(planCompanionAvatar('model-1', models, { live2dSdkReady: false })).toEqual({
       kind: 'live2d',
       modelId: 'model-1',
       modelName: 'Haru',
       ready: false,
-      reason: 'renderer_not_bundled',
+      reason: 'sdk_not_loaded',
+    })
+  })
+
+  it('marks a Live2D model ready when BYO Cubism Core runtime is loaded', () => {
+    const models = [{ id: 'model-1', name: 'Haru' }]
+    expect(planCompanionAvatar('model-1', models, { live2dSdkReady: true })).toEqual({
+      kind: 'live2d',
+      modelId: 'model-1',
+      modelName: 'Haru',
+      ready: true,
     })
   })
 
@@ -32,12 +42,17 @@ describe('avatar kind seam', () => {
   })
 
   it('falls back to the model id when the imported name is blank', () => {
-    expect(planAvatar('live2d', 'model-1', '  ')).toMatchObject({ modelName: 'model-1' })
+    expect(planAvatar('live2d', 'model-1', '  ', { live2dSdkReady: false })).toMatchObject({ modelName: 'model-1' })
   })
 
   it('maps an explicit kind without consulting a list', () => {
     expect(planAvatar('sprite', 'panda')).toEqual({ kind: 'sprite', slug: 'panda', ready: true })
     expect(planAvatar(null, 'panda').kind).toBe('sprite')
-    expect(planAvatar('live2d', 'x').kind).toBe('live2d')
+    expect(planAvatar('live2d', 'x', null, { live2dSdkReady: true })).toEqual({
+      kind: 'live2d',
+      modelId: 'x',
+      modelName: 'x',
+      ready: true,
+    })
   })
 })

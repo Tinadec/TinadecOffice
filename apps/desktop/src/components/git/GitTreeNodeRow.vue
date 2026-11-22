@@ -14,6 +14,9 @@ import {
   Minus,
   RotateCcw,
   ExternalLink,
+  History,
+  UserCheck,
+  FileCode2,
 } from '@lucide/vue'
 import { UiCheckbox } from '../ui'
 import type { GitTreeNode } from './diffUtils'
@@ -28,7 +31,8 @@ export interface GitTreeFileItem {
   deletions?: number
 }
 
-const { t } = useI18n()
+const { t, te } = useI18n()
+const lbl = (key: string, fallback: string) => (typeof te === 'function' && te(key) ? t(key) : fallback)
 
 const props = defineProps<{
   node: GitTreeNode<GitTreeFileItem>
@@ -46,6 +50,9 @@ const emit = defineEmits<{
   (e: 'discard-file', path: string): void
   (e: 'stage-folder', paths: string[]): void
   (e: 'unstage-folder', paths: string[]): void
+  (e: 'show-history', path: string): void
+  (e: 'annotate-blame', path: string): void
+  (e: 'open-in-editor', path: string): void
 }>()
 
 const isExpanded = ref(true)
@@ -186,6 +193,9 @@ function handleUnstageFolder() {
         @discard-file="emit('discard-file', $event)"
         @stage-folder="emit('stage-folder', $event)"
         @unstage-folder="emit('unstage-folder', $event)"
+        @show-history="emit('show-history', $event)"
+        @annotate-blame="emit('annotate-blame', $event)"
+        @open-in-editor="emit('open-in-editor', $event)"
       />
     </div>
 
@@ -214,7 +224,7 @@ function handleUnstageFolder() {
           v-if="node.fileData.is_staged"
           type="button"
           class="git-hover-btn"
-          :title="t('context.gitUnstageFile')"
+          :title="lbl('context.gitUnstageAction', t('context.gitUnstageFile'))"
           :disabled="operationLoading"
           @click.stop="emit('unstage-file', node.fileData.path)"
         >
@@ -224,7 +234,7 @@ function handleUnstageFolder() {
           v-else
           type="button"
           class="git-hover-btn"
-          :title="t('context.gitStageFile')"
+          :title="lbl('context.gitStageAction', t('context.gitStageFile'))"
           :disabled="operationLoading"
           @click.stop="emit('stage-file', node.fileData.path)"
         >
@@ -235,11 +245,38 @@ function handleUnstageFolder() {
           v-if="!node.fileData.is_conflicted"
           type="button"
           class="git-hover-btn is-discard"
-          :title="t('context.gitDiscardChanges')"
+          :title="lbl('context.gitRollback', t('context.gitDiscardChanges'))"
           :disabled="operationLoading"
           @click.stop="emit('discard-file', node.fileData.path)"
         >
           <RotateCcw :size="12" />
+        </button>
+
+        <button
+          type="button"
+          class="git-hover-btn"
+          :title="lbl('context.gitShowHistory', 'Show History')"
+          @click.stop="emit('show-history', node.fileData.path)"
+        >
+          <History :size="12" />
+        </button>
+
+        <button
+          type="button"
+          class="git-hover-btn"
+          :title="lbl('context.gitAnnotateBlame', 'Annotate')"
+          @click.stop="emit('annotate-blame', node.fileData.path)"
+        >
+          <UserCheck :size="12" />
+        </button>
+
+        <button
+          type="button"
+          class="git-hover-btn"
+          :title="lbl('context.gitOpenInEditor', 'Open in Editor')"
+          @click.stop="emit('open-in-editor', node.fileData.path)"
+        >
+          <FileCode2 :size="12" />
         </button>
 
         <button

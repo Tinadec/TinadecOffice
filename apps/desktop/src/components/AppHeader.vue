@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { Copy, Minus, Square, X } from '@lucide/vue'
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { UiButton } from '@/components/ui'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
+import { useHostAccess } from '@/lib/hostAccess'
 
 const { t } = useI18n()
+const hostAccess = useHostAccess()
+const isElectron = computed(() => hostAccess.isElectron?.value ?? true)
 withDefaults(defineProps<{ showSearch?: boolean }>(), { showSearch: true })
 
 // There is no main-process maximize event today, so the icon follows the window's
@@ -50,6 +53,7 @@ function closeWindow() {
         Snapshots have their own bars and mount `CommandPaletteButton` themselves.
       -->
       <CommandPaletteButton v-if="showSearch" />
+      <template v-if="isElectron">
       <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" :aria-label="t('app.minimize')" @click="minimizeWindow">
         <Minus :size="14" aria-hidden="true" />
       </UiButton>
@@ -67,6 +71,7 @@ function closeWindow() {
       <UiButton variant="ghost" size="icon" class="window-btn close" :title="t('app.close')" :aria-label="t('app.close')" @click="closeWindow">
         <X :size="14" aria-hidden="true" />
       </UiButton>
+      </template>
     </div>
   </header>
 </template>

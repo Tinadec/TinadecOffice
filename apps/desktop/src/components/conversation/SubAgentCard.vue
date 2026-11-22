@@ -169,8 +169,8 @@ function openInPanel() {
 div.conversation-sub-agent-toggle { cursor: default; }
 .conversation-sub-agent-toggle:focus-visible { outline: 1px solid hsl(var(--ring)); border-radius: 4px; }
 .conversation-sub-agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
-.conversation-sub-agent-time { flex-shrink: 0; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.conversation-sub-agent-badge { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+.conversation-sub-agent-time { flex-shrink: 0; white-space: nowrap; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.conversation-sub-agent-badge { flex-shrink: 0; white-space: nowrap; font-size: 11px; color: var(--text-muted); }
 .conversation-sub-agent-badge[data-status='running'] { color: var(--accent-primary); }
 .conversation-sub-agent-badge[data-status='awaiting_approval'] { color: var(--accent-warning); }
 .conversation-sub-agent-badge[data-status='failed'], .conversation-sub-agent-badge[data-status='blocked'] { color: var(--accent-danger); }

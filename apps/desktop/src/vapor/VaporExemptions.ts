@@ -21,17 +21,6 @@ export interface VaporExemptionEntry {
 
 export const VAPOR_EXEMPTIONS: readonly VaporExemptionEntry[] = [
   {
-    file: 'src/pages/MarketPage.vue',
-    reason: 'UIE route host: keep it classic together with its three Market cards while investigating the reported insertBefore non-Node anchor on Home/Market navigation.',
-    verdict: 'exempt',
-    note: 'Market restores its layout before mounting the canvas. Empty/populated catalogs, delayed hydration and repeated navigation require real-renderer verification before restoring Vapor.',
-  },
-  ...['MarketFilterCard', 'MarketCatalogCard', 'MarketDetailCard'].map((name): VaporExemptionEntry => ({
-    file: `../TinadecUI/src/components/cards/market/${name}.vue`,
-    reason: 'Market UIE card stays classic with the route and canvas to remove a mixed-renderer boundary during layout replacement.',
-    verdict: 'exempt',
-  })),
-  {
     file: 'src/components/code/CodeEditor.vue',
     reason: 'Monaco editor mounts imperatively into a real DOM container (monaco.editor.create). Vapor renderer output must expose a stable container ref; verify before opting in.',
   },

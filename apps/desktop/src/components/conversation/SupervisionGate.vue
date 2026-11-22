@@ -123,13 +123,16 @@ async function decide(option: SupervisionDecisionOption) {
 .supervision-reasons { display: flex; flex-direction: column; gap: 3px; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
 .supervision-reasons-heading { display: flex; align-items: center; gap: 6px; color: var(--accent-warning); }
 .supervision-reasons strong { font-weight: 600; }
-.supervision-summary { display: flex; flex-direction: column; gap: 2px; margin: 0; padding-left: 18px; }
+.supervision-summary { display: flex; flex-direction: column; gap: 2px; margin: 0; padding-left: 18px; font-variant-numeric: tabular-nums; }
 .supervision-guidance { margin: 0; color: var(--text-primary); }
 .supervision-details { color: var(--text-muted); }
-.supervision-details summary { width: fit-content; cursor: pointer; }
+.supervision-details summary { width: fit-content; cursor: pointer; border-radius: 4px; }
+.supervision-details summary:focus-visible { outline: 1px solid hsl(var(--ring)); }
 .supervision-details > span { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .supervision-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.supervision-action { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 26px; max-width: 260px; padding: 5px 10px; border: 1px solid var(--border-muted); border-radius: 6px; color: var(--text-primary); background: var(--surface-raised); cursor: pointer; font-size: 12px; text-align: left; }
+.supervision-action { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 28px; max-width: 260px; padding: 5px 10px; border: 1px solid var(--border-muted); border-radius: 6px; color: var(--text-primary); background: var(--surface-raised); cursor: pointer; font-size: 12px; text-align: left; }
+.supervision-action > span { font-weight: 500; white-space: nowrap; }
 .supervision-action small { color: var(--text-muted); font-size: 10px; line-height: 1.35; }
 .supervision-action:hover { border-color: var(--accent-primary); background: var(--surface-hover); }
+.supervision-action:focus-visible { outline: 1px solid hsl(var(--ring)); border-color: var(--accent-primary); }
 </style>

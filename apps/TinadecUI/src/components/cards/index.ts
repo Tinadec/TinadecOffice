@@ -16,16 +16,6 @@ import BrowserCard from './home/BrowserCard.vue'
 import AgentCard from './home/AgentCard.vue'
 import TerminalCard from './home/TerminalCard.vue'
 import WorkspaceCard from './home/WorkspaceCard.vue'
-import MarketFilterCard from './market/MarketFilterCard.vue'
-import MarketCatalogCard from './market/MarketCatalogCard.vue'
-import MarketDetailCard from './market/MarketDetailCard.vue'
-import CompanionListCard from './companion/CompanionListCard.vue'
-import CompanionFeedCard from './companion/CompanionFeedCard.vue'
-import CompanionGroupsCard from './companion/CompanionGroupsCard.vue'
-import CompanionConnectionsCard from './companion/CompanionConnectionsCard.vue'
-import CompanionBuddyCard from './companion/CompanionBuddyCard.vue'
-import CompanionProfileCard from './companion/CompanionProfileCard.vue'
-import CompanionSupervisionCard from './companion/CompanionSupervisionCard.vue'
 import type { UieCardDescriptor } from '../../engine/types'
 
 /**
@@ -66,24 +56,6 @@ export function buildUieRegistry(): CardRegistry {
     // "open in editor".
     { type: 'docReader', component: DocumentReaderCard, minWidth: 320, minHeight: 220, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },
     { type: 'codeEditor', component: CodeEditorCard, minWidth: 320, minHeight: 220, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },
-    { type: 'marketFilter', component: MarketFilterCard, minWidth: 240, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
-    { type: 'marketCatalog', component: MarketCatalogCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
-    { type: 'marketDetail', component: MarketDetailCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
-    // The companion center observes the companion domain. Each panel is one view of the same
-    // read-only data; opening two of the same kind would duplicate the poll, not add a view.
-    { type: 'companionList', component: CompanionListCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
-    { type: 'companionFeed', component: CompanionFeedCard, minWidth: 280, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
-    { type: 'companionGroups', component: CompanionGroupsCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
-    { type: 'companionConnections', component: CompanionConnectionsCard, minWidth: 240, minHeight: 180, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
-    // The buddy timeline is the centre of the companion page: one conversation, no new-chat
-    // affordance. It is not closable — closing it would leave the page with no main surface.
-    { type: 'companionBuddy', component: CompanionBuddyCard, minWidth: 320, minHeight: 240, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
-    // Supervision answers "does this session need me?" for the sessions with a desktop partner
-    // window out. It reads runs and approvals itself, so it works without the work page running.
-    { type: 'companionSupervision', component: CompanionSupervisionCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
-    // The profile editor follows the roster: picking a partner and then being sent to Settings to
-    // change its persona is a detour the centre can skip. Memory and skills stay in Settings.
-    { type: 'companionProfile', component: CompanionProfileCard, minWidth: 260, minHeight: 220, singleton: true, movable: true, closable: true, detachable: false, defaultTitle: '' },
   ]
 
   for (const c of cards) reg.register(c)

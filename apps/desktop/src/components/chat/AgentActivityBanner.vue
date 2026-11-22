@@ -11,8 +11,14 @@ import {
   ChevronDown,
   ChevronRight,
   ShieldAlert,
+  GitBranch,
+  Send,
+  Bot,
 } from '@lucide/vue'
 import type { AgentActivity, AgentState } from '@/composables/useAgentActivity'
+import { useSessionWorktrees } from '@/composables/useSessionWorktrees'
+import { homeController } from '@/controllers/HomeController'
+import { focusDockCard, type InlineDockCardItem } from '@/lib/homeDockSync'
 import AgentStatusIndicator from './AgentStatusIndicator.vue'
 import { formatDuration as formatElapsed } from '@/lib/conversation/format'
 
@@ -23,6 +29,16 @@ const props = defineProps<{
 
 const { t, locale } = useI18n()
 const expanded = ref(false)
+const c = homeController
+
+const { isolatedGroups } = useSessionWorktrees({
+  projectPath: () => c?.currentProject?.value?.path ?? null,
+  sessionId: () => c?.selectedSessionId?.value ?? null,
+  runs: () => c?.runs?.value,
+  feed: () => c?.conversationFeed,
+  orchestration: () => c?.orchestration?.value,
+  toolExecutions: () => c?.toolExecutions?.value,
+})
 
 const statusConfig = computed(() => {
   switch (props.activity.status) {
@@ -122,6 +138,85 @@ const hasActivity = computed(
       props.activity.activeAgentName !== null ||
       agentList.value.length > 0),
 )
+
+const inlineStatusCards = computed<InlineDockCardItem[]>(() => {
+  const cards: InlineDockCardItem[] = []
+  const pendingApprovalList = (c?.approvals?.value ?? []).filter((a) => a.status === 'pending')
+  if (props.activity.status === 'waiting_approval' || pendingApprovalList.length > 0) {
+    const first = pendingApprovalList[0]
+    cards.push({
+      id: `approval:${first?.id ?? props.activity.runId ?? 'wait'}`,
+      kind: 'approval',
+      card: 'approval',
+      title: t('worktreeDock.pendingApproval'),
+      subtitle: first?.summary ?? null,
+      runId: props.activity.runId,
+      approvalId: first?.id ?? null,
+      urgent: true,
+    })
+  }
+  for (const wt of isolatedGroups.value.slice(0, 2)) {
+    cards.push({
+      id: `wt:${wt.id}`,
+      kind: 'worktree',
+      card: 'git',
+      title: t('worktreeDock.worktreeSwitched'),
+      badge: wt.branch || null,
+      subtitle: t('worktreeDock.diffSummary', {
+        added: wt.counts.added,
+        modified: wt.counts.modified,
+        deleted: wt.counts.deleted,
+      }),
+      runId: wt.runId,
+      taskId: wt.taskId,
+      workerHandle: wt.workerHandle,
+      workerLabel: wt.workerLabel,
+      worktreePath: wt.worktreePath,
+      branch: wt.branch,
+    })
+  }
+  for (const agent of executionAgents.value.slice(0, 3)) {
+    cards.push({
+      id: `exec:${agent.agentId}`,
+      kind: 'dispatch',
+      card: 'orchestration',
+      title: t('worktreeDock.subtaskDispatched'),
+      subtitle: agent.currentTask,
+      badge: agent.agentName,
+      runId: props.activity.runId,
+      workerHandle: agent.agentName,
+      workerLabel: agent.agentName,
+      agentSlug: agent.agentType,
+    })
+  }
+  return cards
+})
+
+function openDockFromBanner(item: InlineDockCardItem): void {
+  focusDockCard({
+    card: item.card,
+    reason: item.kind,
+    runId: item.runId,
+    taskId: item.taskId,
+    workerHandle: item.workerHandle,
+    workerLabel: item.workerLabel,
+    agentSlug: item.agentSlug,
+    worktreePath: item.worktreePath,
+    branch: item.branch,
+    approvalId: item.approvalId,
+  }, { title: t(`uie.cardTitle.${item.card}`) })
+}
+
+function focusAgentWorker(agent: Pick<AgentState, 'agentId' | 'agentName' | 'agentType'>): void {
+  focusDockCard({
+    card: 'agent',
+    reason: 'worker',
+    runId: props.activity.runId,
+    workerHandle: agent.agentName,
+    workerLabel: agent.agentName,
+    agentSlug: agent.agentType,
+  }, { title: t('uie.cardTitle.agent') })
+}
 </script>
 
 <template>
@@ -169,26 +264,64 @@ const hasActivity = computed(
       </div>
     </div>
 
+    <div v-if="inlineStatusCards.length > 0" class="agent-banner-dock-sync" data-testid="agent-banner-dock-cards">
+      <div
+        v-for="item in inlineStatusCards"
+        :key="item.id"
+        class="agent-banner-dock-card"
+        :class="`is-${item.kind}`"
+        :data-dock-kind="item.kind"
+        data-testid="agent-banner-dock-card"
+      >
+        <button type="button" class="agent-banner-dock-main" @click="openDockFromBanner(item)">
+          <Send v-if="item.kind === 'dispatch'" :size="11" aria-hidden="true" />
+          <GitBranch v-else-if="item.kind === 'worktree'" :size="11" aria-hidden="true" />
+          <ShieldAlert v-else :size="11" aria-hidden="true" />
+          <span class="agent-banner-dock-title">{{ item.title }}</span>
+          <span v-if="item.badge" class="agent-banner-dock-badge">{{ item.badge }}</span>
+          <span v-else-if="item.subtitle" class="agent-banner-dock-sub">{{ item.subtitle }}</span>
+        </button>
+        <button
+          v-if="item.workerHandle"
+          type="button"
+          class="agent-banner-worker-badge"
+          data-testid="agent-banner-worker-badge"
+          @click.stop="focusAgentWorker({ agentId: item.workerHandle, agentName: item.workerHandle, agentType: item.agentSlug ?? '' })"
+        >
+          <Bot :size="10" aria-hidden="true" />
+          <span>{{ item.workerLabel ?? item.workerHandle }}</span>
+        </button>
+      </div>
+    </div>
+
     <Transition name="banner-expand">
       <div v-if="expanded" class="agent-banner-details">
         <div v-if="planningAgents.length > 0" class="agent-banner-section">
           <span class="agent-banner-section-title">{{ t('activity.banner.planningAgents') }}</span>
           <div class="agent-banner-agent-grid">
-            <AgentStatusIndicator
+            <button
               v-for="agent in planningAgents"
               :key="agent.agentId"
-              :agent="agent"
-            />
+              type="button"
+              class="agent-banner-agent-btn"
+              @click="focusAgentWorker(agent)"
+            >
+              <AgentStatusIndicator :agent="agent" />
+            </button>
           </div>
         </div>
         <div v-if="executionAgents.length > 0" class="agent-banner-section">
           <span class="agent-banner-section-title">{{ t('activity.banner.executionAgents') }}</span>
           <div class="agent-banner-agent-grid">
-            <AgentStatusIndicator
+            <button
               v-for="agent in executionAgents"
               :key="agent.agentId"
-              :agent="agent"
-            />
+              type="button"
+              class="agent-banner-agent-btn"
+              @click="focusAgentWorker(agent)"
+            >
+              <AgentStatusIndicator :agent="agent" />
+            </button>
           </div>
         </div>
         <div v-if="planningAgents.length === 0 && executionAgents.length === 0" class="agent-banner-empty">
@@ -497,5 +630,119 @@ const hasActivity = computed(
 .banner-expand-leave-to {
   opacity: 0;
   max-height: 0;
+}
+
+.agent-banner-dock-sync {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 12px 9px;
+}
+
+.agent-banner-dock-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 7px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-primary);
+  font-size: 11px;
+}
+
+.agent-banner-dock-card.is-dispatch {
+  border-color: color-mix(in srgb, var(--accent-primary) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-primary) 6%, var(--bg-primary));
+}
+
+.agent-banner-dock-card.is-worktree {
+  border-color: color-mix(in srgb, var(--accent-success) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-success) 6%, var(--bg-primary));
+}
+
+.agent-banner-dock-card.is-approval {
+  border-color: color-mix(in srgb, var(--accent-warning) 34%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-warning) 9%, var(--bg-primary));
+}
+
+.agent-banner-dock-card.is-dispatch .agent-banner-dock-main > svg {
+  color: var(--accent-primary);
+}
+
+.agent-banner-dock-card.is-worktree .agent-banner-dock-main > svg {
+  color: var(--accent-success);
+}
+
+.agent-banner-dock-card.is-approval .agent-banner-dock-main > svg {
+  color: var(--accent-warning);
+}
+
+.agent-banner-dock-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.agent-banner-dock-main:hover {
+  color: var(--accent-primary);
+}
+
+.agent-banner-dock-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.agent-banner-dock-badge {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-banner-dock-sub {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.agent-banner-worker-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  color: var(--accent-primary);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-banner-agent-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 </style>

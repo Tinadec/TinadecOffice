@@ -61,6 +61,10 @@ function decideCurrent(approval: ApprovalDto, decision: 'approved' | 'rejected')
     emit('decide-approval', approval, decision, 'once')
   } else emit('decide-approval', approval, decision)
 }
+function openRecoveryCheck(actionId: string) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('tinadec:open-recovery-check', { detail: { actionId } }))
+}
 </script>
 
 <template>
@@ -155,6 +159,15 @@ function decideCurrent(approval: ApprovalDto, decision: 'approved' | 'rejected')
         </button>
         <button class="approval-action-button reject" :title="isSpecProposal(approval) ? t('approval.rejectDocument') : t('approval.reject')" @click="decideCurrent(approval, 'rejected')">
           <ShieldX :size="14" /><span>{{ isSpecProposal(approval) ? t('approval.rejectDocument') : t('approval.reject') }}</span>
+        </button>
+        <button
+          v-if="approval.governance_status === 'outcome_unknown'"
+          type="button"
+          class="approval-action-button"
+          data-testid="approval-open-recovery-btn"
+          @click="openRecoveryCheck(approval.id)"
+        >
+          <ShieldAlert :size="14" /><span>{{ t('governance.recoveryTitle') }}</span>
         </button>
       </div>
       </article>

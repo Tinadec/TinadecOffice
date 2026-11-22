@@ -15,8 +15,6 @@
     "dev:gateway": "bun run --cwd TinadecGateway dev",
     "dev:desktop": "bun run --cwd apps/desktop dev",
     "dev:web": "bun run --cwd apps/web dev",
-    "fixture": "bun scripts/model-fixture.mjs",
-    "e2e:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-local-loop.ps1",
     "build": "bun run --workspaces --if-present build && bun run --cwd TinadecGateway build && bun scripts/dotnet.mjs build TinadecOffice.slnx",
     "test:scripts": "bun scripts/run-node-tests.mjs scripts",
     "test": "bun run test:scripts && bun run --workspaces --if-present test && bun run --cwd TinadecGateway test && bun scripts/dotnet.mjs test TinadecOffice.slnx",
@@ -31,12 +29,9 @@
     "ai:codegraph:explore": "codegraph explore",
     "ai:codegraph:impact": "codegraph impact",
     "ai:workspace:setup": "bun scripts/setup-ai-workspace.mjs",
-    "ai:workspace:test": "bun --test scripts/setup-ai-workspace.test.mjs",
     "ai:ponytail:validate": "bun .tinadec_dev/tooling/ponytail/validate.js",
     "ai:tools:install": "bun install -g @colbymchenry/codegraph && codegraph telemetry off && codegraph install --target=opencode --location=local --yes",
     "ai:tools:check": "bun run ai:codegraph:status && bun run ai:ponytail:validate",
-    "ai:tools:setup": "powershell -ExecutionPolicy Bypass -File scripts/install-ai-tools.ps1",
-    "ai:tools:test": "powershell -ExecutionPolicy Bypass -File scripts/test-ai-tools.ps1",
     "ai:shadcn:setup": "bun scripts/setup-shadcn-ai.mjs"
   },
   "devDependencies": {

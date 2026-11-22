@@ -146,7 +146,16 @@ export const CORE_VIRTUAL_TOOL_IDS = [
   'recall_evidence',
   'environment_list',
   'environment_acquire',
-  'environment_release'
+  'environment_release',
+  'load_skill',
+  'tinadec_inspect',
+  'tinadec_agent_apply',
+  'tinadec_mode_apply',
+  'tinadec_mode_publish',
+  'tinadec_skill_apply',
+  'tinadec_mcp_apply',
+  'tinadec_prompt_apply',
+  'tinadec_model_profile_apply'
 ] as const
 
 /**
@@ -216,7 +225,16 @@ const KIND_BY_ID: Record<string, ToolKind> = {
   recall_evidence: 'search',
   environment_list: 'orchestration',
   environment_acquire: 'orchestration',
-  environment_release: 'orchestration'
+  environment_release: 'orchestration',
+  load_skill: 'read',
+  tinadec_inspect: 'read',
+  tinadec_agent_apply: 'orchestration',
+  tinadec_mode_apply: 'orchestration',
+  tinadec_mode_publish: 'orchestration',
+  tinadec_skill_apply: 'orchestration',
+  tinadec_mcp_apply: 'mcp',
+  tinadec_prompt_apply: 'orchestration',
+  tinadec_model_profile_apply: 'orchestration'
 }
 
 const ICON_BY_KIND: Record<ToolKind, Component> = {

@@ -4,14 +4,14 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { computed } from 'vue'
 
 const badgeVariants = cva(
-  'inline-flex items-center whitespace-nowrap rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+  'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[var(--radius-control,6px)] border px-2 py-0.5 text-[11px] font-medium leading-[1.35] tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-color,var(--accent-primary))] focus-visible:ring-offset-1',
   {
     variants: {
       variant: {
-        default: 'border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80',
-        secondary: 'border-transparent bg-[var(--surface-button)] text-secondary-foreground hover:bg-[var(--surface-button-hover)]',
-        destructive: 'border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80',
-        outline: 'text-foreground',
+        default: 'border-transparent bg-[var(--bg-primary-button,hsl(var(--primary)))] text-white',
+        secondary: 'border-[var(--border-muted)] bg-[var(--surface-button)] text-[var(--text-primary)]',
+        destructive: 'border-transparent bg-destructive text-destructive-foreground',
+        outline: 'border-[var(--border-default)] bg-transparent text-[var(--text-secondary)]',
       },
     },
     defaultVariants: {

@@ -466,14 +466,14 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
         <Panel position="top-right" class="vf-panel">{{ readonly ? t('canvas.readonlyHint') : t('canvas.pipelineHint') }}</Panel>
         <template #node-custom="{ data }">
           <div class="pp-node" :class="[{ sel: data.selected }, `type-${data.nodeType}`]">
-            <Handle type="target" :position="Position.Left" />
+            <Handle type="target" :position="Position.Left" :connectable="!readonly" :class="{ 'pp-handle-readonly': readonly }" />
             <div class="pp-node-head">
               <span class="pp-node-type">{{ data.nodeType }}</span>
               <strong :title="data.label">{{ data.label }}</strong>
             </div>
             <div v-if="data.snippet" class="pp-node-snippet" :title="data.snippet">{{ data.snippet }}</div>
             <div v-else class="pp-node-id">{{ (data.raw as PromptPipelineNodeDto)?.id }}</div>
-            <Handle type="source" :position="Position.Right" />
+            <Handle type="source" :position="Position.Right" :connectable="!readonly" :class="{ 'pp-handle-readonly': readonly }" />
           </div>
         </template>
       </VueFlow>
@@ -534,15 +534,37 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
 .vf { width: 100%; height: 100%; }
 .vf-panel { font-size: 11px; color: var(--text-muted); background: var(--surface-raised); padding: 4px 8px; border-radius: 6px; }
 .pp-node { position: relative; width: 208px; padding: 8px 10px; border-radius: 10px; background: var(--surface-raised); border: 1px solid var(--border-muted); display: grid; gap: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+.pp-node.type-assemble {
+  border-color: color-mix(in srgb, var(--accent-success) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-success) 4%, var(--surface-raised));
+}
+.pp-node.type-assemble .pp-node-type {
+  color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 14%, var(--surface-section));
+}
+.pp-node.type-condition {
+  border-color: color-mix(in srgb, var(--accent-warning) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-warning) 4%, var(--surface-raised));
+}
+.pp-node.type-condition .pp-node-type {
+  color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 14%, var(--surface-section));
+}
+.pp-node.type-fragment_ref {
+  border-color: color-mix(in srgb, var(--accent-brand) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-brand) 4%, var(--surface-raised));
+}
+.pp-node.type-fragment_ref .pp-node-type {
+  color: var(--accent-brand);
+  background: color-mix(in srgb, var(--accent-brand) 14%, var(--surface-section));
+}
 .pp-node.sel { border-color: var(--accent-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 22%, transparent); }
-.pp-node.type-assemble { border-left: 3px solid var(--accent-success); }
-.pp-node.type-condition { border-left: 3px solid var(--accent-warning); }
-.pp-node.type-fragment_ref { border-left: 3px solid var(--accent-brand); }
 .pp-node-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pp-node-type { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); background: var(--surface-section); padding: 2px 6px; border-radius: 999px; flex-shrink: 0; }
 .pp-node-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-primary); }
 .pp-node-id,
 .pp-node-snippet { font-size: 10px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-handle-readonly { opacity: 0; pointer-events: none; }
 </style>
 
 <style>

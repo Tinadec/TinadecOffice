@@ -31,16 +31,6 @@ const host = {
   routeName: () => null,
 }
 
-const enMessages = {
-  ...en,
-  commandPanel: {
-    ...en.commandPanel,
-    temporaryOverrides: 'Temporarily adjusted',
-    resetToPreset: 'Reset',
-    resetToPresetHint: 'Reset switches back to the active preset defaults',
-  },
-}
-
 const teamDefaults: SpaceOptionsDto = {
   plan_first: false,
   spec_enabled: false,
@@ -100,7 +90,7 @@ function mountPanel(props: Partial<{
   }), {
     attachTo: document.body,
     global: {
-      plugins: [createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })],
+      plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
     },
   })
   return wrapper

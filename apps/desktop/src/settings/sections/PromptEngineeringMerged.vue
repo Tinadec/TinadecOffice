@@ -1308,6 +1308,8 @@ defineExpose({ refreshAll })
   gap: 6px;
   font-size: 12px;
   color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .pe-preview-card :deep(.ui-card-content) {
   display: grid;

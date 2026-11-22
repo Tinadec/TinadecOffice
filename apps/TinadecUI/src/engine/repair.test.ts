@@ -29,19 +29,23 @@ describe('repairLayout', () => {
     expect(out.columns).toBeTruthy()
   })
 
-  it('restores the page preset when a persisted page snapshot has no cards', () => {
+  it('recovers to home preset when an obsolete market page snapshot has unreferenced cards', () => {
     const ctx = makeCtx()
-    const out = repairLayout({ version: 1, pageId: 'market', columns: {}, cards: {} }, ctx)
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'market',
+        columns: {},
+        cards: { legacy: { id: 'legacy', descriptorId: 'nav', title: 'Legacy' } },
+      },
+      ctx,
+    )
 
-    expect(out.pageId).toBe('market')
-    expect(Object.values(out.cards).map((card) => card.descriptorId)).toEqual([
-      'marketFilter',
-      'marketCatalog',
-      'marketDetail',
-    ])
+    expect(out.pageId).toBe('home')
+    expect(Object.values(out.cards).length).toBeGreaterThan(0)
     expect(out.columns.left.primary.tabIds).toHaveLength(1)
     expect(out.columns.center.primary.tabIds).toHaveLength(1)
-    expect(out.columns.right.primary.tabIds).toHaveLength(1)
+    expect(out.columns.right.primary.tabIds.length).toBeGreaterThan(0)
   })
 
   it('drops cards with unknown descriptorId', () => {
@@ -151,8 +155,6 @@ describe('repairLayout', () => {
     expect(home.edgeInset).toBe(8)
     const settings = repairLayout({ version: 1, pageId: 'settings', columns: {}, cards: {} }, ctx)
     expect(settings.edgeInset).toBe(8)
-    const market = repairLayout({ version: 1, pageId: 'market', columns: {}, cards: {} }, ctx)
-    expect(market.edgeInset).toBe(8)
   })
 
   it('defaults legacy app-page JSON to a flush edge inset', () => {
@@ -175,20 +177,8 @@ describe('repairLayout', () => {
     expect(out.pageId).toBe('companionCenter')
     expect(out.edgeInset).toBe(8)
     expect(out.gap).toBe(8)
-    expect(Object.values(out.cards).map((card) => card.descriptorId).sort()).toEqual([
-      'companionBuddy',
-      'companionConnections',
-      'companionFeed',
-      'companionGroups',
-      'companionList',
-      'companionProfile',
-      'companionSupervision',
-      'nav',
-    ])
-    // The sidebar island stands alone on the left rail; the buddy timeline owns the centre.
+    expect(Object.values(out.cards).map((card) => card.descriptorId).sort()).toEqual(['nav'])
     expect(out.columns.left.primary.tabIds).toHaveLength(1)
-    expect(out.columns.center.primary.tabIds).toHaveLength(1)
-    expect(out.columns.right.primary.tabIds).toHaveLength(6)
   })
 
   it('falls back to home for an unknown page id, without touching the companion page', () => {

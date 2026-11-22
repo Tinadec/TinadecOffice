@@ -6,6 +6,8 @@ import { createPinia, setActivePinia } from 'pinia'
 
 const mocks = vi.hoisted(() => ({
   createAgentDraft: vi.fn(),
+  updateAgentDraft: vi.fn(),
+  publishAgent: vi.fn(),
   listAgents: vi.fn(),
   getAgent: vi.fn(),
   getAgentPack: vi.fn(),
@@ -22,6 +24,8 @@ vi.mock('../api', () => ({
   api: new Proxy({}, {
     get(_target, property) {
       if (property === 'createAgentDraft') return mocks.createAgentDraft
+      if (property === 'updateAgentDraft') return mocks.updateAgentDraft
+      if (property === 'publishAgent') return mocks.publishAgent
       if (property === 'listAgents') return mocks.listAgents
       if (property === 'getAgent') return mocks.getAgent
       if (property === 'getAgentPack') return mocks.getAgentPack
@@ -54,6 +58,7 @@ vi.mock('@/components/ui', () => ({
   UiLabel: { template: '<label><slot /></label>' },
   UiSkeleton: { template: '<span />' },
   UiSwitch: { inheritAttrs: false, template: '<button v-bind="$attrs" />' },
+  UiCheckbox: { inheritAttrs: false, template: '<input type="checkbox" v-bind="$attrs" />' },
   UiDropdownMenu: { template: '<div><slot /></div>' },
   UiSheet: { props: ['open', 'side'], emits: ['update:open'], template: '<div v-if="open"><slot /></div>' },
   UiSelectField: {
@@ -183,7 +188,9 @@ const managedAgentDefinition = {
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  mocks.createAgentDraft.mockReset().mockResolvedValue({ id: 'clone-id' })
+  mocks.createAgentDraft.mockReset().mockResolvedValue({ id: 'clone-id', revision: 1 })
+  mocks.updateAgentDraft.mockReset().mockResolvedValue({ id: 'custom-agent-id', revision: 2 })
+  mocks.publishAgent.mockReset().mockResolvedValue({ id: 'custom-agent-id', revision: 3, status: 'published' })
   mocks.listAgents.mockReset().mockResolvedValue([customAgent, managedAgent])
   mocks.getAgent.mockReset().mockImplementation((agentId: string) =>
     Promise.resolve(agentId === managedAgent.id ? managedAgentDefinition : customAgentDefinition))
@@ -263,6 +270,10 @@ describe('SettingsPage GraphSeedPack clone flow', () => {
       throw new Error(`Agent Center did not render: ${wrapper.find('.settings-content').text().slice(0, 500)}`)
     }
     expect(wrapper.find('.agent-detail-panel').text()).toContain('Custom Helper')
+
+    // Built-in Pack panel now opens from the top-right status pill drawer.
+    await wrapper.get('[data-testid="agent-packs-pill"]').trigger('click')
+    await flushPromises()
 
     const packCloneButton = wrapper.findAll('[data-testid="graph-seed-pack-status"] button')
       .find((button) => button.text().includes('agentPack.cloneAction'))
@@ -350,7 +361,9 @@ describe('SettingsPage Agent Center read recovery', () => {
   it('keeps the successful directory when a later refresh fails', async () => {
     const wrapper = await openCenter()
     mocks.listAgents.mockRejectedValueOnce(new Error('Refresh offline'))
-    await wrapper.get('.agent-center-merged > .center-command-bar button').trigger('click')
+    const refreshBtn = wrapper.findAll('.agent-center-merged > .center-command-bar button')
+      .find((b) => b.text().includes('settings.refresh'))!
+    await refreshBtn.trigger('click')
     await flushPromises()
     expect(wrapper.findAll('.agent-card')).toHaveLength(2)
     expect(wrapper.get('[data-testid="agent-center-read-failure"]').text()).toContain('Refresh offline')
@@ -442,9 +455,14 @@ describe('SettingsPage installed Agent Pack inventory', () => {
     expect(agentCenterNav).toBeDefined()
     await agentCenterNav!.trigger('click')
     await flushPromises()
-    // Same sub-tab default ('teams'); installed packs/agents assertions need 'agents'.
+    // Same sub-tab default ('teams'); installed packs/agents assertions need 'agents' + pill drawer.
     await wrapper.findAll('.ac-subtab').find(b => b.text().trim() === 'settings.agents')?.trigger('click')
     await flushPromises()
+    const pill = wrapper.find('[data-testid="agent-packs-pill"]')
+    if (pill.exists()) {
+      await pill.trigger('click')
+      await flushPromises()
+    }
     return wrapper
   }
 
@@ -548,6 +566,95 @@ describe('SettingsPage installed Agent Pack inventory', () => {
     expect(wrapper.text()).toContain('404 not found')
     expect(wrapper.find('[data-testid="retired-pack-notice"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="graph-seed-pack-status"]').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('renders agent_generated provenance, wildcard tool badge, and separate Save Draft vs Save & Publish actions', async () => {
+    const generatedAgent = {
+      ...customAgent,
+      id: 'gen-agent-id',
+      slug: 'sql_specialist',
+      display_name: 'SQL Specialist',
+      layer: 'execution',
+      role: 'task_executor',
+      source_kind: 'agent_generated',
+      provenance: {
+        created_by_agent_id: 'managed-meeting-id',
+        created_by_run_id: 'run-9988',
+        reason: 'Autonomous SQL migration assistant',
+      },
+      base_prompt_pipeline_id: 'pipe-default',
+    }
+    const generatedDefinition = {
+      ...customAgentDefinition,
+      id: 'gen-agent-id',
+      slug: 'sql_specialist',
+      display_name: 'SQL Specialist',
+      name: 'SQL Specialist',
+      layer: 'execution',
+      role: 'task_executor',
+      source_kind: 'agent_generated',
+      provenance: generatedAgent.provenance,
+      base_prompt_pipeline_id: 'pipe-default',
+      tool_scope: ['*'],
+    }
+    mocks.listAgents.mockResolvedValue([generatedAgent, managedAgent])
+    mocks.getAgent.mockImplementation((id: string) =>
+      Promise.resolve(id === generatedAgent.id ? generatedDefinition : managedAgentDefinition))
+
+    const wrapper = await mountAgentCenter()
+    await flushPromises()
+
+    // Provenance card is visible for agent_generated definition
+    const provenance = wrapper.get('[data-testid="agent-provenance-section"]')
+    expect(provenance.text()).toContain('Managed Meeting')
+    expect(provenance.text()).toContain('run-9988')
+    expect(provenance.text()).toContain('Autonomous SQL migration assistant')
+
+    // Wildcard '*' tools badge is shown
+    expect(wrapper.find('[data-testid="agent-wildcard-tools-badge"]').exists()).toBe(true)
+
+    // Save Draft only calls updateAgentDraft without publishAgent
+    await wrapper.get('[data-testid="save-agent-draft-btn"]').trigger('click')
+    await flushPromises()
+    expect(mocks.updateAgentDraft).toHaveBeenCalledTimes(1)
+    expect(mocks.publishAgent).not.toHaveBeenCalled()
+
+    // Save & Publish calls both updateAgentDraft and publishAgent
+    await wrapper.get('[data-testid="publish-agent-btn"]').trigger('click')
+    await flushPromises()
+    expect(mocks.updateAgentDraft).toHaveBeenCalledTimes(2)
+    expect(mocks.publishAgent).toHaveBeenCalledWith('gen-agent-id', '2')
+
+    wrapper.unmount()
+  })
+
+  it('renders modular detail sections, reverse-reference mode chips, and jumps to Teams & Modes on click', async () => {
+    const usedAgent = {
+      ...customAgent,
+      mode_usages: [{ mode_id: 'mode-solo', mode_slug: 'solo_mode', node_key: 'coordinator' }],
+    }
+    mocks.listAgents.mockResolvedValue([usedAgent, managedAgent])
+
+    const wrapper = await mountAgentCenter()
+    // Close pack drawer so we inspect the directory cleanly
+    await wrapper.get('[data-testid="agent-packs-drawer-close"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="agent-section-identity"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-section-runtime"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-section-tools"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-section-prompt-pipeline"]').exists()).toBe(true)
+
+    const usedBy = wrapper.get('[data-testid="agent-used-by-modes"]')
+    expect(usedBy.text()).toContain('solo_mode')
+    await wrapper.get('[data-testid="agent-mode-chip-mode-solo"]').trigger('click')
+    await flushPromises()
+
+    // Jumping from a chip activates the unified Teams & Modes tab
+    const activeTab = wrapper.find('.ac-subtab.active')
+    expect(activeTab.text()).toContain('settings.agentTeamsAndModes')
 
     wrapper.unmount()
   })

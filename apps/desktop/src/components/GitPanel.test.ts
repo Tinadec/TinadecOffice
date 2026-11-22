@@ -281,4 +281,76 @@ describe('GitPanel', () => {
 
     expect(wrapper.findComponent({ name: 'GitBranchView' }).exists()).toBe(true);
   });
+
+  it('renders live runtime engine badge on isolated worker worktrees when orchestration carries teammate engine metadata', async () => {
+    executeCodeTool.mockReset();
+    executeCodeTool
+      .mockResolvedValueOnce(previewResult)
+      .mockResolvedValueOnce({
+        ...pushPlanResult,
+        data: {
+          ...(pushPlanResult.data as Record<string, unknown>),
+          worktrees: [
+            { branch: 'main', path: 'D:/repo', is_main: true },
+            { branch: 'worktree/claude-worker', path: 'D:/repo/.tinadec/worktrees/claude-worker', is_main: false },
+          ],
+        },
+      })
+      .mockResolvedValue({
+        tool_id: 'git_worktree_manager',
+        status: 'completed',
+        summary: 'ok',
+        evidence: [],
+        requires_approval: false,
+        approval_summary: null,
+        data: { branch: 'worktree/claude-worker', files: [], sections: [] },
+      });
+
+    const wrapper = mount(GitPanel, {
+      props: {
+        approvals: [],
+        currentProjectPath: 'D:/repo',
+        selectedSessionId: 'session-1',
+        orchestration: {
+          run: {
+            id: 'run-1',
+            session_id: 'session-1',
+            user_message_id: 'msg-1',
+            status: 'running',
+            runtime_profile_id: 'default',
+            config_version: 1,
+            config_hash: 'h',
+            context_revision: 1,
+            summary: '',
+            created_at: '2026-11-22T00:00:00Z',
+            updated_at: '2026-11-22T00:00:00Z',
+          },
+          nodes: [],
+          lanes: [],
+          assignments: [],
+          step_results: [],
+          context_packs: [],
+          supervision_findings: [],
+          teammates: [
+            {
+              handle: 'coder#1',
+              worktree_path: 'D:/repo/.tinadec/worktrees/claude-worker',
+              branch_name: 'worktree/claude-worker',
+              protocol: 'cli',
+              driver: 'claude-code',
+            },
+          ],
+        } as unknown as import('../api').OrchestrationSnapshotDto,
+      },
+      global: { stubs },
+    });
+
+    await flushPromises();
+    await flushPromises();
+
+    const engineBadge = wrapper.find('[data-testid="git-worktree-engine-badge"]');
+    expect(engineBadge.exists()).toBe(true);
+    expect(engineBadge.text()).toBe('CLI · Claude Code');
+    expect(engineBadge.attributes('data-engine-kind')).toBe('cli');
+  });
 });

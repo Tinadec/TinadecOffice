@@ -6,6 +6,7 @@ import type {
   AgentModeTopologyDto,
   AgentOrchestrationTier,
   AgentViewDto,
+  SpaceOptionsDto,
 } from '@/api'
 
 /**
@@ -231,6 +232,7 @@ export interface TeamBuildInput extends TeamSelection {
   /** Team-level collaboration instructions, frozen into the mode version. */
   instructions?: string
   orchestrationTier?: AgentOrchestrationTier | null
+  defaultOptions?: SpaceOptionsDto | null
   memberScopes?: Record<string, MemberScope>
   /**
    * Existing topology when saving from TeamsTab so runtime_policy, canvas_layout,
@@ -300,7 +302,9 @@ export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[])
       ? 'Break down the goal, hand off along the declared pipeline stages, and consolidate verified outputs.'
       : 'Complete the user goal directly and verify evidence.'
 
+  const { subscriptions: _rawLeaderSubs, ...preservedLeaderRel } = existingLeaderRel ?? {}
   const leaderRelationship: Record<string, unknown> = {
+    ...preservedLeaderRel,
     duty: typeof existingLeaderRel?.duty === 'string' && existingLeaderRel.duty.trim()
       ? existingLeaderRel.duty
       : defaultLeaderDuty,
@@ -369,18 +373,26 @@ export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[])
           ? existingMemberNode.position
           : { x: 60 + index * 260, y: 280 },
         ...(existingMemberNode?.config ? { config: existingMemberNode.config } : {}),
-        relationship: {
-          duty: (member.description ?? '').trim() || `Execute pipeline stage ${index + 1} as ${member.name || agentSlugOf(member)}.`,
-          inputs_outputs: validInputsOutputs(existingMemberRel?.inputs_outputs) ?? {
-            receives: index === 0 ? 'goal and constraints from leader' : 'artifact from previous stage',
-            returns: index === members.length - 1 ? 'verified final deliverable' : 'stage output for next stage',
-          },
-          allowed_dispatch_targets: nextTargetSlug,
-          success_criteria: validStringArray(existingMemberRel?.success_criteria) ?? [
-            'Turn the incoming work into a verified result',
-          ],
-          agent_types: [],
-        },
+        relationship: (() => {
+          const { subscriptions: _rawMemberSubs, ...preservedMemberRel } = existingMemberRel ?? {}
+          const existingMemberSubs = validStringArray(existingMemberRel?.subscriptions)
+          return {
+            ...preservedMemberRel,
+            duty: typeof existingMemberRel?.duty === 'string' && existingMemberRel.duty.trim()
+              ? existingMemberRel.duty
+              : ((member.description ?? '').trim() || `Execute pipeline stage ${index + 1} as ${member.name || agentSlugOf(member)}.`),
+            inputs_outputs: validInputsOutputs(existingMemberRel?.inputs_outputs) ?? {
+              receives: index === 0 ? 'goal and constraints from leader' : 'artifact from previous stage',
+              returns: index === members.length - 1 ? 'verified final deliverable' : 'stage output for next stage',
+            },
+            allowed_dispatch_targets: nextTargetSlug,
+            success_criteria: validStringArray(existingMemberRel?.success_criteria) ?? [
+              'Turn the incoming work into a verified result',
+            ],
+            agent_types: validStringArray(existingMemberRel?.agent_types) ?? [],
+            ...(existingMemberSubs && existingMemberSubs.length > 0 ? { subscriptions: existingMemberSubs } : {}),
+          }
+        })(),
         ...(existingMemberNode?.model_strategy_override ? { model_strategy_override: existingMemberNode.model_strategy_override } : {}),
       })
 
@@ -468,6 +480,11 @@ export function buildTeamTopology(input: TeamBuildInput, agents: AgentViewDto[])
     bindings,
     instructions: trimmedInstructions,
     canvas_layout: input.existingDetail?.canvas_layout ?? {},
+    ...(input.defaultOptions !== undefined
+      ? { default_options: input.defaultOptions }
+      : input.existingDetail?.default_options !== undefined
+        ? { default_options: input.existingDetail.default_options }
+        : {}),
     ...(input.existingDetail?.runtime_policy !== undefined
       ? { runtime_policy: input.existingDetail.runtime_policy }
       : {}),
@@ -483,6 +500,7 @@ export function cloneModeTopology(detail: AgentModeTopologyDto): AgentModeDraftU
     display_name: detail.display_name,
     description: detail.description ?? null,
     ...(detail.orchestration_tier !== undefined ? { orchestration_tier: detail.orchestration_tier } : {}),
+    ...(detail.default_options !== undefined ? { default_options: detail.default_options } : {}),
     nodes: (detail.nodes ?? []).map(node => ({
       node_key: nodeKey(node),
       agent_definition_id: nodeAgentId(node),

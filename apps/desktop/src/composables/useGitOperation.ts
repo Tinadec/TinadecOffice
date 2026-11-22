@@ -10,6 +10,7 @@ import {
   withGitToolConfirmation,
 } from '../userToolAction'
 import { isStagedFile, isUnstagedFile } from '../lib/gitStatusSides'
+import { isPathWithinRoot, pathComparisonKey } from './useSessionWorktrees'
 
 // ---- Type definitions ----
 
@@ -94,6 +95,18 @@ export interface GitBranch {
   last_date?: string
 }
 
+export type GitConfirmKind = 'discard' | 'push' | 'branch_delete' | 'merge' | 'rebase' | 'stash_drop'
+
+export interface GitPendingConfirmation {
+  kind: GitConfirmKind
+  title: string
+  detail: string
+  target?: string
+  paths?: string[]
+  warning?: string
+  run: () => Promise<void>
+}
+
 export interface GitRepoSummary {
   branch: string
   upstream: string | null
@@ -172,6 +185,7 @@ export function useGitOperation(
   currentProjectPath: () => string | undefined,
   selectedSessionId: () => string | null,
   approvals: () => ApprovalDto[],
+  projectRootSource?: () => string | undefined,
 ) {
   const { t, te } = useI18n()
   const { notify } = useNotifications()
@@ -190,10 +204,13 @@ export function useGitOperation(
   const branchResult = ref<CodeToolExecuteResultDto | null>(null)
 
   const commitMessage = ref('')
+  const amendCommit = ref(false)
   const selectedPaths = ref<Set<string>>(new Set())
   const selectAll = ref(true)
   // 拉取策略：后端当前仅支持 ff-only，merge/rebase 在 UI 上预留并禁用，避免静默行为不一致。
   const pullStrategy = ref<'ff-only' | 'merge' | 'rebase'>('ff-only')
+  const pendingConfirmation = ref<GitPendingConfirmation | null>(null)
+  let quickActionSeq = 0
 
   // Approval tracking
   const indexApprovalId = ref<string | null>(null)
@@ -396,7 +413,32 @@ export function useGitOperation(
 
   // ---- Validation computed ----
   const cwd = computed(() => currentProjectPath())
+  const projectRoot = computed(() => projectRootSource?.() ?? currentProjectPath())
   const sid = computed(() => selectedSessionId())
+
+  /** Registered project root sent as API `cwd` so sub-worktrees never 404. */
+  function resolveRegisteredCwd(): string | undefined {
+    const root = projectRoot.value
+    const target = cwd.value
+    if (!target) return root
+    if (root && isPathWithinRoot(target, root)) return root
+    return root ?? target
+  }
+
+  function repositoryPathArg(): { repository_path: string } | Record<string, never> {
+    const lookup = resolveRegisteredCwd()
+    const target = cwd.value
+    if (lookup && target && pathComparisonKey(target) !== pathComparisonKey(lookup) && isPathWithinRoot(target, lookup)) {
+      return { repository_path: target }
+    }
+    return {}
+  }
+
+  function resolveRepositoryPath(lookup: string): string {
+    const target = cwd.value
+    if (target && isPathWithinRoot(target, lookup)) return target
+    return lookup
+  }
 
   const canRequestIndexApproval = computed(() =>
     Boolean(cwd.value && sid.value && selectedCommitPaths.value.length > 0),
@@ -404,22 +446,36 @@ export function useGitOperation(
   const canRequestDiscardApproval = computed(() =>
     Boolean(cwd.value && sid.value && selectedCommitPaths.value.length > 0),
   )
-  // 勾选即提交范围：有已暂存直接提交暂存区；无暂存但有勾选时用 paths 模式一次审批自动暂存勾选文件。
+  // 勾选即提交范围：有已暂存直接提交暂存区；无暂存但有勾选时用 paths 模式一次审批自动暂存勾选文件；amend 允许直接修改提交说明或追加更改。
   const commitUsesSelectedPaths = computed(() =>
     repoSummary.value.stagedCount === 0 && selectedCommitPaths.value.length > 0,
   )
   const canRequestCommitApproval = computed(() =>
-    Boolean(cwd.value && sid.value && commitMessage.value.trim() && (repoSummary.value.stagedCount > 0 || selectedCommitPaths.value.length > 0)),
+    Boolean(cwd.value && sid.value && commitMessage.value.trim() && (repoSummary.value.stagedCount > 0 || selectedCommitPaths.value.length > 0 || amendCommit.value)),
   )
+  const canQuickCommit = computed(() =>
+    Boolean(cwd.value && commitMessage.value.trim() && (repoSummary.value.stagedCount > 0 || selectedCommitPaths.value.length > 0 || amendCommit.value)),
+  )
+  const canQuickStage = computed(() => Boolean(cwd.value))
+  const canQuickDiscard = computed(() => Boolean(cwd.value))
   const canRequestPushApproval = computed(() =>
     Boolean(cwd.value && sid.value && hasPushCandidate.value),
   )
+  const canQuickPush = computed(() => Boolean(cwd.value && hasPushCandidate.value))
   const canRequestPullApproval = computed(() =>
     Boolean(cwd.value && sid.value && repoSummary.value.behind > 0),
   )
+  const canQuickPull = computed(() => Boolean(cwd.value && repoSummary.value.behind > 0))
   const canRequestFetchApproval = computed(() => Boolean(cwd.value && sid.value))
+  const canQuickFetch = computed(() => Boolean(cwd.value))
 
   function notifyOperationError(err: unknown, fallback: string) {
+    if (
+      (err instanceof DOMException && err.name === 'AbortError')
+      || (typeof err === 'object' && err !== null && 'name' in err && (err as { name?: unknown }).name === 'AbortError')
+    ) {
+      return
+    }
     notify.error(err instanceof Error ? err : fallback, { source: 'git' })
   }
 
@@ -438,16 +494,18 @@ export function useGitOperation(
   }
 
   async function createGitAction(toolId: string, args: Record<string, unknown>, summary: string): Promise<ApprovalDto> {
-    if (!cwd.value) throw new Error(t('context.gitWorkspaceRequired'))
+    const lookupCwd = resolveRegisteredCwd()
+    if (!lookupCwd) throw new Error(t('context.gitWorkspaceRequired'))
+    const repoPath = resolveRepositoryPath(lookupCwd)
     const parameters = withGitToolConfirmation(toolId, {
-      repository_path: cwd.value,
+      repository_path: repoPath,
       ...args,
     })
     const idempotencyKey = await userToolActionIdempotencyKey(`desktop:git:${toolId}`, {
-      project_path: cwd.value,
+      project_path: lookupCwd,
       parameters,
     })
-    const action = await createUserToolActionForPath(cwd.value, toolId, parameters, idempotencyKey)
+    const action = await createUserToolActionForPath(lookupCwd, toolId, parameters, idempotencyKey)
     return actionToApproval(action, summary)
   }
 
@@ -459,6 +517,348 @@ export function useGitOperation(
     userActions.set(approval.id, action)
     userActionStore.actions = { ...userActionStore.actions, [action.id]: action }
     return action
+  }
+
+  /**
+   * 1-click governed human Git workflow (`create -> decide -> resume`):
+   * keeps UserToolAction audit & prewrite workspace snapshots intact without interrupting the user
+   * with extra agent-gate clicks on local/explicitly confirmed human Git actions.
+   */
+  async function runGovernedGitMutation(
+    toolId: string,
+    args: Record<string, unknown>,
+  ): Promise<UserToolActionDto | null> {
+    const lookupCwd = resolveRegisteredCwd()
+    if (!lookupCwd) throw new Error(t('context.gitWorkspaceRequired'))
+    const repoPath = resolveRepositoryPath(lookupCwd)
+    const parameters = withGitToolConfirmation(toolId, {
+      repository_path: repoPath,
+      ...args,
+    })
+    const nonce = `${Date.now()}:${++quickActionSeq}`
+    const idempotencyKey = await userToolActionIdempotencyKey(`desktop:git-quick:${toolId}:${nonce}`, {
+      project_path: lookupCwd,
+      parameters,
+    })
+    let action = await createUserToolActionForPath(lookupCwd, toolId, parameters, idempotencyKey)
+    userActionStore.actions = { ...userActionStore.actions, [action.id]: action }
+
+    if (action.status === 'awaiting_user' && action.permission_request_id) {
+      await api.decidePermissionRequest(action.permission_request_id, { approve: true, reason: null })
+      action = await api.getUserToolAction(action.id)
+      userActionStore.actions = { ...userActionStore.actions, [action.id]: action }
+    }
+    if (action.action_approval_id && (action.status === 'awaiting_approval' || action.status === 'awaiting_user')) {
+      await api.decideApproval(action.action_approval_id, 'approved', null)
+    }
+
+    const result = await api.resumeUserToolAction(action.id)
+    userActionStore.actions = { ...userActionStore.actions, [result.id]: result }
+    return result
+  }
+
+  async function quickStage(selection?: GitIndexSelection) {
+    const selected = selection?.patch
+      ? { patch: selection.patch }
+      : { paths: selection?.paths?.length ? selection.paths : selectedCommitPaths.value }
+    const paths = selected.paths ?? []
+    if (!cwd.value || (!selected.patch && paths.length === 0)) return
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation('git_stage', selected.patch ? { patch: selected.patch } : { paths })
+      if (!actionCompleted(result)) return
+      await loadStatus()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitIndexUpdateFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickUnstage(selection?: GitIndexSelection) {
+    const selected = selection?.patch
+      ? { patch: selection.patch }
+      : { paths: selection?.paths?.length ? selection.paths : selectedCommitPaths.value }
+    const paths = selected.paths ?? []
+    if (!cwd.value || (!selected.patch && paths.length === 0)) return
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation('git_unstage', selected.patch ? { patch: selected.patch } : { paths })
+      if (!actionCompleted(result)) return
+      await loadStatus()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitIndexUpdateFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickCommit(options?: { amend?: boolean; pushAfter?: boolean }) {
+    if (!cwd.value || !canQuickCommit.value) return
+    const useAmend = Boolean(options?.amend ?? amendCommit.value)
+    const usePaths = !useAmend && commitUsesSelectedPaths.value
+    const paths = [...selectedCommitPaths.value]
+    const args: Record<string, unknown> = useAmend && repoSummary.value.stagedCount === 0 && paths.length === 0
+      ? { message: commitMessage.value.trim(), amend: true }
+      : usePaths
+        ? { message: commitMessage.value.trim(), paths, ...(useAmend ? { amend: true } : {}) }
+        : { commit_staged_only: true, message: commitMessage.value.trim(), ...(useAmend ? { amend: true } : {}) }
+
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation('git_commit', args)
+      if (!actionCompleted(result)) return
+      commitMessage.value = ''
+      amendCommit.value = false
+      await Promise.all([loadStatus(), loadLog()])
+      if (options?.pushAfter && hasPushCandidate.value) {
+        confirmPush()
+      }
+    } catch (err) {
+      notifyOperationError(err, t('context.gitCommitFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickCheckout(branch: string) {
+    if (!cwd.value || !branch.trim()) return
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation('git_checkout', { branch: branch.trim() })
+      if (!actionCompleted(result)) return
+      await refreshAll()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitCheckoutFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickCreateBranch(branch: string) {
+    if (!cwd.value || !branch.trim()) return
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation('git_branch_create', { branch: branch.trim() })
+      if (!actionCompleted(result)) return
+      await refreshAll()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitBranchCreateFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickFetch() {
+    if (!cwd.value) return
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation('git_fetch', {})
+      if (!actionCompleted(result)) return
+      await Promise.all([loadBranches(), loadStatus()])
+    } catch (err) {
+      notifyOperationError(err, t('context.gitFetchFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickPull() {
+    if (!cwd.value || !canQuickPull.value) return
+    operationLoading.value = true
+    try {
+      const branch = previewData.value.branch ?? 'HEAD'
+      const upstream = previewData.value.upstream ?? 'origin'
+      const result = await runGovernedGitMutation('git_pull', {
+        branch,
+        remote: upstream.split('/')[0] ?? 'origin',
+      })
+      if (!actionCompleted(result)) return
+      await Promise.all([loadStatus(), loadLog()])
+    } catch (err) {
+      notifyOperationError(err, t('context.gitPullFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickResolveConflict(filePath: string, strategy: 'ours' | 'theirs' | 'both') {
+    if (!cwd.value || !filePath.trim()) return
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation('git_conflict_resolve', { path: filePath.trim(), strategy })
+      if (!actionCompleted(result)) return
+      await loadStatus()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitResolveConflictFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickStashPush(message?: string, includeUntracked = false): Promise<boolean> {
+    if (!cwd.value) return false
+    operationLoading.value = true
+    try {
+      const args: Record<string, unknown> = {
+        confirm_stash_push: message?.trim() || 'Stash workspace changes',
+      }
+      if (message?.trim()) args.message = message.trim()
+      if (includeUntracked) args.include_untracked = true
+      const result = await runGovernedGitMutation('git_stash_push', args)
+      if (!actionCompleted(result)) return false
+      await loadStatus()
+      return true
+    } catch (err) {
+      notifyOperationError(err, t('context.gitLoadFailed'))
+      return false
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function quickStashApply(stashRef: string, pop = false): Promise<boolean> {
+    if (!cwd.value || !stashRef.trim()) return false
+    const toolId = pop ? 'git_stash_pop' : 'git_stash_apply'
+    const confirmKey = pop ? 'confirm_stash_pop' : 'confirm_stash_apply'
+    operationLoading.value = true
+    try {
+      const result = await runGovernedGitMutation(toolId, {
+        stash_ref: stashRef.trim(),
+        [confirmKey]: `${pop ? 'Pop' : 'Apply'} ${stashRef.trim()}`,
+      })
+      if (!actionCompleted(result)) return false
+      await refreshAll()
+      return true
+    } catch (err) {
+      notifyOperationError(err, t('context.gitLoadFailed'))
+      return false
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  function quickStashPop(stashRef: string): Promise<boolean> {
+    return quickStashApply(stashRef, true)
+  }
+
+  function confirmPush() {
+    if (!cwd.value || !hasPushCandidate.value) return
+    const branch = pushData.value.branch ?? repoSummary.value.branch ?? 'HEAD'
+    pendingConfirmation.value = {
+      kind: 'push',
+      title: t('context.gitPush'),
+      detail: te('context.gitConfirmPush') ? t('context.gitConfirmPush', { branch }) : `Push local commits on ${branch}?`,
+      target: branch,
+      run: async () => {
+        const result = await runGovernedGitMutation('git_push', {
+          set_upstream: noUpstreamOnly.value,
+          remote: 'origin',
+        })
+        if (!actionCompleted(result)) return
+        await loadStatus()
+      },
+    }
+  }
+
+  function confirmDiscard(paths: string[], includeUntracked = false) {
+    const targets = [...new Set(paths.map((p) => p.trim()).filter(Boolean))]
+    if (!cwd.value || targets.length === 0) return
+    pendingConfirmation.value = {
+      kind: 'discard',
+      title: te('context.gitRollback') ? t('context.gitRollback') : t('context.gitDiscardFile'),
+      detail: te('context.gitConfirmDiscard') ? t('context.gitConfirmDiscard', { count: targets.length }) : `Discard changes in ${targets.length} file(s)?`,
+      paths: targets,
+      run: async () => {
+        const result = await runGovernedGitMutation('git_discard', {
+          paths: targets,
+          include_untracked: includeUntracked,
+        })
+        if (!actionCompleted(result)) return
+        await loadStatus()
+      },
+    }
+  }
+
+  function confirmDeleteBranch(branch: string, force = false) {
+    if (!cwd.value || !branch.trim()) return
+    pendingConfirmation.value = {
+      kind: 'branch_delete',
+      title: t(force ? 'context.gitForceDeleteBranch' : 'context.gitDeleteBranch'),
+      detail: te('context.gitConfirmDeleteBranch') ? t('context.gitConfirmDeleteBranch', { branch }) : `Delete branch ${branch}?`,
+      target: branch,
+      run: async () => {
+        const result = await runGovernedGitMutation('git_branch_delete', { branch: branch.trim(), force })
+        if (!actionCompleted(result)) return
+        await Promise.all([loadBranches(), loadStatus()])
+      },
+    }
+  }
+
+  function confirmMerge(branch: string) {
+    if (!cwd.value || !branch.trim()) return
+    pendingConfirmation.value = {
+      kind: 'merge',
+      title: t('context.gitMergeBranch'),
+      detail: te('context.gitConfirmMergeBranch') ? t('context.gitConfirmMergeBranch', { branch }) : `Merge ${branch}?`,
+      target: branch,
+      run: async () => {
+        const result = await runGovernedGitMutation('git_merge', { branch: branch.trim() })
+        if (!actionCompleted(result)) return
+        await refreshAll()
+      },
+    }
+  }
+
+  function confirmRebase(branch: string) {
+    if (!cwd.value || !branch.trim()) return
+    pendingConfirmation.value = {
+      kind: 'rebase',
+      title: t('context.gitRebaseBranch'),
+      detail: te('context.gitConfirmRebaseBranch') ? t('context.gitConfirmRebaseBranch', { branch }) : `Rebase onto ${branch}?`,
+      target: branch,
+      run: async () => {
+        const result = await runGovernedGitMutation('git_rebase', { operation: 'start', branch: branch.trim() })
+        if (!actionCompleted(result)) return
+        await refreshAll()
+      },
+    }
+  }
+
+  function confirmDropStash(stashRef: string, onDone?: () => Promise<void>) {
+    if (!cwd.value || !stashRef.trim()) return
+    pendingConfirmation.value = {
+      kind: 'stash_drop',
+      title: te('context.gitStashDrop') ? t('context.gitStashDrop') : 'Drop Stash',
+      detail: te('context.gitConfirmDropStash') ? t('context.gitConfirmDropStash', { stash: stashRef }) : `Drop ${stashRef}?`,
+      target: stashRef,
+      run: async () => {
+        const result = await runGovernedGitMutation('git_stash_drop', {
+          stash_ref: stashRef.trim(),
+          confirm_stash_drop: `Drop ${stashRef.trim()}`,
+        })
+        if (!actionCompleted(result)) return
+        await onDone?.()
+      },
+    }
+  }
+
+  async function confirmPendingAction() {
+    const pending = pendingConfirmation.value
+    if (!pending) return
+    pendingConfirmation.value = null
+    operationLoading.value = true
+    try {
+      await pending.run()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  function cancelConfirmation() {
+    pendingConfirmation.value = null
   }
 
   /** Only `blocked + error_category=snapshot_failed` may offer the one-shot override (docs/app-core-ui.md §6.2). */
@@ -504,7 +904,8 @@ export function useGitOperation(
   // ---- Actions ----
 
   async function loadStatus() {
-    const path = cwd.value
+    const path = resolveRegisteredCwd()
+    const repoArg = repositoryPathArg()
     const epoch = cwdEpoch
     if (!path) {
       preview.value = null
@@ -517,11 +918,11 @@ export function useGitOperation(
       const [nextPreview, nextPushPlan] = await Promise.all([
         api.executeCodeTool('git_worktree_manager', {
           cwd: path,
-          arguments: { action: 'diff_preview', max_files: 120, max_diff_bytes: 180000 },
+          arguments: { action: 'diff_preview', ...repoArg, max_files: 120, max_diff_bytes: 180000 },
         }),
         api.executeCodeTool('git_worktree_manager', {
           cwd: path,
-          arguments: { action: 'push_plan' },
+          arguments: { action: 'push_plan', ...repoArg },
         }),
       ])
       // The project changed while this was in flight: the reply describes a repository that
@@ -541,7 +942,7 @@ export function useGitOperation(
   }
 
   async function loadLog(limit = 50, ref?: string) {
-    const path = cwd.value
+    const path = resolveRegisteredCwd()
     const epoch = cwdEpoch
     if (!path) return
     try {
@@ -556,13 +957,14 @@ export function useGitOperation(
   }
 
   async function loadBranches() {
-    const path = cwd.value
+    const path = resolveRegisteredCwd()
+    const repoArg = repositoryPathArg()
     const epoch = cwdEpoch
     if (!path) return
     try {
       const res = await api.executeCodeTool('git_worktree_manager', {
         cwd: path,
-        arguments: { action: 'branch_list', all: true },
+        arguments: { action: 'branch_list', ...repoArg, all: true },
       })
       if (epoch !== cwdEpoch) return
       branchResult.value = res
@@ -912,17 +1314,19 @@ export function useGitOperation(
     args: Record<string, unknown>,
     summary: string,
   ): Promise<ApprovalDto> {
-    if (!cwd.value) throw new Error(t('context.gitWorkspaceRequired'))
+    const lookupCwd = resolveRegisteredCwd()
+    if (!lookupCwd) throw new Error(t('context.gitWorkspaceRequired'))
+    const repoPath = resolveRepositoryPath(lookupCwd)
     const parameters = withGitToolConfirmation('git_rebase', {
-      repository_path: cwd.value,
+      repository_path: repoPath,
       operation,
       ...args,
     })
     const idempotencyKey = await userToolActionIdempotencyKey(`desktop:git-rebase:${operation}`, {
-      project_path: cwd.value,
+      project_path: lookupCwd,
       parameters,
     })
-    const action = await createUserToolActionForPath(cwd.value, 'git_rebase', parameters, idempotencyKey)
+    const action = await createUserToolActionForPath(lookupCwd, 'git_rebase', parameters, idempotencyKey)
     return actionToApproval(action, summary)
   }
 
@@ -1261,6 +1665,8 @@ export function useGitOperation(
    */
   function resetForProjectChange() {
     resetApprovals()
+    pendingConfirmation.value = null
+    amendCommit.value = false
     preview.value = null
     pushPlan.value = null
     logResult.value = null
@@ -1285,7 +1691,9 @@ export function useGitOperation(
     loading,
     operationLoading,
     commitMessage,
+    amendCommit,
     pullStrategy,
+    pendingConfirmation,
     discardPaths,
     discardIncludeUntracked,
     selectedPaths,
@@ -1345,10 +1753,16 @@ export function useGitOperation(
     canRequestIndexApproval,
     canRequestDiscardApproval,
     canRequestCommitApproval,
+    canQuickCommit,
+    canQuickStage,
+    canQuickDiscard,
     commitUsesSelectedPaths,
     canRequestPushApproval,
+    canQuickPush,
     canRequestPullApproval,
+    canQuickPull,
     canRequestFetchApproval,
+    canQuickFetch,
     // Actions
     loadStatus,
     loadLog,
@@ -1396,6 +1810,26 @@ export function useGitOperation(
     approveAndExecuteCheckout,
     approveAndExecuteCreateBranch,
     approveAndExecuteFetch,
+    // 1-click governed human Git & explicit confirmation flows
+    quickStage,
+    quickUnstage,
+    quickCommit,
+    quickCheckout,
+    quickCreateBranch,
+    quickFetch,
+    quickPull,
+    quickResolveConflict,
+    quickStashPush,
+    quickStashApply,
+    quickStashPop,
+    confirmPush,
+    confirmDiscard,
+    confirmDeleteBranch,
+    confirmMerge,
+    confirmRebase,
+    confirmDropStash,
+    confirmPendingAction,
+    cancelConfirmation,
     // Utils
     approvalStatusLabel,
     decideGitApproval,

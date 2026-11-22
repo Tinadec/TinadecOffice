@@ -30,12 +30,15 @@ const diagnostics = ref<Array<Record<string, unknown>>>([])
 const notice = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const monacoFallback = ref(
-  typeof window === 'undefined' || /happy-dom|jsdom/i.test(window.navigator?.userAgent ?? ''),
+  import.meta.env.MODE === 'test' ||
+    typeof window === 'undefined' ||
+    /happy[- ]?dom|jsdom/i.test(window.navigator?.userAgent ?? ''),
 )
 
 let disposed = false
 let editor: import('monaco-editor').editor.IStandaloneCodeEditor | null = null
 let model: import('monaco-editor').editor.ITextModel | null = null
+let monacoInitPromise: Promise<void> | null = null
 
 const isDirty = computed(() => activeDocument.value !== null && text.value !== activeDocument.value.text)
 const documentOptions = computed(() => documents.value.map((id) => ({ value: id, label: id })))
@@ -51,38 +54,60 @@ async function confirmDiscardUnsaved(): Promise<boolean> {
   })
 }
 
+function disposeMonaco(): void {
+  editor?.dispose()
+  model?.dispose()
+  editor = null
+  model = null
+  if (monacoHost.value) {
+    monacoHost.value.replaceChildren()
+    monacoHost.value.removeAttribute('data-keybinding-context')
+    monacoHost.value.removeAttribute('data-mode-id')
+  }
+}
+
 async function initMonaco(): Promise<void> {
   if (monacoFallback.value || !monacoHost.value || editor) return
-  try {
-    const monaco = await getMonaco()
-    if (disposed || !monacoHost.value) return
-    model = monaco.editor.createModel(text.value, detectLanguage(selected.value || 'config.toml'))
-    editor = monaco.editor.create(monacoHost.value, {
-      model,
-      readOnly: !editing.value,
-      theme: isDark.value ? 'vs-dark' : 'vs',
-      ariaLabel: t('settings.tomlTitle'),
-      automaticLayout: true,
-      minimap: { enabled: false },
-      fontSize: 12,
-      lineNumbers: 'on',
-      tabSize: 2,
-      scrollBeyondLastLine: false,
-      wordWrap: 'on',
-      padding: { top: 10 },
-    })
-    editor.onDidChangeModelContent(() => {
-      if (model) {
-        const nextValue = model.getValue()
-        if (nextValue !== text.value) text.value = nextValue
-      }
-    })
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      if (editing.value && !busy.value) void save()
-    })
-  } catch {
-    if (!disposed) monacoFallback.value = true
-  }
+  if (monacoInitPromise) return monacoInitPromise
+  monacoInitPromise = (async () => {
+    try {
+      const monaco = await getMonaco()
+      if (disposed || !monacoHost.value) return
+      // Dispose any prior instance before binding to the host node to prevent
+      // Monaco's "Element already has context attribute" warning on remount.
+      disposeMonaco()
+      const host = monacoHost.value
+      model = monaco.editor.createModel(text.value, detectLanguage(selected.value || 'config.toml'))
+      editor = monaco.editor.create(host, {
+        model,
+        readOnly: !editing.value,
+        theme: isDark.value ? 'vs-dark' : 'vs',
+        ariaLabel: t('settings.tomlTitle'),
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 12,
+        lineNumbers: 'on',
+        tabSize: 2,
+        scrollBeyondLastLine: false,
+        wordWrap: 'on',
+        padding: { top: 10 },
+      })
+      editor.onDidChangeModelContent(() => {
+        if (model) {
+          const nextValue = model.getValue()
+          if (nextValue !== text.value) text.value = nextValue
+        }
+      })
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+        if (editing.value && !busy.value) void save()
+      })
+    } catch {
+      if (!disposed) monacoFallback.value = true
+    } finally {
+      monacoInitPromise = null
+    }
+  })()
+  return monacoInitPromise
 }
 
 watch(text, (nextValue) => {
@@ -95,7 +120,10 @@ watch(editing, (isEditing) => {
   editor?.updateOptions({ readOnly: !isEditing })
 })
 
-watch(monacoHost, (el) => {
+watch(monacoHost, (el, prevEl) => {
+  if (prevEl && prevEl !== el) {
+    disposeMonaco()
+  }
   if (el && !monacoFallback.value && !editor) {
     void initMonaco()
   }
@@ -236,10 +264,7 @@ onMounted(() => {
 watch(canAccessBackend, (ready) => { if (ready) void reload() })
 onBeforeUnmount(() => {
   disposed = true
-  editor?.dispose()
-  model?.dispose()
-  editor = null
-  model = null
+  disposeMonaco()
 })
 defineExpose({ reload, selectDocument })
 </script>
@@ -342,14 +367,19 @@ defineExpose({ reload, selectDocument })
   width: 100%;
   min-height: 280px;
   padding: 10px 12px;
-  border: 1px solid var(--border-muted);
-  border-radius: 9px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control-md, 8px);
   background: var(--surface-input);
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   resize: vertical;
+}
+.toml-editor:focus-visible {
+  outline: none;
+  border-color: var(--border-input-focus);
+  box-shadow: var(--focus-ring, 0 0 0 2px color-mix(in srgb, var(--accent-primary) 28%, transparent));
 }
 .toml-monaco-host {
   width: 100%;

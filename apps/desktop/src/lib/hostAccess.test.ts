@@ -59,4 +59,23 @@ describe('host business admission', () => {
     Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus: async () => { abort.abort(); return ready } } })
     await expect(assertHostAccess('/api/v1/projects', abort.signal)).rejects.toMatchObject({ name: 'AbortError' })
   })
+  it('blocks business routes with 401 when auth_required while allowing web-auth endpoints', async () => {
+    Object.defineProperty(window, 'tinadec', {
+      configurable: true,
+      value: {
+        isWebShim: true,
+        getHostStatus: async () => ({
+          state: 'auth_required',
+          managed: true,
+          error: { code: 'web_auth_required', message: 'Authentication required' },
+        }),
+      },
+    })
+    await expect(assertHostAccess('/api/v1/web-auth/status')).resolves.toBeUndefined()
+    await expect(assertHostAccess('/api/v1/web-auth/login')).resolves.toBeUndefined()
+    await expect(assertHostAccess('/api/v1/projects')).rejects.toMatchObject({ code: 'web_auth_required', status: 401 })
+    expect(useHostAccess().isAuthRequired.value).toBe(true)
+    expect(useHostAccess().isElectron.value).toBe(false)
+    expect(useHostAccess().canAccessBackend.value).toBe(false)
+  })
 })

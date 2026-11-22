@@ -55,6 +55,8 @@ const props = defineProps<{
   canDecideWorktreeApproval: boolean
   canRequestFetchApproval: boolean
   operationLoading: boolean
+  useQuickFlow?: boolean
+  canQuickFetch?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -76,6 +78,7 @@ const emit = defineEmits<{
   'create-worktree': [payload: { branch: string; path: string }]
   'remove-worktree': [path: string]
   'execute-worktree': []
+  'switch-worktree': [path: string]
 }>()
 
 const { t, te } = useI18n()
@@ -153,7 +156,7 @@ function handleRebaseBranch(branch: string) {
 }
 
 function onSwitchWorktree(path: string) {
-  // Delegate to parent
+  emit('switch-worktree', path)
 }
 
 function onCreateWorktree(payload: { branch: string; path: string }) {
@@ -209,7 +212,7 @@ defineExpose({ refresh: refreshBranches })
           :placeholder="t('context.gitBranchFilter')"
           size="sm"
         />
-        <UiButton variant="ghost" size="xs" :disabled="!canRequestFetchApproval || operationLoading" @click="emit('fetch')">
+        <UiButton variant="ghost" size="xs" :disabled="!(useQuickFlow ? (canQuickFetch ?? true) : canRequestFetchApproval) || operationLoading" @click="emit('fetch')">
           <RefreshCw :size="12" :class="{ spinning: operationLoading }" />
         </UiButton>
         <UiButton variant="secondary" size="xs" @click="showCreateForm = !showCreateForm">
@@ -233,21 +236,21 @@ defineExpose({ refresh: refreshBranches })
             :disabled="!canCreateBranch"
             @click="handleCreateBranch"
           >
-            <ShieldCheck :size="13" />
-            <span>{{ t('context.gitRequestApproval') }}</span>
+            <component :is="useQuickFlow ? Plus : ShieldCheck" :size="13" />
+            <span>{{ useQuickFlow ? t('context.gitNewBranch') : t('context.gitRequestApproval') }}</span>
           </UiButton>
           <UiButton variant="ghost" size="sm" @click="showCreateForm = false">
             {{ t('context.gitCompareCancel') }}
           </UiButton>
         </div>
         <!-- Execute approved -->
-        <div v-if="branchApproval?.status === 'approved'" class="git-branch-execute-row">
+        <div v-if="!useQuickFlow && branchApproval?.status === 'approved'" class="git-branch-execute-row">
           <UiButton variant="secondary" size="sm" :disabled="operationLoading" @click="emit('execute-create-branch')">
             <CheckCircle2 :size="13" />
             <span>{{ t('context.gitExecuteCreateBranch') }}</span>
           </UiButton>
         </div>
-        <div v-if="canDecideBranchApproval" class="git-approval-decide">
+        <div v-if="!useQuickFlow && canDecideBranchApproval" class="git-approval-decide">
           <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', branchApproval!, 'approved')">
             <CheckCircle2 :size="14" />
           </button>

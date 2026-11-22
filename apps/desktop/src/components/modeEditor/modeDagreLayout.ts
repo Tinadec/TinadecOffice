@@ -6,8 +6,9 @@ export const MODE_NODE_WIDTH = 224
 export const MODE_NODE_HEIGHT = 112
 export const MODE_GRID_SIZE = 20
 export const MODE_LANE_SPLIT_Y = 240
+export const MODE_LANE_HEADER_CLEARANCE_Y = 60
 export const MODE_OPERATION_DEFAULT_Y = 60
-export const MODE_EXECUTION_START_Y = 280
+export const MODE_EXECUTION_START_Y = 320
 
 const HORIZONTAL_STEP = 260
 const VERTICAL_STEP = 180
@@ -79,7 +80,7 @@ export function clampToLane(pos: { x: number; y: number }, lane: ModeLane): { x:
       y: Math.min(snappedY, maxOperationY),
     }
   }
-  const minExecutionY = snapToGrid(MODE_LANE_SPLIT_Y + MODE_GRID_SIZE)
+  const minExecutionY = snapToGrid(MODE_LANE_SPLIT_Y + MODE_LANE_HEADER_CLEARANCE_Y)
   return {
     x: snappedX,
     y: Math.max(snappedY, minExecutionY),

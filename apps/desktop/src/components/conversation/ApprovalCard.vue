@@ -144,9 +144,9 @@ function onKeydown(event: KeyboardEvent) {
 
 <style scoped>
 .conversation-approval { display: flex; flex-direction: column; gap: 6px; }
-.conversation-approval-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
-.conversation-approval-title { font-weight: 600; color: var(--text-primary); }
-.conversation-approval-requester { color: var(--text-muted); font-size: 11px; }
+.conversation-approval-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 12px; }
+.conversation-approval-title { font-weight: 600; color: var(--text-primary); white-space: nowrap; flex-shrink: 0; }
+.conversation-approval-requester { min-width: 0; color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-approval-question { margin: 0; font-size: 13px; color: var(--text-primary); overflow-wrap: anywhere; }
 .conversation-approval-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 12px; }
 .conversation-approval-facts dt { color: var(--text-muted); }

@@ -34,36 +34,25 @@ describe('built-in presets', () => {
     expect(preset.columns.right.collapsed).toBe(true)
   })
 
-  it('companion center preset lays out list, feed and the groups/connections stack', () => {
+  it('companion center preset keeps the shared left nav card and clears legacy companion cards', () => {
     const preset = buildPreset('companionCenter', { nextInstanceId: nextId() })
     expect(preset.pageId).toBe('companionCenter')
     expect(preset.gap).toBe(8)
     expect(preset.edgeInset).toBe(8)
-    // The left rail is the shared nav card at the work-page width, not a bespoke column.
     expect(preset.columns.left.width).toBe(260)
     expect(preset.columns.center.surfaceMode).toBe('immersive')
     expect(preset.columns.right.width).toBe(380)
 
     const descriptors = (slot: 'left' | 'center' | 'right') =>
       preset.columns[slot].primary.tabIds.map((id) => preset.cards[id].descriptorId)
-    // The left rail is one card — the shared nav island — so it gets no tab strip.
     expect(descriptors('left')).toEqual(['nav'])
-    // The centre is the buddy conversation; the activity feed moved to a right-hand tab.
-    expect(descriptors('center')).toEqual(['companionBuddy'])
-    // Roster first, then what those partners are doing, then the reference surfaces.
-    expect(descriptors('right')).toEqual([
-      'companionList', 'companionSupervision', 'companionProfile',
-      'companionGroups', 'companionFeed', 'companionConnections',
-    ])
-    // Eight cards: the shared sidebar plus seven companion panels.
-    expect(Object.keys(preset.cards)).toHaveLength(8)
-    // The feature panel clears the window controls exactly like the work pages do.
-    expect(preset.columns.right.topInset).toBe(48)
-    expect(preset.columns.left.topInset).toBe(8)
+    expect(descriptors('center')).toEqual([])
+    expect(descriptors('right')).toEqual([])
+    expect(Object.keys(preset.cards)).toHaveLength(1)
   })
 
   it('every page has a non-empty preset', () => {
-    for (const pageId of ['home', 'settings', 'market', 'code', 'debug', 'companionCenter'] as const) {
+    for (const pageId of ['home', 'settings', 'code', 'debug', 'companionCenter'] as const) {
       const preset = buildPreset(pageId, { nextInstanceId: nextId() })
       expect(preset.pageId).toBe(pageId)
       expect(Object.keys(preset.cards).length).toBeGreaterThan(0)

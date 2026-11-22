@@ -263,9 +263,7 @@ declare global {
       getHostStatus: () => Promise<import('./lib/hostConnection').HostConnectionStatus>;
       retryHostConnection: () => Promise<import('./lib/hostConnection').HostConnectionStatus>;
       onHostStatusChanged: (callback: (status: import('./lib/hostConnection').HostConnectionStatus) => void) => () => void;
-      getAppConfig: () => Promise<{ gateway_url: string; source: 'default' | 'user' | 'environment'; managed: boolean; debug_studio_enabled?: boolean; close_to_tray?: boolean; launch_at_login?: boolean; companion_speak_replies?: boolean; companion_mode_enabled?: boolean; path?: string; storage?: { root: string; source: 'default' | 'desktop' | 'environment'; bootstrap_config: string; managed: boolean; local_services: boolean } }>;
-      saveDebugStudioEnabled: (enabled: boolean) => Promise<{ debug_studio_enabled: boolean }>;
-      onDebugStudioEnabledChanged: (callback: () => void) => () => void;
+      getAppConfig: () => Promise<{ gateway_url: string; source: 'default' | 'user' | 'environment'; managed: boolean; close_to_tray?: boolean; launch_at_login?: boolean; companion_speak_replies?: boolean; companion_mode_enabled?: boolean; path?: string; storage?: { root: string; source: 'default' | 'desktop' | 'environment'; bootstrap_config: string; managed: boolean; local_services: boolean } }>;
       /** Keep the app running in the tray after the main window is closed. */
       saveCloseToTray: (enabled: boolean) => Promise<{ close_to_tray: boolean }>;
       onCloseToTrayChanged: (callback: (value: { close_to_tray: boolean }) => void) => () => void;
@@ -302,7 +300,6 @@ declare global {
       minimizeWindow: () => void;
       maximizeWindow: () => void;
       closeWindow: () => void;
-      openDebugStudio: () => Promise<boolean>;
       /** Open the Logto login flow in the system browser; resolves with the synced identity or null. */
       openLogin: () => Promise<LoginIdentity | null>;
       /** Revoke the current login session. */

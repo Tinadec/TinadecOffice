@@ -1,26 +1,35 @@
 import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?raw'
-import anthropicIcon from '@lobehub/icons-static-svg/icons/anthropic.svg?raw'
-import geminiIcon from '@lobehub/icons-static-svg/icons/gemini.svg?raw'
-import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek.svg?raw'
-import openrouterIcon from '@lobehub/icons-static-svg/icons/openrouter.svg?raw'
+import anthropicIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?raw'
+import geminiIcon from '@lobehub/icons-static-svg/icons/gemini-color.svg?raw'
+import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek-color.svg?raw'
+import openrouterIcon from '@lobehub/icons-static-svg/icons/openrouter-color.svg?raw'
 import pollinationsIcon from '@lobehub/icons-static-svg/icons/pollinations.svg?raw'
 import groqIcon from '@lobehub/icons-static-svg/icons/groq.svg?raw'
-import togetherIcon from '@lobehub/icons-static-svg/icons/together.svg?raw'
-import fireworksIcon from '@lobehub/icons-static-svg/icons/fireworks.svg?raw'
+import togetherIcon from '@lobehub/icons-static-svg/icons/together-color.svg?raw'
+import fireworksIcon from '@lobehub/icons-static-svg/icons/fireworks-color.svg?raw'
 import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?raw'
-import mistralIcon from '@lobehub/icons-static-svg/icons/mistral.svg?raw'
-import cohereIcon from '@lobehub/icons-static-svg/icons/cohere.svg?raw'
-import qwenIcon from '@lobehub/icons-static-svg/icons/qwen.svg?raw'
-import azureaiIcon from '@lobehub/icons-static-svg/icons/azureai.svg?raw'
-import bedrockIcon from '@lobehub/icons-static-svg/icons/bedrock.svg?raw'
+import mistralIcon from '@lobehub/icons-static-svg/icons/mistral-color.svg?raw'
+import cohereIcon from '@lobehub/icons-static-svg/icons/cohere-color.svg?raw'
+import qwenIcon from '@lobehub/icons-static-svg/icons/qwen-color.svg?raw'
+import azureaiIcon from '@lobehub/icons-static-svg/icons/azureai-color.svg?raw'
+import bedrockIcon from '@lobehub/icons-static-svg/icons/bedrock-color.svg?raw'
 import githubcopilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg?raw'
 import ollamaIcon from '@lobehub/icons-static-svg/icons/ollama.svg?raw'
-import vllmIcon from '@lobehub/icons-static-svg/icons/vllm.svg?raw'
+import vllmIcon from '@lobehub/icons-static-svg/icons/vllm-color.svg?raw'
 import lmstudioIcon from '@lobehub/icons-static-svg/icons/lmstudio.svg?raw'
-import codexIcon from '@lobehub/icons-static-svg/icons/codex.svg?raw'
-import claudeIcon from '@lobehub/icons-static-svg/icons/claude.svg?raw'
+import codexIcon from '@lobehub/icons-static-svg/icons/codex-color.svg?raw'
+import claudeCodeIcon from '@lobehub/icons-static-svg/icons/claudecode-color.svg?raw'
+import codebuddyIcon from '@lobehub/icons-static-svg/icons/codebuddy-color.svg?raw'
 import cursorIcon from '@lobehub/icons-static-svg/icons/cursor.svg?raw'
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
+import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw'
+import kimiIcon from '@lobehub/icons-static-svg/icons/kimi-color.svg?raw'
+import minimaxIcon from '@lobehub/icons-static-svg/icons/minimax-color.svg?raw'
+import siliconcloudIcon from '@lobehub/icons-static-svg/icons/siliconcloud-color.svg?raw'
+import volcengineIcon from '@lobehub/icons-static-svg/icons/volcengine-color.svg?raw'
+import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.svg?raw'
+import geminicliIcon from '@lobehub/icons-static-svg/icons/geminicli-color.svg?raw'
+import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
 
 export type ConnectionKind = 'api-key' | 'cli' | 'local-server' | 'public-api'
 
@@ -302,6 +311,81 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     placeholders: { base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max / qwen-plus / qwen-turbo', api_key: 'sk-...' }
   },
   {
+    driver: 'zhipu',
+    display_name_key: 'providers.zhipu',
+    summary_key: 'providers.zhipuSummary',
+    connection_kind: 'api-key',
+    category: 'cloud-api',
+    default_base_url: 'https://open.bigmodel.cn/api/paas/v4',
+    default_model: 'glm-4.5',
+    capabilities: ['chat', 'streaming', 'reasoning', 'tool-calls'],
+    brand_color: '#3b82f6',
+    brand_bg: hexToRgba('#3b82f6', 0.12),
+    icon: zhipuIcon,
+    fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
+    placeholders: { base_url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.5 / glm-4-plus', api_key: 'id.secret' }
+  },
+  {
+    driver: 'moonshot',
+    display_name_key: 'providers.moonshot',
+    summary_key: 'providers.moonshotSummary',
+    connection_kind: 'api-key',
+    category: 'cloud-api',
+    default_base_url: 'https://api.moonshot.cn/v1',
+    default_model: 'kimi-k2-0711-preview',
+    capabilities: ['chat', 'streaming', 'reasoning', 'tool-calls'],
+    brand_color: '#0ea5e9',
+    brand_bg: hexToRgba('#0ea5e9', 0.12),
+    icon: kimiIcon,
+    fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
+    placeholders: { base_url: 'https://api.moonshot.cn/v1', model: 'kimi-k2-0711-preview / moonshot-v1-128k', api_key: 'sk-...' }
+  },
+  {
+    driver: 'minimax',
+    display_name_key: 'providers.minimax',
+    summary_key: 'providers.minimaxSummary',
+    connection_kind: 'api-key',
+    category: 'cloud-api',
+    default_base_url: 'https://api.minimax.chat/v1',
+    default_model: 'MiniMax-M1',
+    capabilities: ['chat', 'streaming', 'reasoning', 'tool-calls'],
+    brand_color: '#f43f5e',
+    brand_bg: hexToRgba('#f43f5e', 0.12),
+    icon: minimaxIcon,
+    fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
+    placeholders: { base_url: 'https://api.minimax.chat/v1', model: 'MiniMax-M1 / MiniMax-Text-01', api_key: 'eyJ...' }
+  },
+  {
+    driver: 'siliconflow',
+    display_name_key: 'providers.siliconflow',
+    summary_key: 'providers.siliconflowSummary',
+    connection_kind: 'api-key',
+    category: 'cloud-api',
+    default_base_url: 'https://api.siliconflow.cn/v1',
+    default_model: 'deepseek-ai/DeepSeek-V3',
+    capabilities: ['chat', 'streaming', 'reasoning', 'tool-calls'],
+    brand_color: '#7c3aed',
+    brand_bg: hexToRgba('#7c3aed', 0.12),
+    icon: siliconcloudIcon,
+    fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
+    placeholders: { base_url: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3 / Qwen/Qwen3-235B', api_key: 'sk-...' }
+  },
+  {
+    driver: 'volcengine',
+    display_name_key: 'providers.volcengine',
+    summary_key: 'providers.volcengineSummary',
+    connection_kind: 'api-key',
+    category: 'cloud-api',
+    default_base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+    default_model: 'doubao-1-5-pro-32k-250115',
+    capabilities: ['chat', 'streaming', 'tool-calls'],
+    brand_color: '#2563eb',
+    brand_bg: hexToRgba('#2563eb', 0.12),
+    icon: volcengineIcon,
+    fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
+    placeholders: { base_url: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-pro-32k-250115 / ep-...', api_key: '...' }
+  },
+  {
     driver: 'azure-openai',
     display_name_key: 'providers.azureOpenai',
     summary_key: 'providers.azureOpenaiSummary',
@@ -355,8 +439,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     default_base_url: 'http://localhost:11434/v1',
     default_model: 'llama3.2',
     capabilities: ['chat', 'local', 'no-api-key'],
-    brand_color: '#c8a87c',
-    brand_bg: hexToRgba('#c8a87c', 0.12),
+    brand_color: '#d97706',
+    brand_bg: hexToRgba('#d97706', 0.12),
     icon: ollamaIcon,
     fields: { base_url: true, model: true, api_key: false, binary_path: false, home_path: false, server_url: false, launch_args: false },
     placeholders: { base_url: 'http://localhost:11434/v1', model: 'llama3.2 / qwen2.5 / mistral' }
@@ -400,8 +484,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     default_base_url: 'http://localhost:1234/v1',
     default_model: 'default',
     capabilities: ['chat', 'local', 'no-api-key'],
-    brand_color: '#00d4aa',
-    brand_bg: hexToRgba('#00d4aa', 0.12),
+    brand_color: '#0d9488',
+    brand_bg: hexToRgba('#0d9488', 0.12),
     icon: lmstudioIcon,
     fields: { base_url: true, model: true, api_key: false, binary_path: false, home_path: false, server_url: false, launch_args: false },
     placeholders: { base_url: 'http://localhost:1234/v1', model: 'default' }
@@ -443,8 +527,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
       { channel: 'cli', protocol: 'headless-cli' },
       { channel: 'tui', protocol: 'tui' }
     ],
-    brand_color: '#22d3ee',
-    brand_bg: hexToRgba('#22d3ee', 0.12),
+    brand_color: '#0891b2',
+    brand_bg: hexToRgba('#0891b2', 0.12),
     icon: opencodeIcon,
     fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: false, server_url: true, launch_args: true },
     placeholders: {
@@ -487,7 +571,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     ],
     brand_color: '#2563eb',
     brand_bg: hexToRgba('#2563eb', 0.12),
-    icon: harnessIcon,
+    icon: codebuddyIcon,
     fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: false, server_url: false, launch_args: false },
     placeholders: { binary_path: 'C:\\Program Files\\WorkBuddy\\resources\\app.asar.unpacked\\cli\\bin\\codebuddy.exe' }
   },
@@ -506,9 +590,9 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
       { channel: 'cli', protocol: 'headless-cli' },
       { channel: 'tui', protocol: 'tui' }
     ],
-    brand_color: '#4f46e5',
-    brand_bg: hexToRgba('#4f46e5', 0.12),
-    icon: harnessIcon,
+    brand_color: '#4d6bfe',
+    brand_bg: hexToRgba('#4d6bfe', 0.12),
+    icon: deepseekIcon,
     fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: false, server_url: false, launch_args: false },
     placeholders: { binary_path: '/usr/local/bin/dsh' }
   },
@@ -529,7 +613,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     ],
     brand_color: '#0ea5e9',
     brand_bg: hexToRgba('#0ea5e9', 0.12),
-    icon: harnessIcon,
+    icon: kimiIcon,
     fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: false, server_url: false, launch_args: false },
     placeholders: { binary_path: 'C:\\Users\\me\\.kimi-code\\bin\\kimi.exe' }
   },
@@ -550,7 +634,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     ],
     brand_color: '#d97706',
     brand_bg: hexToRgba('#d97706', 0.12),
-    icon: claudeIcon,
+    icon: claudeCodeIcon,
     fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: false, server_url: false, launch_args: false },
     placeholders: { binary_path: 'C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd' }
   },
@@ -593,6 +677,123 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     icon: harnessIcon,
     fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: false, server_url: false, launch_args: false },
     placeholders: { binary_path: '/usr/local/bin/zcode' }
+  },
+  {
+    driver: 'agy',
+    display_name_key: 'providers.antigravity',
+    summary_key: 'providers.antigravitySummary',
+    connection_kind: 'cli',
+    category: 'agent-cli',
+    default_base_url: null,
+    default_model: null,
+    capabilities: ['agent', 'harness', 'acp'],
+    protocol: 'acp',
+    channels: [
+      { channel: 'acp', protocol: 'acp' },
+      { channel: 'tui', protocol: 'tui' }
+    ],
+    brand_color: '#4285f4',
+    brand_bg: hexToRgba('#4285f4', 0.12),
+    icon: antigravityIcon,
+    fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: true, server_url: false, launch_args: true },
+    placeholders: { binary_path: 'agy', home_path: '~/.gemini/antigravity', launch_args: 'acp' }
+  },
+  {
+    driver: 'gemini-cli',
+    display_name_key: 'providers.geminiCli',
+    summary_key: 'providers.geminiCliSummary',
+    connection_kind: 'cli',
+    category: 'agent-cli',
+    default_base_url: null,
+    default_model: null,
+    capabilities: ['agent', 'harness', 'acp'],
+    protocol: 'acp',
+    channels: [
+      { channel: 'acp', protocol: 'acp' },
+      { channel: 'tui', protocol: 'tui' }
+    ],
+    brand_color: '#4285f4',
+    brand_bg: hexToRgba('#4285f4', 0.12),
+    icon: geminicliIcon,
+    fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: true, server_url: false, launch_args: true },
+    placeholders: { binary_path: 'gemini', home_path: '~/.gemini', launch_args: '--experimental-acp' }
+  },
+  {
+    driver: 'qwen-code',
+    display_name_key: 'providers.qwenCode',
+    summary_key: 'providers.qwenCodeSummary',
+    connection_kind: 'cli',
+    category: 'agent-cli',
+    default_base_url: null,
+    default_model: null,
+    capabilities: ['agent', 'harness', 'acp'],
+    protocol: 'acp',
+    channels: [
+      { channel: 'acp', protocol: 'acp' },
+      { channel: 'tui', protocol: 'tui' }
+    ],
+    brand_color: '#6236ff',
+    brand_bg: hexToRgba('#6236ff', 0.12),
+    icon: qwenIcon,
+    fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: true, server_url: false, launch_args: true },
+    placeholders: { binary_path: 'qwen', home_path: '~/.qwen', launch_args: '--acp' }
+  },
+  {
+    driver: 'minimax-code',
+    display_name_key: 'providers.minimaxCode',
+    summary_key: 'providers.minimaxCodeSummary',
+    connection_kind: 'cli',
+    category: 'agent-cli',
+    default_base_url: null,
+    default_model: null,
+    capabilities: ['agent', 'harness', 'acp'],
+    protocol: 'acp',
+    channels: [
+      { channel: 'acp', protocol: 'acp' },
+      { channel: 'tui', protocol: 'tui' }
+    ],
+    brand_color: '#f43f5e',
+    brand_bg: hexToRgba('#f43f5e', 0.12),
+    icon: minimaxIcon,
+    fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: true, server_url: false, launch_args: true },
+    placeholders: { binary_path: 'minimax', home_path: '~/.minimax', launch_args: '--acp' }
+  },
+  {
+    driver: 'pi',
+    display_name_key: 'providers.piHarness',
+    summary_key: 'providers.piHarnessSummary',
+    connection_kind: 'cli',
+    category: 'agent-cli',
+    default_base_url: null,
+    default_model: null,
+    capabilities: ['agent', 'harness', 'acp'],
+    protocol: 'acp',
+    channels: [
+      { channel: 'acp', protocol: 'acp' },
+      { channel: 'tui', protocol: 'tui' }
+    ],
+    brand_color: '#10b981',
+    brand_bg: hexToRgba('#10b981', 0.12),
+    icon: piIcon,
+    fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: true, server_url: false, launch_args: true },
+    placeholders: { binary_path: 'pi', home_path: '~/.pi', launch_args: '--acp' }
+  },
+  {
+    driver: 'custom-acp',
+    display_name_key: 'providers.customAcp',
+    summary_key: 'providers.customAcpSummary',
+    connection_kind: 'cli',
+    category: 'agent-cli',
+    default_base_url: null,
+    default_model: null,
+    capabilities: ['agent', 'harness', 'acp'],
+    protocol: 'acp',
+    channels: [{ channel: 'acp', protocol: 'acp' }],
+    brand_color: '#6366f1',
+    brand_bg: hexToRgba('#6366f1', 0.12),
+    icon: harnessIcon,
+    fields: { base_url: false, model: false, api_key: false, binary_path: true, home_path: true, server_url: false, launch_args: true },
+    placeholders: { binary_path: '/path/to/acp-agent', home_path: '~/.acp-agent', launch_args: '--acp' }
   },
   {
     driver: 'custom',
