@@ -10,6 +10,8 @@ import {
   getNextStep,
   getPrevStep,
   isProviderEffectivelyConfigured,
+  normalizeOobeState,
+  OOBE_STEPS,
   openOobeWizard,
   queueDeferredHabit,
   replayOobeWizard,
@@ -38,21 +40,44 @@ function makeReceipt(items: RuntimeReadinessReceiptDto['items']): RuntimeReadine
   return { status: 'ready', items }
 }
 
-describe('useOobe engine & admission rules', () => {
+describe('useOobe 3-step engine & admission rules', () => {
   beforeEach(() => {
     __resetOobeForTests()
     localStorage.clear()
   })
 
-  it('ignores keyless DevSeed placeholders and triggers OOBE auto-open', () => {
+  it('defines the streamlined 3-step core flow and migrates legacy persisted steps cleanly', () => {
+    expect(OOBE_STEPS).toEqual(['welcome', 'provider', 'workspace'])
+    expect(getNextStep('welcome')).toBe('provider')
+    expect(getNextStep('provider')).toBe('workspace')
+    expect(getNextStep('workspace')).toBeNull()
+    expect(getPrevStep('workspace')).toBe('provider')
+
+    const migrated = normalizeOobeState({
+      version: 1,
+      firstRun: { resumeStep: 'habits' },
+      tours: {},
+    })
+    expect(migrated.firstRun.resumeStep).toBe('workspace')
+  })
+
+  it('ignores keyless DevSeed placeholders while recognizing CLI / ACP / local runtimes as configured', () => {
     const devSeed = makeProvider({
       id: 'dev-seed-default',
       display_name: 'DevSeed OpenAI',
       connection_kind: 'api-key',
       has_api_key: false,
     })
-
     expect(isProviderEffectivelyConfigured(devSeed)).toBe(false)
+
+    const acpHarness = makeProvider({
+      id: 'claude-code-acp',
+      driver: 'claude-code',
+      display_name: 'Claude Code',
+      connection_kind: 'acp' as ModelProviderInstanceDto['connection_kind'],
+      has_api_key: false,
+    })
+    expect(isProviderEffectivelyConfigured(acpHarness)).toBe(true)
 
     const receipt = makeReceipt([
       { id: 'model_route', status: 'ready' },
@@ -117,11 +142,10 @@ describe('useOobe engine & admission rules', () => {
     })
 
     try {
-      openOobeWizard('habits')
+      openOobeWizard('workspace')
       queueDeferredHabit('companionCapsule', true)
       queueDeferredHabit('desktopPet', true)
 
-      // Neither floating window API may fire while wizard is still open!
       expect(saveCompanionMode).not.toHaveBeenCalled()
       expect(setEnabled).not.toHaveBeenCalled()
 

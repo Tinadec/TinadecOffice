@@ -6,10 +6,13 @@ import {
   type ReadinessItemDto,
   type RuntimeReadinessReceiptDto,
 } from '@/api'
+import { ensureGraphSeedPack } from '@/agentPacks/graphSeedPackBootstrap'
 import { useHostAccess } from '@/lib/hostAccess'
 
-export const OOBE_STEPS = ['welcome', 'provider', 'ecosystem', 'habits', 'firstTask'] as const
+export const OOBE_STEPS = ['welcome', 'provider', 'workspace'] as const
 export type OobeStepId = (typeof OOBE_STEPS)[number]
+
+const LEGACY_WORKSPACE_STEPS = new Set(['ecosystem', 'habits', 'firstTask'])
 
 export interface OobeTourRecord {
   status: 'done' | 'dismissed' | 'snoozed'
@@ -55,7 +58,8 @@ export interface DeferredOobeHabits {
 
 const STORAGE_KEY = 'tinadec.oobe.state.v1'
 
-const LOCAL_OR_NO_KEY_DRIVERS = new Set(['ollama', 'lmstudio', 'vllm', 'pollinations'])
+const LOCAL_OR_NO_KEY_DRIVERS = new Set(['ollama', 'lmstudio', 'vllm', 'sglang', 'llamacpp', 'pollinations'])
+const HARNESS_OR_LOCAL_CONNECTIONS = new Set(['local-server', 'cli', 'acp', 'tui', 'public-api'])
 
 export function createDefaultOobeState(): OobeState {
   return {
@@ -69,9 +73,11 @@ export function normalizeOobeState(raw: unknown): OobeState {
   if (!raw || typeof raw !== 'object') return createDefaultOobeState()
   const candidate = raw as Partial<OobeState>
   const firstRun = candidate.firstRun && typeof candidate.firstRun === 'object' ? candidate.firstRun : {}
-  const resumeStep =
-    typeof firstRun.resumeStep === 'string' && (OOBE_STEPS as readonly string[]).includes(firstRun.resumeStep)
-      ? (firstRun.resumeStep as OobeStepId)
+  const rawStep = typeof firstRun.resumeStep === 'string' ? firstRun.resumeStep : ''
+  const resumeStep: OobeStepId | undefined = (OOBE_STEPS as readonly string[]).includes(rawStep)
+    ? (rawStep as OobeStepId)
+    : LEGACY_WORKSPACE_STEPS.has(rawStep)
+      ? 'workspace'
       : undefined
   return {
     version: 1,
@@ -95,13 +101,17 @@ export function isProviderEffectivelyConfigured(
   const idLower = (provider.id || '').toLowerCase()
   const nameLower = (provider.display_name || '').toLowerCase()
   const driverLower = (provider.driver || '').toLowerCase()
-  const isDevSeedName = idLower.includes('devseed') || idLower.includes('dev-seed') || nameLower.includes('devseed') || nameLower.includes('dev seed')
+  const isDevSeedName =
+    idLower.includes('devseed') ||
+    idLower.includes('dev-seed') ||
+    nameLower.includes('devseed') ||
+    nameLower.includes('dev seed')
 
   if (isDevSeedName && !provider.has_api_key) {
     return false
   }
 
-  if (provider.connection_kind === 'local-server' || provider.connection_kind === 'cli' || provider.connection_kind === 'public-api') {
+  if (HARNESS_OR_LOCAL_CONNECTIONS.has(String(provider.connection_kind || '').toLowerCase())) {
     return true
   }
 
@@ -239,8 +249,6 @@ export function getPrevStep(step: OobeStepId): OobeStepId | null {
   return index > 0 ? OOBE_STEPS[index - 1] : null
 }
 
-// ---- Persistence bridge (Electron IPC when available, localStorage fallback) ----
-
 interface OobeStorageBridge {
   readState?: () => Promise<unknown>
   writeState?: (state: OobeState) => Promise<void>
@@ -287,15 +295,23 @@ export async function writePersistedOobeState(next: OobeState): Promise<void> {
   }
 }
 
-// ---- Module-level singleton controller ----
-
 const oobeOpen = ref(false)
 const currentStep = ref<OobeStepId>('welcome')
 const oobeState = ref<OobeState>(createDefaultOobeState())
 const readinessSummary = ref<OobeReadinessSummary | null>(null)
 const providerVerified = ref(false)
+const selectedWorkspacePath = ref('')
 const deferredHabits = ref<DeferredOobeHabits>({ companionCapsule: null, desktopPet: null })
 let admissionEvaluated = false
+
+function ensureSeedPackSilently(): void {
+  try {
+    if (typeof api.getAgentPack !== 'function') return
+    void ensureGraphSeedPack().catch(() => undefined)
+  } catch {
+    // Best-effort silent bootstrap in minimal test environments.
+  }
+}
 
 export function isOobeOpen(): boolean {
   return oobeOpen.value
@@ -336,11 +352,13 @@ export async function flushDeferredHabits(): Promise<void> {
 export function openOobeWizard(step?: OobeStepId): void {
   currentStep.value = step ?? oobeState.value.firstRun.resumeStep ?? 'welcome'
   oobeOpen.value = true
+  ensureSeedPackSilently()
 }
 
 export function replayOobeWizard(): void {
   currentStep.value = 'welcome'
   oobeOpen.value = true
+  ensureSeedPackSilently()
 }
 
 export async function setOobeStep(step: OobeStepId): Promise<void> {
@@ -382,7 +400,6 @@ export async function closeOobeWizard(mode: 'skip' | 'complete' | 'dismiss' = 'd
     oobeState.value = next
     await writePersistedOobeState(next)
   }
-  // Always flush deferred floating windows ONLY after the wizard closes so alwaysOnTop never overlaps OOBE.
   await flushDeferredHabits()
 }
 
@@ -391,7 +408,6 @@ export async function evaluateOobeAdmission(): Promise<boolean> {
   const { canAccessBackend } = useHostAccess()
   if (!canAccessBackend.value) return false
   if (typeof api.readiness !== 'function' || typeof api.listModelProviders !== 'function') {
-    // Minimal mocked test environment: stay silent.
     return false
   }
   admissionEvaluated = true
@@ -408,6 +424,7 @@ export async function evaluateOobeAdmission(): Promise<boolean> {
     if (shouldAutoOpenOobe(receipt, providers, persisted)) {
       currentStep.value = persisted.firstRun.resumeStep ?? 'welcome'
       oobeOpen.value = true
+      ensureSeedPackSilently()
       return true
     }
     return false
@@ -422,6 +439,7 @@ export function __resetOobeForTests(): void {
   oobeState.value = createDefaultOobeState()
   readinessSummary.value = null
   providerVerified.value = false
+  selectedWorkspacePath.value = ''
   deferredHabits.value = { companionCapsule: null, desktopPet: null }
   admissionEvaluated = false
 }
@@ -441,6 +459,7 @@ export function useOobe() {
     state: oobeState,
     readinessSummary,
     providerVerified,
+    selectedWorkspacePath,
     deferredHabits,
     openOobeWizard,
     replayOobeWizard,

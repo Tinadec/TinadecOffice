@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronLeft, ChevronRight, X } from '@lucide/vue'
+import { ArrowLeft, ArrowRight, Check, Minus, Square, X } from '@lucide/vue'
+import BrandLogo from '@/components/BrandLogo.vue'
+import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import { UiButton } from '@/components/ui'
+import { usePlatform } from '@/composables/usePlatform'
+import { useHostAccess } from '@/lib/hostAccess'
 import { getNextStep, getPrevStep, useOobe, type OobeStepId } from '@/composables/useOobe'
 import OobeStepWelcome from './OobeStepWelcome.vue'
 import OobeStepProvider from './OobeStepProvider.vue'
-import OobeStepEcosystem from './OobeStepEcosystem.vue'
-import OobeStepHabits from './OobeStepHabits.vue'
-import OobeStepFirstTask from './OobeStepFirstTask.vue'
+import OobeStepWorkspace from './OobeStepWorkspace.vue'
 
 const { t, te } = useI18n()
+const { isElectron } = useHostAccess()
+const { isMac, isElectronMac, isFullScreen } = usePlatform()
 const {
   steps,
   open,
@@ -26,20 +30,16 @@ function label(key: string, fallback: string, params?: Record<string, unknown>):
   return te(key) ? String(t(key, params ?? {})) : fallback
 }
 
-const stepLabels: Record<OobeStepId, { key: string; fallback: string }> = {
-  welcome: { key: 'oobe.steps.welcome', fallback: 'Welcome' },
-  provider: { key: 'oobe.steps.provider', fallback: 'Model Setup' },
-  ecosystem: { key: 'oobe.steps.ecosystem', fallback: 'Tools & Packs' },
-  habits: { key: 'oobe.steps.habits', fallback: 'Habits' },
-  firstTask: { key: 'oobe.steps.firstTask', fallback: 'First Task' },
+const stepMeta: Record<OobeStepId, { num: string; key: string; fallback: string }> = {
+  welcome: { num: '01', key: 'oobe.steps.welcome', fallback: '外观与语言' },
+  provider: { num: '02', key: 'oobe.steps.provider', fallback: '模型与引擎' },
+  workspace: { num: '03', key: 'oobe.steps.workspace', fallback: '工作区' },
 }
 
 const stepComponents = {
   welcome: OobeStepWelcome,
   provider: OobeStepProvider,
-  ecosystem: OobeStepEcosystem,
-  habits: OobeStepHabits,
-  firstTask: OobeStepFirstTask,
+  workspace: OobeStepWorkspace,
 } as const
 
 const activeStepComponent = computed(() => stepComponents[currentStep.value])
@@ -67,241 +67,451 @@ async function skip(): Promise<void> {
 async function finish(): Promise<void> {
   await closeOobeWizard('complete')
 }
+
+function minimizeWindow(): void {
+  window.tinadec?.minimizeWindow?.()
+}
+
+function maximizeWindow(): void {
+  window.tinadec?.maximizeWindow?.()
+}
+
+function closeWindow(): void {
+  window.tinadec?.closeWindow?.()
+}
+
+function onGlobalKeydown(event: KeyboardEvent): void {
+  if (!open.value || event.key !== 'Escape') return
+  // Do not steal Escape from an open Reka select menu or directory picker modal.
+  if (
+    typeof document !== 'undefined' &&
+    document.querySelector('[data-reka-popper-content-wrapper], [data-testid="server-directory-picker-modal"]')
+  ) {
+    return
+  }
+  event.preventDefault()
+  void skip()
+}
+
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('keydown', onGlobalKeydown)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('keydown', onGlobalKeydown)
+  }
+})
 </script>
 
 <template>
   <Teleport to="body">
     <div
       v-if="open"
-      class="oobe-backdrop"
+      class="oobe-fullscreen-stage"
+      :class="{ 'is-mac-framed': isElectronMac && !isFullScreen }"
       role="dialog"
       aria-modal="true"
-      :aria-label="label('oobe.title', 'Get Started with TinadecOffice')"
+      :aria-label="label('oobe.title', '欢迎使用 TinadecOffice')"
       data-testid="oobe-wizard-modal"
     >
-      <div class="oobe-modal">
-        <header class="oobe-header">
-          <div class="oobe-header__title">
-            <h2>{{ label('oobe.title', 'Get Started with TinadecOffice') }}</h2>
-            <span class="oobe-step-counter">
-              {{ label('oobe.stepCounter', `Step ${stepIndex + 1} of ${steps.length}`, { current: stepIndex + 1, total: steps.length }) }}
-            </span>
-          </div>
-          <UiButton
-            variant="ghost"
-            size="icon"
-            :aria-label="label('oobe.skipForNow', 'Skip for now')"
+      <div class="oobe-ambient-glow" aria-hidden="true" />
+
+      <!-- Minimal Full-Screen Top Bar (respects macOS traffic lights & Windows frameless controls) -->
+      <header class="oobe-topbar">
+        <div class="oobe-topbar__brand">
+          <BrandLogo :size="15" class="oobe-brand-icon" />
+          <TinadecCalligraphy :size="14" class="oobe-brand-wordmark" />
+        </div>
+
+        <nav class="oobe-topbar__steps no-drag" :aria-label="label('oobe.stepsNav', '初始化步骤')">
+          <ol class="oobe-rail">
+            <li
+              v-for="(step, idx) in steps"
+              :key="step"
+              class="oobe-rail__item"
+              :class="{
+                'is-active': step === currentStep,
+                'is-completed': idx < stepIndex,
+              }"
+            >
+              <button
+                type="button"
+                class="oobe-rail__btn"
+                :aria-current="step === currentStep ? 'step' : undefined"
+                :data-testid="`oobe-rail-${step}`"
+                @click="setOobeStep(step)"
+              >
+                <span class="oobe-rail__index">
+                  <Check v-if="idx < stepIndex" :size="11" aria-hidden="true" />
+                  <template v-else>{{ stepMeta[step].num }}</template>
+                </span>
+                <span class="oobe-rail__label">{{ label(stepMeta[step].key, stepMeta[step].fallback) }}</span>
+              </button>
+              <span v-if="idx < steps.length - 1" class="oobe-rail__divider" aria-hidden="true" />
+            </li>
+          </ol>
+        </nav>
+
+        <div class="oobe-topbar__actions no-drag">
+          <button
+            type="button"
+            class="oobe-skip-top"
             data-testid="oobe-close-btn"
             @click="skip"
           >
-            <X :size="16" />
-          </UiButton>
-        </header>
+            {{ label('oobe.skipForNow', '稍后配置') }}
+          </button>
 
-        <ol class="oobe-stepper" aria-label="Onboarding steps">
-          <li
-            v-for="(step, idx) in steps"
-            :key="step"
-            class="oobe-stepper__item"
-            :class="{
-              active: step === currentStep,
-              completed: idx < stepIndex,
-            }"
-          >
-            <button
-              type="button"
-              class="oobe-stepper__btn"
-              :aria-current="step === currentStep ? 'step' : undefined"
-              @click="setOobeStep(step)"
+          <template v-if="isElectron && !isMac">
+            <span class="oobe-win-sep" aria-hidden="true" />
+            <UiButton
+              variant="ghost"
+              size="icon"
+              class="window-btn minimize"
+              :title="label('app.minimize', '最小化')"
+              :aria-label="label('app.minimize', '最小化')"
+              @click="minimizeWindow"
             >
-              <span class="oobe-stepper__dot">
-                <Check v-if="idx < stepIndex" :size="11" />
-                <span v-else>{{ idx + 1 }}</span>
-              </span>
-              <span class="oobe-stepper__label">{{ label(stepLabels[step].key, stepLabels[step].fallback) }}</span>
-            </button>
-          </li>
-        </ol>
-
-        <div class="oobe-body">
-          <component :is="activeStepComponent" />
+              <Minus :size="14" aria-hidden="true" />
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              size="icon"
+              class="window-btn maximize"
+              :title="label('app.maximize', '最大化')"
+              :aria-label="label('app.maximize', '最大化')"
+              @click="maximizeWindow"
+            >
+              <Square :size="12" aria-hidden="true" />
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              size="icon"
+              class="window-btn close"
+              :title="label('app.close', '关闭')"
+              :aria-label="label('app.close', '关闭')"
+              @click="closeWindow"
+            >
+              <X :size="14" aria-hidden="true" />
+            </UiButton>
+          </template>
         </div>
+      </header>
 
-        <footer class="oobe-footer">
-          <UiButton variant="ghost" size="sm" data-testid="oobe-skip-btn" @click="skip">
-            {{ label('oobe.skipForNow', 'Skip for now') }}
-          </UiButton>
-          <div class="oobe-footer__nav">
-            <UiButton
-              v-if="canGoBack"
-              variant="outline"
-              size="sm"
-              data-testid="oobe-back-btn"
-              @click="goBack"
-            >
-              <ChevronLeft :size="14" />
-              <span>{{ label('oobe.back', 'Back') }}</span>
-            </UiButton>
-            <UiButton
-              v-if="!isLastStep"
-              size="sm"
-              data-testid="oobe-next-btn"
-              @click="goNext"
-            >
-              <span>{{ label('oobe.next', 'Next') }}</span>
-              <ChevronRight :size="14" />
-            </UiButton>
-            <UiButton
-              v-else
-              size="sm"
-              data-testid="oobe-finish-btn"
-              @click="finish"
-            >
-              <span>{{ label('oobe.finish', 'Enter Workspace') }}</span>
-            </UiButton>
+      <!-- Centered Editorial Stage -->
+      <main class="oobe-stage-scroll">
+        <div class="oobe-stage-column">
+          <div class="oobe-step-viewport">
+            <Transition name="oobe-step-fade" mode="out-in">
+              <component :is="activeStepComponent" :key="currentStep" />
+            </Transition>
           </div>
-        </footer>
-      </div>
+
+          <footer class="oobe-stage-footer">
+            <div class="oobe-stage-footer__left">
+              <UiButton
+                v-if="canGoBack"
+                variant="ghost"
+                size="sm"
+                data-testid="oobe-back-btn"
+                @click="goBack"
+              >
+                <ArrowLeft :size="14" />
+                <span>{{ label('oobe.back', '上一步') }}</span>
+              </UiButton>
+              <button
+                v-else
+                type="button"
+                class="oobe-skip-inline"
+                data-testid="oobe-skip-btn"
+                @click="skip"
+              >
+                {{ label('oobe.enterDirectly', '先跳过，直接进入工作台') }}
+              </button>
+            </div>
+
+            <div class="oobe-stage-footer__right">
+              <UiButton
+                v-if="!isLastStep"
+                size="default"
+                data-testid="oobe-next-btn"
+                @click="goNext"
+              >
+                <span>{{ label('oobe.next', '继续') }}</span>
+                <ArrowRight :size="14" />
+              </UiButton>
+              <UiButton
+                v-else
+                size="default"
+                data-testid="oobe-finish-btn"
+                @click="finish"
+              >
+                <span>{{ label('oobe.finish', '进入工作台') }}</span>
+                <ArrowRight :size="14" />
+              </UiButton>
+            </div>
+          </footer>
+        </div>
+      </main>
     </div>
   </Teleport>
 </template>
 
 <style scoped>
-.oobe-backdrop {
+.oobe-fullscreen-stage {
   position: fixed;
   inset: 0;
   z-index: 1200;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(10, 12, 18, 0.58);
-  backdrop-filter: blur(8px);
-}
-
-.oobe-modal {
-  width: min(680px, 100%);
-  max-height: min(86vh, 720px);
-  display: flex;
   flex-direction: column;
-  border-radius: 16px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-section);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.36);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   overflow: hidden;
 }
 
-.oobe-header {
-  display: flex;
+.oobe-ambient-glow {
+  position: absolute;
+  top: -20%;
+  left: 50%;
+  width: min(880px, 120vw);
+  height: 420px;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--text-primary) 3.5%, transparent) 0%,
+    transparent 72%
+  );
+  pointer-events: none;
+}
+
+.oobe-topbar {
+  position: relative;
+  z-index: 2;
+  height: 48px;
+  padding: 0 18px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 14px 18px 10px;
-  border-bottom: 1px solid var(--border-muted);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
 }
 
-.oobe-header__title {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
+.oobe-fullscreen-stage.is-mac-framed .oobe-topbar {
+  padding-left: 84px;
 }
 
-.oobe-header__title h2 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text-primary);
-}
-
-.oobe-step-counter {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.oobe-stepper {
-  list-style: none;
-  margin: 0;
-  padding: 10px 18px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-bottom: 1px solid var(--border-muted);
-  background: var(--surface-raised);
-  overflow-x: auto;
-}
-
-.oobe-stepper__item {
-  flex: 1 0 auto;
-}
-
-.oobe-stepper__btn {
-  width: 100%;
+.oobe-topbar__brand {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.oobe-brand-icon,
+.oobe-brand-wordmark {
+  flex-shrink: 0;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.oobe-topbar__steps {
+  justify-self: center;
+}
+
+.oobe-rail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.oobe-rail__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.oobe-rail__btn {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 4px 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
   font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
 }
 
-.oobe-stepper__item.active .oobe-stepper__btn {
+.oobe-rail__btn:hover {
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+}
+
+.oobe-rail__item.is-active .oobe-rail__btn {
   color: var(--text-primary);
   font-weight: 600;
-  background: var(--surface-section);
 }
 
-.oobe-stepper__item.completed .oobe-stepper__btn {
+.oobe-rail__item.is-completed .oobe-rail__btn {
   color: var(--text-secondary);
 }
 
-.oobe-stepper__dot {
+.oobe-rail__index {
   width: 18px;
   height: 18px;
   border-radius: 999px;
+  border: 1px solid var(--border-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  border: 1px solid var(--border-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-.oobe-stepper__item.active .oobe-stepper__dot {
-  border-color: var(--bg-primary-button, var(--accent-primary));
-  background: var(--bg-primary-button, var(--accent-primary));
-  color: var(--text-on-primary, #ffffff);
+.oobe-rail__item.is-active .oobe-rail__index {
+  border-color: var(--text-primary);
+  background: var(--bg-primary-button, var(--text-primary));
+  color: var(--text-on-primary, var(--bg-primary));
 }
 
-.oobe-stepper__item.completed .oobe-stepper__dot {
-  border-color: var(--accent-success, #22c55e);
-  background: color-mix(in srgb, var(--accent-success, #22c55e) 18%, transparent);
-  color: var(--accent-success, #22c55e);
+.oobe-rail__item.is-completed .oobe-rail__index {
+  border-color: var(--border-default, var(--border-muted));
+  background: var(--surface-section);
+  color: var(--text-primary);
 }
 
-.oobe-body {
+.oobe-rail__divider {
+  width: 18px;
+  height: 1px;
+  background: var(--border-muted);
+}
+
+@media (max-width: 720px) {
+  .oobe-rail__label {
+    display: none;
+  }
+}
+
+.oobe-topbar__actions {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.oobe-skip-top {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.oobe-skip-top:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.oobe-win-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 4px;
+  background: var(--border-muted);
+}
+
+.oobe-stage-scroll {
+  position: relative;
+  z-index: 1;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 24px 36px;
 }
 
-.oobe-footer {
+.oobe-stage-column {
+  width: min(540px, 100%);
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.oobe-step-viewport {
+  min-height: 310px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.oobe-stage-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 18px;
+  padding-top: 18px;
   border-top: 1px solid var(--border-muted);
-  background: var(--surface-raised);
 }
 
-.oobe-footer__nav {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.oobe-skip-inline {
+  padding: 6px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.oobe-skip-inline:hover {
+  color: var(--text-primary);
+}
+
+.oobe-step-fade-enter-active,
+.oobe-step-fade-leave-active {
+  transition:
+    opacity 150ms cubic-bezier(0.2, 0, 0, 1),
+    transform 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.oobe-step-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.oobe-step-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oobe-step-fade-enter-active,
+  .oobe-step-fade-leave-active {
+    transition: none;
+  }
+
+  .oobe-step-fade-enter-from,
+  .oobe-step-fade-leave-to {
+    transform: none;
+  }
 }
 </style>
