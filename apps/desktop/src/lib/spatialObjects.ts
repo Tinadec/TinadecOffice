@@ -174,3 +174,142 @@ export function projectSpatialRelations(objects: SpatialObject[]): SpatialRelati
   }
   return [...relations.values()]
 }
+
+export interface SpatialCausalHighlight {
+  active: boolean
+  nodeIds: Set<string>
+  edgeIds: Set<string>
+  upstreamIds: Set<string>
+  downstreamIds: Set<string>
+}
+
+/**
+ * Walks causal upstream and downstream task dependencies from the currently selected
+ * work-card IDs so SpatialPage can emphasize the active dependency chain.
+ */
+export function computeCausalHighlight(
+  selectedIds: Iterable<string>,
+  relations: readonly SpatialRelation[],
+): SpatialCausalHighlight {
+  const seeds = [...selectedIds]
+  const nodeIds = new Set<string>()
+  const edgeIds = new Set<string>()
+  const upstreamIds = new Set<string>()
+  const downstreamIds = new Set<string>()
+  if (!seeds.length || !relations.length) {
+    return { active: false, nodeIds, edgeIds, upstreamIds, downstreamIds }
+  }
+
+  const incoming = new Map<string, SpatialRelation[]>()
+  const outgoing = new Map<string, SpatialRelation[]>()
+  for (const rel of relations) {
+    const inc = incoming.get(rel.target)
+    if (inc) inc.push(rel)
+    else incoming.set(rel.target, [rel])
+    const out = outgoing.get(rel.source)
+    if (out) out.push(rel)
+    else outgoing.set(rel.source, [rel])
+  }
+
+  let matchedAny = false
+  for (const seed of seeds) {
+    if (!incoming.has(seed) && !outgoing.has(seed)) continue
+    matchedAny = true
+    nodeIds.add(seed)
+
+    // Traverse upstream (prerequisites)
+    const upQueue = [seed]
+    const upVisited = new Set<string>([seed])
+    while (upQueue.length) {
+      const curr = upQueue.shift()!
+      for (const rel of incoming.get(curr) ?? []) {
+        edgeIds.add(rel.id)
+        nodeIds.add(rel.source)
+        upstreamIds.add(rel.source)
+        if (!upVisited.has(rel.source)) {
+          upVisited.add(rel.source)
+          upQueue.push(rel.source)
+        }
+      }
+    }
+
+    // Traverse downstream (dependents)
+    const downQueue = [seed]
+    const downVisited = new Set<string>([seed])
+    while (downQueue.length) {
+      const curr = downQueue.shift()!
+      for (const rel of outgoing.get(curr) ?? []) {
+        edgeIds.add(rel.id)
+        nodeIds.add(rel.target)
+        downstreamIds.add(rel.target)
+        if (!downVisited.has(rel.target)) {
+          downVisited.add(rel.target)
+          downQueue.push(rel.target)
+        }
+      }
+    }
+  }
+
+  return { active: matchedAny, nodeIds, edgeIds, upstreamIds, downstreamIds }
+}
+
+export interface SpatialActiveTeammate {
+  id: string
+  name: string
+  status: string
+  taskId?: string
+  objectId?: string
+  runId?: string
+  instanceId?: string
+}
+
+/** Collects active AI teammates from projected spatial tasks for the top-right presence bar. */
+export function collectSpatialTeammates(objects: readonly SpatialObject[]): SpatialActiveTeammate[] {
+  const byOwner = new Map<string, SpatialActiveTeammate>()
+  const priority = (status?: string) => {
+    if (!status) return 0
+    if (['running', 'in_progress', 'planning'].includes(status)) return 3
+    if (['waiting_approval', 'awaiting_user', 'blocked'].includes(status)) return 2
+    return 1
+  }
+  for (const obj of objects) {
+    if (obj.kind !== 'task' || !obj.owner) continue
+    const key = obj.instanceId || obj.owner
+    const existing = byOwner.get(key)
+    if (!existing || priority(obj.status) > priority(existing.status)) {
+      byOwner.set(key, {
+        id: `ai:${key}`,
+        name: obj.owner,
+        status: obj.status || 'idle',
+        taskId: obj.taskId,
+        objectId: obj.id,
+        runId: obj.runId,
+        instanceId: obj.instanceId,
+      })
+    }
+  }
+  return [...byOwner.values()]
+}
+
+export interface SpatialSelectionContextItem {
+  id: string
+  kind: string
+  label: string
+  snippet?: string
+}
+
+/** Builds a clean, compact prompt prefix referencing selected canvas objects for team dispatch. */
+export function buildSpatialSelectionPrompt(
+  items: readonly SpatialSelectionContextItem[],
+  instruction?: string,
+): string {
+  const lines = items.slice(0, 12).map((item) => {
+    const cleanSnippet = item.snippet?.replace(/\s+/g, ' ').trim()
+    const excerpt = cleanSnippet ? ` — ${cleanSnippet.slice(0, 120)}` : ''
+    return `- [${item.kind}] ${item.label}${excerpt}`
+  })
+  const header = lines.length ? `[Spatial Selection (${items.length})]\n${lines.join('\n')}` : ''
+  const body = instruction?.trim() ?? ''
+  if (header && body) return `${header}\n\n${body}`
+  return header || body
+}

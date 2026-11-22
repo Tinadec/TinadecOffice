@@ -67,7 +67,7 @@ const meeting: SpatialObject = {
 const approvalObject: SpatialObject = { id: 'approval:session-1', groupId: 'overview', kind: 'approval' }
 const approval = (id: string, sessionId: string | null): ApprovalDto => ({ id, session_id: sessionId, kind: 'permission', summary: `Approval ${id}`, status: 'pending', created_at: '' })
 const wrappers: VueWrapper[] = []
-function render(props: { object?: SpatialObject; compact?: boolean; preview?: boolean; detail?: boolean }, provide: Record<string, unknown> = {}) {
+function render(props: { object?: SpatialObject; compact?: boolean; preview?: boolean; detail?: boolean; macro?: boolean }, provide: Record<string, unknown> = {}) {
   const wrapper = mount(SpatialWorkCard, { props, global: { provide } })
   wrappers.push(wrapper)
   return wrapper
@@ -264,5 +264,22 @@ describe('SpatialWorkCard summaries and detail', () => {
     const preview = render({ object: taskWithEngine, preview: true })
     expect(preview.get('[data-testid="space-runtime-badge"]').text()).toBe('ACP · Antigravity')
     expect(preview.findAll('button')).toHaveLength(0)
+  })
+
+  it('switches into semantic macro LOD when zoomed out, preserving Title + Owner + Status while hiding body clutter', () => {
+    const macro = render({ object: task }, { 'space:macro': computed(() => true) })
+    expect(macro.classes()).toContain('is-macro')
+    expect(macro.attributes('data-lod')).toBe('macro')
+    expect(macro.get('h2').text()).toBe(task.title)
+    expect(macro.get('.space-owner').text()).toBe('engineering#2')
+    expect(macro.get('.space-card-status').text()).toContain('blocked')
+    expect(macro.find('.space-work-body').exists()).toBe(false)
+    expect(macro.find('footer').exists()).toBe(false)
+
+    // Detail inspector always renders full content even when canvas is in macro LOD
+    const detail = render({ object: task, detail: true }, { 'space:macro': computed(() => true) })
+    expect(detail.classes()).not.toContain('is-macro')
+    expect(detail.attributes('data-lod')).toBe('detail')
+    expect(detail.find('.space-work-body').exists()).toBe(true)
   })
 })

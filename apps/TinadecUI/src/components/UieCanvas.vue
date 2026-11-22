@@ -4,12 +4,19 @@ import UieColumn from './UieColumn.vue'
 import { useUie } from './useUie'
 
 const uie = useUie()
-const props = defineProps<{ spatial?: boolean; spatialPanel?: boolean }>()
+const props = defineProps<{ spatial?: boolean; spatialPanel?: boolean; fullBleed?: boolean }>()
 const panelVisited = ref(false)
 watch(() => props.spatialPanel, value => { if (value) panelVisited.value = true }, { immediate: true })
 const slots = computed(() => props.spatial ? panelVisited.value ? ['left', 'right'] as const : ['left'] as const : uie.snapshot.value.columnOrder)
-const spaceLeft = computed(() => uie.geometry.value.columns.left.x + uie.geometry.value.columns.left.width + uie.snapshot.value.gap)
-const spaceRight = computed(() => props.spatialPanel ? uie.geometry.value.columns.right.width + uie.snapshot.value.gap : 8)
+const spaceLeft = computed(() => {
+  const leftEdge = uie.geometry.value.columns.left.x + uie.geometry.value.columns.left.width
+  return props.fullBleed ? leftEdge : leftEdge + uie.snapshot.value.gap
+})
+const spaceRight = computed(() =>
+  props.spatialPanel
+    ? uie.geometry.value.columns.right.width + uie.snapshot.value.gap
+    : props.fullBleed ? 0 : 8,
+)
 
 const canvasRef = ref<HTMLElement | null>(null)
 let observer: ResizeObserver | null = null
@@ -38,7 +45,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="canvasRef" class="uie-canvas">
+  <div ref="canvasRef" class="uie-canvas" :class="{ 'uie-canvas--spatial': spatial, 'uie-canvas--full-bleed': spatial && fullBleed }">
     <!-- Columns are absolutely positioned by the constraint solver. -->
     <UieColumn
       v-for="slotId in slots"
@@ -49,7 +56,14 @@ onBeforeUnmount(() => {
       :split="uie.geometry.value.splits[slotId]"
       :dock="uie.geometry.value.docks[slotId]"
     />
-    <section v-if="spatial" class="uie-space-stage" :style="{ left: `${spaceLeft}px`, right: `${spaceRight}px` }"><slot /></section>
+    <section
+      v-if="spatial"
+      class="uie-space-stage"
+      :class="{ 'uie-space-stage--full-bleed': fullBleed }"
+      :style="{ left: `${spaceLeft}px`, right: `${spaceRight}px` }"
+    >
+      <slot />
+    </section>
   </div>
 </template>
 
@@ -61,5 +75,24 @@ onBeforeUnmount(() => {
   /* Transparent — the background-layer in App.vue shows through. */
   background: transparent;
 }
-.uie-space-stage { position: absolute; top: 44px; right: 8px; bottom: 0; min-width: 0; overflow: hidden; }
+.uie-canvas--spatial :deep(.uie-column) {
+  z-index: 12;
+}
+.uie-canvas--spatial :deep(.uie-column--overlay) {
+  z-index: 20;
+}
+.uie-space-stage {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  bottom: 0;
+  z-index: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.uie-space-stage--full-bleed {
+  top: 0;
+  right: 0;
+  bottom: 0;
+}
 </style>

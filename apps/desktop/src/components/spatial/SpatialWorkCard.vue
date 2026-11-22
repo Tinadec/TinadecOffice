@@ -120,17 +120,28 @@ function formatEngineBadge(
   return { label: `${prefix} · ${name}`, kind }
 }
 
-const props = withDefaults(defineProps<{ object?: SpatialObject; preview?: boolean; compact?: boolean; detail?: boolean }>(), { compact: undefined })
+const props = withDefaults(defineProps<{ object?: SpatialObject; preview?: boolean; compact?: boolean; detail?: boolean; macro?: boolean }>(), { compact: undefined, macro: undefined })
 const { t, te } = useI18n()
 const state = inject<Record<string, unknown>>('uie:cardState', {})
 const objects = inject<ComputedRef<Record<string, SpatialObject>>>('space:objects')
 const compactItems = inject<ComputedRef<Record<string, boolean>>>('space:compact')
+const macroLod = inject<ComputedRef<boolean>>('space:macro')
 const open = inject<(id: string) => void>('space:open')
 const locate = inject<(id: string) => void>('space:locate')
 const focusInstance = inject<(runId: string, instanceId: string) => void>('space:focus-instance')
 const git = inject<ReturnType<typeof useSpatialGit>>('space:git')
 const object = computed(() => props.object ?? objects?.value[String(state.objectId)])
 const isCompact = computed(() => !props.detail && (props.compact ?? compactItems?.value[object.value?.id ?? ''] ?? false))
+const isMacro = computed(() => !props.detail && !props.preview && (props.macro ?? macroLod?.value ?? false))
+const statusTone = computed(() => {
+  const s = object.value?.status
+  if (!s) return 'neutral'
+  if (['running', 'in_progress', 'planning'].includes(s)) return 'active'
+  if (['completed', 'succeeded', 'approved'].includes(s)) return 'success'
+  if (['blocked', 'waiting_approval', 'awaiting_user', 'awaiting_approval'].includes(s)) return 'warning'
+  if (['failed', 'rejected', 'cancelled'].includes(s)) return 'danger'
+  return 'neutral'
+})
 const runId = computed(() => object.value?.runId ?? (object.value && ['run', 'task', 'plan', 'tool', 'result'].includes(object.value.kind) ? object.value.groupId : undefined))
 const icons = { message: MessageSquare, meeting: Bot, run: Target, result: MessageSquare, plan: ListTodo, task: FileCode2, tool: Wrench, git: GitBranch, approval: ShieldCheck }
 /**
@@ -298,9 +309,17 @@ async function readFile(path: string) {
 }
 </script>
 <template>
-  <article ref="cardElement" v-if="object" class="spatial-work-card" :class="{ 'is-compact': isCompact, 'is-detail': detail }" :data-object-id="object.id">
+  <article
+    ref="cardElement"
+    v-if="object"
+    class="spatial-work-card"
+    :class="{ 'is-compact': isCompact, 'is-detail': detail, 'is-macro': isMacro }"
+    :data-object-id="object.id"
+    :data-lod="detail ? 'detail' : isMacro ? 'macro' : 'normal'"
+    :data-status-tone="statusTone"
+  >
     <header class="space-drag-handle">
-      <component :is="icons[object.kind]" :size="20" aria-hidden="true" />
+      <component :is="icons[object.kind]" :size="isMacro ? 22 : 18" class="space-kind-icon" aria-hidden="true" />
       <h2>{{ object.title || kindTitle(object.kind) }}</h2>
     </header>
     <div v-if="object.owner || runtimeBadge || runId || object.status" class="space-card-meta nodrag nopan">
@@ -316,17 +335,17 @@ async function readFile(path: string) {
         {{ object.owner }}
       </component>
       <span
-        v-if="runtimeBadge"
+        v-if="runtimeBadge && !isMacro"
         class="space-runtime-badge"
         :data-engine-kind="runtimeBadge.kind"
         :title="runtimeBadge.label"
         data-testid="space-runtime-badge"
       >{{ runtimeBadge.label }}</span>
-      <button v-if="runId && !preview && locate && object.kind !== 'run'" type="button" class="space-run" :title="t('space.cluster.locateRun', { id: runId })" @click="locate(`tasks:${runId}`)">{{ t('space.cluster.runTag', { id: runId.slice(0, 8) }) }}</button>
-      <span v-else-if="runId" class="space-run" :title="runId">{{ t('space.cluster.runTag', { id: runId.slice(0, 8) }) }}</span>
-      <small v-if="object.status" class="space-card-status">{{ status(object.status) }}</small>
+      <button v-if="!isMacro && runId && !preview && locate && object.kind !== 'run'" type="button" class="space-run" :title="t('space.cluster.locateRun', { id: runId })" @click="locate(`tasks:${runId}`)">{{ t('space.cluster.runTag', { id: runId.slice(0, 8) }) }}</button>
+      <span v-else-if="!isMacro && runId" class="space-run" :title="runId">{{ t('space.cluster.runTag', { id: runId.slice(0, 8) }) }}</span>
+      <small v-if="object.status" class="space-card-status" :data-tone="statusTone"><span class="space-status-dot" aria-hidden="true" />{{ status(object.status) }}</small>
     </div>
-    <div class="space-work-body nodrag nopan nowheel">
+    <div v-if="!isMacro" class="space-work-body nodrag nopan nowheel">
       <template v-if="isCompact">
         <p v-if="summary" class="space-work-text space-summary">{{ summary }}</p>
         <p v-if="object.kind === 'git'" class="space-muted">{{ t('space.cluster.sharedGit') }}<br>{{ t('space.filesChanged', { count: git?.state.value.preview.files?.length ?? 0 }) }}</p>
@@ -405,16 +424,18 @@ async function readFile(path: string) {
         </section>
       </template>
     </div>
-    <footer v-if="object.rows?.length || (!preview && !detail && open)">
+    <footer v-if="!isMacro && (object.rows?.length || (!preview && !detail && open))">
       <span v-if="object.rows?.length">{{ t('space.progress', { done: completed, total: object.rows.length }) }}</span>
       <button v-if="!preview && !detail && open" type="button" class="space-open-detail nodrag nopan" :data-open-object="object.id" @click="open(object.id)">{{ t('space.cluster.openDetail') }}</button>
     </footer>
   </article>
 </template>
 <style scoped>
-.spatial-work-card { height: 100%; display: flex; flex-direction: column; min-width: 0; color: var(--text-primary); background: var(--surface-raised); backdrop-filter: var(--material-filter-raised, none); border-radius: var(--radius-island, 12px); overflow: hidden; }
+.spatial-work-card { height: 100%; display: flex; flex-direction: column; min-width: 0; color: var(--text-primary); background: var(--surface-raised); backdrop-filter: var(--material-filter-raised, none); border: 1px solid var(--border-card, var(--border-muted)); border-radius: var(--radius-island, 12px); overflow: hidden; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.spatial-work-card.is-detail { border: 0; border-radius: 0; }
 .space-drag-handle { display: flex; align-items: flex-start; gap: 9px; padding: 14px 18px 10px; cursor: grab; flex-shrink: 0; }
-h2 { font-size: 17px; font-weight: 600; line-height: 1.25; margin: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.space-kind-icon { color: var(--text-secondary); margin-top: 2px; }
+h2 { font-size: 16px; font-weight: 600; line-height: 1.28; margin: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 h3 { font-size: 13px; font-weight: 600; line-height: 1.6; margin: 16px 0 8px; }
 .space-drag-handle svg { flex-shrink: 0; }
 .is-detail .space-drag-handle { cursor: default; }
@@ -425,7 +446,22 @@ h3 { font-size: 13px; font-weight: 600; line-height: 1.6; margin: 16px 0 8px; }
 .space-runtime-badge[data-engine-kind='cli'],
 .space-runtime-badge[data-engine-kind='tui'] { border-color: color-mix(in srgb, var(--accent-info, var(--accent-primary)) 32%, var(--border-muted)); background: color-mix(in srgb, var(--accent-info, var(--accent-primary)) 10%, transparent); color: var(--accent-info, var(--text-primary)); }
 .space-run { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.space-card-status { margin-left: auto; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+.space-card-status { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-muted); background: var(--surface-section); color: var(--text-secondary); white-space: nowrap; flex-shrink: 0; }
+.space-status-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--text-muted); flex-shrink: 0; }
+.space-card-status[data-tone='active'] { color: var(--accent-primary); border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--border-muted)); background: color-mix(in srgb, var(--accent-primary) 10%, transparent); }
+.space-card-status[data-tone='active'] .space-status-dot { background: var(--accent-primary); }
+.space-card-status[data-tone='success'] { color: var(--accent-success, #22c55e); border-color: color-mix(in srgb, var(--accent-success, #22c55e) 34%, var(--border-muted)); background: color-mix(in srgb, var(--accent-success, #22c55e) 10%, transparent); }
+.space-card-status[data-tone='success'] .space-status-dot { background: var(--accent-success, #22c55e); }
+.space-card-status[data-tone='warning'] { color: var(--accent-warning, #f59e0b); border-color: color-mix(in srgb, var(--accent-warning, #f59e0b) 34%, var(--border-muted)); background: color-mix(in srgb, var(--accent-warning, #f59e0b) 10%, transparent); }
+.space-card-status[data-tone='warning'] .space-status-dot { background: var(--accent-warning, #f59e0b); }
+.space-card-status[data-tone='danger'] { color: var(--accent-danger, #ef4444); border-color: color-mix(in srgb, var(--accent-danger, #ef4444) 34%, var(--border-muted)); background: color-mix(in srgb, var(--accent-danger, #ef4444) 10%, transparent); }
+.space-card-status[data-tone='danger'] .space-status-dot { background: var(--accent-danger, #ef4444); }
+.spatial-work-card.is-macro { justify-content: center; gap: 10px; padding: 8px 4px; }
+.spatial-work-card.is-macro .space-drag-handle { padding: 12px 18px 4px; align-items: center; }
+.spatial-work-card.is-macro h2 { font-size: 20px; line-height: 1.25; -webkit-line-clamp: 2; }
+.spatial-work-card.is-macro .space-card-meta { padding: 0 18px 14px; font-size: 13px; gap: 8px; }
+.spatial-work-card.is-macro .space-owner { padding: 4px 10px; font-size: 13px; }
+.spatial-work-card.is-macro .space-card-status { padding: 4px 10px; font-size: 13px; }
 .space-work-body { padding: 4px 18px 14px; flex: 1; min-height: 0; overflow: auto; user-select: text; }
 .space-work-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; margin: 0 0 16px; }
 .space-muted { color: var(--text-muted); line-height: 1.7; font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
