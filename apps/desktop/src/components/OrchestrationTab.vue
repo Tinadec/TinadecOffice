@@ -13,6 +13,7 @@ import {
   GitBranch,
   Layers3,
   ListTree,
+  MessageSquare,
   Network,
   Package,
   RefreshCw,
@@ -48,6 +49,7 @@ import ToolExecutionTimeline from './tools/ToolExecutionTimeline.vue'
 import ToolCatalogBrowser from './tools/ToolCatalogBrowser.vue'
 import ToolStatsDashboard from './tools/ToolStatsDashboard.vue'
 import SessionPlanPanel from './plan/SessionPlanPanel.vue'
+import TeammateSteerPopover, { type TeammateSteerTarget } from './teammate/TeammateSteerPopover.vue'
 import {
   buildContextWindowBuckets,
   buildTrajectoryTree,
@@ -92,7 +94,16 @@ const props = defineProps<{
   focusedTarget?: string | OrchestrationFocusTarget | null
 }>()
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+
+function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
+  if (te(key)) return params ? t(key, params) : t(key)
+  if (!params) return fallback
+  return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
+}
+
+const focusedSteerTarget = ref<TeammateSteerTarget | null>(null)
+const focusedSteerOpen = ref(false)
 const { runStatusLabel: statusWords, severityLabel } = useStatusLabels()
 const { nameFor } = typeof api.listAgents === 'function'
   ? useAgentDirectory()
@@ -210,6 +221,35 @@ const selectedParentNode = computed<RuntimeTopologyNode | null>(() => {
   if (!parentId) return null
   return runtimeTopology.value.nodes.find((n) => n.id === parentId) ?? null
 })
+
+const canSteerSelectedNode = computed(() => {
+  const node = selectedNode.value
+  const runId = props.snapshot?.run?.id ?? activeTopologyRun.value?.run_id
+  if (!node || !runId || node.roleTier === 'coordinator') return false
+  return Boolean((node.handle || node.agentSlug || '').trim())
+})
+
+function openSelectedNodeSteer(event?: Event): void {
+  const node = selectedNode.value
+  const runId = props.snapshot?.run?.id ?? activeTopologyRun.value?.run_id
+  if (!node || !runId || node.roleTier === 'coordinator') return
+  const handle = (node.handle || node.agentSlug || '').trim()
+  if (!handle) return
+  const el = (event?.currentTarget as HTMLElement | null) ?? null
+  const rect = el?.getBoundingClientRect?.()
+  focusedSteerTarget.value = {
+    runId,
+    handle,
+    displayName: node.label,
+    status: node.rawStatus || node.status,
+    paused: String(node.rawStatus ?? '').toLowerCase() === 'paused',
+    taskSummary: node.title && node.title !== node.label ? node.title : (node.subtitle ?? node.description ?? null),
+    anchorRect: rect && (rect.width > 0 || rect.height > 0)
+      ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom }
+      : null,
+  }
+  focusedSteerOpen.value = true
+}
 
 function matchTopologyNode(target: string | OrchestrationFocusTarget | null | undefined): RuntimeTopologyNode | null {
   if (!target) return null
@@ -729,6 +769,7 @@ function handleExportDiagnosticHtml() {
           v-if="topologyViewMode === 'topology'"
           :nodes="runtimeTopology.nodes"
           :edges="runtimeTopology.edges"
+          :run-id="snapshot.run?.id ?? activeTopologyRun?.run_id ?? null"
           :selected-node-id="selectedNodeId"
           @select-node="onSelectTopologyNode"
         />
@@ -751,6 +792,17 @@ function handleExportDiagnosticHtml() {
             <span class="focused-node-card__status" :class="`is-${selectedNode.status}`">
               {{ runStatusLabel(selectedNode.status === 'awaiting_approval' ? 'awaiting_approval' : (selectedNode.rawStatus || selectedNode.status)) }}
             </span>
+            <button
+              v-if="canSteerSelectedNode"
+              type="button"
+              class="focused-node-card__steer-btn ui-pressable"
+              data-testid="focused-node-steer-btn"
+              :title="tr('teammateControl.triggerTooltip', 'Steer or pause {name}', { name: selectedNode.label })"
+              @click.stop="openSelectedNodeSteer($event)"
+            >
+              <MessageSquare :size="13" aria-hidden="true" />
+              <span>{{ tr('teammateControl.steerAction', 'Direct control') }}</span>
+            </button>
           </div>
           <div class="orchestration-tags">
             <span
@@ -1132,6 +1184,18 @@ function handleExportDiagnosticHtml() {
         </div>
       </article>
     </template>
+
+    <TeammateSteerPopover
+      v-if="focusedSteerTarget"
+      v-model:open="focusedSteerOpen"
+      :run-id="focusedSteerTarget.runId"
+      :handle="focusedSteerTarget.handle"
+      :display-name="focusedSteerTarget.displayName"
+      :status="focusedSteerTarget.status"
+      :paused="focusedSteerTarget.paused"
+      :task-summary="focusedSteerTarget.taskSummary"
+      :anchor-rect="focusedSteerTarget.anchorRect"
+    />
   </section>
 </template>
 
@@ -1346,6 +1410,27 @@ function handleExportDiagnosticHtml() {
 .focused-node-card__status.is-failed {
   color: var(--accent-danger, #f85149);
   background: color-mix(in srgb, var(--accent-danger, #f85149) 15%, transparent);
+}
+
+.focused-node-card__steer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-control, 6px);
+  border: 1px solid var(--border-default);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.focused-node-card__steer-btn:hover {
+  background: var(--bg-hover);
 }
 
 .focused-node-card__title {

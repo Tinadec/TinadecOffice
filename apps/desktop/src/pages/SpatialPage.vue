@@ -20,6 +20,7 @@ import {
 import { MiniMap } from '@vue-flow/minimap'
 import { NodeResizer } from '@vue-flow/node-resizer'
 import {
+  Activity,
   AlertTriangle,
   ArrowUpRight,
   Bot,
@@ -35,6 +36,7 @@ import {
   Map as MapIcon,
   Maximize,
   MessageCircle,
+  MessageSquare,
   Minus,
   MousePointer2,
   Pen,
@@ -72,8 +74,18 @@ import SpatialDrawingLayer from '@/components/spatial/SpatialDrawingLayer.vue'
 import SpatialMediaFileNode from '@/components/spatial/SpatialMediaFileNode.vue'
 import SpatialCommentPinsLayer from '@/components/spatial/SpatialCommentPinsLayer.vue'
 import SpatialFreeConnectorEdge from '@/components/spatial/SpatialFreeConnectorEdge.vue'
-import SpatialPresenceLayer, { type SpatialCollaboratorLike } from '@/components/spatial/SpatialPresenceLayer.vue'
+import SpatialPresenceLayer, {
+  type SpatialCollaboratorLike,
+  type SpatialTeammateSteerEvent,
+} from '@/components/spatial/SpatialPresenceLayer.vue'
+import SpatialLiveDigestInspector, {
+  type SpatialDigestFillSteerEvent,
+} from '@/components/spatial/SpatialLiveDigestInspector.vue'
 import SpatialSelectionBar from '@/components/spatial/SpatialSelectionBar.vue'
+import TeammateSteerPopover, {
+  type TeammateSteerAnchorRect,
+  type TeammateSteerTarget,
+} from '@/components/teammate/TeammateSteerPopover.vue'
 import {
   SPATIAL_SECTION_PALETTE,
   SPATIAL_SECTION_TONES,
@@ -116,10 +128,17 @@ import { openDocument, openInEditor } from '@/lib/documentWorkspace'
 import { readFileText, type ReadFileDataDto } from '@/lib/workspaceSearch'
 import { useSpatialGit } from '@/composables/useSpatialGit'
 import { useSpatialBoardSync } from '@/composables/useSpatialBoardSync'
+import { selectPrimaryRunId, useLiveDigest, type LiveDigestTeammateThoughtDto } from '@/composables/useLiveDigest'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { usePageTransition } from '@/composables/usePageTransition'
 
 const { t, te, locale } = useI18n()
+
+function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
+  if (te(key)) return params ? t(key, params) : t(key)
+  if (!params) return fallback
+  return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
+}
 const emit = defineEmits<{ ready: [] }>()
 const uie = ensureProductionUie()
 
@@ -151,8 +170,13 @@ const zoomMenuOpen = ref(false)
 const showMinimap = ref(false)
 const showDependencies = ref(true)
 const inspectorOpen = ref(false)
-const inspectorTab = ref<'details' | 'style' | 'plan'>('details')
+const inspectorTab = ref<'details' | 'style' | 'plan' | 'digest'>('details')
 const dragOverCanvas = ref(false)
+
+// Direct single-teammate steer/pause popover state
+const steerTarget = ref<(TeammateSteerTarget & { initialDraft?: string }) | null>(null)
+const steerOpen = ref(false)
+const pausedTeammates = ref<Record<string, boolean>>({})
 
 // Tool dock state
 const activeTool = ref<SpatialToolMode>('select')
@@ -245,6 +269,16 @@ const objectMap = computed(() => Object.fromEntries(objects.value.map((o) => [o.
 const runs = computed(() => objects.value.filter((o) => o.kind === 'run'))
 provide('space:terminal-runs', computed(() => new Set(runs.value.flatMap((o) => (o.runId ? [o.runId] : [])))))
 provide('space:terminal-visible', terminalVisible)
+
+// Same-source Live Digest stream (ref-counted per runId, shared across sections, cursors & inspector)
+const activeDigestRunId = computed<string | null>(() => {
+  if (focusedRun.value && focusedRun.value !== '*') return focusedRun.value
+  if (c.stoppableRunId.value) return c.stoppableRunId.value
+  const primary = selectPrimaryRunId(c.runs.value)
+  if (primary) return primary
+  return runs.value[0]?.runId ?? null
+})
+const liveDigest = useLiveDigest(activeDigestRunId)
 
 const selectedObject = computed(() => (selectedId.value ? objectMap.value[selectedId.value] : undefined))
 const selectedWhiteboardObject = computed<SpatialDocObject | null>(() => {
@@ -360,14 +394,44 @@ const hiddenByCollapsedSection = computed<Set<string>>(() => {
   return hidden
 })
 
+function resolveSectionRunId(sec: SpatialDocObject): string | null {
+  const explicit = typeof sec.props.runId === 'string' ? sec.props.runId.trim() : ''
+  if (explicit) return explicit
+  const space = uie.snapshot.value.space
+  if (!space) return null
+  const foundRunIds = new Set<string>()
+  for (const obj of objects.value) {
+    if (!obj.runId) continue
+    const item = space.items[obj.id]
+    if (!item) continue
+    const cx = item.x + item.width / 2
+    const cy = item.y + (measuredHeights.get(obj.id) ?? item.height) / 2
+    if (cx >= sec.x && cx <= sec.x + sec.width && cy >= sec.y && cy <= sec.y + sec.height) {
+      foundRunIds.add(obj.runId)
+      if (foundRunIds.size > 1) return null
+    }
+  }
+  return foundRunIds.size === 1 ? [...foundRunIds][0]! : null
+}
+
 const nodes = computed<FlowNode[]>((previous) => {
   if (gesturing.value) return previous ?? []
   const space = uie.snapshot.value.space
   const out: FlowNode[] = []
+  const digestRunId = activeDigestRunId.value
+  const digestHeadline = liveDigest.headline.value.trim()
+  const digestWl = liveDigest.contextWaterline.value
+  const digestUsagePct = digestWl && (digestWl.max_tokens > 0 || digestWl.usage_percent > 0)
+    ? Math.max(0, Math.min(100, Math.round(digestWl.usage_percent)))
+    : null
+  const digestCompactions = digestWl?.compaction_count ?? 0
+  const digestRunning = liveDigest.isRunning.value
 
   // 1. Sections first (behind cards)
   for (const sec of board.objectsByKind.value.section) {
     const isCollapsed = Boolean(sec.props.collapsed)
+    const sectionRunId = resolveSectionRunId(sec)
+    const matchesActiveDigest = Boolean(sectionRunId && digestRunId && sectionRunId === digestRunId)
     out.push({
       id: sec.id,
       type: 'section',
@@ -382,7 +446,19 @@ const nodes = computed<FlowNode[]>((previous) => {
         display: hiddenByCollapsedSection.value.has(sec.id) ? 'none' : undefined,
       },
       dragHandle: '.space-drag-handle',
-      data: { ...sec.props, childCount: sectionChildCounts.value[sec.id] ?? 0 },
+      data: {
+        ...sec.props,
+        childCount: sectionChildCounts.value[sec.id] ?? 0,
+        ...(sectionRunId ? { runId: sectionRunId } : {}),
+        ...(matchesActiveDigest
+          ? {
+              liveHeadline: digestHeadline || null,
+              liveUsagePercent: digestUsagePct,
+              liveCompactionCount: digestCompactions,
+              liveRunning: digestRunning,
+            }
+          : {}),
+      },
       connectable: true,
       deletable: false,
     })
@@ -579,25 +655,108 @@ const visibleGuides = computed<SmartGuideLine[]>(() =>
   dragGuides.value.length ? dragGuides.value : board.activeGuides.value,
 )
 
-// Presence avatars: remote human/AI collaborators + active AI teammates from spatial tasks
+// Presence avatars: remote human/AI collaborators + active AI teammates + same-source Live Digest thoughts
 const activeTeammates = computed(() => collectSpatialTeammates(objects.value))
 const presenceCollaborators = computed<SpatialCollaboratorLike[]>(() => {
   const remote = board.collaborators.value.filter((item) => item.clientId !== board.clientId)
-  const existingNames = new Set(remote.map((item) => item.displayName.toLowerCase()))
-  const merged: SpatialCollaboratorLike[] = [...remote]
+  const digestRunId = activeDigestRunId.value
+  const thoughtByKey = new Map<string, LiveDigestTeammateThoughtDto>()
+  for (const item of liveDigest.teammateThoughts.value) {
+    if (item.handle) thoughtByKey.set(item.handle.trim().toLowerCase().replace(/^@/, ''), item)
+    if (item.display_name) thoughtByKey.set(item.display_name.trim().toLowerCase().replace(/^@/, ''), item)
+  }
+
+  const findThought = (handle?: string | null, displayName?: string | null): LiveDigestTeammateThoughtDto | null => {
+    for (const raw of [handle, displayName]) {
+      if (!raw) continue
+      const key = raw.trim().toLowerCase().replace(/^@/, '')
+      const hit = thoughtByKey.get(key)
+      if (hit) return hit
+    }
+    return null
+  }
+
+  const isPausedHandle = (handle?: string | null, status?: string | null): boolean => {
+    const clean = (handle ?? '').trim().replace(/^@/, '')
+    if (clean && pausedTeammates.value[clean] !== undefined) return Boolean(pausedTeammates.value[clean])
+    return String(status ?? '').trim().toLowerCase() === 'paused'
+  }
+
+  const existingKeys = new Set<string>()
+  const merged: SpatialCollaboratorLike[] = remote.map((item) => {
+    existingKeys.add(item.displayName.toLowerCase())
+    if (item.role !== 'ai') return item
+    const thoughtDto = findThought(item.displayName, item.displayName)
+    const handle = thoughtDto?.handle ?? item.displayName
+    existingKeys.add(handle.toLowerCase())
+    const paused = isPausedHandle(handle, thoughtDto?.status ?? item.status)
+    return {
+      ...item,
+      handle,
+      runId: digestRunId,
+      status: paused ? 'paused' : (thoughtDto?.status ?? item.status ?? null),
+      paused,
+      thought: thoughtDto?.thought ?? null,
+      currentTask: thoughtDto?.current_task ?? null,
+    }
+  })
+
   const palette = ['#8b5cf6', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899']
+  const rects = allObjectRects.value
+
   activeTeammates.value.forEach((tm, idx) => {
-    if (existingNames.has(tm.name.toLowerCase())) return
+    const key = tm.name.toLowerCase()
+    if (existingKeys.has(key)) return
+    existingKeys.add(key)
+    const thoughtDto = findThought(tm.name, tm.name)
+    const handle = thoughtDto?.handle ?? tm.name
+    existingKeys.add(handle.toLowerCase())
+    const cardRect = tm.objectId ? rects[tm.objectId] : undefined
+    const taskObj = tm.objectId ? objectMap.value[tm.objectId] : undefined
+    const paused = isPausedHandle(handle, thoughtDto?.status ?? tm.status)
     merged.push({
       clientId: tm.id,
-      displayName: tm.name,
+      displayName: thoughtDto?.display_name || tm.name,
       color: palette[idx % palette.length]!,
       role: 'ai',
+      handle,
+      runId: tm.runId ?? digestRunId,
       agentInstanceId: tm.instanceId ?? null,
-      status: tm.status,
+      status: paused ? 'paused' : (thoughtDto?.status ?? tm.status),
+      paused,
+      thought: thoughtDto?.thought ?? null,
+      currentTask: thoughtDto?.current_task ?? taskObj?.title ?? null,
+      cursor: cardRect ? { x: cardRect.x + cardRect.width - 24, y: cardRect.y + 14 } : null,
       selection: tm.objectId ? [tm.objectId] : [],
     })
   })
+
+  // Also surface active Live Digest teammates that are not yet reflected in topology tasks
+  const runCardRect = digestRunId ? rects[`tasks:${digestRunId}`] : undefined
+  liveDigest.teammateThoughts.value.forEach((tm, idx) => {
+    const handleKey = tm.handle.trim().toLowerCase()
+    const nameKey = (tm.display_name || tm.handle).trim().toLowerCase()
+    if (existingKeys.has(handleKey) || existingKeys.has(nameKey)) return
+    existingKeys.add(handleKey)
+    existingKeys.add(nameKey)
+    const paused = isPausedHandle(tm.handle, tm.status)
+    merged.push({
+      clientId: `digest:${tm.handle}`,
+      displayName: tm.display_name || tm.handle,
+      color: palette[(merged.length + idx) % palette.length]!,
+      role: 'ai',
+      handle: tm.handle,
+      runId: digestRunId,
+      status: paused ? 'paused' : tm.status,
+      paused,
+      thought: tm.thought || null,
+      currentTask: tm.current_task ?? null,
+      cursor: runCardRect
+        ? { x: runCardRect.x + runCardRect.width - 24, y: runCardRect.y + 18 + idx * 44 }
+        : { x: 180 + idx * 140, y: 140 },
+    })
+  })
+
   return merged
 })
 
@@ -684,6 +843,9 @@ function enterSession() {
   visitedDetails.value = []
   activePinId.value = null
   connectorSourceId.value = null
+  steerOpen.value = false
+  steerTarget.value = null
+  pausedTeammates.value = {}
   uie.showSpace(sessionKey.value)
   syncObjects()
   void loadTopology()
@@ -920,6 +1082,10 @@ function wrapFocusedRunInSection() {
     externalRects: workExternalRects.value,
   })
   if (section) {
+    const resolvedRun = runId && runId !== '*' ? runId : (activeDigestRunId.value ?? null)
+    if (resolvedRun) {
+      board.updateObjectProps(section.id, { runId: resolvedRun })
+    }
     setSelection([section.id])
   }
 }
@@ -1341,7 +1507,17 @@ function onWrapSelectionInSection() {
     color: 'neutral',
     externalRects: workExternalRects.value,
   })
-  if (section) setSelection([section.id])
+  if (section) {
+    const selectedRuns = new Set(
+      selectedIds.value
+        .map((id) => objectMap.value[id]?.runId)
+        .filter((rid): rid is string => Boolean(rid)),
+    )
+    if (selectedRuns.size === 1) {
+      board.updateObjectProps(section.id, { runId: [...selectedRuns][0]! })
+    }
+    setSelection([section.id])
+  }
 }
 
 function onDuplicateSelected() {
@@ -1504,6 +1680,94 @@ function togglePlanInspector() {
   }
 }
 
+function toggleLiveDigestInspector() {
+  if (inspectorOpen.value && inspectorTab.value === 'digest') {
+    inspectorOpen.value = false
+  } else {
+    inspectorTab.value = 'digest'
+    inspectorOpen.value = true
+    terminalVisible.value = false
+  }
+}
+
+function openLiveDigestForRun(runId?: string | null) {
+  if (runId && runId !== '*') {
+    focusedRun.value = runId
+  }
+  inspectorTab.value = 'digest'
+  inspectorOpen.value = true
+  terminalVisible.value = false
+}
+
+function openTeammateSteer(target: TeammateSteerTarget & { initialDraft?: string }) {
+  if (!target.runId || !target.handle) return
+  steerTarget.value = target
+  steerOpen.value = true
+}
+
+function onPresenceSteerTeammate(payload: SpatialTeammateSteerEvent) {
+  const runId = payload.runId || activeDigestRunId.value || ''
+  if (!runId || !payload.handle) return
+  openTeammateSteer({
+    runId,
+    handle: payload.handle,
+    displayName: payload.displayName,
+    status: payload.status,
+    paused: payload.paused,
+    taskSummary: payload.taskSummary,
+    thought: payload.thought,
+    anchorRect: payload.anchorRect,
+  })
+}
+
+function onTeammateStatusChange(payload: { handle: string; status: string; paused: boolean }) {
+  const clean = payload.handle.trim().replace(/^@/, '')
+  if (!clean) return
+  pausedTeammates.value = {
+    ...pausedTeammates.value,
+    [clean]: payload.paused,
+  }
+}
+
+function onFillSteerFromDigest(payload: SpatialDigestFillSteerEvent) {
+  const prompt = payload.prompt.trim()
+  if (!prompt) return
+  if (typeof c.updateDraft === 'function') c.updateDraft(prompt)
+  expandComposerAndFocus()
+}
+
+function extractEventAnchorRect(event?: Event): TeammateSteerAnchorRect | null {
+  const el = (event?.currentTarget as HTMLElement | null) ?? null
+  const rect = el?.getBoundingClientRect?.()
+  if (!rect || (rect.width === 0 && rect.height === 0)) return null
+  return {
+    top: rect.top,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
+    right: rect.right,
+    bottom: rect.bottom,
+  }
+}
+
+function openSelectedObjectSteer(event?: Event) {
+  const obj = selectedObject.value
+  const runId = obj?.runId || activeDigestRunId.value || ''
+  const handle = obj?.owner?.trim() || ''
+  if (!obj || !runId || !handle) return
+  const thought = liveDigest.teammateThoughtByHandle.value[handle]
+  openTeammateSteer({
+    runId,
+    handle,
+    displayName: thought?.display_name || handle,
+    status: thought?.status ?? obj.status ?? null,
+    paused: Boolean(pausedTeammates.value[handle] ?? (thought?.status === 'paused')),
+    taskSummary: thought?.current_task ?? obj.title ?? null,
+    thought: thought?.thought ?? null,
+    anchorRect: extractEventAnchorRect(event),
+  })
+}
+
 function openUnifiedInspector() {
   zoomMenuOpen.value = false
   if (selectedWhiteboardObject.value) inspectorTab.value = 'style'
@@ -1556,7 +1820,26 @@ function focusPlanNode(target: { taskKey?: string | null; agentSlug?: string | n
   }
 }
 
-function onPresenceAvatarClick(collab: SpatialCollaboratorLike) {
+function onPresenceAvatarClick(collab: SpatialCollaboratorLike, event?: Event) {
+  if (collab.role === 'ai') {
+    const runId = collab.runId || activeDigestRunId.value || ''
+    const handle = (collab.handle || collab.displayName || '').trim()
+    if (runId && handle) {
+      openTeammateSteer({
+        runId,
+        handle,
+        displayName: collab.displayName,
+        status: collab.status ?? null,
+        paused: Boolean(collab.paused),
+        taskSummary: collab.currentTask ?? null,
+        thought: collab.thought ?? null,
+        anchorRect: extractEventAnchorRect(event),
+      })
+      const targetObjectId = collab.selection?.[0]
+      if (targetObjectId) locate(targetObjectId)
+      return
+    }
+  }
   const isRemote = board.collaborators.value.some((c) => c.clientId === collab.clientId)
   if (isRemote) {
     board.toggleFollowCollaborator(collab.clientId)
@@ -1640,6 +1923,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 function onDocumentKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
+    if (steerOpen.value) { steerOpen.value = false; return }
     if (zoomMenuOpen.value) { zoomMenuOpen.value = false; return }
     if (stickyPaletteOpen.value || drawPopoverOpen.value) {
       stickyPaletteOpen.value = false
@@ -1884,6 +2168,7 @@ function collaboratorInitial(name: string): string {
                   @update:title="(title) => board.updateObjectProps(id, { title })"
                   @update:color="(color) => board.updateObjectProps(id, { color })"
                   @update:collapsed="(collapsed) => board.updateObjectProps(id, { collapsed })"
+                  @open-live-digest="openLiveDigestForRun"
                   @resize-start="gesturing = true"
                   @resize-end="(params) => resizeStop(id, params)"
                 />
@@ -2010,15 +2295,18 @@ function collaboratorInitial(name: string): string {
               @dispatch-comment="dispatchCommentPin"
             />
 
-            <!-- Live Multiplayer Cursors, Remote Selections & Follow HUD -->
+            <!-- Live Multiplayer Cursors, Remote Selections, AI Thought Micro-Bubbles & Follow HUD -->
             <SpatialPresenceLayer
               :collaborators="presenceCollaborators"
               :viewport="currentViewport"
               :local-client-id="board.clientId"
               :following-client-id="board.followingClientId.value"
               :object-rects="allObjectRects"
+              :teammate-thoughts="liveDigest.teammateThoughtByHandle.value"
+              :active-run-id="activeDigestRunId"
               @follow-user="(cid) => board.followCollaborator(cid)"
               @stop-follow="board.stopFollowing()"
+              @steer-teammate="onPresenceSteerTeammate"
             />
 
             <!-- Multi-Select Contextual Action Bar -->
@@ -2265,9 +2553,11 @@ function collaboratorInitial(name: string): string {
                   'is-ai': collab.role === 'ai',
                 }"
                 :style="{ '--avatar-color': collab.color }"
-                :title="t('space.whiteboard.followUser', { name: collab.displayName })"
+                :title="collab.role === 'ai'
+                  ? tr('space.liveDigest.thoughtBubbleHint', 'Click to steer or pause {name}', { name: collab.displayName })
+                  : t('space.whiteboard.followUser', { name: collab.displayName })"
                 :data-presence-client="collab.clientId"
-                @click="onPresenceAvatarClick(collab)"
+                @click="onPresenceAvatarClick(collab, $event)"
               >
                 <Bot v-if="collab.role === 'ai'" :size="12" aria-hidden="true" />
                 <span v-else>{{ collaboratorInitial(collab.displayName) }}</span>
@@ -2369,6 +2659,20 @@ function collaboratorInitial(name: string): string {
             </div>
 
             <span class="space-island-sep" aria-hidden="true" />
+
+            <button
+              type="button"
+              class="space-island-icon-btn space-digest-toggle-btn"
+              :class="{ 'is-active': inspectorOpen && inspectorTab === 'digest', 'is-live': liveDigest.isRunning.value }"
+              :aria-expanded="inspectorOpen && inspectorTab === 'digest'"
+              :aria-label="tr('space.liveDigest.inspectorToggle', 'Live Digest')"
+              :title="tr('space.liveDigest.inspectorToggle', 'Live Digest')"
+              data-testid="space-digest-toggle"
+              @click="toggleLiveDigestInspector"
+            >
+              <Activity :size="15" aria-hidden="true" />
+              <span v-if="liveDigest.isRunning.value" class="space-digest-live-dot" aria-hidden="true" />
+            </button>
 
             <button
               type="button"
@@ -2544,6 +2848,17 @@ function collaboratorInitial(name: string): string {
                 >
                   {{ t('space.figma.planTab') }}
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class="space-inspector-tab"
+                  :class="{ 'is-active': inspectorTab === 'digest' }"
+                  :aria-selected="inspectorTab === 'digest'"
+                  data-inspector-tab="digest"
+                  @click="inspectorTab = 'digest'"
+                >
+                  {{ tr('space.liveDigest.tabLabel', 'Live Digest') }}
+                </button>
               </div>
               <UiButton
                 variant="ghost"
@@ -2566,6 +2881,20 @@ function collaboratorInitial(name: string): string {
                 :aria-label="t('space.cluster.details')"
               >
                 <div v-if="selectedObject" class="space-detail-scroll">
+                  <div
+                    v-if="selectedObject.owner && (selectedObject.runId || activeDigestRunId)"
+                    class="space-detail-steer-bar"
+                  >
+                    <button
+                      type="button"
+                      class="space-detail-steer-btn ui-pressable"
+                      data-testid="space-detail-steer-btn"
+                      @click="openSelectedObjectSteer($event)"
+                    >
+                      <MessageSquare :size="13" aria-hidden="true" />
+                      <span>{{ tr('teammateControl.triggerTooltip', 'Steer or pause {name}', { name: selectedObject.owner }) }}</span>
+                    </button>
+                  </div>
                   <div v-if="focusedInstance && instanceTasks.length" class="space-related-list">
                     <strong>{{ t('space.cluster.instanceTasks') }}</strong>
                     <button
@@ -2697,8 +3026,34 @@ function collaboratorInitial(name: string): string {
               <div v-if="inspectorTab === 'plan'" class="space-plan-tab-body" data-testid="space-plan-drawer">
                 <SessionPlanPanel :session-id="c.selectedSessionId.value" @focus-node="focusPlanNode" />
               </div>
+
+              <!-- Tab 4: Same-Source Live Digest Panel -->
+              <div v-if="inspectorTab === 'digest'" class="space-digest-tab-body" data-testid="space-digest-drawer">
+                <SpatialLiveDigestInspector
+                  :run-id="activeDigestRunId"
+                  :paused-overrides="pausedTeammates"
+                  @steer-teammate="openTeammateSteer"
+                  @fill-steer="onFillSteerFromDigest"
+                />
+              </div>
             </div>
           </aside>
+
+          <!-- Direct Single-Teammate Steer / Pause Popover -->
+          <TeammateSteerPopover
+            v-if="steerTarget"
+            v-model:open="steerOpen"
+            :run-id="steerTarget.runId"
+            :handle="steerTarget.handle"
+            :display-name="steerTarget.displayName"
+            :status="steerTarget.status"
+            :paused="steerTarget.paused"
+            :task-summary="steerTarget.taskSummary"
+            :thought="steerTarget.thought"
+            :initial-draft="steerTarget.initialDraft"
+            :anchor-rect="steerTarget.anchorRect"
+            @status-change="onTeammateStatusChange"
+          />
 
           <!-- Resident Collapsible Bottom ComposerBar (Expanded & bottom-centered by default!) -->
           <div
@@ -2994,6 +3349,51 @@ function collaboratorInitial(name: string): string {
 .space-island-icon-btn:disabled {
   opacity: 0.38;
   cursor: not-allowed;
+}
+
+.space-digest-toggle-btn {
+  position: relative;
+}
+
+.space-digest-live-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+}
+
+.space-digest-tab-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.space-detail-steer-bar {
+  display: flex;
+  padding: 10px 14px 0;
+}
+
+.space-detail-steer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-control, 6px);
+  border: 1px solid var(--border-default);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.space-detail-steer-btn:hover {
+  background: var(--bg-hover);
 }
 
 .space-goal-select {

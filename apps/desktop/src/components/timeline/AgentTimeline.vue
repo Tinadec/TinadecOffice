@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Clock,
+  MessageSquare,
   Pause,
   Pin,
   Play,
@@ -12,6 +13,7 @@ import {
   Wrench,
   X,
 } from '@lucide/vue'
+import TeammateSteerPopover, { type TeammateSteerTarget } from '../teammate/TeammateSteerPopover.vue'
 import {
   api,
   type ModelInvocationDto,
@@ -58,10 +60,20 @@ const ROW_HEIGHT_PX = 40
 const COMPACT_BREAKPOINT_PX = 520
 const LIVE_CLOCK_THROTTLE_MS = 50
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const { nameFor } = typeof api.listAgents === 'function'
   ? useAgentDirectory()
   : { nameFor: (slug: string | null | undefined, fallback?: string | null) => fallback ?? slug ?? '' }
+
+function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
+  if (te(key)) return params ? t(key, params) : t(key)
+  if (!params) return fallback
+  return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
+}
+
+const steerTarget = ref<TeammateSteerTarget | null>(null)
+const steerOpen = ref(false)
+const pausedOverrides = ref<Record<string, boolean>>({})
 
 const timelineRootRef = ref<HTMLElement | null>(null)
 const trackColumnRef = ref<HTMLElement | null>(null)
@@ -135,13 +147,16 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-// Reset pin & replay state when run changes
+// Reset pin, steer popover & replay state when run changes
 watch(
   () => model.value.runId,
   () => {
     pinnedSpanId.value = null
     hoveredSpanId.value = null
     hoveredRowId.value = null
+    steerOpen.value = false
+    steerTarget.value = null
+    pausedOverrides.value = {}
     stopReplayRaf()
     isReplaying.value = false
     replayPct.value = 100
@@ -411,10 +426,55 @@ function onTimelineKeydown(event: KeyboardEvent): void {
   }
 }
 
-function onRowHeaderClick(row: AgentTimelineRow): void {
-  if (!row.topologyNodeId) return
-  const next = props.selectedNodeId === row.topologyNodeId ? null : row.topologyNodeId
-  emit('select-node', next)
+function canSteerRow(row: AgentTimelineRow): boolean {
+  return Boolean(model.value.runId && row.roleKind !== 'coordinator' && (row.handle || row.agentSlug))
+}
+
+function rowHandleFor(row: AgentTimelineRow): string {
+  return (row.handle || row.agentSlug || '').trim()
+}
+
+function isRowPaused(row: AgentTimelineRow): boolean {
+  const handle = rowHandleFor(row)
+  if (handle && pausedOverrides.value[handle] !== undefined) return Boolean(pausedOverrides.value[handle])
+  return false
+}
+
+function openRowSteerPopover(row: AgentTimelineRow, event?: Event): void {
+  if (!canSteerRow(row) || !model.value.runId) return
+  const handle = rowHandleFor(row)
+  const el = (event?.currentTarget as HTMLElement | null) ?? null
+  const rect = el?.getBoundingClientRect?.()
+  const lastSpan = row.spans[row.spans.length - 1]
+  steerTarget.value = {
+    runId: model.value.runId,
+    handle,
+    displayName: row.label,
+    status: isRowPaused(row) ? 'paused' : row.status,
+    paused: isRowPaused(row),
+    taskSummary: lastSpan ? displaySpanLabel(lastSpan) : null,
+    anchorRect: rect && (rect.width > 0 || rect.height > 0)
+      ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom }
+      : null,
+  }
+  steerOpen.value = true
+}
+
+function onSteerStatusChange(payload: { handle: string; status: string; paused: boolean }): void {
+  pausedOverrides.value = {
+    ...pausedOverrides.value,
+    [payload.handle]: payload.paused,
+  }
+}
+
+function onRowHeaderClick(row: AgentTimelineRow, event?: Event): void {
+  if (row.topologyNodeId) {
+    const next = props.selectedNodeId === row.topologyNodeId ? null : row.topologyNodeId
+    emit('select-node', next)
+  }
+  if (canSteerRow(row)) {
+    openRowSteerPopover(row, event)
+  }
 }
 
 // ── Formatting & Labels ──
@@ -784,9 +844,10 @@ function isSpanReplayFuture(span: AgentTimelineSpan): boolean {
                 data-testid="timeline-agent-row-label"
                 :data-row-id="row.id"
                 :data-role-kind="row.roleKind"
-                @click="onRowHeaderClick(row)"
-                @keydown.enter.prevent="onRowHeaderClick(row)"
-                @keydown.space.prevent="onRowHeaderClick(row)"
+                :data-steerable="canSteerRow(row) ? 'true' : 'false'"
+                @click="onRowHeaderClick(row, $event)"
+                @keydown.enter.prevent="onRowHeaderClick(row, $event)"
+                @keydown.space.prevent="onRowHeaderClick(row, $event)"
                 @mouseenter="hoveredRowId = row.id"
                 @mouseleave="hoveredRowId = null"
                 @focus="hoveredRowId = row.id"
@@ -795,18 +856,39 @@ function isSpanReplayFuture(span: AgentTimelineSpan): boolean {
                 <div class="agent-timeline__row-top">
                   <span
                     class="agent-timeline__agent-dot"
-                    :class="{ 'is-pulsing': effectiveLive && row.status === 'running' }"
+                    :class="{
+                      'is-pulsing': effectiveLive && row.status === 'running' && !isRowPaused(row),
+                      'is-paused': isRowPaused(row),
+                    }"
                     data-testid="timeline-agent-dot"
                   />
                   <span class="agent-timeline__agent-name" :title="row.label">
                     {{ isCompactDock ? row.shortLabel : row.label }}
                   </span>
                   <span
-                    v-if="!isCompactDock && (row.roleKind === 'coordinator' || row.isPersistentTeammate)"
+                    v-if="isRowPaused(row)"
+                    class="agent-timeline__paused-tag"
+                    data-testid="timeline-row-paused"
+                  >
+                    {{ tr('teammateControl.status.paused', 'Paused') }}
+                  </span>
+                  <span
+                    v-else-if="!isCompactDock && (row.roleKind === 'coordinator' || row.isPersistentTeammate)"
                     class="agent-timeline__role-tag"
                   >
                     {{ roleLabel(row.roleKind) }}
                   </span>
+                  <button
+                    v-if="canSteerRow(row)"
+                    type="button"
+                    class="agent-timeline__steer-trigger ui-pressable"
+                    :title="tr('teammateControl.triggerTooltip', 'Steer or pause {name}', { name: row.label })"
+                    :aria-label="tr('teammateControl.triggerTooltip', 'Steer or pause {name}', { name: row.label })"
+                    data-testid="timeline-row-steer-btn"
+                    @click.stop="openRowSteerPopover(row, $event)"
+                  >
+                    <MessageSquare :size="11" aria-hidden="true" />
+                  </button>
                 </div>
 
                 <div v-if="!isCompactDock" class="agent-timeline__row-sub" data-testid="timeline-row-meta">
@@ -1025,6 +1107,19 @@ function isSpanReplayFuture(span: AgentTimelineSpan): boolean {
         </div>
       </aside>
     </template>
+
+    <TeammateSteerPopover
+      v-if="steerTarget"
+      v-model:open="steerOpen"
+      :run-id="steerTarget.runId"
+      :handle="steerTarget.handle"
+      :display-name="steerTarget.displayName"
+      :status="steerTarget.status"
+      :paused="steerTarget.paused"
+      :task-summary="steerTarget.taskSummary"
+      :anchor-rect="steerTarget.anchorRect"
+      @status-change="onSteerStatusChange"
+    />
   </div>
 </template>
 
@@ -1497,7 +1592,7 @@ function isSpanReplayFuture(span: AgentTimelineSpan): boolean {
 .agent-timeline__span.kind--tool {
   background: color-mix(in srgb, var(--agent-color, var(--accent-info)) 72%, var(--surface-section));
   border-color: color-mix(in srgb, var(--agent-color, var(--accent-info)) 88%, var(--border-default));
-  color: #ffffff;
+  color: rgba(250, 250, 250, 0.96);
 }
 
 /* State: waiting (diagonal hatch exposing blocking/waiting bottlenecks) */
@@ -1715,6 +1810,57 @@ function isSpanReplayFuture(span: AgentTimelineSpan): boolean {
   line-height: 1.35 !important;
   color: var(--text-secondary) !important;
   overflow-wrap: anywhere;
+}
+
+.agent-timeline__agent-dot.is-paused {
+  background: var(--accent-warning) !important;
+  animation: none !important;
+}
+
+.agent-timeline__paused-tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 5px;
+  height: 15px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-warning) 16%, transparent);
+  color: var(--accent-warning);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.agent-timeline__steer-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity var(--duration-tap, 120ms) var(--ease-snappy, ease),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, ease),
+    color var(--duration-tap, 120ms) var(--ease-snappy, ease);
+}
+
+.agent-timeline__row-label:hover .agent-timeline__steer-trigger,
+.agent-timeline__row-label:focus-within .agent-timeline__steer-trigger,
+.agent-timeline__row-label.is-selected-node .agent-timeline__steer-trigger {
+  opacity: 1;
+}
+
+.agent-timeline__steer-trigger:hover {
+  border-color: var(--border-default);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .agent-timeline__detail-hint {

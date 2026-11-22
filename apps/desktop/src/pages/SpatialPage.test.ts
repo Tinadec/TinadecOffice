@@ -27,6 +27,12 @@ const mocks = vi.hoisted(() => ({
   updateDraft: vi.fn(),
   openDocument: vi.fn(),
   openInEditor: vi.fn(),
+  liveDigestRefresh: vi.fn(),
+  liveDigestSnapshots: null as Ref<Record<string, import('@/composables/useLiveDigest').LiveDigestSnapshotDto | null>> | null,
+  listRunTeammates: vi.fn(),
+  steerRunTeammate: vi.fn(),
+  pauseRunTeammate: vi.fn(),
+  resumeRunTeammate: vi.fn(),
 }))
 
 vi.mock('@/controllers/HomeController', async () => {
@@ -109,6 +115,68 @@ vi.mock('@/composables/usePanelStyles', () => ({
     getPanelDataAttributes: () => ({}),
   }),
 }))
+vi.mock('@/composables/useLiveDigest', async () => {
+  const { computed, ref, toValue } = await import('vue')
+  const snapshots = ref<Record<string, import('@/composables/useLiveDigest').LiveDigestSnapshotDto | null>>({})
+  mocks.liveDigestSnapshots = snapshots
+  return {
+    selectPrimaryRunId: (runs: ReadonlyArray<{ id: string }> | null | undefined) => runs?.[0]?.id ?? null,
+    useLiveDigest: (runIdSource: import('vue').MaybeRefOrGetter<string | null | undefined>) => {
+      const runId = computed(() => {
+        const raw = toValue(runIdSource)
+        return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+      })
+      const snapshot = computed(() => (runId.value ? snapshots.value[runId.value] ?? null : null))
+      const isTerminal = computed(() => ['completed', 'failed', 'cancelled'].includes(snapshot.value?.status ?? ''))
+      const isRunning = computed(() => Boolean(snapshot.value && !isTerminal.value))
+      const teammateThoughts = computed(() => snapshot.value?.teammate_thoughts ?? [])
+      const teammateThoughtByHandle = computed(() => {
+        const map: Record<string, import('@/composables/useLiveDigest').LiveDigestTeammateThoughtDto> = {}
+        for (const item of teammateThoughts.value) {
+          if (item.handle) map[item.handle] = item
+        }
+        return map
+      })
+      return {
+        runId,
+        snapshot,
+        loading: computed(() => false),
+        connected: computed(() => isRunning.value),
+        streaming: computed(() => isRunning.value),
+        connectionState: computed(() => (isRunning.value ? 'live' : 'idle')),
+        error: computed(() => null),
+        isRunning,
+        isTerminal,
+        headline: computed(() => snapshot.value?.headline ?? ''),
+        currentPhase: computed(() => snapshot.value?.current_phase ?? null),
+        mode: computed(() => snapshot.value?.mode ?? 'auto'),
+        explainerActive: computed(() => Boolean(snapshot.value?.explainer_active)),
+        explainerModel: computed(() => snapshot.value?.explainer_model ?? null),
+        contextWaterline: computed(() => snapshot.value?.context_waterline ?? null),
+        governanceSignals: computed(() => snapshot.value?.governance_signals ?? []),
+        teammateThoughts,
+        teammateThoughtByHandle,
+        chapters: computed(() => snapshot.value?.chapters ?? []),
+        touchedFiles: computed(() => snapshot.value?.touched_files ?? []),
+        sentinelAlerts: computed(() => snapshot.value?.sentinel_alerts ?? []),
+        lastEventType: computed(() => null),
+        refresh: mocks.liveDigestRefresh,
+        reconnect: vi.fn(),
+        disconnect: vi.fn(),
+      }
+    },
+  }
+})
+vi.mock('@/lib/teammateControlApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/teammateControlApi')>()
+  return {
+    ...actual,
+    listRunTeammates: mocks.listRunTeammates,
+    steerRunTeammate: mocks.steerRunTeammate,
+    pauseRunTeammate: mocks.pauseRunTeammate,
+    resumeRunTeammate: mocks.resumeRunTeammate,
+  }
+})
 vi.mock('vue-i18n', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({
@@ -339,6 +407,35 @@ beforeEach(() => {
   mocks.topology.mockResolvedValue(topology())
   mocks.setViewport.mockResolvedValue(undefined)
   mocks.pickHostFiles.mockResolvedValue([])
+  mocks.listRunTeammates.mockResolvedValue([])
+  mocks.steerRunTeammate.mockResolvedValue({
+    accepted: true,
+    run_id: 'r1',
+    handle: 'worker#a',
+    status: 'working',
+    paused: false,
+    urgent: true,
+    woken: false,
+    delivery_mode: 'injected_next_turn',
+    pending_steer_count: 1,
+  })
+  mocks.pauseRunTeammate.mockResolvedValue({
+    accepted: true,
+    run_id: 'r1',
+    handle: 'worker#a',
+    action: 'pause',
+    status: 'paused',
+    paused: true,
+  })
+  mocks.resumeRunTeammate.mockResolvedValue({
+    accepted: true,
+    run_id: 'r1',
+    handle: 'worker#a',
+    action: 'resume',
+    status: 'working',
+    paused: false,
+  })
+  if (mocks.liveDigestSnapshots) mocks.liveDigestSnapshots.value = {}
   c.draft.value = ''
   c.selectedSessionId.value = 's'
   c.messages.value = [message('r1', 'Build the feature'), message('r2', 'Review the feature')]
@@ -699,5 +796,147 @@ describe('SpatialPage Figma UI3 shell, whiteboard integration & resident compose
 
     expect(mocks.sendMessage).toHaveBeenCalledOnce()
     expect(c.draft.value).toContain('@AI please review the auth edge case')
+  })
+
+  it('projects same-source Live Digest onto Run Section subtitle, AI cursor thought micro-bubble with direct steer/pause, and Inspector Live Digest tab', async () => {
+    mocks.liveDigestSnapshots!.value = {
+      r1: {
+        run_id: 'r1',
+        session_id: 's',
+        status: 'running',
+        mode: 'auto',
+        explainer_active: true,
+        explainer_model: 'gemini-2.5-flash',
+        seq: 7,
+        headline: 'Refactoring auth middleware & running checks',
+        current_phase: 'verification',
+        context_waterline: {
+          used_tokens: 48000,
+          max_tokens: 128000,
+          usage_percent: 37.5,
+          compaction_count: 1,
+          compaction_points: [
+            { seq: 3, before_tokens: 92000, after_tokens: 24000, occurred_at: '2026-11-23T02:20:00Z', summary: 'Compacted history' },
+          ],
+        },
+        governance_signals: [
+          {
+            id: 'sig-1',
+            code: 'SAME_ARGS_RETRY',
+            severity: 'warning',
+            summary: 'Repeated test invocation with identical args',
+            occurred_at: '2026-11-23T02:22:00Z',
+          },
+        ],
+        teammate_thoughts: [
+          {
+            handle: 'worker#a',
+            display_name: 'worker#a',
+            status: 'working',
+            current_task: 'Task a',
+            thought: 'Inspecting token refresh race condition',
+            updated_at: '2026-11-23T02:23:00Z',
+          },
+        ],
+        chapters: [
+          {
+            id: 'ch-1',
+            index: 1,
+            phase: 'verification',
+            title: 'Verify token refresh lock',
+            narrative: 'Checking concurrent refresh requests under load.',
+            source: 'l1_narrator',
+            raw_thought_excerpt: 'Lock contention appears in refreshToken()',
+            scout_note: 'Two callers enter refresh concurrently.',
+            tool_calls: [
+              { tool_call_id: 'tc-1', tool_name: 'read_file', status: 'succeeded', compact_summary: 'Read src/auth.ts' },
+            ],
+            touched_files: [
+              { path: 'src/auth.ts', added_lines: 18, removed_lines: 4 },
+            ],
+            started_at: '2026-11-23T02:21:00Z',
+            updated_at: '2026-11-23T02:23:00Z',
+          },
+        ],
+        touched_files: [{ path: 'src/auth.ts', added_lines: 18, removed_lines: 4 }],
+        sentinel_alerts: [
+          {
+            id: 'alert-1',
+            code: 'SAME_ARGS_RETRY',
+            severity: 'warning',
+            title: 'Repeated test retry',
+            message: 'Same test command ran twice without edits.',
+            suggested_steer_prompt: 'Inspect the failing assertion before rerunning tests.',
+            teammate_handle: 'worker#a',
+            created_at: '2026-11-23T02:23:30Z',
+          },
+        ],
+        updated_at: '2026-11-23T02:23:30Z',
+      },
+    }
+
+    await render()
+
+    // 1. Run Section top live subtitle + context waterline micro-badge
+    await openZoomMenu()
+    await wrapper.get('[data-testid="space-menu-wrap-run"]').trigger('click')
+    await flushPromises()
+
+    const sectionDigest = wrapper.get('[data-testid="section-live-digest"]')
+    expect(sectionDigest.get('[data-testid="section-live-headline"]').text()).toBe(
+      'Refactoring auth middleware & running checks',
+    )
+    expect(sectionDigest.get('[data-testid="section-live-waterline"]').text()).toContain('38%')
+
+    // Clicking the Run Section live digest strip opens the right Inspector directly on the Live Digest tab
+    await sectionDigest.trigger('click')
+    await flushPromises()
+    const inspector = wrapper.get('[data-testid="space-inspector"]')
+    expect(inspector.isVisible()).toBe(true)
+    const digestPanel = inspector.get('[data-testid="space-live-digest-panel"]')
+    expect(digestPanel.get('[data-testid="spatial-digest-headline"]').text()).toBe(
+      'Refactoring auth middleware & running checks',
+    )
+    expect(digestPanel.get('[data-testid="spatial-digest-waterline"]').text()).toContain('38')
+    expect(digestPanel.get('[data-testid="spatial-digest-waterline"]').text()).toContain('48.0k')
+    expect(digestPanel.get('[data-testid="spatial-digest-waterline"]').text()).toContain('128.0k')
+    expect(digestPanel.get('[data-testid="spatial-digest-signals"]').text()).toContain('SAME_ARGS_RETRY')
+    expect(digestPanel.get('[data-testid="spatial-digest-chapters"]').text()).toContain('Verify token refresh lock')
+
+    // 2. Sentinel alert [Fill steer prompt] fills the bottom ComposerBar draft
+    await digestPanel.get('[data-testid="spatial-digest-fill-steer"]').trigger('click')
+    await flushPromises()
+    expect(c.draft.value).toBe('Inspect the failing assertion before rerunning tests.')
+
+    // 3. AI Teammate cursor thought micro-bubble renders on SpatialPresenceLayer and opens TeammateSteerPopover on click
+    const thoughtBubble = wrapper.get('[data-testid="spatial-thought-bubble"][data-thought-handle="worker#a"]')
+    expect(thoughtBubble.text()).toContain('Inspecting token refresh race condition')
+
+    await thoughtBubble.trigger('click')
+    await flushPromises()
+
+    const popover = document.body.querySelector('[data-testid="teammate-steer-popover"]') as HTMLElement | null
+    expect(popover).not.toBeNull()
+    expect(popover?.getAttribute('data-teammate-handle')).toBe('worker#a')
+
+    // Send direct steer via Enter and independently pause teammate
+    const input = popover!.querySelector('[data-testid="teammate-steer-input"]') as HTMLTextAreaElement
+    input.value = 'Focus on refresh lock first'
+    input.dispatchEvent(new Event('input'))
+    await flushPromises()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+
+    expect(mocks.steerRunTeammate).toHaveBeenCalledWith(
+      'r1',
+      'worker#a',
+      { message: 'Focus on refresh lock first', urgent: true },
+      { storageId: undefined },
+    )
+
+    const pauseBtn = popover!.querySelector('[data-testid="teammate-steer-pause-btn"]') as HTMLButtonElement
+    pauseBtn.click()
+    await flushPromises()
+    expect(mocks.pauseRunTeammate).toHaveBeenCalledWith('r1', 'worker#a', { storageId: undefined })
   })
 })

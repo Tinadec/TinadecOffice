@@ -149,6 +149,26 @@ describe('SpatialSectionNode', () => {
     await wrapper.get('[data-testid="section-collapse-btn"]').trigger('click')
     expect(wrapper.emitted('update:collapsed')?.[0]).toEqual([true])
   })
+
+  it('renders restrained single-line live headline + context waterline micro-badge and emits open-live-digest', async () => {
+    const wrapper = track(mount(SpatialSectionNode, {
+      props: {
+        id: 'sec-run-1',
+        title: 'Run #1',
+        color: 'indigo',
+        runId: 'run-42',
+        liveHeadline: 'Auditing API schema parity',
+        liveUsagePercent: 64,
+        liveRunning: true,
+      },
+    }))
+
+    expect(wrapper.get('[data-testid="section-live-headline"]').text()).toBe('Auditing API schema parity')
+    expect(wrapper.get('[data-testid="section-live-waterline"]').text()).toContain('64%')
+
+    await wrapper.get('[data-testid="section-live-digest"]').trigger('click')
+    expect(wrapper.emitted('open-live-digest')?.[0]).toEqual(['run-42'])
+  })
 })
 
 describe('SpatialStickyNode', () => {
@@ -410,6 +430,48 @@ describe('SpatialPresenceLayer', () => {
 
     await wrapper.get('[data-testid="spatial-stop-follow-btn"]').trigger('click')
     expect(wrapper.emitted('stop-follow')).toHaveLength(1)
+  })
+
+  it('renders translucent AI teammate thought micro-bubble and emits steer-teammate on click', async () => {
+    const wrapper = track(mount(SpatialPresenceLayer, {
+      props: {
+        localClientId: 'me',
+        activeRunId: 'run-9',
+        viewport: { x: 0, y: 0, zoom: 1 },
+        teammateThoughts: {
+          'impl#1': {
+            handle: 'impl#1',
+            display_name: 'impl#1',
+            status: 'working',
+            current_task: 'Patch middleware',
+            thought: 'Checking retry backoff timing',
+            updated_at: '2026-11-23T02:20:00Z',
+          },
+        },
+        collaborators: [
+          {
+            clientId: 'ai:impl#1',
+            displayName: 'impl#1',
+            handle: 'impl#1',
+            color: '#8b5cf6',
+            role: 'ai',
+            status: 'working',
+            cursor: { x: 200, y: 120 },
+          },
+        ],
+      },
+    }))
+
+    const bubble = wrapper.get('[data-testid="spatial-thought-bubble"]')
+    expect(bubble.text()).toContain('Checking retry backoff timing')
+
+    await bubble.trigger('click')
+    expect(wrapper.emitted('steer-teammate')?.[0]?.[0]).toMatchObject({
+      runId: 'run-9',
+      handle: 'impl#1',
+      thought: 'Checking retry backoff timing',
+      taskSummary: 'Patch middleware',
+    })
   })
 })
 

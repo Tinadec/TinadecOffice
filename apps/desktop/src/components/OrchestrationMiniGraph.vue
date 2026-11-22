@@ -851,13 +851,15 @@ export function layoutRuntimeTopology(
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, shallowRef, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { MessageSquare } from '@lucide/vue'
 import { Handle, MarkerType, Position, VueFlow, useVueFlow, type Edge, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { api, type ModelProviderInstanceDto } from '../api'
 import { useStatusLabels } from '../lib/statusLabels'
 import { useAgentDirectory } from '../composables/useAgentDirectory'
+import TeammateSteerPopover, { type TeammateSteerTarget } from './teammate/TeammateSteerPopover.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -867,6 +869,7 @@ const props = withDefaults(
     topologyRun?: TopologyRunDto | null
     toolExecutions?: ToolExecutionTimelineItemDto[]
     selectedNodeId?: string | null
+    runId?: string | null
   }>(),
   {
     nodes: undefined,
@@ -875,17 +878,30 @@ const props = withDefaults(
     topologyRun: null,
     toolExecutions: () => [],
     selectedNodeId: null,
+    runId: null,
   },
 )
 
 const emit = defineEmits<{
   'update:selectedNodeId': [nodeId: string | null]
   'select-node': [node: RuntimeTopologyNode | null]
+  'steer-teammate': [target: TeammateSteerTarget]
 }>()
 
 const flowId = `orchestration-mini-graph-${++nextMiniGraphInstance}`
 const { fitView } = useVueFlow(flowId)
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+
+function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
+  if (te(key)) return params ? t(key, params) : t(key)
+  if (!params) return fallback
+  return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
+}
+
+const effectiveRunId = computed(() => props.runId ?? props.snapshot?.run?.id ?? props.topologyRun?.run_id ?? null)
+const steerTarget = ref<TeammateSteerTarget | null>(null)
+const steerOpen = ref(false)
+const pausedOverrides = ref<Record<string, boolean>>({})
 const { runStatusLabel } = useStatusLabels()
 const agentDirectory = typeof api?.listAgents === 'function' ? useAgentDirectory() : null
 const nameFor = agentDirectory
@@ -1049,21 +1065,73 @@ function roleBadgeLabel(tier: RuntimeTopologyRoleTier): string {
   return t('orchestrationPanel.roleWorker')
 }
 
+function nodeHandleFor(node: RuntimeTopologyNode): string {
+  return (node.handle || node.agentSlug || '').trim()
+}
+
+function canSteerNode(node: RuntimeTopologyNode): boolean {
+  return Boolean(effectiveRunId.value && node.roleTier !== 'coordinator' && nodeHandleFor(node))
+}
+
+function isNodePaused(node: RuntimeTopologyNode): boolean {
+  const handle = nodeHandleFor(node)
+  if (handle && pausedOverrides.value[handle] !== undefined) return Boolean(pausedOverrides.value[handle])
+  return String(node.rawStatus ?? '').toLowerCase() === 'paused'
+}
+
+function openNodeSteerPopover(node: RuntimeTopologyNode, event?: Event): void {
+  if (!canSteerNode(node) || !effectiveRunId.value) return
+  const handle = nodeHandleFor(node)
+  const el = (event?.currentTarget as HTMLElement | null) ?? null
+  const rect = el?.getBoundingClientRect?.()
+  const target: TeammateSteerTarget = {
+    runId: effectiveRunId.value,
+    handle,
+    displayName: node.label,
+    status: isNodePaused(node) ? 'paused' : (node.rawStatus || node.status),
+    paused: isNodePaused(node),
+    taskSummary: node.title && node.title !== node.label ? node.title : (node.subtitle ?? node.description ?? null),
+    anchorRect: rect && (rect.width > 0 || rect.height > 0)
+      ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom }
+      : null,
+  }
+  steerTarget.value = target
+  steerOpen.value = true
+  emit('steer-teammate', target)
+}
+
+function onSteerStatusChange(payload: { handle: string; status: string; paused: boolean }): void {
+  pausedOverrides.value = {
+    ...pausedOverrides.value,
+    [payload.handle]: payload.paused,
+  }
+}
+
+watch(effectiveRunId, () => {
+  steerOpen.value = false
+  steerTarget.value = null
+  pausedOverrides.value = {}
+})
+
 function statusDisplayLabel(node: RuntimeTopologyNode): string {
+  if (isNodePaused(node)) return tr('teammateControl.status.paused', 'Paused')
   if (node.status === 'awaiting_approval') return runStatusLabel('awaiting_approval')
   if (node.status === 'queued' && !node.rawStatus) return runStatusLabel('queued')
   return runStatusLabel(node.rawStatus || node.status)
 }
 
-function toggleNode(node: RuntimeTopologyNode): void {
+function toggleNode(node: RuntimeTopologyNode, event?: Event): void {
   const next = props.selectedNodeId === node.id ? null : node
   emit('update:selectedNodeId', next ? next.id : null)
   emit('select-node', next)
+  if (canSteerNode(node)) {
+    openNodeSteerPopover(node, event)
+  }
 }
 
-function onFlowNodeClick(event: { node: { id: string } }): void {
+function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   const found = resolvedGraph.value.nodes.find((n) => n.id === event.node.id)
-  if (found) toggleNode(found)
+  if (found) toggleNode(found, event.event)
 }
 </script>
 
@@ -1107,11 +1175,11 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
           data-testid="mini-topo-node"
           :data-node-id="nodeProps.data.node.id"
           :data-role-tier="nodeProps.data.node.roleTier"
-          :data-node-status="nodeProps.data.node.status"
+          :data-node-status="isNodePaused(nodeProps.data.node) ? 'paused' : nodeProps.data.node.status"
           :title="`${nodeProps.data.node.label} · ${statusDisplayLabel(nodeProps.data.node)}`"
-          @click.stop="toggleNode(nodeProps.data.node)"
-          @keydown.enter.prevent="toggleNode(nodeProps.data.node)"
-          @keydown.space.prevent="toggleNode(nodeProps.data.node)"
+          @click.stop="toggleNode(nodeProps.data.node, $event)"
+          @keydown.enter.prevent="toggleNode(nodeProps.data.node, $event)"
+          @keydown.space.prevent="toggleNode(nodeProps.data.node, $event)"
         >
           <Handle
             type="target"
@@ -1120,12 +1188,29 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
             class="mini-topo-handle"
           />
           <div class="mini-topo-node__top">
-            <span class="mini-topo-dot" :class="`dot--${nodeProps.data.node.status}`" />
+            <span
+              class="mini-topo-dot"
+              :class="isNodePaused(nodeProps.data.node) ? 'dot--paused' : `dot--${nodeProps.data.node.status}`"
+            />
             <strong class="mini-topo-label">{{ nodeProps.data.node.label }}</strong>
             <span class="mini-topo-tier">{{ roleBadgeLabel(nodeProps.data.node.roleTier) }}</span>
+            <button
+              v-if="canSteerNode(nodeProps.data.node)"
+              type="button"
+              class="mini-topo-steer-btn ui-pressable"
+              :title="tr('teammateControl.triggerTooltip', 'Steer or pause {name}', { name: nodeProps.data.node.label })"
+              :aria-label="tr('teammateControl.triggerTooltip', 'Steer or pause {name}', { name: nodeProps.data.node.label })"
+              data-testid="mini-topo-steer-btn"
+              @click.stop="openNodeSteerPopover(nodeProps.data.node, $event)"
+            >
+              <MessageSquare :size="11" aria-hidden="true" />
+            </button>
           </div>
           <div class="mini-topo-node__meta">
-            <span class="mini-topo-status-pill" :class="`pill--${nodeProps.data.node.status}`">
+            <span
+              class="mini-topo-status-pill"
+              :class="isNodePaused(nodeProps.data.node) ? 'pill--paused' : `pill--${nodeProps.data.node.status}`"
+            >
               {{ statusDisplayLabel(nodeProps.data.node) }}
             </span>
             <span
@@ -1153,6 +1238,19 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
         </div>
       </template>
     </VueFlow>
+
+    <TeammateSteerPopover
+      v-if="steerTarget"
+      v-model:open="steerOpen"
+      :run-id="steerTarget.runId"
+      :handle="steerTarget.handle"
+      :display-name="steerTarget.displayName"
+      :status="steerTarget.status"
+      :paused="steerTarget.paused"
+      :task-summary="steerTarget.taskSummary"
+      :anchor-rect="steerTarget.anchorRect"
+      @status-change="onSteerStatusChange"
+    />
   </div>
 </template>
 
@@ -1306,6 +1404,35 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 
 .mini-topo-dot.dot--queued {
   background: var(--text-muted, #8b949e);
+}
+
+.mini-topo-dot.dot--paused {
+  background: var(--accent-warning);
+}
+
+.mini-topo-steer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.mini-topo-steer-btn:hover {
+  border-color: var(--border-default);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.mini-topo-status-pill.pill--paused {
+  color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 16%, transparent);
 }
 
 @keyframes mini-topo-pulse {
