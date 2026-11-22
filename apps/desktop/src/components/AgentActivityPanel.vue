@@ -468,34 +468,35 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
 
 /* ===== Section card ===== */
 .agent-panel-section {
+  flex-shrink: 0;
   border: 1px solid var(--border-muted);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--surface-section);
   overflow: hidden;
 }
 
 .agent-panel-section.status-thinking {
-  border-color: rgba(188, 140, 255, 0.35);
-  background: linear-gradient(135deg, rgba(188, 140, 255, 0.06), var(--bg-secondary));
+  border-color: var(--border-default, var(--border-muted));
+  background: var(--surface-section);
 }
 
 .agent-panel-section.status-working {
-  border-color: rgba(88, 166, 255, 0.35);
-  background: linear-gradient(135deg, rgba(88, 166, 255, 0.06), var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-primary) 4%, var(--surface-section));
 }
 
 .agent-panel-section.status-waiting {
-  border-color: rgba(210, 153, 34, 0.4);
-  background: linear-gradient(135deg, rgba(210, 153, 34, 0.08), var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--accent-warning) 42%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-warning) 5%, var(--surface-section));
 }
 
 .agent-panel-section.status-completed {
-  border-color: rgba(63, 185, 80, 0.35);
+  border-color: color-mix(in srgb, var(--accent-success) 34%, var(--border-muted));
 }
 
 .agent-panel-section.status-error {
-  border-color: rgba(248, 81, 73, 0.4);
-  background: linear-gradient(135deg, rgba(248, 81, 73, 0.05), var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--accent-danger) 42%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-danger) 5%, var(--surface-section));
 }
 
 /* ===== Section header ===== */
@@ -503,9 +504,10 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  min-height: 44px;
+  padding: 9px 11px;
   background: transparent;
   border: none;
   cursor: pointer;
@@ -519,8 +521,8 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
 
 .agent-panel-status-left {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 9px;
   min-width: 0;
   flex: 1;
 }
@@ -528,16 +530,17 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
 .agent-panel-status-icon {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   border-radius: 7px;
+  border: 1px solid var(--border-muted);
   background: var(--surface-raised);
-  color: var(--accent-primary);
+  color: var(--text-primary);
 }
 
 .status-thinking .agent-panel-status-icon {
-  color: #bc8cff;
+  color: var(--text-primary);
 }
 
 .status-working .agent-panel-status-icon {
@@ -605,8 +608,9 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
 }
 
 .status-thinking .agent-panel-status-tag {
-  background: rgba(188, 140, 255, 0.14);
-  color: #bc8cff;
+  border: 1px solid var(--border-default, var(--border-muted));
+  background: var(--surface-raised);
+  color: var(--text-primary);
 }
 
 .status-working .agent-panel-status-tag {

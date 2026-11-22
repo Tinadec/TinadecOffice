@@ -93,7 +93,16 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.doctor-unified { display: flex; flex-direction: column; gap: 10px; }
+.doctor-unified {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+.doctor-unified :deep(.panel) {
+  padding: 0;
+}
 .doctor-subtabs {
   display: flex; align-items: center; gap: 4px; padding: 3px;
   border-radius: 9px; background: var(--surface-raised); border: 1px solid var(--border-muted);

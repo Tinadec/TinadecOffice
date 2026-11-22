@@ -50,6 +50,7 @@ const frameStyle = computed(() => ({
   place-items: center;
   flex: 0 0 auto;
   overflow: hidden;
+  border-radius: 9999px;
   border: 1px solid var(--border-muted);
   background: var(--surface-raised);
 }

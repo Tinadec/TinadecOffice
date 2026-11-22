@@ -112,9 +112,6 @@ function layerLabel(layer: string): string {
 </template>
 
 <style scoped>
-@import '@vue-flow/core/dist/style.css';
-@import '@vue-flow/core/dist/theme-default.css';
-
 .declared-graph-canvas {
   position: relative;
   height: 300px;
@@ -122,6 +119,19 @@ function layerLabel(layer: string): string {
   border-radius: 10px;
   background: var(--surface-section);
   overflow: hidden;
+}
+
+.declared-graph-canvas :deep(.vue-flow__node-default),
+.declared-graph-canvas :deep(.vue-flow__node-default.selected),
+.declared-graph-canvas :deep(.vue-flow__node-default:hover) {
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
 }
 
 .declared-graph-legend {

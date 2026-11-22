@@ -190,8 +190,8 @@ export interface BuildRuntimeTopologyInput {
   resolveAgentName?: (slugOrHandle: string | null | undefined, fallback?: string | null) => string
 }
 
-export const MINI_NODE_WIDTH = 164
-export const MINI_NODE_HEIGHT = 54
+export const MINI_NODE_WIDTH = 208
+export const MINI_NODE_HEIGHT = 72
 
 let nextMiniGraphInstance = 0
 
@@ -817,10 +817,10 @@ export function layoutRuntimeTopology(
   const graph = new dagre.graphlib.Graph({ multigraph: false, compound: false })
   graph.setGraph({
     rankdir: 'TB',
-    nodesep: 18,
-    ranksep: 40,
-    marginx: 12,
-    marginy: 12,
+    nodesep: 24,
+    ranksep: 44,
+    marginx: 16,
+    marginy: 16,
     ranker: 'network-simplex',
   })
   graph.setDefaultEdgeLabel(() => ({}))
@@ -968,9 +968,9 @@ const maxDepth = computed(() =>
 )
 
 const canvasHeightPx = computed(() => {
-  if (maxDepth.value === 0) return 118
-  if (maxDepth.value === 1) return 192
-  return 264
+  if (maxDepth.value === 0) return 136
+  if (maxDepth.value === 1) return 224
+  return 304
 })
 
 const flowNodes = computed<Node[]>(() =>
@@ -1157,18 +1157,30 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 </template>
 
 <style scoped>
-@import '@vue-flow/core/dist/style.css';
-@import '@vue-flow/core/dist/theme-default.css';
-
 .orchestration-mini-graph {
   position: relative;
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border-muted);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--surface-section);
   overflow: hidden;
   transition: height 0.18s ease;
+}
+
+.orchestration-mini-graph :deep(.vue-flow__node-default),
+.orchestration-mini-graph :deep(.vue-flow__node-default.selected),
+.orchestration-mini-graph :deep(.vue-flow__node-default:hover),
+.orchestration-mini-graph :deep(.vue-flow__node-default:focus) {
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
+  font-size: inherit;
 }
 
 .mini-topo-handle {
@@ -1179,15 +1191,18 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 }
 
 .mini-topo-node {
-  width: 164px;
-  min-height: 50px;
+  width: 208px;
+  min-height: 64px;
   box-sizing: border-box;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
   background: var(--surface-raised);
   border: 1px solid var(--border-muted);
-  display: grid;
-  gap: 4px;
+  box-shadow: var(--shadow-subtle, 0 1px 2px rgba(0, 0, 0, 0.12));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
   cursor: pointer;
   user-select: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.12s ease;
@@ -1199,41 +1214,44 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 
 .mini-topo-node:focus-visible {
   outline: 2px solid var(--accent-primary);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 
 .mini-topo-node--coordinator {
-  border-color: color-mix(in srgb, var(--accent-recovery, #b18aff) 28%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-recovery, #b18aff) 4%, var(--surface-raised));
+  border-color: var(--border-default, var(--border-muted));
+  background: var(--surface-raised);
 }
 
 .mini-topo-node--coordinator .mini-topo-tier {
-  color: var(--accent-recovery, #b18aff);
-  background: color-mix(in srgb, var(--accent-recovery, #b18aff) 12%, transparent);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default, var(--border-muted));
+  background: var(--surface-section);
 }
 
 .mini-topo-node--worker {
-  border-color: color-mix(in srgb, var(--accent-info, #4a9eff) 28%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-info, #4a9eff) 4%, var(--surface-raised));
+  border-color: var(--border-muted);
+  background: var(--surface-raised);
 }
 
 .mini-topo-node--worker .mini-topo-tier {
-  color: var(--accent-info, #4a9eff);
-  background: color-mix(in srgb, var(--accent-info, #4a9eff) 12%, transparent);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
 }
 
 .mini-topo-node--subagent {
-  border-color: color-mix(in srgb, var(--accent-primary, #58a6ff) 28%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 4%, var(--surface-raised));
+  border-color: var(--border-muted);
+  background: var(--surface-raised);
 }
 
 .mini-topo-node--subagent .mini-topo-tier {
-  color: var(--accent-primary, #58a6ff);
-  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 12%, transparent);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
 }
 
 .mini-topo-status--running {
-  border-color: color-mix(in srgb, var(--accent-primary, #58a6ff) 55%, var(--border-muted));
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--border-muted));
 }
 
 .mini-topo-status--awaiting_approval {
@@ -1246,17 +1264,17 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 
 .mini-topo-node.is-selected {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary, #58a6ff) 28%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 26%, transparent);
 }
 
 .mini-topo-node.is-dimmed {
-  opacity: 0.58;
+  opacity: 0.54;
 }
 
 .mini-topo-node__top {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -1302,9 +1320,9 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 .mini-topo-label {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.3;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1313,28 +1331,28 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 
 .mini-topo-tier {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
-  line-height: 1.2;
-  padding: 1px 4px;
-  border-radius: 4px;
-  color: var(--text-muted);
-  background: var(--bg-tertiary, var(--surface-section));
+  line-height: 1.25;
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  background: var(--surface-section);
 }
 
 .mini-topo-node__meta {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
 .mini-topo-status-pill {
   flex-shrink: 0;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.25;
-  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 1px 6px;
   border-radius: 999px;
   color: var(--text-muted);
   background: var(--bg-tertiary, var(--surface-section));
@@ -1364,15 +1382,15 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  max-width: 104px;
-  padding: 1px 5px;
-  border-radius: 4px;
+  max-width: 118px;
+  padding: 1px 6px;
+  border-radius: 5px;
   border: 1px solid var(--border-card, var(--border-muted));
   background: var(--surface-section);
   color: var(--text-secondary);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1.25;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1394,11 +1412,12 @@ function onFlowNodeClick(event: { node: { id: string } }): void {
 .mini-topo-subtitle {
   flex: 1;
   min-width: 0;
-  font-size: 10px;
-  line-height: 1.25;
+  font-size: 10.5px;
+  line-height: 1.35;
   color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

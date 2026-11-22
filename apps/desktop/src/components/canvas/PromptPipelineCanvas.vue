@@ -569,5 +569,4 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
 
 <style>
 @import '@vue-flow/core/dist/style.css';
-@import '@vue-flow/core/dist/theme-default.css';
 </style>

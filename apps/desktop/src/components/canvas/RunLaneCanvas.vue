@@ -128,14 +128,24 @@ function nodeStyleClass(layer: string, status: string): string {
 </template>
 
 <style scoped>
-@import '@vue-flow/core/dist/style.css';
-@import '@vue-flow/core/dist/theme-default.css';
-
 .run-lane-canvas {
   height: 380px;
   border-radius: 10px;
   background: var(--surface-section);
   overflow: hidden;
+}
+
+.run-lane-canvas :deep(.vue-flow__node-default),
+.run-lane-canvas :deep(.vue-flow__node-default.selected),
+.run-lane-canvas :deep(.vue-flow__node-default:hover) {
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
 }
 
 .run-lane-canvas__empty {

@@ -298,18 +298,18 @@ const footerHints = computed(() => [
           data-testid="palette-input"
         />
         <UiButton v-if="query" variant="ghost" size="icon" class="search-action" :aria-label="t('palette.clear')" @click="query = ''; inputRef?.focus()">
-          <X data-icon="inline-start" aria-hidden="true" />
+          <X :size="15" data-icon="inline-start" aria-hidden="true" />
         </UiButton>
         <kbd class="command-palette-accelerator command-palette-kbd">{{ comboLabel }}</kbd>
         <UiButton variant="ghost" size="icon" class="search-action" data-testid="palette-fullscreen"
           :aria-label="t(fullscreen ? 'palette.restoreSearch' : 'palette.expandSearch')"
           :title="t(fullscreen ? 'palette.restoreSearch' : 'palette.expandSearch')"
           :aria-pressed="fullscreen" @click="fullscreen = !fullscreen">
-          <component :is="fullscreen ? Minimize2 : Maximize2" data-icon="inline-start" aria-hidden="true" />
+          <component :is="fullscreen ? Minimize2 : Maximize2" :size="15" data-icon="inline-start" aria-hidden="true" />
         </UiButton>
         <UiButton variant="ghost" size="icon" class="search-action" data-testid="palette-close"
           :aria-label="t('palette.close')" :title="t('palette.close')" @click="closePalette()">
-          <X data-icon="inline-start" aria-hidden="true" />
+          <X :size="15" data-icon="inline-start" aria-hidden="true" />
         </UiButton>
       </div>
 
@@ -385,7 +385,7 @@ const footerHints = computed(() => [
               <span>{{ t('palette.emptyHint') }}</span>
             </div>
             <UiButton v-if="searchFailed || groups.some(group => group.error)" variant="ghost" size="sm" class="search-retry" @click="refreshSpotlight(); runSearch()">
-              <RefreshCw data-icon="inline-start" aria-hidden="true" />{{ t('common.refresh') }}
+              <RefreshCw :size="14" data-icon="inline-start" aria-hidden="true" />{{ t('common.refresh') }}
             </UiButton>
           </div>
         </div>
@@ -427,6 +427,17 @@ const footerHints = computed(() => [
 .command-palette--fullscreen,
 .command-palette--fullscreen[open] { inset: 0; transform: none; width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 .command-palette--fullscreen .search-screen { height: 100%; width: min(1120px, 100%); padding: 44px 40px 20px; }
+.command-palette:not(.command-palette--fullscreen) .search-screen-header.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .search-screen-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 26px; }
 .search-heading { flex: 1; min-width: 0; }
 .search-screen-header h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600; letter-spacing: -.025em; }

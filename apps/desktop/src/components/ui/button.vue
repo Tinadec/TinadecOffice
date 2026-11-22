@@ -67,6 +67,13 @@ const classes = computed(() => cn(buttonVariants({ variant: props.variant, size:
 </template>
 
 <style scoped>
+/* Defensive flex alignment so icon+label buttons never wrap onto two lines even before utility overrides. */
+button.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Preserve 1px hairlines over the global unlayered `button { border: 0 }` reset. */
 button.ui-button[data-variant="outline"] {
   border: 1px solid var(--border-default);

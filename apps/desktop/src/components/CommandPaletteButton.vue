@@ -26,7 +26,7 @@ const comboLabel = computed(() => formatCombo(PALETTE_COMBO, isMac.value))
     :title="t('palette.openWithShortcut', { combo: comboLabel })"
     @click="openPalette()"
   >
-    <Search data-icon="inline-start" aria-hidden="true" />
+    <Search :size="15" data-icon="inline-start" aria-hidden="true" />
   </UiButton>
 </template>
 

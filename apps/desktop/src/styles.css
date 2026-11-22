@@ -4,7 +4,16 @@
 @import "@fontsource-variable/fira-code";
 @import "@fontsource-variable/cascadia-code";
 @import "tailwindcss";
+@source "./components";
+@source "./pages";
+@source "./settings";
+@source "./App.vue";
+@source "../../TinadecUI/src/components";
+@source "../../TinadecUI/src/engine";
+@source not "./**/*.test.ts";
+@source not "../../TinadecUI/src/**/*.test.ts";
 @import "./animations/page-transitions.css";
+@import "@vue-flow/core/dist/style.css";
 @import "./components/ui/conversation-primitives.css";
 @import "./components/conversation/conversation.css";
 
@@ -6088,4 +6097,47 @@ Triggered by the page-level transition on the parent .settings-page. */
   .doc-card-tab-close,
   .doc-reader-action,
   .doc-tree-chevron { transition: none; }
+}
+
+/* Theme-aware VueFlow base overrides (replaces @vue-flow/core theme-default.css white node defaults) */
+.vue-flow {
+  --vf-node-bg: transparent;
+  --vf-node-text: var(--text-primary);
+  --vf-connection-path: var(--border-default, var(--border-muted));
+  --vf-handle: var(--text-muted);
+}
+
+.vue-flow .vue-flow__node {
+  cursor: grab;
+}
+
+.vue-flow .vue-flow__node.selectable:focus,
+.vue-flow .vue-flow__node.selectable:focus-visible {
+  outline: none;
+}
+
+.vue-flow .vue-flow__node-default,
+.vue-flow .vue-flow__node-input,
+.vue-flow .vue-flow__node-output {
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
+}
+
+.vue-flow .vue-flow__edge-path {
+  stroke: var(--vf-connection-path);
+}
+
+.vue-flow .vue-flow__edge-text {
+  font-size: 10px;
+  fill: var(--text-muted);
+}
+
+.vue-flow .vue-flow__edge-textbg {
+  fill: var(--surface-section);
 }
