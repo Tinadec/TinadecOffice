@@ -18,6 +18,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapStorageEndpoints();
         endpoints.MapAttachmentEndpoints();
         endpoints.MapDmaeaEndpoints();
+        endpoints.MapSessionPlanEndpoints();
         endpoints.MapCorrectionEndpoints();
         endpoints.MapAgentConfigurationEndpoints();
         endpoints.MapCompanionEndpoints();
@@ -27,6 +28,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapControlPlaneEndpoints();
         endpoints.MapGovernanceEndpoints();
         endpoints.MapMemoryReviewEndpoints();
+        endpoints.MapContextMemoryEndpoints();
         endpoints.MapEvolutionEndpoints();
         endpoints.MapAgentEvaluationEndpoints();
         endpoints.MapRunReplayEndpoints();
@@ -36,12 +38,14 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapTerminalEndpoints();
         endpoints.MapToolExecutionPreviewEndpoints();
         endpoints.MapMcpEndpoints();
+        endpoints.MapTinadecMcpServerEndpoints();
+        endpoints.MapLifecycleHooksEndpoints();
         endpoints.MapToolSettingsEndpoints();
         endpoints.MapToolSkillEndpoints();
-        endpoints.MapMarketEndpoints();
         endpoints.MapTinaChatEndpoints();
         endpoints.MapOrganizationEndpoints();
         endpoints.MapEnvironmentEndpoints();
+        endpoints.MapFilesystemBrowseEndpoints();
         endpoints.MapApprovalRuleEndpoints();
         endpoints.MapProjectOverviewEndpoints();
         endpoints.MapStubEndpoints();

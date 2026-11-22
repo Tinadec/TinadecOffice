@@ -56,6 +56,73 @@ internal static class GraphValidation
         return null;
     }
 
+    internal static string? NormalizeDefaultOptionsJson(JsonElement? options, string context = "mode")
+    {
+        if (options is not { } element || element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            Invalid($"{context} default_options must be a JSON object.");
+            return null;
+        }
+        bool planFirst = false, specEnabled = false, multiAgent = false, bulletinBoard = false, worktree = false;
+        Guid? workflowModeVersionId = null;
+        foreach (var prop in element.EnumerateObject())
+        {
+            switch (prop.Name)
+            {
+                case "plan_first" or "planFirst":
+                    if (prop.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        Invalid($"{context} default_options.{prop.Name} must be a boolean.");
+                    planFirst = prop.Value.GetBoolean();
+                    break;
+                case "spec_enabled" or "specEnabled":
+                    if (prop.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        Invalid($"{context} default_options.{prop.Name} must be a boolean.");
+                    specEnabled = prop.Value.GetBoolean();
+                    break;
+                case "multi_agent" or "multiAgent":
+                    if (prop.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        Invalid($"{context} default_options.{prop.Name} must be a boolean.");
+                    multiAgent = prop.Value.GetBoolean();
+                    break;
+                case "bulletin_board" or "bulletinBoard":
+                    if (prop.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        Invalid($"{context} default_options.{prop.Name} must be a boolean.");
+                    bulletinBoard = prop.Value.GetBoolean();
+                    break;
+                case "worktree":
+                    if (prop.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        Invalid($"{context} default_options.{prop.Name} must be a boolean.");
+                    worktree = prop.Value.GetBoolean();
+                    break;
+                case "workflow_mode_version_id" or "workflowModeVersionId":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.String || !Guid.TryParse(prop.Value.GetString(), out var parsed) || parsed == Guid.Empty)
+                            Invalid($"{context} default_options.{prop.Name} must be a non-empty guid or null.");
+                        else
+                            workflowModeVersionId = parsed;
+                    }
+                    break;
+                default:
+                    Invalid($"{context} default_options contains unknown field '{prop.Name}'.");
+                    break;
+            }
+        }
+        var canonical = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["bulletin_board"] = bulletinBoard,
+            ["multi_agent"] = multiAgent,
+            ["plan_first"] = planFirst,
+            ["spec_enabled"] = specEnabled,
+            ["worktree"] = worktree
+        };
+        if (workflowModeVersionId is not null)
+            canonical["workflow_mode_version_id"] = workflowModeVersionId;
+        return JsonSerializer.Serialize(canonical);
+    }
+
     internal sealed record AgentRef(string Key, string Slug, string Layer, IReadOnlyList<string> Capabilities);
 
     internal sealed record NodeRef(string NodeKey, string AgentKey, string Layer, string? Label, JsonElement Config, JsonElement? Relationship);

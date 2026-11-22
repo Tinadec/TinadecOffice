@@ -107,4 +107,106 @@ public sealed class ToolSkillProjectPackageDto
     public IReadOnlyDictionary<string, string?> ExpectedFileHashes { get; init; } = new Dictionary<string, string?>();
 }
 
+public sealed class ToolSkillEnabledRequestDto
+{
+    public bool? Enabled { get; init; }
+    public Guid? ProjectId { get; init; }
+}
+
+public sealed class ToolSkillInstallRequestDto
+{
+    /// <summary><c>inline</c>, <c>local_dir</c>, <c>git_url</c>, or <c>external_cli_import</c>.</summary>
+    public string SourceType { get; init; } = "inline";
+    public string Scope { get; init; } = "shared";
+    public Guid? ProjectId { get; init; }
+    public string? Name { get; init; }
+    public string? Content { get; init; }
+    public IReadOnlyDictionary<string, string>? Files { get; init; }
+    public string? LocalPath { get; init; }
+    public string? GitUrl { get; init; }
+    public string? Subpath { get; init; }
+    public IReadOnlyList<string>? ItemIds { get; init; }
+    public IReadOnlyList<string>? Ecosystems { get; init; }
+    public bool? Enabled { get; init; }
+    public bool? EnableStdioMcp { get; init; }
+    public bool Overwrite { get; init; }
+    public bool Governed { get; init; }
+}
+
+public sealed class ToolSkillInstallResultDto
+{
+    public string SourceType { get; init; } = string.Empty;
+    public IReadOnlyList<ToolSkillResourceDto> InstalledSkills { get; init; } = [];
+    public IReadOnlyList<McpResourceDto> InstalledMcpServers { get; init; } = [];
+    public IReadOnlyList<ExternalCliImportedCommandDto> InstalledCommands { get; init; } = [];
+    public IReadOnlyList<ExternalCliSkippedItemDto> Skipped { get; init; } = [];
+}
+
+public sealed class ExternalCliEcosystemStatusDto
+{
+    public string Id { get; init; } = string.Empty;
+    public string Label { get; init; } = string.Empty;
+    public bool Detected { get; init; }
+    public IReadOnlyList<string> PathsScanned { get; init; } = [];
+}
+
+public sealed class ExternalCliDiscoveredItemDto
+{
+    public string ItemId { get; init; } = string.Empty;
+    public string Ecosystem { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public string? Description { get; init; }
+    public string SourcePath { get; init; } = string.Empty;
+    public string? Transport { get; init; }
+    public string? Command { get; init; }
+    public IReadOnlyList<string> Args { get; init; } = [];
+    public string? Url { get; init; }
+    public IReadOnlyList<string> EnvKeys { get; init; } = [];
+    public IReadOnlyList<string> HeaderKeys { get; init; } = [];
+    public bool HasSecrets { get; init; }
+    public bool DefaultEnabled { get; init; }
+    public bool AlreadyImported { get; init; }
+    public string? ContentPreview { get; init; }
+}
+
+public sealed class ExternalCliDiscoveryDto
+{
+    public string UserHome { get; init; } = string.Empty;
+    public string? WorkspaceRoot { get; init; }
+    public IReadOnlyList<ExternalCliEcosystemStatusDto> Ecosystems { get; init; } = [];
+    public IReadOnlyList<ExternalCliDiscoveredItemDto> Items { get; init; } = [];
+}
+
+public sealed class ExternalCliImportRequestDto
+{
+    public IReadOnlyList<string> ItemIds { get; init; } = [];
+    public Guid? ProjectId { get; init; }
+    public string Scope { get; init; } = "shared";
+    public bool EnableStdioMcp { get; init; }
+    public bool Overwrite { get; init; }
+}
+
+public sealed class ExternalCliImportedCommandDto
+{
+    public string Name { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Ecosystem { get; init; } = string.Empty;
+}
+
+public sealed class ExternalCliSkippedItemDto
+{
+    public string ItemId { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+}
+
+public sealed class ExternalCliImportResultDto
+{
+    public IReadOnlyList<ToolSkillResourceDto> InstalledSkills { get; init; } = [];
+    public IReadOnlyList<McpResourceDto> InstalledMcpServers { get; init; } = [];
+    public IReadOnlyList<ExternalCliImportedCommandDto> InstalledCommands { get; init; } = [];
+    public IReadOnlyList<ExternalCliSkippedItemDto> Skipped { get; init; } = [];
+}
+
 

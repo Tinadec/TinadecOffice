@@ -47,6 +47,12 @@ public sealed class SqliteOptions
     /// Relative paths resolve against the host content root when available, otherwise the current directory.
     /// </summary>
     public string DatabasePath { get; set; } = Path.Combine(StorageScopePaths.UserRoot(), "data", "tinadec.db");
+
+    /// <summary>SQLite busy_timeout in milliseconds applied to every opened connection.</summary>
+    public int BusyTimeoutMs { get; set; } = SqliteConnectionPragmaInterceptor.DefaultBusyTimeoutMs;
+
+    /// <summary>Enables WAL journal mode + NORMAL synchronous durability on file-backed SQLite databases.</summary>
+    public bool EnableWal { get; set; } = true;
 }
 
 public sealed class PostgreSqlOptions

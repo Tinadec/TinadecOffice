@@ -41,6 +41,100 @@ public static class McpEndpoints
             await ReadInventoryAsync(provider, configuration, settings, includeSchema: false, project_id, ct).ConfigureAwait(false))
             .Produces<McpInventoryDto>(StatusCodes.Status200OK);
 
+        app.MapGet("/api/v1/mcp/servers/configured", (
+            Guid? project_id,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+            mcpService.ListConfiguredAsync(project_id, ct))
+            .Produces<IReadOnlyList<McpResourceDto>>(StatusCodes.Status200OK);
+
+        app.MapPost("/api/v1/mcp/servers", async (
+            McpResourceWriteDto input,
+            HttpRequest request,
+            HttpResponse response,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+        {
+            var expected = OptionalRevision(request) ?? 0;
+            if (expected != 0)
+                throw new ToolSettingsException("revision_conflict", "A new MCP resource requires revision zero.", 412);
+            var created = await mcpService.CreateAsync(input, 0, ct).ConfigureAwait(false);
+            response.Headers.ETag = $"\"{created.Revision}\"";
+            return Results.Ok(created);
+        })
+            .Produces<McpResourceDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed);
+
+        app.MapPost("/api/v1/mcp/servers/import-json", async (
+            McpImportJsonRequestDto input,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+            Results.Ok(await mcpService.ImportJsonAsync(input, ct).ConfigureAwait(false)))
+            .Produces<McpImportJsonResultDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest);
+
+        app.MapPut("/api/v1/mcp/servers/{serverId}", async (
+            string serverId,
+            McpResourceWriteDto input,
+            HttpRequest request,
+            HttpResponse response,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+        {
+            var updated = await mcpService.UpdateAsync(serverId, input, OptionalRevision(request), ct).ConfigureAwait(false);
+            response.Headers.ETag = $"\"{updated.Revision}\"";
+            return Results.Ok(updated);
+        })
+            .Produces<McpResourceDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed);
+
+        app.MapPatch("/api/v1/mcp/servers/{serverId}/enabled", async (
+            string serverId,
+            McpServerEnabledRequestDto input,
+            HttpRequest request,
+            HttpResponse response,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+        {
+            if (input.Enabled is not { } enabled)
+                throw new ToolSettingsException("invalid_request", "enabled (true/false) is required.");
+            var updated = await mcpService.SetEnabledAsync(serverId, enabled, input.ProjectId, OptionalRevision(request), ct).ConfigureAwait(false);
+            response.Headers.ETag = $"\"{updated.Revision}\"";
+            return Results.Ok(updated);
+        })
+            .Produces<McpResourceDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed);
+
+        app.MapPost("/api/v1/mcp/servers/{serverId}/test", async (
+            string serverId,
+            Guid? project_id,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+            Results.Ok(await mcpService.TestAsync(serverId, project_id, ct).ConfigureAwait(false)))
+            .Produces<McpServerTestResultDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        app.MapDelete("/api/v1/mcp/servers/{serverId}", async (
+            string serverId,
+            Guid? project_id,
+            HttpRequest request,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+        {
+            await mcpService.DeleteAsync(serverId, project_id, OptionalRevision(request), ct).ConfigureAwait(false);
+            return Results.NoContent();
+        })
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed);
+
         app.MapGet("/api/v1/mcp/servers/{serverId}/tools", async (
             string serverId,
             Guid? project_id,
@@ -205,6 +299,15 @@ public static class McpEndpoints
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+
+    private static long? OptionalRevision(HttpRequest request)
+    {
+        var raw = request.Headers.IfMatch.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (!long.TryParse(raw.Trim('"'), out var revision) || revision < 0)
+            throw new ToolSettingsException("invalid_precondition", "If-Match must contain a quoted non-negative revision.");
+        return revision;
+    }
 
     private static McpInventoryDto Unavailable(string workspaceRoot, string reason) => new()
     {

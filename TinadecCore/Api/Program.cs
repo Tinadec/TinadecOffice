@@ -78,7 +78,6 @@ using (var seedScope = app.Services.CreateScope())
 
 // Complete /api/v1 route surface lives in the packable TinadecCore.AspNetCore layer.
 app.MapTinadecCore();
-app.MapTinadecMcpServerEndpoints();
 
 app.Run();
 

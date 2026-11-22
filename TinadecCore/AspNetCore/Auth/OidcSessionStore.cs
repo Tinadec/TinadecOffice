@@ -59,7 +59,22 @@ public sealed class OidcSessionStore
     /// </summary>
     private const int MaxPendingLogins = 256;
 
-    private sealed record PendingLogin(string Nonce, DateTimeOffset ExpiresAt);
+    internal sealed record PendingLoginContext(
+        string Nonce,
+        string? RedirectUri,
+        string? ReturnTo,
+        string? Mode,
+        string[]? AllowedSubjects,
+        string[]? AllowedEmails);
+
+    private sealed record PendingLogin(
+        string Nonce,
+        DateTimeOffset ExpiresAt,
+        string? RedirectUri = null,
+        string? ReturnTo = null,
+        string? Mode = null,
+        string[]? AllowedSubjects = null,
+        string[]? AllowedEmails = null);
     private sealed record CompletedLogin(string SessionToken, DateTimeOffset ExpiresAt);
     /// <summary>
     /// <paramref name="AccessToken"/> is Logto's opaque OP token, kept so the host can
@@ -149,7 +164,15 @@ public sealed class OidcSessionStore
         }
     }
 
-    public (string State, string Nonce) BeginLogin()
+    public (string State, string Nonce) BeginLogin() =>
+        BeginLogin(redirectUri: null, returnTo: null, mode: null, allowedSubjects: null, allowedEmails: null);
+
+    public (string State, string Nonce) BeginLogin(
+        string? redirectUri,
+        string? returnTo = null,
+        string? mode = null,
+        string[]? allowedSubjects = null,
+        string[]? allowedEmails = null)
     {
         var state = RandomToken();
         var nonce = RandomToken();
@@ -157,20 +180,29 @@ public sealed class OidcSessionStore
         {
             SweepExpiredLocked(_clock.GetUtcNow());
             if (_pending.Count >= MaxPendingLogins) throw new OidcLoginCapacityException();
-            _pending[state] = new PendingLogin(nonce, _clock.GetUtcNow() + LoginLifetime);
+            _pending[state] = new PendingLogin(
+                nonce,
+                _clock.GetUtcNow() + LoginLifetime,
+                redirectUri,
+                returnTo,
+                mode,
+                allowedSubjects,
+                allowedEmails);
         }
         return (state, nonce);
     }
 
-    public string? ConsumeNonce(string state)
+    public string? ConsumeNonce(string state) => ConsumePendingLogin(state)?.Nonce;
+
+    internal PendingLoginContext? ConsumePendingLogin(string state)
     {
         lock (_sync)
         {
-            var nonce = _pending.Remove(state, out var pending) && pending.ExpiresAt > _clock.GetUtcNow()
-                ? pending.Nonce
+            PendingLoginContext? context = _pending.Remove(state, out var pending) && pending.ExpiresAt > _clock.GetUtcNow()
+                ? new PendingLoginContext(pending.Nonce, pending.RedirectUri, pending.ReturnTo, pending.Mode, pending.AllowedSubjects, pending.AllowedEmails)
                 : null;
             SweepExpiredLocked(_clock.GetUtcNow());
-            return nonce;
+            return context;
         }
     }
 

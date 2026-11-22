@@ -23,7 +23,7 @@ namespace TinadecCore.Persistence;
 /// </summary>
 public static class SqliteTransientRetry
 {
-    public const int MaxAttempts = 3;
+    public const int MaxAttempts = 5;
 
     // Masked to the primary code: 261 (BUSY_RECOVERY) and 517 (BUSY_SNAPSHOT) are the same
     // contention as 5 and 6, and CI has actually hit 261. A bare "is 5 or 6" misses them.

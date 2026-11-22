@@ -21,6 +21,18 @@ public sealed record ModelProfileDto
     [JsonPropertyName("cost_tier")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? CostTier { get; init; }
+
+    [JsonPropertyName("input_price_per_1m")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? InputPricePer1M { get; init; }
+
+    [JsonPropertyName("output_price_per_1m")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? OutputPricePer1M { get; init; }
+
+    [JsonPropertyName("currency")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Currency { get; init; }
 }
 
 public sealed record ModelParametersSnapshotDto

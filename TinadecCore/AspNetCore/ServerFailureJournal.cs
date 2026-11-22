@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.AspNetCore;
 
@@ -32,7 +33,7 @@ public sealed record ServerFailure(
 /// the ring a record of ordinary rejections and push the interesting entries out of view.
 /// </para>
 /// </summary>
-public sealed class ServerFailureJournal
+public sealed class ServerFailureJournal : IServerFailureReader
 {
     /// <summary>Enough history to survive a parallel test collection, small enough to never matter.</summary>
     public const int MaxEntries = 64;
@@ -73,4 +74,17 @@ public sealed class ServerFailureJournal
 
     /// <summary>Oldest first, so the last entry is the one that just happened.</summary>
     public IReadOnlyList<ServerFailure> Recent() => [.. _entries];
+
+    IReadOnlyList<ServerFailureSnapshotDto> IServerFailureReader.Recent() =>
+        _entries.Select(e => new ServerFailureSnapshotDto(
+            e.Method,
+            e.Path,
+            e.Status,
+            e.Code,
+            e.ExceptionType,
+            e.ExceptionMessage,
+            e.RootType,
+            e.RootMessage,
+            e.TraceId,
+            e.Timestamp)).ToArray();
 }

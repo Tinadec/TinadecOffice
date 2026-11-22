@@ -31,12 +31,16 @@ public static class WorkspaceSnapshotEndpoints
             {
                 return Results.Conflict(new { code = "workspace_conflict", message = ex.Message, conflicts = ex.Conflicts });
             }
-        });
+        })
+        .Produces<WorkspaceSnapshotResponseDto>(StatusCodes.Status201Created)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status409Conflict);
 
         app.MapGet("/api/v1/projects/{projectId:guid}/snapshots", async (
             Guid projectId,
             IWorkspaceSnapshotService snapshots,
-            CancellationToken ct) => Results.Ok((await snapshots.ListAsync(projectId, ct).ConfigureAwait(false)).Select(ToSnapshot)));
+            CancellationToken ct) => Results.Ok((await snapshots.ListAsync(projectId, ct).ConfigureAwait(false)).Select(ToSnapshot)))
+        .Produces<IReadOnlyList<WorkspaceSnapshotResponseDto>>(StatusCodes.Status200OK);
 
         app.MapGet("/api/v1/workspace-snapshots/{snapshotId:guid}", async (
             Guid snapshotId,
@@ -45,7 +49,9 @@ public static class WorkspaceSnapshotEndpoints
         {
             var value = await snapshots.GetAsync(snapshotId, ct).ConfigureAwait(false);
             return value is null ? Results.NotFound(new { code = "snapshot_not_found" }) : Results.Ok(ToSnapshot(value));
-        });
+        })
+        .Produces<WorkspaceSnapshotResponseDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/v1/workspace-snapshots/{snapshotId:guid}/restore", async (
             Guid snapshotId,
@@ -65,7 +71,9 @@ public static class WorkspaceSnapshotEndpoints
             {
                 return Results.Conflict(new { code = "workspace_conflict", message = ex.Message, conflicts = ex.Conflicts });
             }
-        });
+        })
+        .Produces<WorkspaceRestoreResponseDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status409Conflict);
 
         // Per-file review of one snapshot. These read the manifest against the workspace as it
         // stands now, so a row answers "did this write land, and is it still there" — which the
@@ -84,7 +92,9 @@ public static class WorkspaceSnapshotEndpoints
             {
                 return Results.NotFound(new { code = "snapshot_not_found", message = ex.Message });
             }
-        });
+        })
+        .Produces<IReadOnlyList<WorkspaceFileChangeResponseDto>>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/v1/workspace-snapshots/{snapshotId:guid}/files/diff", async (
             Guid snapshotId,
@@ -109,7 +119,10 @@ public static class WorkspaceSnapshotEndpoints
             {
                 return Results.NotFound(new { code = "snapshot_not_found", message = ex.Message });
             }
-        });
+        })
+        .Produces<WorkspaceFileDiffResponseDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/v1/workspace-snapshots/{snapshotId:guid}/files/restore", async (
             Guid snapshotId,
@@ -145,7 +158,11 @@ public static class WorkspaceSnapshotEndpoints
             {
                 return Results.NotFound(new { code = "snapshot_not_found", message = ex.Message });
             }
-        });
+        })
+        .Produces<WorkspaceFileChangeResponseDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status409Conflict);
 
         app.MapGet("/api/v1/debug/snapshot/{sessionId:guid}", async (
             Guid sessionId,

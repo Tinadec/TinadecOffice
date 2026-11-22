@@ -1147,10 +1147,13 @@ public sealed class AgentPackService : IAgentPackService
             ["canvas_layout"] = NormalizeObject(resource.CanvasLayout)
         };
         var orchestrationTier = GraphValidation.NormalizeOrchestrationTier(resource.OrchestrationTier);
+        var defaultOptionsJson = GraphValidation.NormalizeDefaultOptionsJson(resource.DefaultOptions, $"mode '{resource.ResourceKey}'");
         if (resource.RuntimePolicy is not null)
             snapshotObject["runtime_policy"] = resource.RuntimePolicy;
         if (orchestrationTier is not null)
             snapshotObject["orchestration_tier"] = orchestrationTier;
+        if (defaultOptionsJson is not null)
+            snapshotObject["default_options"] = JsonSerializer.Deserialize<JsonElement>(defaultOptionsJson);
         var snapshotElement = JsonSerializer.SerializeToElement(snapshotObject, JsonOptions);
         var snapshot = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(snapshotElement));
         var hash = Sha256Hex(Encoding.UTF8.GetBytes(snapshot));
@@ -1185,6 +1188,7 @@ public sealed class AgentPackService : IAgentPackService
             ? null
             : JsonSerializer.Serialize(resource.RuntimePolicy, JsonOptions);
         logical.OrchestrationTier = orchestrationTier;
+        logical.DefaultOptionsJson = defaultOptionsJson;
         logical.BindingsJson = snapshotBindings.Length == 0
             ? null
             : Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(JsonSerializer.SerializeToElement(snapshotBindings, JsonOptions)));
@@ -1685,7 +1689,11 @@ public sealed class AgentPackService : IAgentPackService
                 ValidateI18n(node.I18n, $"mode '{mode.ResourceKey}' node '{node.NodeKey}'", requireDisplayName: false, requireLabel: true);
             if (ModeRuntimePolicyRegistry.Validate(mode.RuntimePolicy) is { } policyError)
                 Invalid($"mode '{mode.ResourceKey}' {policyError}");
-            try { _ = GraphValidation.NormalizeOrchestrationTier(mode.OrchestrationTier); }
+            try
+            {
+                _ = GraphValidation.NormalizeOrchestrationTier(mode.OrchestrationTier);
+                _ = GraphValidation.NormalizeDefaultOptionsJson(mode.DefaultOptions, $"mode '{mode.ResourceKey}'");
+            }
             catch (InvalidDataException ex) { Invalid($"mode '{mode.ResourceKey}' {ex.Message}"); }
             if (mode.RuntimePolicy is not null)
             {

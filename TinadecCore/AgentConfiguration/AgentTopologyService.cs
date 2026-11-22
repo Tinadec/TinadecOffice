@@ -79,11 +79,13 @@ internal static class AgentTopologyStatus
 /// </summary>
 public interface IAgentTopologyService
 {
+    Task<Guid?> ResolveIdBySlugOrGuidAsync(string idOrSlug, CancellationToken cancellationToken = default);
     Task<AgentTopologyResult> GetAsync(Guid modeId, CancellationToken cancellationToken = default);
     Task<AgentTopologyResult> CreateDraftAsync(JsonElement payload, CancellationToken cancellationToken = default);
     Task<AgentTopologyResult> CloneDraftAsync(Guid sourceModeId, JsonElement payload, CancellationToken cancellationToken = default);
     Task<AgentTopologyResult> UpsertDraftAsync(Guid modeId, JsonElement payload, long expectedRevision, CancellationToken cancellationToken = default);
-    Task<AgentTopologyResult> DeleteDraftAsync(Guid modeId, CancellationToken cancellationToken = default);
+    Task<AgentTopologyResult> DeleteDraftAsync(Guid modeId, CancellationToken cancellationToken = default) => DeleteDraftAsync(modeId, -1, cancellationToken);
+    Task<AgentTopologyResult> DeleteDraftAsync(Guid modeId, long expectedRevision, CancellationToken cancellationToken);
     Task<AgentTopologyResult> PublishAsync(Guid modeId, long expectedRevision, CancellationToken cancellationToken = default);
 }
 
@@ -105,11 +107,34 @@ public sealed class AgentTopologyService : IAgentTopologyService
 
     // ── reads ──
 
+    public async Task<Guid?> ResolveIdBySlugOrGuidAsync(string idOrSlug, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(idOrSlug)) return null;
+        var trimmed = idOrSlug.Trim();
+        var scope = _tenant.Current;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (Guid.TryParse(trimmed, out var parsed) && parsed != Guid.Empty)
+        {
+            var exists = await db.AgentModes.AsNoTracking().AnyAsync(
+                x => x.Id == parsed && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status != "archived",
+                cancellationToken);
+            return exists ? parsed : null;
+        }
+        var candidates = await db.AgentModes.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status != "archived" && x.Slug == trimmed)
+            .ToListAsync(cancellationToken);
+        // Client-side DateTimeOffset ordering avoids SQLite server-side ORDER BY limitation.
+        return candidates
+            .OrderByDescending(x => string.Equals(x.Status, "draft", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(x => x.UpdatedAt)
+            .FirstOrDefault()?.Id;
+    }
+
     public async Task<AgentTopologyResult> GetAsync(Guid modeId, CancellationToken cancellationToken = default)
     {
         var scope = _tenant.Current;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var mode = await db.AgentModes.FirstOrDefaultAsync(
+        var mode = await db.AgentModes.AsNoTracking().FirstOrDefaultAsync(
             x => x.Id == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken);
         if (mode is null)
             return AgentTopologyResult.Failure(AgentTopologyStatus.NotFound, AgentTopologyCodes.NotFound, "Mode not found.");
@@ -120,21 +145,114 @@ public sealed class AgentTopologyService : IAgentTopologyService
         // draft projection; published/managed modes read the published projection. The
         // draft-only guard belongs on writes, not on this read.
         var nodeStatus = string.Equals(mode.Status, "draft", StringComparison.OrdinalIgnoreCase) ? "draft" : "published";
-        var nodes = await db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
+        var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
             .OrderBy(x => x.NodeKey).ToListAsync(cancellationToken);
-        var edges = await db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
+        var edges = await db.ModeEdges.AsNoTracking().Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
             .OrderBy(x => x.EdgeKey).ToListAsync(cancellationToken);
-        var layout = await db.CanvasLayouts.FirstOrDefaultAsync(
-            x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus, cancellationToken);
-        var managed = await _packs.FindManagedResourceAsync("mode", modeId, cancellationToken) is not null;
+        var layouts = await db.CanvasLayouts.AsNoTracking()
+            .Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == nodeStatus)
+            .ToListAsync(cancellationToken);
+        var layout = layouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
+        var latestVersionId = await SnapshotBackfillAsync(db, mode, nodes, scope.TenantId, scope.WorkspaceId, cancellationToken);
+        var managedResource = await _packs.FindManagedResourceAsync("mode", modeId, cancellationToken);
         return new AgentTopologyResult
         {
             Ok = true,
             ModeId = mode.Id,
             Revision = mode.Revision,
             Version = mode.Version,
-            Mode = ProjectDetail(mode, nodes, edges, layout, managed),
+            Mode = ProjectDetail(mode, nodes, edges, layout, managedResource is not null, latestVersionId, managedResource?.PackId),
         };
+    }
+
+    /// <summary>
+    /// Backfills missing mode bindings/instructions/tier/default_options and node relationships
+    /// from the latest published <see cref="ModeVersionRecord.SnapshotJson"/> so already-installed
+    /// pack modes immediately return their full graph projection without requiring reinstallation.
+    /// </summary>
+    private static async Task<Guid?> SnapshotBackfillAsync(
+        AgentConfigurationDbContext db,
+        AgentModeRecord mode,
+        IReadOnlyList<ModeNodeRecord> nodes,
+        Guid tenantId,
+        Guid workspaceId,
+        CancellationToken cancellationToken)
+    {
+        var versions = await db.ModeVersions.AsNoTracking()
+            .Where(x => x.AgentModeId == mode.Id && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.Status == "published")
+            .ToListAsync(cancellationToken);
+        var latest = versions
+            .OrderByDescending(x => x.Version)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefault();
+        if (latest is null) return null;
+        if (string.IsNullOrWhiteSpace(latest.SnapshotJson)) return latest.Id;
+
+        var needsModeBackfill = string.IsNullOrWhiteSpace(mode.BindingsJson)
+            || string.IsNullOrWhiteSpace(mode.Instructions)
+            || string.IsNullOrWhiteSpace(mode.OrchestrationTier)
+            || string.IsNullOrWhiteSpace(mode.DefaultOptionsJson);
+        var needsNodeBackfill = nodes.Any(n => string.IsNullOrWhiteSpace(n.RelationshipJson));
+        if (!needsModeBackfill && !needsNodeBackfill) return latest.Id;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(latest.SnapshotJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return latest.Id;
+
+            if (string.IsNullOrWhiteSpace(mode.BindingsJson)
+                && root.TryGetProperty("bindings", out var bindings)
+                && bindings.ValueKind == JsonValueKind.Array
+                && bindings.GetArrayLength() > 0)
+            {
+                mode.BindingsJson = bindings.GetRawText();
+            }
+            if (string.IsNullOrWhiteSpace(mode.Instructions)
+                && root.TryGetProperty("instructions", out var instructions)
+                && instructions.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(instructions.GetString()))
+            {
+                mode.Instructions = instructions.GetString();
+            }
+            if (string.IsNullOrWhiteSpace(mode.OrchestrationTier)
+                && root.TryGetProperty("orchestration_tier", out var tier)
+                && tier.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(tier.GetString()))
+            {
+                mode.OrchestrationTier = tier.GetString();
+            }
+            if (string.IsNullOrWhiteSpace(mode.DefaultOptionsJson)
+                && root.TryGetProperty("default_options", out var defaultOpts)
+                && defaultOpts.ValueKind == JsonValueKind.Object)
+            {
+                mode.DefaultOptionsJson = defaultOpts.GetRawText();
+            }
+            if (needsNodeBackfill
+                && root.TryGetProperty("nodes", out var snapNodes)
+                && snapNodes.ValueKind == JsonValueKind.Array)
+            {
+                var relByKey = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var snapNode in snapNodes.EnumerateArray())
+                {
+                    if (snapNode.ValueKind != JsonValueKind.Object) continue;
+                    var key = Text(snapNode, "node_key");
+                    if (string.IsNullOrWhiteSpace(key)) continue;
+                    if (snapNode.TryGetProperty("relationship", out var rel) && rel.ValueKind == JsonValueKind.Object)
+                        relByKey[key] = rel.GetRawText();
+                }
+                foreach (var node in nodes)
+                {
+                    if (string.IsNullOrWhiteSpace(node.RelationshipJson) && relByKey.TryGetValue(node.NodeKey, out var relJson))
+                        node.RelationshipJson = relJson;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Ignore malformed historical snapshots during readback backfill.
+        }
+        return latest.Id;
     }
 
     /// <summary>
@@ -147,7 +265,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
         IReadOnlyList<ModeNodeRecord> nodes,
         IReadOnlyList<ModeEdgeRecord> edges,
         CanvasLayoutRecord? layout,
-        bool managed) => JsonSerializer.SerializeToElement(new
+        bool managed,
+        Guid? latestPublishedVersionId = null,
+        string? packId = null) => JsonSerializer.SerializeToElement(new
     {
         id = mode.Id,
         slug = mode.Slug,
@@ -156,11 +276,16 @@ public sealed class AgentTopologyService : IAgentTopologyService
         instructions = mode.Instructions,
         i18n = Element(mode.I18nJson),
         runtime_policy = Element(mode.RuntimePolicyJson),
+        orchestration_tier = mode.OrchestrationTier,
+        default_options = Element(mode.DefaultOptionsJson),
         bindings = Element(mode.BindingsJson),
         status = mode.Status,
         revision = mode.Revision,
         version = mode.Version,
+        latest_published_mode_version_id = latestPublishedVersionId,
         managed,
+        pack_id = packId,
+        pack_managed = managed,
         nodes = nodes.Select(n => new
         {
             id = n.Id,
@@ -239,19 +364,32 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (string.Equals(source.Status, "archived", StringComparison.OrdinalIgnoreCase))
             return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.Conflict, "An archived mode cannot be cloned.");
 
-        var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId).ToListAsync(cancellationToken);
-        var edges = await db.ModeEdges.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId).ToListAsync(cancellationToken);
-        var layout = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
-            .OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(cancellationToken);
+        var activeStatus = string.Equals(source.Status, "draft", StringComparison.OrdinalIgnoreCase) ? "draft" : "published";
+        var nodes = await db.ModeNodes.AsNoTracking()
+            .Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == activeStatus)
+            .OrderBy(x => x.NodeKey).ToListAsync(cancellationToken);
+        var edges = await db.ModeEdges.AsNoTracking()
+            .Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == activeStatus)
+            .OrderBy(x => x.EdgeKey).ToListAsync(cancellationToken);
+        var layouts = await db.CanvasLayouts.AsNoTracking()
+            .Where(x => x.ModeId == sourceModeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == activeStatus)
+            .ToListAsync(cancellationToken);
+        var layout = layouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
+        await SnapshotBackfillAsync(db, source, nodes, scope.TenantId, scope.WorkspaceId, cancellationToken);
 
         var now = DateTimeOffset.UtcNow;
-        var name = (payload.ValueKind == JsonValueKind.Object ? Text(payload, "display_name") : null) ?? $"{source.DisplayName} (copy)";
-        var slug = await UniqueDraftSlugAsync(db, Slugify(Text(payload, "slug") ?? $"{source.Slug}-copy"), scope.TenantId, scope.WorkspaceId, cancellationToken);
+        var name = (payload.ValueKind == JsonValueKind.Object ? (Text(payload, "display_name") ?? Text(payload, "name")) : null) ?? $"{source.DisplayName} (copy)";
+        var requestedSlug = payload.ValueKind == JsonValueKind.Object ? Text(payload, "slug") : null;
+        var slug = await UniqueDraftSlugAsync(db, Slugify(requestedSlug ?? $"{source.Slug}-copy"), scope.TenantId, scope.WorkspaceId, cancellationToken);
         var copy = new AgentModeRecord
         {
             Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
             Slug = slug, DisplayName = name.Trim(), Description = source.Description,
             I18nJson = null, RuntimePolicyJson = source.RuntimePolicyJson,
+            OrchestrationTier = source.OrchestrationTier,
+            DefaultOptionsJson = source.DefaultOptionsJson,
+            Instructions = source.Instructions,
+            BindingsJson = source.BindingsJson,
             Status = "draft", Revision = 1, Version = 0,
             CreatedAt = now, UpdatedAt = now,
             CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId,
@@ -263,7 +401,8 @@ public sealed class AgentTopologyService : IAgentTopologyService
                 Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ModeId = copy.Id,
                 NodeKey = node.NodeKey, AgentDefinitionId = node.AgentDefinitionId, Layer = node.Layer,
                 Label = node.Label, I18nJson = node.I18nJson, PositionJson = node.PositionJson,
-                ConfigJson = node.ConfigJson, ModelStrategyOverrideJson = node.ModelStrategyOverrideJson,
+                ConfigJson = node.ConfigJson, RelationshipJson = node.RelationshipJson,
+                ModelStrategyOverrideJson = node.ModelStrategyOverrideJson,
                 Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now,
             });
         foreach (var edge in edges)
@@ -299,26 +438,66 @@ public sealed class AgentTopologyService : IAgentTopologyService
                 $"Pack '{managed.PackId}' manages mode '{managed.ResourceKey}'. Clone it before customizing.");
         if (expectedRevision >= 0 && mode.Revision != expectedRevision)
             return AgentTopologyResult.Failure(AgentTopologyStatus.PreconditionFailed, AgentTopologyCodes.Conflict, "Revision conflict.");
-        if (!string.Equals(mode.Status, "draft", StringComparison.OrdinalIgnoreCase))
-            return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.NotDraft, "Only a draft mode can be edited.");
+        if (string.Equals(mode.Status, "archived", StringComparison.OrdinalIgnoreCase))
+            return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.NotDraft, "Archived modes cannot be edited.");
+        if (!string.Equals(mode.Status, "draft", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(mode.Status, "published", StringComparison.OrdinalIgnoreCase))
+            return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.NotDraft, "Only a draft or published custom mode can be edited.");
+
+        var policy = ParseRuntimePolicy(payload);
+        if (policy.Error is not null)
+            return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRuntimePolicy, policy.Error);
+        var topology = ParseTopology(payload);
+        if (topology.Failure is not null) return topology.Failure;
+
+        // Reopening a published non-pack custom mode converts its live published projection
+        // back to draft while keeping all historical ModeVersionRecord snapshots intact.
+        ReopenedDraftState? reopened = null;
+        if (string.Equals(mode.Status, "published", StringComparison.OrdinalIgnoreCase))
+        {
+            var conflictingDraft = await db.AgentModes.AsNoTracking().AnyAsync(
+                x => x.Id != modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Slug == mode.Slug && x.Status == "draft",
+                cancellationToken);
+            if (conflictingDraft)
+                return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.DuplicateSlug,
+                    $"Another draft mode already uses slug '{mode.Slug}'.");
+
+            var staleDraftNodes = await db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken);
+            if (staleDraftNodes.Count > 0) db.ModeNodes.RemoveRange(staleDraftNodes);
+            var staleDraftEdges = await db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken);
+            if (staleDraftEdges.Count > 0) db.ModeEdges.RemoveRange(staleDraftEdges);
+            var staleDraftLayouts = await db.CanvasLayouts.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken);
+            if (staleDraftLayouts.Count > 0) db.CanvasLayouts.RemoveRange(staleDraftLayouts);
+
+            var pubNodes = await db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "published").ToListAsync(cancellationToken);
+            var pubEdges = await db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "published").ToListAsync(cancellationToken);
+            var pubLayouts = await db.CanvasLayouts.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "published").ToListAsync(cancellationToken);
+            await SnapshotBackfillAsync(db, mode, pubNodes, scope.TenantId, scope.WorkspaceId, cancellationToken);
+            var keptLayout = pubLayouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
+            foreach (var extra in pubLayouts.Where(l => keptLayout is null || l.Id != keptLayout.Id))
+                db.CanvasLayouts.Remove(extra);
+            foreach (var n in pubNodes) { n.Status = "draft"; n.Revision++; }
+            foreach (var e in pubEdges) { e.Status = "draft"; e.Revision++; }
+            if (keptLayout is not null) { keptLayout.Status = "draft"; keptLayout.Revision++; }
+            reopened = new ReopenedDraftState(pubNodes, pubEdges, keptLayout);
+        }
 
         var displayName = Text(payload, "display_name");
         if (!string.IsNullOrWhiteSpace(displayName)) mode.DisplayName = displayName;
         if (payload.TryGetProperty("description", out var description)) mode.Description = description.ValueKind == JsonValueKind.String ? description.GetString() : null;
-        var policy = ParseRuntimePolicy(payload);
-        if (policy.Error is not null)
-            return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRuntimePolicy, policy.Error);
         if (payload.TryGetProperty("runtime_policy", out _)) mode.RuntimePolicyJson = policy.Json;
 
-        var topology = ParseTopology(payload);
-        if (topology.Failure is not null) return topology.Failure;
-        var (state, applied) = await ApplyTopologyAsync(db, mode, topology.Input!, scope.TenantId, scope.WorkspaceId, cancellationToken);
+        var (state, applied) = await ApplyTopologyAsync(db, mode, topology.Input!, scope.TenantId, scope.WorkspaceId, cancellationToken, reopened);
         if (applied is not null) return applied;
 
         // Validation runs against the post-write projection, before anything is saved:
-        // a rejected graph leaves the stored draft exactly as it was.
-        var validated = await ValidateGraphAsync(db, mode, state!, scope.TenantId, scope.WorkspaceId, cancellationToken);
-        if (validated is not null) return validated;
+        // a rejected graph leaves the stored draft exactly as it was. Metadata-only
+        // updates on a newly created node-less draft stay legal until nodes are submitted.
+        if (topology.Input!.HasNodes || state!.Nodes.Count > 0 || state.Edges.Count > 0)
+        {
+            var validated = await ValidateGraphAsync(db, mode, state!, scope.TenantId, scope.WorkspaceId, cancellationToken);
+            if (validated is not null) return validated;
+        }
 
         mode.Revision++;
         mode.UpdatedAt = DateTimeOffset.UtcNow;
@@ -329,7 +508,10 @@ public sealed class AgentTopologyService : IAgentTopologyService
         return await LoadResultAsync(db, mode, cancellationToken);
     }
 
-    public async Task<AgentTopologyResult> DeleteDraftAsync(Guid modeId, CancellationToken cancellationToken = default)
+    public Task<AgentTopologyResult> DeleteDraftAsync(Guid modeId, CancellationToken cancellationToken = default) =>
+        DeleteDraftAsync(modeId, -1, cancellationToken);
+
+    public async Task<AgentTopologyResult> DeleteDraftAsync(Guid modeId, long expectedRevision, CancellationToken cancellationToken)
     {
         var scope = _tenant.Current;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
@@ -341,15 +523,32 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (managed is not null)
             return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.BuiltInReadOnly,
                 $"Pack '{managed.PackId}' manages mode '{managed.ResourceKey}'. Clone it before editing it.");
-        if (!string.Equals(mode.Status, "draft", StringComparison.OrdinalIgnoreCase))
-            return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.NotDraft, "Only a draft mode can be deleted; archive a published mode instead.");
-        if (await db.ModeVersions.AnyAsync(x => x.AgentModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken))
-            return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.PublishedVersionExists,
-                "This mode has published versions; archive it instead of deleting its history.");
+        if (expectedRevision >= 0 && mode.Revision != expectedRevision)
+            return AgentTopologyResult.Failure(AgentTopologyStatus.PreconditionFailed, AgentTopologyCodes.Conflict, "Revision conflict.");
+
+        // Clear workspace_defaults pointers if they referenced this custom mode so
+        // ConfigurationLiveSourceValidation never encounters a dangling reference; keep
+        // ModeVersionRecord snapshots untouched to satisfy historical table immutability.
+        var modeVersionIds = await db.ModeVersions.AsNoTracking()
+            .Where(x => x.AgentModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var defaults = await db.WorkspaceDefaults.SingleOrDefaultAsync(
+            x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken);
+        if (defaults is not null
+            && (defaults.DefaultAgentModeId == modeId
+                || (defaults.DefaultModeVersionId is { } defVerId && modeVersionIds.Contains(defVerId))))
+        {
+            if (defaults.DefaultAgentModeId == modeId) defaults.DefaultAgentModeId = null;
+            if (defaults.DefaultModeVersionId is { } dv && modeVersionIds.Contains(dv)) defaults.DefaultModeVersionId = null;
+            defaults.Revision++;
+            defaults.UpdatedAt = DateTimeOffset.UtcNow;
+        }
 
         db.ModeNodes.RemoveRange(db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
         db.ModeEdges.RemoveRange(db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
         db.CanvasLayouts.RemoveRange(db.CanvasLayouts.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
+        db.ModeBindings.RemoveRange(db.ModeBindings.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId));
         db.AgentModes.Remove(mode);
         await db.SaveChangesAsync(cancellationToken);
         return new AgentTopologyResult { Ok = true, ModeId = modeId };
@@ -374,8 +573,8 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (!string.Equals(mode.Status, "draft", StringComparison.OrdinalIgnoreCase))
             return AgentTopologyResult.Failure(AgentTopologyStatus.Conflict, AgentTopologyCodes.NotDraft, "Only a draft mode can be published.");
 
-        var nodes = await db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId).ToListAsync(cancellationToken);
-        var edges = await db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId).ToListAsync(cancellationToken);
+        var nodes = await db.ModeNodes.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken);
+        var edges = await db.ModeEdges.Where(x => x.ModeId == modeId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken);
         if (nodes.Count == 0)
             return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "Mode must have at least one node.");
 
@@ -401,17 +600,52 @@ public sealed class AgentTopologyService : IAgentTopologyService
         // tools the same way pack publishing does. `"*": false` on the conversation
         // leader is what sheds its business tool face and keeps a team run in the
         // free_form tier instead of solo_dispatch.
+        var parsedBindings = ParseBindingArray(mode.BindingsJson);
+        var nodeByKey = nodes.ToDictionary(n => n.NodeKey, StringComparer.Ordinal);
         var switchesByNode = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var binding in ParseBindingArray(mode.BindingsJson))
+        var bindingSubjects = new List<ModePublishGate.BindingSubject>();
+        foreach (var binding in parsedBindings)
         {
             if (binding.TryGetProperty("node_key", out var bindingNode) && bindingNode.ValueKind == JsonValueKind.String
-                && !string.IsNullOrWhiteSpace(bindingNode.GetString())
-                && binding.TryGetProperty("tool_switches", out var switches) && switches.ValueKind == JsonValueKind.Object)
-                switchesByNode[bindingNode.GetString()!] = switches;
+                && !string.IsNullOrWhiteSpace(bindingNode.GetString()))
+            {
+                var bNodeKey = bindingNode.GetString()!;
+                if (!nodeByKey.TryGetValue(bNodeKey, out var targetNode))
+                    return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.ModeGraphInvalid,
+                        $"mode '{mode.Slug}' binding references unknown node '{bNodeKey}'.",
+                        new AgentTopologyDiagnostic(AgentTopologyCodes.ModeGraphInvalid, $"mode '{mode.Slug}' binding references unknown node '{bNodeKey}'."));
+                JsonElement? switchesEl = binding.TryGetProperty("tool_switches", out var switches) && switches.ValueKind == JsonValueKind.Object ? switches : null;
+                if (switchesEl is { } s) switchesByNode[bNodeKey] = s;
+                JsonElement? envelopeEl = binding.TryGetProperty("envelope", out var envelope) && envelope.ValueKind == JsonValueKind.Object ? envelope : null;
+                if (agentDefinitions.TryGetValue(targetNode.AgentDefinitionId, out var boundAgent))
+                {
+                    bindingSubjects.Add(new ModePublishGate.BindingSubject(
+                        bNodeKey,
+                        boundAgent.Slug,
+                        boundAgent.Layer,
+                        ParseCapabilities(boundAgent.CapabilitiesJson),
+                        ParseTools(boundAgent.ToolScopeJson).ToArray(),
+                        switchesEl,
+                        envelopeEl));
+                }
+            }
+        }
+        if (bindingSubjects.Count > 0)
+        {
+            try
+            {
+                ModePublishGate.ValidateBindings(mode.Slug, bindingSubjects, ceilings: null);
+            }
+            catch (InvalidDataException ex)
+            {
+                return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.ModeGraphInvalid, ex.Message,
+                    new AgentTopologyDiagnostic(AgentTopologyCodes.ModeGraphInvalid, ex.Message));
+            }
         }
 
         // Freeze exact AgentVersion/PromptVersion bindings. Runtime consumes only this snapshot.
         var frozenNodes = new List<object>();
+        var allEffectiveTools = new List<string>();
         foreach (var node in nodes.OrderBy(n => n.NodeKey, StringComparer.Ordinal))
         {
             if (!agentDefinitions.TryGetValue(node.AgentDefinitionId, out var agentDef) || agentDef.Status != "published")
@@ -427,7 +661,8 @@ public sealed class AgentTopologyService : IAgentTopologyService
             else if (modeTools.Count == 0) effective = new HashSet<string>(agentTools, StringComparer.OrdinalIgnoreCase);
             else effective = new HashSet<string>(agentTools.Intersect(modeTools, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
             if (switchesByNode.TryGetValue(node.NodeKey, out var nodeSwitches))
-                effective = new HashSet<string>(effective.Where(tool => !IsSwitchedOff(nodeSwitches, tool)), StringComparer.OrdinalIgnoreCase);
+                effective = new HashSet<string>(effective.Where(tool => !ModePublishGate.IsSwitchedOff(nodeSwitches, tool)), StringComparer.OrdinalIgnoreCase);
+            allEffectiveTools.AddRange(effective);
             if (effective.Count == 0)
                 warnings.Add(JsonSerializer.SerializeToElement(new { code = "EMPTY_EFFECTIVE_TOOLS", message = $"Node {node.NodeKey} has no effective tools after intersection", node_key = node.NodeKey, agent_id = node.AgentDefinitionId }));
             PromptVersionRecord? promptVersion = null;
@@ -473,6 +708,34 @@ public sealed class AgentTopologyService : IAgentTopologyService
                 prompt_version_hash = promptVersion?.ContentHash
             });
         }
+        // ExplorationToolPolicy gate (parity with AgentPackService.ValidateExplorationTools):
+        // collect tools from node-less bindings too, then validate against runtime_policy.
+        foreach (var binding in parsedBindings)
+        {
+            var hasNodeKey = binding.TryGetProperty("node_key", out var bnk) && bnk.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(bnk.GetString());
+            if (hasNodeKey) continue;
+            var agentRefText = Text(binding, "agent_ref")?.Trim();
+            if (string.IsNullOrWhiteSpace(agentRefText)) continue;
+            var slug = agentRefText.StartsWith("agent:", StringComparison.OrdinalIgnoreCase) ? agentRefText["agent:".Length..] : agentRefText;
+            var nodelessAgent = await db.AgentDefinitions.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Slug == slug && x.Status == "published", cancellationToken);
+            if (nodelessAgent is null) continue;
+            JsonElement? switchesEl = binding.TryGetProperty("tool_switches", out var switches) && switches.ValueKind == JsonValueKind.Object ? switches : null;
+            foreach (var tool in ParseTools(nodelessAgent.ToolScopeJson))
+            {
+                if (!ModePublishGate.IsSwitchedOff(switchesEl, tool))
+                    allEffectiveTools.Add(tool);
+            }
+        }
+        var runtimePolicyDto = string.IsNullOrWhiteSpace(mode.RuntimePolicyJson)
+            ? null
+            : JsonSerializer.Deserialize<ModeRuntimePolicyDto>(mode.RuntimePolicyJson);
+        if (ExplorationToolPolicy.Validate(runtimePolicyDto, allEffectiveTools, $"mode '{mode.Slug}'") is { } explorationError)
+        {
+            return AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.ModeGraphInvalid, explorationError,
+                new AgentTopologyDiagnostic(AgentTopologyCodes.ModeGraphInvalid, explorationError));
+        }
+
         // A node config that parsed for the snapshot but not for the warning scan is already
         // rejected above; this is the stored form of the same warnings the HTTP body carries.
         string? warningJson = warnings.Count > 0 ? JsonSerializer.Serialize(warnings) : null;
@@ -501,6 +764,10 @@ public sealed class AgentTopologyService : IAgentTopologyService
             : JsonSerializer.Deserialize<JsonElement>(mode.BindingsJson);
         if (mode.RuntimePolicyJson is not null)
             snapshotObject["runtime_policy"] = JsonSerializer.Deserialize<JsonElement>(mode.RuntimePolicyJson);
+        if (!string.IsNullOrWhiteSpace(mode.OrchestrationTier))
+            snapshotObject["orchestration_tier"] = mode.OrchestrationTier;
+        if (!string.IsNullOrWhiteSpace(mode.DefaultOptionsJson))
+            snapshotObject["default_options"] = JsonSerializer.Deserialize<JsonElement>(mode.DefaultOptionsJson);
         // Only non-empty instructions are frozen: writing the key unconditionally would
         // change the topology hash of every newly published legacy mode.
         if (!string.IsNullOrWhiteSpace(mode.Instructions))
@@ -565,7 +832,11 @@ public sealed class AgentTopologyService : IAgentTopologyService
         bool HasInstructions,
         string? Instructions,
         bool HasBindings,
-        string? BindingsJson);
+        string? BindingsJson,
+        bool HasOrchestrationTier,
+        string? OrchestrationTier,
+        bool HasDefaultOptions,
+        string? DefaultOptionsJson);
 
     /// <summary>The draft projection after a write: what validation reads.</summary>
     private sealed record TopologyState(IReadOnlyList<SubmittedNode> Nodes, IReadOnlyList<SubmittedEdge> Edges);
@@ -674,8 +945,39 @@ public sealed class AgentTopologyService : IAgentTopologyService
             bindingsJson = bindingsElement.GetRawText();
         }
 
+        var hasOrchestrationTier = payload.TryGetProperty("orchestration_tier", out var tierElement);
+        string? orchestrationTier = null;
+        if (hasOrchestrationTier && tierElement.ValueKind != JsonValueKind.Null)
+        {
+            if (tierElement.ValueKind != JsonValueKind.String)
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "orchestration_tier must be a string or null."));
+            try
+            {
+                orchestrationTier = GraphValidation.NormalizeOrchestrationTier(tierElement.GetString());
+            }
+            catch (InvalidDataException ex)
+            {
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, ex.Message));
+            }
+        }
+
+        var hasDefaultOptions = payload.TryGetProperty("default_options", out var defaultOptionsElement);
+        string? defaultOptionsJson = null;
+        if (hasDefaultOptions && defaultOptionsElement.ValueKind != JsonValueKind.Null)
+        {
+            try
+            {
+                defaultOptionsJson = GraphValidation.NormalizeDefaultOptionsJson(defaultOptionsElement, "mode");
+            }
+            catch (InvalidDataException ex)
+            {
+                return new(null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, ex.Message));
+            }
+        }
+
         return new(new TopologyInput(nodes, edges, hasNodes, hasEdges, hasLayout, hasLayout ? layout.GetRawText() : null,
-            hasInstructions, instructions, hasBindings, bindingsJson), null);
+            hasInstructions, instructions, hasBindings, bindingsJson,
+            hasOrchestrationTier, orchestrationTier, hasDefaultOptions, defaultOptionsJson), null);
     }
 
     /// A mode's collaboration instructions are frozen into the version snapshot;
@@ -693,21 +995,28 @@ public sealed class AgentTopologyService : IAgentTopologyService
     /// that is what the editor's node delete means, and Core would refuse the dangling
     /// edge anyway.
     /// </summary>
+    private sealed record ReopenedDraftState(
+        List<ModeNodeRecord> Nodes,
+        List<ModeEdgeRecord> Edges,
+        CanvasLayoutRecord? Layout);
+
     private static async Task<(TopologyState? State, AgentTopologyResult? Failure)> ApplyTopologyAsync(
         AgentConfigurationDbContext db,
         AgentModeRecord mode,
         TopologyInput input,
         Guid tenantId,
         Guid workspaceId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ReopenedDraftState? reopened = null)
     {
         var now = DateTimeOffset.UtcNow;
         var submittedNodeKeys = input.Nodes.Select(n => n.NodeKey).ToHashSet(StringComparer.Ordinal);
         if (submittedNodeKeys.Count != input.Nodes.Count)
             return (null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "Node keys must be unique within one mode."));
 
-        var existingNodes = await db.ModeNodes.Where(x => x.ModeId == mode.Id && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.Status == "draft")
-            .ToListAsync(cancellationToken);
+        var existingNodes = reopened?.Nodes
+            ?? await db.ModeNodes.Where(x => x.ModeId == mode.Id && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.Status == "draft")
+                .ToListAsync(cancellationToken);
         var nodeState = new Dictionary<string, SubmittedNode>(StringComparer.Ordinal);
         if (input.HasNodes)
         {
@@ -754,8 +1063,9 @@ public sealed class AgentTopologyService : IAgentTopologyService
         if (submittedEdgeKeys.Count != input.Edges.Count)
             return (null, AgentTopologyResult.Failure(AgentTopologyStatus.BadRequest, AgentTopologyCodes.InvalidRequest, "Edge keys must be unique within one mode."));
 
-        var existingEdges = await db.ModeEdges.Where(x => x.ModeId == mode.Id && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.Status == "draft")
-            .ToListAsync(cancellationToken);
+        var existingEdges = reopened?.Edges
+            ?? await db.ModeEdges.Where(x => x.ModeId == mode.Id && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.Status == "draft")
+                .ToListAsync(cancellationToken);
         var edgeState = new Dictionary<string, SubmittedEdge>(StringComparer.Ordinal);
         if (input.HasEdges)
         {
@@ -799,8 +1109,10 @@ public sealed class AgentTopologyService : IAgentTopologyService
 
         if (input.HasLayout)
         {
-            var layout = await db.CanvasLayouts.FirstOrDefaultAsync(
-                x => x.ModeId == mode.Id && x.TenantId == tenantId && x.WorkspaceId == workspaceId, cancellationToken);
+            var layout = reopened is not null
+                ? reopened.Layout
+                : await db.CanvasLayouts.FirstOrDefaultAsync(
+                    x => x.ModeId == mode.Id && x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.Status == "draft", cancellationToken);
             var json = input.LayoutJson ?? "{}";
             if (layout is null)
                 db.CanvasLayouts.Add(new CanvasLayoutRecord
@@ -822,6 +1134,10 @@ public sealed class AgentTopologyService : IAgentTopologyService
             mode.Instructions = input.Instructions;
         if (input.HasBindings)
             mode.BindingsJson = input.BindingsJson;
+        if (input.HasOrchestrationTier)
+            mode.OrchestrationTier = input.OrchestrationTier;
+        if (input.HasDefaultOptions)
+            mode.DefaultOptionsJson = input.DefaultOptionsJson;
 
         return (new TopologyState(nodeState.Values.ToArray(), edgeState.Values.ToArray()), null);
     }
@@ -887,15 +1203,22 @@ public sealed class AgentTopologyService : IAgentTopologyService
             .OrderBy(x => x.NodeKey).ToListAsync(cancellationToken);
         var edges = await db.ModeEdges.Where(x => x.ModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft")
             .OrderBy(x => x.EdgeKey).ToListAsync(cancellationToken);
-        var layout = await db.CanvasLayouts.FirstOrDefaultAsync(
-            x => x.ModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft", cancellationToken);
+        var layouts = await db.CanvasLayouts
+            .Where(x => x.ModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft")
+            .ToListAsync(cancellationToken);
+        var layout = layouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
+        var latestVersionId = await db.ModeVersions.AsNoTracking()
+            .Where(x => x.AgentModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "published")
+            .OrderByDescending(x => x.Version)
+            .Select(x => (Guid?)x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
         return new AgentTopologyResult
         {
             Ok = true,
             ModeId = mode.Id,
             Revision = mode.Revision,
             Version = mode.Version,
-            Mode = ProjectDetail(mode, nodes, edges, layout, managed: false),
+            Mode = ProjectDetail(mode, nodes, edges, layout, managed: false, latestVersionId),
         };
     }
 
@@ -999,17 +1322,6 @@ public sealed class AgentTopologyService : IAgentTopologyService
             return document.RootElement.EnumerateArray().Select(item => item.Clone()).ToArray();
         }
         catch (JsonException) { return []; }
-    }
-
-    /// <summary>A tool is switched off by an explicit <c>false</c> (bool or string) on
-    /// its own id, or by the wildcard <c>"*": false</c> that sheds the whole face.</summary>
-    private static bool IsSwitchedOff(JsonElement switches, string toolId)
-    {
-        static bool Off(JsonElement state) => state.ValueKind == JsonValueKind.False
-            || (state.ValueKind == JsonValueKind.String && string.Equals(state.GetString(), "false", StringComparison.OrdinalIgnoreCase));
-        if (switches.ValueKind != JsonValueKind.Object) return false;
-        if (switches.TryGetProperty(toolId, out var exact) && Off(exact)) return true;
-        return switches.TryGetProperty("*", out var all) && Off(all);
     }
 
     private static IReadOnlyList<string> ParseCapabilities(string? capabilitiesJson)

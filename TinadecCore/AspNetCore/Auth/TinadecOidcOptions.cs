@@ -21,11 +21,46 @@ public sealed class TinadecOidcOptions
     /// <summary>Post-login callback URL, always the Gateway origin, e.g. <c>http://127.0.0.1:48730/auth/callback</c>.</summary>
     public string RedirectUri { get; set; } = "";
 
+    /// <summary>
+    /// Optional OIDC subject allowlist for Web owner binding. When both allowlists are empty,
+    /// any authenticated subject is accepted (preserving Desktop Logto sign-in).
+    /// </summary>
+    public string[] AllowedSubjects { get; set; } = [];
+
+    /// <summary>Optional OIDC verified-email allowlist (case-insensitive) for Web owner binding.</summary>
+    public string[] AllowedEmails { get; set; } = [];
+
     public bool Enabled =>
         !string.IsNullOrWhiteSpace(Authority) &&
         !string.IsNullOrWhiteSpace(ClientId) &&
         !string.IsNullOrWhiteSpace(ClientSecret) &&
         !string.IsNullOrWhiteSpace(RedirectUri);
+
+    internal bool IsAllowedIdentity(
+        OidcIdentity identity,
+        IReadOnlyList<string>? extraAllowedSubjects = null,
+        IReadOnlyList<string>? extraAllowedEmails = null)
+    {
+        var subjects = (AllowedSubjects ?? [])
+            .Concat(extraAllowedSubjects ?? [])
+            .Select(s => s?.Trim())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToArray();
+        var emails = (AllowedEmails ?? [])
+            .Concat(extraAllowedEmails ?? [])
+            .Select(e => e?.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .ToArray();
+
+        if (subjects.Length == 0 && emails.Length == 0) return true;
+        if (subjects.Any(s => string.Equals(s, identity.Subject, StringComparison.Ordinal))) return true;
+        if (!string.IsNullOrWhiteSpace(identity.Email)
+            && emails.Any(e => string.Equals(e, identity.Email.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+        return false;
+    }
 
     /// <summary>The Gateway origin derived from <see cref="RedirectUri"/>; the login window lives there.</summary>
     public string PublicOrigin

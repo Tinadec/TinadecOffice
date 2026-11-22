@@ -124,3 +124,85 @@ public static class McpServerStatus
     /// <summary>The provider reported a status string Core does not know.</summary>
     public const string Unknown = "unknown";
 }
+
+/// <summary>Request to import one or more MCP servers from standard <c>.mcp.json</c> / Claude Code / Codex config text.</summary>
+public sealed class McpImportJsonRequestDto
+{
+    [JsonPropertyName("json")]
+    public string? Json { get; init; }
+
+    [JsonPropertyName("config")]
+    public JsonElement? Config { get; init; }
+
+    [JsonPropertyName("project_id")]
+    public Guid? ProjectId { get; init; }
+
+    [JsonPropertyName("overwrite")]
+    public bool Overwrite { get; init; }
+
+    [JsonPropertyName("default_enabled")]
+    public bool? DefaultEnabled { get; init; }
+
+    [JsonPropertyName("import_source")]
+    public string? ImportSource { get; init; }
+}
+
+public sealed class McpImportJsonSkippedDto
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; init; } = string.Empty;
+}
+
+public sealed class McpImportJsonResultDto
+{
+    [JsonPropertyName("imported")]
+    public IReadOnlyList<McpResourceDto> Imported { get; init; } = [];
+
+    [JsonPropertyName("skipped")]
+    public IReadOnlyList<McpImportJsonSkippedDto> Skipped { get; init; } = [];
+
+    [JsonPropertyName("imported_count")]
+    public int ImportedCount { get; init; }
+
+    [JsonPropertyName("skipped_count")]
+    public int SkippedCount { get; init; }
+}
+
+public sealed class McpServerEnabledRequestDto
+{
+    [JsonPropertyName("enabled")]
+    public bool? Enabled { get; init; }
+
+    [JsonPropertyName("project_id")]
+    public Guid? ProjectId { get; init; }
+}
+
+public sealed class McpServerTestResultDto
+{
+    [JsonPropertyName("resource_id")]
+    public Guid ResourceId { get; init; }
+
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = McpServerStatus.Unknown;
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+
+    [JsonPropertyName("tool_count")]
+    public int ToolCount { get; init; }
+
+    [JsonPropertyName("tools")]
+    public IReadOnlyList<McpToolDto> Tools { get; init; } = [];
+}

@@ -111,10 +111,11 @@ internal sealed class ProjectVectorDatabase : IProjectVectorDatabase
         if (_connection.Provider != DatabaseProvider.Sqlite) throw new NotSupportedException("PostgreSQL vector persistence is not implemented yet.");
         var path = _paths.ProjectVectorDatabase(scope.TenantId, scope.WorkspaceId, scope.ProjectId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, DefaultTimeout = 15, Pooling = false }.ToString());
         try
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await SqliteConnectionPragmaInterceptor.ApplyPragmasAsync(connection, cancellationToken: cancellationToken).ConfigureAwait(false);
             connection.EnableExtensions(true);
             connection.LoadVector();
             await using var schema = connection.CreateCommand();

@@ -44,13 +44,23 @@ public sealed class OidcClient
         _clock = clock ?? TimeProvider.System;
     }
 
-    public async Task<string> BuildAuthorizationUrlAsync(string state, string nonce, CancellationToken ct)
+    public Task<string> BuildAuthorizationUrlAsync(string state, string nonce, CancellationToken ct) =>
+        BuildAuthorizationUrlAsync(state, nonce, redirectUriOverride: null, ct);
+
+    public async Task<string> BuildAuthorizationUrlAsync(
+        string state,
+        string nonce,
+        string? redirectUriOverride,
+        CancellationToken ct)
     {
         var d = await GetDiscoveryAsync(ct).ConfigureAwait(false);
+        var effectiveRedirectUri = string.IsNullOrWhiteSpace(redirectUriOverride)
+            ? _options.RedirectUri
+            : redirectUriOverride.Trim();
         var query = string.Join('&',
             "response_type=code",
             $"client_id={Uri.EscapeDataString(_options.ClientId)}",
-            $"redirect_uri={Uri.EscapeDataString(_options.RedirectUri)}",
+            $"redirect_uri={Uri.EscapeDataString(effectiveRedirectUri)}",
             // offline_access is what makes Logto return a refresh token; without it a 30-day
             // identity session could never be renewed and the user was sent back to the browser.
             "scope=openid%20profile%20email%20offline_access",
@@ -59,16 +69,29 @@ public sealed class OidcClient
         return $"{d.AuthorizationEndpoint}?{query}";
     }
 
-    public async Task<(OidcIdentity Identity, OidcTokenSet Tokens)?> ExchangeAsync(string code, string expectedNonce, CancellationToken ct)
+    public Task<(OidcIdentity Identity, OidcTokenSet Tokens)?> ExchangeAsync(
+        string code,
+        string expectedNonce,
+        CancellationToken ct) =>
+        ExchangeAsync(code, expectedNonce, redirectUriOverride: null, ct);
+
+    public async Task<(OidcIdentity Identity, OidcTokenSet Tokens)?> ExchangeAsync(
+        string code,
+        string expectedNonce,
+        string? redirectUriOverride,
+        CancellationToken ct)
     {
         var d = await GetDiscoveryAsync(ct).ConfigureAwait(false);
+        var effectiveRedirectUri = string.IsNullOrWhiteSpace(redirectUriOverride)
+            ? _options.RedirectUri
+            : redirectUriOverride.Trim();
 
         using var request = new HttpRequestMessage(HttpMethod.Post, d.TokenEndpoint);
         request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "authorization_code",
             ["code"] = code,
-            ["redirect_uri"] = _options.RedirectUri,
+            ["redirect_uri"] = effectiveRedirectUri,
             ["client_id"] = _options.ClientId,
         });
         // Logto's Traditional Web apps authenticate the confidential client with

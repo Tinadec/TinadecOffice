@@ -92,6 +92,17 @@ public static class ToolSettingsEndpoints
         {
             await registry.DeleteAsync(resourceId, Revision(request), ct); return Results.NoContent();
         }).Produces(StatusCodes.Status204NoContent).ProducesProblem(428).ProducesProblem(412).ProducesProblem(404);
+        app.MapPost("/api/v1/tools/mcp/servers/import-json", async (McpImportJsonRequestDto input, IMcpServerService mcpService, CancellationToken ct) =>
+            Results.Ok(await mcpService.ImportJsonAsync(input, ct))).Produces<McpImportJsonResultDto>().ProducesProblem(400);
+        app.MapPatch("/api/v1/tools/mcp/servers/{resourceId:guid}/enabled", async (Guid resourceId, McpServerEnabledRequestDto input, HttpRequest request, HttpResponse response, IMcpServerService mcpService, CancellationToken ct) =>
+        {
+            if (input.Enabled is not { } enabled) throw new ToolSettingsException("invalid_request", "enabled (true/false) is required.");
+            var rawIfMatch = request.Headers.IfMatch.FirstOrDefault();
+            long? expected = rawIfMatch is null ? null : Revision(request);
+            var updated = await mcpService.SetEnabledAsync(resourceId.ToString("N"), enabled, input.ProjectId, expected, ct);
+            response.Headers.ETag = $"\"{updated.Revision}\"";
+            return Results.Ok(updated);
+        }).Produces<McpResourceDto>().ProducesProblem(400).ProducesProblem(404).ProducesProblem(412);
            app.MapPost("/api/v1/tools/mcp/servers/{resourceId:guid}/install-preview", async (Guid resourceId, Guid? project_id, string? action, IManagedMcpProgramService programs, CancellationToken ct) =>
             Results.Ok(await programs.PreviewAsync(resourceId, project_id, action ?? "install", ct))).Produces<ManagedMcpProgramPreviewDto>().ProducesProblem(404).ProducesProblem(409);
         app.MapPost("/api/v1/tools/mcp/servers/{resourceId:guid}/install", async (Guid resourceId, Guid? project_id, string? action, IManagedMcpProgramService programs, CancellationToken ct) =>
@@ -99,24 +110,8 @@ public static class ToolSettingsEndpoints
             var preview = await programs.PreviewAsync(resourceId, project_id, action ?? "install", ct);
             return Results.Ok(await programs.RequestApplyAsync(preview, ct));
         }).Produces<UserToolActionResult>().ProducesProblem(404).ProducesProblem(409);
-        app.MapPost("/api/v1/tools/mcp/servers/{resourceId:guid}/test", async (Guid resourceId, IMcpResourceRegistry registry, IToolConfigurationResolver resolver, IToolProvider provider, ISessionLocator sessions, IConfiguration configuration, CancellationToken ct) =>
-        {
-            var resource = await registry.GetAsync(resourceId, ct) ?? throw new ToolSettingsException("mcp_resource_not_found", "MCP resource not found.", 404);
-            if (!resource.Enabled) return Results.Ok(new McpResourceTestDto { ResourceId = resourceId, Status = "disabled", Reason = "Enable this resource before testing it." });
-            var resolved = await resolver.ResolveAsync(resource.ProjectId, null, ct);
-            var selected = new ToolExecutionContextDto { Settings = ToolSettingsSchema.Merge(resolved.Settings, JsonSerializer.SerializeToElement(new { mcp = new { enabled = true } })), SettingsHash = resolved.SettingsHash, McpServers = await registry.ResolveAsync(resource.ProjectId, [resourceId], ct), ReadRoots = [], McpImportError = resolved.McpImportError };
-            var context = await resolver.MaterializeForCallAsync(selected, ["mcp_list"], ct);
-            var root = resource.ProjectId is { } id ? (await sessions.FindProjectAsync(id, ct))!.RootPath : configuration["TinadecTools:DefaultWorkspaceRoot"] ?? Directory.GetCurrentDirectory();
-            try
-            {
-                var response = await provider.CallAsync(root, new() { ToolId = "mcp_list", SessionId = "mcp-resource-test", Approved = false, Params = JsonSerializer.SerializeToElement(new { include_schema = false }), ExecutionContext = context }, TimeSpan.FromSeconds(30), ct);
-                if (!response.IsSuccess) return Results.Ok(new McpResourceTestDto { ResourceId = resourceId, Status = "error", Reason = response.Error });
-                var row = response.Result is { ValueKind: JsonValueKind.Object } payload && payload.TryGetProperty("servers", out var listed) && listed.ValueKind == JsonValueKind.Array ? listed.EnumerateArray().FirstOrDefault(s => s.TryGetProperty("id", out var sid) && sid.GetString() == resource.Id) : default;
-                if (row.ValueKind == JsonValueKind.Undefined) return Results.Ok(new McpResourceTestDto { ResourceId = resourceId, Status = "not_reported", Reason = "The provider did not report this resource." });
-                return Results.Ok(new McpResourceTestDto { ResourceId = resourceId, Status = row.TryGetProperty("status", out var status) ? status.GetString() ?? "unknown" : "unknown", Reason = row.TryGetProperty("error", out var error) ? error.GetString() : null, ToolCount = row.TryGetProperty("tools", out var tools) && tools.ValueKind == JsonValueKind.Array ? tools.GetArrayLength() : 0 });
-            }
-            catch (Exception ex) when (ex is IOException or TimeoutException || ex is OperationCanceledException && !ct.IsCancellationRequested) { return Results.Ok(new McpResourceTestDto { ResourceId = resourceId, Status = "unavailable", Reason = ex.Message }); }
-        }).Produces<McpResourceTestDto>().ProducesProblem(404);
+        app.MapPost("/api/v1/tools/mcp/servers/{resourceId:guid}/test", async (Guid resourceId, IMcpServerService mcpService, CancellationToken ct) =>
+            Results.Ok(await mcpService.TestAsync(resourceId.ToString("N"), null, ct))).Produces<McpServerTestResultDto>().ProducesProblem(404);
         return app;
     }
     private static IResult WithEtag(HttpResponse response, ToolSettingsDocumentDto dto) { response.Headers.ETag = $"\"{dto.Revision}\""; return Results.Ok(dto); }

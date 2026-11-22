@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
@@ -555,7 +556,10 @@ public static class DmaeaEndpoints
                     created_at = e.Timestamp
                 }).ToList()
             }, Options);
-        });
+        })
+        .Produces<RunOrchestrationResponseDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/v1/runs/{runId}/agent-lineage", async (string runId, IAgentInstanceService instances, CancellationToken ct) =>
         {

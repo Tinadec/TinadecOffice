@@ -10,10 +10,11 @@ You can inspect and configure the Tinadec workbench directly with the `tinadec_*
 
 ## Read before write
 
-1. `tinadec_inspect` with `target: "agents"` (or `target: "agent", agent_id: "<id_or_slug>"` for full `system_prompt`, `tool_scope`, `model_strategy`, `base_prompt_pipeline_id`, and `source_kind`).
+1. `tinadec_inspect` with `target: "agents"` (or `target: "agent", agent_id: "<id_or_slug>"` for full `system_prompt`, `tool_scope`, `model_strategy`, `base_prompt_pipeline_id`, and `source_kind`), and `target: "tools"` to list all valid tool IDs.
 2. `tinadec_inspect` with `target: "modes"` to list modes, status, version, `orchestration_tier`, and pack management flags.
 3. `tinadec_inspect` with `target: "mode"` and `mode_id: "<guid_or_slug>"` to read `revision`, `instructions`, `orchestration_tier`, `bindings`, `nodes[]`, `edges[]` (with `edge_key`), and validation diagnostics.
 4. `tinadec_inspect` with `target: "models"`, `target: "prompts"`, or `target: "prompt_pipeline", pipeline_id: "<id_or_slug>"` before picking model strategies or prompt pipelines.
+5. `tinadec_inspect` with `target: "context_memory"` (optional `companion_id`) to read the `[context]`/`[memory]` `runtime.toml` policy, hot Markdown token budgets/hashes across `principal`/`project`/`companion`, and 3-tier strategy presets (`direct`, `managed`, `deep_curator`).
 
 Built-in / pack-managed (`pack_managed` / `is_built_in`) records are read-only. Clone them first before customizing.
 
@@ -30,6 +31,7 @@ inspect -> clone or create draft -> apply/validate -> publish
 - `tinadec_prompt_apply` creates, updates, clones, publishes, or rolls back prompt fragments (`target: "fragment"`) and prompt pipelines (`target: "pipeline"`).
 - `tinadec_model_profile_apply` inspects or updates non-secret `model_profiles` (`specialties`, `tier`, `notes`, `context_window`, `cost_tier`) on enabled providers.
 - `tinadec_skill_apply` and `tinadec_mcp_apply` manage workspace/shared Skills and MCP servers; masked env values keep the stored secret.
+- `tinadec_context_memory_apply` configures `[context]`/`[memory]` `runtime.toml` policy (`action: "update_policy"` | `"set_strategy"` with `policy` and optional `expected_content_hash`) or mutates durable memory items (`upsert_memory`, `supersede_memory`, `revoke_memory`, `revert_memory`). Pass `companion_id` inside `memory` when updating companion memory; companions cannot write `.tinadec/memory/project-core.md` unless `companion_can_write_project_memory` is true. Use `recall_conversation_history` when you need exact earlier turns (`summary_only` | `balanced` | `verbatim_first`).
 
 ## Team and graph semantics
 
@@ -45,8 +47,8 @@ inspect -> clone or create draft -> apply/validate -> publish
    `tinadec_inspect` `{ "target": "mode", "mode_id": "free_director" }`
 2. Clone the pack-managed mode (`name` goes inside `payload.display_name`):
    `tinadec_mode_apply` `{ "action": "clone", "mode_id": "free_director", "payload": { "display_name": "Team + Reviewer" } }`
-3. Upsert the draft with all kept nodes + reviewer node and explicit `edge_key` values:
-   `tinadec_mode_apply` `{ "action": "upsert", "mode_id": "<draft_mode_id>", "expected_revision": <revision>, "payload": { "display_name": "Team + Reviewer", "orchestration_tier": "free_form", "instructions": "...", "nodes": [ ...existingNodes, { "node_key": "reviewer", "agent_definition_id": "<reviewer_agent_id>", "layer": "execution", "duty": "Verify diff and tests" } ], "edges": [ { "edge_key": "meeting-to-reviewer", "source_node_key": "meeting", "target_node_key": "reviewer", "kind": "dispatch" } ] } }`
+3. Upsert the draft with all kept nodes + reviewer node (putting `duty` and dispatch lists inside `node.relationship`) and explicit `edge_key` values:
+   `tinadec_mode_apply` `{ "action": "upsert", "mode_id": "<draft_mode_id>", "expected_revision": <revision>, "payload": { "display_name": "Team + Reviewer", "orchestration_tier": "free_form", "instructions": "...", "nodes": [ ...existingNodes, { "node_key": "reviewer", "agent_definition_id": "<reviewer_agent_id>", "layer": "execution", "relationship": { "duty": "Verify diff and tests", "inputs_outputs": {}, "allowed_dispatch_targets": [], "success_criteria": [], "agent_types": [] } } ], "edges": [ { "edge_key": "meeting-to-reviewer", "source_node_key": "meeting", "target_node_key": "reviewer", "condition": {} } ] } }`
 4. Publish:
    `tinadec_mode_publish` `{ "mode_id": "<draft_mode_id>", "expected_revision": <new_revision> }`
 
@@ -54,7 +56,7 @@ inspect -> clone or create draft -> apply/validate -> publish
 
 1. Confirm server/skill IDs: `tinadec_inspect` `{ "target": "mcp" }` and `{ "target": "skills" }`.
 2. Clone built-in agent or update custom agent with `payload.tool_settings`:
-   `tinadec_agent_apply` `{ "action": "update", "agent_id": "<custom_agent_id>", "payload": { "tool_scope": ["read_file", "mcp_list", "mcp_call"], "tool_settings": { "mcp_server_ids": ["<mcp_id>"], "skill_resource_ids": ["<skill_id>"] } } }`
+   `tinadec_agent_apply` `{ "action": "update", "agent_id": "<custom_agent_id>", "payload": { "tool_scope": ["read_file", "mcp_list", "mcp_invoke"], "tool_settings": { "mcp_server_ids": ["<mcp_id>"], "skill_resource_ids": ["<skill_id>"] } } }`
 3. Publish:
    `tinadec_agent_apply` `{ "action": "publish", "agent_id": "<custom_agent_id>" }`
 

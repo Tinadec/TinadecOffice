@@ -69,7 +69,7 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
                 ValidateLayer(agent.Layer);
                 if (string.IsNullOrWhiteSpace(agent.DisplayName)) throw new InvalidDataException("Agent display name is required.");
                 var version = (await db.AgentVersions.Where(x => x.AgentDefinitionId == agent.Id).MaxAsync(x => (int?)x.Version, ct).ConfigureAwait(false) ?? 0) + 1;
-                var snapshot = JsonSerializer.Serialize(new { id = agent.Id, slug = agent.Slug, display_name = agent.DisplayName, layer = agent.Layer, role = agent.Role, capabilities = ParseJson(agent.CapabilitiesJson), model_strategy = ParseJson(agent.ModelStrategyJson), tool_scope = ParseJson(agent.ToolScopeJson), system_prompt = agent.SystemPrompt, description = agent.Description, enabled = agent.Enabled });
+                var snapshot = JsonSerializer.Serialize(new { id = agent.Id, slug = agent.Slug, display_name = agent.DisplayName, layer = agent.Layer, role = agent.Role, source_kind = agent.SourceKind, provenance = ParseJson(agent.ProvenanceJson), base_prompt_pipeline_id = agent.BasePromptPipelineId, capabilities = ParseJson(agent.CapabilitiesJson), model_strategy = ParseJson(agent.ModelStrategyJson), tool_scope = ParseJson(agent.ToolScopeJson), system_prompt = agent.SystemPrompt, description = agent.Description, enabled = agent.Enabled });
                 var hash = Hash(snapshot);
                 db.AgentVersions.Add(new AgentVersionRecord { Id = Guid.NewGuid(), TenantId = agent.TenantId, WorkspaceId = agent.WorkspaceId, AgentDefinitionId = agent.Id, Version = version, Layer = agent.Layer, Role = agent.Role, SnapshotJson = snapshot, ContentHash = hash, ContentLength = Encoding.UTF8.GetByteCount(snapshot), Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
                 agent.Version = version; agent.Status = "published"; agent.Revision++; agent.UpdatedAt = now; agent.UpdatedByPrincipalId = scope.PrincipalId;
@@ -107,15 +107,40 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
     {
         var name = String(input, "display_name") ?? String(input, "name") ?? throw new ArgumentException("display_name is required.");
         var layer = (String(input, "layer") ?? "operation").Trim().ToLowerInvariant(); ValidateLayer(layer);
-        var row = new AgentDefinitionRecord { Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, Slug = Slug(String(input, "slug") ?? name), DisplayName = name.Trim(), Layer = layer, Role = String(input, "role") ?? "", CapabilitiesJson = Raw(input, "capabilities") ?? "[]", ModelStrategyJson = Raw(input, "model_strategy"), ToolScopeJson = Raw(input, "tool_scope") ?? Raw(input, "allowed_tools") ?? "[]", Description = String(input, "description"), SystemPrompt = String(input, "system_prompt") ?? "", Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now, CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId };
-        db.AgentDefinitions.Add(row); await db.SaveChangesAsync(ct).ConfigureAwait(false); return new { id = row.Id, kind = "agent", slug = row.Slug, revision = row.Revision, status = row.Status };
+        var sourceKind = ValidateSourceKind(String(input, "source_kind"));
+        Guid? basePromptPipelineId = null;
+        if (input.TryGetProperty("base_prompt_pipeline_id", out var bpEl) && bpEl.ValueKind != JsonValueKind.Null)
+        {
+            if (bpEl.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(bpEl.GetString()))
+                basePromptPipelineId = null;
+            else if (Guid.TryParse(bpEl.GetString(), out var parsedBp) && parsedBp != Guid.Empty)
+                basePromptPipelineId = parsedBp;
+            else
+                throw new ArgumentException("base_prompt_pipeline_id must be a valid non-empty GUID or null.");
+        }
+        string? provenanceJson = null;
+        if (input.TryGetProperty("provenance", out var provEl) && provEl.ValueKind != JsonValueKind.Null)
+        {
+            if (provEl.ValueKind != JsonValueKind.Object)
+                throw new ArgumentException("provenance must be a JSON object or null.");
+            provenanceJson = provEl.GetRawText();
+            if (provenanceJson.Length > 4096)
+                throw new ArgumentException("provenance must be at most 4096 characters.");
+        }
+        var slug = Slug(String(input, "slug") ?? name);
+        var row = new AgentDefinitionRecord { Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, Slug = slug, DisplayName = name.Trim(), Layer = layer, Role = String(input, "role") ?? "", BasePromptPipelineId = basePromptPipelineId, SourceKind = sourceKind, SourceKey = String(input, "source_key") ?? slug, ProvenanceJson = provenanceJson, CapabilitiesJson = Raw(input, "capabilities") ?? "[]", ModelStrategyJson = Raw(input, "model_strategy"), ToolScopeJson = Raw(input, "tool_scope") ?? Raw(input, "allowed_tools") ?? "[]", Description = String(input, "description"), SystemPrompt = String(input, "system_prompt") ?? "", Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now, CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId };
+        db.AgentDefinitions.Add(row); await db.SaveChangesAsync(ct).ConfigureAwait(false); return new { id = row.Id, kind = "agent", slug = row.Slug, source_kind = row.SourceKind, base_prompt_pipeline_id = row.BasePromptPipelineId, revision = row.Revision, status = row.Status };
     }
 
     private static async Task<object> CreateModeAsync(AgentConfigurationDbContext db, JsonElement input, TenantContext scope, DateTimeOffset now, CancellationToken ct)
     {
         var name = String(input, "display_name") ?? String(input, "name") ?? throw new ArgumentException("display_name is required.");
-        var row = new AgentModeRecord { Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, Slug = Slug(String(input, "slug") ?? name), DisplayName = name.Trim(), Description = String(input, "description"), Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now, CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId };
-        db.AgentModes.Add(row); await db.SaveChangesAsync(ct).ConfigureAwait(false); return new { id = row.Id, kind = "mode", slug = row.Slug, revision = row.Revision, status = row.Status };
+        var orchestrationTier = GraphValidation.NormalizeOrchestrationTier(String(input, "orchestration_tier"));
+        var defaultOptionsJson = input.TryGetProperty("default_options", out var defOpts)
+            ? GraphValidation.NormalizeDefaultOptionsJson(defOpts, "mode")
+            : null;
+        var row = new AgentModeRecord { Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, Slug = Slug(String(input, "slug") ?? name), DisplayName = name.Trim(), Description = String(input, "description"), OrchestrationTier = orchestrationTier, DefaultOptionsJson = defaultOptionsJson, Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now, CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId };
+        db.AgentModes.Add(row); await db.SaveChangesAsync(ct).ConfigureAwait(false); return new { id = row.Id, kind = "mode", slug = row.Slug, orchestration_tier = row.OrchestrationTier, revision = row.Revision, status = row.Status };
     }
 
     private static async Task<object> CreatePipelineAsync(AgentConfigurationDbContext db, JsonElement input, TenantContext scope, DateTimeOffset now, CancellationToken ct)
@@ -130,6 +155,14 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
     {
         var normalized = layer?.Trim().ToLowerInvariant();
         if (!AgentLayerNames.IsValid(normalized)) throw new ArgumentException("Agent layer must be 'operation' or 'execution'; 'planning' is not allowed.", nameof(layer));
+    }
+
+    public static string ValidateSourceKind(string? sourceKind)
+    {
+        if (string.IsNullOrWhiteSpace(sourceKind)) return "custom";
+        var normalized = sourceKind.Trim().ToLowerInvariant();
+        if (normalized is "custom" or "agent_generated") return normalized;
+        throw new ArgumentException("source_kind must be 'custom' or 'agent_generated'.", nameof(sourceKind));
     }
 
     private static void CheckDraft(string status, long actual, long expected)

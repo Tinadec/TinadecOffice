@@ -149,7 +149,29 @@ public sealed class ControlPlaneService
         var imageOverrides = Value("image_input").ValueKind == JsonValueKind.Object
             && Value("image_input").TryGetProperty("model_overrides", out var overrides)
             && overrides.ValueKind == JsonValueKind.Object ? overrides.Clone() : (JsonElement?)null;
-        return new { id = row.Id, driver = row.Driver, protocol, channel = String("channel"), display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), model_parameters = ModelParameters.ReadMap(Value("model_parameters")), model_profiles = SafeReadModelProfiles(Value("model_profiles")), image_input = new { enabled = imageInput.Enabled, max_image_bytes = imageInput.MaxImageBytes, max_images_per_turn = imageInput.MaxImagesPerTurn, base_enabled = imageBase.Enabled, base_max_image_bytes = imageBase.MaxImageBytes, base_max_images_per_turn = imageBase.MaxImagesPerTurn, editable = !acpSnapshot && protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages, source = acpSnapshot ? "acp_snapshot" : protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages ? "config" : "protocol_unsupported", model_overrides = imageOverrides }, has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+        return new { id = row.Id, driver = row.Driver, protocol, channel = String("channel"), display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), model_parameters = ModelParameters.ReadMap(Value("model_parameters")), model_profiles = SafeReadModelProfiles(Value("model_profiles")), image_input = new { enabled = imageInput.Enabled, max_image_bytes = imageInput.MaxImageBytes, max_images_per_turn = imageInput.MaxImagesPerTurn, base_enabled = imageBase.Enabled, base_max_image_bytes = imageBase.MaxImageBytes, base_max_images_per_turn = imageBase.MaxImagesPerTurn, editable = !acpSnapshot && protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages, source = acpSnapshot ? "acp_snapshot" : protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages ? "config" : "protocol_unsupported", model_overrides = imageOverrides }, acp_capabilities = ReadAcpCapabilities(Value("_capabilities")), has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = String("_probe_diagnostic") ?? "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+
+    private static object? ReadAcpCapabilities(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return null;
+        bool? Bool(string name) => value.TryGetProperty(name, out var prop) && prop.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? prop.GetBoolean()
+            : null;
+        var imageInput = Bool("image_input");
+        var loadSession = Bool("load_session");
+        var sessionFork = Bool("session_fork");
+        if (imageInput is null && loadSession is null && sessionFork is null) return null;
+        var source = value.TryGetProperty("source", out var src) && src.ValueKind == JsonValueKind.String
+            ? src.GetString()
+            : "acp_initialize";
+        return new
+        {
+            load_session = loadSession ?? false,
+            image_input = imageInput ?? false,
+            session_fork = sessionFork ?? false,
+            source
+        };
+    }
 
     private static IReadOnlyDictionary<string, ModelProfileDto> SafeReadModelProfiles(JsonElement value)
     {
@@ -224,7 +246,11 @@ public sealed class ControlPlaneService
                 .Where(row => string.Equals(row.Driver, spec.Id, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             var configuredChannels = new List<string>();
+            var configuredModels = new List<string>();
             string? configuredBinaryPath = null;
+            string? configuredHomePath = null;
+            string? configuredLaunchArgs = null;
+            object? configuredAcpCapabilities = null;
             foreach (var row in rows)
             {
                 var cfg = await LoadProviderConfigAsync(db, row.CurrentVersionId, ct);
@@ -233,9 +259,24 @@ public sealed class ControlPlaneService
                 var protocol = HarnessCatalog.ResolveProtocol(ConfigText("protocol"), spec.Id, ConfigText("channel"));
                 configuredChannels.Add(channel ?? protocol);
                 configuredBinaryPath ??= ConfigText("binary_path");
+                configuredHomePath ??= ConfigText("home_path");
+                configuredLaunchArgs ??= ConfigText("launch_args");
+                if (configuredAcpCapabilities is null && cfg.TryGetValue("_capabilities", out var capsEl))
+                    configuredAcpCapabilities = ReadAcpCapabilities(capsEl);
+                var singleModel = ConfigText("model");
+                if (!string.IsNullOrWhiteSpace(singleModel)) configuredModels.Add(singleModel);
+                if (cfg.TryGetValue("models", out var modelsEl) && modelsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var m in modelsEl.EnumerateArray())
+                    {
+                        var text = m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(text)) configuredModels.Add(text);
+                    }
+                }
             }
             var existing = rows.Count > 0;
-            var located = _harnessBinaries.Resolve(spec.Id, searchPaths);
+            var isTemplate = string.Equals(spec.Id, "custom-acp", StringComparison.OrdinalIgnoreCase);
+            var located = isTemplate ? null : _harnessBinaries.Resolve(spec.Id, searchPaths);
             var probe = located is null ? null : await VerifyCliExecutable(located.BinaryName, located.BinaryPath, spec.VersionProbe, ct);
             var reachable = existing || probe?.Runnable == true;
             // The serve argv is a template with a {port} placeholder; discovery reports the concrete
@@ -244,21 +285,35 @@ public sealed class ControlPlaneService
             var serveArgv = spec.HttpServer is { } server
                 ? string.Join(' ', server.Argv).Replace("{port}", server.DefaultPort.ToString(System.Globalization.CultureInfo.InvariantCulture))
                 : null;
+            var defaultChannel = spec.HttpServer is not null ? null : spec.Channels[0].Channel;
+            var defaultProtocol = spec.DefaultProtocol;
+            var defaultLaunchArgs = configuredLaunchArgs
+                ?? serveArgv
+                ?? (spec.Channels[0].Argv.Count > 0 ? string.Join(' ', spec.Channels[0].Argv) : null);
+            var detectedHome = configuredHomePath ?? (reachable ? _harnessBinaries.ConfigHomeOf(spec.Id) : null);
             candidates.Add(new
             {
                 driver = spec.Id,
                 display_name = spec.DisplayName,
                 vendor = spec.Vendor,
                 docs_url = spec.DocsUrl,
+                is_template = isTemplate,
+                default_channel = defaultChannel,
+                default_protocol = defaultProtocol,
+                default_launch_args = defaultLaunchArgs,
+                env_vars = spec.EnvVars.ToArray(),
+                detected_models = configuredModels.Distinct(StringComparer.Ordinal).ToArray(),
+                acp_capabilities = configuredAcpCapabilities,
                 binary_path = reachable ? located?.BinaryPath ?? configuredBinaryPath : null,
                 // Reported as a fact about the harness, not as the process HOME. The two are different
                 // directories: Kimi's config home is `~/.kimi-code`, and handing that to the child as
                 // HOME would make it look for `~/.kimi-code/.kimi-code`. Only the path the operator
                 // types in the form becomes HOME, and discovery never invents one.
-                config_home = reachable ? _harnessBinaries.ConfigHomeOf(spec.Id) : null,
+                config_home = detectedHome,
+                home_path = detectedHome,
                 server_url = reachable && spec.HttpServer is { } endpoint ? $"http://127.0.0.1:{endpoint.DefaultPort}" : null,
-                launch_args = reachable ? serveArgv : null,
-                status = existing ? "configured" : probe?.Runnable == true ? "found" : "missing",
+                launch_args = reachable ? (configuredLaunchArgs ?? serveArgv ?? defaultLaunchArgs) : defaultLaunchArgs,
+                status = existing ? "configured" : isTemplate ? "template" : probe?.Runnable == true ? "found" : "missing",
                 configured_channels = configuredChannels.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 // A probe that did not answer is not evidence that the harness is absent, and the old
                 // code turned that difference invisible: an unread stdout pipe or a loaded machine made
@@ -266,6 +321,7 @@ public sealed class ControlPlaneService
                 probe_note = existing ? null : probe is { Runnable: false } failed ? failed.Note : null,
                 probe_note_code = existing || probe is not { Runnable: false } ? null : probe.NoteCode,
                 probe_note_data = existing || probe is not { Runnable: false } ? null : probe.NoteData,
+                probe_hint = existing ? null : BuildDiscoverHint(spec, isTemplate, probe),
                 channels = HarnessChannelFacts(spec).ToArray(),
                 caveats = spec.KnownCaveats.ToArray()
             });
@@ -339,6 +395,12 @@ public sealed class ControlPlaneService
 
         OpencodeServeEndpoint? endpoint = null;
         AcpHarnessProbeResult? acpCapabilities = null;
+        var launchArgs = Get("launch_args");
+        var homePath = Get("home_path");
+        var requestedModel = Get("model");
+        var requestedModels = input.TryGetProperty("models", out var modelsProp) && modelsProp.ValueKind == JsonValueKind.Array
+            ? modelsProp.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToArray()
+            : (!string.IsNullOrWhiteSpace(requestedModel) ? new[] { requestedModel.Trim() } : Array.Empty<string>());
         var existing = await ExistingCliProviderAsync(driver, channel, protocol, ct);
         if (protocol == ChatProtocols.Acp)
         {
@@ -347,21 +409,26 @@ public sealed class ControlPlaneService
             // probe never proved is what let a provider look connected while it could not start.
             try
             {
-                acpCapabilities = await ProbeAcpHandshakeAsync(driver, binaryPath, Get("home_path"), existing?.Id, ct);
+                acpCapabilities = await ProbeAcpHandshakeAsync(driver, binaryPath, homePath, launchArgs, existing?.Id, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // Everything a harness can fail with here is a fact about connecting to it: an
                 // unavailable binary, a timeout waiting for `initialize`, a session the agent
                 // refused. Only the caller's cancellation is a different kind of answer.
-                return Results.Json(new { code = "CLI_CONNECT_FAILED", message = ex.Message }, statusCode: 502);
+                return Results.Json(new
+                {
+                    code = "CLI_CONNECT_FAILED",
+                    message = ex.Message,
+                    hint = BuildAcpConnectDiagnosticHint(spec, ex.Message)
+                }, statusCode: 502);
             }
         }
         else if (protocol == ChatProtocols.OpencodeServe)
         {
             try
             {
-                endpoint = await _opencode.EnsureRunningAsync(new OpencodeServeConfig(binaryPath, Get("launch_args"), Get("server_url"), Get("home_path")), ct);
+                endpoint = await _opencode.EnsureRunningAsync(new OpencodeServeConfig(binaryPath, launchArgs, Get("server_url"), homePath), ct);
             }
             catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException)
             {
@@ -370,17 +437,27 @@ public sealed class ControlPlaneService
         }
 
         var port = endpoint is null ? 0 : new Uri(endpoint.ServerUrl).Port;
+        var defaultChannelArgv = spec?.Channel(channel)?.Argv;
+        var resolvedLaunchArgs = !string.IsNullOrWhiteSpace(launchArgs)
+            ? launchArgs.Trim()
+            : protocol == ChatProtocols.OpencodeServe
+                ? $"serve --port {port}"
+                : defaultChannelArgv is { Count: > 0 }
+                    ? string.Join(' ', defaultChannelArgv)
+                    : null;
         var payload = JsonSerializer.SerializeToElement(new
         {
             driver,
-            display_name = Get("display_name") ?? driver,
+            display_name = Get("display_name") ?? spec?.DisplayName ?? driver,
             connection_kind = "cli",
             protocol,
             channel,
+            model = requestedModel ?? requestedModels.FirstOrDefault(),
+            models = requestedModels,
             binary_path = binaryPath,
-            home_path = Get("home_path"),
+            home_path = homePath,
             server_url = endpoint?.ServerUrl,
-            launch_args = Get("launch_args") ?? (protocol == ChatProtocols.OpencodeServe ? $"serve --port {port}" : null),
+            launch_args = resolvedLaunchArgs,
             _capabilities = acpCapabilities is null ? null : new
             {
                 image_input = acpCapabilities.ImageInput,
@@ -388,6 +465,7 @@ public sealed class ControlPlaneService
                 session_fork = acpCapabilities.SessionFork,
                 source = "acp_initialize"
             },
+            _probe_diagnostic = (string?)null,
             enabled = true
         });
         // Internal system path: the CLI process just spawned is the source of truth, so the
@@ -400,8 +478,41 @@ public sealed class ControlPlaneService
     /// catalog's argv, the governed scratch directory it is allowed to work in — stays behind the
     /// prober port, because this file's job is the provider row, not the process shape.
     /// </summary>
-    private async Task<AcpHarnessProbeResult> ProbeAcpHandshakeAsync(string driver, string binaryPath, string? homePath, Guid? providerInstanceId, CancellationToken ct) =>
-        await _acp.ProbeAsync(providerInstanceId, driver, binaryPath, homePath, ct);
+    private async Task<AcpHarnessProbeResult> ProbeAcpHandshakeAsync(string driver, string binaryPath, string? homePath, string? launchArgs, Guid? providerInstanceId, CancellationToken ct) =>
+        await _acp.ProbeAsync(providerInstanceId, driver, binaryPath, homePath, launchArgs, ct);
+
+    private static string? BuildDiscoverHint(HarnessSpec spec, bool isTemplate, CliProbe? probe)
+    {
+        if (isTemplate)
+            return "Generic ACP template: enter any compliant ACP executable path in binary_path and optional flags in launch_args.";
+        if (probe is not { Runnable: false }) return null;
+        var authNote = spec.EnvVars.Count > 0 ? $" Verify auth env ({string.Join(", ", spec.EnvVars)}) or sign in interactively once." : string.Empty;
+        return probe.NoteCode switch
+        {
+            "probe_timeout" => $"Version probe timed out; check whether '{spec.BinaryNames[0]}' blocks on first-run login/prompt.{authNote}",
+            "exit_code" => $"Executable returned non-zero on version probe; check CLI installation or set custom launch_args.{authNote}",
+            _ => $"Could not probe '{spec.BinaryNames[0]}'; verify binary_path or permissions.{authNote}"
+        };
+    }
+
+    private static string BuildAcpConnectDiagnosticHint(HarnessSpec? spec, string errorMessage)
+    {
+        if (errorMessage.Contains("auth", StringComparison.OrdinalIgnoreCase)
+            || errorMessage.Contains("login", StringComparison.OrdinalIgnoreCase)
+            || errorMessage.Contains("unauthorized", StringComparison.OrdinalIgnoreCase)
+            || errorMessage.Contains("api key", StringComparison.OrdinalIgnoreCase))
+        {
+            var envHint = spec is { EnvVars.Count: > 0 }
+                ? $" Ensure {string.Join(" / ", spec.EnvVars)} is set or run the CLI login command once."
+                : " Sign in once in your terminal before connecting via ACP.";
+            return "ACP authentication failed." + envHint;
+        }
+        if (errorMessage.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+            return "ACP initialize timed out. Verify launch_args starts stdio ACP mode (not interactive TUI) and check first-run prompts.";
+        return spec is null || string.Equals(spec.Id, "custom-acp", StringComparison.OrdinalIgnoreCase)
+            ? "Verify binary_path points to an executable speaking JSON-RPC stdio ACP and configure any subcommands/flags in launch_args."
+            : $"Verify '{spec.DisplayName}' supports stdio ACP flags ({string.Join(' ', spec.Channel(AgentChannels.Acp)?.Argv ?? [])}) or override launch_args.";
+    }
 
     private async Task<ModelProviderRecord?> ExistingCliProviderAsync(string driver, string? channel, string protocol, CancellationToken ct)
     {
@@ -498,18 +609,7 @@ public sealed class ControlPlaneService
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        if (OperatingSystem.IsWindows()
-            && (path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase)))
-        {
-            psi.FileName = "cmd.exe";
-            psi.ArgumentList.Add("/c");
-            psi.ArgumentList.Add(path);
-        }
-        else
-        {
-            psi.FileName = path;
-        }
-        foreach (var argument in probe.Argv) psi.ArgumentList.Add(argument);
+        HarnessProcessCommand.Apply(psi, path, probe.Argv);
         return psi;
     }
 
@@ -1150,7 +1250,6 @@ public sealed class ControlPlaneService
         var assembler = _promptAssembler ?? throw new InvalidOperationException("IPromptAssembler is not registered.");
         FrozenWorkspaceBinding? workspace = null;
         Guid? sessionModeVersionId = null;
-        string? sessionLocale = null;
 
         if (input.SessionId is { } sessionId && sessionId != Guid.Empty && _sessions is not null)
         {
@@ -1159,7 +1258,6 @@ public sealed class ControlPlaneService
             {
                 workspace = await WorkspaceBindingFactory.TryCreateAsync(_sessions, session, ct);
                 sessionModeVersionId = session.ModeVersionId;
-                sessionLocale = session.InterfaceLocale;
             }
         }
 
@@ -1227,7 +1325,7 @@ public sealed class ControlPlaneService
             PromptVersionContentHash: promptVersionHash,
             PromptGraphJson: promptGraphJson,
             IncludeLiveFragments: true,
-            ResponseLocale: sessionLocale)
+            ResponseLocale: null)
         {
             Workspace = workspace,
             RuntimePolicy = resolvedMode?.RuntimePolicy,

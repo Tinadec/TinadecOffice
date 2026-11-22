@@ -111,6 +111,7 @@ public sealed class AgentConfigurationDbContext : ConfigurationProjectionDbConte
             entity.Property(x => x.Description).HasMaxLength(4096);
             entity.Property(x => x.RuntimePolicyJson).HasMaxLength(4096);
             entity.Property(x => x.OrchestrationTier).HasMaxLength(32);
+            entity.Property(x => x.DefaultOptionsJson).HasMaxLength(1024);
             entity.Property(x => x.Instructions).HasMaxLength(4000);
             // Bindings (team member envelopes, tool switches) for both authored and pack modes.
             entity.Property(x => x.BindingsJson).HasMaxLength(16384);
@@ -483,6 +484,11 @@ public sealed class AgentModeRecord
     /// Null means derive from graph topology and conversation tools at freeze time.
     /// </summary>
     public string? OrchestrationTier { get; set; }
+    /// <summary>
+    /// Optional preset run switches (<c>plan_first</c>, <c>spec_enabled</c>, <c>multi_agent</c>,
+    /// <c>bulletin_board</c>, <c>worktree</c>) applied by default when this mode is selected.
+    /// </summary>
+    public string? DefaultOptionsJson { get; set; }
     /// <summary>
     /// Team-level collaboration instructions. Frozen into the mode version snapshot
     /// at publish time and injected into the conversation identity's system prompt.

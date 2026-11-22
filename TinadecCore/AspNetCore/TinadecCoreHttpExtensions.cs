@@ -26,6 +26,7 @@ public static class TinadecCoreHttpExtensions
                 System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         });
         services.AddSingleton<ServerFailureJournal>();
+        services.AddSingleton<TinadecCore.Abstractions.Ports.IServerFailureReader>(sp => sp.GetRequiredService<ServerFailureJournal>());
         services.Configure<ApiBehaviorOptions>(options =>
         {
             options.InvalidModelStateResponseFactory = context =>
@@ -121,6 +122,11 @@ public static class TinadecCoreHttpExtensions
                     TinadecCore.Abstractions.Ports.ConfigurationDocumentException configuration =>
                         (configuration.Code == "workspace_authorization_required" ? 403 : configuration.Code.Contains("conflict", StringComparison.Ordinal) ? 412 : 400, configuration.Code, configuration.Message),
                     TinadecCore.Abstractions.Ports.ToolSettingsException toolSettings => (toolSettings.StatusCode, toolSettings.Code, toolSettings.Message),
+                    TinadecCore.Abstractions.Ports.LifecycleHookException lifecycleHook => (lifecycleHook.StatusCode, lifecycleHook.Code, lifecycleHook.Message),
+                    TinadecCore.Abstractions.Ports.ModelProfileException modelProfile => (modelProfile.StatusCode, modelProfile.Code, modelProfile.Message),
+                    TinadecCore.Abstractions.Ports.PromptFragmentException promptFragment => (promptFragment.StatusCode, promptFragment.Code, promptFragment.Message),
+                    TinadecCore.Abstractions.Ports.ApprovalRuleException approvalRule => (approvalRule.StatusCode, approvalRule.Code, approvalRule.Message),
+                    TinadecCore.Abstractions.Ports.EnvironmentRegistryException environmentRegistry => (environmentRegistry.StatusCode, environmentRegistry.Code, environmentRegistry.Message),
                     TinadecCore.Abstractions.Ports.TinaChatException chat => (chat.StatusCode, chat.Code, chat.Message),
                     TinadecCore.AgentConfiguration.AgentPackDomainException ape => (ape.StatusCode, ape.Code, ape.Message),
                     TinadecCore.DmaEA.RunAdmissionException rae when rae.Code == "CONTEXT_REVISION_CONFLICT" => (StatusCodes.Status409Conflict, "context_conflict", rae.Message),
@@ -132,7 +138,6 @@ public static class TinadecCoreHttpExtensions
                     // letting it fall through to the catch-all turned "you forgot actor_id" into a 500.
                     Microsoft.AspNetCore.Http.BadHttpRequestException binding => (binding.StatusCode, "invalid_request", binding.Message),
                     KeyNotFoundException => (StatusCodes.Status404NotFound, "run_not_found", exception.Message),
-                    InvalidOperationException ioe when ioe.Message.Contains("model", StringComparison.OrdinalIgnoreCase) || ioe.Message.Contains("Provider", StringComparison.OrdinalIgnoreCase) => (StatusCodes.Status400BadRequest, "model_not_configured", ioe.Message),
                     InvalidOperationException => (StatusCodes.Status409Conflict, "conflict", exception.Message),
                     _ => (StatusCodes.Status500InternalServerError, "internal_error", "An unexpected error occurred.")
                 };

@@ -31,10 +31,20 @@ public static class InteractionsEndpoints
 
     public static IEndpointRouteBuilder MapInteractionsEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions", CreateInteraction);
-        app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions/{interactionId:guid}/reassign", ReassignInteraction);
-        app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions/{interactionId:guid}/cancel", CancelInteraction);
-        app.MapGet("/api/v1/sessions/{sessionId:guid}/interactions", ListInteractions);
+        app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions", CreateInteraction)
+            .Produces<InteractionCreatedResponseDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+        app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions/{interactionId:guid}/reassign", ReassignInteraction)
+            .Produces<InteractionMutationResponseDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions/{interactionId:guid}/cancel", CancelInteraction)
+            .Produces<InteractionMutationResponseDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapGet("/api/v1/sessions/{sessionId:guid}/interactions", ListInteractions)
+            .Produces<IReadOnlyList<InteractionSummaryResponseDto>>(StatusCodes.Status200OK);
         return app;
     }
 

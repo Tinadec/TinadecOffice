@@ -21,7 +21,7 @@ public sealed class VectorStoreModuleRegistrar : IModuleRegistrar
             Dependencies = ["abstractions", "persistence"],
             Capabilities = ["semantic_indexing", "embedding_generation", "project_scoped_retrieval"],
             Language = "C#",
-            RegistrationStatus = ModuleRegistrationStatus.NotConfigured
+            RegistrationStatus = ModuleRegistrationStatus.Registered
         });
     }
 }

@@ -715,5 +715,295 @@ public sealed class ToolSkillResourceService(
             || path.Split('/').Any(x => x.Equals("CON", StringComparison.OrdinalIgnoreCase) || x.Equals("PRN", StringComparison.OrdinalIgnoreCase) || x.Equals("AUX", StringComparison.OrdinalIgnoreCase) || x.Equals("NUL", StringComparison.OrdinalIgnoreCase)))
             throw new ToolSettingsException("invalid_skill_asset", "Asset paths must stay relative to the skill package and cannot contain reserved names.");
     }
+
+    public async Task<ToolSkillInstallResultDto> InstallAsync(
+        ToolSkillInstallRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var sourceType = (request.SourceType ?? "inline").Trim().ToLowerInvariant();
+        var scope = string.Equals(request.Scope, "project", StringComparison.OrdinalIgnoreCase) ? "project" : "shared";
+        if (scope == "project" && (request.ProjectId is null || request.ProjectId == Guid.Empty))
+            throw new ToolSettingsException("project_required", "A project_id is required when scope is 'project'.");
+
+        switch (sourceType)
+        {
+            case "inline":
+            {
+                if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Content))
+                    throw new ToolSettingsException("invalid_skill", "inline install requires name and content.");
+                var name = ExternalCliDiscoveryService.NormalizeSkillName(request.Name);
+                var existing = request.Overwrite
+                    ? (await ListAsync(request.ProjectId, includeBuiltins: false, cancellationToken)).Skills
+                        .FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Scope, scope, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                var content = ExternalCliDiscoveryService.EnsureSkillFrontmatter(request.Content, name, null);
+                var write = new ToolSkillWriteDto
+                {
+                    Scope = scope,
+                    ProjectId = request.ProjectId,
+                    Name = name,
+                    Content = content,
+                    Enabled = request.Enabled ?? true,
+                    Files = request.Files,
+                    ReplaceFiles = true,
+                    ExpectedFileHash = existing?.FileHash,
+                    Source = "inline",
+                };
+                var saved = request.Governed
+                    ? await RequestSaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken)
+                    : await SaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken);
+                return new ToolSkillInstallResultDto
+                {
+                    SourceType = sourceType,
+                    InstalledSkills = [saved],
+                };
+            }
+            case "local_dir":
+            {
+                var localPath = (request.LocalPath ?? string.Empty).Trim();
+                if (localPath.Length == 0 || !Directory.Exists(localPath))
+                    throw new ToolSettingsException("invalid_skill_path", "local_path must point to an existing skill directory.");
+                if ((File.GetAttributes(localPath) & FileAttributes.ReparsePoint) != 0)
+                    throw new ToolSettingsException("skill_path_escape", "Skill directory cannot be a symbolic link.");
+                var skillMdPath = Path.Combine(localPath, "SKILL.md");
+                if (!File.Exists(skillMdPath))
+                    throw new ToolSettingsException("invalid_skill", "The selected local directory does not contain SKILL.md.");
+
+                var rawName = string.IsNullOrWhiteSpace(request.Name)
+                    ? Path.GetFileName(Path.GetFullPath(localPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                    : request.Name;
+                var name = ExternalCliDiscoveryService.NormalizeSkillName(rawName);
+                var existing = request.Overwrite
+                    ? (await ListAsync(request.ProjectId, includeBuiltins: false, cancellationToken)).Skills
+                        .FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Scope, scope, StringComparison.OrdinalIgnoreCase))
+                    : null;
+
+                var rawContent = await File.ReadAllTextAsync(skillMdPath, Encoding.UTF8, cancellationToken);
+                var content = ExternalCliDiscoveryService.EnsureSkillFrontmatter(rawContent, name, null);
+                var files = ExternalCliDiscoveryService.ReadSkillAssets(localPath);
+                var write = new ToolSkillWriteDto
+                {
+                    Scope = scope,
+                    ProjectId = request.ProjectId,
+                    Name = name,
+                    Content = content,
+                    Enabled = request.Enabled ?? true,
+                    Files = files,
+                    ReplaceFiles = true,
+                    ExpectedFileHash = existing?.FileHash,
+                    Source = "local_dir",
+                };
+                var saved = request.Governed
+                    ? await RequestSaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken)
+                    : await SaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken);
+                return new ToolSkillInstallResultDto
+                {
+                    SourceType = sourceType,
+                    InstalledSkills = [saved],
+                };
+            }
+            case "git_url":
+            {
+                var gitUrl = (request.GitUrl ?? string.Empty).Trim();
+                if (gitUrl.Length == 0)
+                    throw new ToolSettingsException("invalid_git_url", "git_url is required.");
+                var fetchRoot = request.ProjectId is { } pid
+                    ? (await Project(pid, cancellationToken))?.RootPath
+                    : null;
+                fetchRoot ??= storage.Locations.Root;
+
+                var (name, packageFiles, commit) = await FetchSkillFromGitUrlAsync(gitUrl, request.Name, request.Subpath, fetchRoot, cancellationToken);
+                var rawContent = Encoding.UTF8.GetString(Convert.FromBase64String(packageFiles["SKILL.md"]));
+                var content = ExternalCliDiscoveryService.EnsureSkillFrontmatter(rawContent, name, null);
+                var assets = packageFiles.Where(x => !string.Equals(x.Key, "SKILL.md", StringComparison.Ordinal))
+                    .ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal);
+                var existing = request.Overwrite
+                    ? (await ListAsync(request.ProjectId, includeBuiltins: false, cancellationToken)).Skills
+                        .FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Scope, scope, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                var write = new ToolSkillWriteDto
+                {
+                    Scope = scope,
+                    ProjectId = request.ProjectId,
+                    Name = name,
+                    Content = content,
+                    Enabled = request.Enabled ?? true,
+                    Files = assets,
+                    ReplaceFiles = true,
+                    ExpectedFileHash = existing?.FileHash,
+                    Source = "git_url",
+                    Commit = commit,
+                };
+                var saved = request.Governed
+                    ? await RequestSaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken)
+                    : await SaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken);
+                return new ToolSkillInstallResultDto
+                {
+                    SourceType = sourceType,
+                    InstalledSkills = [saved],
+                };
+            }
+            case "external_cli_import":
+            {
+                var discovery = services.GetRequiredService<IExternalCliDiscoveryService>();
+                var itemIds = request.ItemIds;
+                if (itemIds is null || itemIds.Count == 0)
+                {
+                    var found = await discovery.DiscoverAsync(request.ProjectId, request.Ecosystems, cancellationToken);
+                    itemIds = found.Items.Select(x => x.ItemId).ToArray();
+                }
+                if (itemIds.Count == 0)
+                {
+                    return new ToolSkillInstallResultDto { SourceType = sourceType };
+                }
+                var imported = await discovery.ImportAsync(new ExternalCliImportRequestDto
+                {
+                    ItemIds = itemIds,
+                    ProjectId = request.ProjectId,
+                    Scope = scope,
+                    EnableStdioMcp = request.EnableStdioMcp ?? false,
+                    Overwrite = request.Overwrite,
+                }, cancellationToken);
+                return new ToolSkillInstallResultDto
+                {
+                    SourceType = sourceType,
+                    InstalledSkills = imported.InstalledSkills,
+                    InstalledMcpServers = imported.InstalledMcpServers,
+                    InstalledCommands = imported.InstalledCommands,
+                    Skipped = imported.Skipped,
+                };
+            }
+            default:
+                throw new ToolSettingsException("invalid_request", "source_type must be inline, local_dir, git_url, or external_cli_import.");
+        }
+    }
+
+    public async Task<ToolSkillResourceDto> SetEnabledAsync(
+        Guid resourceId,
+        bool enabled,
+        Guid? projectId = null,
+        long? expectedRevision = null,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await GetAsync(resourceId, projectId, cancellationToken)
+            ?? throw new ToolSettingsException("skill_not_found", "Skill resource not found.", 404);
+        if (existing.ReadOnly)
+            throw new ToolSettingsException("read_only_skill", "Built-in and compatibility skills are read-only.", 409);
+        if (expectedRevision is { } rev && existing.Revision != rev)
+            throw Conflict();
+
+        var write = new ToolSkillWriteDto
+        {
+            Scope = existing.Scope,
+            ProjectId = existing.ProjectId,
+            Enabled = enabled,
+            ExpectedFileHash = existing.FileHash,
+        };
+        return await SaveAsync(resourceId, existing.ProjectId, write, expectedRevision ?? existing.Revision, cancellationToken);
+    }
+
+    public Task<ToolSkillListDto> ReloadAsync(Guid? projectId = null, CancellationToken cancellationToken = default) =>
+        ListAsync(projectId, includeBuiltins: true, cancellationToken);
+
+    private async Task<(string Name, Dictionary<string, string> Files, string? Commit)> FetchSkillFromGitUrlAsync(
+        string gitUrl,
+        string? requestedName,
+        string? subpath,
+        string fetchRoot,
+        CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(gitUrl, UriKind.Absolute, out var uri)
+            || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || uri.UserInfo.Length > 0)
+        {
+            throw new ToolSettingsException("invalid_git_url", "git_url must be a public https:// URL without embedded credentials.");
+        }
+
+        // Direct SKILL.md HTTPS link
+        if (uri.AbsolutePath.EndsWith("/SKILL.md", StringComparison.OrdinalIgnoreCase))
+        {
+            var page = await MarketFetch.FetchPageAsync(provider, fetchRoot, gitUrl, cancellationToken);
+            if (page.Error is not null || string.IsNullOrWhiteSpace(page.Body))
+                throw new ToolSettingsException("git_fetch_failed", page.Error ?? "Failed to fetch SKILL.md.");
+            var segments = uri.AbsolutePath.Trim('/').Split('/');
+            var derivedName = ExternalCliDiscoveryService.NormalizeSkillName(
+                !string.IsNullOrWhiteSpace(requestedName) ? requestedName
+                : segments.Length >= 2 ? segments[^2] : "git-skill");
+            return (derivedName, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["SKILL.md"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(page.Body)),
+            }, null);
+        }
+
+        if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+            throw new ToolSettingsException("invalid_git_url", "Only https://github.com/... repository URLs or direct https://.../SKILL.md URLs are supported.");
+
+        // If already a pinned 40-char commit tree URL, delegate directly to SkillGitRepositorySource.
+        if (SkillGitRepositorySource.ValidateLocation(gitUrl, out _))
+        {
+            var pathParts = uri.AbsolutePath.Trim('/').Split('/');
+            var commit = pathParts[3].ToLowerInvariant();
+            var skillName = ExternalCliDiscoveryService.NormalizeSkillName(
+                !string.IsNullOrWhiteSpace(requestedName) ? requestedName
+                : pathParts.Length > 4 ? pathParts[^1] : pathParts[1]);
+            var (files, error) = await SkillGitRepositorySource.ReadPackageAsync(provider, fetchRoot, gitUrl, skillName, cancellationToken);
+            if (files is null)
+                throw new ToolSettingsException("git_fetch_failed", error ?? "Failed to read skill package from GitHub.");
+            return (skillName, files, commit);
+        }
+
+        // Resolve owner/repo [/tree/<branch>/<subpath>] -> commit SHA via GitHub REST API through #fetch
+        var parts = uri.AbsolutePath.Trim('/').Split('/');
+        if (parts.Length < 2)
+            throw new ToolSettingsException("invalid_git_url", "Expected https://github.com/<owner>/<repo>[/tree/<branch>/<path>].");
+        var owner = parts[0];
+        var repo = parts[1].EndsWith(".git", StringComparison.OrdinalIgnoreCase) ? parts[1][..^4] : parts[1];
+        string? branch = null;
+        var prefix = (subpath ?? string.Empty).Trim('/');
+        if (parts.Length >= 4 && string.Equals(parts[2], "tree", StringComparison.OrdinalIgnoreCase))
+        {
+            branch = parts[3];
+            if (parts.Length > 4 && string.IsNullOrEmpty(prefix))
+                prefix = string.Join('/', parts.Skip(4));
+        }
+
+        if (string.IsNullOrWhiteSpace(branch))
+        {
+            var repoPage = await MarketFetch.FetchPageAsync(provider, fetchRoot, $"https://api.github.com/repos/{owner}/{repo}", cancellationToken);
+            if (repoPage.Error is not null || string.IsNullOrWhiteSpace(repoPage.Body))
+                throw new ToolSettingsException("git_fetch_failed", repoPage.Error ?? "Could not inspect GitHub repository.");
+            using var repoDoc = JsonDocument.Parse(repoPage.Body);
+            branch = repoDoc.RootElement.TryGetProperty("default_branch", out var dbEl) && dbEl.ValueKind == JsonValueKind.String
+                ? dbEl.GetString() ?? "main"
+                : "main";
+        }
+
+        var branchPage = await MarketFetch.FetchPageAsync(provider, fetchRoot, $"https://api.github.com/repos/{owner}/{repo}/branches/{Uri.EscapeDataString(branch)}", cancellationToken);
+        if (branchPage.Error is not null || string.IsNullOrWhiteSpace(branchPage.Body))
+            throw new ToolSettingsException("git_fetch_failed", branchPage.Error ?? $"Could not resolve branch '{branch}'.");
+        string resolvedCommit;
+        using (var branchDoc = JsonDocument.Parse(branchPage.Body))
+        {
+            if (!branchDoc.RootElement.TryGetProperty("commit", out var commitEl)
+                || !commitEl.TryGetProperty("sha", out var shaEl)
+                || shaEl.GetString() is not { Length: 40 } sha)
+            {
+                throw new ToolSettingsException("git_fetch_failed", $"GitHub branch '{branch}' did not return a commit SHA.");
+            }
+            resolvedCommit = sha.ToLowerInvariant();
+        }
+
+        var pinnedUrl = string.IsNullOrEmpty(prefix)
+            ? $"https://github.com/{owner}/{repo}/tree/{resolvedCommit}"
+            : $"https://github.com/{owner}/{repo}/tree/{resolvedCommit}/{prefix}";
+        var lookupName = !string.IsNullOrEmpty(prefix) ? prefix.Split('/')[^1] : repo;
+        var resolvedName = ExternalCliDiscoveryService.NormalizeSkillName(
+            !string.IsNullOrWhiteSpace(requestedName) ? requestedName : lookupName);
+        var (pkgFiles, pkgErr) = await SkillGitRepositorySource.ReadPackageAsync(provider, fetchRoot, pinnedUrl, lookupName, cancellationToken);
+        if (pkgFiles is null)
+            throw new ToolSettingsException("git_fetch_failed", pkgErr ?? "Failed to read skill package from GitHub.");
+        return (resolvedName, pkgFiles, resolvedCommit);
+    }
 }
 

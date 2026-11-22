@@ -55,7 +55,13 @@ internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer
                 });
                 break;
             default:
-                options.UseSqlite(_connectionInfo.ConnectionString, db => db.MigrationsAssembly("TinadecCore.Storage.Migrations.Sqlite"));
+                var commandTimeoutSeconds = Math.Clamp((_options.Sqlite.BusyTimeoutMs + 999) / 1000, 15, 120);
+                options.UseSqlite(_connectionInfo.ConnectionString, db =>
+                {
+                    db.MigrationsAssembly("TinadecCore.Storage.Migrations.Sqlite");
+                    db.CommandTimeout(commandTimeoutSeconds);
+                });
+                options.AddInterceptors(new SqliteConnectionPragmaInterceptor(_options.Sqlite.BusyTimeoutMs, _options.Sqlite.EnableWal));
                 break;
         }
     }

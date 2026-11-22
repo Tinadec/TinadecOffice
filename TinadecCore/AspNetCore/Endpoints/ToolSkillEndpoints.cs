@@ -83,6 +83,46 @@ public static class ToolSkillEndpoints
             if (!Revision(request, out var revision)) return Results.Problem("If-Match with the loaded revision is required.", statusCode: 428);
             try { return Results.Ok(await skills.RequestDeleteAsync(resourceId, project_id, revision, ct)); } catch (ToolSettingsException ex) { return Problem(ex); }
         }).Produces<ToolSkillResourceDto>().ProducesProblem(412).ProducesProblem(428);
+
+        group.MapPost("/install", async (ToolSkillInstallRequestDto input, IToolSkillResourceService skills, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await skills.InstallAsync(input, ct)); }
+            catch (ToolSettingsException ex) { return Problem(ex); }
+        }).Produces<ToolSkillInstallResultDto>().ProducesProblem(400).ProducesProblem(409);
+
+        group.MapPatch("/{resourceId:guid}/enabled", async (Guid resourceId, ToolSkillEnabledRequestDto input, HttpRequest request, HttpResponse response, IToolSkillResourceService skills, CancellationToken ct) =>
+        {
+            if (input.Enabled is not { } enabled)
+                return Results.Problem("enabled (true/false) is required.", statusCode: 400);
+            long? expected = request.Headers.IfMatch.Count > 0 && Revision(request, out var rev) ? rev : null;
+            if (request.Headers.IfMatch.Count > 0 && expected is null)
+                return Results.Problem("If-Match must contain a valid non-negative integer.", statusCode: 400);
+            try
+            {
+                var updated = await skills.SetEnabledAsync(resourceId, enabled, input.ProjectId, expected, ct);
+                response.Headers.ETag = $"\"{updated.Revision}\"";
+                return Results.Ok(updated);
+            }
+            catch (ToolSettingsException ex) { return Problem(ex); }
+        }).Produces<ToolSkillResourceDto>().ProducesProblem(400).ProducesProblem(404).ProducesProblem(409).ProducesProblem(412);
+
+        group.MapPost("/reload", async (Guid? project_id, IToolSkillResourceService skills, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await skills.ReloadAsync(project_id, ct)); }
+            catch (ToolSettingsException ex) { return Problem(ex); }
+        }).Produces<ToolSkillListDto>();
+
+        app.MapGet("/api/v1/tools/external-cli/discover", async (
+            Guid? project_id,
+            string? ecosystems,
+            IExternalCliDiscoveryService discovery,
+            CancellationToken ct) =>
+        {
+            var ecoList = string.IsNullOrWhiteSpace(ecosystems)
+                ? null
+                : ecosystems.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return Results.Ok(await discovery.DiscoverAsync(project_id, ecoList, ct));
+        }).WithTags("Tool Skills").Produces<ExternalCliDiscoveryDto>();
         return app;
     }
     private static bool Revision(HttpRequest request, out long revision) => long.TryParse(request.Headers.IfMatch.ToString().Trim('"'), out revision) && revision >= 0;

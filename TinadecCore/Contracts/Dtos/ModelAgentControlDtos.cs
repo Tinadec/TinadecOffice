@@ -8,6 +8,7 @@ public static class ModelStrategyKinds
     public const string Inherit = "inherit";
     public const string Route = "route";
     public const string Fixed = "fixed";
+    public const string Auto = "auto";
 }
 
 public sealed class ModelStrategyDto
@@ -16,6 +17,12 @@ public sealed class ModelStrategyDto
     public string? RoutePurpose { get; init; }
     public Guid? ProviderInstanceId { get; init; }
     public string? Model { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? RequiredSpecialties { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PreferredTier { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MaxCostTier { get; init; }
 }
 
 public sealed class ModelRouteCandidateDto
@@ -225,7 +232,15 @@ public static class ModelStrategyJson
                 ProviderInstanceId = RequiredGuid(value, "provider_instance_id"),
                 Model = OptionalString(value, "model")
             },
-            _ => throw new ArgumentException("model_strategy.kind must be inherit|route|fixed.")
+            ModelStrategyKinds.Auto => new ModelStrategyDto
+            {
+                Kind = ModelStrategyKinds.Auto,
+                RoutePurpose = OptionalString(value, "route_purpose"),
+                RequiredSpecialties = OptionalStringArray(value, "required_specialties"),
+                PreferredTier = OptionalEnum(value, "preferred_tier", ["fast", "balanced", "deep"]),
+                MaxCostTier = OptionalEnum(value, "max_cost_tier", ["low", "medium", "high"])
+            },
+            _ => throw new ArgumentException("model_strategy.kind must be inherit|route|fixed|auto.")
         };
     }
 
@@ -236,6 +251,38 @@ public static class ModelStrategyJson
 
     private static string? OptionalString(JsonElement value, string property) =>
         value.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString()?.Trim() : null;
+
+    private static IReadOnlyList<string>? OptionalStringArray(JsonElement value, string property)
+    {
+        if (!value.TryGetProperty(property, out var item) || item.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (item.ValueKind != JsonValueKind.Array)
+            throw new ArgumentException($"model_strategy.{property} must be an array of strings.");
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in item.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.String)
+                throw new ArgumentException($"model_strategy.{property} must contain only strings.");
+            var text = entry.GetString()?.Trim();
+            if (!string.IsNullOrEmpty(text) && seen.Add(text))
+                result.Add(text);
+        }
+        return result.Count == 0 ? null : result;
+    }
+
+    private static string? OptionalEnum(JsonElement value, string property, string[] allowed)
+    {
+        if (!value.TryGetProperty(property, out var item) || item.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (item.ValueKind != JsonValueKind.String)
+            throw new ArgumentException($"model_strategy.{property} must be {string.Join('|', allowed)}.");
+        var text = item.GetString()?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(text)) return null;
+        if (!allowed.Contains(text, StringComparer.Ordinal))
+            throw new ArgumentException($"model_strategy.{property} must be {string.Join('|', allowed)}.");
+        return text;
+    }
 
     private static Guid RequiredGuid(JsonElement value, string property) =>
         value.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String && Guid.TryParse(item.GetString(), out var id) && id != Guid.Empty

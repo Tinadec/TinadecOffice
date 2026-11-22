@@ -15,24 +15,26 @@ public static class AgentConfigurationEndpoints
     public static IEndpointRouteBuilder MapAgentConfigurationEndpoints(this IEndpointRouteBuilder app)
     {
         // Agents
-        app.MapGet("/api/v1/agents", ListAgents);
-        app.MapPost("/api/v1/agents", CreateAgent);
-        app.MapGet("/api/v1/agents/{id:guid}", GetAgent);
+        app.MapGet("/api/v1/agents", ListAgents).Produces<IReadOnlyList<AgentDefinitionResponseDto>>(StatusCodes.Status200OK);
+        app.MapPost("/api/v1/agents", CreateAgent).Produces<AgentDefinitionResponseDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest);
+        app.MapGet("/api/v1/agents/{id:guid}", GetAgent).Produces<AgentDefinitionResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
         app.MapPut("/api/v1/agents/{id:guid}/runtime-binding", PutAgentRuntimeBinding);
-        app.MapPut("/api/v1/agents/{id:guid}/draft", UpdateAgentDraft);
-        app.MapPost("/api/v1/agents/{id:guid}/publish", PublishAgent);
-        app.MapPost("/api/v1/agents/{id:guid}/archive", ArchiveAgent);
+        app.MapPut("/api/v1/agents/{id:guid}/draft", UpdateAgentDraft).Produces<AgentDefinitionResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapPost("/api/v1/agents/{id:guid}/publish", PublishAgent).Produces<AgentPublishResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapPost("/api/v1/agents/{id:guid}/archive", ArchiveAgent).Produces<AgentDefinitionResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
         app.MapGet("/api/v1/agents/{id:guid}/versions", ListAgentVersions);
         app.MapGet("/api/v1/agents/{id:guid}/versions/{versionId:guid}", GetAgentVersion);
 
         // Agent Modes
         app.MapGet("/api/v1/agent-mode-runtime-policies", ListModeRuntimePolicies);
-        app.MapGet("/api/v1/agent-modes", ListModes);
-        app.MapPost("/api/v1/agent-modes", CreateMode);
-        app.MapGet("/api/v1/agent-modes/{id:guid}", GetMode);
-        app.MapPut("/api/v1/agent-modes/{id:guid}/draft", UpdateModeDraft);
-        app.MapPost("/api/v1/agent-modes/{id:guid}/publish", PublishMode);
-        app.MapPost("/api/v1/agent-modes/{id:guid}/archive", ArchiveMode);
+        app.MapGet("/api/v1/agent-modes", ListModes).Produces<IReadOnlyList<AgentModeSummaryResponseDto>>(StatusCodes.Status200OK);
+        app.MapPost("/api/v1/agent-modes", CreateMode).Produces<AgentModeTopologyResponseDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest);
+        app.MapGet("/api/v1/agent-modes/{id:guid}", GetMode).Produces<AgentModeTopologyResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapPut("/api/v1/agent-modes/{id:guid}/draft", UpdateModeDraft).Produces<AgentModeTopologyResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapPost("/api/v1/agent-modes/{id:guid}/clone", CloneMode).Produces<AgentModeTopologyResponseDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapDelete("/api/v1/agent-modes/{id:guid}", DeleteMode).Produces<ModeDeletedResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapPost("/api/v1/agent-modes/{id:guid}/publish", PublishMode).Produces<AgentModeTopologyResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
+        app.MapPost("/api/v1/agent-modes/{id:guid}/archive", ArchiveMode).Produces<AgentModeTopologyResponseDto>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound);
         app.MapGet("/api/v1/agent-modes/{id:guid}/versions", ListModeVersions);
         app.MapGet("/api/v1/agent-modes/{id:guid}/versions/{versionId:guid}", GetModeVersion);
 
@@ -282,7 +284,9 @@ public static class AgentConfigurationEndpoints
                 Id = definition.Id, Slug = definition.Slug, DisplayName = definition.DisplayName,
                 I18n = i18nMap(definition.I18nJson),
                 Layer = definition.Layer, Role = definition.Role, SourceKind = definition.SourceKind,
-                SourceKey = definition.SourceKey, Managed = definition.Managed, Writable = !definition.Managed && definition.Status != "archived",
+                SourceKey = definition.SourceKey, BasePromptPipelineId = definition.BasePromptPipelineId,
+                Provenance = i18nElement(definition.ProvenanceJson),
+                Managed = definition.Managed, Writable = !definition.Managed && definition.Status != "archived",
                 Enabled = definition.Enabled, Status = definition.Status, Revision = definition.Revision, Version = definition.Version,
                 CurrentVersionId = agentVersion?.Id, ConfiguredStrategy = configuredStrategy,
                 ModeUsages = usages, EffectivePreviews = previews,
@@ -420,8 +424,28 @@ public static class AgentConfigurationEndpoints
         var slug = el.TryGetProperty("slug", out var s) ? s.GetString() : null;
         var name = el.TryGetProperty("display_name", out var n) ? n.GetString() : el.TryGetProperty("name", out var n2) ? n2.GetString() : null;
         var layer = el.TryGetProperty("layer", out var l) ? l.GetString() : "operation";
-        AgentConfigurationService.ValidateLayer(layer!);
+        try { AgentConfigurationService.ValidateLayer(layer!); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { code = "invalid_request", message = ex.Message }); }
         if (string.IsNullOrWhiteSpace(name)) return Results.BadRequest(new { code = "invalid_request", message = "display_name is required" });
+        string sourceKind = "custom";
+        if (el.TryGetProperty("source_kind", out var skEl) && skEl.ValueKind != JsonValueKind.Null)
+        {
+            if (skEl.ValueKind != JsonValueKind.String)
+                return Results.BadRequest(new { code = "invalid_request", message = "source_kind must be a string." });
+            try { sourceKind = AgentConfigurationService.ValidateSourceKind(skEl.GetString()); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { code = "invalid_request", message = ex.Message }); }
+        }
+        string? provenanceJson = null;
+        if (el.TryGetProperty("provenance", out var provEl) && provEl.ValueKind != JsonValueKind.Null)
+        {
+            if (provEl.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new { code = "invalid_request", message = "provenance must be a JSON object or null." });
+            provenanceJson = provEl.GetRawText();
+            if (provenanceJson.Length > 4096)
+                return Results.BadRequest(new { code = "invalid_request", message = "provenance must be at most 4096 characters." });
+        }
+        if (!TryParseOptionalGuid(el, "base_prompt_pipeline_id", out var basePromptPipelineId, out var bpErr))
+            return Results.BadRequest(new { code = "invalid_request", message = bpErr });
         // model_strategy validation
         if (el.TryGetProperty("model_strategy", out var msEl))
         {
@@ -430,16 +454,21 @@ public static class AgentConfigurationEndpoints
         }
         var (t, w, p) = Ctx(a);
         await using var db = await f.CreateDbContextAsync(ct);
+        var computedSlug = Slug(slug, name!);
+        var sourceKey = el.TryGetProperty("source_key", out var sKeyEl) && sKeyEl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sKeyEl.GetString())
+            ? sKeyEl.GetString()!.Trim()
+            : computedSlug;
         var rec = new AgentDefinitionRecord
         {
-            Id = Guid.NewGuid(), TenantId = t, WorkspaceId = w, Slug = Slug(slug, name!), DisplayName = name!, Layer = layer!.Trim().ToLowerInvariant(),
+            Id = Guid.NewGuid(), TenantId = t, WorkspaceId = w, Slug = computedSlug, DisplayName = name!, Layer = layer!.Trim().ToLowerInvariant(),
             Role = el.TryGetProperty("role", out var r) ? r.GetString() ?? "" : "",
+            BasePromptPipelineId = basePromptPipelineId,
             CapabilitiesJson = el.TryGetProperty("capabilities", out var c) ? c.GetRawText() : "[]",
             ModelStrategyJson = el.TryGetProperty("model_strategy", out var ms) ? ms.GetRawText() : el.TryGetProperty("model_strategy_json", out var ms2) ? ms2.GetRawText() : null,
             ToolScopeJson = el.TryGetProperty("tool_scope", out var ts) ? ts.GetRawText() : el.TryGetProperty("allowed_tools", out var at) ? at.GetRawText() : "[]",
             SystemPrompt = el.TryGetProperty("system_prompt", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null,
             Description = el.TryGetProperty("description", out var de) && de.ValueKind == JsonValueKind.String ? de.GetString() : null,
-            SourceKind = "custom", SourceKey = Slug(slug, name!), Managed = false,
+            SourceKind = sourceKind, SourceKey = sourceKey, ProvenanceJson = provenanceJson, Managed = false,
             Enabled = !el.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.False,
             Status = "draft", Revision = 1, Version = 0, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow, CreatedByPrincipalId = p, UpdatedByPrincipalId = p
         };
@@ -466,7 +495,39 @@ public static class AgentConfigurationEndpoints
         if (await packs.FindManagedResourceAsync("agent", id, ct) is { } managed) return ManagedReadOnly(managed);
         if (rec.Status == "archived") return Results.Conflict(new { code = "conflict", message = "Archived agent cannot be edited" });
         if (exp >= 0 && rec.Revision != exp) return Results.Json(new { code = "conflict", message = "Revision conflict" }, statusCode: 412);
-        if (el.TryGetProperty("layer", out var l)) { AgentConfigurationService.ValidateLayer(l.GetString()!); rec.Layer = l.GetString()!.Trim().ToLowerInvariant(); }
+        if (el.TryGetProperty("layer", out var l))
+        {
+            try { AgentConfigurationService.ValidateLayer(l.GetString()!); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { code = "invalid_request", message = ex.Message }); }
+            rec.Layer = l.GetString()!.Trim().ToLowerInvariant();
+        }
+        if (el.TryGetProperty("source_kind", out var skEl) && skEl.ValueKind != JsonValueKind.Null)
+        {
+            if (skEl.ValueKind != JsonValueKind.String)
+                return Results.BadRequest(new { code = "invalid_request", message = "source_kind must be a string." });
+            try { rec.SourceKind = AgentConfigurationService.ValidateSourceKind(skEl.GetString()); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { code = "invalid_request", message = ex.Message }); }
+        }
+        if (el.TryGetProperty("provenance", out var provEl))
+        {
+            if (provEl.ValueKind == JsonValueKind.Null)
+                rec.ProvenanceJson = null;
+            else if (provEl.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new { code = "invalid_request", message = "provenance must be a JSON object or null." });
+            else
+            {
+                var provRaw = provEl.GetRawText();
+                if (provRaw.Length > 4096)
+                    return Results.BadRequest(new { code = "invalid_request", message = "provenance must be at most 4096 characters." });
+                rec.ProvenanceJson = provRaw;
+            }
+        }
+        if (el.TryGetProperty("base_prompt_pipeline_id", out _))
+        {
+            if (!TryParseOptionalGuid(el, "base_prompt_pipeline_id", out var bpId, out var bpErr))
+                return Results.BadRequest(new { code = "invalid_request", message = bpErr });
+            rec.BasePromptPipelineId = bpId;
+        }
         if (el.TryGetProperty("display_name", out var n)) rec.DisplayName = n.GetString() ?? rec.DisplayName;
         if (el.TryGetProperty("name", out var n2) && string.IsNullOrWhiteSpace(rec.DisplayName)) rec.DisplayName = n2.GetString() ?? rec.DisplayName;
         if (el.TryGetProperty("role", out var r)) rec.Role = r.GetString() ?? rec.Role;
@@ -609,27 +670,61 @@ public static class AgentConfigurationEndpoints
         {
             latestVersions.TryGetValue(r.Id, out var version);
             ownership.TryGetValue(r.Id, out var owner);
-            return ToModeDto(r, version?.Id, version?.Version, owner.PackId, owner.Status);
+            return ToModeDto(r, version?.Id, version?.Version, owner.PackId, owner.Status, version?.SnapshotJson);
         }));
     }
-    static async Task<IResult> CreateMode(HttpRequest req, IAgentTopologyService topology, CancellationToken ct)
+    static async Task<IResult> CreateMode(HttpRequest req, HttpResponse response, IAgentTopologyService topology, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         var result = await topology.CreateDraftAsync(el, ct);
         if (!result.Ok) return TopologyFailure(result);
+        if (result.Revision is { } rev) SetEtag(response, rev);
         return Results.Created($"/api/v1/agent-modes/{result.ModeId}", result.Mode);
     }
-static async Task<IResult> GetMode(Guid id, IAgentTopologyService topology, CancellationToken ct)
+    static async Task<IResult> GetMode(Guid id, HttpResponse response, IAgentTopologyService topology, CancellationToken ct)
     {
         var result = await topology.GetAsync(id, ct);
-        return result.Ok ? Results.Ok(result.Mode) : TopologyFailure(result);
+        if (!result.Ok) return TopologyFailure(result);
+        if (result.Revision is { } rev) SetEtag(response, rev);
+        return Results.Ok(result.Mode);
     }
 
-    static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IAgentTopologyService topology, CancellationToken ct)
+    static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, HttpResponse response, IAgentTopologyService topology, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         var result = await topology.UpsertDraftAsync(id, el, IfMatch(req), ct);
-        return result.Ok ? Results.Ok(result.Mode) : TopologyFailure(result);
+        if (!result.Ok) return TopologyFailure(result);
+        if (result.Revision is { } rev) SetEtag(response, rev);
+        return Results.Ok(result.Mode);
+    }
+
+    static async Task<IResult> CloneMode(Guid id, HttpRequest req, HttpResponse response, IAgentTopologyService topology, CancellationToken ct)
+    {
+        JsonElement el;
+        using (var reader = new StreamReader(req.Body))
+        {
+            var body = await reader.ReadToEndAsync(ct);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                el = JsonSerializer.SerializeToElement(new { });
+            }
+            else
+            {
+                try { el = JsonSerializer.Deserialize<JsonElement>(body); }
+                catch (JsonException) { return Results.BadRequest(new { code = AgentTopologyCodes.InvalidRequest, message = "Body must be valid JSON." }); }
+            }
+        }
+        var result = await topology.CloneDraftAsync(id, el, ct);
+        if (!result.Ok) return TopologyFailure(result);
+        if (result.Revision is { } rev) SetEtag(response, rev);
+        return Results.Created($"/api/v1/agent-modes/{result.ModeId}", result.Mode);
+    }
+
+    static async Task<IResult> DeleteMode(Guid id, HttpRequest req, IAgentTopologyService topology, CancellationToken ct)
+    {
+        var result = await topology.DeleteDraftAsync(id, IfMatch(req), ct);
+        if (!result.Ok) return TopologyFailure(result);
+        return Results.Ok(new { id = result.ModeId, deleted = true });
     }
 
     static async Task<IResult> PublishMode(Guid id, HttpRequest req, IAgentTopologyService topology, CancellationToken ct)
@@ -928,7 +1023,7 @@ static async Task<IResult> GetMode(Guid id, IAgentTopologyService topology, Canc
             using var doc = JsonDocument.Parse(graphJson);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return "graph must be object";
-            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "template", "variable", "condition", "stage", "stage_select", "read_only_retrieval", "retrieval", "memory", "budget", "assemble", "context_trim" };
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "template", "variable", "condition", "stage", "stage_select", "read_only_retrieval", "retrieval", "memory", "budget", "assemble", "context_trim", "fragment_ref", "workspace_rules", "skills_index" };
             var nodes = new List<JsonElement>();
             if (root.TryGetProperty("nodes", out var n) && n.ValueKind == JsonValueKind.Array) nodes.AddRange(n.EnumerateArray());
             else if (root.TryGetProperty("prompt_nodes", out var pn) && pn.ValueKind == JsonValueKind.Array) nodes.AddRange(pn.EnumerateArray());
@@ -976,7 +1071,60 @@ static async Task<IResult> GetMode(Guid id, IAgentTopologyService topology, Canc
         catch (Exception ex) { return "graph invalid: " + ex.Message; }
     }
 
-    static object ToAgentDto(AgentDefinitionRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, i18n=i18nElement(r.I18nJson), layer=r.Layer, role=r.Role, source_kind=r.SourceKind, source_key=r.SourceKey, managed=r.Managed, writable=!r.Managed && r.Status!="archived", capabilities= r.CapabilitiesJson!=null? JsonSerializer.Deserialize<JsonElement>(r.CapabilitiesJson): (JsonElement?)null, model_strategy= r.ModelStrategyJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ModelStrategyJson): (JsonElement?)null, tool_scope= r.ToolScopeJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ToolScopeJson): (JsonElement?)null, system_prompt=r.SystemPrompt, description=r.Description, enabled=r.Enabled, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
+    static object ToAgentDto(AgentDefinitionRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, i18n=i18nElement(r.I18nJson), layer=r.Layer, role=r.Role, source_kind=r.SourceKind, source_key=r.SourceKey, provenance=i18nElement(r.ProvenanceJson), base_prompt_pipeline_id=r.BasePromptPipelineId, managed=r.Managed, writable=!r.Managed && r.Status!="archived", capabilities= r.CapabilitiesJson!=null? JsonSerializer.Deserialize<JsonElement>(r.CapabilitiesJson): (JsonElement?)null, model_strategy= r.ModelStrategyJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ModelStrategyJson): (JsonElement?)null, tool_scope= r.ToolScopeJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ToolScopeJson): (JsonElement?)null, system_prompt=r.SystemPrompt, description=r.Description, enabled=r.Enabled, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
+
+    static bool TryParseOptionalGuid(JsonElement root, string property, out Guid? value, out string? error)
+    {
+        value = null;
+        error = null;
+        if (!root.TryGetProperty(property, out var el) || el.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return true;
+        if (el.ValueKind != JsonValueKind.String)
+        {
+            error = $"{property} must be a GUID string or null.";
+            return false;
+        }
+        var text = el.GetString();
+        if (string.IsNullOrWhiteSpace(text))
+            return true;
+        if (Guid.TryParse(text, out var parsed) && parsed != Guid.Empty)
+        {
+            value = parsed;
+            return true;
+        }
+        error = $"{property} must be a valid non-empty GUID or null.";
+        return false;
+    }
+
+    static string? SnapshotString(string? snapshotJson, string property)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(snapshotJson);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(property, out var val)
+                && val.ValueKind == JsonValueKind.String
+                ? val.GetString()
+                : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    static JsonElement? SnapshotElement(string? snapshotJson, string property)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(snapshotJson);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(property, out var val)
+                && val.ValueKind != JsonValueKind.Null
+                ? val.Clone()
+                : null;
+        }
+        catch (JsonException) { return null; }
+    }
 
     static JsonElement? i18nElement(string? json) =>
         string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<JsonElement>(json);
@@ -1002,12 +1150,14 @@ static async Task<IResult> GetMode(Guid id, IAgentTopologyService topology, Canc
         Guid? latestPublishedVersionId = null,
         int? latestVersion = null,
         string? packId = null,
-        string? packStatus = null) => new
+        string? packStatus = null,
+        string? latestSnapshotJson = null) => new
     {
         id = r.Id,
         slug = r.Slug,
         display_name = r.DisplayName,
         description = r.Description,
+        instructions = r.Instructions ?? SnapshotString(latestSnapshotJson, "instructions"),
         i18n = i18nElement(r.I18nJson),
         status = r.Status,
         revision = r.Revision,
@@ -1015,7 +1165,9 @@ static async Task<IResult> GetMode(Guid id, IAgentTopologyService topology, Canc
         created_at = r.CreatedAt,
         updated_at = r.UpdatedAt,
         archived_at = r.ArchivedAt,
-        runtime_policy = r.RuntimePolicyJson is null ? (JsonElement?)null : JsonSerializer.Deserialize<JsonElement>(r.RuntimePolicyJson),
+        runtime_policy = r.RuntimePolicyJson is null ? SnapshotElement(latestSnapshotJson, "runtime_policy") : JsonSerializer.Deserialize<JsonElement>(r.RuntimePolicyJson),
+        orchestration_tier = r.OrchestrationTier ?? SnapshotString(latestSnapshotJson, "orchestration_tier"),
+        default_options = r.DefaultOptionsJson is null ? SnapshotElement(latestSnapshotJson, "default_options") : JsonSerializer.Deserialize<JsonElement>(r.DefaultOptionsJson),
         latest_published_mode_version_id = latestPublishedVersionId,
         // Provenance: the UI groups the directory by pack and offers per-pack
         // actions (disable/uninstall). Null for user-authored rows.

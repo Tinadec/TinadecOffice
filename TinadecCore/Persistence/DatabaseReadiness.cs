@@ -89,6 +89,7 @@ internal sealed class DatabaseReadiness : IDatabaseReadiness
 
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await SqliteConnectionPragmaInterceptor.ApplyPragmasAsync(connection, cancellationToken: cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT 1";
         var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);

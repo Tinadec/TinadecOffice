@@ -21,6 +21,7 @@ public sealed class SkillsModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IToolSkillResourceService>(sp => sp.GetRequiredService<ToolSkillResourceService>());
         builder.Services.AddSingleton<IToolSkillCatalog>(sp => sp.GetRequiredService<ToolSkillResourceService>());
         builder.Services.AddSingleton<ISkillProvider, SkillProvider>();
+        builder.Services.AddSingleton<IExternalCliDiscoveryService, ExternalCliDiscoveryService>();
         builder.Services.AddSingleton<IMarketCatalogService, MarketCatalogService>();
         builder.Services.AddSingleton<IMarketInstallService, MarketInstallService>();
         builder.RegisterModule(new ModuleDescriptor

@@ -115,9 +115,11 @@ public static class ServiceCollectionExtensions
             ? path
             : Path.GetFullPath(Path.Combine(contentRootPath, path));
 
+        var defaultTimeoutSeconds = Math.Clamp((options.Sqlite.BusyTimeoutMs + 999) / 1000, 5, 120);
         var connectionString = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
         {
             DataSource = fullPath,
+            DefaultTimeout = defaultTimeoutSeconds,
             // A closed scope must release its database file immediately. Process-wide
             // pooling can outlive its service graph and keep a moved/copied project locked.
             Pooling = false

@@ -61,6 +61,7 @@ public sealed class McpResourceWriteDto
     /// <summary>Header name → value. A value of <c>********</c> preserves the stored secret.</summary>
     public IReadOnlyDictionary<string, string?>? Headers { get; init; }
     public string? Cwd { get; init; }
+    public string? ImportSource { get; init; }
 }
 
 public sealed class McpResourceDto

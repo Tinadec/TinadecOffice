@@ -195,6 +195,41 @@ public static class DirectToolEndpoints
                 var call = await CallReadOnlyToolAsync(publicToolId, "git_log", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
                 return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AdaptLogData(call.Response!.Result, arguments));
             }
+            case "log_list":
+            {
+                var call = await CallReadOnlyToolAsync(publicToolId, "git_log_list", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
+                return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AddRoot(call.Response!.Result, root));
+            }
+            case "log_detail":
+            {
+                var call = await CallReadOnlyToolAsync(publicToolId, "git_log_detail", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
+                return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AddRoot(call.Response!.Result, root));
+            }
+            case "file_history":
+            {
+                var call = await CallReadOnlyToolAsync(publicToolId, "git_file_history", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
+                return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AddRoot(call.Response!.Result, root));
+            }
+            case "blame":
+            {
+                var call = await CallReadOnlyToolAsync(publicToolId, "git_blame", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
+                return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AddRoot(call.Response!.Result, root));
+            }
+            case "file_at_revision":
+            {
+                var call = await CallReadOnlyToolAsync(publicToolId, "git_file_at_revision", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
+                return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AddRoot(call.Response!.Result, root));
+            }
+            case "stash_list":
+            {
+                var call = await CallReadOnlyToolAsync(publicToolId, "git_stash_list", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
+                return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AddRoot(call.Response!.Result, root));
+            }
+            case "stash_show":
+            {
+                var call = await CallReadOnlyToolAsync(publicToolId, "git_stash_show", arguments ?? EmptyObject(), root, manifest, provider, cancellationToken).ConfigureAwait(false);
+                return call.Failure ?? FacadeResult(publicToolId, action, [call.Response!], AddRoot(call.Response!.Result, root));
+            }
             default:
                 return Results.BadRequest(new { code = "invalid_git_action", message = $"Unsupported git_worktree_manager action '{action}'." });
         }
@@ -327,8 +362,31 @@ public static class DirectToolEndpoints
 
     private static bool IsGitTool(string toolId) => toolId.StartsWith("git_", StringComparison.OrdinalIgnoreCase);
 
-    private static JsonElement InjectRepositoryPath(JsonElement arguments, string root) =>
-        WithProperties(arguments, ("repository_path", root));
+    private static JsonElement InjectRepositoryPath(JsonElement arguments, string root)
+    {
+        var requested = ReadString(arguments, "repository_path");
+        if (!string.IsNullOrWhiteSpace(requested) && IsWithinRoot(requested, root))
+        {
+            return WithProperties(arguments, ("repository_path", Path.GetFullPath(requested)));
+        }
+        return WithProperties(arguments, ("repository_path", root));
+    }
+
+    private static bool IsWithinRoot(string candidate, string root)
+    {
+        try
+        {
+            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var fullCandidate = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (string.Equals(fullCandidate, fullRoot, comparison)) return true;
+            return fullCandidate.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     private static JsonElement WithProperties(JsonElement? source, params (string Name, object? Value)[] overrides)
     {
