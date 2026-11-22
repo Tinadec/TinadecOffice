@@ -30,3 +30,6 @@ export * from './persistence/layerStore'
 
 export * from './spatialLayout'
 export * from './spatialRouting'
+export * from './spatialFractionalIndex'
+export * from './spatialDocument'
+export * from './spatialSmartGuides'

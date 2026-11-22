@@ -16,6 +16,49 @@
 // remain importable from `@tinadec/ui/engine`.
 
 export * from './engine'
+export {
+  FRACTIONAL_KEY_ALPHABET,
+  isValidFractionalKey,
+  compareFractionalKeys,
+  generateKeyBetween,
+  generateNKeysBetween,
+} from './engine/spatialFractionalIndex'
+export {
+  compareLwwTimestamps,
+  LocalLoopbackSyncAdapter,
+  SpatialMultiplayerDocument,
+  importLegacySpatialLayout,
+  exportToSpatialLayout,
+  type SpatialObjectKind,
+  type SpatialLwwTimestamp,
+  type SpatialDocObject,
+  type SpatialPropertyOp,
+  type SpatialRejectedOp,
+  type SpatialAckPayload,
+  type SpatialRemoteDelta,
+  type SpatialViewportState,
+  type SpatialCollaboratorPresence,
+  type SpatialPresenceUpdate,
+  type SpatialSyncFrame,
+  type ISpatialSyncAdapter,
+  type ExternalCrdtSyncContract,
+  type UpsertSpatialObjectInput,
+  type SpatialMoveChange,
+  type SpatialMultiplayerDocumentOptions,
+  type SpatialSnapshotInput,
+  type LocalLoopbackSyncOptions,
+} from './engine/spatialDocument'
+export {
+  computeSmartGuides,
+  alignRects,
+  distributeRects,
+  computeBoundingSectionRect,
+  type SpatialRect,
+  type SmartGuideLine,
+  type SmartGuidesResult,
+  type SpatialAlignMode,
+  type SpatialDistributeAxis,
+} from './engine/spatialSmartGuides'
 export * from './components'
 export { default as UieColumn } from './components/UieColumn.vue'
 export { default as UieStack } from './components/UieStack.vue'
