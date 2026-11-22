@@ -251,12 +251,24 @@ function onKeydown(event: KeyboardEvent) {
     if (item) { event.preventDefault(); run(item) }
   }
 }
+
+function splitHintKeycap(raw: string): { key: string | null; label: string } {
+  const match = /^(\S+)\s+([\s\S]+)$/.exec(raw.trim())
+  if (!match) return { key: null, label: raw }
+  return { key: match[1]!, label: match[2]!.replace(/^—\s*/, '') }
+}
+
+const footerHints = computed(() => [
+  splitHintKeycap(t('palette.hintNavigate')),
+  splitHintKeycap(t('palette.hintRun')),
+  splitHintKeycap(t('palette.hintClose')),
+])
 </script>
 
 <template>
   <dialog
     ref="dialogRef"
-    class="command-palette no-drag"
+    class="command-palette ui-pop no-drag"
     :class="{ 'command-palette--fullscreen': fullscreen }"
     :style="materialStyle"
     v-bind="materialAttributes"
@@ -277,7 +289,7 @@ function onKeydown(event: KeyboardEvent) {
       </header>
 
       <div class="command-palette-search">
-        <Search class="command-palette-search-icon" :size="24" aria-hidden="true" />
+        <Search class="command-palette-search-icon" :size="20" aria-hidden="true" />
         <input
           ref="inputRef" v-model="query" class="command-palette-input" type="search" role="combobox"
           :placeholder="t('palette.spotlightPlaceholder')" :aria-label="t('palette.title')"
@@ -288,7 +300,7 @@ function onKeydown(event: KeyboardEvent) {
         <UiButton v-if="query" variant="ghost" size="icon" class="search-action" :aria-label="t('palette.clear')" @click="query = ''; inputRef?.focus()">
           <X data-icon="inline-start" aria-hidden="true" />
         </UiButton>
-        <kbd class="command-palette-accelerator">{{ comboLabel }}</kbd>
+        <kbd class="command-palette-accelerator command-palette-kbd">{{ comboLabel }}</kbd>
         <UiButton variant="ghost" size="icon" class="search-action" data-testid="palette-fullscreen"
           :aria-label="t(fullscreen ? 'palette.restoreSearch' : 'palette.expandSearch')"
           :title="t(fullscreen ? 'palette.restoreSearch' : 'palette.expandSearch')"
@@ -304,7 +316,7 @@ function onKeydown(event: KeyboardEvent) {
       <div class="search-screen-body">
         <nav class="search-categories" :aria-label="t('palette.categories')" data-testid="palette-categories">
           <button class="search-category" :class="{ 'is-selected': activeKind === 'all' }" :aria-pressed="activeKind === 'all'" data-testid="palette-filter-all" @click="selectKind('all')">
-            <Layers3 :size="18" aria-hidden="true" /><span>{{ t('palette.all') }}</span>
+            <Layers3 :size="16" aria-hidden="true" /><span>{{ t('palette.all') }}</span>
             <span class="search-category-count">{{ groups.reduce((count, group) => count + group.items.length, 0) }}</span>
           </button>
           <button
@@ -312,7 +324,7 @@ function onKeydown(event: KeyboardEvent) {
             :class="{ 'is-selected': activeKind === kind }" :aria-pressed="activeKind === kind"
             :data-testid="`palette-filter-${kind}`" @click="selectKind(kind)"
           >
-            <component :is="kindIcons[kind]" :size="18" aria-hidden="true" />
+            <component :is="kindIcons[kind]" :size="16" aria-hidden="true" />
             <span>{{ t(spotlightKindLabel(kind)) }}</span><span class="search-category-count">{{ countFor(kind) }}</span>
           </button>
           <p class="search-scope-note">{{ t('palette.scopeNote') }}</p>
@@ -321,7 +333,7 @@ function onKeydown(event: KeyboardEvent) {
         <div class="search-results-column">
           <div class="search-results-summary" role="status" aria-live="polite">
             <span>{{ query.trim() ? t('palette.resultCount', { count: totalResults }) : t('palette.browse') }}</span>
-            <span v-if="searching" class="search-progress"><LoaderCircle :size="14" aria-hidden="true" />{{ t('palette.searching') }}</span>
+            <span v-if="searching" class="search-progress"><LoaderCircle :size="13" class="search-progress-icon" aria-hidden="true" /><span class="ui-shimmer-text">{{ t('palette.searching') }}</span></span>
           </div>
           <div :id="listId" class="command-palette-list" :aria-busy="searching" data-testid="palette-list">
             <section v-for="(group, groupIndex) in visibleGroups" :key="group.kind" class="search-result-group" :data-testid="`palette-kind-${group.kind}`">
@@ -331,7 +343,7 @@ function onKeydown(event: KeyboardEvent) {
                 @click="toggleGroup(group.kind)"
               >
                 <component :is="collapsedGroups.has(group.kind) ? ChevronRight : ChevronDown" :size="14" aria-hidden="true" />
-                <component :is="kindIcons[group.kind]" :size="17" aria-hidden="true" />
+                <component :is="kindIcons[group.kind]" :size="16" aria-hidden="true" />
                 <span>{{ t(spotlightKindLabel(group.kind)) }}</span>
                 <span class="search-group-count">{{ group.items.length }}</span>
               </button>
@@ -345,7 +357,7 @@ function onKeydown(event: KeyboardEvent) {
                     :data-testid="`palette-row-${item.id}`" :title="[item.label, item.detail].filter(Boolean).join(' — ')"
                     @mouseenter="activeIndex = rowIndex(groupIndex, itemIndex)" @mousedown.prevent @click="run(item)"
                   >
-                    <component :is="resultIcon(item)" :size="19" class="search-result-icon" aria-hidden="true" />
+                    <component :is="resultIcon(item)" :size="18" class="search-result-icon" aria-hidden="true" />
                     <span class="search-result-copy">
                       <span class="command-palette-label">{{ item.label }}</span>
                       <span v-if="item.detail" class="command-palette-detail">{{ item.detail }}</span>
@@ -379,101 +391,183 @@ function onKeydown(event: KeyboardEvent) {
         </div>
       </div>
       <footer class="command-palette-footer">
-        <span>{{ t('palette.hintNavigate') }}</span><span>{{ t('palette.hintRun') }}</span><span>{{ t('palette.hintClose') }}</span>
+        <span v-for="(hint, idx) in footerHints" :key="idx" class="command-palette-hint">
+          <kbd v-if="hint.key" class="command-palette-kbd">{{ hint.key }}</kbd>
+          <span>{{ hint.label }}</span>
+        </span>
       </footer>
     </div>
   </dialog>
 </template>
 
 <style scoped>
+/* Centered without translateX(-50%) so dialog.ui-pop[open] settles to transform: none. */
 .command-palette {
   position: fixed;
-  inset: auto;
-  top: max(40px, 12vh);
-  left: 50%;
-  transform: translateX(-50%);
+  inset: max(40px, 12vh) 0 auto 0;
   width: min(760px, calc(100vw - 40px));
   height: auto;
   max-width: none;
   max-height: none;
   margin: 0 auto;
   padding: 0;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-default, var(--border-muted));
   border-radius: 14px;
   color: var(--text-primary);
   background: var(--surface-section);
-  box-shadow: none;
+  box-shadow: var(--shadow-elevated, 0 16px 48px rgba(0, 0, 0, 0.28));
   -webkit-app-region: no-drag;
 }
 .command-palette::backdrop {
-  background: color-mix(in srgb, var(--bg-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 26%, transparent);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
 .search-screen { display: flex; flex-direction: column; height: min(590px, calc(100dvh - 90px)); width: 100%; margin: 0 auto; padding: 0; }
-.command-palette--fullscreen { inset: 0; transform: none; width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; }
+.command-palette--fullscreen,
+.command-palette--fullscreen[open] { inset: 0; transform: none; width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 .command-palette--fullscreen .search-screen { height: 100%; width: min(1120px, 100%); padding: 44px 40px 20px; }
 .search-screen-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 26px; }
 .search-heading { flex: 1; min-width: 0; }
 .search-screen-header h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600; letter-spacing: -.025em; }
 .search-screen-header p { margin: 0; color: var(--text-secondary); font-size: 13px; }
-.search-action { flex-shrink: 0; border: 0; background: transparent; box-shadow: none; border-radius: 0; color: var(--text-secondary); }
-.search-action:hover { background: transparent; color: var(--text-primary); }
-.search-action:focus-visible { outline: 2px solid var(--text-brand); outline-offset: -2px; }
-.command-palette-search { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border-muted); }
-.command-palette-search-icon { color: var(--text-muted); flex-shrink: 0; }
-.command-palette-input { flex: 1; min-width: 0; padding: 0; border: none; background: transparent; color: var(--text-primary); font-size: 17px; outline: none; border-radius: 0; }
+.search-action { flex-shrink: 0; border: 0; background: transparent; box-shadow: none; border-radius: 6px; color: var(--text-secondary); transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)), color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
+.search-action:hover { background: var(--surface-hover); color: var(--text-primary); }
+.search-action:focus-visible { outline: 2px solid var(--accent-primary, var(--text-brand)); outline-offset: -2px; }
+.command-palette-search { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border-muted); transition: border-color var(--duration-pop, 180ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
+.command-palette-search-icon { color: var(--text-muted); flex-shrink: 0; transition: color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
+.command-palette-search:focus-within .command-palette-search-icon { color: var(--text-primary); }
+.command-palette-input { flex: 1; min-width: 0; padding: 0; border: none; background: transparent; color: var(--text-primary); font-size: 16px; outline: none; border-radius: 0; }
 .command-palette-input::placeholder { color: var(--text-muted); }
 .command-palette-input:focus { box-shadow: none; }
 .command-palette-input::-webkit-search-cancel-button { display: none; }
-.command-palette-search:focus-within { border-bottom-color: var(--text-brand); }
-.command-palette-accelerator { color: var(--text-muted); font: 11px 'Geist Mono', ui-monospace, monospace; white-space: nowrap; }
-.search-screen-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px 18px 0; }
-.search-categories { display: flex; flex-direction: row; gap: 20px; overflow-x: auto; scrollbar-width: none; padding-bottom: 5px; flex-shrink: 0; }
+.command-palette-search:focus-within { border-bottom-color: var(--border-input-focus, var(--border-default)); }
+/* Crisp monochrome <kbd> keycaps: 1px border + delicate inset bottom edge */
+.command-palette-kbd,
+.command-palette-accelerator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border-default, var(--border-muted));
+  background: var(--surface-raised);
+  box-shadow: inset 0 -1px 0 var(--border-muted);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, 'Geist Mono', ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.search-screen-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 18px 0; }
+.search-categories { display: flex; flex-direction: row; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; flex-shrink: 0; }
 .search-categories::-webkit-scrollbar { display: none; }
-.search-category { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 7px 12px 7px 0; text-align: left; border: 0; background: transparent; box-shadow: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; flex-shrink: 0; }
+.search-category { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 10px; text-align: left; border: 1px solid transparent; border-radius: 999px; background: transparent; box-shadow: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; flex-shrink: 0; transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)), border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)), color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
 .search-category svg { flex-shrink: 0; }
-.search-category.is-selected { color: var(--text-brand); font-weight: 600; }
-.search-category:hover { color: var(--text-primary); }
-.search-category-count { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.search-category:hover { background: var(--surface-hover); color: var(--text-primary); }
+.search-category.is-selected { background: var(--surface-raised); border-color: var(--border-default, var(--border-muted)); color: var(--text-primary); font-weight: 500; }
+.search-category-count { margin-left: 2px; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .search-scope-note { display: none; }
 .search-results-column { display: flex; flex-direction: column; min-height: 0; min-width: 0; flex: 1; }
-.search-results-summary { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 30px; color: var(--text-muted); font-size: 11px; }
-.search-progress { display: flex; gap: 6px; align-items: center; }
-.command-palette-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 12px 0; }
-.search-result-group { padding: 10px 0 16px; border-bottom: 1px solid var(--border-muted); }
+.search-results-summary { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 28px; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.search-progress { display: inline-flex; gap: 6px; align-items: center; }
+.search-progress-icon { animation: palette-spin 1s linear infinite; color: var(--text-muted); }
+@keyframes palette-spin { to { transform: rotate(360deg); } }
+.command-palette-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 4px 12px 0; }
+.search-result-group { padding: 8px 0 12px; border-bottom: 1px solid var(--border-muted); }
 .search-result-group:last-child { border-bottom: 0; }
-.search-group-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 2px 7px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; }
-.search-group-count { font-size: 11px; font-weight: 400; color: var(--text-muted); }
-.command-palette-row { display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 8px 10px; cursor: pointer; border-radius: 6px; }
-.command-palette-row.is-active { background: var(--surface-hover); }
-.search-result-icon { flex-shrink: 0; color: var(--text-secondary); }
-.search-result-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.command-palette-label { color: var(--text-primary); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-group-toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; padding: 0 4px 6px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; text-align: left; transition: color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
+.search-group-toggle:hover { color: var(--text-primary); }
+.search-group-count { font-size: 11px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.command-palette-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 7px 10px;
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.command-palette-row.is-active {
+  background: var(--surface-hover);
+  border-color: var(--border-card-active, var(--border-muted));
+}
+.search-result-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.command-palette-row.is-active .search-result-icon {
+  color: var(--text-primary);
+}
+.search-result-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.command-palette-label { color: var(--text-primary); font-size: 13px; font-weight: 450; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .command-palette-detail { color: var(--text-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.search-result-arrow { flex-shrink: 0; color: var(--text-muted); opacity: 0; }
-.is-active .search-result-arrow { opacity: 1; }
-.search-show-more { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 12px 0 44px; border: 0; background: transparent; color: var(--text-brand); font: inherit; font-size: 11px; cursor: pointer; }
+.search-result-arrow {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  opacity: 0;
+  transform: translate(-2px, 2px);
+  transition:
+    opacity var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.is-active .search-result-arrow {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+.search-show-more { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 12px 0 42px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; transition: color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
+.search-show-more:hover { color: var(--text-primary); }
 .search-source-error, .search-limit-note { display: flex; gap: 8px; align-items: center; margin: 8px 12px; font-size: 11px; line-height: 1.6; color: var(--text-muted); }
 .search-source-error { color: var(--accent-warning); }
 .command-palette-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 68px 16px; color: var(--text-muted); text-align: center; }
 .command-palette-empty p { margin: 0; color: var(--text-secondary); font-size: 14px; }
 .command-palette-empty span { font-size: 12px; line-height: 1.7; }
 .search-retry { margin-top: 12px; }
-.command-palette-footer { display: flex; justify-content: flex-end; gap: 16px; padding: 10px 18px; border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: 10px; }
-.search-category:focus-visible, .search-group-toggle:focus-visible, .search-show-more:focus-visible { outline: 2px solid var(--text-brand); outline-offset: -2px; }
+.command-palette-footer { display: flex; justify-content: flex-end; align-items: center; gap: 16px; padding: 9px 18px; border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: 11px; }
+.command-palette-hint { display: inline-flex; align-items: center; gap: 5px; }
+.command-palette-footer .command-palette-kbd { min-height: 18px; padding: 0 5px; font-size: 10px; }
+.search-category:focus-visible, .search-group-toggle:focus-visible, .search-show-more:focus-visible { outline: 2px solid var(--accent-primary, var(--text-brand)); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .search-action,
+  .command-palette-search,
+  .command-palette-search-icon,
+  .search-category,
+  .search-group-toggle,
+  .command-palette-row,
+  .search-result-icon,
+  .search-result-arrow,
+  .search-show-more {
+    transition: none;
+  }
+  .search-progress-icon {
+    animation: none;
+  }
+  .search-result-arrow {
+    transform: none;
+  }
+}
 @media (max-width: 720px) {
   .command-palette { top: 28px; width: calc(100vw - 24px); }
   .search-screen { height: min(590px, calc(100dvh - 56px)); }
-  .command-palette--fullscreen { top: 0; width: 100%; }
+  .command-palette--fullscreen,
+  .command-palette--fullscreen[open] { top: 0; width: 100%; }
   .command-palette--fullscreen .search-screen { height: 100%; padding: 40px 14px 0; }
   .search-screen-header { padding-bottom: 18px; }
   .search-screen-header h1 { font-size: 19px; }
-  .command-palette-input { font-size: 17px; }
+  .command-palette-input { font-size: 16px; }
   .command-palette-accelerator { display: none; }
   .search-screen-body { gap: 8px; padding: 8px 12px 0; }
-  .search-categories { flex-direction: row; overflow-x: auto; gap: 18px; padding-bottom: 8px; }
-  .search-category { padding: 4px 0; gap: 6px; }
+  .search-categories { flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 6px; }
+  .search-category { padding: 4px 8px; gap: 6px; }
   .search-scope-note { display: none; }
   .command-palette-list { padding-right: 0; }
 }

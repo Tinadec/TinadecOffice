@@ -3,7 +3,12 @@ import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, 
 import { useI18n } from 'vue-i18n'
 import { useStatusLabels } from '@/lib/statusLabels'
 import { errorCodeMessage } from '@/lib/apiError'
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, useId, type Component, type Ref } from 'vue'
+import { TransitionGroup, ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, useId, type Component, type Ref } from 'vue'
+
+const ComposerTransitionGroup = {
+  ...(TransitionGroup as object),
+  name: 'ComposerTransitionGroup',
+} as unknown as typeof TransitionGroup
 import { useRouter } from 'vue-router'
 import { UiButton, UiSelectField } from '@/components/ui'
 import ComposerCommandPanel from './ComposerCommandPanel.vue'
@@ -969,89 +974,93 @@ function confirmSteer(id: string, interrupt = false) {
       </div>
       <!-- queued cards sit inside dialog top when items are queued -->
       <div v-if="!hero && !spatial && queued.length" class="composer-queued">
-        <div v-for="item in queued" :key="item.id" class="queued-card">
-          <div class="queued-content">{{ item.content }}</div>
-          <div class="queued-actions">
-            <template v-if="steeringId === item.id">
-              <UiSelectField
-                v-model="steerTarget"
-                class="queued-run-select"
-                :aria-label="t('composer.selectTargetRun')"
-                :options="[
-                  { value: '', label: t('composer.selectTargetRun'), disabled: true },
-                  ...activeRuns.map((r) => ({ value: r.id, label: `${r.id.slice(0,8)} · ${runStatusLabel(r.status)}` })),
-                ]"
-              />
-              <button class="queued-action" :disabled="!steerTarget" @click="confirmSteer(item.id)">{{ t('composer.confirmSteer') }}</button>
-              <button class="queued-action" :disabled="!steerTarget" :title="t('composer.interruptSteerHint')" @click="confirmSteer(item.id, true)">{{ t('composer.interruptSteer') }}</button>
-            </template>
-            <template v-else>
-              <button class="queued-action" @click="startSteer(item.id)">{{ t('composer.steer') }}</button>
-              <button class="queued-action" :title="t('composer.interruptSteerHint')" @click="startSteer(item.id, true)">{{ t('composer.interruptSteer') }}</button>
-              <button class="queued-action" @click="homeController.promoteQueued(item.id)">{{ t('composer.parallel') }}</button>
-              <button class="queued-action" @click="homeController.editQueued(item.id)">{{ t('composer.edit') }}</button>
-              <button class="queued-action" :aria-label="t('composer.dismiss')" @click="homeController.dismissQueued(item.id)">×</button>
-            </template>
+        <ComposerTransitionGroup name="ui-pop">
+          <div v-for="item in queued" :key="item.id" class="queued-card">
+            <div class="queued-content">{{ item.content }}</div>
+            <div class="queued-actions">
+              <template v-if="steeringId === item.id">
+                <UiSelectField
+                  v-model="steerTarget"
+                  class="queued-run-select"
+                  :aria-label="t('composer.selectTargetRun')"
+                  :options="[
+                    { value: '', label: t('composer.selectTargetRun'), disabled: true },
+                    ...activeRuns.map((r) => ({ value: r.id, label: `${r.id.slice(0,8)} · ${runStatusLabel(r.status)}` })),
+                  ]"
+                />
+                <button class="queued-action" :disabled="!steerTarget" @click="confirmSteer(item.id)">{{ t('composer.confirmSteer') }}</button>
+                <button class="queued-action" :disabled="!steerTarget" :title="t('composer.interruptSteerHint')" @click="confirmSteer(item.id, true)">{{ t('composer.interruptSteer') }}</button>
+              </template>
+              <template v-else>
+                <button class="queued-action" @click="startSteer(item.id)">{{ t('composer.steer') }}</button>
+                <button class="queued-action" :title="t('composer.interruptSteerHint')" @click="startSteer(item.id, true)">{{ t('composer.interruptSteer') }}</button>
+                <button class="queued-action" @click="homeController.promoteQueued(item.id)">{{ t('composer.parallel') }}</button>
+                <button class="queued-action" @click="homeController.editQueued(item.id)">{{ t('composer.edit') }}</button>
+                <button class="queued-action" :aria-label="t('composer.dismiss')" @click="homeController.dismissQueued(item.id)">×</button>
+              </template>
+            </div>
           </div>
-        </div>
+        </ComposerTransitionGroup>
       </div>
 
       <!-- The attachment primitive's five states: idle while the draft session is being made,
            uploading (an image previews locally, dimmed), done, or error with the reason in words. -->
       <AttachmentGroup v-if="attachments.length || preparingFiles.length" class="composer-attachments" role="list" aria-live="polite" :aria-label="t('composer.attachments')">
-        <Attachment
-          v-for="pick in preparingFiles"
-          :key="pick.key"
-          state="idle"
-          size="xs"
-          class="attachment-chip is-idle"
-          role="listitem"
-          data-testid="attachment-chip"
-        >
-          <AttachmentMedia><component :is="pick.type.startsWith('image/') ? Image : FileText" aria-hidden="true" /></AttachmentMedia>
-          <AttachmentContent class="attachment-content">
-            <AttachmentTitle class="attachment-name"><span class="attachment-stem">{{ fileNameParts(pick.name).stem }}</span>{{ fileNameParts(pick.name).extension }}</AttachmentTitle>
-            <AttachmentDescription><span class="attachment-meta">{{ formatAttachmentBytes(pick.size) }}</span> <span class="attachment-state">{{ t('composer.attachPreparing') }}</span></AttachmentDescription>
-          </AttachmentContent>
-        </Attachment>
-        <Attachment
-          v-for="item in attachments"
-          :key="item.clientId"
-          :state="attachmentDisplayState(item.status)"
-          size="xs"
-          class="attachment-chip"
-          :class="`is-${item.status}`"
-          role="listitem"
-          :title="attachmentHint(item)"
-          data-testid="attachment-chip"
-        >
-          <AttachmentMedia :variant="item.previewUrl ? 'image' : 'icon'">
-            <img v-if="item.previewUrl" :src="item.previewUrl" :alt="item.fileName" />
-            <component :is="item.mediaType.startsWith('image/') ? Image : FileText" v-else aria-hidden="true" />
-            <button
-              v-if="item.previewUrl"
-              type="button"
-              class="attachment-preview-trigger"
-              :aria-label="t('composer.previewAttachment', { name: item.fileName })"
-              :title="t('composer.previewAttachment', { name: item.fileName })"
-              data-testid="attachment-preview"
-              @click.stop="openComposerLightbox(item.clientId)"
-            />
-            <Spinner v-if="item.status === 'uploading'" decorative class="attachment-spinner" />
-          </AttachmentMedia>
-          <AttachmentContent class="attachment-content">
-            <AttachmentTitle class="attachment-name"><span class="attachment-stem">{{ fileNameParts(item.fileName).stem }}</span>{{ fileNameParts(item.fileName).extension }}</AttachmentTitle>
-            <AttachmentDescription>
-              <span class="attachment-meta">{{ formatAttachmentBytes(item.size) }}</span>
-              <span v-if="item.status !== 'ready'" class="attachment-state"> {{ attachmentHint(item) }}</span>
-            </AttachmentDescription>
-          </AttachmentContent>
-          <AttachmentActions>
-            <AttachmentAction class="attachment-remove" :aria-label="t('composer.removeAttachment', { name: item.fileName })" @click="dropAttachment(item.clientId)">
-              <X aria-hidden="true" />
-            </AttachmentAction>
-          </AttachmentActions>
-        </Attachment>
+        <ComposerTransitionGroup name="ui-pop">
+          <Attachment
+            v-for="pick in preparingFiles"
+            :key="pick.key"
+            state="idle"
+            size="xs"
+            class="attachment-chip is-idle"
+            role="listitem"
+            data-testid="attachment-chip"
+          >
+            <AttachmentMedia><component :is="pick.type.startsWith('image/') ? Image : FileText" aria-hidden="true" /></AttachmentMedia>
+            <AttachmentContent class="attachment-content">
+              <AttachmentTitle class="attachment-name"><span class="attachment-stem">{{ fileNameParts(pick.name).stem }}</span>{{ fileNameParts(pick.name).extension }}</AttachmentTitle>
+              <AttachmentDescription><span class="attachment-meta">{{ formatAttachmentBytes(pick.size) }}</span> <span class="attachment-state">{{ t('composer.attachPreparing') }}</span></AttachmentDescription>
+            </AttachmentContent>
+          </Attachment>
+          <Attachment
+            v-for="item in attachments"
+            :key="item.clientId"
+            :state="attachmentDisplayState(item.status)"
+            size="xs"
+            class="attachment-chip"
+            :class="`is-${item.status}`"
+            role="listitem"
+            :title="attachmentHint(item)"
+            data-testid="attachment-chip"
+          >
+            <AttachmentMedia :variant="item.previewUrl ? 'image' : 'icon'">
+              <img v-if="item.previewUrl" :src="item.previewUrl" :alt="item.fileName" />
+              <component :is="item.mediaType.startsWith('image/') ? Image : FileText" v-else aria-hidden="true" />
+              <button
+                v-if="item.previewUrl"
+                type="button"
+                class="attachment-preview-trigger"
+                :aria-label="t('composer.previewAttachment', { name: item.fileName })"
+                :title="t('composer.previewAttachment', { name: item.fileName })"
+                data-testid="attachment-preview"
+                @click.stop="openComposerLightbox(item.clientId)"
+              />
+              <Spinner v-if="item.status === 'uploading'" decorative class="attachment-spinner" />
+            </AttachmentMedia>
+            <AttachmentContent class="attachment-content">
+              <AttachmentTitle class="attachment-name"><span class="attachment-stem">{{ fileNameParts(item.fileName).stem }}</span>{{ fileNameParts(item.fileName).extension }}</AttachmentTitle>
+              <AttachmentDescription>
+                <span class="attachment-meta">{{ formatAttachmentBytes(item.size) }}</span>
+                <span v-if="item.status !== 'ready'" class="attachment-state"> {{ attachmentHint(item) }}</span>
+              </AttachmentDescription>
+            </AttachmentContent>
+            <AttachmentActions>
+              <AttachmentAction class="attachment-remove" :aria-label="t('composer.removeAttachment', { name: item.fileName })" @click="dropAttachment(item.clientId)">
+                <X aria-hidden="true" />
+              </AttachmentAction>
+            </AttachmentActions>
+          </Attachment>
+        </ComposerTransitionGroup>
       </AttachmentGroup>
 
       <div
@@ -1136,7 +1145,7 @@ function confirmSteer(id: string, interrupt = false) {
             :title="t('chat.stopRun')"
             @click="emit('stop')"
           >
-            <Square :size="14" />
+            <Square :size="11" fill="currentColor" />
           </UiButton>
           <UiButton
             v-if="!spatial || !(canStop && !canSend)"
@@ -1149,7 +1158,7 @@ function confirmSteer(id: string, interrupt = false) {
             @click="submit()"
           >
             <span v-if="busy" class="composer-send-spinner" role="status" :aria-label="t('chat.sending')" />
-            <ArrowUp v-else :size="15" />
+            <ArrowUp v-else :size="15" :stroke-width="2.25" />
           </UiButton>
         </div>
       </div>
@@ -1309,29 +1318,54 @@ function confirmSteer(id: string, interrupt = false) {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: visible;
 }
+/* Floating composer capsule: 1px border, subtle resting elevation, focus ring.
+   NEVER apply transform here — .composer-drop-hint inside uses backdrop-filter. */
 .composer-box {
+  position: relative;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  background: var(--surface-input, var(--surface-section));
+  box-shadow: var(--shadow-card-subtle);
+  transition:
+    border-color var(--duration-pop, 180ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    box-shadow var(--duration-pop, 180ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    background-color var(--duration-pop, 180ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.composer-box:focus-within {
+  border-color: var(--border-input-focus, var(--border-default));
+  box-shadow: var(--focus-ring), var(--shadow-card-subtle);
 }
 .welcome-dialog-main {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  padding: 12px 14px 6px;
+  gap: 8px;
+  align-items: flex-end;
+}
+.composer-box:not(:has(.welcome-dialog-toolbar)) .welcome-dialog-main {
+  padding: 10px 12px;
 }
 .welcome-dialog-input {
   flex: 1 1 0;
   min-width: 0;
+  padding: 5px 2px;
 }
+/* Single continuous capsule — zero horizontal divider lines between input & toolbar. */
 .welcome-dialog-toolbar {
   flex-wrap: wrap;
   gap: 4px 8px;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+  padding: 4px 12px 10px;
+  border-top: 0;
 }
 .toolbar-left {
   flex: 1 1 auto;
@@ -1345,6 +1379,23 @@ function confirmSteer(id: string, interrupt = false) {
   margin-left: auto;
   max-width: 100%;
 }
+.welcome-dialog-plus {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  transition:
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.welcome-dialog-plus:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.welcome-dialog-plus:active {
+  transform: scale(0.94);
+}
 .mode-selector-trigger,
 .permission-selector-trigger,
 .project-dropdown-trigger,
@@ -1354,8 +1405,37 @@ function confirmSteer(id: string, interrupt = false) {
   gap: 5px;
   min-width: 0;
   max-width: 100%;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
   white-space: nowrap;
   flex-shrink: 0;
+  cursor: pointer;
+  transition:
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.project-dropdown-trigger {
+  background: var(--surface-raised);
+  border-color: var(--border-muted);
+}
+.mode-selector-trigger:hover,
+.permission-selector-trigger:hover,
+.project-dropdown-trigger:hover,
+.toolbar-agent-config:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.mode-selector-trigger:active,
+.permission-selector-trigger:active,
+.project-dropdown-trigger:active,
+.toolbar-agent-config:active {
+  transform: scale(0.97);
 }
 .welcome-dialog-plus:focus-visible,
 .mode-selector-trigger:focus-visible,
@@ -1383,14 +1463,14 @@ function confirmSteer(id: string, interrupt = false) {
 }
 @media (max-width: 1180px) {
   .welcome-dialog-toolbar {
-    padding: 5px 8px;
+    padding: 4px 10px 8px;
     gap: 4px 6px;
   }
   .mode-selector-trigger,
   .permission-selector-trigger,
   .project-dropdown-trigger,
   .toolbar-agent-config {
-    padding: 4px 6px;
+    padding: 4px 7px;
   }
   .mode-selector-label,
   .permission-selector-label,
@@ -1403,18 +1483,18 @@ function confirmSteer(id: string, interrupt = false) {
 }
 @container composer (max-width: 440px) {
   .welcome-dialog-main {
-    padding: 8px 8px;
-    gap: 4px;
+    padding: 9px 10px 5px;
+    gap: 6px;
   }
   .welcome-dialog-toolbar {
-    padding: 5px 8px;
+    padding: 4px 10px 8px;
     gap: 4px 6px;
   }
   .mode-selector-trigger,
   .permission-selector-trigger,
   .project-dropdown-trigger,
   .toolbar-agent-config {
-    padding: 4px 6px;
+    padding: 4px 7px;
   }
   .mode-selector-label,
   .permission-selector-label,
@@ -1432,21 +1512,19 @@ function confirmSteer(id: string, interrupt = false) {
 }
 .mode-selector-chevron,
 .permission-selector-chevron,
-.project-dropdown-chevron { flex-shrink: 0; transition: transform 160ms ease; }
+.project-dropdown-chevron {
+  flex-shrink: 0;
+  transition: transform var(--duration-pop, 180ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
 .mode-selector-chevron.is-expanded,
 .permission-selector-chevron.is-expanded,
 .project-dropdown-chevron.is-expanded { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) {
-  .mode-selector-chevron,
-  .permission-selector-chevron,
-  .project-dropdown-chevron { transition: none; }
-}
-.composer-permission-icon[data-risk='low'] { color: color-mix(in srgb, var(--accent-info) 80%, var(--text-primary)); }
+.composer-permission-icon[data-risk='low'] { color: var(--text-secondary); }
 .composer-permission-icon[data-risk='medium'] { color: var(--accent-warning); }
 .composer-permission-icon[data-risk='high'] { color: var(--accent-danger); }
 .composer-settings-summary { display: flex; align-items: center; gap: 6px; padding: 0 8px 6px; flex-wrap: wrap; min-width: 0; max-width: 100%; box-sizing: border-box; }
-.composer-settings-summary button { display: inline-flex; align-items: center; background: var(--surface-section); border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 8px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-secondary); cursor: pointer; max-width: 100%; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-settings-summary button:hover { background: var(--surface-hover); }
+.composer-settings-summary button { display: inline-flex; align-items: center; background: var(--surface-section); border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 9px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-secondary); cursor: pointer; max-width: 100%; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)), color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
+.composer-settings-summary button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .composer-settings-summary .composer-pinned-model.is-unavailable { color: var(--accent-warning); border-color: color-mix(in srgb, var(--accent-warning) 40%, transparent); }
 .composer-error {
   display: flex;
@@ -1464,7 +1542,7 @@ function confirmSteer(id: string, interrupt = false) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 12px 0;
+  padding: 10px 14px 2px;
 }
 .composer-select-input {
   height: 26px;
@@ -1479,21 +1557,58 @@ function confirmSteer(id: string, interrupt = false) {
   position: relative;
   display: flex;
   align-items: center;
+  gap: 6px;
+}
+/* High-contrast monochrome-ready circular primary action buttons (Send & Stop) */
+.welcome-dialog-send,
+.composer-stop-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  margin: 0;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    opacity var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    box-shadow var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.welcome-dialog-send:hover:not(:disabled),
+.composer-stop-button:hover:not(:disabled) {
+  background: var(--bg-primary-button-hover, color-mix(in srgb, var(--bg-primary-button, var(--accent-primary)) 88%, var(--text-on-primary, #ffffff)));
+  color: var(--text-on-primary, #ffffff);
+}
+.welcome-dialog-send:active:not(:disabled),
+.composer-stop-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.welcome-dialog-send:disabled {
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  border-color: var(--border-muted);
+  box-shadow: none;
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .composer-send-spinner {
-  width: 15px;
-  height: 15px;
-  border: 2px solid var(--border-muted);
-  border-top-color: var(--text-primary);
+  width: 14px;
+  height: 14px;
+  border: 1.75px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: composer-spin 0.8s linear infinite;
-}
-.composer-stop-button {
-  margin-right: 2px;
-  color: var(--text-secondary);
-}
-.composer-stop-button:hover {
-  color: var(--text-primary);
 }
 @keyframes composer-spin {
   to { transform: rotate(360deg); }
@@ -1502,42 +1617,52 @@ function confirmSteer(id: string, interrupt = false) {
   z-index: 9999;
   display: flex;
   flex-direction: column;
-  min-width: 96px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
+  min-width: 108px;
+  border: 1px solid var(--border-default, var(--border-muted));
+  border-radius: 10px;
   background: var(--surface-section);
   padding: 4px;
   box-shadow: var(--shadow-panel);
+  transition:
+    opacity var(--duration-pop, 180ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    transform var(--duration-pop, 180ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1));
+}
+@starting-style {
+  .ask-menu {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
 }
 .ask-menu-item {
   border: none;
   background: none;
   text-align: left;
   font-size: 12px;
-  padding: 5px 8px;
-  border-radius: 4px;
+  padding: 6px 9px;
+  border-radius: 6px;
   cursor: pointer;
   color: var(--text-primary);
   white-space: nowrap;
+  transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
 }
 .ask-menu-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
 }
 .queued-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
+  border: 1px solid var(--border-card, var(--border-muted));
+  border-radius: 10px;
   background: var(--surface-raised);
-  padding: 6px 8px;
+  padding: 7px 10px;
 }
 .queued-content {
   flex: 1;
   min-width: 0;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1555,13 +1680,16 @@ function confirmSteer(id: string, interrupt = false) {
   background: none;
   font-size: 12px;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
   color: var(--text-muted);
   white-space: nowrap;
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
 }
 .queued-action:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 .queued-action:disabled {
@@ -1574,13 +1702,10 @@ function confirmSteer(id: string, interrupt = false) {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 12px 0;
-}
-.composer-box {
-  position: relative;
+  padding: 10px 14px 2px;
 }
 .composer-box[data-dragging="true"] {
-  outline: 1.5px dashed var(--accent, var(--text-primary));
+  outline: 1.5px dashed var(--accent-primary, var(--text-primary));
   outline-offset: -2px;
 }
 .composer-drop-hint {
@@ -1612,11 +1737,12 @@ function confirmSteer(id: string, interrupt = false) {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 6px 12px 0;
+  margin: 6px 14px 0;
   padding: 5px 9px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--warning, #d97706) 11%, transparent);
-  color: var(--warning-text, var(--text-muted));
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-warning, #d97706) 28%, transparent);
+  background: color-mix(in srgb, var(--accent-warning, #d97706) 9%, transparent);
+  color: var(--warning-text, var(--text-secondary));
   font-size: 12px;
   line-height: 1.35;
 }
@@ -1656,5 +1782,36 @@ function confirmSteer(id: string, interrupt = false) {
 .plus-menu-item:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-box,
+  .welcome-dialog-plus,
+  .mode-selector-trigger,
+  .permission-selector-trigger,
+  .project-dropdown-trigger,
+  .toolbar-agent-config,
+  .mode-selector-chevron,
+  .permission-selector-chevron,
+  .project-dropdown-chevron,
+  .composer-settings-summary button,
+  .welcome-dialog-send,
+  .composer-stop-button,
+  .ask-menu,
+  .ask-menu-item,
+  .queued-action {
+    transition: none;
+  }
+  .composer-send-spinner {
+    animation: none;
+  }
+  .welcome-dialog-plus:active,
+  .mode-selector-trigger:active,
+  .permission-selector-trigger:active,
+  .project-dropdown-trigger:active,
+  .toolbar-agent-config:active,
+  .welcome-dialog-send:active:not(:disabled),
+  .composer-stop-button:active:not(:disabled) {
+    transform: none;
+  }
 }
 </style>

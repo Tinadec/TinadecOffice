@@ -1,34 +1,36 @@
+@import "./micro-motion.css";
+
 /* ===================================================================
    UNIFIED SYMMETRIC PAGE TRANSITION & MOTION SYSTEM
    Covers all 4 primary routes: Home (/), Space (/space),
    Companion Center (/companion-center), and Settings (/settings).
 ====================================================================
 
-DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
+DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 1. Background layer ALWAYS outside transitions (App.vue)
-2. Only opacity + transform on animated island roots — NO color/background
+2. Only opacity + transform on animated leaf roots — NO color/background
 3. Parent wrapper chain MUST NEVER have transform above backdrop-filter children!
-   Animate ONLY leaf blur/material root islands directly.
-4. Asymmetric M3/HIG timing:
-   - Exit is fast & decisive: 190ms total budget, ease-in cubic-bezier(0.4, 0, 1, 1)
-   - Enter decelerates smoothly: 280ms per island + 35ms stagger, cubic-bezier(0.2, 0, 0, 1)
-5. Settled (.route-idle) clears animation & will-change so zero transform
-   stacking contexts remain on resting islands.
+   Containers holding nested blur children animate opacity ONLY.
+4. Tightened asymmetric timing:
+   - Exit is fast & decisive: 180ms total budget, ease-in var(--ease-exit)
+   - Enter decelerates crisply: 240ms per island + 28ms stagger, var(--ease-snappy)
+5. Settled (.route-idle) clears animation, transform & will-change so zero
+   transform stacking contexts remain on resting islands.
 ==================================================================== */
 
 :root {
-  --motion-enter-duration: 280ms;
-  --motion-enter-ease: cubic-bezier(0.2, 0, 0, 1);
-  --motion-exit-duration: 190ms;
-  --motion-exit-ease: cubic-bezier(0.4, 0, 1, 1);
-  --motion-stagger-step: 35ms;
+  --motion-enter-duration: var(--duration-panel, 240ms);
+  --motion-enter-ease: var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+  --motion-exit-duration: var(--duration-pop, 180ms);
+  --motion-exit-ease: var(--ease-exit, cubic-bezier(0.4, 0, 1, 1));
+  --motion-stagger-step: 28ms;
 }
 
 /* ----------------------------------------------------------------------------
    1. HOME PAGE (/) — Staggered Column Stack Rise / Exit
    Wrapper: .home-page-container (.home-preparing/.home-entering/.home-exiting
    and unified .route-preparing/.route-entering/.route-exiting).
-   Animated blur/material roots: .uie-stack and .uie-column-rail.
+   Animated roots: .uie-stack and .uie-column-rail.
    ---------------------------------------------------------------------------- */
 
 /* Let .uie-column-clip overflow during transitions so rising/exiting stacks
@@ -50,12 +52,12 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
     opacity: 1;
   }
   to {
-    transform: translateY(-28px) scale(0.97);
+    transform: translateY(-14px) scale(0.985);
     opacity: 0;
   }
 }
 
-/* 150ms + 0/20/40ms stagger completes all 3 columns cleanly within 190ms. */
+/* 140ms + 0/18/36ms stagger completes all 3 columns cleanly within 180ms. */
 .home-page-container:is(.home-exiting, .route-exiting) :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
   pointer-events: none;
@@ -66,15 +68,15 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   animation-delay: 0ms;
 }
 .home-page-container:is(.home-exiting, .route-exiting) .uie-column:nth-child(2) :is(.uie-stack, .uie-column-rail) {
-  animation-delay: 20ms;
+  animation-delay: 18ms;
 }
 .home-page-container:is(.home-exiting, .route-exiting) .uie-column:nth-child(3) :is(.uie-stack, .uie-column-rail) {
-  animation-delay: 40ms;
+  animation-delay: 36ms;
 }
 
 @keyframes home-up-enter {
   from {
-    transform: translateY(28px) scale(0.97);
+    transform: translateY(14px) scale(0.985);
     opacity: 0;
   }
   to {
@@ -85,7 +87,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
 
 .home-page-container:is(.home-preparing, .route-preparing) :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
-  transform: translateY(28px) scale(0.97);
+  transform: translateY(14px) scale(0.985);
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -106,10 +108,16 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   animation-delay: calc(var(--motion-stagger-step) * 2);
 }
 
+.home-page-container.route-idle:not(.home-preparing):not(.home-entering):not(.home-exiting) :is(.uie-stack, .uie-column-rail) {
+  animation: none;
+  transform: none;
+  will-change: auto;
+}
+
 /* ----------------------------------------------------------------------------
    2. COMPANION CENTER (/companion-center) — 3-Island Staggered Choreography
    Wrapper: .companion-center-page (NEVER transformed).
-   Animated blur/material roots ONLY:
+   Animated roots ONLY:
    .companion-center-rail, .companion-thread, .companion-dock.
    ---------------------------------------------------------------------------- */
 
@@ -119,7 +127,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
 
 @keyframes companion-island-enter {
   from {
-    transform: translateY(24px) scale(0.975);
+    transform: translateY(14px) scale(0.985);
     opacity: 0;
   }
   to {
@@ -134,14 +142,14 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
     opacity: 1;
   }
   to {
-    transform: translateY(-24px) scale(0.975);
+    transform: translateY(-14px) scale(0.985);
     opacity: 0;
   }
 }
 
 .companion-center-page.route-preparing :is(.companion-center-rail, .companion-thread, .companion-dock) {
   will-change: transform, opacity;
-  transform: translateY(24px) scale(0.975);
+  transform: translateY(14px) scale(0.985);
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -172,17 +180,25 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   animation-delay: 0ms;
 }
 .companion-center-page.route-exiting .companion-thread {
-  animation-delay: 20ms;
+  animation-delay: 18ms;
 }
 .companion-center-page.route-exiting .companion-dock {
-  animation-delay: 40ms;
+  animation-delay: 36ms;
+}
+
+.companion-center-page.route-idle :is(.companion-center-rail, .companion-thread, .companion-dock) {
+  animation: none;
+  transform: none;
+  will-change: auto;
 }
 
 /* ----------------------------------------------------------------------------
    3. SPATIAL VIEW (/space) — Spatial Canvas, HUD Bars & Leaf Islands
    Wrapper chain (.spatial-page, .shell, .uie-canvas, .uie-space-stage,
    .space-surface, .space-flow-area, .space-composer-dock) NEVER carries
-   transform so backdrop-filter works on every leaf island!
+   transform so backdrop-filter works on every glass island!
+   Islands that host nested blur popovers (.space-island, .composer-box)
+   animate opacity ONLY so zero transform ancestor ever sits above blur.
    ---------------------------------------------------------------------------- */
 
 .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .uie-column-clip {
@@ -191,7 +207,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
 
 @keyframes space-island-enter {
   from {
-    transform: translateY(22px) scale(0.975);
+    transform: translateY(12px) scale(0.985);
     opacity: 0;
   }
   to {
@@ -206,36 +222,14 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
     opacity: 1;
   }
   to {
-    transform: translateY(-22px) scale(0.975);
-    opacity: 0;
-  }
-}
-
-@keyframes space-hud-enter {
-  from {
-    transform: translateY(-14px) scale(0.98);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
-}
-
-@keyframes space-hud-exit {
-  from {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
-  to {
-    transform: translateY(-14px) scale(0.98);
+    transform: translateY(-12px) scale(0.985);
     opacity: 0;
   }
 }
 
 @keyframes space-card-enter {
   from {
-    transform: translateY(16px) scale(0.96);
+    transform: translateY(10px) scale(0.98);
     opacity: 0;
   }
   to {
@@ -250,29 +244,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
     opacity: 1;
   }
   to {
-    transform: translateY(-16px) scale(0.96);
-    opacity: 0;
-  }
-}
-
-@keyframes space-side-enter {
-  from {
-    transform: translateX(18px) scale(0.98);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-}
-
-@keyframes space-side-exit {
-  from {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-  to {
-    transform: translateX(18px) scale(0.98);
+    transform: translateY(-10px) scale(0.98);
     opacity: 0;
   }
 }
@@ -295,19 +267,26 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   }
 }
 
-/* Spatial preparing state on leaf islands */
-.spatial-page.route-preparing :is(.uie-stack, .uie-column-rail),
-.spatial-page.route-preparing :is(.space-index-button, .space-composer-dock .composer-box) {
+/* Spatial preparing state */
+.spatial-page.route-preparing :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
-  transform: translateY(22px) scale(0.975);
+  transform: translateY(12px) scale(0.985);
   opacity: 0;
   pointer-events: none;
   transition: none;
 }
 
-.spatial-page.route-preparing :is(.space-goal-controls, .space-controls, .space-data-status) {
-  will-change: transform, opacity;
-  transform: translateY(-14px) scale(0.98);
+.spatial-page.route-preparing :is(
+  .space-island,
+  .space-goal-controls,
+  .space-controls,
+  .space-data-status,
+  .space-inspector,
+  .space-layers-drawer,
+  .space-composer-pill,
+  .space-index-button,
+  .space-composer-dock .composer-box
+) {
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -315,15 +294,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
 
 .spatial-page.route-preparing .space-flow-area .spatial-work-card {
   will-change: transform, opacity;
-  transform: translateY(16px) scale(0.96);
-  opacity: 0;
-  pointer-events: none;
-  transition: none;
-}
-
-.spatial-page.route-preparing :is(.space-detail, .space-plan-drawer, .space-hide-terminal) {
-  will-change: transform, opacity;
-  transform: translateX(18px) scale(0.98);
+  transform: translateY(10px) scale(0.98);
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -340,15 +311,14 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   animation-delay: 0ms;
 }
 
-.spatial-page.route-entering :is(.space-goal-controls, .space-controls, .space-data-status) {
-  will-change: transform, opacity;
-  animation: space-hud-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
-  animation-delay: 20ms;
+.spatial-page.route-entering :is(.space-island, .space-goal-controls, .space-controls, .space-data-status) {
+  animation: space-fade-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: 16ms;
 }
 
 .spatial-page.route-entering .space-flow-area :is(.vue-flow__background, .vue-flow__edges) {
   animation: space-fade-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
-  animation-delay: 20ms;
+  animation-delay: 16ms;
 }
 
 .spatial-page.route-entering .space-flow-area .spatial-work-card {
@@ -357,19 +327,17 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   animation-delay: var(--motion-stagger-step);
 }
 
-.spatial-page.route-entering :is(.space-detail, .space-plan-drawer, .space-hide-terminal) {
-  will-change: transform, opacity;
-  animation: space-side-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
-  animation-delay: 50ms;
+.spatial-page.route-entering :is(.space-inspector, .space-layers-drawer) {
+  animation: space-fade-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+  animation-delay: 40ms;
 }
 
-.spatial-page.route-entering :is(.space-index-button, .space-composer-dock .composer-box) {
-  will-change: transform, opacity;
-  animation: space-island-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
+.spatial-page.route-entering :is(.space-composer-pill, .space-index-button, .space-composer-dock .composer-box) {
+  animation: space-fade-enter var(--motion-enter-duration) var(--motion-enter-ease) both;
   animation-delay: calc(var(--motion-stagger-step) * 2);
 }
 
-/* Spatial exiting state (completes cleanly within 190ms) */
+/* Spatial exiting state (completes cleanly within 180ms) */
 .spatial-page.route-exiting :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
   pointer-events: none;
@@ -377,37 +345,48 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   animation-delay: 0ms;
 }
 
-.spatial-page.route-exiting :is(.space-goal-controls, .space-controls, .space-data-status) {
-  will-change: transform, opacity;
+.spatial-page.route-exiting :is(.space-island, .space-goal-controls, .space-controls, .space-data-status) {
   pointer-events: none;
-  animation: space-hud-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
-  animation-delay: 15ms;
+  animation: space-fade-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 12ms;
 }
 
 .spatial-page.route-exiting .space-flow-area :is(.vue-flow__background, .vue-flow__edges) {
   animation: space-fade-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
-  animation-delay: 15ms;
+  animation-delay: 12ms;
 }
 
 .spatial-page.route-exiting .space-flow-area .spatial-work-card {
   will-change: transform, opacity;
   pointer-events: none;
   animation: space-card-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
-  animation-delay: 20ms;
+  animation-delay: 18ms;
 }
 
-.spatial-page.route-exiting :is(.space-detail, .space-plan-drawer, .space-hide-terminal) {
-  will-change: transform, opacity;
+.spatial-page.route-exiting :is(.space-inspector, .space-layers-drawer) {
   pointer-events: none;
-  animation: space-side-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
-  animation-delay: 25ms;
+  animation: space-fade-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 22ms;
 }
 
-.spatial-page.route-exiting :is(.space-index-button, .space-composer-dock .composer-box) {
-  will-change: transform, opacity;
+.spatial-page.route-exiting :is(.space-composer-pill, .space-index-button, .space-composer-dock .composer-box) {
   pointer-events: none;
-  animation: space-island-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
-  animation-delay: 40ms;
+  animation: space-fade-exit calc(var(--motion-exit-duration) - 40ms) var(--motion-exit-ease) forwards;
+  animation-delay: 36ms;
+}
+
+.spatial-page.route-idle :is(
+  .uie-stack,
+  .uie-column-rail,
+  .space-island,
+  .space-inspector,
+  .space-layers-drawer,
+  .space-composer-pill,
+  .space-index-button
+),
+.spatial-page.route-idle .space-composer-dock .composer-box {
+  animation: none;
+  will-change: auto;
 }
 
 /* ----------------------------------------------------------------------------
@@ -446,7 +425,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   pointer-events: none;
   animation-duration: calc(var(--motion-exit-duration) - 25ms);
   animation-timing-function: var(--motion-exit-ease);
-  animation-delay: 25ms;
+  animation-delay: 22ms;
 }
 
 /* ----------------------------------------------------------------------------
@@ -466,12 +445,16 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / Adobe Spectrum):
   .spatial-page:is(.route-preparing, .route-entering, .route-exiting) :is(
     .uie-stack,
     .uie-column-rail,
+    .space-island,
     .space-goal-controls,
     .space-controls,
     .space-data-status,
+    .space-inspector,
+    .space-layers-drawer,
     .space-detail,
     .space-plan-drawer,
     .space-hide-terminal,
+    .space-composer-pill,
     .space-index-button
   ),
   .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-flow-area :is(

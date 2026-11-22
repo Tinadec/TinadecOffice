@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { Transition, computed, ref, type FunctionalComponent, type TransitionProps } from 'vue'
 import { Bot, GitBranch, ListChecks, Send, ShieldAlert } from '@lucide/vue'
+
+const MotionTransition: FunctionalComponent<TransitionProps> = (props, ctx) => Transition(props, ctx)
 import { useI18n } from 'vue-i18n'
 import ThinkingProcess from './ThinkingProcess.vue'
 import ToolCallCard from './ToolCallCard.vue'
@@ -22,6 +24,7 @@ const pendingCalls = computed(() => (props.toolCalls ?? []).filter((call) => cal
 const detailItems = computed(() => items.value.filter((item) => item.kind !== 'tool' || item.call.status !== 'waiting_approval'))
 const isWorking = computed(() => (props.thinkingSteps ?? []).some((step) => step.status === 'running')
   || (props.toolCalls ?? []).some((call) => call.status === 'running' || call.status === 'pending'))
+const isAwaitingDecision = computed(() => Boolean(props.supervisionReview?.options.length) || pendingCalls.value.length > 0)
 const activityState = computed(() => props.supervisionReview?.options.length
   ? t('agent.activityWaitingApproval')
   : pendingCalls.value.length
@@ -165,57 +168,264 @@ function openWorkerFromCard(item: InlineDockCardItem): void {
       </div>
     </div>
     <div v-if="items.length" class="activity-summary" data-testid="activity-summary">
-      <button class="activity-summary-trigger" type="button" :aria-expanded="expanded" data-testid="activity-toggle" @click="expanded = !expanded">
+      <button
+        class="activity-summary-trigger"
+        type="button"
+        :aria-expanded="expanded"
+        data-testid="activity-toggle"
+        @click="expanded = !expanded"
+      >
         <ListChecks :size="13" class="activity-summary-icon" aria-hidden="true" />
         <span class="activity-summary-chevron" :class="{ expanded }" aria-hidden="true">›</span>
-        <span class="activity-summary-label">{{ t('agent.activity') }}</span>
+        <span class="activity-summary-label" :class="{ 'ui-shimmer-text': isWorking && !isAwaitingDecision && !activityState }">{{ t('agent.activity') }}</span>
         <span class="activity-summary-count">{{ t('agent.activityCount', { count: items.length }) }}</span>
-        <span v-if="activityState" class="activity-summary-state">{{ activityState }}</span>
+        <span
+          v-if="activityState"
+          class="activity-summary-state"
+          :class="{
+            'ui-shimmer-text': isWorking && !isAwaitingDecision,
+            'is-awaiting': isAwaitingDecision,
+          }"
+        >{{ activityState }}</span>
       </button>
-      <div v-if="expanded" class="activity-details" data-testid="activity-details">
-        <template v-for="item in detailItems" :key="item.id">
-          <ThinkingProcess v-if="item.kind === 'thinking'" :steps="item.steps" />
-          <ToolCallCard v-else :tool-call="item.call" :run-id="runId"
-            @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
-        </template>
-      </div>
+      <MotionTransition name="ui-collapse">
+        <div v-if="expanded" class="activity-collapse">
+          <div class="activity-collapse-inner">
+            <div class="activity-details" data-testid="activity-details">
+              <template v-for="item in detailItems" :key="item.id">
+                <ThinkingProcess v-if="item.kind === 'thinking'" :steps="item.steps" />
+                <ToolCallCard
+                  v-else
+                  :tool-call="item.call"
+                  :run-id="runId"
+                  @approve="emit('approve', $event)"
+                  @reject="emit('reject', $event)"
+                />
+              </template>
+            </div>
+          </div>
+        </div>
+      </MotionTransition>
     </div>
     <template v-for="call in pendingCalls" :key="`attention-${call.id}`">
-      <ToolCallCard :tool-call="call" :run-id="runId"
-        @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
+      <ToolCallCard
+        :tool-call="call"
+        :run-id="runId"
+        @approve="emit('approve', $event)"
+        @reject="emit('reject', $event)"
+      />
     </template>
     <SupervisionGate :review="supervisionReview" />
   </div>
 </template>
 
 <style scoped>
-.turn-timeline { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.turn-dock-cards { display: flex; flex-wrap: wrap; gap: 5px; }
-.turn-dock-card { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 7px; border-radius: 7px; border: 1px solid var(--border-card); background: var(--surface-section); font-size: 11px; }
-.turn-dock-card.is-dispatch { border-color: color-mix(in srgb, var(--accent-primary) 28%, var(--border-card)); background: color-mix(in srgb, var(--accent-primary) 6%, var(--surface-section)); }
-.turn-dock-card.is-worktree { border-color: color-mix(in srgb, var(--accent-success) 28%, var(--border-card)); background: color-mix(in srgb, var(--accent-success) 6%, var(--surface-section)); }
-.turn-dock-card.is-approval { border-color: color-mix(in srgb, var(--accent-warning) 34%, var(--border-card)); background: color-mix(in srgb, var(--accent-warning) 9%, var(--surface-section)); }
-.turn-dock-card.is-dispatch .turn-dock-card-main > svg { color: var(--accent-primary); }
-.turn-dock-card.is-worktree .turn-dock-card-main > svg { color: var(--accent-success); }
-.turn-dock-card.is-approval .turn-dock-card-main > svg { color: var(--accent-warning); }
-.turn-dock-card-main { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; }
-.turn-dock-card-main:hover { color: var(--accent-primary); }
-.turn-dock-card-title { font-weight: 600; white-space: nowrap; }
-.turn-dock-card-badge { padding: 1px 5px; border-radius: 4px; background: var(--surface-raised); font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text-secondary); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.turn-dock-card-sub { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; color: var(--text-muted); }
-.turn-dock-worker-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent-primary) 10%, transparent); color: var(--accent-primary); font-size: 10px; font-weight: 600; cursor: pointer; }
-.turn-dock-worker-badge:hover { background: color-mix(in srgb, var(--accent-primary) 18%, transparent); }
-.activity-summary { min-width: 0; overflow: hidden; }
-.activity-summary-trigger { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 4px 2px; border: 0; border-radius: 6px; color: var(--text-secondary); background: transparent; font-size: 11px; text-align: left; cursor: pointer; }
-.activity-summary-trigger:hover, .activity-summary-trigger:focus-visible { color: var(--text-primary); background: var(--surface-hover); }
-.activity-summary-trigger:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
-.activity-summary-chevron { display: inline-block; width: 12px; color: var(--text-muted); font-size: 18px; line-height: 12px; transition: transform .15s ease; }
-.activity-summary-chevron.expanded { transform: rotate(90deg); }
-.activity-summary-icon { flex: 0 0 auto; color: var(--accent-primary); }
-.activity-summary-label { font-weight: 500; }
-.activity-summary-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.activity-summary-state { min-width: 0; margin-left: auto; overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.activity-details { position: relative; display: flex; flex-direction: column; gap: 1px; margin-left: 8px; padding: 3px 0 5px 14px; }
-.activity-details::before { position: absolute; top: 0; bottom: 5px; left: 3px; width: 1px; background: color-mix(in srgb, var(--border-muted) 72%, transparent); content: ''; }
-@media (prefers-reduced-motion: reduce) { .activity-summary-chevron { transition: none; } }
+.turn-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.turn-dock-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.turn-dock-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border-card, var(--border-muted));
+  background: var(--surface-section);
+  font-size: 11px;
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.turn-dock-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-default, var(--border-muted));
+}
+.turn-dock-card.is-approval {
+  border-color: color-mix(in srgb, var(--accent-warning) 32%, var(--border-card, var(--border-muted)));
+  background: color-mix(in srgb, var(--accent-warning) 6%, var(--surface-section));
+}
+.turn-dock-card .turn-dock-card-main > svg {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.turn-dock-card.is-approval .turn-dock-card-main > svg {
+  color: var(--accent-warning);
+}
+.turn-dock-card-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.turn-dock-card-main:hover {
+  color: var(--text-primary);
+}
+.turn-dock-card-title {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.turn-dock-card-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  font-size: 10px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-dock-card-sub {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.turn-dock-worker-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-default, var(--border-muted));
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.turn-dock-worker-badge:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.activity-summary {
+  min-width: 0;
+  overflow: hidden;
+}
+.activity-summary-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.activity-summary-trigger:hover,
+.activity-summary-trigger:focus-visible {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+.activity-summary-trigger:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+.activity-summary-chevron {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-muted);
+  font-size: 17px;
+  line-height: 12px;
+  transition: transform var(--duration-pop, 180ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.activity-summary-chevron.expanded {
+  transform: rotate(90deg);
+}
+.activity-summary-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.activity-summary-label {
+  font-weight: 500;
+}
+.activity-summary-count {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+.activity-summary-state {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-summary-state.is-awaiting {
+  color: var(--accent-warning);
+  font-weight: 500;
+}
+.activity-collapse {
+  display: grid;
+}
+.activity-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.activity-details {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 8px;
+  padding: 4px 0 6px 14px;
+}
+.activity-details::before {
+  position: absolute;
+  top: 2px;
+  bottom: 6px;
+  left: 3px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border-muted) 80%, transparent);
+  content: '';
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-dock-card,
+  .turn-dock-card-main,
+  .turn-dock-worker-badge,
+  .activity-summary-trigger,
+  .activity-summary-chevron {
+    transition: none;
+  }
+}
 </style>

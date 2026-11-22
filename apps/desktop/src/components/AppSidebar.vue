@@ -837,7 +837,7 @@ watch([displayName, () => props.collapsed], async () => {
                     <button class="session-more" :title="t('sidebar.moreActions')" @click.stop="openMenuAtButton($event, 'session', selectionKey(session), session.title)"><MoreHorizontal :size="13" /></button>
                   </div>
                 </template>
-                <!-- 项目活动: the same conversations, drawn as activity cards. The group header already
+                <!-- Project activity: the same conversations, drawn as activity cards. The group header already
                      names the workspace, so each card drops the trailing name. -->
                 <template v-if="item.variant === 'activity'">
                   <SidebarActivityCard
@@ -997,7 +997,7 @@ watch([displayName, () => props.collapsed], async () => {
         ><GripVertical :size="13" /></span>
       </div>
     </div>
-    <dialog ref="migrationDialog" class="sidebar-migration-dialog" aria-labelledby="migration-title" @close="migrationSession = null">
+    <dialog ref="migrationDialog" class="sidebar-migration-dialog ui-pop" aria-labelledby="migration-title" @close="migrationSession = null">
       <form @submit.prevent="submitMigration">
         <h2 id="migration-title">{{ t('sidebar.migrateSession') }}</h2>
         <p>{{ migrationSession?.name }}</p>
@@ -1014,29 +1014,109 @@ watch([displayName, () => props.collapsed], async () => {
    backdrop-filter and material background do not reach. They inherit the
    surface tokens but must apply the raised filter themselves. */
 .sidebar-view-menu, .sidebar-workspace-options, .sidebar-migration-dialog { backdrop-filter: var(--material-filter-raised, none); -webkit-backdrop-filter: var(--material-filter-raised, none); }
-.sidebar-view-menu { position: fixed; inset: auto; margin: 0; width: 200px; padding: 6px; border: 1px solid var(--border-muted); border-radius: 12px; background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--shadow-card-subtle); opacity: 0; transform: translateY(6px) scale(0.98); transform-origin: bottom left; pointer-events: none; transition: opacity 160ms ease-out, transform 160ms ease-out, display 160ms allow-discrete, overlay 160ms allow-discrete; }
-.sidebar-view-menu:popover-open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+
+/* Monochrome active row pills & smooth action icon hover micro-motion */
+.sidebar-nav-item,
+.sidebar-footer-action {
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.sidebar-nav-item:active:not(:disabled),
+.sidebar-footer-action:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.project-row,
+.session-row {
+  border-radius: 7px;
+  border: 1px solid transparent;
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.project-row:hover,
+.session-row:hover {
+  background: var(--surface-hover);
+}
+.project-row.active,
+.session-row.active {
+  background: var(--surface-selected);
+  border-color: var(--border-card-active, var(--border-muted));
+}
+.session-row .session-item:hover {
+  background: transparent;
+}
+.session-row.active .session-item {
+  color: var(--text-primary);
+  font-weight: 500;
+  background: transparent;
+}
+.project-row.active .project-row-main {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.project-row-action,
+.session-more {
+  opacity: 0;
+  transform: scale(0.92);
+  transition:
+    opacity var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.project-row:hover .project-row-action,
+.project-row:focus-within .project-row-action,
+.session-row:hover .session-more,
+.session-row:focus-within .session-more,
+.session-row.active .session-more {
+  opacity: 1;
+  transform: scale(1);
+}
+.workspace-section .workspace-section-action {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.92);
+  transition:
+    opacity var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.workspace-section:hover .workspace-section-action,
+.workspace-section-heading:focus-within .workspace-section-action,
+.workspace-section-action[aria-expanded="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+.project-row-action:active:not(:disabled),
+.session-more:active:not(:disabled),
+.workspace-section-action:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.sidebar-view-menu { position: fixed; inset: auto; margin: 0; width: 200px; padding: 6px; border: 1px solid var(--border-default, var(--border-muted)); border-radius: 12px; background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--shadow-panel, var(--shadow-card-subtle)); opacity: 0; transform: translateY(6px) scale(0.98); transform-origin: bottom left; pointer-events: none; transition: opacity var(--duration-pop, 180ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)), transform var(--duration-pop, 180ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)), display var(--duration-pop, 180ms) allow-discrete, overlay var(--duration-pop, 180ms) allow-discrete; }
+.sidebar-view-menu:popover-open { opacity: 1; transform: none; pointer-events: auto; }
 @starting-style {
   .sidebar-view-menu:popover-open { opacity: 0; transform: translateY(6px) scale(0.98); }
 }
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-view-menu { transition: none; transform: none; }
-}
-.sidebar-view-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
-.sidebar-view-menu button:hover, .sidebar-view-menu button[aria-pressed="true"] { background: var(--surface-selected); }
+.sidebar-view-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)), border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
+.sidebar-view-menu button:hover { background: var(--surface-hover); }
+.sidebar-view-menu button[aria-pressed="true"] { background: var(--surface-selected); border-color: var(--border-card-active, var(--border-muted)); font-weight: 500; }
 /* Section options mirror the view chooser: a native popover anchored by the invoker, so
    Escape, light dismiss and focus restore stay browser behaviour instead of hand-rolled. */
-.sidebar-workspace-options { position: fixed; inset: auto; margin: 0; width: 236px; padding: 6px; border: 1px solid var(--border-muted); border-radius: 12px; background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--shadow-card-subtle); opacity: 0; transform: translateY(-6px) scale(0.98); transform-origin: top right; pointer-events: none; transition: opacity 160ms ease-out, transform 160ms ease-out, display 160ms allow-discrete, overlay 160ms allow-discrete; }
-.sidebar-workspace-options:popover-open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+.sidebar-workspace-options { position: fixed; inset: auto; margin: 0; width: 236px; padding: 6px; border: 1px solid var(--border-default, var(--border-muted)); border-radius: 12px; background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--shadow-panel, var(--shadow-card-subtle)); opacity: 0; transform: translateY(-6px) scale(0.98); transform-origin: top right; pointer-events: none; transition: opacity var(--duration-pop, 180ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)), transform var(--duration-pop, 180ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)), display var(--duration-pop, 180ms) allow-discrete, overlay var(--duration-pop, 180ms) allow-discrete; }
+.sidebar-workspace-options:popover-open { opacity: 1; transform: none; pointer-events: auto; }
 @starting-style { .sidebar-workspace-options:popover-open { opacity: 0; transform: translateY(-6px) scale(0.98); } }
-@media (prefers-reduced-motion: reduce) { .sidebar-workspace-options { transition: none; transform: none; } .sidebar-option.drag-source { transition: none; } }
 .sidebar-workspace-options-title { margin: 4px 8px 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--text-muted); }
 /* One row = one block of the list below it: the checkbox toggles it, the handle reorders it. */
-.sidebar-option { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 8px; border-radius: 8px; background: transparent; color: var(--text-primary); cursor: pointer; }
+.sidebar-option { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border-radius: 8px; background: transparent; color: var(--text-primary); cursor: pointer; transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
 .sidebar-option:hover, .sidebar-option:focus-within { background: var(--surface-hover); }
 .sidebar-option-label { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Always faintly visible, never invisible: an affordance nobody knows about is not an affordance. */
-.sidebar-option-grip { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 2px; border-radius: 4px; color: var(--text-muted); opacity: 0.45; cursor: grab; transition: opacity 120ms ease; }
+.sidebar-option-grip { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 2px; border-radius: 4px; color: var(--text-muted); opacity: 0.45; cursor: grab; transition: opacity var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
 .sidebar-option:hover .sidebar-option-grip, .sidebar-option:focus-within .sidebar-option-grip, .sidebar-option.drag-source .sidebar-option-grip { opacity: 1; }
 .sidebar-option-grip:active { cursor: grabbing; }
 .sidebar-option.drag-source {
@@ -1047,10 +1127,28 @@ watch([displayName, () => props.collapsed], async () => {
 .sidebar-option.drag-over-before::before, .sidebar-option.drag-over-after::after { content: ''; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 1px; background: var(--accent-primary); pointer-events: none; }
 .sidebar-option.drag-over-before::before { top: -1px; }
 .sidebar-option.drag-over-after::after { bottom: -1px; }
-.sidebar-migration-dialog { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border-muted); border-radius: 12px; padding: 24px; background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--shadow-card-subtle); }
+.sidebar-migration-dialog { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border-default, var(--border-muted)); border-radius: 12px; padding: 24px; background: var(--surface-raised); color: var(--text-primary); box-shadow: var(--shadow-elevated, var(--shadow-card-subtle)); }
 .sidebar-migration-dialog::backdrop { background: color-mix(in srgb, var(--bg-overlay) 65%, transparent); }
 .sidebar-migration-dialog form, .sidebar-migration-dialog label { display: grid; gap: 12px; }
 .sidebar-migration-dialog form > div { display: flex; justify-content: flex-end; gap: 12px; }
 .sidebar-migration-dialog h2 { font-size: 18px; margin: 0; }
 .sidebar-migration-dialog select:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-nav-item,
+  .sidebar-footer-action,
+  .project-row,
+  .session-row,
+  .project-row-action,
+  .session-more,
+  .workspace-section .workspace-section-action,
+  .sidebar-view-menu,
+  .sidebar-view-menu button,
+  .sidebar-workspace-options,
+  .sidebar-option,
+  .sidebar-option-grip,
+  .sidebar-option.drag-source {
+    transition: none;
+    transform: none;
+  }
+}
 </style>

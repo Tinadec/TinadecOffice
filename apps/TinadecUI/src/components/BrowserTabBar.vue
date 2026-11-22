@@ -10,7 +10,9 @@
 //   - Chrome-style drag-to-detach (tab tearing) with Electron cursor polling.
 //
 // Shared styles come from apps/desktop/src/styles.css (.browser-tab-*).
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { Transition, computed, nextTick, onMounted, onUnmounted, ref, type FunctionalComponent, type TransitionProps } from 'vue'
+
+const MotionTransition: FunctionalComponent<TransitionProps> = (props, ctx) => Transition(props, ctx)
 import {
   PanelsTopLeft,
   ExternalLink,
@@ -321,32 +323,108 @@ onUnmounted(() => {
          never cuts it off; position:fixed right-aligned to the + button.
          Compact list — each item is [small monochrome icon] + [title] only. -->
     <Teleport to="body">
-      <div
-        v-if="menuOpen"
-        class="feature-panel-menu"
-        role="menu"
-        :style="menuStyle"
-      >
-        <button
-          v-for="feature in menuFeatures"
-          :key="feature.descriptorId"
-          class="feature-panel-menu-item"
-          role="menuitem"
-          @click="onSelect(feature.descriptorId)"
+      <MotionTransition name="ui-pop">
+        <div
+          v-if="menuOpen"
+          class="feature-panel-menu"
+          role="menu"
+          :style="menuStyle"
         >
-          <component :is="feature.icon" :size="14" class="feature-panel-menu-icon" />
-          <span class="feature-panel-menu-title">{{ t(feature.titleKey) }}</span>
-        </button>
-      </div>
+          <button
+            v-for="feature in menuFeatures"
+            :key="feature.descriptorId"
+            class="feature-panel-menu-item"
+            role="menuitem"
+            @click="onSelect(feature.descriptorId)"
+          >
+            <component :is="feature.icon" :size="14" class="feature-panel-menu-icon" />
+            <span class="feature-panel-menu-title">{{ t(feature.titleKey) }}</span>
+          </button>
+        </div>
+      </MotionTransition>
     </Teleport>
   </div>
 </template>
 
 <style scoped>
-/* All visual styles come from the shared .browser-tab-* rules in styles.css.
-   The component only needs to be a flex-shrink-safe strip. */
+/* Base layout & responsive label folding come from .browser-tab-* in styles.css;
+   scoped rules refine monochrome pill contrast and action icon micro-motion. */
 .uie-stack-tabbar {
   flex-shrink: 0;
+}
+
+.browser-tab {
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    border-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    box-shadow var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+
+.browser-tab:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-muted);
+  color: var(--text-primary);
+}
+
+.browser-tab.active {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border-color: var(--border-default, var(--border-muted));
+  box-shadow: var(--shadow-card-subtle, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+
+.browser-tab-close,
+.browser-tab-detach {
+  opacity: 0;
+  transform: scale(0.88);
+  transition:
+    opacity var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+
+.browser-tab.active .browser-tab-close {
+  opacity: 0.65;
+  transform: scale(1);
+}
+
+.browser-tab:hover .browser-tab-close,
+.browser-tab:focus-within .browser-tab-close,
+.browser-tab:hover .browser-tab-detach,
+.browser-tab:focus-within .browser-tab-detach {
+  opacity: 0.8;
+  transform: scale(1);
+}
+
+.browser-tab-close:hover,
+.browser-tab-detach:hover {
+  opacity: 1;
+  background: var(--surface-button-hover, var(--surface-hover));
+  color: var(--text-primary);
+}
+
+.browser-tab-close:active,
+.browser-tab-detach:active {
+  transform: scale(0.92);
+}
+
+.browser-tab-add,
+.browser-tab-collapse {
+  transition:
+    transform var(--duration-tap, 120ms) var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+
+.browser-tab-add:active,
+.browser-tab-collapse:active {
+  transform: scale(0.94);
 }
 
 /* Highlight the + button while its menu is open. */
@@ -365,13 +443,14 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  min-width: 160px;
-  max-width: 220px;
+  min-width: 164px;
+  max-width: 224px;
   padding: 4px;
   background: var(--surface-raised);
-  border: 1px solid var(--border-card);
-  border-radius: 8px;
+  border: 1px solid var(--border-default, var(--border-card));
+  border-radius: 10px;
   box-shadow: var(--shadow-panel);
+  transform-origin: top right;
 }
 
 .feature-panel-menu-item {
@@ -379,13 +458,15 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 5px 8px;
+  padding: 6px 8px;
   text-align: left;
   background: transparent;
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
 }
 
 .feature-panel-menu-item:hover {
@@ -397,6 +478,7 @@ onUnmounted(() => {
 .feature-panel-menu-icon {
   flex-shrink: 0;
   color: var(--text-secondary);
+  transition: color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
 }
 
 .feature-panel-menu-item:hover .feature-panel-menu-icon {
@@ -411,5 +493,23 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-tab,
+  .browser-tab-close,
+  .browser-tab-detach,
+  .browser-tab-add,
+  .browser-tab-collapse,
+  .feature-panel-menu-item,
+  .feature-panel-menu-icon {
+    transition: none;
+  }
+  .browser-tab-close,
+  .browser-tab-detach,
+  .browser-tab-add:active,
+  .browser-tab-collapse:active {
+    transform: none;
+  }
 }
 </style>

@@ -1,0 +1,299 @@
+/* ===================================================================
+   MICRO-MOTION SYSTEM & WORKBENCH TRANSITION UTILITIES
+   T3 Code / Codex / Linear Grade — Snappy, Monochrome, Accessible
+====================================================================
+
+INVARIANTS:
+1. NEVER apply `transform` (`translate` / `scale`) to ancestor wrappers
+   that contain `backdrop-filter` glass descendants — use `.ui-fade-*`
+   on wrappers or transform leaf non-blurred elements only.
+2. Top-layer leaf surfaces (`dialog.ui-pop`) settle to `transform: none`
+   when `[open]` so zero transform stacking context lingers at rest.
+3. All motion tokens and utilities degrade cleanly under
+   `@media (prefers-reduced-motion: reduce)`.
+==================================================================== */
+
+:root {
+  --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
+  --ease-spring-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --duration-tap: 120ms;
+  --duration-pop: 180ms;
+  --duration-panel: 240ms;
+}
+
+/* ----------------------------------------------------------------------------
+   1. POP TRANSITION (.ui-pop-* for Vue <Transition>/<TransitionGroup> & dialog.ui-pop)
+   Leaf menus, chips, command palette dialog, floating cards.
+   ---------------------------------------------------------------------------- */
+
+.ui-pop-enter-active {
+  transition:
+    opacity var(--duration-pop) var(--ease-spring-soft),
+    transform var(--duration-pop) var(--ease-spring-soft);
+}
+
+.ui-pop-leave-active {
+  transition:
+    opacity var(--duration-tap) var(--ease-exit),
+    transform var(--duration-tap) var(--ease-exit);
+}
+
+.ui-pop-enter-from,
+.ui-pop-leave-to {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+}
+
+.ui-pop-move {
+  transition: transform var(--duration-pop) var(--ease-snappy);
+}
+
+/* Native <dialog class="ui-pop"> top-layer modal enter/leave */
+dialog.ui-pop {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.985);
+  transition:
+    opacity var(--duration-tap) var(--ease-exit),
+    transform var(--duration-tap) var(--ease-exit),
+    overlay var(--duration-tap) allow-discrete,
+    display var(--duration-tap) allow-discrete;
+}
+
+dialog.ui-pop[open] {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--duration-pop) var(--ease-spring-soft),
+    transform var(--duration-pop) var(--ease-spring-soft),
+    overlay var(--duration-pop) allow-discrete,
+    display var(--duration-pop) allow-discrete;
+}
+
+@starting-style {
+  dialog.ui-pop[open] {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+}
+
+dialog.ui-pop::backdrop {
+  opacity: 0;
+  transition:
+    opacity var(--duration-tap) var(--ease-exit),
+    overlay var(--duration-tap) allow-discrete,
+    display var(--duration-tap) allow-discrete;
+}
+
+dialog.ui-pop[open]::backdrop {
+  opacity: 1;
+  transition:
+    opacity var(--duration-pop) var(--ease-snappy),
+    overlay var(--duration-pop) allow-discrete,
+    display var(--duration-pop) allow-discrete;
+}
+
+@starting-style {
+  dialog.ui-pop[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   2. FADE TRANSITION (.ui-fade-*)
+   Safe for ancestor wrappers containing backdrop-filter glass surfaces.
+   ---------------------------------------------------------------------------- */
+
+.ui-fade-enter-active {
+  transition: opacity var(--duration-pop) var(--ease-snappy);
+}
+
+.ui-fade-leave-active {
+  transition: opacity var(--duration-tap) var(--ease-exit);
+}
+
+.ui-fade-enter-from,
+.ui-fade-leave-to {
+  opacity: 0;
+}
+
+.ui-fade-move {
+  transition: transform var(--duration-pop) var(--ease-snappy);
+}
+
+/* ----------------------------------------------------------------------------
+   3. GRID COLLAPSE TRANSITION (.ui-collapse / .ui-collapse-*)
+   Smooth 0fr -> 1fr height reveal + opacity without layout thrashing or transform.
+   ---------------------------------------------------------------------------- */
+
+.ui-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--duration-panel) var(--ease-spring-soft),
+    opacity var(--duration-pop) var(--ease-snappy);
+}
+
+.ui-collapse.is-open,
+.ui-collapse[data-state="open"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.ui-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ui-collapse-enter-active {
+  display: grid;
+  transition:
+    grid-template-rows var(--duration-panel) var(--ease-spring-soft),
+    opacity var(--duration-pop) var(--ease-snappy);
+}
+
+.ui-collapse-leave-active {
+  display: grid;
+  transition:
+    grid-template-rows var(--duration-pop) var(--ease-exit),
+    opacity var(--duration-tap) var(--ease-exit);
+}
+
+.ui-collapse-enter-from,
+.ui-collapse-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.ui-collapse-enter-to,
+.ui-collapse-leave-from {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.ui-collapse-enter-active > *,
+.ui-collapse-leave-active > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ----------------------------------------------------------------------------
+   4. TACTILE PRESSABLE (.ui-pressable)
+   Crisp spring active tap response for leaf interactive controls.
+   ---------------------------------------------------------------------------- */
+
+.ui-pressable {
+  transition:
+    transform var(--duration-tap) var(--ease-spring-soft),
+    background-color var(--duration-tap) var(--ease-snappy),
+    border-color var(--duration-tap) var(--ease-snappy),
+    color var(--duration-tap) var(--ease-snappy),
+    opacity var(--duration-tap) var(--ease-snappy),
+    box-shadow var(--duration-tap) var(--ease-snappy);
+}
+
+.ui-pressable:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+/* ----------------------------------------------------------------------------
+   5. CALM MONOCHROME SHIMMER (.ui-shimmer-text / .ui-shimmer-bar)
+   Replaces noisy multi-color blinking/pulse indicators during live agent work.
+   ---------------------------------------------------------------------------- */
+
+@keyframes ui-shimmer-sweep {
+  0% {
+    background-position: 200% 50%;
+  }
+  100% {
+    background-position: -100% 50%;
+  }
+}
+
+.ui-shimmer-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--text-muted) 36%,
+    var(--text-primary) 50%,
+    var(--text-muted) 64%,
+    var(--text-muted) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: ui-shimmer-sweep 2.2s linear infinite;
+}
+
+.ui-shimmer-bar {
+  position: relative;
+  overflow: hidden;
+}
+
+.ui-shimmer-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--text-primary) 10%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  animation: ui-shimmer-sweep 2s linear infinite;
+  pointer-events: none;
+}
+
+/* ----------------------------------------------------------------------------
+   6. REDUCED MOTION ACCESSIBILITY
+   ---------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-tap: 0ms;
+    --duration-pop: 0ms;
+    --duration-panel: 0ms;
+  }
+
+  .ui-pop-enter-active,
+  .ui-pop-leave-active,
+  .ui-pop-move,
+  .ui-fade-enter-active,
+  .ui-fade-leave-active,
+  .ui-fade-move,
+  .ui-collapse,
+  .ui-collapse-enter-active,
+  .ui-collapse-leave-active,
+  .ui-pressable,
+  dialog.ui-pop,
+  dialog.ui-pop[open],
+  dialog.ui-pop::backdrop,
+  dialog.ui-pop[open]::backdrop {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .ui-pop-enter-from,
+  .ui-pop-leave-to,
+  .ui-pressable:active:not(:disabled),
+  dialog.ui-pop,
+  dialog.ui-pop[open] {
+    transform: none !important;
+  }
+
+  .ui-shimmer-text {
+    background: none !important;
+    -webkit-text-fill-color: currentColor !important;
+    color: var(--text-secondary) !important;
+    animation: none !important;
+  }
+
+  .ui-shimmer-bar::after {
+    display: none !important;
+    animation: none !important;
+  }
+}
