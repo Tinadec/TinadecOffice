@@ -19,7 +19,6 @@ import {
   Pencil,
   Plus,
   Settings,
-  ShieldCheck,
   SlidersHorizontal,
   LayoutGrid,
   Waypoints,
@@ -50,10 +49,6 @@ import { auth } from '@/lib/auth'
 const { t, te, locale } = useI18n()
 const { confirm } = useNotifications()
 const { isElectronMac, isFullScreen } = usePlatform()
-
-function openGovernanceDrawer() {
-  window.dispatchEvent(new CustomEvent('tinadec:open-governance-drawer', { detail: { tab: 'decisions' } }))
-}
 
 const props = defineProps<{
   projects: ProjectDto[]
@@ -888,18 +883,6 @@ watch([displayName, () => props.collapsed], async () => {
         <span ref="profileNameProbe" class="sidebar-profile-name-probe" aria-hidden="true">{{ displayName }}</span>
       </button>
       <div ref="footerActionsEl" class="sidebar-footer-actions" :class="{ 'sidebar-footer-actions-collapsed': collapsed }">
-        <UiButton
-          v-if="!companionDomain"
-          variant="ghost"
-          size="icon"
-          class="sidebar-footer-action"
-          data-testid="sidebar-governance"
-          :title="t('governance.boardTitle')"
-          :aria-label="t('governance.boardTitle')"
-          @click="openGovernanceDrawer"
-        >
-          <ShieldCheck :size="16" />
-        </UiButton>
         <UiButton
           variant="ghost"
           size="icon"

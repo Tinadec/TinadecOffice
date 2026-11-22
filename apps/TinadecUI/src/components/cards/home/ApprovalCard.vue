@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ApprovalTab from '@/components/ApprovalTab.vue'
 import GovernanceBoardContent from '@/components/governance/GovernanceBoardContent.vue'
 import CardScroll from './CardScroll.vue'
 import { homeController } from '@/controllers/HomeController'
+import { activeDockFocus } from '@/lib/homeDockSync'
 
 const { t } = useI18n()
 const c = homeController
@@ -12,6 +13,16 @@ defineProps<{ compact?: boolean }>()
 
 type ApprovalCardTab = 'approvals' | 'governance' | 'runtime'
 const activeTab = ref<ApprovalCardTab>('approvals')
+
+watch(
+  () => activeDockFocus.value,
+  (focus) => {
+    if (focus?.card === 'approval' && focus.approvalTab) {
+      activeTab.value = focus.approvalTab
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <template>

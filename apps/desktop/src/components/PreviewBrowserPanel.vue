@@ -13,6 +13,8 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCw,
+  SlidersHorizontal,
   Smartphone,
   Tablet,
   X,
@@ -21,7 +23,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from '@/composables/useNotifications'
 
-type ViewportPreset = 'desktop' | 'tablet' | 'mobile'
+type ViewportPreset = 'desktop' | 'tablet' | 'mobile' | 'custom'
 type PanelMode = 'tabs' | 'mirror'
 type ControlState = 'agent' | 'user' | 'finished'
 
@@ -145,6 +147,46 @@ function createTab(initial = ''): BrowserTab {
 const tabs = ref<BrowserTab[]>([createTab(props.initialUrl ?? '')])
 const activeTabId = ref(tabs.value[0].id)
 const viewport = ref<ViewportPreset>('desktop')
+const customWidth = ref(1280)
+const customHeight = ref(800)
+const customAutoHeight = ref(true)
+
+function clampDimension(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+function updateCustomWidth(raw: string): void {
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isNaN(parsed)) {
+    customWidth.value = clampDimension(parsed, 240, 2560, 1280)
+  }
+}
+
+function updateCustomHeight(raw: string): void {
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isNaN(parsed)) {
+    customHeight.value = clampDimension(parsed, 320, 2160, 800)
+    customAutoHeight.value = false
+  }
+}
+
+function swapCustomDimensions(): void {
+  const nextWidth = clampDimension(customHeight.value, 240, 2560, 800)
+  const nextHeight = clampDimension(customWidth.value, 320, 2160, 1280)
+  customWidth.value = nextWidth
+  customHeight.value = nextHeight
+  customAutoHeight.value = false
+}
+
+const previewFrameStyle = computed<Record<string, string> | undefined>(() => {
+  if (viewport.value !== 'custom') return undefined
+  return {
+    width: `${customWidth.value}px`,
+    maxWidth: '100%',
+    height: customAutoHeight.value ? '100%' : `${customHeight.value}px`,
+  }
+})
 
 const activeTab = computed<BrowserTab>(
   () => tabs.value.find((tab) => tab.id === activeTabId.value) ?? tabs.value[0],
@@ -613,11 +655,79 @@ onBeforeUnmount(() => {
           >
             <Smartphone :size="14" />
           </button>
+          <button
+            type="button"
+            class="preview-nav-btn"
+            :class="{ active: viewport === 'custom' }"
+            :title="label('context.previewViewportCustom', 'Custom size')"
+            data-testid="preview-viewport-custom"
+            @click="viewport = 'custom'"
+          >
+            <SlidersHorizontal :size="14" />
+          </button>
         </div>
 
         <button class="preview-nav-btn" :title="label('context.previewOpenExternal', 'Open external')" @click="openExternal">
           <ExternalLink :size="15" />
         </button>
+      </div>
+
+      <div
+        v-if="viewport === 'custom'"
+        class="preview-custom-bar"
+        data-testid="preview-custom-viewport-bar"
+      >
+        <label class="preview-dim-field">
+          <span>{{ label('context.previewCustomWidth', 'W') }}</span>
+          <input
+            type="number"
+            min="240"
+            max="2560"
+            step="10"
+            class="preview-dim-input"
+            :value="customWidth"
+            :aria-label="label('context.previewCustomWidth', 'Width')"
+            data-testid="preview-custom-width"
+            @change="updateCustomWidth(($event.target as HTMLInputElement).value)"
+          />
+        </label>
+        <span class="preview-dim-sep" aria-hidden="true">×</span>
+        <label class="preview-dim-field" :class="{ 'is-muted': customAutoHeight }">
+          <span>{{ label('context.previewCustomHeight', 'H') }}</span>
+          <input
+            type="number"
+            min="320"
+            max="2160"
+            step="10"
+            class="preview-dim-input"
+            :value="customHeight"
+            :disabled="customAutoHeight"
+            :aria-label="label('context.previewCustomHeight', 'Height')"
+            data-testid="preview-custom-height"
+            @change="updateCustomHeight(($event.target as HTMLInputElement).value)"
+          />
+        </label>
+        <button
+          type="button"
+          class="preview-dim-chip"
+          :class="{ active: customAutoHeight }"
+          data-testid="preview-custom-auto-height"
+          @click="customAutoHeight = !customAutoHeight"
+        >
+          {{ label('context.previewCustomAutoHeight', 'Auto H') }}
+        </button>
+        <button
+          type="button"
+          class="preview-nav-btn"
+          :title="label('context.previewCustomRotate', 'Swap width & height')"
+          data-testid="preview-custom-rotate"
+          @click="swapCustomDimensions"
+        >
+          <RotateCw :size="13" />
+        </button>
+        <span class="preview-dim-summary">
+          {{ customWidth }} × {{ customAutoHeight ? '100%' : `${customHeight}px` }}
+        </span>
       </div>
 
       <!-- Content area -->
@@ -647,7 +757,12 @@ onBeforeUnmount(() => {
           <span>{{ label('context.previewLoading', 'Loading…') }}</span>
         </div>
 
-        <div v-if="activeTab.currentUrl" class="preview-frame-shell" :class="`is-${viewport}`">
+        <div
+          v-if="activeTab.currentUrl"
+          class="preview-frame-shell"
+          :class="`is-${viewport}`"
+          :style="previewFrameStyle"
+        >
           <iframe
             :key="`${activeTab.id}-${activeTab.iframeKey}`"
             :src="activeTab.currentUrl"
@@ -1007,6 +1122,86 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--border-muted);
 }
 
+.preview-custom-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 10px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-muted);
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.preview-dim-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+}
+
+.preview-dim-field.is-muted {
+  opacity: 0.55;
+}
+
+.preview-dim-field span {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.preview-dim-input {
+  width: 54px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.preview-dim-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.preview-dim-chip {
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+
+.preview-dim-chip:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.preview-dim-chip.active {
+  background: var(--surface-section);
+  border-color: var(--border-default, var(--border-muted));
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.preview-dim-summary {
+  margin-left: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .preview-content {
   position: relative;
   flex: 1;
@@ -1033,6 +1228,13 @@ onBeforeUnmount(() => {
   border-left: 1px solid var(--border-muted);
   border-right: 1px solid var(--border-muted);
   box-shadow: var(--shadow-panel);
+}
+.preview-frame-shell.is-custom {
+  border-left: 1px solid var(--border-muted);
+  border-right: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-muted);
+  box-shadow: var(--shadow-panel);
+  flex-shrink: 0;
 }
 
 .preview-iframe {

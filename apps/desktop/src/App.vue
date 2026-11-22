@@ -20,7 +20,6 @@ import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
 import SelectionContextMenu from '@/components/SelectionContextMenu.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import OobeWizardModal from '@/components/oobe/OobeWizardModal.vue'
-import GovernanceDrawer from '@/components/governance/GovernanceDrawer.vue'
 import RecoveryCheckDialog from '@/components/governance/RecoveryCheckDialog.vue'
 import WebLoginPage from '@/components/web/WebLoginPage.vue'
 import ServerDirectoryPickerModal from '@/components/web/ServerDirectoryPickerModal.vue'
@@ -315,7 +314,6 @@ onBeforeUnmount(() => {
   <NotificationDetailDialog v-if="entryReady" />
   <SelectionContextMenu />
   <CommandPalette />
-  <GovernanceDrawer v-if="entryReady && !isChildWindow" />
   <RecoveryCheckDialog
     v-if="recoveryDialogOpen && !isChildWindow"
     v-model:open="recoveryDialogOpen"

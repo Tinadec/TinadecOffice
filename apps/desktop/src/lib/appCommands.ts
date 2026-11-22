@@ -192,9 +192,10 @@ export const appCommands: readonly AppCommand[] = [
     id: 'view.goGovernance',
     group: 'view',
     labelKey: 'palette.goGovernance',
-    run: () => {
+    run: (host) => {
+      if (host.routeName() !== 'home') host.navigate('home')
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('tinadec:open-governance-drawer', { detail: { tab: 'decisions' } }))
+        window.dispatchEvent(new CustomEvent('tinadec:focus-home-dock', { detail: { card: 'approval', approvalTab: 'governance' } }))
       }
     },
   },

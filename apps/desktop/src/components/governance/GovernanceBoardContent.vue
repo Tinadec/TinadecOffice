@@ -170,7 +170,7 @@ defineExpose({ reload: loadAll })
           data-testid="governance-tab-runtime"
           @click="activeTab = 'runtime'"
         >
-          <Activity class="size-3.5" />
+          <Activity :size="13" aria-hidden="true" />
           <span>{{ t('settings.runtimeInstances') }} ({{ runtimeCount }})</span>
         </button>
       </div>
@@ -189,7 +189,7 @@ defineExpose({ reload: loadAll })
 
     <div v-if="activeTab === 'decisions'" class="approval-board__columns">
       <section class="approval-board__column" data-testid="column-permissions">
-        <h2><ShieldCheck class="size-4" /> {{ t('governance.permissions') }} ({{ openPermissions.length }})</h2>
+        <h2><ShieldCheck :size="14" aria-hidden="true" /> {{ t('governance.permissions') }} ({{ openPermissions.length }})</h2>
         <p v-if="!openPermissions.length" class="approval-board__empty">{{ t('common.empty') }}</p>
         <article v-for="p in openPermissions" :key="p.id" class="approval-card">
           <div class="approval-card__title">{{ p.capability }} / {{ p.action }}</div>
@@ -206,7 +206,7 @@ defineExpose({ reload: loadAll })
       </section>
 
       <section class="approval-board__column" data-testid="column-approvals">
-        <h2><Gavel class="size-4" /> {{ t('governance.actionApprovals') }} ({{ openApprovals.length }})</h2>
+        <h2><Gavel :size="14" aria-hidden="true" /> {{ t('governance.actionApprovals') }} ({{ openApprovals.length }})</h2>
         <p v-if="!openApprovals.length" class="approval-board__empty">{{ t('common.empty') }}</p>
         <article v-for="a in openApprovals" :key="a.id" class="approval-card">
           <div class="approval-card__title">{{ approvalSummary(a, { t, te }) }}</div>
@@ -226,7 +226,7 @@ defineExpose({ reload: loadAll })
               data-testid="open-recovery-check-btn"
               @click="openRecoveryCheck(a.id)"
             >
-              <ShieldAlert class="size-3.5" />
+              <ShieldAlert :size="13" aria-hidden="true" />
               {{ t('governance.recoveryTitle') }}
             </button>
           </div>
@@ -234,7 +234,7 @@ defineExpose({ reload: loadAll })
       </section>
 
       <section class="approval-board__column" data-testid="column-supervision">
-        <h2><Eye class="size-4" /> {{ t('governance.supervision') }}</h2>
+        <h2><Eye :size="14" aria-hidden="true" /> {{ t('governance.supervision') }}</h2>
         <p v-if="!findings.length" class="approval-board__empty">
           {{ t('governance.supervisionEmpty') }}
         </p>
@@ -347,10 +347,11 @@ defineExpose({ reload: loadAll })
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px;
+  padding: 10px 12px;
   border-radius: 10px;
+  border: 1px solid var(--border-muted);
   background: var(--surface-section);
-  min-height: 120px;
+  min-height: 96px;
 }
 
 .approval-board__column h2 {
@@ -358,9 +359,14 @@ defineExpose({ reload: loadAll })
   align-items: center;
   gap: 6px;
   margin: 0;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--text-primary);
+}
+
+.approval-board__column h2 svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
 }
 
 .approval-board__empty {

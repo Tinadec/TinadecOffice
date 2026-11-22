@@ -13,7 +13,9 @@ import { selectionKey } from '@/lib/storageScope'
 import {
   activeDockFocus,
   ensureHomeDockCardOpen,
+  focusDockCard,
   highlightedDockCard,
+  type ApprovalDockTab,
   type HomeDockCardId,
 } from '@/lib/homeDockSync'
 
@@ -64,9 +66,22 @@ const controllerStarted = ref(false)
 const { t } = useI18n()
 const { notify } = useNotifications()
 
+function onFocusHomeDockEvent(event: Event): void {
+  const detail = (event as CustomEvent<{ card?: HomeDockCardId; approvalTab?: ApprovalDockTab }>).detail
+  if (!detail?.card) return
+  focusDockCard({
+    card: detail.card,
+    ...(detail.approvalTab ? { approvalTab: detail.approvalTab } : {}),
+  }, { uie, title: dockCardTitle(detail.card) })
+}
+
 onMounted(() => {
   homeController.start()
   controllerStarted.value = true
+  window.addEventListener('tinadec:focus-home-dock', onFocusHomeDockEvent)
+  if (activeDockFocus.value) {
+    ensureHomeDockCardOpen(activeDockFocus.value.card, { uie, title: dockCardTitle(activeDockFocus.value.card) })
+  }
 })
 
 // A spotlight conversation row hands its id over through the request channel:
@@ -145,6 +160,7 @@ function clearHostHighlight(): void {
 
 onUnmounted(() => {
   clearHostHighlight()
+  window.removeEventListener('tinadec:focus-home-dock', onFocusHomeDockEvent)
 })
 
 watch(

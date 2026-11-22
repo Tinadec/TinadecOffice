@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Activity, ArrowUpRight, PackageCheck, RefreshCw, X } from '@lucide/vue'
 import { UiBadge, UiButton } from '@/components/ui'
+import { focusDockCard } from '@/lib/homeDockSync'
 import { graphSeedPackState } from '@/agentPacks/graphSeedPackBootstrap'
 import AgentPacksPanel from '@/settings/sections/AgentPacksPanel.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
@@ -40,9 +42,11 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const router = useRouter()
 
 function openGovernanceRuntimeDrawer() {
-  window.dispatchEvent(new CustomEvent('tinadec:open-governance-drawer', { detail: { tab: 'runtime' } }))
+  focusDockCard({ card: 'approval', approvalTab: 'runtime' })
+  void router.push({ name: 'home' })
 }
 
 function handleDiagnoseOverlap(audit: ContextOverlapAuditResult, pair?: ContextOverlapPairSummary) {

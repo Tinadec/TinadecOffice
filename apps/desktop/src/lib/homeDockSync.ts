@@ -7,6 +7,7 @@ export type HomeDockCardId = 'agent' | 'git' | 'orchestration' | 'approval' | 'w
 export type DockSyncReason = 'dispatch' | 'worktree' | 'approval' | 'worker' | 'code'
 export type GitDockTab = 'changes' | 'history' | 'branches' | 'stash'
 export type GitDockSubView = 'diff' | 'file_history' | 'blame'
+export type ApprovalDockTab = 'approvals' | 'governance' | 'runtime'
 
 export interface DockFocusTarget {
   card: HomeDockCardId
@@ -23,6 +24,7 @@ export interface DockFocusTarget {
   gitTab?: GitDockTab | null
   gitSubView?: GitDockSubView | null
   approvalId?: string | null
+  approvalTab?: ApprovalDockTab | null
   requestCleanupPath?: string | null
   nonce: number
   requestedAt: number
