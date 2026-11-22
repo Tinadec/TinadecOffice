@@ -1,5 +1,11 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-11-22 Vite 8 升级
+
+Desktop 使用 Vite 8.3.8，版本声明位于 `package.json`，依赖锁定由仓库根 `bun.lock` 管理。Vite 配置改用 `import.meta.dirname`，避免 Vite 8 对 `__dirname` 发出的 native config loader 兼容警告。
+
+`vite-plugin-vue-mcp@0.3.2` 的声明 peer 范围仍未覆盖 Vite 8；但启用 `TINADEC_VUE_MCP=1` 后，Vite 8 开发服务器正常启动，`/__mcp/sse` 返回 200 并建立 SSE endpoint。升级后的 `vite build` 已完成 6847 个模块转换，但当前仓库源码仍引用不存在的 `ToolsOverviewPanel.vue` 与 `ToolResourcesPanel.vue`，因此构建失败；`vue-tsc` 也报告这些缺失文件及其他现有类型错误，不能记为 Vite 回归或全量构建通过。
+
 ## 2026-11-14 原生测试发现改为目录展开
 
 桌面 `node --test` 曾用手写文件清单，`electron/companionAvatars.test.cjs`（信任发送方校验，与 issue #33 同类安全边界）不在其中，因此本地与 CI 都没有跑过它。现改为 `vitest run && node ../../scripts/run-node-tests.mjs electron scripts ../../scripts/check-dependencies.test.mjs`：`run-node-tests.mjs`（仓库根 `scripts/`）把目录展开为其内部的 `*.test.js|cjs|mjs`，所以新增测试文件自动被发现（`mainStartup.test.cjs` 那条“已加入 `package.json` 的 `node --test` 清单”的历史记录自此不再需要手工登记）。跨包的 `../../scripts/check-dependencies.test.mjs` 仍显式列出，因为 `desktop-release.yml` 只跑本包的 test，而 root 的 `test:scripts` 不在那条链上。**未验证**：本轮终端不可用，未运行 vitest / `node --test`。
@@ -1071,5 +1077,5 @@ node apps/desktop/scripts/merge-office-channel-catalog.mjs <dir>/office-channel 
 - **dev 启动等后端就绪**: `scripts/dev.mjs` 与 Vite 并行执行 `waitForBackend()`，由 `backendReadiness.mjs` 同时验证 Gateway/Core 健康与同一启动凭据的角色/nonce HMAC。没有“Gateway 失败退回 Core 即放行”的路径；身份错误明确停止，等待到期则打开 Electron 恢复界面，main 的独立宿主验证继续阻断业务请求并显示原因及重试。默认预算 120s（`TINADEC_DEV_BACKEND_WAIT_MS`），`<=0` 只跳过开发启动器的等待，main 的宿主身份验证与业务权限检查仍生效。使用根 `npm run dev` 一起启动服务与 Desktop，以共享同一 launch key；私钥不传给 Vite/renderer。初次连接失败和周期断连有有限退避恢复，预算耗尽须显式重试。
 - **Stale nested Vue copies / stale Vite dep cache**: root `overrides` pin `vue` and the whole `@vue/*` family to `3.6.0-rc.10`（见上表 Vapor mode 行），但两种陈旧会各自咬人。① 裸 `npm install` 可能重建 `apps/desktop/node_modules/vue@3.5.x` + 嵌套 `@vue/*` 实体副本，遮蔽 override 并打坏约 25 个组件用例（`insertBefore` null、boundary/css-contract 断言失败）——删掉那两个目录再跑测试，解析会回落到根版本，**不要**为这个原因去改测试本身。② `node_modules/.vite` 里上一代的预打包运行时不会被依赖升级作废（2026-10-03 实测：rc.2 的 `deps/` 配 rc.10 编译的 Vapor SFC → 整窗空白）；这一条已由 `scripts/viteCacheGuard.mjs` 在 `dev.mjs` 起 Vite 前自动处理，所以第①种修复之后不需要再手动 `rm -rf .vite`——戳不符它自己会删。
 - `vite-plugin-vue-mcp` 在 Vite dev server 上暴露 MCP server（SSE，`http://localhost:5173/__mcp/sse`），供 AI 客户端读取组件树/状态/路由/Pinia。项目根 `.mcp.json` 已注册 `vue-mcp` 客户端；需先启动 dev server，再启动 Claude Code（或 `/mcp` 重连）。
-- 该插件 peer 范围只到 Vite 6，故根目录 `.npmrc` 设 `legacy-peer-deps=true`。此模式下 npm 不自动安装 peer 依赖，因此 `react`/`react-dom`/`react-is` 已作为显式依赖保留，勿删除。
+- `vite-plugin-vue-mcp@0.3.2` 的 peer 范围仍只声明到 Vite 6；Vite 8 下的启用模式已通过开发服务器与 SSE endpoint 冒烟验证（见本页 2026-11-22 记录）。根 `.npmrc` 的 `legacy-peer-deps=true` 是遗留 npm 设置，Bun 不读取它。
 

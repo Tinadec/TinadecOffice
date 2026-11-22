@@ -4,6 +4,8 @@ import { VueMcp } from 'vite-plugin-vue-mcp';
 import { defineConfig } from 'vite';
 import path from 'path';
 
+const rootDir = import.meta.dirname;
+
 // Vite 插件顺序即执行顺序；vue-mcp 只为浏览器端 MCP 调试服务，默认关闭：
 // 它给每次启动加一个本地 SSE 服务，并往 index.html 注入一个 overlay 模块（会拉起
 // @vue/devtools-kit 一整套）。日常开发不需要它，TINADEC_VUE_MCP=1 时再开。
@@ -14,21 +16,21 @@ export default defineConfig({
   plugins: [vue(), tailwindcss(), ...(vueMcpEnabled ? [VueMcp()] : [])],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(rootDir, './src'),
       // TinadecUI — the UI engineering suite (Engine = layout). Points at the package
       // barrel so consumers import '@tinadec/ui' regardless of the file's physical home.
-      '@tinadec/ui': path.resolve(__dirname, '../TinadecUI/src/index.ts'),
+      '@tinadec/ui': path.resolve(rootDir, '../TinadecUI/src/index.ts'),
       // Vapor SFCs compile to `import { defineVaporComponent } from 'vue'`, which the
       // CJS `vue` entry used under Node (vitest) does not export. Point `vue` at a
       // shim re-exporting both runtime-dom and runtime-vapor so the emitted import
       // resolves under both build and vitest.
-      vue: path.resolve(__dirname, './src/lib/vue-shim.ts'),
+      vue: path.resolve(rootDir, './src/lib/vue-shim.ts'),
       // ponytail: dedupe vue reactivity — desktop nested 3.5.41 vs root 3.6.0-rc.7 caused
       // dual @vue/reactivity Ref brands (TS2345). Force all @vue/* to the single
       // root install so vue-tsc sees one Ref identity.
-      '@vue/reactivity': path.resolve(__dirname, '../../node_modules/@vue/reactivity/dist/reactivity.esm-bundler.js'),
-      '@vue/runtime-dom': path.resolve(__dirname, '../../node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js'),
-      '@vue/runtime-vapor': path.resolve(__dirname, '../../node_modules/@vue/runtime-vapor/dist/runtime-vapor.esm-bundler.js'),
+      '@vue/reactivity': path.resolve(rootDir, '../../node_modules/@vue/reactivity/dist/reactivity.esm-bundler.js'),
+      '@vue/runtime-dom': path.resolve(rootDir, '../../node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js'),
+      '@vue/runtime-vapor': path.resolve(rootDir, '../../node_modules/@vue/runtime-vapor/dist/runtime-vapor.esm-bundler.js'),
     },
     dedupe: ['vue', '@vue/reactivity', '@vue/runtime-dom', '@vue/runtime-vapor'],
   },
@@ -61,8 +63,8 @@ export default defineConfig({
       // Keeping it out of the main renderer bundle also keeps the full app bridge away
       // from the window that embeds arbitrary web content.
       input: {
-        main: path.resolve(__dirname, 'index.html'),
-        agentBrowser: path.resolve(__dirname, 'agent-browser.html'),
+        main: path.resolve(rootDir, 'index.html'),
+        agentBrowser: path.resolve(rootDir, 'agent-browser.html'),
       },
     },
   },
