@@ -67,3 +67,13 @@ native/rg/
 logs/
 /.cancricode
 /miniapps
+
+# Root-level debug screenshots, ad-hoc temp dumps, and scratch verification folders
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/.tmp-*
+/.p1verify/
+/screenshot_test.py
+
