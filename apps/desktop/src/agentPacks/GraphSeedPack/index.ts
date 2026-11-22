@@ -87,6 +87,16 @@ export interface AgentPackModeBindingResource {
   includes_core_reserved: boolean
 }
 
+export type AgentPackOrchestrationTier = 'solo_dispatch' | 'free_form' | 'self_dispatch' | 'deterministic'
+
+export interface AgentPackDefaultOptions {
+  plan_first: boolean
+  spec_enabled: boolean
+  multi_agent: boolean
+  bulletin_board: boolean
+  worktree: boolean
+}
+
 export interface AgentPackModeResource {
   resource_key: string
   slug: string
@@ -102,6 +112,8 @@ export interface AgentPackModeResource {
    * each agent's `system_prompt`.
    */
   prompt_pipeline_ref?: AgentPackReference<'prompt'> | null
+  orchestration_tier?: AgentPackOrchestrationTier | null
+  default_options?: AgentPackDefaultOptions | null
   /** Host-owned workflow selected by this mode; absent means ordinary behavior. */
   runtime_policy?: {
     kind: 'structured_investigation' | 'autonomous_exploration'
@@ -154,7 +166,7 @@ export interface AgentPackEnvelope {
 }
 
 export const GRAPH_SEED_PACK_ID = 'tinadec.graph.seed-pack'
-export const GRAPH_SEED_PACK_VERSION = '3.5.0'
+export const GRAPH_SEED_PACK_VERSION = '3.7.0'
 
 export const graphSeedPackManifest = manifestJson as unknown as AgentPackManifest
 
@@ -167,7 +179,7 @@ export const graphSeedPackManifest = manifestJson as unknown as AgentPackManifes
 // The digest must be computed over the DTO-closed manifest, i.e. the raw file as
 // written — Core canonicalizes its DTO round-trip of this same body. See
 // packIntegrity.ts for the invariant and the gates that enforce it.
-export const GRAPH_SEED_PACK_DIGEST = '9ccc0d080e2d2f51f5a0580f1bcdff27b0fe36a3bfb6056a9bc9b7ef63f897b9'
+export const GRAPH_SEED_PACK_DIGEST = 'bc0078359b073f27a97045a864036c45e925ac2f8e9d6d3b5e4e266d880df99a'
 
 export const graphSeedPackEnvelope: AgentPackEnvelope = {
   manifest: graphSeedPackManifest,

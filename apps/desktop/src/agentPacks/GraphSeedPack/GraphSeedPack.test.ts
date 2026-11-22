@@ -8,18 +8,96 @@ import {
   graphSeedPackManifest,
 } from './index'
 
+const REQUIRED_LOCALES = ['zh-CN', 'zh-TW', 'en', 'ja', 'ru'] as const
+
+const TEAM_TOOLS = ['team_spawn', 'team_message', 'team_wait', 'team_plan', 'team_integrate'] as const
+
+const TINADEC_CONFIG_TOOLS = [
+  'tinadec_inspect',
+  'tinadec_agent_apply',
+  'tinadec_mode_apply',
+  'tinadec_mode_publish',
+  'tinadec_skill_apply',
+  'tinadec_mcp_apply',
+  'tinadec_prompt_apply',
+  'tinadec_model_profile_apply',
+  'tinadec_context_memory_apply',
+] as const
+
+const BROWSER_V2_TOOLS = [
+  'browser_run',
+  'browser_handoff',
+  'browser_takeover',
+  'browser_finish',
+  'browser_dialog',
+  'browser_profiles_list',
+  'browser_upload',
+  'browser_download_save',
+] as const
+
+const WORKSPACE_MUTATING_TOOLS = new Set([
+  'write_file',
+  'delete_file',
+  'replace_lines',
+  'replace_bytes',
+  'insert_line',
+  'insert_bytes',
+  'insert_byte',
+  'delete_line',
+  'delete_bytes',
+  'shell',
+  'command_run',
+  'git_stage',
+  'git_unstage',
+  'git_commit',
+  'git_merge',
+  'git_rebase',
+  'git_conflict_resolve',
+  'git_discard',
+  'git_checkout',
+  'git_branch_create',
+  'git_branch_delete',
+  'git_branch_rename',
+  'git_fetch',
+  'git_pull',
+  'git_push',
+  'git_worktree_create',
+  'git_worktree_remove',
+  'sandbox_reset',
+])
+
+const LEGACY_GLUE_TOOL_IDS = [
+  'tina_chat_bind',
+  'tina_chat_search_people',
+  'tina_chat_list_rooms',
+  'tina_chat_read_inbox',
+  'tina_chat_send',
+  'tina_chat_propose_intent',
+  'tina_chat_list_intents',
+  'tina_chat_decide_intent',
+  'tina_chat_execute_intent',
+  'org_directory',
+  'org_read',
+  'org_send',
+  'org_report',
+  'org_decide_report',
+  'org_execute_report',
+  'org_contact',
+  'org_room',
+  'task_dispatch',
+  'task_wait',
+  'plan_update',
+] as const
+
 describe('GraphSeedPack', () => {
-  it('has stable app ownership and internal references', () => {
+  it('has stable app ownership, complete 11-agent roster, modern tool scopes, and zero legacy glue', () => {
     expect(graphSeedPackManifest.metadata.pack_id).toBe(GRAPH_SEED_PACK_ID)
     expect(graphSeedPackManifest.metadata.owner).toBe('tinadec')
     expect(graphSeedPackManifest.metadata.product_id).toBe('tinadec-core')
     expect(graphSeedPackManifest.metadata.version).toBe(GRAPH_SEED_PACK_VERSION)
     expect(graphSeedPackManifest.compatibility.required_core_capabilities).toContain('structured_investigation_v1')
+    expect(graphSeedPackManifest.compatibility.required_core_capabilities).toContain('autonomous_exploration_v1')
 
-    // Three execution templates, TWO conversation identities — `meeting` (no tools, it only
-    // orchestrates) and `solo_master` (holds tools and does the work itself) — and two standing
-    // operation roles: governance review and context upkeep. Both are declared by the pack like
-    // any other agent, never Core-internal roles the pack quietly depends on.
     const agents = graphSeedPackManifest.resources.agents
     expect(agents.map((agent) => agent.resource_key)).toEqual([
       'meeting',
@@ -34,100 +112,200 @@ describe('GraphSeedPack', () => {
       'artex_worker',
       'artex_verifier',
     ])
-    expect(agents.every((agent) => Boolean(agent.system_prompt?.trim()))).toBe(true)
 
-    // Todo E6 (one conversation identity): every mode converses through `meeting`, which
-    // carries the chairman tool ceiling. The modes that coordinate only switch every tool
-    // off on its binding (their tier derives from EFFECTIVE tools, never from slugs);
-    // Solo keeps the full surface and derives solo_dispatch exactly as before.
+    // Every agent must carry non-stub translations (> 80 chars system_prompt) across all 5 locales,
+    // zero legacy glue tools, and zero "holds no tools" contradiction.
+    const serialized = JSON.stringify(graphSeedPackManifest)
+    for (const contradiction of [
+      '自身不持工具',
+      '本身不持有工具',
+      'Holds no tools',
+      '自らはツールを持ちません',
+      'Сам не владеет инструментами',
+    ]) {
+      expect(serialized, `manifest must not contain "${contradiction}"`).not.toContain(contradiction)
+    }
+
+    for (const agent of agents) {
+      expect(Boolean(agent.system_prompt?.trim())).toBe(true)
+      for (const tool of LEGACY_GLUE_TOOL_IDS) {
+        expect(agent.tool_scope, `${agent.resource_key} must not hold legacy tool ${tool}`).not.toContain(tool)
+      }
+      for (const locale of REQUIRED_LOCALES) {
+        const entry = agent.i18n?.[locale]
+        expect(entry, `${agent.resource_key} missing locale ${locale}`).toBeDefined()
+        expect(entry!.display_name?.trim().length ?? 0, `${agent.resource_key}.${locale}.display_name`).toBeGreaterThan(0)
+        expect(entry!.description?.trim().length ?? 0, `${agent.resource_key}.${locale}.description`).toBeGreaterThan(15)
+        expect(entry!.system_prompt?.trim().length ?? 0, `${agent.resource_key}.${locale}.system_prompt`).toBeGreaterThan(80)
+      }
+    }
+
+    // Unified conversation identity (`meeting`): Explore-First Coordinator + Solo/Correction ceiling.
     const meeting = agents.find((agent) => agent.resource_key === 'meeting')!
     expect(meeting.layer).toBe('operation')
-    expect(meeting.tool_scope).toContain('read_file')
-    expect(meeting.tool_scope).toContain('write_file')
-    expect(meeting.tool_scope).toContain('shell')
-    expect(meeting.tool_scope).toContain('task_dispatch')
-    expect(meeting.tool_scope).toContain('task_wait')
-    // A single tool loop has no planner: plan_update is where a multi-step plan lives.
-    expect(meeting.tool_scope).toContain('plan_update')
-    expect(meeting.tool_scope).not.toContain('git_push')
-    // A conversation identity must carry the conversation capability or admission
-    // refuses the run (conversation_identity_locked_mismatch).
     expect(meeting.capabilities).toContain('user.respond')
-    // M2: the workbench is agent-configurable. The conversation identity can inspect the
-    // live configuration and apply governed changes; load_skill is the second half of the
-    // skill index (the index carries only name + description). Every write tool is
-    // approval-gated in Core — holding the id is not holding the authority.
-    for (const tool of ['load_skill', 'mcp_list', 'mcp_search', 'mcp_invoke',
-      'tinadec_inspect', 'tinadec_agent_apply', 'tinadec_mode_apply', 'tinadec_mode_publish',
-      'tinadec_skill_apply', 'tinadec_mcp_apply']) {
+    for (const tool of [
+      'ls',
+      'stat',
+      'read_file',
+      'file_search',
+      'git_status',
+      'git_diff',
+      'git_log',
+      'graph_view',
+      'recall_evidence',
+      'recall_conversation_history',
+      'load_skill',
+      'mcp_list',
+      'mcp_search',
+      'mcp_invoke',
+      'spec_propose',
+      'write_file',
+      'replace_lines',
+      'insert_line',
+      'delete_line',
+      'shell',
+      'git_commit',
+      'git_worktree_create',
+      'git_worktree_remove',
+      'environment_list',
+      'environment_acquire',
+      'environment_release',
+      ...TEAM_TOOLS,
+      ...TINADEC_CONFIG_TOOLS,
+      ...BROWSER_V2_TOOLS,
+    ]) {
       expect(meeting.tool_scope, `meeting must hold ${tool}`).toContain(tool)
     }
+    expect(meeting.tool_scope).not.toContain('git_push')
+    expect(meeting.tool_scope.some((tool) => tool.startsWith('tina_chat_') || tool.startsWith('org_'))).toBe(false)
 
-    // solo_master stays published for sessions frozen on it, but no mode may still point
-    // a conversation node at it (they all converse through meeting now).
+    // Legacy `solo_master`: updated cleanly alongside meeting (no legacy glue, includes #33, Phase 11.5 & #38).
     const soloMaster = agents.find((agent) => agent.resource_key === 'solo_master')!
     expect(soloMaster.layer).toBe('operation')
-    expect(soloMaster.tool_scope).toEqual(meeting.tool_scope)
+    expect(soloMaster.tool_scope).toEqual(meeting.tool_scope.filter((tool) => tool !== 'spec_propose'))
 
-    // The engineering template carries the git tools this round added: a pack whose
-    // prose promises repository work must declare them or the ceiling silently
-    // omits them.
-    const engineering = agents.find((agent) => agent.resource_key === 'global_engineering')!
-    expect(engineering.tool_scope).toContain('git_commit')
-    expect(engineering.tool_scope).toContain('git_push')
-    expect(engineering.tool_scope).toContain('plan_update')
-    // Line-level edits: without them every change is a whole-file rewrite.
-    for (const tool of ['replace_lines', 'insert_line', 'delete_line']) {
-      expect(engineering.tool_scope).toContain(tool)
-      expect(soloMaster.tool_scope).toContain(tool)
+    // `search`: read-only research + recall + board messaging + browser v2.
+    const search = agents.find((agent) => agent.resource_key === 'search')!
+    expect(search.layer).toBe('execution')
+    for (const tool of ['read_file', 'file_search', 'git_log', 'web_fetch', 'recall_conversation_history', 'recall_evidence', 'team_message', 'browser_run', 'browser_screenshot', 'browser_handoff']) {
+      expect(search.tool_scope, `search must hold ${tool}`).toContain(tool)
+    }
+    for (const tool of ['write_file', 'shell', 'git_commit', 'team_spawn', 'team_integrate']) {
+      expect(search.tool_scope, `search must not hold ${tool}`).not.toContain(tool)
     }
 
-    // The reviewer only reads: no file, git or process mutation, and no egress (web_fetch and
-    // mcp_invoke always ask a human). That is what lets a Review run end to end without a
-    // single approval prompt, and what keeps "Review does not change code" true by construction.
+    // `global_engineering`: writable engineering + active browser verification (#38) + team_plan/team_message.
+    const engineering = agents.find((agent) => agent.resource_key === 'global_engineering')!
+    for (const tool of [
+      'replace_lines',
+      'insert_line',
+      'delete_line',
+      'write_file',
+      'shell',
+      'git_commit',
+      'git_push',
+      'team_plan',
+      'team_message',
+      'recall_conversation_history',
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_screenshot',
+      'browser_wait',
+      'browser_click',
+      'browser_type',
+      'browser_press',
+      'browser_scroll',
+      'browser_run',
+      'browser_dialog',
+      'browser_tabs_list',
+      'browser_handoff',
+    ]) {
+      expect(engineering.tool_scope, `global_engineering must hold ${tool}`).toContain(tool)
+    }
+
+    // `reviewer`: STRICTLY read-only and non-spawning (zero code/git/shell mutations, zero team_spawn,
+    // zero interactive browser writes, only read/search/git-read + recall_* + team_message + read-only browser verification).
     const reviewer = agents.find((agent) => agent.resource_key === 'reviewer')!
     expect(reviewer.layer).toBe('execution')
-    expect(reviewer.tool_scope).toContain('git_diff')
-    expect(reviewer.tool_scope).toContain('read_file')
-    // Reading a skill's instructions is reading; every reviewer that can read files can
-    // also load the skill body the index named.
-    expect(reviewer.tool_scope).toContain('load_skill')
-    for (const tool of ['write_file', 'replace_lines', 'insert_line', 'delete_line', 'shell', 'git_commit', 'git_push', 'web_fetch', 'mcp_invoke']) {
-      expect(reviewer.tool_scope, `reviewer must not hold ${tool}`).not.toContain(tool)
+    for (const tool of [
+      'ls',
+      'stat',
+      'read_file',
+      'load_skill',
+      'file_search',
+      'git_status',
+      'git_diff',
+      'git_log',
+      'git_blame',
+      'git_file_at_revision',
+      'git_branch_list',
+      'read_attachment',
+      'recall_evidence',
+      'recall_conversation_history',
+      'team_message',
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_screenshot',
+      'browser_wait',
+      'browser_tabs_list',
+    ]) {
+      expect(reviewer.tool_scope, `reviewer must hold ${tool}`).toContain(tool)
     }
-    // The code reviewer stays outside the organization's conversation on purpose: a Review lens
-    // must not read the other lenses' conclusions before it has formed its own.
-    expect(reviewer.tool_scope.some((tool) => tool.startsWith('org_'))).toBe(false)
-
-    // Executors are organization members: they can see who is there, read their plan room, talk to
-    // a contact and ask for one. Siblings coordinate through TinaChat, never a side channel.
-    for (const executor of [engineering, agents.find((agent) => agent.resource_key === 'search')!]) {
-      for (const tool of ['org_directory', 'org_read', 'org_send', 'org_contact']) expect(executor.tool_scope).toContain(tool)
-      expect(executor.tool_scope).not.toContain('org_report')
+    for (const forbidden of [
+      'team_spawn',
+      'team_integrate',
+      'team_plan',
+      'write_file',
+      'delete_file',
+      'replace_lines',
+      'insert_line',
+      'delete_line',
+      'shell',
+      'git_commit',
+      'git_push',
+      'git_worktree_create',
+      'git_worktree_remove',
+      'web_fetch',
+      'mcp_invoke',
+      'browser_click',
+      'browser_type',
+      'browser_press',
+      'browser_scroll',
+      'browser_run',
+      'browser_upload',
+      'browser_download_save',
+      'tinadec_agent_apply',
+      'tinadec_context_memory_apply',
+    ]) {
+      expect(reviewer.tool_scope, `reviewer must not hold ${forbidden}`).not.toContain(forbidden)
     }
-    // The solo master reads the graph and closes reports addressed to it.
-    for (const tool of ['graph_view', 'org_read', 'org_send', 'org_decide_report', 'recall_evidence', 'git_worktree_create', 'git_worktree_remove']) expect(soloMaster.tool_scope).toContain(tool)
-    // The environment steward's tools: see, take for this run, give back.
-    for (const tool of ['environment_list', 'environment_acquire', 'environment_release']) expect(soloMaster.tool_scope).toContain(tool)
+    expect(reviewer.tool_scope.some((tool) => WORKSPACE_MUTATING_TOOLS.has(tool))).toBe(false)
+    expect(reviewer.tool_scope.some((tool) => tool.startsWith('org_') || tool.startsWith('tina_chat_'))).toBe(false)
 
-    // The governance reviewer observes and reports; it holds no workspace tool and no conversation
-    // capability (it must never become a conversation identity or flip a tier).
+    // `governance_reviewer`: read-only standing governance observer on shared board.
     const governance = agents.find((agent) => agent.resource_key === 'governance_reviewer')!
     expect(governance.layer).toBe('operation')
-    expect(governance.tool_scope).toEqual(['graph_view', 'org_directory', 'org_read', 'org_send', 'org_report', 'org_execute_report', 'recall_evidence', 'environment_list'])
+    expect(governance.tool_scope).toEqual([
+      'graph_view',
+      'team_message',
+      'recall_evidence',
+      'recall_conversation_history',
+      'environment_list',
+    ])
     expect(governance.capabilities).not.toContain('user.respond')
+    expect(governance.tool_scope).not.toContain('team_spawn')
 
-    // Context upkeep is a governance-layer role, not an executor: Core recognizes its role
-    // name, it holds no tool and no dispatch target, and it produces a summary patch only.
+    // `context_compressor`: structural summarization + verbatim recall only, zero mutation/spawn.
     const compressor = agents.find((agent) => agent.resource_key === 'context_compressor')!
     expect(compressor.layer).toBe('operation')
     expect(compressor.role).toBe('context_maintenance')
-    expect(compressor.tool_scope).toEqual([])
+    expect(compressor.tool_scope).toEqual(['recall_conversation_history', 'recall_evidence'])
     expect(compressor.capabilities).toEqual(['context.maintain'])
     expect(compressor.capabilities).not.toContain('user.respond')
   })
 
-  it('declares nine modes on the four orchestration tiers', () => {
+  it('declares nine modes on the four orchestration tiers with Explore-First Team/Review/Spec and valid ModePublishGate bindings', () => {
     const modes = graphSeedPackManifest.resources.modes
     expect(modes.map((mode) => mode.resource_key)).toEqual([
       'free_director',
@@ -140,82 +318,120 @@ describe('GraphSeedPack', () => {
       'correction',
       'artex',
     ])
-    // Display names are the familiar words users know from other agents; the slug (the id
-    // Core, tests and the icon table key on) stays the resource_key.
     expect(modes.map((mode) => mode.display_name)).toEqual(['Team', 'Graph', 'Workflow', 'Solo', 'Plan', 'Review', 'Spec', '纠偏', 'ArtEx'])
     for (const mode of modes) {
       expect(mode.slug).toBe(mode.resource_key)
-      // The picker shows two lines of description; longer text is cut off mid-sentence.
       expect(mode.description!.length, `${mode.resource_key} description`).toBeLessThanOrEqual(50)
+      for (const locale of REQUIRED_LOCALES) {
+        const locDesc = mode.i18n?.[locale]?.description ?? ''
+        expect(locDesc.length, `${mode.resource_key}.i18n[${locale}].description`).toBeGreaterThan(0)
+        expect(locDesc.length, `${mode.resource_key}.i18n[${locale}].description`).toBeLessThanOrEqual(50)
+      }
     }
 
     const bySlug = new Map(modes.map((mode) => [mode.resource_key, mode] as const))
-    // free_form: one director node and no declared edges — the tier is derived from the
-    // topology, so an authoring mistake here silently changes which enforcement path a run
-    // takes. Team also carries two standing operation nodes: governance review (woken by
-    // lease conflicts) and context upkeep (woken by Core's task/run close anchors). Neither
-    // is a dispatch target and neither adds an edge.
+    const agentsByRef = new Map(graphSeedPackManifest.resources.agents.map((agent) => [`agent:${agent.resource_key}`, agent] as const))
+    const meeting = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'meeting')!
+
+    // Team (`free_director`): Explore-First Coordinator + standing governance & context upkeep + worktree default ON.
     const team = bySlug.get('free_director')!
+    expect(team.default_options).toEqual({
+      plan_first: false,
+      spec_enabled: false,
+      multi_agent: true,
+      bulletin_board: true,
+      worktree: true,
+    })
     expect(team.nodes.map((node) => node.node_key)).toEqual(['meeting', 'governance_reviewer', 'context_compressor'])
     expect(team.edges).toHaveLength(0)
-    const standing = team.nodes.find((node) => node.node_key === 'governance_reviewer')!
-    expect(standing.layer).toBe('operation')
-    expect(standing.config.conversation).toBeUndefined()
-    expect(standing.relationship!.subscriptions).toEqual(['lease_conflict'])
-    expect(standing.relationship!.allowed_dispatch_targets).toEqual([])
-    const standingCompressor = team.nodes.find((node) => node.node_key === 'context_compressor')!
-    expect(standingCompressor.layer).toBe('operation')
-    expect(standingCompressor.config.conversation).toBeUndefined()
-    expect(standingCompressor.relationship!.allowed_dispatch_targets).toEqual([])
-    expect(standingCompressor.relationship!.agent_types).toEqual([])
-    // self_dispatch and deterministic share the same three nodes and two edges;
-    // they differ in the meeting binding's envelope (deterministic removes the
-    // spawn room).
-    for (const key of ['vibe_graph', 'fixed_pipeline'] as const) {
-      expect(bySlug.get(key)!.nodes).toHaveLength(3)
-      expect(bySlug.get(key)!.edges).toHaveLength(2)
-    }
+    const standingGov = team.nodes.find((node) => node.node_key === 'governance_reviewer')!
+    expect(standingGov.layer).toBe('operation')
+    expect(standingGov.config.conversation).toBeUndefined()
+    expect(standingGov.relationship!.subscriptions).toEqual(['lease_conflict'])
+    expect(standingGov.relationship!.allowed_dispatch_targets).toEqual([])
+    const standingComp = team.nodes.find((node) => node.node_key === 'context_compressor')!
+    expect(standingComp.layer).toBe('operation')
+    expect(standingComp.config.conversation).toBeUndefined()
+    expect(standingComp.relationship!.allowed_dispatch_targets).toEqual([])
+    expect(standingComp.relationship!.agent_types).toEqual([])
 
-    // solo_dispatch mirrors the free-director SHAPE on purpose: no declared edges, so
-    // its sub-agents must be declared as spawnable templates (agent_types + node-less
-    // bindings) rather than as nodes. Declaring them as nodes with no edge would make
-    // the edge authority deny dispatch to them. The conversation agent is the unified
-    // identity (todo E6); the solo tier comes from its effective tools, not its slug.
-    const solo = bySlug.get('solo')!
-    expect(solo.nodes).toHaveLength(1)
-    expect(solo.edges).toHaveLength(0)
-    expect(solo.nodes[0].agent_ref).toBe('agent:meeting')
-
-    // Plan, Review and Spec are compositions of existing tiers, not new machinery: Plan is the
-    // solo_dispatch shape with its mutating tools switched off, Review and Spec are free-form
-    // directors with their own spawn whitelist and pipeline.
-    for (const key of ['plan', 'review', 'spec'] as const) {
-      expect(bySlug.get(key)!.nodes, `${key} nodes`).toHaveLength(1)
-      expect(bySlug.get(key)!.edges, `${key} edges`).toHaveLength(0)
-    }
-
-    // Todo E6 (one conversation identity): EVERY mode converses through the same agent, so a
-    // session can move between any two modes; switching what the mode does is strategy, not
-    // identity. A session frozen on the legacy solo_master identity migrates at admission
-    // while nothing is running.
-    const conversationAgent = (key: string) => bySlug.get(key)?.nodes?.find((node) => node.config?.conversation === true)?.agent_ref
-    for (const slug of ['solo', 'plan', 'free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec']) {
-      expect(conversationAgent(slug), `${slug} conversation`).toBe('agent:meeting')
-    }
-    // The modes whose conversation must hold NO tools (their tier derives from effective
-    // tools) switch the whole chairman ceiling off; Solo and Plan opt into their own tools.
     const conversationBinding = (key: string) => {
       const binding = bySlug.get(key)?.bindings?.find((candidate) =>
         candidate.agent_ref === 'agent:meeting' && (candidate.node_key ?? 'meeting') === 'meeting')
       expect(binding, `${key} conversation binding`).toBeDefined()
       return binding!
     }
-    const soloMaster = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'solo_master')!
-    for (const slug of ['free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec']) {
-      const switches = conversationBinding(slug).tool_switches ?? {}
-      for (const tool of soloMaster.tool_scope ?? []) expect(switches[tool], `${slug} switches ${tool} off`).toBe(false)
+    const effectiveMeetingTools = (key: string) => {
+      const switches = conversationBinding(key).tool_switches ?? {}
+      return meeting.tool_scope.filter((tool) => switches[tool] !== false)
     }
 
+    // Explore-First Team effective tools: read-only exploration + 5 team_* + 9 tinadec_* + load_skill + mcp_*, zero mutations.
+    const teamEffective = effectiveMeetingTools('free_director')
+    for (const tool of ['ls', 'stat', 'read_file', 'file_search', 'git_status', 'git_diff', 'git_log', 'graph_view', 'recall_evidence', 'recall_conversation_history', 'load_skill', 'mcp_list', 'mcp_search', 'mcp_invoke', ...TEAM_TOOLS, ...TINADEC_CONFIG_TOOLS]) {
+      expect(teamEffective, `free_director must enable ${tool}`).toContain(tool)
+    }
+    expect(teamEffective.some((tool) => WORKSPACE_MUTATING_TOOLS.has(tool))).toBe(false)
+    expect(conversationBinding('free_director').envelope!.resources!.read).toEqual([''])
+    expect(conversationBinding('free_director').envelope!.resources!.write).toBeUndefined()
+
+    // Explore-First Review: read-only exploration + team_spawn/team_message/team_wait/team_plan + tinadec_inspect, zero writes/apply.
+    const reviewEffective = effectiveMeetingTools('review')
+    for (const tool of ['ls', 'stat', 'read_file', 'file_search', 'git_status', 'git_diff', 'git_log', 'recall_conversation_history', 'team_spawn', 'team_message', 'team_wait', 'team_plan', 'tinadec_inspect']) {
+      expect(reviewEffective, `review must enable ${tool}`).toContain(tool)
+    }
+    for (const tool of ['team_integrate', 'spec_propose', 'write_file', 'shell', 'tinadec_agent_apply', 'tinadec_context_memory_apply']) {
+      expect(reviewEffective, `review must disable ${tool}`).not.toContain(tool)
+    }
+    expect(conversationBinding('review').envelope!.resources!.read).toEqual([''])
+
+    // Explore-First Spec: read-only exploration + spec_propose + 5 team_* + tinadec_*, zero mutations on meeting.
+    const specEffective = effectiveMeetingTools('spec')
+    for (const tool of ['read_file', 'file_search', 'git_diff', 'spec_propose', ...TEAM_TOOLS, ...TINADEC_CONFIG_TOOLS]) {
+      expect(specEffective, `spec must enable ${tool}`).toContain(tool)
+    }
+    expect(specEffective.some((tool) => WORKSPACE_MUTATING_TOOLS.has(tool))).toBe(false)
+    expect(conversationBinding('spec').envelope!.resources!.read).toEqual([''])
+
+    // Declared-edge modes (`vibe_graph`, `fixed_pipeline`): switch off all non-tinadec_* tools on meeting.
+    const tinadecSet = new Set<string>(TINADEC_CONFIG_TOOLS)
+    for (const slug of ['vibe_graph', 'fixed_pipeline']) {
+      const switches = conversationBinding(slug).tool_switches ?? {}
+      for (const tool of meeting.tool_scope) {
+        if (tinadecSet.has(tool)) {
+          expect(switches[tool], `${slug} keeps ${tool} enabled`).not.toBe(false)
+        } else {
+          expect(switches[tool], `${slug} switches ${tool} off`).toBe(false)
+        }
+      }
+      expect(bySlug.get(slug)!.nodes).toHaveLength(3)
+      expect(bySlug.get(slug)!.edges).toHaveLength(2)
+    }
+
+    // Unified conversation identity across all non-ArtEx modes.
+    const conversationAgent = (key: string) => bySlug.get(key)?.nodes?.find((node) => node.config?.conversation === true)?.agent_ref
+    for (const slug of ['solo', 'plan', 'free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec', 'correction']) {
+      expect(conversationAgent(slug), `${slug} conversation`).toBe('agent:meeting')
+    }
+
+    const expectedTiers: Record<string, string> = {
+      free_director: 'free_form',
+      vibe_graph: 'self_dispatch',
+      fixed_pipeline: 'deterministic',
+      solo: 'solo_dispatch',
+      plan: 'solo_dispatch',
+      review: 'free_form',
+      spec: 'free_form',
+      correction: 'solo_dispatch',
+      artex: 'solo_dispatch',
+    }
+    for (const [slug, tier] of Object.entries(expectedTiers)) {
+      const mode = bySlug.get(slug)!
+      expect(mode.orchestration_tier, `${slug} orchestration_tier`).toBe(tier)
+      expect(mode.default_options, `${slug} default_options`).toBeDefined()
+    }
+
+    // ModePublishGate invariant + zero stale tool_switches keys across EVERY binding in EVERY mode.
     const resourceKeys = new Set(graphSeedPackManifest.resources.agents.map((agent) => agent.resource_key))
     for (const mode of modes) {
       expect(mode.nodes.some((node) => node.layer === 'operation')).toBe(true)
@@ -223,86 +439,118 @@ describe('GraphSeedPack', () => {
         expect(node.agent_ref).toMatch(/^agent:/)
         expect(resourceKeys.has(node.agent_ref.slice('agent:'.length))).toBe(true)
       }
-      // Edge endpoints must resolve to declared nodes, or the frozen graph would
-      // carry an edge the dispatch path can never walk.
       const nodeKeys = new Set(mode.nodes.map((node) => node.node_key))
       for (const edge of mode.edges) {
         expect(nodeKeys.has(edge.source_node_key), `${mode.resource_key} edge source`).toBe(true)
         expect(nodeKeys.has(edge.target_node_key), `${mode.resource_key} edge target`).toBe(true)
       }
+      for (const binding of mode.bindings ?? []) {
+        const agent = agentsByRef.get(binding.agent_ref)!
+        expect(agent, `${mode.resource_key} unknown binding ${binding.agent_ref}`).toBeDefined()
+        const switches = binding.tool_switches ?? {}
+        for (const switchKey of Object.keys(switches)) {
+          expect(agent.tool_scope, `${mode.resource_key} binding switches unknown tool '${switchKey}'`).toContain(switchKey)
+        }
+        const effective = agent.tool_scope.filter((tool) => switches[tool] !== false)
+        const mutatingKept = effective.filter((tool) => WORKSPACE_MUTATING_TOOLS.has(tool))
+        if (mutatingKept.length > 0) {
+          expect(binding.envelope?.resources?.write?.length ?? 0, `${mode.resource_key}/${binding.node_key ?? binding.agent_ref} needs write grant for [${mutatingKept.join(', ')}]`).toBeGreaterThan(0)
+        }
+      }
     }
   })
 
-  it('binds every mode to its own prompt pipeline', () => {
-    // Prompts used to be bound per AGENT only, so all modes shared one set of
-    // instructions and nothing on a mode could say "this mode collaborates
-    // differently". One pipeline per mode, each describing its own
-    // collaboration semantics for the master AND the sub-agents.
+  it('binds every mode to its own prompt pipeline with complete 5-locale non-stub templates (>80 chars)', () => {
     const modes = graphSeedPackManifest.resources.modes
-    const promptKeys = new Set(graphSeedPackManifest.resources.prompt_pipelines.map((pipeline) => pipeline.resource_key))
+    const pipelines = graphSeedPackManifest.resources.prompt_pipelines
+    expect(pipelines.map((p) => p.resource_key)).toEqual([
+      'seed-base',
+      'solo-base',
+      'vibe-base',
+      'fixed-base',
+      'free-base',
+      'plan-base',
+      'review-base',
+      'spec-base',
+      'correction-base',
+      'artex-base',
+    ])
 
+    const promptKeys = new Set(pipelines.map((pipeline) => pipeline.resource_key))
     const bound = modes.map((mode) => {
       expect(mode.prompt_pipeline_ref, `mode '${mode.resource_key}' prompt_pipeline_ref`).toMatch(/^prompt:/)
       const key = mode.prompt_pipeline_ref!.slice('prompt:'.length)
       expect(promptKeys.has(key), `mode '${mode.resource_key}' references unknown pipeline '${key}'`).toBe(true)
       return key
     })
-    // Distinct pipelines, not one name for every mode: that is the whole point.
     expect(new Set(bound).size).toBe(modes.length)
     expect(bound).toEqual(['free-base', 'vibe-base', 'fixed-base', 'solo-base', 'plan-base', 'review-base', 'spec-base', 'correction-base', 'artex-base'])
 
-    // Each pipeline must actually carry prose — an empty template list assembles to
-    // nothing, which would silently ship a mode with no instructions at all.
-    for (const pipeline of graphSeedPackManifest.resources.prompt_pipelines) {
-      const content = pipeline.graph.nodes
-        .map((node) => (node as { config?: { content?: string } }).config?.content ?? '')
-        .join('')
-      expect(content.trim().length, `pipeline '${pipeline.resource_key}' content`).toBeGreaterThan(0)
+    for (const pipeline of pipelines) {
+      const templateNodes = pipeline.graph.nodes.filter((n) => (n as { type?: string }).type === 'template') as Array<{
+        id: string
+        config?: { content?: string }
+      }>
+      expect(templateNodes.length, `pipeline '${pipeline.resource_key}' template nodes`).toBeGreaterThan(0)
+      for (const node of templateNodes) {
+        expect(node.config?.content?.trim().length ?? 0, `${pipeline.resource_key}.${node.id}`).toBeGreaterThan(80)
+      }
+      for (const locale of REQUIRED_LOCALES) {
+        const entry = pipeline.i18n?.[locale]
+        expect(entry, `pipeline '${pipeline.resource_key}' missing locale ${locale}`).toBeDefined()
+        expect(entry!.display_name?.trim().length ?? 0).toBeGreaterThan(0)
+        expect(entry!.description?.trim().length ?? 0).toBeGreaterThan(15)
+        for (const node of templateNodes) {
+          const text = entry!.templates?.[node.id] ?? ''
+          expect(text.trim().length, `pipeline '${pipeline.resource_key}'.${node.id} (${locale})`).toBeGreaterThan(80)
+        }
+      }
     }
 
-    // The solo pipeline has to state the things the mode depends on and that the model
-    // would otherwise get wrong: dispatching is QUEUED (its result is not in the tool's
-    // return value), task_wait is how the result comes back, and writes still need
-    // per-call approval.
-    const soloContent = graphSeedPackManifest.resources.prompt_pipelines
-      .find((pipeline) => pipeline.resource_key === 'solo-base')!
-      .graph.nodes
-      .map((node) => (node as { config?: { content?: string } }).config?.content ?? '')
-      .join('')
-    expect(soloContent).toContain('task_dispatch')
-    expect(soloContent).toContain('结果不在这次调用里')
-    expect(soloContent).toContain('task_wait')
-    expect(soloContent).toContain('plan_update')
-    expect(soloContent).toContain('人工批准')
-
-    // The three new pipelines each carry the one rule their mode stands on.
     const contentOf = (key: string) => graphSeedPackManifest.resources.prompt_pipelines
       .find((pipeline) => pipeline.resource_key === key)!
       .graph.nodes
       .map((node) => (node as { config?: { content?: string } }).config?.content ?? '')
-      .join('')
-    // Plan: the tools are off by design, the plan is written with plan_update, and the way
-    // forward is switching to Solo (same conversation agent, so the switch is allowed).
+      .join('\n')
+
+    // seed-base: shared core charter (evidence-first, recall_conversation_history, SessionPlan, tinadec_inspect, browser_screenshot/handoff).
+    expect(contentOf('seed-base')).toContain('recall_conversation_history')
+    expect(contentOf('seed-base')).toContain('SessionPlan')
+    expect(contentOf('seed-base')).toContain('tinadec_inspect')
+    expect(contentOf('seed-base')).toContain('browser_screenshot')
+    expect(contentOf('seed-base')).toContain('browser_handoff')
+
+    // free-base (Team): Explore-First + 5 orthogonal team_* primitives + WorktreeIntegratorService.
+    for (const token of ['team_spawn', 'team_message', 'team_wait', 'team_plan', 'team_integrate', 'WorktreeIntegratorService', 'SessionPlan']) {
+      expect(contentOf('free-base'), `free-base must mention ${token}`).toContain(token)
+    }
+
+    // solo-base: direct execution + optional ephemeral team_spawn + team_wait + team_plan + browser_run.
+    for (const token of ['team_spawn', 'ephemeral', 'team_wait', 'team_plan', 'browser_run', '人工审批']) {
+      expect(contentOf('solo-base'), `solo-base must mention ${token}`).toContain(token)
+    }
+
+    // plan-base: read-only + team_plan + switch to Solo / Team.
     expect(contentOf('plan-base')).toContain('已关闭')
-    expect(contentOf('plan-base')).toContain('plan_update')
+    expect(contentOf('plan-base')).toContain('team_plan')
     expect(contentOf('plan-base')).toContain('切到 Solo')
-    // Review: every lens goes to a reviewer, and reviewers must not see each other's findings.
-    expect(contentOf('review-base')).toContain('assignee 写 reviewer')
-    expect(contentOf('review-base')).toContain('互相看不到对方')
-    // Spec: three named documents, and nothing is written before the user confirms it.
-    for (const file of ['requirements.md', 'design.md', 'tasks.md']) expect(contentOf('spec-base')).toContain(file)
-    expect(contentOf('spec-base')).toContain('用户确认之前不要落盘')
-    // Correction: state is a host capability, not prose; the same repro and user
-    // reproduction are explicit completion evidence, not model assertions.
+
+    // review-base: independent read-only reviewers.
+    expect(contentOf('review-base')).toContain('agent_slug="reviewer"')
+    expect(contentOf('review-base')).toContain('独立判断')
+
+    // spec-base: three specs + spec_propose + no write before confirmation.
+    for (const token of ['requirements.md', 'design.md', 'tasks.md', 'spec_propose', '用户确认之前绝不落盘']) {
+      expect(contentOf('spec-base'), `spec-base must mention ${token}`).toContain(token)
+    }
+
+    // correction-base: host-owned causal trace + same focused repro + user reproduction reopens.
     expect(contentOf('correction-base')).toContain('update_correction_trace')
     expect(contentOf('correction-base')).toContain('同一个聚焦 repro')
     expect(contentOf('correction-base')).toContain('用户报告仍复现')
   })
 
-  it('carries all five relationship fields on every node', () => {
-    // The relationship file is compiled into the role system prompt through a
-    // fixed tail slot that participates in the prompt hash; a missing field means
-    // a silently weaker contract rather than a failure.
+  it('carries all five relationship fields on every node and exact spawn whitelists', () => {
     for (const mode of graphSeedPackManifest.resources.modes) {
       for (const node of mode.nodes) {
         const relationship = node.relationship
@@ -315,16 +563,11 @@ describe('GraphSeedPack', () => {
       }
     }
 
-    // The spawn whitelist is what makes a spawn demand admissible in free_form and
-    // solo_dispatch; only the free director and the solo master declare one (the
-    // deterministic tier has none, which is why graph_tier_spawn_denied is its
-    // contract).
     const whitelists: Record<string, string[]> = {
-      free_director: ['search', 'global_engineering'],
+      free_director: ['search', 'global_engineering', 'reviewer'],
       fixed_pipeline: ['search', 'global_engineering'],
       solo: ['search', 'global_engineering'],
       spec: ['search', 'global_engineering'],
-      // Plan can only send out read-only investigation; Review only independent reviewers.
       plan: ['search'],
       review: ['reviewer'],
       correction: ['search', 'global_engineering'],
@@ -332,22 +575,15 @@ describe('GraphSeedPack', () => {
     for (const [key, whitelist] of Object.entries(whitelists)) {
       const mode = graphSeedPackManifest.resources.modes.find((row) => row.resource_key === key)!
       expect(mode.nodes[0].relationship!.agent_types, `${key} spawn whitelist`).toEqual(whitelist)
-      // Dispatch targets and the spawn whitelist name the same roles in a single-node mode.
       expect(mode.nodes[0].relationship!.allowed_dispatch_targets, `${key} dispatch targets`).toEqual(whitelist)
     }
-    // The graph tier derives the deterministic contract from the topology, but the
-    // spawn room is what the gate reads: an absent spawn envelope is a denial.
+
     const fixedPipeline = graphSeedPackManifest.resources.modes.find((mode) => mode.resource_key === 'fixed_pipeline')!
     const fixedBinding = fixedPipeline.bindings!.find((binding) => binding.node_key === 'meeting')!
     expect(fixedBinding.envelope!.spawn!.max_depth).toBe(0)
   })
 
   it('lets the delegating modes nest one level deeper than a flat dispatch', () => {
-    // Depth is a product decision, not a coincidence. `max_depth = 1` means the coordinator may
-    // dispatch executors that cannot dispatch anything themselves — a flat star. A mode whose
-    // whole point is a team (Team), independent lenses (Review) or delegated investigation
-    // (Correction) needs the second level, or "接近 Qoder 的层级子智能体" is unreachable.
-    // The single-loop modes keep a flat dispatch, and the fixed pipeline stays a declared chain.
     const depth = (key: string) => {
       const mode = graphSeedPackManifest.resources.modes.find((row) => row.resource_key === key)!
       return mode.bindings!.find((binding) => binding.node_key === 'meeting')!.envelope!.spawn!.max_depth
@@ -357,9 +593,9 @@ describe('GraphSeedPack', () => {
     expect(depth('fixed_pipeline')).toBe(0)
   })
 
-  it('binds node-less envelopes for spawnable templates and narrows tools where declared', () => {
+  it('binds node-less envelopes for spawnable templates and configures Correction & ArtEx policies', () => {
     const spawnable: Record<string, string[]> = {
-      free_director: ['agent:global_engineering', 'agent:search'],
+      free_director: ['agent:global_engineering', 'agent:reviewer', 'agent:search'],
       solo: ['agent:global_engineering', 'agent:search'],
       spec: ['agent:global_engineering', 'agent:search'],
       correction: ['agent:global_engineering', 'agent:search'],
@@ -368,23 +604,15 @@ describe('GraphSeedPack', () => {
     }
     for (const [key, templates] of Object.entries(spawnable)) {
       const mode = graphSeedPackManifest.resources.modes.find((row) => row.resource_key === key)!
-      // Node-less bindings attach a resource envelope to a spawnable template: the
-      // director spawns these through the engine-authoritative path, and the
-      // envelope is where the spawned instance's resource grants come from.
       const nodeLess = mode.bindings!.filter((binding) => binding.node_key == null)
       expect(nodeLess.map((binding) => binding.agent_ref).sort(), `${key} node-less bindings`).toEqual(templates)
       for (const binding of nodeLess) {
         expect(binding.envelope!.resources!.read).toEqual([''])
-        // Only the engineering executor is ever granted write.
         const expectedWrite = binding.agent_ref === 'agent:global_engineering' ? [''] : undefined
         expect(binding.envelope!.resources!.write, `${key} ${binding.agent_ref} write`).toEqual(expectedWrite)
       }
     }
 
-    // No mode narrows file editing away from the engineering executor. The strict
-    // pipeline once switched write_file off, which never stopped writes (shell and
-    // git_commit stayed) — it only pushed edits through the shell, around the
-    // file-hash guard. Its strictness is the declared edges and the denied spawn.
     for (const mode of graphSeedPackManifest.resources.modes) {
       for (const binding of mode.bindings!.filter((item) => item.agent_ref === 'agent:global_engineering')) {
         expect(binding.tool_switches ?? {}, `${mode.resource_key} engineering switches`).toEqual({})
@@ -398,10 +626,8 @@ describe('GraphSeedPack', () => {
       features: ['causal_trace', 'completion_contract', 'failing_repro_required', 'clarification_ledger', 'user_reproduction_reopens', 'local_hunk_revert'],
     })
     const correctionBinding = correction.bindings!.find((binding) => binding.node_key === 'meeting')!
-    expect(correctionBinding.tool_switches).toEqual({ plan_update: false })
+    expect(correctionBinding.tool_switches).toEqual({ spec_propose: false, team_plan: false })
 
-    // ArtEx is configuration, not code: the mode selects the host-owned autonomous policy,
-    // declares every feature, and keeps its planner and workers out of the conversation.
     const artex = graphSeedPackManifest.resources.modes.find((mode) => mode.resource_key === 'artex')!
     expect(artex.runtime_policy?.kind).toBe('autonomous_exploration')
     expect(artex.runtime_policy?.version).toBe(1)
@@ -410,30 +636,26 @@ describe('GraphSeedPack', () => {
       'run_dossier', 'side_question']) {
       expect(artex.runtime_policy?.features, `artex feature ${feature}`).toContain(feature)
     }
-    expect(graphSeedPackManifest.compatibility.required_core_capabilities).toContain('autonomous_exploration_v1')
     expect(artex.nodes.map((node) => node.node_key)).toEqual(['artex_director', 'artex_planner'])
     expect(artex.edges).toEqual([])
     expect(artex.nodes[0].config.conversation).toBe(true)
     expect(artex.nodes[1].relationship?.subscriptions).toEqual(['worker_settled', 'user_steer', 'plan_tick', 'budget_tick'])
     expect(artex.nodes[1].relationship?.allowed_dispatch_targets).toEqual(['artex_worker', 'artex_verifier'])
-    // The planner drives the ledger and dispatch but never answers the user; the verifier is read-only.
+
     const artexPlanner = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'artex_planner')!
     expect(artexPlanner.capabilities).not.toContain('user.respond')
     expect(artexPlanner.tool_scope).toContain('plan_ledger_update')
-    expect(artexPlanner.tool_scope).toContain('task_dispatch')
+    expect(artexPlanner.tool_scope).toContain('team_spawn')
+    expect(artexPlanner.tool_scope).toContain('team_wait')
+    expect(artexPlanner.tool_scope).toContain('recall_conversation_history')
+
     const artexVerifier = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'artex_verifier')!
-    for (const tool of ['write_file', 'shell', 'web_fetch', 'mcp_invoke', 'plan_ledger_update']) {
+    for (const tool of ['write_file', 'shell', 'web_fetch', 'mcp_invoke', 'plan_ledger_update', 'team_spawn']) {
       expect(artexVerifier.tool_scope, `verifier must not hold ${tool}`).not.toContain(tool)
     }
   })
 
-  it('grants the solo master the workspace write it needs to work itself', () => {
-    // The resource envelope is the only thing that can grant write:
-    // WorkspaceGrantDefaults never implies it, so a master holding write_file with a
-    // read-only envelope would have every write DENIED (not asked) at the decision
-    // point. The spawn room must be present too, or "dispatch aggressively" is
-    // rejected as graph_tier_spawn_denied. (The conversation agent is the unified
-    // identity since E6; the solo behavior lives on this binding, not on the slug.)
+  it('grants Solo the workspace write and spawn room it needs to work directly', () => {
     const solo = graphSeedPackManifest.resources.modes.find((mode) => mode.resource_key === 'solo')!
     const masterBinding = solo.bindings!.find((binding) => binding.node_key === 'meeting')!
     expect(masterBinding.agent_ref).toBe('agent:meeting')
@@ -443,31 +665,54 @@ describe('GraphSeedPack', () => {
     expect(masterBinding.envelope!.spawn!.max_agents_per_run).toBeGreaterThan(0)
   })
 
-  it('keeps Plan read-only while it runs on the unified conversation identity', () => {
-    // Plan reuses the unified identity (todo E6), like every other mode. Its read-only
-    // promise therefore rests on the binding, not on the agent: the node's effective
-    // tools (tool_scope minus switched-off ids, the same view Core publishes) must be
-    // exactly the reading, planning and dispatch set. Pinned as an exact list so a tool
-    // later added to the chairman ceiling cannot reach Plan without someone deciding.
+  it('keeps Plan strictly read-only while running on the unified conversation identity', () => {
     const plan = graphSeedPackManifest.resources.modes.find((mode) => mode.resource_key === 'plan')!
     const binding = plan.bindings!.find((item) => item.node_key === 'meeting')!
     expect(binding.agent_ref).toBe('agent:meeting')
-    const soloMaster = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'solo_master')!
+    const meeting = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'meeting')!
     const switches = binding.tool_switches ?? {}
-    const effective = soloMaster.tool_scope.filter((tool) => switches[tool] !== false)
-    // Reading the organization (who is here, what was said, the session graph, the evidence archive)
-    // is reading; posting into it and closing reports are not, so those stay off in Plan.
-    expect(effective).toEqual(['ls', 'stat', 'read_file', 'load_skill', 'file_search', 'git_status', 'git_diff', 'git_log', 'read_attachment', 'task_dispatch', 'task_wait', 'plan_update',
-      'graph_view', 'org_directory', 'org_read', 'recall_evidence', 'environment_list'])
-    // The workbench write tools and MCP egress are switched off in Plan: planning must not
-    // reconfigure the workbench or reach the network.
-    for (const tool of ['mcp_list', 'mcp_search', 'mcp_invoke', 'tinadec_agent_apply', 'tinadec_mode_apply', 'tinadec_mode_publish', 'tinadec_skill_apply', 'tinadec_mcp_apply']) {
+    const effective = meeting.tool_scope.filter((tool) => switches[tool] !== false)
+    expect(effective).toEqual([
+      'ls',
+      'stat',
+      'read_file',
+      'file_search',
+      'git_status',
+      'git_diff',
+      'git_log',
+      'read_attachment',
+      'graph_view',
+      'recall_evidence',
+      'recall_conversation_history',
+      'environment_list',
+      'load_skill',
+      'team_spawn',
+      'team_wait',
+      'team_plan',
+      'tinadec_inspect',
+    ])
+    for (const tool of [
+      'mcp_list',
+      'mcp_search',
+      'mcp_invoke',
+      'tinadec_agent_apply',
+      'tinadec_mode_apply',
+      'tinadec_mode_publish',
+      'tinadec_skill_apply',
+      'tinadec_mcp_apply',
+      'tinadec_prompt_apply',
+      'tinadec_model_profile_apply',
+      'tinadec_context_memory_apply',
+      'team_integrate',
+      'team_message',
+      'spec_propose',
+      'browser_run',
+      'browser_navigate',
+    ]) {
       expect(switches[tool], `plan switches ${tool} off`).toBe(false)
     }
-    // No write grant either: even a tool that slipped through would be denied at the decision point.
     expect(binding.envelope!.resources!.read).toEqual([''])
     expect(binding.envelope!.resources!.write).toBeUndefined()
-    // The spawn room stays, so Plan can still send read-only investigation out.
     expect(binding.envelope!.spawn!.max_depth).toBeGreaterThan(0)
   })
 
