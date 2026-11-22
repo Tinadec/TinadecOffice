@@ -69,23 +69,36 @@ function listeningDevPorts() {
   return listening;
 }
 
+function hasRunningCoreProcess() {
+  const raw = run('tasklist', ['/FI', 'IMAGENAME eq TinadecCore.Api.exe', '/FO', 'CSV', '/NH']);
+  return Boolean(raw && /tinadeccore\.api\.exe/i.test(raw));
+}
+
+const normalizedRoot = repoRoot.toLowerCase().replace(/\//g, '\\');
 const listeningPorts = listeningDevPorts();
-if (listeningPorts !== null && !BLOCKING_PORTS.some((port) => listeningPorts.has(port))) {
-  // 三个服务端口都没人监听，就没有“端口被占导致启动失败”要防的事。
+const hasBlockingPort = listeningPorts === null || BLOCKING_PORTS.some((port) => listeningPorts.has(port));
+const checkStalledCore = hasRunningCoreProcess();
+
+if (!hasBlockingPort && !checkStalledCore) {
+  // 三个服务端口都没人监听且无本仓库 Core 进程残留，直接放行。
   // 9222 是 DevTools 口，被占只影响调试连接，不为它拉一次 PowerShell。
-  if (listeningPorts.has(9222)) {
+  if (listeningPorts?.has(9222)) {
     console.log('[dev-port-guard] 端口 9222（Electron DevTools）已被占用，不影响 dev 启动，跳过检查。');
   }
   process.exit(0);
 }
 
-// 单次 PowerShell 调用取回「端口 → 进程名 + 命令行」，脚本内不使用双引号以免转义问题。
+// 单次 PowerShell 调用取回「端口监听者 + 卡在启动期未绑端口的本仓库 TinadecCore.Api.exe」，脚本内不使用双引号以免转义问题。
 const PS_QUERY = [
   `$ports = ${PORTS.join(',')};`,
+  '$items = @();',
   'Get-NetTCPConnection -State Listen -LocalPort $ports -ErrorAction SilentlyContinue |',
   "ForEach-Object { $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_.OwningProcess) -ErrorAction SilentlyContinue;",
-  '[pscustomobject]@{ port = $_.LocalPort; pid = $_.OwningProcess; name = $p.Name; cmdline = $p.CommandLine } } |',
-  'ConvertTo-Json -Compress',
+  '$items += [pscustomobject]@{ port = $_.LocalPort; pid = [int]$_.OwningProcess; name = $p.Name; execPath = $p.ExecutablePath; cmdline = $p.CommandLine } };',
+  "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'TinadecCore.Api.exe' } |",
+  'ForEach-Object { $proc = $_; if (-not ($items | Where-Object { $_.pid -eq [int]$proc.ProcessId })) {',
+  '$items += [pscustomobject]@{ port = 0; pid = [int]$proc.ProcessId; name = $proc.Name; execPath = $proc.ExecutablePath; cmdline = $proc.CommandLine } } };',
+  'if ($items.Count -gt 0) { $items | ConvertTo-Json -Compress }',
 ].join(' ');
 
 let listeners = [];
@@ -104,24 +117,28 @@ if (listeners.length === 0) {
   process.exit(0);
 }
 
-const normalizedRoot = repoRoot.toLowerCase().replace(/\//g, '\\');
-
 function isOwnDevProcess(listener) {
   const name = (listener.name ?? '').toLowerCase();
-  const cmdline = (listener.cmdline ?? '').toLowerCase();
-  if (name === 'tinadeccore.api.exe') return true;
+  const cmdline = (listener.cmdline ?? '').toLowerCase().replace(/\//g, '\\');
+  const execPath = (listener.execPath ?? '').toLowerCase().replace(/\//g, '\\');
+  if (execPath.includes(normalizedRoot) || cmdline.includes(normalizedRoot)) return true;
+  // 未监听端口的外部仓库 TinadecCore.Api.exe（如其他分支/实例）绝不误杀
+  if (listener.port === 0) return false;
+  if (name === 'tinadeccore.api.exe' && !execPath && !cmdline) return true;
   if (name === 'bun.exe' && /--watch\s+src[\\/]index\.ts/.test(cmdline)) return true;
-  return cmdline.includes(normalizedRoot);
+  return false;
 }
 
 const reclaimed = [];
 const foreign = [];
 const advisory = [];
+const killedPids = new Set();
 
 for (const listener of listeners) {
-  const label = PORT_LABELS[listener.port] ?? 'dev service';
+  const label = listener.port === 0 ? 'Core (未完成启动残留)' : (PORT_LABELS[listener.port] ?? 'dev service');
   const who = `${listener.name ?? 'unknown'} (pid ${listener.pid})`;
   if (!isOwnDevProcess(listener)) {
+    if (listener.port === 0) continue;
     // 9222 被仓库外的进程占着时只提示，不阻塞启动：dev 本身不需要这个端口。
     if (listener.port === 9222) {
       advisory.push({ ...listener, label, who });
@@ -130,6 +147,8 @@ for (const listener of listeners) {
     foreign.push({ ...listener, label, who });
     continue;
   }
+  if (killedPids.has(listener.pid)) continue;
+  killedPids.add(listener.pid);
   if (reportOnly) {
     reclaimed.push({ ...listener, label, who });
     continue;
@@ -140,7 +159,8 @@ for (const listener of listeners) {
 
 for (const item of reclaimed) {
   const verb = reportOnly ? '占用中' : '已回收';
-  console.log(`[dev-port-guard] ${verb}端口 ${item.port}（${item.label}）：残留的 ${item.who}`);
+  const target = item.port === 0 ? item.label : `端口 ${item.port}（${item.label}）`;
+  console.log(`[dev-port-guard] ${verb}${target}：残留的 ${item.who}`);
 }
 if (reclaimed.length > 0 && reportOnly) {
   console.log('[dev-port-guard] report 模式不回收，以上端口仍被占用，停止启动。');

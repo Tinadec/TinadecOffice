@@ -1,5 +1,8 @@
+using System.Data;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.Extensions.Logging;
 
 namespace TinadecCore.Persistence;
 
@@ -16,6 +19,7 @@ public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationP
         var migrations = db.Database.GetMigrations().ToArray();
         if (migrations.Length != 0)
         {
+            await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
             await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
         }
         // Some module control-plane schemas predate provider migration assemblies.
@@ -27,6 +31,67 @@ public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationP
 
 public static class DbContextSchemaBootstrapper
 {
+    /// <summary>
+    /// Clears an orphaned <c>__EFMigrationsLock</c> row left behind if a previous single-owner SQLite
+    /// host process was terminated mid-migration. Scope single-writer leases (<c>host.lock</c> / scope
+    /// lease) already forbid concurrent process migrators on the same SQLite database.
+    /// </summary>
+    public static async Task ClearStaleSqliteMigrationsLockAsync(DbContext db, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        if (!db.Database.IsSqlite()) return;
+        var connection = db.Database.GetDbConnection();
+        var closeAfter = connection.State != ConnectionState.Open;
+        if (closeAfter)
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            await ClearMigrationsLockOnOpenConnectionAsync(connection, logger: null, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (closeAfter)
+            {
+                await connection.CloseAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    public static async Task ClearStaleSqliteMigrationsLockAsync(
+        string connectionString,
+        int busyTimeoutMs = SqliteConnectionPragmaInterceptor.DefaultBusyTimeoutMs,
+        bool enableWal = true,
+        ILogger? logger = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await SqliteConnectionPragmaInterceptor.ApplyPragmasAsync(connection, busyTimeoutMs, enableWal, cancellationToken).ConfigureAwait(false);
+        await ClearMigrationsLockOnOpenConnectionAsync(connection, logger, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ClearMigrationsLockOnOpenConnectionAsync(
+        System.Data.Common.DbConnection connection,
+        ILogger? logger,
+        CancellationToken cancellationToken)
+    {
+        await using var checkCmd = connection.CreateCommand();
+        checkCmd.CommandText = "SELECT COUNT(*) FROM \"sqlite_master\" WHERE \"type\" = 'table' AND \"name\" = '__EFMigrationsLock';";
+        var tableExists = Convert.ToInt64(await checkCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)) > 0;
+        if (!tableExists) return;
+
+        await using var deleteCmd = connection.CreateCommand();
+        deleteCmd.CommandText = "DELETE FROM \"__EFMigrationsLock\";";
+        var cleared = await deleteCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        if (cleared > 0)
+        {
+            logger?.LogWarning("Cleared {Count} orphaned SQLite __EFMigrationsLock row(s) from a previously interrupted host process.", cleared);
+        }
+    }
     public static async Task EnsureTablesAsync(DbContext db, CancellationToken cancellationToken = default)
     {
         // Column reconciliation must run before the create script: the script's

@@ -306,6 +306,9 @@ let admissionEvaluated = false
 
 function ensureSeedPackSilently(): void {
   try {
+    const { status, canAccessBackend } = useHostAccess()
+    if (!canAccessBackend.value) return
+    if (typeof window !== 'undefined' && window.tinadec && status.value?.state !== 'ready') return
     if (typeof api.getAgentPack !== 'function') return
     void ensureGraphSeedPack().catch(() => undefined)
   } catch {

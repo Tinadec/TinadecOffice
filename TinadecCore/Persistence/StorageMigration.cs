@@ -41,6 +41,15 @@ internal sealed class StorageMigrationRunner : IStorageMigrationRunner
         }
 
         var participants = _participants.ToList();
+        if (options.Provider == DatabaseProvider.Sqlite && _connection.IsConfigured && !string.IsNullOrWhiteSpace(_connection.ConnectionString))
+        {
+            await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(
+                _connection.ConnectionString,
+                options.Sqlite.BusyTimeoutMs,
+                options.Sqlite.EnableWal,
+                _logger,
+                cancellationToken).ConfigureAwait(false);
+        }
         if (options.Provider == DatabaseProvider.PostgreSql && options.PostgreSql.Schema is { Length: > 0 } schema)
         {
             if (schema.Any(c => !(char.IsAsciiLetterOrDigit(c) || c == '_')))

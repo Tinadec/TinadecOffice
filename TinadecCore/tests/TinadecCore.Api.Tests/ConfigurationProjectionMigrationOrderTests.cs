@@ -54,6 +54,40 @@ public sealed class ConfigurationProjectionMigrationOrderTests
             Assert.Empty(await db.AgentDefinitions.ToListAsync());
     }
 
+    [Fact]
+    public async Task OrphanedSqliteEfMigrationsLockIsClearedBeforeMigrationSoStartupDoesNotHang()
+    {
+        var databasePath = await CreateLegacyDatabaseAsync();
+        await using (var conn = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await conn.OpenAsync();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS "__EFMigrationsLock" (
+                    "Id" INTEGER NOT NULL CONSTRAINT "PK___EFMigrationsLock" PRIMARY KEY,
+                    "Timestamp" TEXT NOT NULL
+                );
+                INSERT OR REPLACE INTO "__EFMigrationsLock" ("Id", "Timestamp") VALUES (1, '2026-11-22T00:00:00Z');
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        await using var services = Build(databasePath);
+        var participant = new DbContextMigrationParticipant<AgentConfigurationDbContext>(
+            services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>());
+        await participant.MigrateAsync(cts.Token);
+
+        Assert.True(await HasMigrationAsync(databasePath, I18nMigration));
+        await using (var conn = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await conn.OpenAsync(cts.Token);
+            await using var check = conn.CreateCommand();
+            check.CommandText = "SELECT COUNT(*) FROM \"__EFMigrationsLock\";";
+            Assert.Equal(0L, Convert.ToInt64(await check.ExecuteScalarAsync(cts.Token)));
+        }
+    }
+
     private async Task<string> CreateLegacyDatabaseAsync()
     {
         Directory.CreateDirectory(_root);

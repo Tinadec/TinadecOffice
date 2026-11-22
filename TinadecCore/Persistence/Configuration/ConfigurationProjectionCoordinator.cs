@@ -115,7 +115,10 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
             if (!_migrationsSettled.Contains(db.GetType()))
             {
                 if (db.Database.GetPendingMigrations().Any())
+                {
+                    await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
                     await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+                }
                 _migrationsSettled.Add(db.GetType());
             }
             // Projection reads use the current EF model, so an older existing table
