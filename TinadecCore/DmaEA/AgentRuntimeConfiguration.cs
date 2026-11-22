@@ -18,6 +18,23 @@ public sealed record SupervisionPolicy(bool RequiredBeforeFinal, int MaxRevision
 
 public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimit, bool OptimisticRevision)
 {
+    public const string DefaultStrategy = "managed";
+    public const string DefaultRecallFidelity = "balanced";
+    public const double DefaultCompactionTriggerRatio = 0.75;
+    public const int DefaultOffloadLargeToolPayloadBytes = 16_384;
+    public const int MinRecentMessageLimit = 4;
+    public const int MaxRecentMessageLimit = 200;
+
+    public static readonly IReadOnlySet<string> AllowedStrategies = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "direct", "managed", "deep_curator"
+    };
+
+    public static readonly IReadOnlySet<string> AllowedRecallFidelities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "summary_only", "balanced", "verbatim_first"
+    };
+
     /// <summary>
     /// Shipped per-task token fuse. Zero disables it; loop detection still stops
     /// repeated calls, consecutive errors and malformed model behaviour.
@@ -47,6 +64,24 @@ public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimi
     /// </summary>
     public int? TaskTokenBudget { get; init; }
 
+    /// <summary>3-tier context management preset: <c>direct</c>, <c>managed</c>, or <c>deep_curator</c>.</summary>
+    public string Strategy { get; init; } = DefaultStrategy;
+
+    /// <summary>On-demand history recall fidelity: <c>summary_only</c>, <c>balanced</c>, or <c>verbatim_first</c>.</summary>
+    public string RecallFidelity { get; init; } = DefaultRecallFidelity;
+
+    /// <summary>Context occupancy ratio (<c>0.40..0.95</c>) that triggers async background compaction.</summary>
+    public double CompactionTriggerRatio { get; init; } = DefaultCompactionTriggerRatio;
+
+    /// <summary>Allows <c>deep_curator</c> and explicit recall queries to search sibling project sessions.</summary>
+    public bool AllowCrossSessionRecall { get; init; } = true;
+
+    /// <summary>Always-on primitive: folds stale large tool outputs older than the hot window.</summary>
+    public bool MicroCompactStaleToolOutputs { get; init; } = true;
+
+    /// <summary>Always-on primitive: byte threshold above which stale tool payloads are offloaded to artifact pointers.</summary>
+    public int OffloadLargeToolPayloadBytes { get; init; } = DefaultOffloadLargeToolPayloadBytes;
+
     public int EffectiveTaskTokenBudget => TaskTokenBudget ?? DefaultTokenBudget;
 
     public static void Validate(ContextPolicy policy)
@@ -56,9 +91,9 @@ public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimi
         {
             throw new InvalidDataException("default_token_budget must be positive.");
         }
-        if (policy.RecentMessageLimit <= 0)
+        if (policy.RecentMessageLimit is < MinRecentMessageLimit or > MaxRecentMessageLimit)
         {
-            throw new InvalidDataException("recent_message_limit must be positive.");
+            throw new InvalidDataException($"recent_message_limit must be between {MinRecentMessageLimit} and {MaxRecentMessageLimit}.");
         }
         if (policy.RunTokenBudget < 0)
         {
@@ -68,10 +103,79 @@ public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimi
         {
             throw new InvalidDataException("task_token_budget must not be negative (0 disables the per-task gate).");
         }
+        if (string.IsNullOrWhiteSpace(policy.Strategy) || !AllowedStrategies.Contains(policy.Strategy.Trim()))
+        {
+            throw new InvalidDataException($"Unknown context.strategy '{policy.Strategy}'. Expected one of: direct, managed, deep_curator.");
+        }
+        if (string.IsNullOrWhiteSpace(policy.RecallFidelity) || !AllowedRecallFidelities.Contains(policy.RecallFidelity.Trim()))
+        {
+            throw new InvalidDataException($"Unknown context.recall_fidelity '{policy.RecallFidelity}'. Expected one of: summary_only, balanced, verbatim_first.");
+        }
+        if (double.IsNaN(policy.CompactionTriggerRatio) || policy.CompactionTriggerRatio is < 0.40 or > 0.95)
+        {
+            throw new InvalidDataException("compaction_trigger_ratio must be between 0.40 and 0.95.");
+        }
+        if (policy.OffloadLargeToolPayloadBytes < 1024)
+        {
+            throw new InvalidDataException("offload_large_tool_payload_bytes must be at least 1024.");
+        }
     }
 }
 
-public sealed record MemoryPolicy(bool CandidateOnly, int RetrievalLimit, IReadOnlyList<string> AllowedScopes, IReadOnlyList<string> AllowedKinds);
+public sealed record MemoryPolicy(bool CandidateOnly, int RetrievalLimit, IReadOnlyList<string> AllowedScopes, IReadOnlyList<string> AllowedKinds)
+{
+    public const string DefaultEvolutionMode = "auto_evolve";
+    public const int DefaultCoreMarkdownMaxTokens = 1500;
+    public const int MinCoreMarkdownMaxTokens = 256;
+    public const int MaxCoreMarkdownMaxTokens = 8000;
+    public const string DefaultProjectMemoryPath = ".tinadec/memory/project-core.md";
+
+    public static readonly IReadOnlySet<string> AllowedEvolutionModes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "auto_evolve", "candidate_only"
+    };
+
+    /// <summary>Memory mutation friction mode: <c>auto_evolve</c> (default) or <c>candidate_only</c>.</summary>
+    public string EvolutionMode { get; init; } = DefaultEvolutionMode;
+
+    /// <summary>Hard token cap for projected core Markdown files (<c>256..8000</c>).</summary>
+    public int CoreMarkdownMaxTokens { get; init; } = DefaultCoreMarkdownMaxTokens;
+
+    /// <summary>Enables bidirectional sync with workspace project Markdown memory.</summary>
+    public bool ProjectMarkdownProjection { get; init; } = true;
+
+    /// <summary>Workspace-relative path for objective project memory Markdown.</summary>
+    public string ProjectMemoryPath { get; init; } = DefaultProjectMemoryPath;
+
+    /// <summary>When false (default), companions have read-only access to project memory.</summary>
+    public bool CompanionCanWriteProjectMemory { get; init; }
+
+    /// <summary>True when either <see cref="CandidateOnly"/> is set or <see cref="EvolutionMode"/> is <c>candidate_only</c>.</summary>
+    public bool EffectiveCandidateOnly => CandidateOnly || string.Equals(EvolutionMode, "candidate_only", StringComparison.OrdinalIgnoreCase);
+
+    public static void Validate(MemoryPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (policy.RetrievalLimit < 0)
+        {
+            throw new InvalidDataException("memory.retrieval_limit must not be negative.");
+        }
+        if (string.IsNullOrWhiteSpace(policy.EvolutionMode) || !AllowedEvolutionModes.Contains(policy.EvolutionMode.Trim()))
+        {
+            throw new InvalidDataException($"Unknown memory.evolution_mode '{policy.EvolutionMode}'. Expected one of: auto_evolve, candidate_only.");
+        }
+        if (policy.CoreMarkdownMaxTokens is < MinCoreMarkdownMaxTokens or > MaxCoreMarkdownMaxTokens)
+        {
+            throw new InvalidDataException($"memory.core_markdown_max_tokens must be between {MinCoreMarkdownMaxTokens} and {MaxCoreMarkdownMaxTokens}.");
+        }
+        if (string.IsNullOrWhiteSpace(policy.ProjectMemoryPath)
+            || Path.IsPathRooted(policy.ProjectMemoryPath.Trim())
+            || policy.ProjectMemoryPath.Replace('\\', '/').Split('/').Contains("..", StringComparer.Ordinal))
+        {
+            throw new InvalidDataException("memory.project_memory_path must be a non-empty relative path without '..' traversal.");
+        }
+    }
+}
 
 public sealed record ToolRuntimePolicy(
     string Provider,
@@ -487,9 +591,33 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             Boolean(context, "optimistic_revision"))
         {
             RunTokenBudget = Integer(context, "run_token_budget", ContextPolicy.DefaultRunTokenBudget),
-            TaskTokenBudget = Integer(context, "task_token_budget", ContextPolicy.DefaultTaskTokenBudget)
+            TaskTokenBudget = Integer(context, "task_token_budget", ContextPolicy.DefaultTaskTokenBudget),
+            Strategy = Text(context, "strategy", ContextPolicy.DefaultStrategy).Trim().ToLowerInvariant(),
+            RecallFidelity = Text(context, "recall_fidelity", ContextPolicy.DefaultRecallFidelity).Trim().ToLowerInvariant(),
+            CompactionTriggerRatio = Double(context, "compaction_trigger_ratio", ContextPolicy.DefaultCompactionTriggerRatio),
+            AllowCrossSessionRecall = Boolean(context, "allow_cross_session_recall", true),
+            MicroCompactStaleToolOutputs = Boolean(context, "micro_compact_stale_tool_outputs", true),
+            OffloadLargeToolPayloadBytes = Integer(context, "offload_large_tool_payload_bytes", ContextPolicy.DefaultOffloadLargeToolPayloadBytes)
         };
         ContextPolicy.Validate(contextPolicy);
+        var candidateOnly = Boolean(memory, "candidate_only", false);
+        var rawEvolutionMode = OptionalString(memory, "evolution_mode");
+        var evolutionMode = string.IsNullOrWhiteSpace(rawEvolutionMode)
+            ? (candidateOnly ? "candidate_only" : MemoryPolicy.DefaultEvolutionMode)
+            : rawEvolutionMode.Trim().ToLowerInvariant();
+        var memoryPolicy = new MemoryPolicy(
+            candidateOnly,
+            Integer(memory, "retrieval_limit", 8),
+            Strings(memory, "allowed_scopes"),
+            Strings(memory, "allowed_kinds"))
+        {
+            EvolutionMode = evolutionMode,
+            CoreMarkdownMaxTokens = Integer(memory, "core_markdown_max_tokens", MemoryPolicy.DefaultCoreMarkdownMaxTokens),
+            ProjectMarkdownProjection = Boolean(memory, "project_markdown_projection", true),
+            ProjectMemoryPath = Text(memory, "project_memory_path", MemoryPolicy.DefaultProjectMemoryPath).Trim(),
+            CompanionCanWriteProjectMemory = Boolean(memory, "companion_can_write_project_memory", false)
+        };
+        MemoryPolicy.Validate(memoryPolicy);
         // The compression threshold and the context budget are one mechanism: if
         // the threshold reaches (or passes) the budget, compaction either never
         // fires or always fires. Fail loud at load time and name BOTH keys instead
@@ -535,7 +663,7 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             new SchedulingPolicy(Integer(scheduling, "max_active_runs_per_session", 2), Integer(scheduling, "worker_retry_limit", 2), Boolean(scheduling, "preserve_partial_results")),
             new SupervisionPolicy(Boolean(supervision, "required_before_final"), Integer(supervision, "max_revision_rounds", 2)),
             contextPolicy,
-            new MemoryPolicy(Boolean(memory, "candidate_only"), Integer(memory, "retrieval_limit", 8), Strings(memory, "allowed_scopes"), Strings(memory, "allowed_kinds")),
+            memoryPolicy,
             toolPolicy)
         {
             Triggers = triggersPolicy,
@@ -564,6 +692,7 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
     private static TomlTable? OptionalTable(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlTable nested ? nested : null;
     private static string Text(TomlTable table, string key, string fallback = "") => table.TryGetValue(key, out var value) ? value?.ToString() ?? fallback : fallback;
     private static int Integer(TomlTable table, string key, int fallback) => table.TryGetValue(key, out var value) ? Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture) : fallback;
+    private static double Double(TomlTable table, string key, double fallback) => table.TryGetValue(key, out var value) ? Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture) : fallback;
     private static bool Boolean(TomlTable table, string key) => table.TryGetValue(key, out var value) && Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture);
     private static bool Boolean(TomlTable table, string key, bool fallback) => table.TryGetValue(key, out var value) ? Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) : fallback;
     private static string[] Strings(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlArray array ? array.Select(x => x?.ToString() ?? string.Empty).Where(x => x.Length > 0).ToArray() : [];

@@ -60,12 +60,12 @@ public sealed class TinadecConfigToolGatewayTests : IAsyncLifetime
     }
 
     [Fact]
-    public void WriteTools_AreApprovalGatedHighRiskAndDoNotMutateTheWorkspace()
+    public void WriteTools_ExecuteUnderSelfConfigPolicyWithoutWorkspaceMutation()
     {
         foreach (var id in CoreVirtualToolPolicy.TinadecConfigToolIds.Where(id => !CoreVirtualToolPolicy.IsTinadecInspect(id)))
         {
             var entry = CoreTinadecConfigTools.ManifestEntry(id);
-            Assert.True(entry.RequiresApproval, id);
+            Assert.False(entry.RequiresApproval, id);
             Assert.Equal("high", entry.Risk);
             Assert.False(entry.MutatesWorkspace);
             Assert.Equal("unsafe", entry.RetrySafety);
@@ -246,7 +246,7 @@ public sealed class TinadecConfigToolGatewayTests : IAsyncLifetime
         var inspect = Assert.Single(snapshot.AuthorizedTools, x => x.Id == CoreVirtualToolPolicy.TinadecInspectToolId);
         Assert.False(inspect.RequiresApproval);
         var apply = Assert.Single(snapshot.AuthorizedTools, x => x.Id == CoreVirtualToolPolicy.TinadecModeApplyToolId);
-        Assert.True(apply.RequiresApproval);
+        Assert.False(apply.RequiresApproval);
         Assert.Contains(snapshot.AuthorizedTools, x => x.Id == CoreVirtualToolPolicy.LoadSkillToolId);
     }
 

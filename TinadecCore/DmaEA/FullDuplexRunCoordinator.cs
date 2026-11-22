@@ -626,7 +626,6 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 batch = _projection.Since(runId, cursor);
             }
 
-            var emitted = false;
             foreach (var chunk in batch)
             {
                 // The durable tail is written before CompleteRunAsync so a crashed owner can
@@ -637,7 +636,6 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                     break;
                 cursor = Math.Max(cursor, chunk.Seq);
                 lastEmitAt = DateTimeOffset.UtcNow;
-                emitted = true;
                 yield return chunk;
                 if (chunk.Kind is "done" or "error") yield break;
             }
@@ -645,6 +643,16 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
             if (IsTerminal(state.Status))
             {
+                // Drain storage once more after observing terminal state so a durable "done" frame
+                // deferred at line 635 (before CompleteRunAsync committed) is delivered with its
+                // full MessageId and Usage rather than replaced by a synthetic fallback frame.
+                foreach (var tail in await ReplayAsync())
+                {
+                    cursor = Math.Max(cursor, tail.Seq);
+                    yield return tail;
+                    if (tail.Kind is "done" or "error") yield break;
+                }
+
                 // The run finished and nothing more will be appended. A terminal frame is written
                 // by the same path that ends the run, so a reader that saw done/error already
                 // returned; reaching here means the run ended without one — a failure before the
@@ -880,7 +888,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         string.Equals(configuration.PermissionMode, run.PermissionMode, StringComparison.OrdinalIgnoreCase)
         && string.Equals(configuration.RuntimeProfileId, run.RuntimeProfileId, StringComparison.OrdinalIgnoreCase);
 
-    private static RunStreamChunk ToStreamChunk(DurableRunStreamChunk chunk)
+    internal static RunStreamChunk ToStreamChunk(DurableRunStreamChunk chunk)
     {
         object? usage = null;
         if (!string.IsNullOrWhiteSpace(chunk.UsageJson))

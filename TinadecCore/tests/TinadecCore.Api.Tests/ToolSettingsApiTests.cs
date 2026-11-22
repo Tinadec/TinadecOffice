@@ -97,6 +97,48 @@ public sealed class ToolSettingsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public void BrowserSettings_CoverAll22BrowserV2Tools_DriverAndProfileMerge_AndEnforceBudgets()
+    {
+        var v2Tools = new[]
+        {
+            "browser_run", "browser_handoff", "browser_takeover", "browser_finish",
+            "browser_dialog", "browser_profiles_list", "browser_upload", "browser_download_save"
+        };
+        Assert.Equal(22, ToolSettingsSchema.BrowserTools.Count);
+        foreach (var tool in v2Tools)
+        {
+            Assert.Contains(tool, ToolSettingsSchema.BrowserTools);
+            Assert.True(ToolSettingsSchema.IsEnabled(ToolSettingsSchema.Defaults, tool));
+        }
+
+        var schemaBrowser = ToolSettingsSchema.Schema().GetProperty("properties").GetProperty("browser").GetProperty("properties");
+        Assert.Equal(new[] { "builtin_electron", "ego_lite" },
+            schemaBrowser.GetProperty("driver").GetProperty("enum").EnumerateArray().Select(x => x.GetString()).ToArray());
+        var budgetProps = schemaBrowser.GetProperty("tool_budgets").GetProperty("properties");
+        foreach (var tool in v2Tools)
+            Assert.True(budgetProps.TryGetProperty(tool, out _), $"browser.tool_budgets schema missing '{tool}'");
+
+        var configured = ToolSettingsSchema.Merge(
+            ToolSettingsSchema.Defaults,
+            JsonSerializer.SerializeToElement(new
+            {
+                browser = new
+                {
+                    driver = "ego_lite",
+                    profile_id = "work-profile",
+                    tool_budgets = new { browser_run = new { timeout_ms = 45000, max_snapshot_chars = 16000 } }
+                }
+            }));
+        Assert.Equal("ego_lite", configured.GetProperty("browser").GetProperty("driver").GetString());
+        Assert.Equal("work-profile", configured.GetProperty("browser").GetProperty("profile_id").GetString());
+        Assert.Equal(TimeSpan.FromSeconds(75), ToolSettingsSchema.WireBudget(configured, "browser_run", null, TimeSpan.FromSeconds(10)));
+
+        var disabled = ToolSettingsSchema.Merge(ToolSettingsSchema.Defaults, JsonSerializer.SerializeToElement(new { browser = new { enabled = false } }));
+        Assert.All(v2Tools, tool => Assert.False(ToolSettingsSchema.IsEnabled(disabled, tool)));
+        Assert.Throws<ToolSettingsException>(() => ToolSettingsSchema.Validate(JsonSerializer.SerializeToElement(new { browser = new { driver = "unknown" } })));
+    }
+
+    [Fact]
     public async Task SharedLimitChanges_RejectInvalidAgentOverridesWithoutAdvancingRevision()
     {
         var store = _factory.Services.GetRequiredService<IToolSettingsStore>();

@@ -268,28 +268,42 @@ public sealed class VibeGraphPackTests
     }
 
     [Fact]
-    public async Task RelationshipFile_MissingField_IsRejected()
+    public async Task RelationshipFile_OptionalProseFieldsAccepted_InvalidFieldTypeRejected()
     {
         using var factory = new VibePackFactory();
         using var client = factory.CreateClient();
-        var envelope = VibeEnvelope(mutate: manifest =>
+
+        // Optional duty / inputs_outputs / success_criteria may be omitted cleanly.
+        var minimalEnvelope = VibeEnvelope(mutate: manifest =>
         {
             var mode = manifest["resources"]!["modes"]!.AsArray()[0]!.AsObject();
             var meetingNode = mode["nodes"]!.AsArray().First(node => node!["node_key"]!.GetValue<string>() == "meeting")!.AsObject();
             meetingNode["relationship"] = new JsonObject
             {
                 ["duty"] = "orchestrate",
-                ["inputs_outputs"] = new JsonObject(),
-                ["allowed_dispatch_targets"] = new JsonArray(),
-                // success_criteria missing → incomplete file is rejected
-                ["agent_types"] = new JsonArray()
+                ["allowed_dispatch_targets"] = new JsonArray("worker.search"),
+                ["agent_types"] = new JsonArray("orchestrator")
+            };
+        });
+        using var okPreview = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", minimalEnvelope);
+        Assert.True(okPreview.IsSuccessStatusCode, $"minimal relationship preview failed: {okPreview.StatusCode} {await okPreview.Content.ReadAsStringAsync()}");
+
+        // Invalid type on present field (allowed_dispatch_targets not an array of strings) is still rejected.
+        var invalidEnvelope = VibeEnvelope(version: "1.0.1", mutate: manifest =>
+        {
+            var mode = manifest["resources"]!["modes"]!.AsArray()[0]!.AsObject();
+            var meetingNode = mode["nodes"]!.AsArray().First(node => node!["node_key"]!.GetValue<string>() == "meeting")!.AsObject();
+            meetingNode["relationship"] = new JsonObject
+            {
+                ["duty"] = "orchestrate",
+                ["allowed_dispatch_targets"] = "not-an-array"
             };
         });
 
-        using var previewResponse = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
+        using var previewResponse = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", invalidEnvelope);
         Assert.True(previewResponse.StatusCode == HttpStatusCode.BadRequest, $"preview: {previewResponse.StatusCode} {await previewResponse.Content.ReadAsStringAsync()}");
         var problem = await previewResponse.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Contains("success_criteria", problem.GetProperty("detail").GetString());
+        Assert.Contains("allowed_dispatch_targets", problem.GetProperty("detail").GetString());
     }
 
     private static JsonElement VibeEnvelope(string? version = null, Action<JsonObject>? mutate = null)

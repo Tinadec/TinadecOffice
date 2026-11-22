@@ -1,18 +1,22 @@
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.DmaEA;
+using TinadecCore.TinaChat;
 
 namespace TinadecCore.Runtime;
 
 /// <summary>
 /// Bridges a TinaChat executor wake into the existing run context protocol. The message has already
-/// passed TinaChat audience checks; this class only applies a CAS context supplement and wakes the
-/// durable run. It never invokes a second worker or creates a hidden execution loop.
+/// passed TinaChat audience checks; this class applies a bounded CAS context supplement (enforcing
+/// <see cref="TinaChatService.MaxTeammateRelayDepth"/>) and immediately wakes the durable run.
+/// It never invokes a second worker or creates an unbounded ping-pong execution loop.
 /// </summary>
 internal sealed class ExecutorMessageWakeSink(
     ILifecycleManager lifecycle,
     IConversationStore conversations,
     IFullDuplexRunEngine engine) : IExecutorMessageWakeSink
 {
+    private const string WakeSummaryPrefix = "TinaChat message for the execution agent";
+
     public async Task<bool> DeliverAsync(
         Guid sessionId,
         Guid runId,
@@ -46,12 +50,24 @@ internal sealed class ExecutorMessageWakeSink(
                 return true;
             }
 
+            var priorRelaysForInstance = existing.Count(patch =>
+                patch.AgentInstanceId == agentInstanceId
+                && patch.Summary is not null
+                && patch.Summary.StartsWith(WakeSummaryPrefix, StringComparison.Ordinal));
+            if (priorRelaysForInstance >= TinaChatService.MaxTeammateRelayDepth)
+            {
+                // Bounded relay depth guard: settle the wake without appending another context patch
+                // or re-waking the run in an unbounded ping-pong loop.
+                return true;
+            }
+
+            var relayDepth = priorRelaysForInstance + 1;
             var baseRevision = await conversations.GetContextRevisionAsync(sessionId, cancellationToken).ConfigureAwait(false);
             var applied = await conversations.ApplyContextPatchAsync(new ContextPatchRequest(
                 sessionId,
                 baseRevision,
                 briefing,
-                "TinaChat message for the execution agent",
+                $"{WakeSummaryPrefix} [relay_depth={relayDepth}/{TinaChatService.MaxTeammateRelayDepth}]",
                 runId,
                 agentInstanceId,
                 Kind: "supplement"), cancellationToken).ConfigureAwait(false);

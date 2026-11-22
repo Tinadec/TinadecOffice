@@ -35,13 +35,14 @@ public sealed class AgentGraphModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IToolExecutionTargetResolver, ToolExecutionTargetResolver>();
         // Standing approvals a person gave: command prefixes, and the per-session shell delegation opt-in.
         builder.Services.AddSingleton<IApprovalRules, ApprovalRulesService>();
+        builder.Services.AddSingleton<IWorktreeIntegratorService, WorktreeIntegratorService>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.5.0",
             Language = "C#",
             Dependencies = ["abstractions", "persistence"],
-            Capabilities = ["resource_ledger", "write_scope_leases", "dead_holder_reclaim", "approval_gates", "evidence_archive", "hybrid_recall", "environment_registry", "approval_rules"],
+            Capabilities = ["resource_ledger", "write_scope_leases", "dead_holder_reclaim", "approval_gates", "evidence_archive", "hybrid_recall", "environment_registry", "approval_rules", "worktree_integrator"],
             MafPrimitives = [],
             RegistrationStatus = ModuleRegistrationStatus.Registered
         });

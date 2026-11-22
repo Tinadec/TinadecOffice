@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Tools;
@@ -12,12 +13,15 @@ namespace TinadecCore.AspNetCore.Endpoints;
 /// <summary>
 /// Loopback-only MCP JSON-RPC 2.0 server mounted at <c>POST /api/v1/mcp/tinadec</c>.
 /// Enforces an external-network block (remote socket IP and proxy forwarding headers must
-/// all resolve to loopback) without intra-host auth friction, exposing the <c>tinadec_*</c>
-/// configuration toolkit directly via <see cref="ITinadecConfigToolGateway"/>.
+/// all resolve to loopback). Unauthenticated loopback requests expose the <c>tinadec_*</c>
+/// configuration toolkit via <see cref="ITinadecConfigToolGateway"/>; requests presenting a
+/// per-teammate bearer token (<c>Authorization: Bearer &lt;token&gt;</c> or <c>X-Tinadec-Team-Token</c>)
+/// are strictly isolated to run-scoped shared-board tools via <see cref="ITeamBoardMcpBridge"/>.
 /// </summary>
 public static class TinadecMcpServerEndpoints
 {
     private const string ServerName = "tinadec-selfconfig-mcp";
+    private const string TeamBoardServerName = "tinadec-team-board-mcp";
     private const string ServerVersion = "1.0.0";
     private const string DefaultProtocolVersion = "2024-11-05";
 
@@ -32,6 +36,9 @@ public static class TinadecMcpServerEndpoints
         new("tinadec://skills", "Skills Catalog", "Workspace, shared, and built-in skills inventory.", "application/json"),
         new("tinadec://mcp", "MCP Servers", "Managed MCP server registrations with environment secrets masked.", "application/json"),
         new("tinadec://catalog", "Authoring Catalog", "Agents and prompt pipelines available when authoring modes.", "application/json"),
+        new("tinadec://recent-failures", "Recent Server Failures", "Recent sanitized 5xx/exception failures from ServerFailureJournal.", "application/json"),
+        new("tinadec://system-health", "System Health", "Readiness checks, model cooling breaker states, and MCP live status.", "application/json"),
+        new("tinadec://context-memory", "Context & Memory Policy", "Effective [context]/[memory] runtime.toml policy, hot Markdown budgets, and 3-tier strategy presets.", "application/json"),
     ];
 
     public static IEndpointRouteBuilder MapTinadecMcpServerEndpoints(this IEndpointRouteBuilder app)
@@ -59,6 +66,27 @@ public static class TinadecMcpServerEndpoints
                 },
                 statusCode: StatusCodes.Status403Forbidden,
                 contentType: "application/problem+json");
+        }
+
+        ScopedTeamMcpLease? scopedLease = null;
+        if (TryExtractTeamToken(context, out var presentedToken))
+        {
+            var teamBridge = context.RequestServices.GetService<ITeamBoardMcpBridge>();
+            scopedLease = teamBridge?.ValidateToken(presentedToken);
+            if (scopedLease is null)
+            {
+                return Results.Json(
+                    new
+                    {
+                        type = "https://tinadec.local/errors/invalid_team_mcp_token",
+                        title = "Invalid or expired teammate MCP token",
+                        status = StatusCodes.Status401Unauthorized,
+                        detail = "The supplied scoped teammate MCP bearer token is missing, invalid, expired, or revoked.",
+                        code = "invalid_team_mcp_token",
+                    },
+                    statusCode: StatusCodes.Status401Unauthorized,
+                    contentType: "application/problem+json");
+            }
         }
 
         JsonDocument requestDoc;
@@ -94,20 +122,17 @@ public static class TinadecMcpServerEndpoints
                 ? paramsProp.Clone()
                 : null;
 
+            if (scopedLease is not null)
+            {
+                var teamBridge = context.RequestServices.GetRequiredService<ITeamBoardMcpBridge>();
+                return await HandleScopedTeammateRequestAsync(scopedLease, teamBridge, method, requestId, @params, ct).ConfigureAwait(false);
+            }
+
             switch (method)
             {
                 case "initialize":
                 {
-                    var requestedVersion = @params is { } p
-                        && p.TryGetProperty("protocolVersion", out var pv)
-                        && pv.ValueKind == JsonValueKind.String
-                        && !string.IsNullOrWhiteSpace(pv.GetString())
-                        ? pv.GetString()!
-                        : DefaultProtocolVersion;
-                    var negotiated = requestedVersion is "2024-11-05" or "2025-03-26"
-                        ? requestedVersion
-                        : DefaultProtocolVersion;
-
+                    var negotiated = NegotiateProtocolVersion(@params);
                     return JsonRpcOk(requestId, new
                     {
                         protocolVersion = negotiated,
@@ -173,25 +198,7 @@ public static class TinadecMcpServerEndpoints
                     };
 
                     var result = await gateway.ExecuteAsync(toolName, scope, wire, ct).ConfigureAwait(false);
-                    var text = result.Result is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } r
-                        ? JsonSerializer.Serialize(r)
-                        : JsonSerializer.Serialize(new { error = result.Error ?? "Tool execution failed." });
-
-                    if (result.Result is { ValueKind: JsonValueKind.Object or JsonValueKind.Array } structured)
-                    {
-                        return JsonRpcOk(requestId, new
-                        {
-                            content = new object[] { new { type = "text", text } },
-                            structuredContent = structured,
-                            isError = !result.IsSuccess,
-                        });
-                    }
-
-                    return JsonRpcOk(requestId, new
-                    {
-                        content = new object[] { new { type = "text", text } },
-                        isError = !result.IsSuccess,
-                    });
+                    return FormatToolCallResult(requestId, result);
                 }
 
                 case "resources/list":
@@ -257,6 +264,156 @@ public static class TinadecMcpServerEndpoints
                     return JsonRpcError(requestId, -32601, "Method not found", $"Unsupported MCP method '{method}'.");
             }
         }
+    }
+
+    private static async Task<IResult> HandleScopedTeammateRequestAsync(
+        ScopedTeamMcpLease lease,
+        ITeamBoardMcpBridge teamBridge,
+        string method,
+        JsonElement? requestId,
+        JsonElement? @params,
+        CancellationToken ct)
+    {
+        switch (method)
+        {
+            case "initialize":
+            {
+                var negotiated = NegotiateProtocolVersion(@params);
+                return JsonRpcOk(requestId, new
+                {
+                    protocolVersion = negotiated,
+                    capabilities = new
+                    {
+                        tools = new { listChanged = false },
+                    },
+                    serverInfo = new
+                    {
+                        name = TeamBoardServerName,
+                        version = ServerVersion,
+                    },
+                    instructions = $"Scoped Team shared-board MCP server for run '{lease.RunId:N}' (teammate '{lease.TeammateHandle}'). Only shared-board and read-only session recall tools are authorized.",
+                });
+            }
+
+            case "notifications/initialized":
+            case "initialized":
+                return requestId is null
+                    ? Results.StatusCode(StatusCodes.Status202Accepted)
+                    : JsonRpcOk(requestId, new { });
+
+            case "tools/list":
+            {
+                var tools = teamBridge.ListScopedTools(lease)
+                    .Select(entry => new
+                    {
+                        name = entry.Id,
+                        description = entry.Description,
+                        inputSchema = entry.InputSchema,
+                    })
+                    .ToArray();
+                return JsonRpcOk(requestId, new { tools });
+            }
+
+            case "tools/call":
+            {
+                if (@params is null
+                    || !@params.Value.TryGetProperty("name", out var nameProp)
+                    || nameProp.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(nameProp.GetString()))
+                {
+                    return JsonRpcError(requestId, -32602, "Invalid params", "tools/call requires a non-empty 'name' parameter.");
+                }
+
+                var toolName = nameProp.GetString()!.Trim();
+                if (CoreVirtualToolPolicy.IsTinadecConfig(toolName))
+                {
+                    return JsonRpcError(
+                        requestId,
+                        -32602,
+                        "Forbidden tool",
+                        $"Scoped teammate MCP token for '{lease.TeammateHandle}' is forbidden from calling '{toolName}'.");
+                }
+
+                var argsElement = @params.Value.TryGetProperty("arguments", out var argsProp) && argsProp.ValueKind == JsonValueKind.Object
+                    ? argsProp.Clone()
+                    : EmptyObject();
+
+                var result = await teamBridge.ExecuteScopedToolAsync(lease, toolName, argsElement, ct).ConfigureAwait(false);
+                return FormatToolCallResult(requestId, result);
+            }
+
+            case "resources/list":
+                return JsonRpcOk(requestId, new { resources = Array.Empty<object>() });
+
+            case "resources/read":
+                return JsonRpcError(requestId, -32002, "Forbidden resource", "Scoped teammate MCP tokens cannot read tinadec:// host configuration resources.");
+
+            default:
+                return JsonRpcError(requestId, -32601, "Method not found", $"Unsupported MCP method '{method}'.");
+        }
+    }
+
+    private static bool TryExtractTeamToken(HttpContext context, out string token)
+    {
+        token = string.Empty;
+        if (context.Request.Headers.TryGetValue("X-Tinadec-Team-Token", out var customHeader))
+        {
+            var rawCustom = customHeader.ToString().Trim();
+            if (!string.IsNullOrEmpty(rawCustom))
+            {
+                token = rawCustom;
+                return true;
+            }
+            return true;
+        }
+
+        if (context.Request.Headers.TryGetValue("Authorization", out var authHeader))
+        {
+            var rawAuth = authHeader.ToString().Trim();
+            if (rawAuth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                token = rawAuth["Bearer ".Length..].Trim();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NegotiateProtocolVersion(JsonElement? @params)
+    {
+        var requestedVersion = @params is { } p
+            && p.TryGetProperty("protocolVersion", out var pv)
+            && pv.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(pv.GetString())
+            ? pv.GetString()!
+            : DefaultProtocolVersion;
+        return requestedVersion is "2024-11-05" or "2025-03-26"
+            ? requestedVersion
+            : DefaultProtocolVersion;
+    }
+
+    private static IResult FormatToolCallResult(JsonElement? requestId, ToolWireResponseDto result)
+    {
+        var text = result.Result is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } r
+            ? JsonSerializer.Serialize(r)
+            : JsonSerializer.Serialize(new { error = result.Error ?? "Tool execution failed." });
+
+        if (result.Result is { ValueKind: JsonValueKind.Object or JsonValueKind.Array } structured)
+        {
+            return JsonRpcOk(requestId, new
+            {
+                content = new object[] { new { type = "text", text } },
+                structuredContent = structured,
+                isError = !result.IsSuccess,
+            });
+        }
+
+        return JsonRpcOk(requestId, new
+        {
+            content = new object[] { new { type = "text", text } },
+            isError = !result.IsSuccess,
+        });
     }
 
     internal static bool IsLoopbackOnlyRequest(HttpContext context)
@@ -354,6 +511,13 @@ public static class TinadecMcpServerEndpoints
         "tinadec://skills" => JsonSerializer.SerializeToElement(new { target = "skills", limit = 50 }),
         "tinadec://mcp" => JsonSerializer.SerializeToElement(new { target = "mcp", limit = 50 }),
         "tinadec://catalog" => JsonSerializer.SerializeToElement(new { target = "catalog", limit = 50 }),
+        "tinadec://recent-failures" => JsonSerializer.SerializeToElement(new { target = "recent_failures", limit = 50 }),
+        "tinadec://system-health" => JsonSerializer.SerializeToElement(new { target = "system_health", limit = 50 }),
+        "tinadec://context-memory" => JsonSerializer.SerializeToElement(new { target = "context_memory", limit = 50 }),
+        _ when uri.StartsWith("tinadec://runs/", StringComparison.OrdinalIgnoreCase) && uri.EndsWith("/replay", StringComparison.OrdinalIgnoreCase) =>
+            uri["tinadec://runs/".Length..^"/replay".Length] is { Length: > 0 } runId
+                ? JsonSerializer.SerializeToElement(new { target = "run_replay", run_id = Uri.UnescapeDataString(runId) })
+                : null,
         _ when uri.StartsWith("tinadec://agents/", StringComparison.OrdinalIgnoreCase) =>
             uri["tinadec://agents/".Length..] is { Length: > 0 } id
                 ? JsonSerializer.SerializeToElement(new { target = "agent", agent_id = Uri.UnescapeDataString(id) })
@@ -369,6 +533,8 @@ public static class TinadecMcpServerEndpoints
         _ => null,
     };
 
+    private static readonly JsonSerializerOptions McpJsonOptions = new(JsonSerializerDefaults.Web);
+
     private static JsonElement EmptyObject() => JsonDocument.Parse("{}").RootElement.Clone();
 
     private static IResult JsonRpcOk(JsonElement? id, object result) =>
@@ -377,7 +543,7 @@ public static class TinadecMcpServerEndpoints
             jsonrpc = "2.0",
             id,
             result,
-        });
+        }, McpJsonOptions);
 
     private static IResult JsonRpcError(JsonElement? id, int code, string message, object? data = null) =>
         Results.Json(new
@@ -390,5 +556,5 @@ public static class TinadecMcpServerEndpoints
                 message,
                 data,
             },
-        });
+        }, McpJsonOptions);
 }

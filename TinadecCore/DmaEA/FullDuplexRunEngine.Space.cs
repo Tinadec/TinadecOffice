@@ -7,22 +7,76 @@ using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.DmaEA;
 
+internal sealed class CheckpointTaskLineageLookup(ILifecycleManager lifecycle) : ITaskLineageLookup
+{
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public async Task<IReadOnlyList<Guid>> GetAncestorTaskIdsAsync(
+        Guid sessionId,
+        Guid runId,
+        Guid taskId,
+        CancellationToken cancellationToken = default)
+    {
+        _ = sessionId;
+        try
+        {
+            var stored = await lifecycle.GetCurrentRunCheckpointAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(stored?.Content)) return [];
+            var checkpoint = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(stored.Content, Web);
+            if (checkpoint is null || checkpoint.Tasks.Count == 0) return [];
+            var byId = new Dictionary<Guid, DurableTaskNode>();
+            foreach (var node in checkpoint.Tasks)
+                byId.TryAdd(node.TaskId, node);
+            var ancestors = new List<Guid>();
+            var visited = new HashSet<Guid> { taskId };
+            var current = taskId;
+            while (byId.TryGetValue(current, out var currentTask)
+                   && currentTask.DispatchedByTaskId is { } parentId
+                   && visited.Add(parentId))
+            {
+                ancestors.Add(parentId);
+                current = parentId;
+            }
+            return ancestors;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException)
+        {
+            return [];
+        }
+    }
+}
+
 internal sealed partial class FullDuplexRunEngine
 {
     private const string SpaceWorktreeCallId = "core-space-worktree";
+    private const string TaskWorktreeCallPrefix = "core-task-worktree:";
     private static readonly string[] SpecStages = ["requirements", "design", "tasks"];
 
-    internal static string WithSpaceContext(FullDuplexCheckpointV1 checkpoint, string taskContext) => taskContext
-        + (checkpoint.SpaceWorktreePath is { } root ? $"\nActual execution root for this run: {root}. All tool paths must use this worktree, not the original checkout." : "")
+    internal static string WithSpaceContext(
+        FullDuplexCheckpointV1 checkpoint,
+        string taskContext,
+        string? taskWorktreePath = null,
+        string? taskWorktreeBranch = null) => taskContext
+        + (!string.IsNullOrWhiteSpace(taskWorktreePath)
+            ? $"\nTask-isolated git worktree root: {taskWorktreePath}{(string.IsNullOrWhiteSpace(taskWorktreeBranch) ? "" : $" (branch: {taskWorktreeBranch})")}. All tool paths for this task must use this worktree, not the original checkout. Before emitting TASK_OUTCOME, summarize modified files and whether changes were committed on this branch."
+            : checkpoint.SpaceWorktreePath is { } root
+                ? $"\nActual execution root for this run: {root}. All tool paths must use this worktree, not the original checkout."
+                : "")
         + (checkpoint.Correction is { } correction ? "\n" + correction.PromptContext() : "")
         + (checkpoint.SpaceSpecDocuments.Count == 0 ? "" : "\nConfirmed specifications (authoritative, do not ask for their confirmation again):\n"
             + string.Join("\n\n", checkpoint.SpaceSpecDocuments.Select(document => $"[{document.Stage}, revision {document.Revision}, hash {document.ContentHash}]\n{document.Content}"))
             + (checkpoint.SpaceSpecDocuments.Count == SpecStages.Length
                 ? "\nAll three stages are confirmed. Allocate the approved tasks to the selected workflow without inventing a competing plan or extending their scope." : ""));
 
-    private static FrozenRunConfigurationV1 SpacePromptConfiguration(FrozenRunConfigurationV1 configuration, FullDuplexCheckpointV1 checkpoint) =>
-        configuration.SpaceOptions is { Worktree: true } && checkpoint.SpaceWorktreePath is { } root && configuration.Workspace is { } workspace
-            ? configuration with { Workspace = workspace with { RootPath = root } } : configuration;
+    private static FrozenRunConfigurationV1 SpacePromptConfiguration(FrozenRunConfigurationV1 configuration, FullDuplexCheckpointV1 checkpoint, string? taskWorktreePath = null) =>
+        !string.IsNullOrWhiteSpace(taskWorktreePath) && configuration.Workspace is { } taskWorkspace
+            ? configuration with { Workspace = taskWorkspace with { RootPath = taskWorktreePath } }
+            : configuration.SpaceOptions is { Worktree: true } && checkpoint.SpaceWorktreePath is { } root && configuration.Workspace is { } workspace
+                ? configuration with { Workspace = workspace with { RootPath = root } }
+                : configuration;
 
     internal static bool QueueSpaceWorktree(FrozenRunConfigurationV1 configuration, FullDuplexCheckpointV1 checkpoint, DurableTaskNode task)
     {
@@ -43,6 +97,33 @@ internal sealed partial class FullDuplexRunEngine
         return true;
     }
 
+    internal static bool QueueTaskWorktree(FrozenRunConfigurationV1 configuration, FullDuplexCheckpointV1 checkpoint, DurableTaskNode task)
+    {
+        if (task.IsSpacePreparation || !task.Worktree || task.TaskWorktreePath is not null
+            || configuration.Workspace is not { IsGitRepository: true } workspace
+            || task.ToolTurns.Any(turn => turn.IsSpaceWorktreeProvisioning))
+        {
+            return false;
+        }
+        var root = workspace.RootPath;
+        var branch = $"tinadec/task-{checkpoint.RunId:N}-{task.TaskId:N}"[..45];
+        var path = Path.Combine(root, ".tinadec", "worktrees", $"task-{task.TaskId:N}");
+        task.ToolTurns.Insert(0, new WorkerToolTurn
+        {
+            CallId = TaskWorktreeCallPrefix + task.TaskId.ToString("N"),
+            ToolId = "git_worktree_create",
+            IsSpaceWorktreeProvisioning = true,
+            ArgumentsJson = JsonSerializer.Serialize(new
+            {
+                repository_path = root,
+                path,
+                branch,
+                confirm_worktree_create = $"Create {path} on {branch} for task '{task.TaskKey}' isolated worktree."
+            }),
+        });
+        return true;
+    }
+
     internal static bool SpacePreparationReady(FrozenRunConfigurationV1 configuration, FullDuplexCheckpointV1 checkpoint) =>
         configuration.SpaceOptions is { } options
         && (!options.Worktree || checkpoint.SpaceWorktreePath is not null)
@@ -55,7 +136,8 @@ internal sealed partial class FullDuplexRunEngine
         if (options is null) return null;
         if (!options.MultiAgent && SpaceCompositionPolicy.IsDispatch(turn.ToolId))
             return "New executor dispatch is disabled for this run. Complete the task yourself.";
-        if (turn.IsSpaceWorktreeProvisioning && turn.ToolId == "git_worktree_create" && task.IsSpacePreparation && options.Worktree) return null;
+        if (turn.IsSpaceWorktreeProvisioning && turn.ToolId == "git_worktree_create"
+            && ((task.IsSpacePreparation && options.Worktree) || task.Worktree)) return null;
         if (SpaceCompositionPolicy.IsWorktreeManagement(turn.ToolId))
             return options.Worktree ? "Core owns the single worktree for this run. Keep its changes for the user; do not create another worktree or remove the assigned one."
                 : "Independent worktree isolation is disabled for this run.";
@@ -97,6 +179,8 @@ internal sealed partial class FullDuplexRunEngine
         if (options.SpecEnabled && checkpoint.SpaceSpecDocuments.Count < SpecStages.Length && (mutating || dispatch))
             return "Implementation and delegation wait for the requirements, design, and tasks documents to be confirmed with spec_propose. You can investigate with read-only tools first.";
         if (options.PlanFirst && !options.SpecEnabled && options.WorkflowModeVersionId is null
+            && (configuration.Graph is null || string.Equals(configuration.Graph.Tier, FrozenGraphTiers.SoloDispatch, StringComparison.Ordinal))
+            && !task.DispatchedByTaskId.HasValue
             && (mutating || dispatch) && task.Plan is not { Count: > 0 })
             return "Plan-first is enabled. Call plan_update with the concrete steps before changing the workspace or delegating, then continue execution. No extra human confirmation is required.";
         return null;
@@ -105,7 +189,6 @@ internal sealed partial class FullDuplexRunEngine
     private async Task<FullDuplexCheckpointV1> RecordSpaceToolResultAsync(RunState run, FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint, DurableTaskNode task, WorkerToolTurn turn, CancellationToken cancellationToken)
     {
-        if (configuration.SpaceOptions is null) return checkpoint;
         if (turn.IsSpaceWorktreeProvisioning && turn.ToolId == "git_worktree_create")
         {
             if (!TryParseJsonObject(turn.ResultJson ?? "null", out var result) || !result.TryGetProperty("path", out var path)
@@ -115,12 +198,29 @@ internal sealed partial class FullDuplexRunEngine
             var target = await targetResolver.ResolveAsync(checkpoint.SessionId, checkpoint.RunId, task.TaskId,
                 "read_file", configuration.Workspace!.RootPath, cancellationToken).ConfigureAwait(false);
             if (target.IsRejected || target.Target is not { Kind: "worktree" })
-                throw new InvalidDataException(target.Error ?? "Worktree creation did not establish its run assignment.");
-            checkpoint.SpaceWorktreePath = target.Target.RootPath;
-            await AppendEventAsync(checkpoint.RunId, "space.worktree.ready", "The task's independent worktree is ready.",
-                new { path = checkpoint.SpaceWorktreePath, run_id = checkpoint.RunId }, cancellationToken,
-                idempotencyKey: $"space-worktree:{checkpoint.RunId:N}").ConfigureAwait(false);
+                throw new InvalidDataException(target.Error ?? "Worktree creation did not establish its assignment.");
+            if (task.IsSpacePreparation)
+            {
+                checkpoint.SpaceWorktreePath = target.Target.RootPath;
+                await AppendEventAsync(checkpoint.RunId, "space.worktree.ready", "The task's independent worktree is ready.",
+                    new { path = checkpoint.SpaceWorktreePath, run_id = checkpoint.RunId }, cancellationToken,
+                    idempotencyKey: $"space-worktree:{checkpoint.RunId:N}").ConfigureAwait(false);
+            }
+            else
+            {
+                var branch = result.TryGetProperty("branch", out var brEl) && brEl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(brEl.GetString())
+                    ? brEl.GetString()
+                    : TryParseJsonObject(turn.ArgumentsJson, out var turnArgs) && turnArgs.TryGetProperty("branch", out var argBr) && argBr.ValueKind == JsonValueKind.String
+                        ? argBr.GetString()
+                        : null;
+                task.TaskWorktreePath = target.Target.RootPath;
+                task.TaskWorktreeBranch = branch;
+                await AppendEventAsync(checkpoint.RunId, "task.worktree.ready", $"Task '{task.TaskKey}' independent worktree is ready.",
+                    new { path = task.TaskWorktreePath, branch = task.TaskWorktreeBranch, run_id = checkpoint.RunId, task_id = task.TaskId, task_key = task.TaskKey },
+                    cancellationToken, task.TaskId, idempotencyKey: $"task-worktree:{checkpoint.RunId:N}:{task.TaskId:N}").ConfigureAwait(false);
+            }
         }
+        if (configuration.SpaceOptions is null) return checkpoint;
         if (CoreVirtualToolPolicy.IsSpecPropose(turn.ToolId) && TryParseJsonObject(turn.ArgumentsJson, out var args))
         {
             var stage = args.GetProperty("stage").GetString()!;

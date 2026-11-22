@@ -44,7 +44,7 @@ public sealed partial class ToolChainEndpointTests
             .WhenConversationGate("{\"decision\":\"approve\",\"rationale\":\"用户要的就是这份文档。\"}");
         _factory = new ToolChainFactory(_root, script, provider, settings: GatesByHand);
         var client = _factory.CreateClient();
-        await InstallGraphSeedPackAsync(client);
+        await InstallGraphSeedPackAsync(client, DisableTeamSpawnOnMode("free_director"));
         var sessionId = await GateSessionAsync(client, workspace, await LatestPublishedModeVersionIdAsync("free_director"));
 
         var active = StartStreamingInvoke(client, sessionId, new { content = $"写一份文档 {GoalSentinel}", client_message_id = "gates-both-1", permission_mode = "delegate-both" });

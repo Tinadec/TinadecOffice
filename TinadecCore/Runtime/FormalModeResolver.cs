@@ -127,7 +127,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                        select managed.Id).AnyAsync(cancellationToken).ConfigureAwait(false)) continue;
             var roster = await ResolveRosterForModeAsync(sessionId, candidate.Id, interfaceLocale, cancellationToken).ConfigureAwait(false);
             var root = roster?.Operation.FirstOrDefault(item => item.Id == roster.ConversationTemplateSlug);
-            if (roster is { HasDeclaredEdges: false } && root is { AllowedTools.Count: > 0 }
+            if (roster is { HasDeclaredEdges: false }
+                && root is not null
+                && root.AllowedTools.Any(tool => !CoreVirtualToolPolicy.IsTinadecConfig(tool))
                 && root.ResourceGrants.Any(grant => grant.Level == "write")) return roster;
         }
         return null;
@@ -160,6 +162,12 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             var envelopes = ParseBindingEnvelopes(mv);
             var runtimePolicy = ParseRuntimePolicy(mv);
             var modeInstructions = ParseModeInstructions(mv);
+            var orchestrationTier = ParseOrchestrationTier(mv);
+            var defaultOptions = ParseDefaultOptions(mv);
+            var (modeSlug, modeDisplayName) = ParseModeIdentity(mv, interfaceLocale);
+            var isPackManaged = await cfg.AgentPackManagedResources.AsNoTracking()
+                .AnyAsync(m => m.TenantId == sess.TenantId && m.WorkspaceId == sess.WorkspaceId && m.ResourceKind == "mode" && m.LogicalEntityId == mv.AgentModeId, ct)
+                .ConfigureAwait(false);
             var policyTools = CorrectionRuntimePolicy.IsStructuredInvestigation(runtimePolicy)
                 ? new[] { CoreVirtualToolPolicy.CorrectionTraceToolId }
                 : [];
@@ -355,16 +363,6 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             }
             if (operation.Count == 0)
                 throw new InvalidDataException($"Published agent mode '{mv.AgentModeId}' has no operation-layer agent.");
-            // The execution layer is optional only for the free_form shape: no
-            // declared edges and a conversation identity that holds spawn authority
-            // (it builds its workers itself instead of dispatching a declared
-            // roster). Anything else without execution agents is a broken topology.
-            if (execution.Count == 0 && !(edges.Count == 0 && conversationSpawnAuthority))
-                throw new InvalidDataException($"Published agent mode '{mv.AgentModeId}' has no execution-layer agent.");
-
-            var graphNodes = resolved
-                .Select(item => new DeclaredGraphNode(item.Node.NodeKey, item.Slug, item.Layer))
-                .ToArray();
             var spawnable = (await ResolveSpawnableTemplatesAsync(
                     cfg, mv, nodes, sess.TenantId, sess.WorkspaceId, envelopes, interfaceLocale, ct).ConfigureAwait(false))
                 .Select(template => policyTools.Length == 0
@@ -378,9 +376,32 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     })
                 .ToArray();
 
+            // The execution layer is optional for solo_dispatch / free_form modes (or when
+            // the conversation identity holds real workspace tools or spawnable templates).
+            var conversationHasWorkspaceTools = operation.Any(op =>
+                op.DirectUserOutput && op.AllowedTools.Any(tool => !CoreVirtualToolPolicy.IsTinadecConfig(tool)));
+            var allowsEmptyExecution = (edges.Count == 0 && (conversationSpawnAuthority || spawnable.Length > 0))
+                || conversationHasWorkspaceTools
+                || orchestrationTier is "solo_dispatch" or "free_form";
+            if (execution.Count == 0 && !allowsEmptyExecution)
+                throw new InvalidDataException($"Published agent mode '{mv.AgentModeId}' has no execution-layer agent.");
+
+            var graphNodes = resolved
+                .Select(item => new DeclaredGraphNode(item.Node.NodeKey, item.Slug, item.Layer)
+                {
+                    AllowedDispatchTargets = item.Node.RelationshipDispatchTargets,
+                    AgentTypes = item.Node.RelationshipAgentTypes is { Count: > 0 } types ? types : null
+                })
+                .ToArray();
+
             return new FormalModeRoster(operation, execution, mv.Id, mv.Version, mv.TopologyHash, $"mode:{mv.AgentModeId}:{mv.Version}")
             {
                 AgentModeId = mv.AgentModeId,
+                ModeSlug = modeSlug,
+                ModeDisplayName = modeDisplayName,
+                OrchestrationTier = orchestrationTier,
+                DefaultOptions = defaultOptions,
+                IsPackManaged = isPackManaged,
                 Edges = edges,
                 HasDeclaredEdges = edges.Count > 0,
                 GraphNodes = graphNodes,
@@ -691,6 +712,54 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             return null;
         var text = element.GetString();
         return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+    }
+
+    private static (string? Slug, string? DisplayName) ParseModeIdentity(ModeVersionRecord version, string? interfaceLocale)
+    {
+        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return (null, null);
+        using var document = JsonDocument.Parse(version.SnapshotJson);
+        if (!document.RootElement.TryGetProperty("mode", out var modeEl) || modeEl.ValueKind != JsonValueKind.Object)
+            return (null, null);
+        var slug = OptionalString(modeEl, "slug");
+        var displayName = LocalizedString(modeEl, "display_name", interfaceLocale) ?? OptionalString(modeEl, "display_name");
+        return (slug, displayName);
+    }
+
+    private static string? ParseOrchestrationTier(ModeVersionRecord version)
+    {
+        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return null;
+        using var document = JsonDocument.Parse(version.SnapshotJson);
+        if (!document.RootElement.TryGetProperty("orchestration_tier", out var element)
+            || element.ValueKind != JsonValueKind.String)
+            return null;
+        var text = element.GetString()?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (text == "solo") return "solo_dispatch";
+        return text is "solo_dispatch" or "free_form" or "self_dispatch" or "deterministic"
+            ? text
+            : throw new InvalidDataException($"Mode snapshot declares unsupported orchestration_tier '{text}'.");
+    }
+
+    private static SpaceRunOptions? ParseDefaultOptions(ModeVersionRecord version)
+    {
+        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return null;
+        using var document = JsonDocument.Parse(version.SnapshotJson);
+        if (!document.RootElement.TryGetProperty("default_options", out var element)
+            || element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Mode snapshot default_options must be an object.");
+        static bool ReadBool(JsonElement obj, string snake, string camel) =>
+            (obj.TryGetProperty(snake, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False && v.GetBoolean())
+            || (obj.TryGetProperty(camel, out var c) && c.ValueKind is JsonValueKind.True or JsonValueKind.False && c.GetBoolean());
+        var workflowId = OptionalGuid(element, "workflow_mode_version_id") ?? OptionalGuid(element, "workflowModeVersionId");
+        return new SpaceRunOptions(
+            PlanFirst: ReadBool(element, "plan_first", "planFirst"),
+            SpecEnabled: ReadBool(element, "spec_enabled", "specEnabled"),
+            MultiAgent: ReadBool(element, "multi_agent", "multiAgent"),
+            WorkflowModeVersionId: workflowId,
+            BulletinBoard: ReadBool(element, "bulletin_board", "bulletinBoard"),
+            Worktree: ReadBool(element, "worktree", "worktree"));
     }
 
     private static IReadOnlyList<ModeNodeSnapshot> ParseModeSnapshot(ModeVersionRecord version)

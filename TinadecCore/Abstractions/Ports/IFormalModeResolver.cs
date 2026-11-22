@@ -80,6 +80,13 @@ public sealed record FormalModeRoster(
     /// </summary>
     public string? OrchestrationTier { get; init; }
 
+    /// <summary>
+    /// Optional preset run switches (<c>plan_first</c>, <c>spec_enabled</c>, <c>multi_agent</c>,
+    /// <c>bulletin_board</c>, <c>worktree</c>) frozen with the mode version.
+    /// </summary>
+    public SpaceRunOptions? DefaultOptions { get; init; }
+    public bool IsPackManaged { get; init; }
+
     // DmaEA graph orchestration: the declared communication topology, conversation
     // resolution and spawnable-template declarations resolved from the frozen mode
     // snapshot. HasDeclaredEdges is keyed on edge COUNT — an empty array means the
@@ -124,7 +131,14 @@ public sealed record DeclaredGraphEdge(string EdgeKey, string SourceNodeKey, str
 }
 
 /// <summary>One declared node of a mode graph, projected with its resolved agent slug.</summary>
-public sealed record DeclaredGraphNode(string NodeKey, string AgentSlug, string Layer);
+public sealed record DeclaredGraphNode(string NodeKey, string AgentSlug, string Layer)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AgentTypes { get; init; }
+}
 
 /// <summary>
 /// A spawnable worker template resolved from a relationship file's <c>agent_types</c>

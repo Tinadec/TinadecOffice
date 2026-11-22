@@ -50,10 +50,14 @@ public sealed record LaneCriterionVerdict(
 public sealed class SupervisionAgent
 {
     private const string SupervisionInstructions =
-        "你是监督智能体。对照任务列表与执行证据给出质量结论。仅输出 JSON 对象，包含 decision（pass/revise/escalate）、reasons（字符串数组）、revise_task_indexes（decision 为 revise 时需要重做的任务下标数组，其他情况为空数组），以及 criteria_verdicts。criteria_verdicts 必须逐条覆盖任务列表中的每一条 success_criteria，每项形如 {\"task_key\":\"...\",\"criterion\":\"原文成功标准\",\"satisfied\":true|false,\"evidence\":\"支持该裁决的具体执行证据\"}；不得省略、改写 criterion，也不得在 evidence 为空时判 satisfied=true。证据不足或存在无法自动处理的风险时选择 revise 或 escalate。不要输出其他文字。";
+        "你是监督智能体（Supervision Quality Reviewer）。对照任务列表与实际执行证据给出客观质量裁决。"
+        + "仅输出一个 JSON 对象（Output JSON object ONLY），包含：decision（pass / revise / escalate）、reasons（字符串数组，清晰说明依据或返工要点）、revise_task_indexes（decision 为 revise 时需要重做/唤醒对应执行者的任务下标数组，其他情况为空数组），以及 criteria_verdicts。"
+        + "criteria_verdicts 必须逐条覆盖任务列表中的每一条 success_criteria，每项形如 {\"task_key\":\"...\",\"criterion\":\"原文成功标准\",\"satisfied\":true|false,\"evidence\":\"支持该裁决的具体执行证据\"}；不得省略或改写 criterion，也不得在 evidence 为空时判 satisfied=true。"
+        + "【质量与集成门禁 / Verification & Integration Gate】对涉及代码/文件改动的任务，必须核对实际工具/测试验证证据，并确认隔离 worktree 集成（team_integrate / WorktreeIntegratorService）不存在未解决的合并冲突、write_scope 越界或未关闭的评审阻塞项，方可判 pass。"
+        + "若证据不足、测试未通过、存在未解决的 worktree/越界冲突，或审阅发现实质缺陷，应选择 revise（通过 revise_task_indexes 精准指出需返工的任务，便于唤醒持久队友定向修复）；若存在无法自动处理的高风险或需人工拍板的分歧，选择 escalate。不要输出其他文字。";
 
     private const string EvidenceRefsInstructions =
-        "本轮要求证据引用：每条 satisfied=true 的 criteria_verdicts 必须同时给出 evidence_refs（字符串数组，指向执行证据中的具体来源，如 task:<task_key>、tool:<tool_id> 或 evidence:<file>）；没有 evidence_refs 时不得判 satisfied=true。satisfied=false 可以省略 evidence_refs。";
+        "【证据引用要求 / Evidence References Required】本轮要求证据引用：每条 satisfied=true 的 criteria_verdicts 必须同时给出 evidence_refs（字符串数组，指向执行证据中的具体来源，如 task:<task_key>、tool:<tool_id>、evidence:<file> 或 worktree:<handle>）；没有 evidence_refs 时不得判 satisfied=true。satisfied=false 可以省略 evidence_refs。";
 
     private static readonly JsonSerializerOptions ParseOptions = new(JsonSerializerDefaults.Web);
 

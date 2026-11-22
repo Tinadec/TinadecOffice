@@ -41,8 +41,47 @@ public static class CoreVirtualToolPolicy
     /// engine, which stores the plan on the task node and emits plan.updated for the UI.
     /// </summary>
     public const string PlanUpdateToolId = "plan_update";
+    public const string PlanReadToolId = "plan_read";
     public const string SpecProposeToolId = "spec_propose";
     public static bool IsSpecPropose(string? toolId) => string.Equals(toolId, SpecProposeToolId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The five orthogonal Team orchestration primitives (#33): spawn persistent/ephemeral teammates,
+    /// message on the low-latency run board, wait for settlement or replies, maintain the shared plan,
+    /// and inspect/integrate isolated Git worktrees via <see cref="IWorktreeIntegratorService"/>.
+    /// </summary>
+    public const string TeamSpawnToolId = "team_spawn";
+    public const string TeamMessageToolId = "team_message";
+    public const string TeamWaitToolId = "team_wait";
+    public const string TeamPlanToolId = "team_plan";
+    public const string TeamIntegrateToolId = "team_integrate";
+
+    public static readonly IReadOnlyList<string> TeamToolIds =
+    [
+        TeamSpawnToolId,
+        TeamMessageToolId,
+        TeamWaitToolId,
+        TeamPlanToolId,
+        TeamIntegrateToolId,
+    ];
+
+    public static bool IsTeamTool(string? toolId) =>
+        toolId is not null && TeamToolIds.Contains(toolId, StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsTeamSpawn(string? toolId) =>
+        string.Equals(toolId, TeamSpawnToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsTeamMessage(string? toolId) =>
+        string.Equals(toolId, TeamMessageToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsTeamWait(string? toolId) =>
+        string.Equals(toolId, TeamWaitToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsTeamPlan(string? toolId) =>
+        string.Equals(toolId, TeamPlanToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsTeamIntegrate(string? toolId) =>
+        string.Equals(toolId, TeamIntegrateToolId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Host-owned causal trace for the submitted symptom. Only a mode with the
@@ -97,12 +136,16 @@ public static class CoreVirtualToolPolicy
     public const string TinadecMcpApplyToolId = "tinadec_mcp_apply";
     public const string TinadecPromptApplyToolId = "tinadec_prompt_apply";
     public const string TinadecModelProfileApplyToolId = "tinadec_model_profile_apply";
+    public const string TinadecContextMemoryApplyToolId = "tinadec_context_memory_apply";
+
+    public static bool IsTinadecContextMemoryApply(string? toolId) =>
+        string.Equals(toolId, TinadecContextMemoryApplyToolId, StringComparison.OrdinalIgnoreCase);
 
     public static readonly IReadOnlyList<string> TinadecConfigToolIds =
     [
         TinadecInspectToolId, TinadecAgentApplyToolId, TinadecModeApplyToolId,
         TinadecModePublishToolId, TinadecSkillApplyToolId, TinadecMcpApplyToolId,
-        TinadecPromptApplyToolId, TinadecModelProfileApplyToolId,
+        TinadecPromptApplyToolId, TinadecModelProfileApplyToolId, TinadecContextMemoryApplyToolId,
     ];
 
     public static bool IsTinadecConfig(string? toolId) =>
@@ -129,6 +172,9 @@ public static class CoreVirtualToolPolicy
 
     public static bool IsPlanUpdate(string? toolId) =>
         string.Equals(toolId, PlanUpdateToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsPlanRead(string? toolId) =>
+        string.Equals(toolId, PlanReadToolId, StringComparison.OrdinalIgnoreCase);
 
     public static bool IsReadAttachment(string? toolId) =>
         string.Equals(toolId, ReadAttachmentToolId, StringComparison.OrdinalIgnoreCase);
@@ -188,6 +234,16 @@ public static class CoreVirtualToolPolicy
 
     public static bool IsRecallEvidence(string? toolId) =>
         string.Equals(toolId, RecallEvidenceToolId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Searches the immutable conversation message ledger + session summaries with selectable
+    /// fidelity (<c>summary_only</c>, <c>balanced</c>, <c>verbatim_first</c>). Read-only and
+    /// needs no approval.
+    /// </summary>
+    public const string RecallHistoryToolId = "recall_conversation_history";
+
+    public static bool IsRecallHistory(string? toolId) =>
+        string.Equals(toolId, RecallHistoryToolId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The environment steward's tools (todo E1): see the workspace's environments and who holds them,
@@ -274,6 +330,34 @@ public static class CoreVirtualToolPolicy
     public static bool IsGraphView(string? toolId) =>
         string.Equals(toolId, GraphViewToolId, StringComparison.OrdinalIgnoreCase);
 
+    public static readonly IReadOnlyList<string> AllToolIds =
+    [
+        CreateWorkspaceToolId,
+        TaskDispatchToolId,
+        TaskWaitToolId,
+        PlanUpdateToolId,
+        PlanReadToolId,
+        SpecProposeToolId,
+        CorrectionTraceToolId,
+        ReadAttachmentToolId,
+        .. TeamToolIds,
+        .. TinaChatToolIds,
+        .. OrganizationToolIds,
+        GraphViewToolId,
+        RecallEvidenceToolId,
+        RecallHistoryToolId,
+        .. EnvironmentToolIds,
+        .. ExplorationToolIds,
+        .. PlanLedgerToolIds,
+        TraceSearchToolId,
+        RunDossierToolId,
+        LoadSkillToolId,
+        .. TinadecConfigToolIds,
+    ];
+
+    public static readonly IReadOnlySet<string> CoreVirtualSet =
+        new HashSet<string>(AllToolIds, StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// True for ANY Core-owned virtual tool. These are executed by Core itself and are
     /// deliberately absent from the TinadecTools child manifest, so every place that
@@ -281,11 +365,7 @@ public static class CoreVirtualToolPolicy
     /// legitimately declared virtual tool is dropped as "the process does not offer it".
     /// </summary>
     public static bool IsCoreVirtual(string? toolId) =>
-        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTaskWait(toolId) || IsPlanUpdate(toolId) || IsSpecPropose(toolId)
-        || IsCorrectionTrace(toolId) || IsReadAttachment(toolId)
-        || IsTinaChat(toolId) || IsOrganization(toolId) || IsGraphView(toolId) || IsRecallEvidence(toolId) || IsEnvironment(toolId)
-        || IsExploration(toolId) || IsPlanLedger(toolId) || IsTraceSearch(toolId) || IsRunDossier(toolId)
-        || IsLoadSkill(toolId) || IsTinadecConfig(toolId);
+        toolId is not null && CoreVirtualSet.Contains(toolId);
 
     /// <summary>
     /// True when a call-time gate may demand that the tool appear in the TinadecTools child-process

@@ -76,10 +76,10 @@ TOOLS ARE WITHDRAWN: do not request any tool call in this turn; answer in plain 
 最后 3 次调用 / last 3 tool calls: {lastTools}
 
 收尾要求（以下四项必须逐条回答，中文或英文均可）/ CLOSE-OUT REQUIREMENTS (answer all four):
-1. 已完成什么 / what has been completed — 具体到文件、命令或产物。
-2. 还剩什么 / what remains — 未完成的部分要写清楚，不要含糊。
+1. 已完成什么 / what has been completed — 具体到文件、命令、验证结果或产物（若在隔离 worktree 中工作，注明变更是否已提交/待 team_integrate 合并）。
+2. 还剩什么 / what remains — 未完成的部分与尚待推进的 SessionPlan 步骤要写清楚，不要含糊。
 3. 为什么停在这里 / why it stopped — 写出上面的触发原因与具体数值（哪个预算、用了多少、上限多少）。
-4. 下一步建议 / recommended next step for the user — 可执行的下一步，而不是泛泛而谈。
+4. 下一步建议 / recommended next step for the user — 可执行的下一步（例如继续修复、唤醒队友、合并验证或放宽预算），而不是泛泛而谈。
 
 如果目标尚未达成，必须明确写出「未达成」以及差在哪里；这段文本会作为本任务的证据记录，所以不要用「已完成」掩盖未完成的工作。
 If the goal was not reached, say so explicitly and state precisely what is missing. This text becomes the task's recorded evidence, so a false "done" is worse than an honest partial result.

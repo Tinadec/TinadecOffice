@@ -1329,11 +1329,15 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 
+    private static string CandidateOnlyCurateToml() =>
+        RuntimeTomlWith(
+            "enabled = true\ncontext_token_threshold = 6000\ncompress_on_task_closed = false\nrecommend_on_task_created = false\ncurate_on_run_closed = true\ngit_steward_on_run_closed = false\n");
+
     [Fact]
     public async Task OperationalEvolution_CuratesMemoryAndAgentCandidatesOnRunClose()
     {
         var script = CuratedRunScript(CuratorCandidatesJson);
-        var factory = CreateFactory(script);
+        var factory = CreateFactory(script, runtimeToml: CandidateOnlyCurateToml());
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
@@ -1512,7 +1516,7 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
         const string MemoryContent = "probe-pattern: dispatch workers after planning";
         var curatorJson = $"{{\"memory_candidates\":[{{\"scope\":\"workspace\",\"kind\":\"fact\",\"content\":\"{MemoryContent}\",\"confidence\":0.9,\"applicability\":\"probe pattern runs\"}}],\"agent_candidates\":[]}}";
         var script = CuratedRunScript(curatorJson);
-        var factory = CreateFactory(script);
+        var factory = CreateFactory(script, runtimeToml: CandidateOnlyCurateToml());
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
@@ -1538,6 +1542,54 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
         var secondRun = await StreamInvokeAsync(client, sessionId, new { content = "probe pattern notes", client_message_id = "memory-loop-run-2" });
         Assert.Equal("completed", secondRun.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
         Assert.Contains(script.Instructions, instructions => instructions.Contains("probe-pattern", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OperationalEvolution_AutoEvolve_PersistsActiveMemoryWithProvenanceAndRefreshesMarkdownOnRunClose()
+    {
+        const string AutoEvolvedFact = "AUTO-EVOLVED-INVARIANT-91A: always use module registrars for cross-boundary wiring";
+        var curatorJson = $"{{\"memory_candidates\":[{{\"scope\":\"workspace\",\"kind\":\"decision\",\"content\":\"{AutoEvolvedFact}\",\"confidence\":0.94,\"applicability\":\"all core modules\"}}],\"agent_candidates\":[]}}";
+        var script = CuratedRunScript(curatorJson);
+        // Default runtime.toml sets evolution_mode = "auto_evolve" (EffectiveCandidateOnly == false);
+        // enable curate_on_run_closed so CurateOnRunClosed writes straight to active IContextMemoryService.
+        var autoEvolveToml = CandidateOnlyCurateToml()
+            .Replace("candidate_only = true", "evolution_mode = \"auto_evolve\"\ncandidate_only = false\nproject_markdown_projection = true", StringComparison.Ordinal);
+        var workspaceDir = Path.Combine(_root, "workspace");
+        Directory.CreateDirectory(workspaceDir);
+        var factory = CreateFactory(script, runtimeToml: autoEvolveToml);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var firstRun = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "auto-evolve-run-1" });
+        var runId = RunIdOf(firstRun[0]);
+        Assert.Equal("completed", firstRun.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        var contextMemory = factory.Services.GetRequiredService<IContextMemoryService>();
+        MemoryItemLedgerDto? persisted = null;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var page = await contextMemory.ListItemsAsync("project");
+            persisted = page.Items.FirstOrDefault(x => x.Content.Contains("AUTO-EVOLVED-INVARIANT-91A", StringComparison.Ordinal));
+            if (persisted is not null) break;
+            await Task.Delay(100);
+        }
+
+        Assert.NotNull(persisted);
+        Assert.Equal("active", persisted!.Status);
+        Assert.Equal(runId, persisted.SourceRunId);
+        Assert.Equal(sessionId, persisted.SourceSessionId);
+
+        // Candidate queue stays empty under auto_evolve, and project-core.md projection is refreshed.
+        var proposedCandidates = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/memory-candidates?status=proposed");
+        Assert.Empty(proposedCandidates!);
+        var mdPath = Path.Combine(workspaceDir, ".tinadec", "memory", "project-core.md");
+        Assert.True(File.Exists(mdPath));
+        Assert.Contains("AUTO-EVOLVED-INVARIANT-91A", await File.ReadAllTextAsync(mdPath));
+
+        var lifecycle = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await lifecycle.ReplayEventsAsync(sessionId, 0);
+        Assert.Contains(events, e => e.EventType == "memory.auto_evolved");
     }
 
     [Fact]

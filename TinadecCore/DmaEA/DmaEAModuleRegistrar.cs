@@ -18,6 +18,9 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
         Maf18RuntimeAdapter.EnsureCompatible();
         builder.Services.AddDbContextFactory<AgentControlDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<AgentControlDbContext>>();
+        builder.Services.AddDbContextFactory<SessionPlanDbContext>((sp, options) => options.UseTinadecDatabase(sp));
+        builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<SessionPlanDbContext>>();
+        builder.Services.AddSingleton<SessionPlanService>();
         builder.Services.AddSingleton<AgentRuntimeConfigurationStore>();
         builder.Services.AddSingleton<IConfigurationDocumentValidator, RuntimeConfigurationDocumentValidator>();
         builder.Services.AddSingleton<IAgentRuntimeConfiguration>(sp => sp.GetRequiredService<AgentRuntimeConfigurationStore>());
@@ -77,21 +80,23 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
             sp.GetService<Microsoft.Extensions.Logging.ILogger<RunDossierService>>()));
         // Hard insert (todo D2): process-local, like the in-flight tool registry.
         builder.Services.AddSingleton<IRunInterrupts, RunInterruptRegistry>();
+        builder.Services.AddSingleton<ITaskLineageLookup, CheckpointTaskLineageLookup>();
         // The live positions of followed runs. One instance per storage scope, shared by the
         // engine (which publishes after a durable append) and the coordinator (which reads
         // instead of polling storage).
         builder.Services.AddSingleton<RunStreamProjection>();
         builder.Services.AddSingleton<FullDuplexRunEngine>();
         builder.Services.AddSingleton<IFullDuplexRunEngine>(sp => sp.GetRequiredService<FullDuplexRunEngine>());
+        builder.Services.AddSingleton<ITeamRunBoardActionSink>(sp => sp.GetRequiredService<FullDuplexRunEngine>());
         builder.Services.AddHostedService(sp => sp.GetRequiredService<FullDuplexRunEngine>());
         builder.Services.AddSingleton<SideQuestionService>();
         builder.Services.AddSingleton<IFullDuplexRunCoordinator, FullDuplexRunCoordinator>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
-            Version = "0.1.0",
+            Version = "0.2.0",
             Dependencies = ["abstractions", "persistence", "lifecycle", "models", "memory", "context", "prompts", "loop_guard", "tools"],
-            Capabilities = ["dual_layer_orchestration", "task_dispatch", "collaboration", "scheduling", "result_aggregation", "operational_trigger_chain", "standing_member_turns", "governance_topic_sink", "approval_gate_judge", "autonomous_exploration_coordinator", "worker_settlement", "cross_worker_trace"],
+            Capabilities = ["dual_layer_orchestration", "task_dispatch", "team_orchestration", "persistent_teammates", "worktree_integration", "collaboration", "scheduling", "result_aggregation", "operational_trigger_chain", "standing_member_turns", "governance_topic_sink", "approval_gate_judge", "autonomous_exploration_coordinator", "worker_settlement", "cross_worker_trace"],
             Language = "C#",
             MafPrimitives = ["agent", "workflow"],
             RegistrationStatus = ModuleRegistrationStatus.Registered

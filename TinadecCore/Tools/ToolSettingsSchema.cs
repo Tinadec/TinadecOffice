@@ -15,23 +15,41 @@ public static class ToolSettingsSchema
         read = new { enabled = true, sentinel_line_limit = 150, directory_page_size = 100, max_file_bytes = (long?)null },
         write = new { enabled = true, max_file_bytes = (long?)null, create_parent_directories = true },
         search = new { enabled = true, max_results = 50, timeout_ms = (int?)null, rg_path = (string?)null, case_sensitive = false, fixed_strings = false, context_lines = 0, include_hidden = false, respect_ignore_files = true },
-        git = new { enabled = true, timeout_ms = 60000, max_output_chars = 4194304, protected_branches = new[] { "main", "master" }, log_limit = 50, log_list_limit = 100, allow_hooks = false, tool_budgets = new Dictionary<string,object>() },
+        git = new { enabled = true, timeout_ms = 60000, max_output_chars = 4194304, protected_branches = new[] { "main", "master" }, log_limit = 50, log_list_limit = 100, allow_hooks = false, tool_budgets = new Dictionary<string, object>() },
         web = new { enabled = true, timeout_ms = 15000, max_bytes = 262144, max_chars = 12000, max_redirects = 3 },
-        browser = new { enabled = true, max_snapshot_chars = 24000, action_timeout_ms = 15000, wait_timeout_ms = 30000, allow_private_hosts = false },
+        browser = new { enabled = true, driver = "builtin_electron", profile_id = (string?)null, max_snapshot_chars = 24000, action_timeout_ms = 15000, wait_timeout_ms = 30000, allow_private_hosts = false, tool_budgets = new Dictionary<string, object>() },
         mcp = new { enabled = true, timeout_ms = 30000, server_resource_ids = (Guid[]?)null },
         skills = new { enabled = true, resource_ids = (Guid[]?)null, search_depth = 2, max_skills = 40, max_index_chars = 8000, max_file_bytes = 262144 }
     });
 
     private static readonly IReadOnlyDictionary<string, (long Min, long Max)> Ranges = new Dictionary<string, (long, long)>
     {
-        ["shell.timeout_ms"] = (1,1800000), ["shell.command_timeout_ms"] = (1,1800000), ["shell.max_timeout_ms"] = (1,1800000), ["shell.max_output_chars"] = (1,65536),
-        ["read.sentinel_line_limit"] = (0,100000), ["read.directory_page_size"] = (1,500), ["read.max_file_bytes"] = (1,1073741824), ["write.max_file_bytes"] = (1,1073741824),
-        ["search.max_results"] = (1,10000), ["search.context_lines"] = (0,1000), ["search.timeout_ms"] = (1,1800000), ["git.timeout_ms"] = (1,1800000), ["git.max_output_chars"] = (1,4194304), ["git.log_limit"] = (1,500), ["git.log_list_limit"] = (1,10000),
-        ["web.timeout_ms"] = (1000,60000), ["web.max_bytes"] = (1,4194304), ["web.max_chars"] = (1,60000), ["web.max_redirects"] = (0,3),
-        ["browser.max_snapshot_chars"] = (2048,64000), ["browser.action_timeout_ms"] = (1000,60000), ["browser.wait_timeout_ms"] = (100,60000),
-        ["mcp.timeout_ms"] = (1,1800000), ["skills.search_depth"] = (2,2), ["skills.max_skills"] = (0,1000), ["skills.max_index_chars"] = (0,1048576), ["skills.max_file_bytes"] = (262144,262144)
+        ["shell.timeout_ms"] = (1, 1800000), ["shell.command_timeout_ms"] = (1, 1800000), ["shell.max_timeout_ms"] = (1, 1800000), ["shell.max_output_chars"] = (1, 65536),
+        ["read.sentinel_line_limit"] = (0, 100000), ["read.directory_page_size"] = (1, 500), ["read.max_file_bytes"] = (1, 1073741824), ["write.max_file_bytes"] = (1, 1073741824),
+        ["search.max_results"] = (1, 10000), ["search.context_lines"] = (0, 1000), ["search.timeout_ms"] = (1, 1800000), ["git.timeout_ms"] = (1, 1800000), ["git.max_output_chars"] = (1, 4194304), ["git.log_limit"] = (1, 500), ["git.log_list_limit"] = (1, 10000),
+        ["web.timeout_ms"] = (1000, 60000), ["web.max_bytes"] = (1, 4194304), ["web.max_chars"] = (1, 60000), ["web.max_redirects"] = (0, 3),
+        ["browser.max_snapshot_chars"] = (2048, 64000), ["browser.action_timeout_ms"] = (1000, 60000), ["browser.wait_timeout_ms"] = (100, 60000),
+        ["mcp.timeout_ms"] = (1, 1800000), ["skills.search_depth"] = (2, 2), ["skills.max_skills"] = (0, 1000), ["skills.max_index_chars"] = (0, 1048576), ["skills.max_file_bytes"] = (262144, 262144)
     };
-    private static readonly IReadOnlyList<string> GitTools = ["git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_conflict_resolve", "git_discard", "git_stage", "git_unstage", "git_worktree_create", "git_worktree_remove", "git_fetch", "git_push", "git_pull", "git_file_history", "git_log_list", "git_commit", "git_log_detail", "git_status", "git_push_readiness", "git_log", "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision", "git_conflict_preview", "git_merge", "git_rebase", "git_stash_list", "git_stash_show", "git_stash_push", "git_stash_apply", "git_stash_pop", "git_stash_drop"];
+
+    private static readonly IReadOnlyList<string> GitTools =
+    [
+        "git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_conflict_resolve", "git_discard",
+        "git_stage", "git_unstage", "git_worktree_create", "git_worktree_remove", "git_fetch", "git_push", "git_pull",
+        "git_file_history", "git_log_list", "git_commit", "git_log_detail", "git_status", "git_push_readiness", "git_log",
+        "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision",
+        "git_conflict_preview", "git_merge", "git_rebase", "git_stash_list", "git_stash_show", "git_stash_push", "git_stash_apply",
+        "git_stash_pop", "git_stash_drop"
+    ];
+
+    public static readonly IReadOnlyList<string> BrowserTools =
+    [
+        "browser_snapshot", "browser_navigate", "browser_tabs_list", "browser_wait", "browser_screenshot",
+        "browser_click", "browser_type", "browser_press", "browser_scroll", "browser_history",
+        "browser_tab_open", "browser_tab_select", "browser_tab_close", "browser_batch",
+        "browser_run", "browser_handoff", "browser_takeover", "browser_finish",
+        "browser_dialog", "browser_profiles_list", "browser_upload", "browser_download_save"
+    ];
 
     public static JsonElement Schema()
     {
@@ -50,9 +68,17 @@ public static class ToolSettingsSchema
                         tools[tool] = new JsonObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = new JsonObject { ["timeout_ms"] = new JsonObject { ["type"] = "integer", ["minimum"] = 1, ["maximum"] = 1800000, ["description"] = "Deadline for this Git tool in milliseconds." }, ["max_output_chars"] = new JsonObject { ["type"] = "integer", ["minimum"] = 1, ["maximum"] = 4194304, ["description"] = "Maximum returned characters for this Git tool." } } };
                     property = new() { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = tools };
                 }
+                else if (key == "browser.tool_budgets")
+                {
+                    var tools = new JsonObject();
+                    foreach (var tool in BrowserTools)
+                        tools[tool] = new JsonObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = new JsonObject { ["timeout_ms"] = new JsonObject { ["type"] = "integer", ["minimum"] = 100, ["maximum"] = 600000, ["description"] = "Deadline for this Browser tool in milliseconds." }, ["max_snapshot_chars"] = new JsonObject { ["type"] = "integer", ["minimum"] = 2048, ["maximum"] = 64000, ["description"] = "Maximum snapshot characters returned for this Browser tool." } } };
+                    property = new() { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = tools };
+                }
                 else if (field.Name is "resource_ids" or "server_resource_ids") property = new() { ["type"] = new JsonArray("array", "null"), ["items"] = new JsonObject { ["type"] = "string", ["format"] = "uuid" }, ["uniqueItems"] = true };
                 else if (field.Name == "protected_branches") property = new() { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string" } };
-                else if (field.Name == "rg_path") property = new() { ["type"] = new JsonArray("string", "null") };
+                else if (field.Name is "rg_path" or "profile_id") property = new() { ["type"] = new JsonArray("string", "null") };
+                else if (field.Name == "driver") property = new() { ["type"] = "string", ["enum"] = new JsonArray("builtin_electron", "ego_lite") };
                 else if (Ranges.TryGetValue(key, out var range)) property = new() { ["type"] = field.Value.ValueKind == JsonValueKind.Null ? new JsonArray("integer", "null") : JsonValue.Create("integer"), ["minimum"] = range.Min, ["maximum"] = range.Max };
                 else if (field.Value.ValueKind is JsonValueKind.True or JsonValueKind.False) property = new() { ["type"] = "boolean" };
                 else property = new() { ["type"] = "string", ["enum"] = new JsonArray("auto", "cmd", "powershell", "pwsh", "bash") };
@@ -98,6 +124,20 @@ public static class ToolSettingsSchema
                         }
                     }
                 }
+                else if (key == "browser.tool_budgets")
+                {
+                    if (value.ValueKind != JsonValueKind.Object) throw Invalid("browser.tool_budgets must be an object keyed by Browser tool id.");
+                    var seenTools = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var tool in value.EnumerateObject())
+                    {
+                        if (!seenTools.Add(tool.Name) || !BrowserTools.Contains(tool.Name) || tool.Value.ValueKind != JsonValueKind.Object) throw Invalid($"Unknown or invalid Browser tool budget '{tool.Name}'.");
+                        var seenFields = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (var budget in tool.Value.EnumerateObject())
+                        {
+                            if (!seenFields.Add(budget.Name) || budget.Name is not ("timeout_ms" or "max_snapshot_chars") || budget.Value.ValueKind != JsonValueKind.Number || !budget.Value.TryGetInt64(out var number) || (budget.Name == "timeout_ms" ? number is < 100 or > 600000 : number is < 2048 or > 64000)) throw Invalid($"Invalid Browser budget '{tool.Name}.{budget.Name}'.");
+                        }
+                    }
+                }
                 else if (field.Name is "resource_ids" or "server_resource_ids")
                 {
                     if (value.ValueKind != JsonValueKind.Array || value.EnumerateArray().Any(v => v.ValueKind != JsonValueKind.String || !Guid.TryParse(v.GetString(), out var id) || id == Guid.Empty)) throw Invalid($"'{key}' must contain resource UUIDs or null.");
@@ -107,9 +147,13 @@ public static class ToolSettingsSchema
                 {
                     if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > 100 || value.EnumerateArray().Any(v => v.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(v.GetString()) || v.GetString()!.Length > 256)) throw Invalid($"'{key}' must contain branch names.");
                 }
-                else if (field.Name == "rg_path")
+                else if (field.Name is "rg_path" or "profile_id")
                 {
-                    if (value.ValueKind != JsonValueKind.String || value.GetString()!.Length > 2048) throw Invalid($"'{key}' must be a path or null.");
+                    if (value.ValueKind != JsonValueKind.String || value.GetString()!.Length > 2048) throw Invalid($"'{key}' must be a string or null.");
+                }
+                else if (field.Name == "driver")
+                {
+                    if (value.ValueKind != JsonValueKind.String || value.GetString() is not ("builtin_electron" or "ego_lite")) throw Invalid("Unsupported browser driver; expected 'builtin_electron' or 'ego_lite'.");
                 }
                 else if (field.Name == "shell")
                 {
@@ -130,11 +174,12 @@ public static class ToolSettingsSchema
         if (shell.GetProperty("timeout_ms").GetInt64() > shell.GetProperty("max_timeout_ms").GetInt64() || shell.GetProperty("command_timeout_ms").GetInt64() > shell.GetProperty("max_timeout_ms").GetInt64()) throw Invalid("Shell default timeouts must not exceed max_timeout_ms.");
         return merged;
     }
+
     /// <summary>Agent defaults may narrow shared safety ceilings; they cannot remove shared guards.</summary>
     public static JsonElement MergeAgent(JsonElement shared, JsonElement patch)
     {
         var merged = Merge(shared, patch);
-        foreach (var (section, field) in new[] { ("shell", "max_timeout_ms"), ("shell", "max_output_chars"), ("read", "max_file_bytes"), ("write", "max_file_bytes"), ("git", "max_output_chars"), ("web", "max_bytes"), ("web", "max_chars"), ("web", "max_redirects"), ("skills", "max_skills"), ("skills", "max_index_chars") })
+        foreach (var (section, field) in new[] { ("shell", "max_timeout_ms"), ("shell", "max_output_chars"), ("read", "max_file_bytes"), ("write", "max_file_bytes"), ("git", "max_output_chars"), ("web", "max_bytes"), ("web", "max_chars"), ("web", "max_redirects"), ("browser", "max_snapshot_chars"), ("skills", "max_skills"), ("skills", "max_index_chars") })
             RequireNarrower(shared.GetProperty(section).GetProperty(field), merged.GetProperty(section).GetProperty(field), section + "." + field);
         var sharedGit = shared.GetProperty("git");
         var agentGit = merged.GetProperty("git");
@@ -144,15 +189,25 @@ public static class ToolSettingsSchema
                 var ceiling = sharedGit.GetProperty("tool_budgets").TryGetProperty(tool.Name, out var sharedBudget) && sharedBudget.TryGetProperty("max_output_chars", out var specific) ? specific : sharedGit.GetProperty("max_output_chars");
                 RequireNarrower(ceiling, output, "git.tool_budgets." + tool.Name + ".max_output_chars");
             }
+        var sharedBrowser = shared.GetProperty("browser");
+        var agentBrowser = merged.GetProperty("browser");
+        foreach (var tool in agentBrowser.GetProperty("tool_budgets").EnumerateObject())
+            if (tool.Value.TryGetProperty("max_snapshot_chars", out var snapChars))
+            {
+                var ceiling = sharedBrowser.GetProperty("tool_budgets").TryGetProperty(tool.Name, out var sharedBudget) && sharedBudget.TryGetProperty("max_snapshot_chars", out var specific) ? specific : sharedBrowser.GetProperty("max_snapshot_chars");
+                RequireNarrower(ceiling, snapChars, "browser.tool_budgets." + tool.Name + ".max_snapshot_chars");
+            }
         var guards = sharedGit.GetProperty("protected_branches").EnumerateArray().Concat(agentGit.GetProperty("protected_branches").EnumerateArray()).Select(branch => branch.GetString()).Distinct(StringComparer.Ordinal).ToArray();
         var result = JsonNode.Parse(merged.GetRawText())!.AsObject();
         result["git"]!["protected_branches"] = JsonSerializer.SerializeToNode(guards);
         return Canonical(JsonSerializer.SerializeToElement(result));
     }
+
     private static void RequireNarrower(JsonElement shared, JsonElement agent, string path)
     {
         if (shared.ValueKind == JsonValueKind.Number && (agent.ValueKind != JsonValueKind.Number || agent.GetInt64() > shared.GetInt64())) throw Invalid($"Agent setting '{path}' must not exceed or remove the shared limit.");
     }
+
     private static void MergeObject(JsonObject result, JsonElement patch)
     {
         foreach (var field in patch.EnumerateObject())
@@ -161,12 +216,14 @@ public static class ToolSettingsSchema
     }
 
     public static string Hash(JsonElement value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(value).GetRawText()))).ToLowerInvariant();
+
     public static JsonElement Canonical(JsonElement value)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream)) WriteCanonical(writer, value);
         return JsonDocument.Parse(stream.ToArray()).RootElement.Clone();
     }
+
     private static void WriteCanonical(Utf8JsonWriter writer, JsonElement value)
     {
         if (value.ValueKind == JsonValueKind.Object)
@@ -178,7 +235,9 @@ public static class ToolSettingsSchema
         else if (value.ValueKind == JsonValueKind.Array) { writer.WriteStartArray(); foreach (var item in value.EnumerateArray()) WriteCanonical(writer, item); writer.WriteEndArray(); }
         else value.WriteTo(writer);
     }
+
     private static ToolSettingsException Invalid(string message) => new("invalid_tool_settings", message);
+
     private static string Description(string key) => key switch
     {
         _ when key.EndsWith(".enabled", StringComparison.Ordinal) => "Offer this tool family to the Agent. Existing governance and approval limits continue to apply.",
@@ -212,6 +271,13 @@ public static class ToolSettingsSchema
         "web.max_bytes" => "Maximum downloaded response bytes, capped at 4 MiB.",
         "web.max_chars" => "Maximum text characters returned by a fetch, capped at 60,000.",
         "web.max_redirects" => "Maximum redirects allowed, at most three. Address checks apply at every hop.",
+        "browser.driver" => "Browser automation connector driver: builtin_electron (desktop host) or ego_lite (external Ego Lite browser).",
+        "browser.profile_id" => "Optional browser profile identifier used when opening or claiming a TaskSpace.",
+        "browser.max_snapshot_chars" => "Maximum accessibility snapshot characters returned per browser read or action receipt.",
+        "browser.action_timeout_ms" => "Default deadline in milliseconds for a single browser navigation or interaction.",
+        "browser.wait_timeout_ms" => "Default deadline in milliseconds for browser_wait, browser_batch, and browser_run workflows.",
+        "browser.allow_private_hosts" => "Allow agent browser navigation to loopback and private-network addresses (e.g. local dev servers).",
+        "browser.tool_budgets" => "Optional per-tool timeout_ms and max_snapshot_chars overrides for browser_* tools.",
         "mcp.timeout_ms" => "Maximum wait in milliseconds for an MCP tool operation.",
         "mcp.server_resource_ids" => "Selected MCP resource UUIDs. Null selects all applicable enabled resources; [] selects none.",
         "skills.resource_ids" => "Selected Skill resource UUIDs. Null selects all applicable enabled resources; [] selects none.",
@@ -230,6 +296,7 @@ public static class ToolSettingsSchema
             "write_file" or "delete_file" or "replace_lines" or "replace_bytes" or "insert_line" or "insert_bytes" or "insert_byte" or "delete_line" or "delete_bytes" => "write",
             "shell" or "sandbox_status" or "sandbox_reset" or "command_run" or "command_wait" or "command_read" or "command_input" or "command_list" or "command_stop" => "shell",
             _ when toolId.StartsWith("git_", StringComparison.OrdinalIgnoreCase) => "git",
+            _ when BrowserTools.Contains(toolId, StringComparer.OrdinalIgnoreCase) || toolId.StartsWith("browser_", StringComparison.OrdinalIgnoreCase) => "browser",
             _ when toolId.StartsWith("mcp_", StringComparison.OrdinalIgnoreCase) => "mcp",
             _ when toolId.StartsWith("web_", StringComparison.OrdinalIgnoreCase) => "web",
             _ when toolId.Contains("search", StringComparison.OrdinalIgnoreCase) || toolId == "glob_files" => "search",
@@ -248,11 +315,14 @@ public static class ToolSettingsSchema
             {
                 "shell" => ("shell", "timeout_ms"), "command_run" => ("shell", "command_timeout_ms"),
                 "file_search" => ("search", "timeout_ms"), "web_fetch" => ("web", "timeout_ms"),
+                "browser_wait" or "browser_batch" or "browser_run" => ("browser", "wait_timeout_ms"),
+                _ when BrowserTools.Contains(toolId, StringComparer.OrdinalIgnoreCase) || toolId.StartsWith("browser_", StringComparison.OrdinalIgnoreCase) => ("browser", "action_timeout_ms"),
                 _ when toolId.StartsWith("mcp_", StringComparison.OrdinalIgnoreCase) => ("mcp", "timeout_ms"),
                 _ when toolId.StartsWith("git_", StringComparison.OrdinalIgnoreCase) => ("git", "timeout_ms"), _ => ("", "")
             };
             if (settings.ValueKind == JsonValueKind.Object && settings.TryGetProperty(section, out var node) && node.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.Number) milliseconds = value.GetInt64();
             if (section == "git" && settings.GetProperty("git").TryGetProperty("tool_budgets", out var budgets) && budgets.TryGetProperty(toolId, out var budget) && budget.TryGetProperty("timeout_ms", out var specific) && specific.ValueKind == JsonValueKind.Number) milliseconds = specific.GetInt64();
+            if (section == "browser" && settings.TryGetProperty("browser", out var bSec) && bSec.TryGetProperty("tool_budgets", out var bBudgets) && bBudgets.TryGetProperty(toolId, out var bBudget) && bBudget.TryGetProperty("timeout_ms", out var bSpecific) && bSpecific.ValueKind == JsonValueKind.Number) milliseconds = bSpecific.GetInt64();
         }
         var seconds = Math.Clamp(Math.Ceiling(fallback.TotalSeconds), 1, 1830);
         if (milliseconds is { } ms) seconds = Math.Max(seconds, Math.Clamp(Math.Ceiling(ms / 1000d), 1, 1800));

@@ -53,6 +53,14 @@ public sealed class PlannedTask
     /// </summary>
     [JsonPropertyName("write_scope")]
     public string[] WriteScope { get; init; } = [];
+    /// <summary>
+    /// Optional task-scoped git worktree isolation flag. When true in a Git project,
+    /// Core provisions an isolated worktree bound to this task's id (inherited by
+    /// nested sub-tasks dispatched by this task).
+    /// </summary>
+    [JsonPropertyName("worktree")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Worktree { get; init; }
     [JsonPropertyName("priority")]
     public int Priority { get; init; } = 1;
     [JsonPropertyName("risk")]

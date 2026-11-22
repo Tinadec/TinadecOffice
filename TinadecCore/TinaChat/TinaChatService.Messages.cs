@@ -20,7 +20,8 @@ public sealed partial class TinaChatService
     {
         var (actor, conversation, _) = await AccessAsync(db, scope, conversationId, request.ActorId, ct);
         Required(request.Content, "content", 65536);
-        var key = "message:" + Hash(Required(request.ClientMessageId, "client_message_id", 128));
+        var rawClientId = Required(request.ClientMessageId, "client_message_id", 128);
+        var key = "message:" + Hash(rawClientId);
         var sources = Ids(request.SourceMessageIds ?? [], "source_message_ids")
             .Concat(request.ReplyToMessageId is { } reply ? new[] { reply } : []).Distinct().Order().ToArray();
         var audience = request.AudienceParticipantIds is null ? null : Ids(request.AudienceParticipantIds, "audience_participant_ids");
@@ -39,7 +40,7 @@ public sealed partial class TinaChatService
         if (sensitivity == "confidential" && recipients.Any(x => x.WorkspaceId != actor.WorkspaceId))
             throw Forbidden("Confidential content cannot cross workspace boundaries.");
         var row = await AppendMessageAsync(db, conversation, actor, request.Content, key, hash, "message", sensitivity,
-            request.AllowDerivedSharing, request.ReplyToMessageId, sources, recipients, ct);
+            request.AllowDerivedSharing, request.ReplyToMessageId, sources, recipients, ct, rawClientMessageId: rawClientId);
         return await ToMessageAsync(db, conversation, actor, row, ct, sources);
     }
 
@@ -143,7 +144,7 @@ public sealed partial class TinaChatService
 
     private async Task<ChatMessage> AppendMessageAsync(TinaChatDbContext db, ChatConversation conversation, ChatParticipant actor,
         string body, string key, string requestHash, string kind, string sensitivity, bool allowDerivedSharing,
-        Guid? replyTo, Guid[] sources, ChatParticipant[] recipients, CancellationToken ct)
+        Guid? replyTo, Guid[] sources, ChatParticipant[] recipients, CancellationToken ct, string? rawClientMessageId = null)
     {
         await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(body));
         var stored = await content.PutAsync(new ContentWriteRequest(conversation.TenantId, conversation.WorkspaceId, "tina-chat-message", "text/plain; charset=utf-8", stream), ct);
@@ -171,7 +172,7 @@ public sealed partial class TinaChatService
             audienceRows.Add(audience);
             db.Audiences.Add(audience);
         }
-        await EnqueueWakesAsync(db, conversation, actor, row, recipients, audienceRows, ct);
+        await EnqueueWakesAsync(db, conversation, actor, row, recipients, audienceRows, ct, rawClientMessageId);
         return row;
     }
 

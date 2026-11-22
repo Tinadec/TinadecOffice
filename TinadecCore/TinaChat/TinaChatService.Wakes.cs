@@ -8,6 +8,8 @@ namespace TinadecCore.TinaChat;
 public sealed partial class TinaChatService
 {
     private static readonly TimeSpan WakeCooldown = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan ActiveRunTeammateWakeDebounce = TimeSpan.FromMilliseconds(350);
+    public const int MaxTeammateRelayDepth = 8;
     private static readonly TimeSpan WakeRetryBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan WakeClaimLease = TimeSpan.FromMinutes(5);
     private const int MaxWakeAttempts = 5;
@@ -15,6 +17,73 @@ public sealed partial class TinaChatService
     private static readonly TimeSpan TurnWindow = TimeSpan.FromHours(1);
 
     private sealed record WakeClaim(long Id, string Token);
+
+    private static bool IsActiveRunTeammateParticipant(ChatParticipant participant) =>
+        participant.OrgRole == OrganizationRoles.Executor
+        || (participant.OrganizationId is not null
+            && participant.CurrentRunId is not null
+            && !string.Equals(participant.Presence, "offline", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsActiveRunWakeContext(ChatConversation conversation, ChatParticipant sender, ChatMessage message, ChatParticipant recipient, string? rawClientMessageId = null) =>
+        IsActiveRunTeammateParticipant(recipient)
+        || (conversation.OrganizationId is not null
+            && recipient.OrganizationId == conversation.OrganizationId
+            && (sender.OrgRole == OrganizationRoles.Executor
+                || sender.CurrentRunId is not null
+                || (rawClientMessageId ?? message.ClientMessageId).StartsWith("team:", StringComparison.OrdinalIgnoreCase)));
+
+    private static int? TryParseExplicitRelayDepth(string? clientMessageId)
+    {
+        if (string.IsNullOrWhiteSpace(clientMessageId)) return null;
+        foreach (var marker in new[] { "relay_depth=", "relay=", "hop=" })
+        {
+            var idx = clientMessageId.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) continue;
+            var start = idx + marker.Length;
+            var end = start;
+            while (end < clientMessageId.Length && char.IsDigit(clientMessageId[end])) end++;
+            if (end > start && int.TryParse(clientMessageId[start..end], out var parsed))
+                return parsed;
+        }
+        return null;
+    }
+
+    private static async Task<int> ComputeRelayDepthAsync(
+        TinaChatDbContext db,
+        ChatConversation conversation,
+        ChatParticipant sender,
+        ChatMessage message,
+        ChatParticipant recipient,
+        CancellationToken ct,
+        string? rawClientMessageId = null)
+    {
+        if (sender.Kind == "human" || sender.OrgRole is OrganizationRoles.Human or OrganizationRoles.Host)
+            return 0;
+
+        if (TryParseExplicitRelayDepth(rawClientMessageId) is { } explicitDepth
+            || TryParseExplicitRelayDepth(message.ClientMessageId) is { } explicitDepth2 && (explicitDepth = explicitDepth2) >= 0)
+            return explicitDepth;
+
+        var lastHumanReset = await (from msg in db.Messages
+                                    join p in db.Participants on msg.SenderId equals p.Id
+                                    where msg.ConversationId == conversation.Id
+                                          && (p.Kind == "human" || p.OrgRole == OrganizationRoles.Human || p.OrgRole == OrganizationRoles.Host)
+                                    orderby msg.Sequence descending
+                                    select (DateTimeOffset?)msg.CreatedAt).FirstOrDefaultAsync(ct);
+
+        var settledQuery = db.Wakes.Where(x =>
+            x.ConversationId == conversation.Id
+            && x.ParticipantId == recipient.Id
+            && x.Reason == "message"
+            && x.Status == "done");
+
+        var settledRows = await settledQuery.Select(x => x.UpdatedAt).ToArrayAsync(ct);
+        var priorRelays = lastHumanReset is { } resetAt
+            ? settledRows.Count(updatedAt => updatedAt >= resetAt)
+            : settledRows.Length;
+
+        return priorRelays + 1;
+    }
 
     /// <summary>
     /// Queues the turns a committed message owes, inside the caller's Serializable transaction. A
@@ -26,7 +95,7 @@ public sealed partial class TinaChatService
     /// claimed snapshot back without losing a message that arrived during the call.
     /// </summary>
     private static async Task EnqueueWakesAsync(TinaChatDbContext db, ChatConversation conversation, ChatParticipant sender,
-        ChatMessage message, ChatParticipant[] recipients, List<ChatAudience> audiences, CancellationToken ct)
+        ChatMessage message, ChatParticipant[] recipients, List<ChatAudience> audiences, CancellationToken ct, string? rawClientMessageId = null)
     {
         if (message.Kind == "intent_brief") return;
         var now = DateTimeOffset.UtcNow;
@@ -40,6 +109,17 @@ public sealed partial class TinaChatService
             var audience = audiences.FirstOrDefault(x => x.ParticipantId == recipient.Id);
             if (audience is null) continue;
             if (!audience.CanReadOriginal && !(message.AllowDerivedSharing && audience.CanReceiveDerived)) continue;
+
+            var activeRunWake = IsActiveRunWakeContext(conversation, sender, message, recipient, rawClientMessageId);
+            if (activeRunWake)
+            {
+                var relayDepth = await ComputeRelayDepthAsync(db, conversation, sender, message, recipient, ct, rawClientMessageId);
+                if (relayDepth > MaxTeammateRelayDepth)
+                {
+                    continue;
+                }
+            }
+
             var live = await db.Wakes.SingleOrDefaultAsync(x => x.ConversationId == conversation.Id && x.ParticipantId == recipient.Id
                 && x.Reason == "message" && (x.Status == "pending" || x.Status == "running"), ct);
             if (live is not null)
@@ -47,10 +127,20 @@ public sealed partial class TinaChatService
                 // Do not cap this merge: a cap silently loses source ids. Context pressure is handled
                 // by the turn's model budget, while the durable queue remains complete and auditable.
                 live.SourceMessageIdsJson = Serialize(Merge(Deserialize(live.SourceMessageIdsJson), new[] { message.Id }));
+                if (activeRunWake && live.Status == "pending")
+                {
+                    var debounced = now.Add(ActiveRunTeammateWakeDebounce);
+                    if (debounced < live.AvailableAt)
+                    {
+                        live.AvailableAt = debounced;
+                        live.DueAtUnixMs = debounced.ToUnixTimeMilliseconds();
+                    }
+                }
                 live.UpdatedAt = now;
                 continue;
             }
-            var due = await NextWakeSlotAsync(db, conversation.Id, recipient.Id, now, ct);
+            var cooldown = activeRunWake ? ActiveRunTeammateWakeDebounce : WakeCooldown;
+            var due = await NextWakeSlotAsync(db, conversation.Id, recipient.Id, now, cooldown, ct);
             db.Wakes.Add(new ChatWake
             {
                 TenantId = conversation.TenantId, WorkspaceId = recipient.WorkspaceId, ConversationId = conversation.Id,
@@ -62,12 +152,18 @@ public sealed partial class TinaChatService
         }
     }
 
-    private static async Task<DateTimeOffset> NextWakeSlotAsync(TinaChatDbContext db, Guid conversationId, Guid participantId, DateTimeOffset now, CancellationToken ct)
+    private static async Task<DateTimeOffset> NextWakeSlotAsync(
+        TinaChatDbContext db,
+        Guid conversationId,
+        Guid participantId,
+        DateTimeOffset now,
+        TimeSpan cooldown,
+        CancellationToken ct)
     {
         var settled = await db.Wakes.Where(x => x.ConversationId == conversationId && x.ParticipantId == participantId
             && x.Reason == "message" && x.Status != "pending" && x.Status != "running").ToArrayAsync(ct);
         var last = settled.Length == 0 ? default : settled.Max(x => x.UpdatedAt);
-        return last == default || last.Add(WakeCooldown) <= now ? now : last.Add(WakeCooldown);
+        return last == default || last.Add(cooldown) <= now ? now : last.Add(cooldown);
     }
 
     public async Task<int> ProcessPendingWakesAsync(int maxWakes, CancellationToken ct = default)
@@ -390,13 +486,38 @@ public sealed partial class TinaChatService
         row.ClaimedSourceMessageIdsJson = "[]";
         row.ClaimToken = null;
         row.ClaimedAtUnixMs = null;
-        row.Status = arrived.Length == 0 ? "done" : "pending";
-        if (arrived.Length != 0)
+        if (arrived.Length == 0)
         {
-            row.AvailableAt = now.Add(WakeCooldown);
-            row.DueAtUnixMs = row.AvailableAt.ToUnixTimeMilliseconds();
+            row.Status = "done";
+            row.LastError = null;
         }
-        row.LastError = null;
+        else
+        {
+            var participant = await db.Participants.AsNoTracking().SingleOrDefaultAsync(x => x.Id == row.ParticipantId, ct);
+            var activeTeammate = participant is not null && IsActiveRunTeammateParticipant(participant);
+            if (activeTeammate)
+            {
+                var settledCount = await db.Wakes.CountAsync(x =>
+                    x.ConversationId == row.ConversationId
+                    && x.ParticipantId == row.ParticipantId
+                    && x.Reason == "message"
+                    && x.Status == "done", ct);
+                if (settledCount + 1 >= MaxTeammateRelayDepth)
+                {
+                    row.SourceMessageIdsJson = "[]";
+                    row.Status = "done";
+                    row.LastError = $"relay_depth_limit: capped at {MaxTeammateRelayDepth}";
+                    row.UpdatedAt = now;
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
+            }
+            row.Status = "pending";
+            var cooldown = activeTeammate ? ActiveRunTeammateWakeDebounce : WakeCooldown;
+            row.AvailableAt = now.Add(cooldown);
+            row.DueAtUnixMs = row.AvailableAt.ToUnixTimeMilliseconds();
+            row.LastError = null;
+        }
         row.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
     }

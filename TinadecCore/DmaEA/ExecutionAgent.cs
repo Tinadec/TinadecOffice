@@ -108,7 +108,8 @@ public sealed class ExecutionAgent
 
         var imageInput = attachments is null
             ? AttachmentImageInput.Empty
-            : await AttachmentImageParts.BuildAsync(attachments, ctx.SessionId, ctx.TriggerMessageId, resolved, ct).ConfigureAwait(false);
+            : await AttachmentImageParts.BuildWithRecentContextAsync(attachments, ctx.SessionId, ctx.TriggerMessageId, resolved, ct).ConfigureAwait(false);
+        var deliveredIds = new List<Guid>(imageInput.DeliveredAttachmentIds);
         var conversation = await BuildConversationAsync(
             ctx.UserGoal + imageInput.PromptSuffix,
             history,
@@ -116,15 +117,20 @@ public sealed class ExecutionAgent
             maxHistoryMessages,
             ct,
             imageInput.Parts,
-            fullResults).ConfigureAwait(false);
+            fullResults,
+            resolved,
+            attachments,
+            ctx.SessionId,
+            imageInput.TotalBytes,
+            deliveredIds).ConfigureAwait(false);
         var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
             .GetResponseAsync(conversation, options, ct)
             .ConfigureAwait(false);
-        if (attachments is not null && imageInput.DeliveredAttachmentIds.Count > 0)
+        if (attachments is not null && deliveredIds.Count > 0)
         {
             try
             {
-                await attachments.MarkDeliveredAsync(imageInput.DeliveredAttachmentIds, ctx.RunId, DateTimeOffset.UtcNow, ct)
+                await attachments.MarkDeliveredAsync(deliveredIds.Distinct().ToArray(), ctx.RunId, DateTimeOffset.UtcNow, ct)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -177,16 +183,27 @@ public sealed class ExecutionAgent
         return new WorkerModelTurn(true, text, calls, null, Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
     }
 
-    private static async Task<IReadOnlyList<ChatMessage>> BuildConversationAsync(
+    internal static async Task<IReadOnlyList<ChatMessage>> BuildConversationAsync(
         string goal,
         IReadOnlyList<WorkerToolTurn> history,
         IReadOnlyList<WorkerInterruption> interruptions,
         int maxHistoryMessages,
         CancellationToken cancellationToken,
         IReadOnlyList<AIContent>? goalParts = null,
-        IReadOnlyDictionary<string, string>? fullResults = null)
+        IReadOnlyDictionary<string, string>? fullResults = null,
+        ChatResolution? resolution = null,
+        IMessageAttachmentStore? attachments = null,
+        Guid sessionId = default,
+        long initialImageBytes = 0,
+        List<Guid>? deliveredAttachmentIds = null)
     {
         var messages = new List<ChatMessage>();
+        var effectiveResolution = resolution ?? new ChatResolution { IsAvailable = true, SupportsImageInput = false };
+        var maxImagesPerTurn = Math.Max(1, effectiveResolution.MaxImagesPerTurn);
+        var usedImages = goalParts?.OfType<DataContent>().Count() ?? 0;
+        var usedImageBytes = Math.Max(0, initialImageBytes);
+        var recentVisualWindowStart = Math.Max(0, history.Count - 4);
+
         // A round the user cut off sits in the transcript where it happened: what the worker had
         // said so far, then what the user sent. Only ever between whole tool rounds, never between a
         // call and its result.
@@ -212,10 +229,48 @@ public sealed class ExecutionAgent
             if (!string.IsNullOrWhiteSpace(turn.ResultJson))
             {
                 var result = turn.ResultOnExecution && fullResults?.GetValueOrDefault(turn.CallId) is { } full ? full : turn.ResultJson;
+                IReadOnlyList<AIContent> toolVisualParts = [];
+                if (index >= recentVisualWindowStart)
+                {
+                    var remainingSlots = Math.Max(0, maxImagesPerTurn - usedImages);
+                    var remainingBytes = Math.Max(0, AttachmentImageParts.MaxTotalBytesPerTurn - usedImageBytes);
+                    var extracted = await AttachmentImageParts.ExtractToolResultImagesAsync(
+                        turn.ToolId,
+                        result,
+                        effectiveResolution,
+                        attachments,
+                        sessionId,
+                        remainingSlots,
+                        remainingBytes,
+                        cancellationToken).ConfigureAwait(false);
+                    result = extracted.SanitizedResultJson;
+                    if (!string.IsNullOrWhiteSpace(extracted.PromptNote))
+                    {
+                        result = ModelFacingResult(result) + "\n" + extracted.PromptNote;
+                    }
+                    if (extracted.Parts.Count > 0)
+                    {
+                        toolVisualParts = extracted.Parts;
+                        usedImages += extracted.Parts.OfType<DataContent>().Count();
+                        usedImageBytes += extracted.Parts.OfType<DataContent>().Sum(dc => (long)dc.Data.Length);
+                    }
+                    if (deliveredAttachmentIds is not null && extracted.DeliveredAttachmentIds.Count > 0)
+                    {
+                        deliveredAttachmentIds.AddRange(extracted.DeliveredAttachmentIds);
+                    }
+                }
+
                 messages.Add(new ChatMessage(ChatRole.Tool,
                 [
                     new FunctionResultContent(turn.CallId, ModelFacingResult(result))
                 ]));
+
+                if (toolVisualParts.Count > 0)
+                {
+                    messages.Add(new ChatMessage(
+                        ChatRole.User,
+                        [new TextContent($"[Visual output from tool '{turn.ToolId}' (call {turn.CallId})]"), .. toolVisualParts]));
+                }
             }
             AddInterruptions(++index);
         }

@@ -45,10 +45,20 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         {
             try
             {
+                foreach (var entry in Directory.EnumerateFileSystemEntries(_root, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        if (File.Exists(entry)) File.SetAttributes(entry, FileAttributes.Normal);
+                        else if (Directory.Exists(entry)) new DirectoryInfo(entry).Attributes = FileAttributes.Normal;
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
                 Directory.Delete(_root, recursive: true);
                 break;
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 await Task.Delay(500);
             }
@@ -1664,6 +1674,29 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
             $"seed-pack apply failed ({applyResponse.StatusCode}): {await applyResponse.Content.ReadAsStringAsync()}");
     }
 
+    internal static Action<System.Text.Json.Nodes.JsonNode> DisableTeamSpawnOnMode(string modeResourceKey) => manifest =>
+    {
+        var mode = manifest["resources"]!["modes"]!.AsArray()
+            .First(m => (string?)m!["resource_key"] == modeResourceKey)!;
+        var meeting = mode["bindings"]!.AsArray()
+            .First(b => (string?)b!["node_key"] == "meeting")!;
+        var switches = meeting["tool_switches"]?.AsObject() ?? new System.Text.Json.Nodes.JsonObject();
+        switches["team_spawn"] = false;
+        meeting["tool_switches"] = switches;
+    };
+
+    private static void EnableLegacyDispatchOnMeeting(System.Text.Json.Nodes.JsonNode manifest)
+    {
+        var meeting = manifest["resources"]!["agents"]!.AsArray()
+            .First(a => (string?)a!["slug"] == "meeting")!;
+        var scope = meeting["tool_scope"]!.AsArray();
+        foreach (var legacyId in new[] { "plan_update", "task_dispatch", "task_wait" })
+        {
+            if (!scope.Any(x => (string?)x == legacyId))
+                scope.Add(legacyId);
+        }
+    }
+
     private static string FindGraphSeedManifestPath()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
@@ -1702,7 +1735,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
             .WhenMeeting("完成。");
         _factory = new ToolChainFactory(_root, script, provider);
         var client = _factory.CreateClient();
-        await InstallGraphSeedPackAsync(client);
+        await InstallGraphSeedPackAsync(client, DisableTeamSpawnOnMode("free_director"));
 
         var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "free-director project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
         var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "free-director session" })).Content.ReadFromJsonAsync<JsonElement>();
@@ -1791,7 +1824,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
             .WhenMeeting("HomePage 共被引用 3 处。");
         _factory = new ToolChainFactory(_root, script, provider);
         var client = _factory.CreateClient();
-        await InstallGraphSeedPackAsync(client);
+        await InstallGraphSeedPackAsync(client, EnableLegacyDispatchOnMeeting);
 
         var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "solo project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
         // Since E6 every mode converses through the one identity (`meeting`), so a solo session
@@ -1876,7 +1909,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
             .WhenMeeting("子任务完成。");
         _factory = new ToolChainFactory(_root, script, provider);
         var client = _factory.CreateClient();
-        await InstallGraphSeedPackAsync(client);
+        await InstallGraphSeedPackAsync(client, EnableLegacyDispatchOnMeeting);
 
         // The host holds docs/ (a lease with no run: never reclaimed, and it blocks every run).
         var ledger = _factory.Services.GetRequiredService<IResourceLeaseService>();
@@ -1953,7 +1986,15 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
                 [new TextContent("Reported.")]);
         _factory = new ToolChainFactory(_root, script, provider);
         var client = _factory.CreateClient();
-        await InstallGraphSeedPackAsync(client);
+        await InstallGraphSeedPackAsync(client, manifest =>
+        {
+            DisableTeamSpawnOnMode("free_director")(manifest);
+            var gov = manifest["resources"]!["agents"]!.AsArray()
+                .First(a => (string?)a!["slug"] == "governance_reviewer")!;
+            var govScope = gov["tool_scope"]!.AsArray();
+            if (!govScope.Any(x => (string?)x == "org_report"))
+                govScope.Add("org_report");
+        });
 
         var ledger = _factory.Services.GetRequiredService<IResourceLeaseService>();
         Assert.True((await ledger.AcquireAsync(new ResourceAcquireRequest(
@@ -1991,7 +2032,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         Assert.Contains(TinaChatMemberTurnRunner.TurnMarker, turn.Instructions);
         Assert.Contains("治理审查智能体", turn.Instructions);
         Assert.Contains("lease_conflict", turn.Briefing);
-        Assert.Equal(["graph_view", "org_directory", "org_execute_report", "org_read", "org_report", "org_send", "recall_evidence"], turn.Tools.Order().ToArray());
+        Assert.Equal(["graph_view", "org_report", "recall_evidence"], turn.Tools.Order().ToArray());
         // The reviewer recalled what the finished task actually said, verbatim, from the evidence archive —
         // keyword mode here (the test host has no embedding model), which is a result, not "nothing".
         var recalled = Assert.Single(script.MemberToolResults, result => result.Contains("\"mode\"", StringComparison.Ordinal));
@@ -2164,12 +2205,12 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         Directory.CreateDirectory(workspace);
         var script = new ToolScriptedClient()
             .WhenWorkerTurns(
-                [new FunctionCallContent("call-plan", "plan_update", new Dictionary<string, object?>
+                [new FunctionCallContent("call-plan", "team_plan", new Dictionary<string, object?>
                 {
                     ["steps"] = new object[]
                     {
-                        new Dictionary<string, object?> { ["step"] = "在首页加入口", ["status"] = "pending" },
-                        new Dictionary<string, object?> { ["step"] = "补测试", ["status"] = "pending" }
+                        new Dictionary<string, object?> { ["title"] = "在首页加入口", ["status"] = "pending" },
+                        new Dictionary<string, object?> { ["title"] = "补测试", ["status"] = "pending" }
                     }
                 })],
                 [new TextContent("方案：先加入口，再补测试。确认后切到 Solo 执行。")])
@@ -2191,12 +2232,12 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
         Assert.Equal("solo_dispatch", orchestration.GetProperty("graph").GetProperty("tier").GetString());
         var offered = script.WorkerToolNames[0];
-        foreach (var tool in new[] { "read_file", "git_diff", "plan_update", "task_dispatch", "task_wait", "graph_view", "org_read" })
+        foreach (var tool in new[] { "read_file", "git_diff", "team_plan", "team_spawn", "team_wait", "graph_view", "recall_evidence" })
             Assert.Contains(tool, offered);
-        // Reading the organization is reading; posting into it and closing reports are not.
-        foreach (var tool in new[] { "write_file", "replace_lines", "insert_line", "delete_line", "shell", "git_commit", "tina_chat_send", "tina_chat_execute_intent", "org_send", "org_decide_report" })
+        // Plan mode forbids mutations, board/integration writes, and legacy tina_chat/org glue.
+        foreach (var tool in new[] { "write_file", "replace_lines", "insert_line", "delete_line", "shell", "git_commit", "team_integrate", "team_message", "tina_chat_send", "tina_chat_execute_intent", "org_send", "org_decide_report" })
             Assert.DoesNotContain(tool, offered);
-        Assert.Contains("本模式是规划（Plan）", script.WorkerInstructions[0], StringComparison.Ordinal);
+        Assert.Contains("本模式是只读规划模式（Plan）", script.WorkerInstructions[0], StringComparison.Ordinal);
 
         using var handOver = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions",
             new { content = "确认，开始做", client_message_id = "plan-2", mode_version_id = await LatestPublishedModeVersionIdAsync("solo"), dispatch_mode = "queued" });
@@ -2213,10 +2254,24 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
     {
         var workspace = Path.Combine(_root, "workspace-review");
         Directory.CreateDirectory(workspace);
-        const string lens = "{{\"task_key\":\"{0}\",\"title\":\"{1}\",\"description\":\"审查工作区未提交的改动：{1}。\",\"success_criteria\":[\"每条问题有位置与证据\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"assignee\":\"reviewer\",\"priority\":1,\"risk\":\"low\"}}";
         var script = new ToolScriptedClient()
-            .WhenPlanner("[" + string.Format(lens, "correctness", "正确性") + "," + string.Format(lens, "security", "安全") + "]")
-            .WhenWorkerTurns([new TextContent("正确性：未发现问题。")], [new TextContent("安全：未发现问题。")])
+            .WhenWorkerTurns(
+                [
+                    new FunctionCallContent("spawn-c", "team_spawn", new Dictionary<string, object?>
+                    {
+                        ["agent_slug"] = "reviewer", ["handle"] = "rev-correctness", ["mode"] = "ephemeral",
+                        ["prompt"] = "审查工作区未提交的改动：正确性。"
+                    }),
+                    new FunctionCallContent("spawn-s", "team_spawn", new Dictionary<string, object?>
+                    {
+                        ["agent_slug"] = "reviewer", ["handle"] = "rev-security", ["mode"] = "ephemeral",
+                        ["prompt"] = "审查工作区未提交的改动：安全。"
+                    })
+                ],
+                [new FunctionCallContent("wait-revs", "team_wait", new Dictionary<string, object?>())],
+                [new TextContent("正确性：未发现问题。")],
+                [new TextContent("安全：未发现问题。")],
+                [new TextContent("两位评审都没有发现问题。")])
             .WhenMeeting("两位评审都没有发现问题。");
         _factory = new ToolChainFactory(_root, script, new FakeToolProvider());
         var client = _factory.CreateClient();
@@ -2233,6 +2288,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
 
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
         Assert.Equal("free_form", orchestration.GetProperty("graph").GetProperty("tier").GetString());
+        Assert.Equal(0, script.PlannerCalls);
         var runEvents = (await _factory.Services.GetRequiredService<ILifecycleManager>().ReplayEventsAsync(sessionId, 0))
             .Where(e => string.Equals(e.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -2241,8 +2297,9 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
             .Select(e => ((JsonElement)e.Payload["payload"]!).GetProperty("agent_instance_id").GetGuid())
             .ToList();
         Assert.Equal(2, reviewers.Distinct().Count());
-        Assert.Equal(2, script.WorkerCalls);
-        foreach (var offered in script.WorkerToolNames)
+        var reviewerToolLists = script.WorkerToolNames.Where(names => !names.Contains("team_spawn")).ToArray();
+        Assert.Equal(2, reviewerToolLists.Length);
+        foreach (var offered in reviewerToolLists)
         {
             Assert.Contains("git_diff", offered);
             foreach (var tool in new[] { "write_file", "shell", "git_commit", "web_fetch", "mcp_invoke" })
@@ -2251,9 +2308,9 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Spec is a free-form director whose pipeline carries the spec-driven procedure. Its first
-    /// turn may legitimately plan nothing and just ask the user about the requirements: an empty
-    /// plan completes the run with the coordinator's answer.
+    /// Spec is an Explore-First free-form director whose pipeline carries the spec-driven procedure.
+    /// Its first turn may legitimately spawn nothing and just ask the user about requirements without
+    /// calling PlanningAgent.
     /// </summary>
     [Fact]
     public async Task SpecMode_ReachesThePlannerWithTheSpecProcedure_AndMayOpenWithQuestions()
@@ -2261,7 +2318,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         var workspace = Path.Combine(_root, "workspace-spec");
         Directory.CreateDirectory(workspace);
         var script = new ToolScriptedClient()
-            .WhenPlanner("[]")
+            .WhenWorkerTurns([new TextContent("开始写需求之前，想先确认两件事：……")])
             .WhenMeeting("开始写需求之前，想先确认两件事：……");
         _factory = new ToolChainFactory(_root, script, new FakeToolProvider());
         var client = _factory.CreateClient();
@@ -2278,10 +2335,11 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
 
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
         Assert.Equal("free_form", orchestration.GetProperty("graph").GetProperty("tier").GetString());
-        var planner = Assert.Single(script.PlannerInstructions);
-        Assert.Contains("本模式是规格驱动开发（Spec）", planner, StringComparison.Ordinal);
-        Assert.Contains("requirements.md", planner, StringComparison.Ordinal);
-        Assert.Equal(0, script.WorkerCalls);
+        Assert.Equal(0, script.PlannerCalls);
+        var coordinatorInstructions = Assert.Single(script.WorkerInstructions);
+        Assert.Contains("本模式是规格驱动开发（Spec）", coordinatorInstructions, StringComparison.Ordinal);
+        Assert.Contains("requirements.md", coordinatorInstructions, StringComparison.Ordinal);
+        Assert.Contains("spec_propose", script.WorkerToolNames[0]);
     }
 
     /// <summary>
@@ -2655,7 +2713,15 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
                 new() { Id = "browser_tab_open", Description = "In-process fake browser tab open probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
                 new() { Id = "browser_tab_select", Description = "In-process fake browser tab select probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
                 new() { Id = "browser_tab_close", Description = "In-process fake browser tab close probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
-                new() { Id = "browser_batch", Description = "In-process fake browser batch probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" }
+                new() { Id = "browser_batch", Description = "In-process fake browser batch probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_profiles_list", Description = "In-process fake browser profiles probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
+                new() { Id = "browser_handoff", Description = "In-process fake browser handoff probe", RequiresApproval = false, Risk = "low", MutatesWorkspace = false },
+                new() { Id = "browser_takeover", Description = "In-process fake browser takeover probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_finish", Description = "In-process fake browser finish probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_dialog", Description = "In-process fake browser dialog probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_upload", Description = "In-process fake browser upload probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" },
+                new() { Id = "browser_download_save", Description = "In-process fake browser download save probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = true, RetrySafety = "unsafe" },
+                new() { Id = "browser_run", Description = "In-process fake browser run probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false, RetrySafety = "unsafe" }
             };
             return new ToolManifestDto
             {

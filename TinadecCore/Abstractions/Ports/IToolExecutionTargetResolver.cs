@@ -33,3 +33,16 @@ public interface IToolExecutionTargetResolver
         string projectRoot,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Resolves a task's ancestor chain (<c>DispatchedByTaskId</c>, nearest parent first)
+/// so nested sub-tasks inherit their parent worker's task-scoped worktree assignment.
+/// </summary>
+public interface ITaskLineageLookup
+{
+    Task<IReadOnlyList<Guid>> GetAncestorTaskIdsAsync(
+        Guid sessionId,
+        Guid runId,
+        Guid taskId,
+        CancellationToken cancellationToken = default);
+}

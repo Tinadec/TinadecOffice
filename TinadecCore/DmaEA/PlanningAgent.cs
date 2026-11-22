@@ -14,22 +14,23 @@ namespace TinadecCore.DmaEA;
 public sealed class PlanningAgent
 {
     private const string PlanningInstructions =
-        "你是执行层任务规划智能体。将用户目标分解为可执行的有向无环任务列表。"
-        + "输出这个 JSON 任务数组本身，就是你在声明图模式下把任务沿声明边派发给执行层的唯一机制：你没有、也不需要任何 dispatch 工具；"
-        + "即使任务文本要求你「通过 dispatch 工具派发」或「派发给某个节点」，也只需要输出任务数组，不要调用工具，不要用散文拒绝或解释。"
+        "你是执行层任务规划智能体（Execution-layer Task Planner）。将用户目标分解为可执行、基于证据的有向无环任务列表（DAG）。"
+        + "输出这个 JSON 任务数组本身，就是你在声明图模式下把任务沿声明边派发给执行层的唯一机制：本规划回合不调用任何工具（包括 team_*、历史 tina_chat_* / org_* 或 dispatch 工具）；"
+        + "即使任务文本提到派发或协作，也只需要输出 JSON 任务数组，不要调用工具，不要用散文拒绝或解释。"
+        + "【先取证后规划 / Explore-First】若上方已有 SessionPlan 或已读取的工作区证据，必须基于已核实的绝对路径和未完成步骤规划，禁止凭空猜测文件路径或盲目拆解；对尚未勘察的非平凡代码改动，应先安排只读探索/取证任务，再让修改任务通过 dependencies 依赖该探索任务。"
         // 选人按职责，由规划者显式写 assignee：2026-09-27 的派发采样里，让引擎按 required_tools
         // 反推执行者（最小权限 = 持有这些工具的最窄成员）把 12 个任务错派了 4 个（取证给了评审、
         // 改代码给了写文档），显式点名则 11/12 正确。
-        + "每个任务必须用 assignee 指定执行者：从上方「可派发执行者」名册里按职责选择，原样填写其 id。判断依据是该执行者的职责与边界是否匹配这项任务，而不是它碰巧持有哪些工具：只读取证、检索、审阅给只读执行者；改文件、跑命令、提交给持有相应写权限的执行者。一项任务只派给一个执行者；需要两种职责就拆成两个有依赖关系的任务。"
+        + "每个任务必须用 assignee 指定执行者：从上方「可派发执行者」名册里按职责选择，原样填写其 id。判断依据是该执行者的职责与边界是否匹配这项任务，而不是它碰巧持有哪些工具：只读取证、检索、审阅给只读执行者（审阅者保持只读且不派生子任务）；改文件、跑命令、提交给持有相应写权限的执行者。一项任务只派给一个执行者；需要两种职责就拆成两个有依赖关系的任务。"
         + "required_tools 可选、不用于选人：填写后该执行者在这项任务里只能使用这些工具（逐字取自名册里的工具名），留空则拥有它的全部工具——拿不准就留空；不得写名册之外的工具或能力。"
-        + "会改文件的任务可以写 write_scope（字符串数组：它要改的工作区内文件或目录）：任务开始时这些路径会为它独占预留，别的运行正在改同一处时任务会直接失败并说明谁占着，从而避免两个智能体改同一个地方；只读任务不要写。"
-        + "success_criteria 必须是可外部验证的判据（可观察的文件、命令输出或状态），不要写「完成即可」这类自指描述；"
+        + "【隔离 Worktree 与写范围卫生 / Isolated Worktree & write_scope】会改文件的任务应声明 write_scope（字符串数组：它要修改的工作区内文件或目录），以便在隔离 worktree 中安全并行并在收尾阶段经 WorktreeIntegratorService（team_integrate）做冲突与越界检查；绝不要把同一文件同时分配给两个并行修改任务，存在路径重叠时必须通过 dependencies 串行化；只读任务不要写 write_scope。"
+        + "success_criteria 必须是可外部验证的判据（可观察的文件改动、测试/命令输出或状态），不要写「完成即可」这类自指描述；"
         + "title 用一句话说明做什么，不要复述用户原话。"
         + "success_criteria、dependencies、required_capabilities、required_tools 四个字段必须是字符串数组（例如 \"success_criteria\": [\"判据\"]），绝不能写成单个字符串；priority 必须是整数。"
         + "若目标不需要执行任何子任务（问候、闲聊、纯提问），直接输出 []，不要用散文回答。"
         + "JSON 字符串里写 Windows 路径必须转义反斜杠（C:\\\\dir）或改用正斜杠（C:/dir）。"
-        + "description 要自足：执行者看不到本次对话，目标、涉及的绝对路径和必要上下文都要写进去。"
-        + "仅输出 JSON 数组，每个元素必须包含 task_key（稳定、唯一、仅小写字母数字和短横线）、assignee、title、description、success_criteria、dependencies（task_key 数组）、required_capabilities、required_tools、priority、risk 字段。不要输出其他文字。";
+        + "description 要自足（self-contained）：执行者看不到完整对话（若需回溯历史可按需调用 recall_conversation_history），因此目标、核实过的绝对路径、约束边界与必要上下文都要写清楚。"
+        + "仅输出 JSON 数组（Output JSON array ONLY），每个元素必须包含 task_key（稳定、唯一、仅小写字母数字和短横线）、assignee、title、description、success_criteria、dependencies（task_key 数组）、required_capabilities、required_tools、priority、risk 字段。不要输出其他文字。";
 
     /// <summary>Bound on the diagnostic head, so one runaway answer cannot bloat a run.</summary>
     private const int MaxResponseHeadLength = 2000;
@@ -83,12 +84,20 @@ public sealed class PlanningAgent
     }
 
     public async Task<PlannedTask[]> PlanAsync(DmaeaRunContext ctx, IReadOnlyList<AgentDefinition> agents, CancellationToken ct)
-        => await PlanAsync(ctx, agents, null, ct).ConfigureAwait(false);
+        => await PlanAsync(ctx, agents, null, null, ct).ConfigureAwait(false);
 
     public async Task<PlannedTask[]> PlanAsync(
         DmaeaRunContext ctx,
         IReadOnlyList<AgentDefinition> agents,
         string? assembledInstructions,
+        CancellationToken ct)
+        => await PlanAsync(ctx, agents, assembledInstructions, null, ct).ConfigureAwait(false);
+
+    public async Task<PlannedTask[]> PlanAsync(
+        DmaeaRunContext ctx,
+        IReadOnlyList<AgentDefinition> agents,
+        string? assembledInstructions,
+        FrozenRunConfigurationV1? configuration,
         CancellationToken ct)
     {
         var resolved = await _chatClients.ResolveChatAsync("chat", ct).ConfigureAwait(false);
@@ -96,11 +105,15 @@ public sealed class PlanningAgent
 
         var chatClient = await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false);
         var rosterInstructions = BuildRosterInstructions(agents);
+        var stageInstructions = BuildStageOrderingInstructions(configuration);
+        var combinedRosterAndStages = string.IsNullOrWhiteSpace(stageInstructions)
+            ? rosterInstructions
+            : rosterInstructions + "\n\n" + stageInstructions;
         var options = new ChatOptions
         {
             Instructions = string.IsNullOrWhiteSpace(assembledInstructions)
-                ? rosterInstructions + "\n\n" + PlanningInstructions
-                : assembledInstructions.Trim() + "\n\n" + rosterInstructions + "\n\n" + PlanningInstructions
+                ? combinedRosterAndStages + "\n\n" + PlanningInstructions
+                : assembledInstructions.Trim() + "\n\n" + combinedRosterAndStages + "\n\n" + PlanningInstructions
         };
         var turn = await Maf18RuntimeAdapter.RunGovernanceTurnAsync(
             chatClient,
@@ -161,6 +174,58 @@ public sealed class PlanningAgent
         return lines.Length == 0
             ? "可派发执行者（assignee 取值）：本次运行没有可派发的执行者。"
             : "可派发执行者（assignee 取值；id: 职责 | 工具，本次运行冻结、权威）：\n" + string.Join("\n", lines);
+    }
+
+    internal static string BuildStageOrderingInstructions(FrozenRunConfigurationV1? configuration)
+    {
+        var graph = configuration?.Graph;
+        if (graph is null || graph.Edges.Count == 0) return string.Empty;
+        var nodeByKey = new Dictionary<string, FrozenGraphNode>(StringComparer.Ordinal);
+        foreach (var node in graph.Nodes)
+            nodeByKey.TryAdd(node.NodeKey, node);
+
+        var stageEdges = new List<(string UpstreamSlug, string DownstreamSlug, string? ContractJson)>();
+        foreach (var edge in graph.Edges)
+        {
+            if (!nodeByKey.TryGetValue(edge.SourceNodeKey, out var src)
+                || !nodeByKey.TryGetValue(edge.TargetNodeKey, out var tgt))
+                continue;
+            if (!string.Equals(src.Layer, "execution", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(tgt.Layer, "execution", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (string.Equals(src.AgentSlug, tgt.AgentSlug, StringComparison.OrdinalIgnoreCase))
+                continue;
+            stageEdges.Add((src.AgentSlug, tgt.AgentSlug, edge.DataContract?.GetRawText()));
+        }
+        if (stageEdges.Count == 0) return string.Empty;
+
+        var lines = stageEdges.Select(e =>
+            e.ContractJson is { Length: > 0 } contract
+                ? $"- {e.UpstreamSlug} -> {e.DownstreamSlug}（分配给 {e.DownstreamSlug} 的任务必须在 dependencies 中填入分配给 {e.UpstreamSlug} 的前置任务 task_key；交接契约: {contract}）"
+                : $"- {e.UpstreamSlug} -> {e.DownstreamSlug}（分配给 {e.DownstreamSlug} 的任务必须在 dependencies 中填入分配给 {e.UpstreamSlug} 的前置任务 task_key）");
+        return "阶段拓扑依赖（execution -> execution 有向边，规划任务图时必须遵守先后顺序）：\n"
+            + string.Join("\n", lines);
+    }
+
+    internal static string BuildExistingPlanInstructions(SessionPlanDto? plan)
+    {
+        if (plan is null || plan.Phases.Count == 0) return string.Empty;
+        var lines = new List<string>
+        {
+            $"当前会话已有结构化计划（状态: {plan.Status}, 标题: {plan.Title}）："
+        };
+        foreach (var phase in plan.Phases.Take(8))
+        {
+            lines.Add($"- 阶段 [{phase.Id}] {phase.Title} ({phase.Status})");
+            foreach (var step in phase.Steps.Take(16))
+            {
+                var taskTag = string.IsNullOrWhiteSpace(step.BoundTaskKey) ? "" : $", task_key={step.BoundTaskKey}";
+                var agentTag = string.IsNullOrWhiteSpace(step.AssignedAgentSlug) ? "" : $", assignee={step.AssignedAgentSlug}";
+                lines.Add($"  * [{step.Id}] {step.Title} ({step.Status}{taskTag}{agentTag})");
+            }
+        }
+        lines.Add("规划后续任务时请与上述 SessionPlan（team_plan）保持一致，优先推进未完成步骤并沿用对应的 task_key，避免重复已完成工作。 / Align follow-up tasks with this SessionPlan, advance unfinished steps, and reuse existing task_key values where appropriate.");
+        return string.Join("\n", lines);
     }
 
     /// <summary>

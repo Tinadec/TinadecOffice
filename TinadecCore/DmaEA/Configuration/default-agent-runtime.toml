@@ -26,23 +26,80 @@ lanes_enabled = false
 max_lanes_per_run = 4
 max_tasks_per_lane = 6
 
-# Context policy. default_token_budget is the finite context-window allocation
-# used to pack and compress prompts; it is not a cumulative spend cap.
-# task_token_budget and run_token_budget are cumulative token fuses. Both ship
-# disabled: repeated calls, consecutive errors, empty turns and hard tool-call
-# ceilings still stop abnormal workers without cutting normal long investigations.
+# =============================================================================
+# 上下文管理策略 (Context Management Policy)
+# 说明：KV-Cache 友好的 Append-Only 热窗口与过期大工具输出折叠默认永久开启，无需额外开关。
+# 本节控制 3 档策略预设、后台异步压缩触发水位与按需召回保真度，供用户和 AI Agent 读写调优。
+#
+# Always-On Primitives (default ON, no off-switch):
+#   - KV-cache friendly append-only hot window (static prefix first, append-only history).
+#   - Automatic micro-compaction of stale tool outputs & offloading of oversized tool payloads.
+# =============================================================================
 [context]
+# 默认上下文策略预设，可被具体智能体模式 (AgentMode) 或单会话临时设置覆写：
+#   - "direct"       : 轻量直通（不启用治理层上下文智能体，极速低成本，KV Cache 最稳）
+#   - "managed"      : 标准托管（默认；热窗口保缓存 + 达水位/Run 收尾异步压缩 + 主控按需回溯原始库）
+#   - "deep_curator" : 深度策展（允许跨同项目历史会话深挖 + 探索图谱折叠 + 积极记忆演化）
+strategy = "managed"
+
+# 单轮提示词组装与压缩所参照的上下文窗口预算（非累计消费上限）
+# default_token_budget is the finite context-window allocation used to pack and compress prompts.
+# task_token_budget and run_token_budget are cumulative token fuses (0 disables the fuse).
 default_token_budget = 131072
 task_token_budget = 0
 run_token_budget = 0
+
+# 热窗口保留的最近原始消息条数上限（Append-Only 区域，保护 Prompt Cache 命中；范围 4..200）
 recent_message_limit = 128
+
+# 后台异步结构化压缩的触发水位比例（范围 0.40 ~ 0.95，默认 0.75）；达到该比例时整理冷区历史，不阻塞当前首字响应
+compaction_trigger_ratio = 0.75
+
+# 主控或上下文子智能体回溯原始对话时的返回保真倾向：
+#   - "summary_only"   : 仅返回精简总结（最省 Token，可能丢失具体报错行号或精确原文）
+#   - "balanced"       : 默认；返回顶部摘要 + 关键原话/报错/代码精确片段（带 session_id & message_seq 坐标）
+#   - "verbatim_first" : 优先保留更多原始对话上下文（适合高精度排障与审计）
+recall_fidelity = "balanced"
+
+# 是否允许上下文子智能体在 deep_curator 模式（或显式请求）下跨同项目历史会话检索原始对话账本
+allow_cross_session_recall = true
+
+# 默认内置底层效率原语参数（常开推荐）：自动折叠热尾之前的陈旧长工具输出，并将超大载荷外置为指针
+micro_compact_stale_tool_outputs = true
+offload_large_tool_payload_bytes = 16384
+
 optimistic_revision = true
 
+# =============================================================================
+# 四层记忆演化策略 (Four-Layer Memory Evolution Policy)
+# 四层作用域：session (会话上下文) / project (项目客观记忆) / principal (用户全局画像) / companion (伙伴私域)
+# 机制：数据库保存结构化版本链与溯源；活跃核心记忆按上限双向投影为可编辑 Markdown 文档。
+# =============================================================================
 [memory]
-candidate_only = true
+# 记忆演化生效模式：
+#   - "auto_evolve"    : 默认；新事实与修订自动生效并记录版本链/溯源，冲突旧值标记 superseded，随时可改可回滚
+#   - "candidate_only" : 严格审批模式；所有提炼记忆先进入待审队列，人工批准后才注入提示词
+evolution_mode = "auto_evolve"
+
+# 兼容旧配置键；当显式为 true 时等价于 evolution_mode = "candidate_only"
+candidate_only = false
+
+# 每次上下文组装最多检索注入的长期记忆条目数（向量语义 + 关键词混合检索）
 retrieval_limit = 8
-allowed_scopes = ["principal", "workspace", "project", "agent"]
-allowed_kinds = ["fact", "preference", "decision", "success_pattern", "failure_pattern", "task_template", "supervision_rule"]
+
+# 投影到核心 Markdown 文档（project-core.md / user-profile.md / companion memory.md）的最大 Token 上限（范围 256..8000）
+# 超出上限的冷记忆仍留在数据库与向量索引中按需召回，防止长期文档膨胀撑爆窗口
+core_markdown_max_tokens = 1500
+
+# 是否将项目级客观记忆双向投影到工作区 project_memory_path（默认 .tinadec/memory/project-core.md，Git 可跟踪）
+project_markdown_projection = true
+project_memory_path = ".tinadec/memory/project-core.md"
+
+# 是否允许伙伴 (Companion) 在监工总结后向项目客观记忆写入带溯源的修订（默认 false，伙伴仅只读引用项目记忆）
+companion_can_write_project_memory = false
+
+allowed_scopes = ["principal", "workspace", "project", "agent", "companion"]
+allowed_kinds = ["fact", "preference", "decision", "success_pattern", "failure_pattern", "task_template", "supervision_rule", "bond", "episode"]
 
 [tools]
 provider = "tinadec-tools-process"

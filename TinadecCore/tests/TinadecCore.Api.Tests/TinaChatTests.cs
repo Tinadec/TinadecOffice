@@ -943,6 +943,120 @@ public sealed class TinaChatTests : IAsyncLifetime
         return id;
     }
 
+    [Fact]
+    public async Task ActiveRunTeammateWakes_Use350msDebounce_AndEnforceMaxTeammateRelayDepth8_UntilHumanReset()
+    {
+        var current = _identity.Current;
+        await SeedScopeAsync(current);
+        var sessionId = await NewSessionAsync();
+        var runId = Guid.NewGuid();
+        var orgScope = new OrganizationScope(current.TenantId, current.WorkspaceId, current.PrincipalId, sessionId);
+        var orgService = _factory.Services.GetRequiredService<ISessionOrganization>();
+
+        var coordinatorId = Guid.NewGuid();
+        var executorAId = Guid.NewGuid();
+        var executorBId = Guid.NewGuid();
+        var coordMember = await orgService.EnrolAsync(new OrganizationMemberEnrolment(orgScope, OrganizationRoles.Conversation, "meeting", "meeting", runId, coordinatorId, Guid.NewGuid(), null));
+        var execAMember = await orgService.EnrolAsync(new OrganizationMemberEnrolment(orgScope, OrganizationRoles.Executor, "global_engineering", "impl-a", runId, executorAId, Guid.NewGuid(), coordinatorId));
+        var execBMember = await orgService.EnrolAsync(new OrganizationMemberEnrolment(orgScope, OrganizationRoles.Executor, "reviewer", "rev-b", runId, executorBId, Guid.NewGuid(), coordinatorId));
+
+        Guid planRoomId;
+        await using (var db = await DbAsync())
+        {
+            planRoomId = (await db.Conversations.SingleAsync(r => r.OrganizationId == coordMember.OrganizationId && r.Kind == "plan")).Id;
+        }
+
+        // 1. Standard room interpreter uses 20s cooldown after a settled wake, whereas active-run teammate uses ~350ms debounce.
+        var standardTeam = await TeamAsync();
+        await using (var db = await DbAsync())
+        {
+            var settledAt = DateTimeOffset.UtcNow;
+            db.Wakes.Add(new ChatWake
+            {
+                TenantId = current.TenantId, WorkspaceId = current.WorkspaceId,
+                ConversationId = standardTeam.Conversation, ParticipantId = standardTeam.Interpreter,
+                Reason = "message", Status = "done", SourceMessageIdsJson = "[]",
+                AvailableAt = settledAt, DueAtUnixMs = settledAt.ToUnixTimeMilliseconds(),
+                CreatedAt = settledAt, UpdatedAt = settledAt
+            });
+            db.Wakes.Add(new ChatWake
+            {
+                TenantId = current.TenantId, WorkspaceId = current.WorkspaceId,
+                ConversationId = planRoomId, ParticipantId = execBMember.ParticipantId,
+                Reason = "message", Status = "done", SourceMessageIdsJson = "[]",
+                AvailableAt = settledAt, DueAtUnixMs = settledAt.ToUnixTimeMilliseconds(),
+                CreatedAt = settledAt, UpdatedAt = settledAt
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var beforeSend = DateTimeOffset.UtcNow;
+        await Chat.SendAsync(standardTeam.Conversation, new(standardTeam.Human, "Follow-up question", "std-debounce-1", AllowDerivedSharing: true));
+        await Chat.SendAsync(planRoomId, new(execAMember.ParticipantId, "@rev-b please inspect src/app.ts", "team:relay_depth=2", AllowDerivedSharing: true));
+
+        await using (var db = await DbAsync())
+        {
+            var stdWake = await db.Wakes.AsNoTracking().SingleAsync(w => w.ConversationId == standardTeam.Conversation && w.ParticipantId == standardTeam.Interpreter && w.Status == "pending");
+            var teamWake = await db.Wakes.AsNoTracking().SingleAsync(w => w.ConversationId == planRoomId && w.ParticipantId == execBMember.ParticipantId && w.Status == "pending");
+            Assert.True((stdWake.AvailableAt - beforeSend).TotalSeconds >= 15, $"Expected standard room wake cooldown >= 15s, got {(stdWake.AvailableAt - beforeSend).TotalMilliseconds}ms");
+            Assert.True((teamWake.AvailableAt - beforeSend).TotalSeconds < 3, $"Expected active-run teammate debounce ~350ms (<3s), got {(teamWake.AvailableAt - beforeSend).TotalMilliseconds}ms");
+
+            // Clear pending wake to test MaxTeammateRelayDepth = 8 boundary cleanly.
+            await db.Wakes.Where(w => w.ConversationId == planRoomId && w.Status == "pending").ExecuteDeleteAsync();
+        }
+
+        // 2. Explicit relay_depth=9 (> MaxTeammateRelayDepth=8) is suppressed; relay_depth=8 is allowed;
+        //    and durable 8-settled-wake saturation is reset once a human speaks in the room.
+        Assert.Equal(8, TinaChatService.MaxTeammateRelayDepth);
+        await Chat.SendAsync(planRoomId, new(execAMember.ParticipantId, "@rev-b hop 9 loop", "team:relay_depth=9", AllowDerivedSharing: true));
+        await using (var db = await DbAsync())
+        {
+            Assert.Equal(0, await db.Wakes.CountAsync(w => w.ConversationId == planRoomId && w.ParticipantId == execBMember.ParticipantId && w.Status == "pending"));
+        }
+
+        await Chat.SendAsync(planRoomId, new(execAMember.ParticipantId, "@rev-b hop 8 allowed", "team:relay_depth=8", AllowDerivedSharing: true));
+        Guid humanMemberId;
+        await using (var db = await DbAsync())
+        {
+            Assert.Equal(1, await db.Wakes.CountAsync(w => w.ConversationId == planRoomId && w.ParticipantId == execBMember.ParticipantId && w.Status == "pending"));
+            await db.Wakes.Where(w => w.ConversationId == planRoomId && w.Status == "pending").ExecuteDeleteAsync();
+
+            // Seed 7 more settled wakes (total = 8 settled wakes -> next unannotated relay is hop 9 -> suppressed).
+            var ts = DateTimeOffset.UtcNow;
+            for (var i = 0; i < 7; i++)
+            {
+                db.Wakes.Add(new ChatWake
+                {
+                    TenantId = current.TenantId, WorkspaceId = current.WorkspaceId,
+                    ConversationId = planRoomId, ParticipantId = execBMember.ParticipantId,
+                    Reason = "message", Status = "done", SourceMessageIdsJson = "[]",
+                    AvailableAt = ts, DueAtUnixMs = ts.ToUnixTimeMilliseconds(),
+                    CreatedAt = ts, UpdatedAt = ts
+                });
+            }
+            humanMemberId = (await db.Participants.SingleAsync(p => p.OrganizationId == coordMember.OrganizationId && p.OrgRole == OrganizationRoles.Human)).Id;
+            if (!await db.Members.AnyAsync(m => m.ConversationId == planRoomId && m.ParticipantId == humanMemberId))
+            {
+                db.Members.Add(new ChatMember { ConversationId = planRoomId, ParticipantId = humanMemberId, Role = "member", Status = "active" });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        await Chat.SendAsync(planRoomId, new(execAMember.ParticipantId, "@rev-b unannotated hop 9", "natural-hop-9", AllowDerivedSharing: true));
+        await using (var db = await DbAsync())
+        {
+            Assert.Equal(0, await db.Wakes.CountAsync(w => w.ConversationId == planRoomId && w.ParticipantId == execBMember.ParticipantId && w.Status == "pending"));
+        }
+
+        await Task.Delay(15);
+        await Chat.SendAsync(planRoomId, new(humanMemberId, "Human intervention resets relay budget", "human-reset-1", AllowDerivedSharing: true));
+        await Chat.SendAsync(planRoomId, new(execAMember.ParticipantId, "@rev-b hop 1 after human reset", "natural-hop-1-after-reset", AllowDerivedSharing: true));
+        await using (var db = await DbAsync())
+        {
+            Assert.Equal(1, await db.Wakes.CountAsync(w => w.ConversationId == planRoomId && w.ParticipantId == execBMember.ParticipantId && w.Status == "pending"));
+        }
+    }
+
     private async Task<TinaChatDbContext> DbAsync() =>
         await _factory.Services.GetRequiredService<IDbContextFactory<TinaChatDbContext>>().CreateDbContextAsync();
 

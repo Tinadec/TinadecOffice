@@ -11,7 +11,8 @@ namespace TinadecCore.AgentGraph;
 /// </summary>
 internal sealed class ToolExecutionTargetResolver(
     IResourceLeaseService leases,
-    IEnvironmentRegistry environments) : IToolExecutionTargetResolver
+    IEnvironmentRegistry environments,
+    ITaskLineageLookup? lineage = null) : IToolExecutionTargetResolver
 {
     private static readonly string[] RootKeys = ["workspace_root", "root_path", "path", "cwd", "working_directory"];
 
@@ -36,10 +37,54 @@ internal sealed class ToolExecutionTargetResolver(
                 && item.Kind == ResourceLeaseKinds.Worktree
                 && item.Purpose == ResourceLeasePurposes.Assignment)
             .ToArray();
-        if (worktrees.Length > 1)
+
+        ResourceLeaseInfo? selectedWorktree = null;
+        if (worktrees.Length > 0)
         {
-            return new ToolExecutionTargetResolution(null,
-                "This run holds more than one worktree assignment without a task binding; refusing to guess which provider root this task should use.");
+            var exactTaskWorktrees = taskId == Guid.Empty
+                ? []
+                : worktrees.Where(item => item.TaskId == taskId).ToArray();
+            if (exactTaskWorktrees.Length > 1)
+            {
+                return new ToolExecutionTargetResolution(null,
+                    "This task holds more than one worktree assignment; refusing to guess which provider root this task should use.");
+            }
+            if (exactTaskWorktrees is [{ } exactMatch])
+            {
+                selectedWorktree = exactMatch;
+            }
+            else if (taskId != Guid.Empty && lineage is not null && worktrees.Any(item => item.TaskId is not null))
+            {
+                var ancestors = await lineage.GetAncestorTaskIdsAsync(sessionId, runId, taskId, cancellationToken).ConfigureAwait(false);
+                foreach (var ancestorId in ancestors)
+                {
+                    var ancestorMatches = worktrees.Where(item => item.TaskId == ancestorId).ToArray();
+                    if (ancestorMatches.Length > 1)
+                    {
+                        return new ToolExecutionTargetResolution(null,
+                            "An ancestor task holds more than one worktree assignment; refusing to guess which provider root this sub-task should inherit.");
+                    }
+                    if (ancestorMatches is [{ } inherited])
+                    {
+                        selectedWorktree = inherited;
+                        break;
+                    }
+                }
+            }
+
+            if (selectedWorktree is null)
+            {
+                var unscopedWorktrees = worktrees.Where(item => item.TaskId is null).ToArray();
+                if (unscopedWorktrees.Length > 1)
+                {
+                    return new ToolExecutionTargetResolution(null,
+                        "This run holds more than one worktree assignment without a task binding; refusing to guess which provider root this task should use.");
+                }
+                if (unscopedWorktrees is [{ } runWorktree])
+                {
+                    selectedWorktree = runWorktree;
+                }
+            }
         }
 
         var environmentLeases = active.Where(item => item.RunId == runId
@@ -56,7 +101,7 @@ internal sealed class ToolExecutionTargetResolver(
         // A worktree is the most specific local execution root. If an environment
         // is also held, require the two facts to identify the same root rather than
         // silently dropping one of the assignments.
-        if (worktrees is [{ } worktree])
+        if (selectedWorktree is { } worktree)
         {
             var worktreeRoot = ExistingDirectory(worktree.ResourceKey, "worktree", worktree.Id);
             if (environmentLeases is [{ } environment])

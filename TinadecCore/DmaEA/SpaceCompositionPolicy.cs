@@ -21,13 +21,15 @@ internal static class SpaceCompositionPolicy
         }
         var root = roster.Operation.FirstOrDefault(item => item.Id == roster.ConversationTemplateSlug);
         if (root is null) throw new RunAdmissionException("space_base_unavailable", "The selected resources have no conversation identity.");
-        if (options.PlanFirst && options.WorkflowModeVersionId is null
-            && !root.AllowedTools.Contains(CoreVirtualToolPolicy.PlanUpdateToolId, StringComparer.OrdinalIgnoreCase))
-            throw new RunAdmissionException("space_options_unavailable", "This published baseline does not offer the plan_update capability.");
+        var rootExecutesDirectly = !options.MultiAgent
+            && options.WorkflowModeVersionId is null
+            && root.AllowedTools.Any(tool => !CoreVirtualToolPolicy.IsTinadecConfig(tool) && !CoreVirtualToolPolicy.IsTeamTool(tool));
+        if (options.PlanFirst && rootExecutesDirectly
+            && !root.AllowedTools.Contains(CoreVirtualToolPolicy.PlanUpdateToolId, StringComparer.OrdinalIgnoreCase)
+            && !root.AllowedTools.Contains(CoreVirtualToolPolicy.TeamPlanToolId, StringComparer.OrdinalIgnoreCase))
+            throw new RunAdmissionException("space_options_unavailable", "This published baseline does not offer the plan_update or team_plan capability.");
         if (options.Worktree && workspace is not { IsGitRepository: true })
             throw new RunAdmissionException("space_worktree_unavailable", "An independent worktree requires a Git project.");
-        if (options.Worktree && options.WorkflowModeVersionId is null && !root.AllowedTools.Contains("git_worktree_create", StringComparer.OrdinalIgnoreCase))
-            throw new RunAdmissionException("space_worktree_unavailable", "The selected workflow does not grant its conversation identity worktree creation.");
     }
 
     internal static RuntimeAgentDefinition[] Narrow(IEnumerable<RuntimeAgentDefinition> agents, SpaceRunOptions options) =>
@@ -44,17 +46,24 @@ internal static class SpaceCompositionPolicy
     internal static FrozenGraph Narrow(FrozenGraph graph, IReadOnlyList<RuntimeAgentDefinition> operation, SpaceRunOptions options) =>
         graph with
         {
-            Tier = options.WorkflowModeVersionId is not null
-                ? (operation.First(agent => agent.Id == graph.ConversationTemplateSlug).Capabilities.Any(IsSpawn)
-                    ? FrozenGraphTiers.SelfDispatch : FrozenGraphTiers.Deterministic)
-                : FrozenGraphTiers.SoloDispatch,
+            Tier = !options.MultiAgent
+                ? FrozenGraphTiers.SoloDispatch
+                : options.WorkflowModeVersionId is not null
+                    ? (operation.First(agent => agent.Id == graph.ConversationTemplateSlug).Capabilities.Any(IsSpawn)
+                        ? FrozenGraphTiers.SelfDispatch : FrozenGraphTiers.Deterministic)
+                    : graph.Tier,
             SpawnableTemplates = options.MultiAgent ? graph.SpawnableTemplates.Select(template => template with
             {
                 ToolCeiling = template.ToolCeiling.Where(tool => options.Worktree || !IsWorktreeManagement(tool)).ToArray()
             }).ToArray() : [],
         };
 
-    internal static bool IsDispatch(string tool) => CoreVirtualToolPolicy.IsTaskDispatch(tool) || CoreVirtualToolPolicy.IsTaskWait(tool)
+    internal static bool IsDispatch(string tool) =>
+        CoreVirtualToolPolicy.IsTaskDispatch(tool)
+        || CoreVirtualToolPolicy.IsTaskWait(tool)
+        || CoreVirtualToolPolicy.IsTeamSpawn(tool)
+        || CoreVirtualToolPolicy.IsTeamWait(tool)
+        || CoreVirtualToolPolicy.IsTeamIntegrate(tool)
         || tool.Equals("tina_chat_execute_intent", StringComparison.OrdinalIgnoreCase);
     internal static bool IsSpawn(string capability) => capability is "agent.create_temporary" or "agent.spawn" or "agent.create_persistent";
     internal static bool IsWorktreeManagement(string tool) => tool is "git_worktree_create" or "git_worktree_remove";

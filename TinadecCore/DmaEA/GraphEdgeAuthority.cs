@@ -20,46 +20,158 @@ namespace TinadecCore.DmaEA;
 /// </summary>
 public static class GraphEdgeAuthority
 {
-    public static bool IsDispatchAllowed(FrozenGraph? graph, string? workerSlug)
+    public static bool IsDispatchAllowed(FrozenGraph? graph, string? workerSlug, string? dispatcherSlug = null)
     {
         if (graph is null) return true;
         if (string.IsNullOrWhiteSpace(workerSlug)) return false;
-        if (string.Equals(graph.Tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal)) return true;
-        var nodeBySlug = graph.Nodes.ToDictionary(node => node.AgentSlug, StringComparer.Ordinal);
-        if (!nodeBySlug.TryGetValue(workerSlug, out var workerNode))
-        {
-            // A slug that is not a declared node can only be a spawned template, and only
-            // the tiers that carry spawn authority may dispatch to one. solo_dispatch is
-            // grouped with self_dispatch: it walks declared edges when it has them and
-            // falls back to the spawnable whitelist when it does not, so one tier covers
-            // both "the master dispatches along the graph" and "the master dispatches
-            // freely".
-            var tierAllowsSpawnedWorkers = string.Equals(graph.Tier, FrozenGraphTiers.SelfDispatch, StringComparison.Ordinal)
-                || string.Equals(graph.Tier, FrozenGraphTiers.SoloDispatch, StringComparison.Ordinal);
-            return tierAllowsSpawnedWorkers
-                && graph.SpawnableTemplates.Any(template =>
-                    string.Equals(template.Slug, workerSlug, StringComparison.OrdinalIgnoreCase));
-        }
-        var workerNodeKey = workerNode.NodeKey;
+        var trimmedWorker = workerSlug.Trim();
 
-        foreach (var edge in graph.Edges)
+        var nodeBySlug = new Dictionary<string, FrozenGraphNode>(StringComparer.OrdinalIgnoreCase);
+        var nodeByKey = new Dictionary<string, FrozenGraphNode>(StringComparer.Ordinal);
+        foreach (var node in graph.Nodes)
         {
-            if (!string.Equals(edge.TargetNodeKey, workerNodeKey, StringComparison.Ordinal))
+            nodeBySlug.TryAdd(node.AgentSlug, node);
+            nodeByKey.TryAdd(node.NodeKey, node);
+        }
+        nodeBySlug.TryGetValue(trimmedWorker, out var workerNode);
+
+        // When a concrete dispatcher is named (e.g. an execution worker invoking task_dispatch
+        // for 2-layer nested delegation), evaluate ONLY that dispatcher's outgoing declared
+        // edges and its node-declared allowed_dispatch_targets / agent_types, strictly
+        // forbidding execution -> operation backflow.
+        if (!string.IsNullOrWhiteSpace(dispatcherSlug))
+        {
+            var trimmedDispatcher = dispatcherSlug.Trim();
+            nodeBySlug.TryGetValue(trimmedDispatcher, out var dispatcherNode);
+            var dispatcherIsExecution = dispatcherNode is null
+                || string.Equals(dispatcherNode.Layer, "execution", StringComparison.OrdinalIgnoreCase);
+            if (dispatcherIsExecution && workerNode is not null
+                && string.Equals(workerNode.Layer, "operation", StringComparison.OrdinalIgnoreCase))
             {
-                continue;
+                return false;
             }
-            var sourceIsConversation = string.Equals(edge.SourceNodeKey, graph.ConversationNodeKey, StringComparison.Ordinal);
-            if (sourceIsConversation)
+
+            // Conversation root delegates to the root reachability & tier authority,
+            // subject to its own allowed_dispatch_targets narrowing if declared.
+            if (dispatcherNode is not null
+                && (dispatcherNode.IsConversation
+                    || string.Equals(dispatcherNode.NodeKey, graph.ConversationNodeKey, StringComparison.Ordinal)
+                    || string.Equals(dispatcherNode.AgentSlug, graph.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase)))
             {
-                return true;
+                if (dispatcherNode.AllowedDispatchTargets is { } rootTargets
+                    && !rootTargets.Contains(trimmedWorker, StringComparer.OrdinalIgnoreCase))
+                    return false;
+                return IsDispatchAllowed(graph, trimmedWorker, dispatcherSlug: null);
             }
-            var sourceNode = graph.Nodes.FirstOrDefault(node =>
-                string.Equals(node.NodeKey, edge.SourceNodeKey, StringComparison.Ordinal));
-            if (sourceNode is not null && string.Equals(sourceNode.Layer, "operation", StringComparison.Ordinal))
+
+            if (dispatcherNode is not null)
             {
-                return true;
+                if (dispatcherNode.AllowedDispatchTargets is { } narrowTargets
+                    && !narrowTargets.Contains(trimmedWorker, StringComparer.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+                if (workerNode is not null
+                    && !string.Equals(workerNode.Layer, "operation", StringComparison.OrdinalIgnoreCase)
+                    && graph.Edges.Any(edge =>
+                        string.Equals(edge.SourceNodeKey, dispatcherNode.NodeKey, StringComparison.Ordinal)
+                        && string.Equals(edge.TargetNodeKey, workerNode.NodeKey, StringComparison.Ordinal)))
+                {
+                    return true;
+                }
+                if (dispatcherNode.AllowedDispatchTargets is { } explicitTargets
+                    && explicitTargets.Contains(trimmedWorker, StringComparer.OrdinalIgnoreCase))
+                {
+                    return IsKnownWorkerOrAuthorizedTemplate(graph, workerNode, trimmedWorker);
+                }
+                if (dispatcherNode.AgentTypes is { } agentTypes
+                    && agentTypes.Contains(trimmedWorker, StringComparer.OrdinalIgnoreCase))
+                {
+                    return IsKnownWorkerOrAuthorizedTemplate(graph, workerNode, trimmedWorker);
+                }
+                return false;
+            }
+
+            var dispatcherTemplate = graph.SpawnableTemplates.FirstOrDefault(template =>
+                string.Equals(template.Slug, trimmedDispatcher, StringComparison.OrdinalIgnoreCase));
+            if (dispatcherTemplate?.AllowedDispatchTargets is { } templateTargets
+                && templateTargets.Contains(trimmedWorker, StringComparer.OrdinalIgnoreCase))
+            {
+                return IsKnownWorkerOrAuthorizedTemplate(graph, workerNode, trimmedWorker);
+            }
+            return false;
+        }
+
+        if (string.Equals(graph.Tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal))
+        {
+            if (workerNode is not null && string.Equals(workerNode.Layer, "operation", StringComparison.OrdinalIgnoreCase) && !workerNode.IsConversation)
+                return false;
+            return true;
+        }
+
+        if (workerNode is null)
+            return TierAllowsSpawnedWorkers(graph.Tier)
+                && graph.SpawnableTemplates.Any(template =>
+                    string.Equals(template.Slug, trimmedWorker, StringComparison.OrdinalIgnoreCase));
+
+        // Execution tasks never dispatch back into operation-layer nodes.
+        if (string.Equals(workerNode.Layer, "operation", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Directed BFS reachability from conversation / operation seeds across forward
+        // edges (supporting multi-stage pipelines leader -> m1 -> m2 while forbidding
+        // execution -> operation backflow traversal).
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+        foreach (var node in graph.Nodes)
+        {
+            if (string.Equals(node.NodeKey, graph.ConversationNodeKey, StringComparison.Ordinal)
+                || string.Equals(node.Layer, "operation", StringComparison.OrdinalIgnoreCase))
+            {
+                if (visited.Add(node.NodeKey))
+                    queue.Enqueue(node.NodeKey);
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(graph.ConversationNodeKey) && visited.Add(graph.ConversationNodeKey))
+            queue.Enqueue(graph.ConversationNodeKey);
+
+        while (queue.Count > 0)
+        {
+            var currentKey = queue.Dequeue();
+            nodeByKey.TryGetValue(currentKey, out var sourceNode);
+            var sourceIsExecution = sourceNode is not null
+                && string.Equals(sourceNode.Layer, "execution", StringComparison.OrdinalIgnoreCase);
+
+            foreach (var edge in graph.Edges)
+            {
+                if (!string.Equals(edge.SourceNodeKey, currentKey, StringComparison.Ordinal))
+                    continue;
+                if (!nodeByKey.TryGetValue(edge.TargetNodeKey, out var targetNode))
+                    continue;
+                if (sourceIsExecution && string.Equals(targetNode.Layer, "operation", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (string.Equals(edge.TargetNodeKey, workerNode.NodeKey, StringComparison.Ordinal))
+                    return true;
+                if (visited.Add(edge.TargetNodeKey))
+                    queue.Enqueue(edge.TargetNodeKey);
             }
         }
         return false;
     }
+
+    private static bool IsKnownWorkerOrAuthorizedTemplate(FrozenGraph graph, FrozenGraphNode? workerNode, string workerSlug)
+    {
+        if (workerNode is not null)
+            return !string.Equals(workerNode.Layer, "operation", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(graph.Tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal))
+            return true;
+        return TierAllowsSpawnedWorkers(graph.Tier)
+            && graph.SpawnableTemplates.Any(template =>
+                string.Equals(template.Slug, workerSlug, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TierAllowsSpawnedWorkers(string tier) =>
+        string.Equals(tier, FrozenGraphTiers.SelfDispatch, StringComparison.Ordinal)
+        || string.Equals(tier, FrozenGraphTiers.SoloDispatch, StringComparison.Ordinal)
+        || string.Equals(tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal);
 }

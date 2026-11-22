@@ -35,7 +35,7 @@ public sealed partial class ToolChainEndpointTests
         var script = new ToolScriptedClient().WhenWorkerTurns(
             [SpaceCall("read", "read_file", ("filepath", path))],
             [SpaceCall("early-write", "write_file", ("filepath", path), ("content", "too early"))],
-            [SpaceCall("plan", "plan_update", ("steps", new[] { new { step = "Write the verified result", status = "in_progress" } }))],
+            [SpaceCall("plan", "team_plan", ("steps", new[] { new { title = "Write the verified result", status = "in_progress" } }))],
             [SpaceCall("write", "write_file", ("filepath", path), ("content", "planned"))],
             [new TextContent("The verified result was written. TASK_OUTCOME: completed")]).WhenMeeting("Done.");
         var provider = new FakeToolProvider();
@@ -49,7 +49,11 @@ public sealed partial class ToolChainEndpointTests
         var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60));
         Assert.Contains(chunks, chunk => KindOf(chunk) == "done");
         Assert.Equal(new[] { "read_file", "write_file" }, provider.ReceivedToolIds);
-        Assert.All(script.WorkerToolNames, names => Assert.DoesNotContain("task_dispatch", names));
+        Assert.All(script.WorkerToolNames, names =>
+        {
+            Assert.DoesNotContain("task_dispatch", names);
+            Assert.DoesNotContain("team_spawn", names);
+        });
         using var scope = _factory!.Services.CreateScope();
         var lifecycle = scope.ServiceProvider.GetRequiredService<ILifecycleManager>();
         var events = await lifecycle.ReplayEventsAsync(fixture.Session, 0);

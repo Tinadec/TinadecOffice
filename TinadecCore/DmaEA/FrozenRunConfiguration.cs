@@ -162,6 +162,25 @@ public sealed record FrozenRunConfigurationV1(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public TinaChatInputBinding? TinaChatInput { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ModeSlug { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ModeDisplayName { get; init; }
+
+    /// <summary>
+    /// Preset run switches declared on the published mode itself (<c>default_options</c>).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SpaceRunOptions? DefaultOptions { get; init; }
+
+    /// <summary>
+    /// Active global/workspace/agent prompt fragments captured at run admission so resumed runs
+    /// and worker sub-tasks read an immutable snapshot instead of querying live mutable storage.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<FrozenPromptFragment>? FrozenPromptFragments { get; init; }
+
     /// <summary>
     /// The frozen-body schema this Core writes and reads. v2 introduced the
     /// always-present Graph section (free_form tier on disk) and spawnable
@@ -239,6 +258,12 @@ public sealed record FrozenGraphNode(string NodeKey, string AgentSlug, string La
 {
     /// <summary>Workspace-relative path grants frozen from the node's binding envelope resources (empty = deny path-targeting tools; WS-4 resource envelope).</summary>
     public IReadOnlyList<FrozenResourceGrant> ResourceGrants { get; init; } = [];
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AgentTypes { get; init; }
 }
 
 /// <summary>
@@ -287,6 +312,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     private readonly IPolicySnapshotProvider? _policySnapshots;
     private readonly IToolConfigurationResolver? _toolSettings;
     private readonly IConfigurationProjectionCoordinator? _configurationFiles;
+    private readonly IFrozenPromptFragmentSource? _promptFragments;
 
     public AgentRuntimeConfigurationResolver(
         IAgentRuntimeConfiguration baseline,
@@ -295,7 +321,8 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         ISessionLocator sessions,
         IPolicySnapshotProvider? policySnapshots = null,
         IToolConfigurationResolver? toolSettings = null,
-        IConfigurationProjectionCoordinator? configurationFiles = null)
+        IConfigurationProjectionCoordinator? configurationFiles = null,
+        IFrozenPromptFragmentSource? promptFragments = null)
     {
         _baseline = baseline;
         _formal = formal;
@@ -304,6 +331,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         _policySnapshots = policySnapshots;
         _toolSettings = toolSettings;
         _configurationFiles = configurationFiles;
+        _promptFragments = promptFragments;
     }
 
     public Task<FrozenRunConfigurationV1> ResolveAsync(
@@ -355,9 +383,6 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         }
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Session was not found.");
-        if (spaceOptions is not null && session.ViewMode != "space")
-            throw new RunAdmissionException("space_options_invalid", "Spatial options apply only to a spatial session.");
-        if (session.ViewMode == "space") spaceOptions ??= session.SpaceOptions ?? new SpaceRunOptions();
         if (spaceOptions?.WorkflowModeVersionId is { } workflowId) modeVersionIdOverride = workflowId;
         var modeVersionId = modeVersionIdOverride ?? session.ModeVersionId;
         if (modeVersionId is null)
@@ -381,32 +406,79 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         };
         if (fileSnapshot is not null)
             bindings.Add(new("scope_configuration_files", DeterministicGuid(fileSnapshot.StorageId), DeterministicGuid(fileSnapshot.ContentHash), fileSnapshot.ContentHash));
-        var relational = spaceOptions is { WorkflowModeVersionId: null }
-            ? await _formal.ResolveSpaceBaseAsync(sessionId, RunLocaleResolver.Normalize(interfaceLocale), cancellationToken).ConfigureAwait(false)
-                ?? throw new RunAdmissionException("space_base_unavailable", "Publish a directly executable mode with a writable conversation identity before using spatial composition.")
-            : await _formal.ResolveRosterForModeAsync(sessionId, modeVersionId.Value, RunLocaleResolver.Normalize(interfaceLocale), cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
+        var normalizedLocale = RunLocaleResolver.Normalize(interfaceLocale);
+        var explicitOptions = spaceOptions ?? session.SpaceOptions;
+        FormalModeRoster relational;
+        if (explicitOptions is { MultiAgent: false, WorkflowModeVersionId: null } && session.ViewMode == "space" && modeVersionIdOverride is null)
+        {
+            relational = await _formal.ResolveSpaceBaseAsync(sessionId, normalizedLocale, cancellationToken).ConfigureAwait(false)
+                ?? throw new RunAdmissionException("space_base_unavailable", "Publish a directly executable mode with a writable conversation identity before using spatial composition.");
+        }
+        else
+        {
+            relational = await _formal.ResolveRosterForModeAsync(sessionId, modeVersionId.Value, normalizedLocale, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
+            if (explicitOptions is { MultiAgent: false, WorkflowModeVersionId: null })
+            {
+                var rootCandidate = relational.Operation.FirstOrDefault(item => string.Equals(item.Id, relational.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase));
+                var hasDirectTools = rootCandidate is not null
+                    && rootCandidate.AllowedTools.Any(tool => !CoreVirtualToolPolicy.IsTinadecConfig(tool) && !CoreVirtualToolPolicy.IsTeamTool(tool))
+                    && rootCandidate.ResourceGrants.Any(grant => string.Equals(grant.Level, "write", StringComparison.OrdinalIgnoreCase));
+                if (!hasDirectTools)
+                {
+                    var soloBase = await _formal.ResolveSpaceBaseAsync(sessionId, normalizedLocale, cancellationToken).ConfigureAwait(false);
+                    if (soloBase is not null) relational = soloBase;
+                }
+            }
+        }
+        var effectiveOptions = explicitOptions ?? (relational.IsPackManaged ? null : relational.DefaultOptions);
+        if (effectiveOptions?.WorkflowModeVersionId is { } resolvedWfId && resolvedWfId != relational.ModeVersionId)
+        {
+            relational = await _formal.ResolveRosterForModeAsync(sessionId, resolvedWfId, normalizedLocale, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException($"Agent mode version '{resolvedWfId}' could not be resolved.");
+        }
         modeVersionId = relational.ModeVersionId;
-        SpaceCompositionPolicy.Validate(spaceOptions, relational, workspace);
+        SpaceCompositionPolicy.Validate(effectiveOptions, relational, workspace);
+
         var operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
         var execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
         string[] preparationTools = [];
-        if (spaceOptions is { WorkflowModeVersionId: not null } && (spaceOptions.SpecEnabled || spaceOptions.Worktree))
+        if (effectiveOptions is not null && (effectiveOptions.SpecEnabled || effectiveOptions.Worktree))
         {
-            var preparation = await _formal.ResolveSpaceBaseAsync(sessionId, RunLocaleResolver.Normalize(interfaceLocale), cancellationToken).ConfigureAwait(false)
-                ?? throw new RunAdmissionException("space_base_unavailable", "The workflow requires a published direct-execution resource for its preparation phase.");
-            var source = preparation.Operation.Single(item => item.Id == preparation.ConversationTemplateSlug);
-            var root = operation.Single(item => item.Id == relational.ConversationTemplateSlug);
-            if (root.AgentVersionId != source.AgentVersionId)
-                throw new RunAdmissionException("space_options_conflict", "Workflow preparation must use the same published conversation agent version as its direct-execution resource.");
-            preparationTools = source.AllowedTools.Where(tool =>
-                spaceOptions.Worktree && tool == "git_worktree_create" || spaceOptions.SpecEnabled && SpaceCompositionPolicy.PreparationReadTools.Contains(tool)).ToArray();
-            if (spaceOptions.Worktree && !preparationTools.Contains("git_worktree_create"))
-                throw new RunAdmissionException("space_worktree_unavailable", "The published preparation resource does not grant worktree creation.");
-            operation = operation.Select(agent => agent.AgentVersionId == root.AgentVersionId
-                ? agent with { AllowedTools = agent.AllowedTools.Concat(preparationTools).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-                    ResourceGrants = agent.ResourceGrants.Concat(source.ResourceGrants).Distinct().ToArray() } : agent).ToArray();
-            bindings.Add(new RunConfigurationBinding("space_preparation_mode_version", preparation.AgentModeId, preparation.ModeVersionId, preparation.TopologyHash ?? ""));
+            var root = operation.FirstOrDefault(item => string.Equals(item.Id, relational.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase));
+            var needsWorktreeTool = effectiveOptions.Worktree && (root is null || !root.AllowedTools.Contains("git_worktree_create", StringComparer.OrdinalIgnoreCase));
+            var needsSpecReadTools = effectiveOptions.SpecEnabled
+                && (root is null || !SpaceCompositionPolicy.PreparationReadTools.All(t => root.AllowedTools.Contains(t, StringComparer.OrdinalIgnoreCase)));
+            if (root is not null && (needsWorktreeTool || needsSpecReadTools))
+            {
+                var preparation = await _formal.ResolveSpaceBaseAsync(sessionId, normalizedLocale, cancellationToken).ConfigureAwait(false);
+                if (preparation is null)
+                {
+                    if (needsWorktreeTool)
+                        throw new RunAdmissionException("space_worktree_unavailable", "The selected mode does not grant worktree creation and no direct-execution preparation resource is published.");
+                    if (effectiveOptions.WorkflowModeVersionId is not null)
+                        throw new RunAdmissionException("space_base_unavailable", "The workflow requires a published direct-execution resource for its preparation phase.");
+                }
+                else
+                {
+                    var source = preparation.Operation.Single(item => item.Id == preparation.ConversationTemplateSlug);
+                    if (effectiveOptions.WorkflowModeVersionId is not null && root.AgentVersionId != source.AgentVersionId)
+                        throw new RunAdmissionException("space_options_conflict", "Workflow preparation must use the same published conversation agent version as its direct-execution resource.");
+                    preparationTools = source.AllowedTools.Where(tool =>
+                        effectiveOptions.Worktree && tool == "git_worktree_create"
+                        || (effectiveOptions.SpecEnabled && SpaceCompositionPolicy.PreparationReadTools.Contains(tool))).ToArray();
+                    if (effectiveOptions.Worktree && !preparationTools.Contains("git_worktree_create", StringComparer.OrdinalIgnoreCase))
+                        throw new RunAdmissionException("space_worktree_unavailable", "The published preparation resource does not grant worktree creation.");
+                    operation = operation.Select(agent => string.Equals(agent.Id, root.Id, StringComparison.OrdinalIgnoreCase)
+                        ? agent with
+                        {
+                            AllowedTools = agent.AllowedTools.Concat(preparationTools).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                            ResourceGrants = agent.ResourceGrants.Concat(source.ResourceGrants).Distinct().ToArray()
+                        }
+                        : agent).ToArray();
+                    bindings.Add(new RunConfigurationBinding("space_preparation_mode_version", preparation.AgentModeId, preparation.ModeVersionId, preparation.TopologyHash ?? ""));
+                }
+            }
         }
         operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId.Value, relational.ConversationTemplateSlug, meetingModelOverride, cancellationToken, useSessionModelOverride).ConfigureAwait(false)).ToArray();
         execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId.Value, relational.ConversationTemplateSlug, meetingModelOverride, cancellationToken, useSessionModelOverride).ConfigureAwait(false)).ToArray();
@@ -435,7 +507,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             .GroupBy(agent => agent.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().ResourceGrants, StringComparer.OrdinalIgnoreCase);
         var graph = new FrozenGraph(
-            DeriveGraphTier(operation, relational.HasDeclaredEdges, relational.ConversationTemplateSlug),
+            DeriveGraphTier(operation, relational.HasDeclaredEdges, relational.ConversationTemplateSlug, relational.OrchestrationTier),
             relational.ConversationTemplateSlug,
             relational.ConversationNodeKey,
             relational.GraphNodes.Select(node => new FrozenGraphNode(
@@ -444,7 +516,9 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
                 node.Layer,
                 string.Equals(node.NodeKey, relational.ConversationNodeKey, StringComparison.Ordinal))
             {
-                ResourceGrants = grantsBySlug.TryGetValue(node.AgentSlug, out var grants) ? grants : []
+                ResourceGrants = grantsBySlug.TryGetValue(node.AgentSlug, out var grants) ? grants : [],
+                AllowedDispatchTargets = node.AllowedDispatchTargets,
+                AgentTypes = node.AgentTypes
             }).ToArray(),
             relational.Edges)
         {
@@ -477,13 +551,16 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             snapshot.Orchestration.LanesEnabled);
 
         var runtimeProfileId = relational.RuntimeProfileId;
-        if (spaceOptions is not null)
+        if (effectiveOptions is not null)
         {
-            operation = SpaceCompositionPolicy.Narrow(operation, spaceOptions);
-            execution = SpaceCompositionPolicy.Narrow(execution, spaceOptions);
-            graph = SpaceCompositionPolicy.Narrow(graph, operation, spaceOptions);
-            runtimeProfileId += ":space:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(spaceOptions)))).ToLowerInvariant()[..16];
+            operation = SpaceCompositionPolicy.Narrow(operation, effectiveOptions);
+            execution = SpaceCompositionPolicy.Narrow(execution, effectiveOptions);
+            graph = SpaceCompositionPolicy.Narrow(graph, operation, effectiveOptions);
+            runtimeProfileId += ":space:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(effectiveOptions)))).ToLowerInvariant()[..16];
         }
+        var frozenFragments = _promptFragments is null
+            ? null
+            : await _promptFragments.SnapshotActiveFragmentsAsync(session.TenantId, session.WorkspaceId, cancellationToken).ConfigureAwait(false);
         bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.AgentModeId, relational.ModeVersionId, relational.TopologyHash ?? ""));
         foreach (var agent in relational.Operation.Concat(relational.Execution))
         {
@@ -525,9 +602,13 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             Orchestration = snapshot.Orchestration,
             Graph = graph,
             RuntimePolicy = relational.RuntimePolicy,
-            InterfaceLocale = RunLocaleResolver.Normalize(interfaceLocale),
+            ModeSlug = relational.ModeSlug,
+            ModeDisplayName = relational.ModeDisplayName,
+            InterfaceLocale = normalizedLocale,
             Workspace = workspace,
-            SpaceOptions = spaceOptions,
+            DefaultOptions = relational.DefaultOptions,
+            SpaceOptions = effectiveOptions,
+            FrozenPromptFragments = frozenFragments,
             SpacePreparationToolIds = preparationTools.Length == 0 ? null : preparationTools
         };
         if (fileSnapshot is not null && _configurationFiles is not null)
@@ -548,16 +629,31 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     /// (including create_persistent-only, which mints candidates not dispatchable
     /// workers) → deterministic.
     /// </summary>
-    internal static string DeriveGraphTier(IReadOnlyList<RuntimeAgentDefinition> operation, bool hasDeclaredEdges, string? conversationSlug)
+    internal static string DeriveGraphTier(
+        IReadOnlyList<RuntimeAgentDefinition> operation,
+        bool hasDeclaredEdges,
+        string? conversationSlug,
+        string? explicitOrchestrationTier = null)
     {
+        if (!string.IsNullOrWhiteSpace(explicitOrchestrationTier))
+        {
+            var normalized = explicitOrchestrationTier.Trim().ToLowerInvariant();
+            if (normalized is "solo" or FrozenGraphTiers.SoloDispatch) return FrozenGraphTiers.SoloDispatch;
+            if (normalized is "team" or "free_director" or FrozenGraphTiers.FreeForm) return FrozenGraphTiers.FreeForm;
+            if (normalized is "graph" or FrozenGraphTiers.SelfDispatch) return FrozenGraphTiers.SelfDispatch;
+            if (normalized is "workflow" or FrozenGraphTiers.Deterministic) return FrozenGraphTiers.Deterministic;
+        }
         var conversation = conversationSlug is { } slug
             ? operation.FirstOrDefault(agent => string.Equals(agent.Id, slug, StringComparison.OrdinalIgnoreCase))
             : null;
-        // First branch: the conversation identity holds tools. Placed first because it
-        // answers a different question than the two that follow — who EXECUTES, not how
-        // dispatch is shaped. The three modes that predate it declare an empty meeting
-        // tool_scope and therefore land on their original branches unchanged.
-        if (conversation is { AllowedTools.Count: > 0 }) return FrozenGraphTiers.SoloDispatch;
+        // Unspecified single-node direct tool conversation: when no explicit tier was declared
+        // and the conversation identity holds direct workspace tools (excluding tinadec_*
+        // self-config and team_* orchestration primitives), classify as solo_dispatch.
+        if (conversation is not null
+            && conversation.AllowedTools.Any(tool => !CoreVirtualToolPolicy.IsTinadecConfig(tool) && !CoreVirtualToolPolicy.IsTeamTool(tool)))
+        {
+            return FrozenGraphTiers.SoloDispatch;
+        }
         if (!hasDeclaredEdges) return FrozenGraphTiers.FreeForm;
         var capabilities = conversation?.Capabilities ?? [];
         return capabilities.Any(capability =>
