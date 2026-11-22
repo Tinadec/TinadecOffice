@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
+import { createI18n } from 'vue-i18n'
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -68,14 +69,19 @@ function resolveKey(bundle: Bundle, key: string): unknown {
 const panelSources = import.meta.glob(
   [
     './../pages/SettingsPage.vue',
-    './../settings/sections/AgentModesPanel.vue',
     './../settings/agentCenter/AgentCenterSection.vue',
     './../settings/agentCenter/AgentsDirectoryPanel.vue',
-    './../settings/agentCenter/TeamsTab.vue',
+    './../settings/agentCenter/directory/*.vue',
+    './../settings/agentCenter/TeamsModesMerged.vue',
     './../settings/agentCenter/TomlDocumentPanel.vue',
     './../settings/agentCenter/WorkspaceDefaultsPanel.vue',
+    './../settings/agentCenter/LifecycleHooksPanel.vue',
+    './../settings/modelCenter/*.vue',
+    './../settings/memoryContext/*.vue',
     './../components/modeEditor/*.vue',
+    './../components/chat/ImageLightbox.vue',
     './../settings/sections/GeneralSection.vue',
+    './../settings/sections/MemoryContextSection.vue',
     './../settings/sections/AppearanceSection.vue',
     './../settings/sections/ArchiveTrashSection.vue',
     './../settings/sections/PetsSection.vue',
@@ -92,9 +98,9 @@ const panelSources = import.meta.glob(
     './../settings/sections/ModelCenterModelRows.vue',
     './../settings/sections/ModelParametersEditor.vue',
     './../settings/sections/ToolCenterSection.vue',
-    './../settings/sections/ToolResourcesPanel.vue',
     './../settings/sections/ToolDraftDialog.vue',
-    './../settings/sections/ToolsOverviewPanel.vue',
+    './../settings/sections/WebAccessSection.vue',
+    './../settings/toolCenter/*.vue',
     './../components/PermissionSelector.vue',
     './../components/agentCenter/GovernanceRolesPanel.vue',
     './../components/AgentEvolutionPanel.vue',
@@ -117,27 +123,16 @@ const panelSources = import.meta.glob(
     // The supervision decision row labels Core's continue/correct/cancel vocabulary;
     // those three buttons were hardcoded Chinese and read as Chinese in the English app.
     './../components/chat/TurnTimeline.vue',
-    // Market labels are resolved by the controller (one owner for both the filter rail and the
-    // row badges), so a dead key there would render in two cards at once.
-    './../controllers/MarketController.ts',
     // Pages whose wording moved out of the template into the locales; a dead key would show its
     // dotted path where the heading or button was.
-    './../pages/LibraryPage.vue',
-    './../pages/WorkbenchPage.vue',
-    './../pages/MemoryPage.vue',
-    './../pages/GovernanceBoardPage.vue',
-    './../pages/RecoveryCheckPage.vue',
-    './../pages/SnapshotsPage.vue',
     './../pages/DesktopPetPage.vue',
     // The companion window's chat: its empty states, failure reasons and invite dialog all speak.
     './../pages/CompanionPage.vue',
     // Companion settings: the user-wide switchboard, the editor and its five panels.
     './../settings/sections/CompanionSection.vue',
     './../settings/sections/companion/*.vue',
-    './../components/governance/PreAuthorizationDialog.vue',
-    './../components/governance/SnapshotOverrideDialog.vue',
-    // The code page and its Git panels, including the approval and status lines built in script.
-    './../pages/CodePage.vue',
+    './../components/governance/*.vue',
+    '!./../components/governance/*Badge.vue',
     './../components/code/*.vue',
     // The sidebar document reader: its empty, oversized and unsupported states all speak.
     './../components/document/*.vue',
@@ -166,14 +161,9 @@ const panelSources = import.meta.glob(
     './../components/chat/AgentStatusIndicator.vue',
     './../lib/hostAccess.ts',
     './../lib/hostConnection.ts',
-    // The mode / pipeline canvases and Debug Studio, whose chrome was hardcoded Chinese.
-    './../components/canvas/AgentModeCanvas.vue',
+    // The pipeline canvas, whose chrome was hardcoded Chinese.
+    // (AgentModeCanvas is now a thin wrapper around ModeGraphCanvas in ./../components/modeEditor/*.vue.)
     './../components/canvas/PromptPipelineCanvas.vue',
-    './../debug/DebugStudio.vue',
-    './../debug/preview/PreviewGallery.vue',
-    './../debug/preview/ComponentPreview.vue',
-    './../debug/preview/PagePreview.vue',
-    './../debug/preview/ConversationPreview.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>
@@ -299,6 +289,42 @@ describe('i18n locale parity and reference integrity', () => {
       .toEqual(['1 узел', '3 узла', '5 узлов', '21 узел'])
     expect(t('orchestrationPanel.nodes', 5, { locale: 'ja' })).toBe('5 個のノード')
     expect(t('orchestrationPanel.nodes', 1, { locale: 'zh-TW' })).toBe('1 個節點')
+  })
+
+  it('compiles literal double-brace template variable hints and unified governance terminology', () => {
+    const t = i18n.global.t
+    for (const locale of SUPPORTED_LOCALES) {
+      const compiled = t('settings.promptStudio.templateVarsHint', {}, { locale })
+      expect(compiled, `${locale} templateVarsHint should compile literal double braces`).toContain('{{agent_name}}')
+    }
+    expect(t('workbench.operationLane', {}, { locale: 'zh-CN' })).toBe('治理层')
+    expect(t('workbench.operationLane', {}, { locale: 'zh-TW' })).toBe('治理層')
+  })
+
+  it('compiles every leaf message across all 5 locales without vue-i18n syntax errors', () => {
+    for (const [locale, bundle] of Object.entries(bundles)) {
+      const instance = createI18n({
+        legacy: false,
+        locale,
+        messages: { [locale]: bundle as never },
+        missingWarn: false,
+        fallbackWarn: false,
+        warnHtmlMessage: false,
+      })
+      const errors: string[] = []
+      for (const [key, raw] of leafValues(bundle)) {
+        const params: Record<string, string | number> = { count: 1, n: 1 }
+        for (const match of raw.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+          if (!(match[1]! in params)) params[match[1]!] = 'x'
+        }
+        try {
+          instance.global.t(key, params)
+        } catch (error) {
+          errors.push(`${key}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      expect(errors, `${locale}.ts has vue-i18n compilation errors`).toEqual([])
+    }
   })
 
   it('every t() key referenced by agent-center panels exists in both locales', () => {
