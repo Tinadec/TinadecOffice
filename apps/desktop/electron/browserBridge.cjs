@@ -3,9 +3,9 @@
  *
  * Owns the only control surface between the .NET tool process and the Electron-owned browser.
  * It is deliberately tiny and boring: loopback-only HTTP, one random bearer token written to a
- * protected file, a strict CDP method allowlist, and per-session serialization. The semantic
- * layer (a11y snapshot, ref registry, action resolution, waits) stays in TinadecTools; this file
- * never grows a "click" or "snapshot" command of its own.
+ * protected file, a strict CDP method allowlist, DIALOG_SAFE_METHOD guard, and per-TaskSpace
+ * serialization. The semantic layer (a11y snapshot, ref registry, action resolution, waits)
+ * stays in TinadecTools; this file never grows a "click" or "snapshot" command of its own.
  *
  * Why a file instead of an environment variable: `TinadecTools/Runtime/TerminalRunner.cs` and
  * some other helpers spawn children that inherit the whole environment. A token in the env would
@@ -17,14 +17,15 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const fsp = require('node:fs/promises');
 const path = require('node:path');
 
 const BRIDGE_VERSION = 1;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_AUDIT_BYTES = 5 * 1024 * 1024;
-const SESSION_ID = /^[A-Za-z0-9._:-]{1,200}$/;
+const SESSION_ID = /^[A-Za-z0-9._:-]{1,256}$/;
+const TASK_SPACE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const TAB_ID = /^[A-Za-z0-9._:-]{1,80}$/;
+const CDP_SESSION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /** Methods the .NET tools are allowed to send. Everything else is refused, not forwarded. */
 const ALLOWED_CDP_METHODS = new Set([
@@ -33,13 +34,16 @@ const ALLOWED_CDP_METHODS = new Set([
   'Page.navigate',
   'Page.reload',
   'Page.getFrameTree',
+  'Page.getLayoutMetrics',
   'Page.getNavigationHistory',
   'Page.navigateToHistoryEntry',
   'Page.handleJavaScriptDialog',
   'Page.setInterceptFileChooserDialog',
+  'Page.setDownloadBehavior',
   'DOM.enable',
   'DOM.disable',
   'DOM.getDocument',
+  'DOM.getFrameOwner',
   'DOM.querySelector',
   'DOM.querySelectorAll',
   'DOM.describeNode',
@@ -48,6 +52,7 @@ const ALLOWED_CDP_METHODS = new Set([
   'DOM.getBoxModel',
   'DOM.scrollIntoViewIfNeeded',
   'DOM.focus',
+  'DOM.setFileInputFiles',
   'Runtime.enable',
   'Runtime.disable',
   'Runtime.evaluate',
@@ -65,6 +70,21 @@ const ALLOWED_CDP_METHODS = new Set([
   'Target.attachToTarget',
   'Target.detachFromTarget',
 ]);
+
+/**
+ * A modal JavaScript dialog stalls every command the renderer has to answer
+ * (`Page.getFrameTree`, `Page.captureScreenshot`, `DOM.*`, `Accessibility.*`,
+ * `Runtime.*`, `Input.*`). Only methods answered by the browser process itself
+ * or the dialog/download handler may proceed while a dialog is open; everything
+ * else fails fast with `browser_dialog_open`.
+ */
+function DIALOG_SAFE_METHOD(method) {
+  if (typeof method !== 'string') return false;
+  return method.startsWith('Target.')
+    || method.startsWith('Browser.')
+    || method === 'Page.handleJavaScriptDialog'
+    || method === 'Page.setDownloadBehavior';
+}
 
 /**
  * Defense in depth for the two methods that carry a script. The tool process is the capability
@@ -103,9 +123,23 @@ const OPS = new Set([
   'screenshot',
   'dialog',
   'state',
+  'handoff',
+  'takeover',
+  'finish',
+  'mirror',
+  'spaces/list',
 ]);
 
-const READ_ONLY_OPS = new Set(['state', 'tabs/list']);
+const READ_ONLY_OPS = new Set(['state', 'tabs/list', 'mirror', 'spaces/list']);
+const USER_CONTROL_ALLOWED_OPS = new Set([
+  'state',
+  'tabs/list',
+  'mirror',
+  'spaces/list',
+  'handoff',
+  'takeover',
+  'finish',
+]);
 
 function nowIso(now) {
   return (now ? now() : new Date()).toISOString();
@@ -114,6 +148,12 @@ function nowIso(now) {
 function sanitizeSessionId(value) {
   const id = typeof value === 'string' ? value.trim() : '';
   return SESSION_ID.test(id) ? id : null;
+}
+
+function sanitizeTaskSpace(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const id = typeof value === 'string' ? value.trim() : '';
+  return TASK_SPACE_ID.test(id) ? id : undefined;
 }
 
 function sanitizeTabId(value) {
@@ -151,14 +191,21 @@ function numberInRange(value, min, max) {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
 }
 
-function fail(code, permanent, message) {
-  return { ok: false, code, permanent: permanent !== false, message: message ?? code };
+function fail(code, permanent, message, extra) {
+  return {
+    ok: false,
+    code,
+    permanent: permanent !== false,
+    message: message ?? code,
+    ...(extra && typeof extra === 'object' ? extra : {}),
+  };
 }
 
 function bridgeError(error) {
   const code = typeof error?.code === 'string' ? error.code : 'browser_bridge_error';
   const permanent = typeof error?.permanent === 'boolean' ? error.permanent : true;
-  return fail(code, permanent, error?.message);
+  const extra = error?.dialog ? { pending_dialog: error.dialog } : undefined;
+  return fail(code, permanent, error?.message, extra);
 }
 
 function createBrowserBridge({
@@ -294,20 +341,50 @@ function createBrowserBridge({
     if (method === 'Page.handleJavaScriptDialog' && typeof value.accept !== 'boolean') {
       return fail('browser_invalid_params', false);
     }
+    if (method === 'DOM.setFileInputFiles') {
+      if (!Array.isArray(value.files) || value.files.length > 50) {
+        return fail('browser_invalid_params', false);
+      }
+      for (const filePath of value.files) {
+        if (typeof filePath !== 'string' || !filePath || filePath.length > 4096 || filePath.includes('\0')) {
+          return fail('browser_invalid_params', false);
+        }
+      }
+      if (value.backendNodeId !== undefined && (!Number.isInteger(value.backendNodeId) || value.backendNodeId < 0)) {
+        return fail('browser_invalid_params', false);
+      }
+      if (value.nodeId !== undefined && (!Number.isInteger(value.nodeId) || value.nodeId < 0)) {
+        return fail('browser_invalid_params', false);
+      }
+      if (value.objectId !== undefined && (typeof value.objectId !== 'string' || !value.objectId)) {
+        return fail('browser_invalid_params', false);
+      }
+    }
+    if (method === 'Page.setDownloadBehavior') {
+      if (!['deny', 'allow', 'default'].includes(value.behavior)) {
+        return fail('browser_invalid_params', false);
+      }
+      if (value.downloadPath !== undefined
+        && (typeof value.downloadPath !== 'string' || value.downloadPath.length > 4096 || value.downloadPath.includes('\0'))) {
+        return fail('browser_invalid_params', false);
+      }
+    }
     if (value.promptText !== undefined && (typeof value.promptText !== 'string' || value.promptText.length > 4096)) {
       return fail('browser_invalid_params', false);
     }
     return null;
   }
 
-  async function withNotices(sessionId, data) {
-    const after = await agentBrowser.getState(sessionId);
+  async function withNotices(spaceKey, data) {
+    const after = await agentBrowser.getState(spaceKey);
     return {
       ok: true,
       data: {
         ...(data && typeof data === 'object' ? data : {}),
         notices: Array.isArray(after?.notices) ? after.notices.slice(-5) : [],
         notice_seq: Number.isFinite(after?.notice_seq) ? after.notice_seq : 0,
+        console_errors: Array.isArray(after?.console_errors) ? after.console_errors.slice(-10) : [],
+        ...(after?.dialog ? { pending_dialog: after.dialog } : {}),
       },
     };
   }
@@ -318,79 +395,178 @@ function createBrowserBridge({
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('browser_bridge_bad_request', false);
     const op = body.op;
     if (!OPS.has(op)) return fail('browser_bridge_bad_op', false);
+
+    if (op === 'spaces/list') {
+      const spaces = typeof agentBrowser.listSpaces === 'function' ? agentBrowser.listSpaces() : [];
+      return { ok: true, data: { spaces } };
+    }
+
     const sessionId = sanitizeSessionId(body.session_id);
     if (!sessionId) return fail('browser_session_invalid', false);
+    const taskSpace = sanitizeTaskSpace(body.task_space);
+    if (taskSpace === undefined) return fail('browser_task_space_invalid', false);
+    const spaceKey = taskSpace ? `${sessionId}::${taskSpace}` : sessionId;
 
-    const state = await agentBrowser.getState(sessionId);
+    const state = await agentBrowser.getState(spaceKey);
     const readOnly = READ_ONLY_OPS.has(op);
 
-    if (!readOnly && state?.control === 'user') return fail('browser_user_in_control', true);
+    if (state?.control === 'finished' && !readOnly && op !== 'finish') {
+      return fail('browser_task_space_finished', true, 'Task space has finished and cannot be resumed.');
+    }
+
+    if (!USER_CONTROL_ALLOWED_OPS.has(op) && state?.control === 'user') {
+      return fail('browser_user_in_control', true);
+    }
 
     if (op === 'state') return { ok: true, data: state };
     if (op === 'tabs/list') return { ok: true, data: state?.tabs ?? [] };
-
-    return exclusive(sessionId, async () => {
+    if (op === 'mirror') {
+      if (typeof agentBrowser.capturePreview !== 'function') {
+        return fail('browser_mirror_unavailable', false);
+      }
+      const tabId = body.tab_id !== undefined && body.tab_id !== null && body.tab_id !== ''
+        ? sanitizeTabId(body.tab_id)
+        : undefined;
+      if (tabId === null) return fail('browser_tab_invalid', false);
       try {
+        const preview = await agentBrowser.capturePreview(spaceKey, { tabId });
+        return { ok: true, data: preview };
+      } catch (error) {
+        return bridgeError(error);
+      }
+    }
+
+    return exclusive(spaceKey, async () => {
+      try {
+        const current = await agentBrowser.getState(spaceKey);
+        if (current?.control === 'finished' && op !== 'finish') {
+          return fail('browser_task_space_finished', true, 'Task space has finished and cannot be resumed.');
+        }
+        if (!USER_CONTROL_ALLOWED_OPS.has(op) && current?.control === 'user') {
+          return fail('browser_user_in_control', true);
+        }
+
+        if (op === 'handoff') {
+          if (body.reason !== undefined && (typeof body.reason !== 'string' || body.reason.length > 200)) {
+            return fail('browser_invalid_params', false);
+          }
+          const result = typeof agentBrowser.handOff === 'function'
+            ? await agentBrowser.handOff(spaceKey, { reason: body.reason })
+            : await agentBrowser.setControl(spaceKey, 'user');
+          audit({ session_id: spaceKey, op, reason: body.reason });
+          return withNotices(spaceKey, result);
+        }
+
+        if (op === 'takeover') {
+          const result = typeof agentBrowser.takeOver === 'function'
+            ? await agentBrowser.takeOver(spaceKey)
+            : await agentBrowser.setControl(spaceKey, 'agent');
+          audit({ session_id: spaceKey, op });
+          return withNotices(spaceKey, result);
+        }
+
+        if (op === 'finish') {
+          let keep = [];
+          if (body.keep === true) {
+            keep = true;
+          } else if (body.keep !== undefined && body.keep !== null) {
+            if (!Array.isArray(body.keep) || body.keep.length > 32) {
+              return fail('browser_invalid_params', false);
+            }
+            for (const item of body.keep) {
+              const sanitized = sanitizeTabId(item);
+              if (!sanitized) return fail('browser_tab_invalid', false);
+              keep.push(sanitized);
+            }
+          }
+          if (typeof agentBrowser.finish !== 'function') {
+            return fail('browser_bridge_bad_op', false);
+          }
+          const result = await agentBrowser.finish(spaceKey, { keep });
+          audit({ session_id: spaceKey, op, kept: Array.isArray(keep) ? keep.length : 'all' });
+          return { ok: true, data: result };
+        }
+
         if (op === 'tabs/open') {
           const url = body.url === undefined || body.url === null || body.url === '' ? null : parseHttpUrl(body.url);
           if (body.url && !url) return fail('browser_navigation_blocked', false);
           if (url && blockedHost(url)) return fail('browser_navigation_blocked', false);
-          const tab = await agentBrowser.openTab(sessionId, url ? url.toString() : null);
-          audit({ session_id: sessionId, tab_id: tab?.tab?.id, op, url: url ? url.toString() : undefined });
-          return withNotices(sessionId, tab);
+          const tab = await agentBrowser.openTab(spaceKey, url ? url.toString() : null);
+          audit({ session_id: spaceKey, tab_id: tab?.tab?.id, op, url: url ? url.toString() : undefined });
+          return withNotices(spaceKey, tab);
         }
         if (op === 'tabs/select') {
           const tabId = sanitizeTabId(body.tab_id);
           if (!tabId) return fail('browser_tab_invalid', false);
-          const tab = await agentBrowser.selectTab(sessionId, tabId);
-          audit({ session_id: sessionId, tab_id: tabId, op });
-          return withNotices(sessionId, tab);
+          const tab = await agentBrowser.selectTab(spaceKey, tabId);
+          audit({ session_id: spaceKey, tab_id: tabId, op });
+          return withNotices(spaceKey, tab);
         }
         if (op === 'tabs/close') {
           const tabId = sanitizeTabId(body.tab_id);
           if (!tabId) return fail('browser_tab_invalid', false);
-          const result = await agentBrowser.closeTab(sessionId, tabId);
-          audit({ session_id: sessionId, tab_id: tabId, op });
-          return withNotices(sessionId, result);
+          const result = await agentBrowser.closeTab(spaceKey, tabId);
+          audit({ session_id: spaceKey, tab_id: tabId, op });
+          return withNotices(spaceKey, result);
         }
         if (op === 'dialog') {
           if (typeof body.accept !== 'boolean') return fail('browser_invalid_params', false);
           if (body.prompt_text !== undefined && (typeof body.prompt_text !== 'string' || body.prompt_text.length > 4096)) {
             return fail('browser_invalid_params', false);
           }
-          const result = await agentBrowser.handleDialog(sessionId, body.accept, body.prompt_text);
-          audit({ session_id: sessionId, op, code: result?.ok === false ? result.code : undefined });
-          return result?.ok === false ? result : { ok: true, data: result };
+          const result = await agentBrowser.handleDialog(spaceKey, body.accept, body.prompt_text);
+          audit({ session_id: spaceKey, op, code: result?.ok === false ? result.code : undefined });
+          return result?.ok === false ? result : withNotices(spaceKey, result);
         }
         if (op === 'screenshot') {
-          const tabId = sanitizeTabId(body.tab_id) ?? state?.active_tab ?? null;
+          const tabId = sanitizeTabId(body.tab_id) ?? current?.active_tab ?? null;
           if (!tabId) return fail('browser_not_started', false);
-          if (state?.dialog) return fail('browser_dialog_open', true);
-          const result = await agentBrowser.screenshot(sessionId, tabId, body.full_page === true, shotsDir);
-          audit({ session_id: sessionId, tab_id: tabId, op });
-          return withNotices(sessionId, result);
+          if (current?.dialog) {
+            return fail(
+              'browser_dialog_open',
+              true,
+              'Screenshot blocked while a JavaScript dialog is open',
+              { pending_dialog: current.dialog },
+            );
+          }
+          const result = await agentBrowser.screenshot(spaceKey, tabId, body.full_page === true, shotsDir);
+          audit({ session_id: spaceKey, tab_id: tabId, op });
+          return withNotices(spaceKey, result);
         }
 
         // op === 'cdp'
-        const tabId = sanitizeTabId(body.tab_id) ?? state?.active_tab ?? null;
+        const tabId = sanitizeTabId(body.tab_id) ?? current?.active_tab ?? null;
         if (!tabId) return fail('browser_not_started', true);
+        let cdpSessionId;
+        if (body.cdp_session_id !== undefined && body.cdp_session_id !== null && body.cdp_session_id !== '') {
+          const candidate = typeof body.cdp_session_id === 'string' ? body.cdp_session_id.trim() : '';
+          if (!CDP_SESSION_ID.test(candidate)) return fail('browser_invalid_params', false);
+          cdpSessionId = candidate;
+        }
         const invalid = validateCdp(body.method, body.params);
         if (invalid) return invalid;
-        if (state?.dialog && body.method !== 'Page.handleJavaScriptDialog') {
-          return fail('browser_dialog_open', true);
+        if (current?.dialog && !DIALOG_SAFE_METHOD(body.method)) {
+          return fail(
+            'browser_dialog_open',
+            true,
+            `CDP method ${body.method} blocked while a JavaScript ${current.dialog.type ?? 'modal'} dialog is open`,
+            { pending_dialog: current.dialog },
+          );
         }
-        const result = await agentBrowser.cdp(sessionId, tabId, body.method, body.params ?? {});
+        const result = cdpSessionId
+          ? await agentBrowser.cdp(spaceKey, tabId, body.method, body.params ?? {}, { cdpSessionId })
+          : await agentBrowser.cdp(spaceKey, tabId, body.method, body.params ?? {});
         audit({
-          session_id: sessionId,
+          session_id: spaceKey,
           tab_id: tabId,
           op,
           method: body.method,
           url: body.method === 'Page.navigate' ? body.params?.url : undefined,
         });
-        return withNotices(sessionId, { result: result ?? {} });
+        return withNotices(spaceKey, { result: result ?? {} });
       } catch (error) {
         const result = bridgeError(error);
-        audit({ session_id: sessionId, op, code: result.code });
+        audit({ session_id: spaceKey, op, code: result.code });
         return result;
       }
     });
@@ -526,6 +702,7 @@ module.exports = {
   ALLOWED_CDP_METHODS,
   BLOCKED_SCRIPT_TOKENS,
   BRIDGE_VERSION,
+  DIALOG_SAFE_METHOD,
   MAX_BODY_BYTES,
   createBrowserBridge,
 };

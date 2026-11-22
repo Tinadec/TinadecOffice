@@ -34,6 +34,8 @@ public sealed class BrowserToolManifestTests
                      BrowserToolRegistration.TabsListToolId,
                      BrowserToolRegistration.WaitToolId,
                      BrowserToolRegistration.ScreenshotToolId,
+                     BrowserToolRegistration.ProfilesListToolId,
+                     BrowserToolRegistration.HandoffToolId,
                  })
         {
             var entry = tools[id];
@@ -43,6 +45,15 @@ public sealed class BrowserToolManifestTests
             Assert.Equal("safe", entry.GetProperty("retry_safety").GetString());
             Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("description").GetString()), id);
         }
+    }
+
+    [Fact]
+    public async Task ScreenshotDescription_IsMultimodalReadyAndDoesNotClaimBlindness()
+    {
+        var tools = await ManifestAsync();
+        var description = tools[BrowserToolRegistration.ScreenshotToolId].GetProperty("description").GetString()!;
+        Assert.DoesNotContain("cannot view images", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("screenshot_path", description, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -62,7 +73,7 @@ public sealed class BrowserToolManifestTests
     }
 
     [Fact]
-    public async Task BrowserActToolsAreApprovalGatedHighRiskAndNotWorkspaceMutations()
+    public async Task BrowserActAndLifecycleToolsAreApprovalGatedHighRisk()
     {
         var tools = await ManifestAsync();
         foreach (var id in new[]
@@ -76,6 +87,11 @@ public sealed class BrowserToolManifestTests
                      BrowserToolRegistration.TabSelectToolId,
                      BrowserToolRegistration.TabCloseToolId,
                      BrowserToolRegistration.BatchToolId,
+                     BrowserToolRegistration.TakeoverToolId,
+                     BrowserToolRegistration.FinishToolId,
+                     BrowserToolRegistration.DialogToolId,
+                     BrowserToolRegistration.UploadToolId,
+                     BrowserToolRegistration.RunToolId,
                  })
         {
             var entry = tools[id];
@@ -85,45 +101,68 @@ public sealed class BrowserToolManifestTests
             Assert.Equal("unsafe", entry.GetProperty("retry_safety").GetString());
             Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("description").GetString()), id);
         }
+
+        var downloadEntry = tools[BrowserToolRegistration.DownloadSaveToolId];
+        Assert.True(downloadEntry.GetProperty("requires_approval").GetBoolean());
+        Assert.True(downloadEntry.GetProperty("mutates_workspace").GetBoolean());
     }
 
     [Fact]
-    public async Task BatchSchemaBindsTheStepList()
+    public async Task BatchAndRunSchemasBindStepLists()
     {
         var tools = await ManifestAsync();
-        var steps = tools[BrowserToolRegistration.BatchToolId].GetProperty("input_schema").GetProperty("properties").GetProperty("steps");
-        Assert.Equal("array", steps.GetProperty("type").GetString());
-        Assert.Equal(1, steps.GetProperty("minItems").GetInt32());
-        Assert.Equal(20, steps.GetProperty("maxItems").GetInt32());
+        var batchSteps = tools[BrowserToolRegistration.BatchToolId].GetProperty("input_schema").GetProperty("properties").GetProperty("steps");
+        Assert.Equal("array", batchSteps.GetProperty("type").GetString());
+        Assert.Equal(1, batchSteps.GetProperty("minItems").GetInt32());
+        Assert.Equal(20, batchSteps.GetProperty("maxItems").GetInt32());
+
+        var runSteps = tools[BrowserToolRegistration.RunToolId].GetProperty("input_schema").GetProperty("properties").GetProperty("steps");
+        Assert.Equal("array", runSteps.GetProperty("type").GetString());
+        Assert.Equal(1, runSteps.GetProperty("minItems").GetInt32());
+        Assert.Equal(30, runSteps.GetProperty("maxItems").GetInt32());
     }
 
     [Fact]
-    public async Task UnapprovedClickIsRefusedBeforeTheRuntimeIsTouched()
+    public async Task UnapprovedClickAndRunAreRefusedBeforeTheRuntimeIsTouched()
     {
         GeneratedToolRegistry.RegisterAll();
         BrowserToolRegistration.Register();
-        using var parameters = JsonDocument.Parse("""{"ref":1}""");
+        using var clickParams = JsonDocument.Parse("""{"ref":1}""");
 
-        var response = await ToolRegistry.DispatchAsync(new ToolCallRequest<JsonElement>
+        var clickResp = await ToolRegistry.DispatchAsync(new ToolCallRequest<JsonElement>
         {
             ToolId = BrowserToolRegistration.ClickToolId,
             SessionId = "test",
             ToolCallId = 8,
             Approved = false,
-            Params = parameters.RootElement.Clone(),
+            Params = clickParams.RootElement.Clone(),
         });
 
-        Assert.False(response.IsSuccess);
-        Assert.Equal(NotApprovedResponse.MESSAGE, response.Response.GetString());
+        Assert.False(clickResp.IsSuccess);
+        Assert.Equal(NotApprovedResponse.MESSAGE, clickResp.Response.GetString());
+
+        using var runParams = JsonDocument.Parse("""{"steps":[{"action":"goto","url":"https://example.com/"}]}""");
+        var runResp = await ToolRegistry.DispatchAsync(new ToolCallRequest<JsonElement>
+        {
+            ToolId = BrowserToolRegistration.RunToolId,
+            SessionId = "test",
+            ToolCallId = 9,
+            Approved = false,
+            Params = runParams.RootElement.Clone(),
+        });
+        Assert.False(runResp.IsSuccess);
+        Assert.Equal(NotApprovedResponse.MESSAGE, runResp.Response.GetString());
     }
 
     [Fact]
-    public async Task SnapshotSchemaExposesTheCharacterBudget()
+    public async Task SnapshotSchemaExposesCharacterBudgetAndScopes()
     {
         var tools = await ManifestAsync();
         var properties = tools[BrowserToolRegistration.SnapshotToolId].GetProperty("input_schema").GetProperty("properties");
         Assert.True(properties.TryGetProperty("max_chars", out var maxChars));
         Assert.Equal("integer", maxChars.GetProperty("type").GetString());
+        Assert.True(properties.TryGetProperty("scope", out _));
+        Assert.True(properties.TryGetProperty("root_ref", out _));
     }
 
     [Fact]

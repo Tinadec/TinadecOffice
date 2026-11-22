@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using NLog;
 
@@ -146,24 +145,63 @@ internal sealed class BrowserBridgeClient : IBrowserBridge
         using (document)
         {
             var root = document.RootElement;
-            var ok = root.TryGetProperty("ok", out var okElement) && okElement.ValueKind == JsonValueKind.True;
-            if (!ok)
-            {
-                var code = root.TryGetProperty("code", out var codeElement) ? codeElement.GetString() : null;
-                var message = root.TryGetProperty("message", out var messageElement) ? messageElement.GetString() : null;
-                var permanent = !root.TryGetProperty("permanent", out var permanentElement)
-                    || permanentElement.ValueKind != JsonValueKind.False;
-                return BrowserBridgeResponse.Failure(code ?? "browser_bridge_error", message, permanent);
-            }
-
             JsonElement? data = null;
             if (root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind != JsonValueKind.Null)
             {
                 data = dataElement.Clone();
             }
-            return new BrowserBridgeResponse { Ok = true, Data = data };
+
+            BrowserDialogInfo? pendingDialog = null;
+            if (root.TryGetProperty("pending_dialog", out var dialogElement) && dialogElement.ValueKind == JsonValueKind.Object)
+            {
+                pendingDialog = ParseDialog(dialogElement);
+            }
+            else if (data is { ValueKind: JsonValueKind.Object } d
+                     && d.TryGetProperty("pending_dialog", out var nestedDialog)
+                     && nestedDialog.ValueKind == JsonValueKind.Object)
+            {
+                pendingDialog = ParseDialog(nestedDialog);
+            }
+
+            var ok = root.TryGetProperty("ok", out var okElement) && okElement.ValueKind == JsonValueKind.True;
+            if (!ok)
+            {
+                var code = root.TryGetProperty("code", out var codeElement) && codeElement.ValueKind == JsonValueKind.String
+                    ? codeElement.GetString()
+                    : null;
+                var message = root.TryGetProperty("message", out var messageElement) && messageElement.ValueKind == JsonValueKind.String
+                    ? messageElement.GetString()
+                    : null;
+                var permanent = !root.TryGetProperty("permanent", out var permanentElement)
+                    || permanentElement.ValueKind != JsonValueKind.False;
+                return BrowserBridgeResponse.Failure(code ?? "browser_bridge_error", message, permanent, data, pendingDialog);
+            }
+
+            return new BrowserBridgeResponse
+            {
+                Ok = true,
+                Data = data,
+                PendingDialog = pendingDialog,
+            };
         }
     }
+
+    private static BrowserDialogInfo ParseDialog(JsonElement dialog) => new()
+    {
+        Type = dialog.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String ? type.GetString() : null,
+        Message = dialog.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.String ? msg.GetString() : null,
+        Url = dialog.TryGetProperty("url", out var url) && url.ValueKind == JsonValueKind.String ? url.GetString() : null,
+        DefaultPrompt = dialog.TryGetProperty("defaultPrompt", out var def) && def.ValueKind == JsonValueKind.String
+            ? def.GetString()
+            : dialog.TryGetProperty("default_prompt", out var def2) && def2.ValueKind == JsonValueKind.String
+                ? def2.GetString()
+                : null,
+        TabId = dialog.TryGetProperty("tabId", out var tabId) && tabId.ValueKind == JsonValueKind.String
+            ? tabId.GetString()
+            : dialog.TryGetProperty("tab_id", out var tabId2) && tabId2.ValueKind == JsonValueKind.String
+                ? tabId2.GetString()
+                : null,
+    };
 
     private static byte[] BuildRequest(BrowserBridgeCall call)
     {
@@ -173,7 +211,9 @@ internal sealed class BrowserBridgeClient : IBrowserBridge
             writer.WriteStartObject();
             writer.WriteString("op", call.Op);
             writer.WriteString("session_id", call.SessionId);
+            if (!string.IsNullOrEmpty(call.TaskSpace)) writer.WriteString("task_space", call.TaskSpace);
             if (!string.IsNullOrEmpty(call.TabId)) writer.WriteString("tab_id", call.TabId);
+            if (!string.IsNullOrEmpty(call.CdpSessionId)) writer.WriteString("cdp_session_id", call.CdpSessionId);
             if (!string.IsNullOrEmpty(call.Method)) writer.WriteString("method", call.Method);
             if (call.Parameters is { } parameters
                 && parameters.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
@@ -185,6 +225,17 @@ internal sealed class BrowserBridgeClient : IBrowserBridge
             if (call.Accept is { } accept) writer.WriteBoolean("accept", accept);
             if (call.PromptText is not null) writer.WriteString("prompt_text", call.PromptText);
             if (call.FullPage is { } fullPage) writer.WriteBoolean("full_page", fullPage);
+            if (!string.IsNullOrEmpty(call.Reason)) writer.WriteString("reason", call.Reason);
+            if (call.Keep is not null)
+            {
+                writer.WritePropertyName("keep");
+                writer.WriteStartArray();
+                foreach (var tab in call.Keep)
+                {
+                    if (!string.IsNullOrWhiteSpace(tab)) writer.WriteStringValue(tab.Trim());
+                }
+                writer.WriteEndArray();
+            }
             writer.WriteEndObject();
         }
         return stream.ToArray();

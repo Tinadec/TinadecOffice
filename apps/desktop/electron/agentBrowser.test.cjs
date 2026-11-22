@@ -3,7 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createAgentBrowserManager, PARTITION, TOOLBAR_HEIGHT } = require('./agentBrowser.cjs');
+const {
+  createAgentBrowserManager,
+  isDialogSafeMethod,
+  MAX_CONSOLE_ERRORS,
+  PARTITION,
+  TOOLBAR_HEIGHT,
+} = require('./agentBrowser.cjs');
 
 let nextId = 100;
 
@@ -33,8 +39,9 @@ class FakeDebugger {
     if (event === 'detach') this.detachHandlers.push(handler);
   }
 
-  async sendCommand(method, params) {
-    this.sent.push([method, params]);
+  async sendCommand(method, params, sessionId) {
+    this.sent.push(sessionId ? [method, params, sessionId] : [method, params]);
+    if (this.customSend) return this.customSend(method, params, sessionId);
     if (method === 'Page.getNavigationHistory') return { entries: [{ id: 1 }, { id: 2 }], currentIndex: 1 };
     if (method === 'Page.captureScreenshot') return { data: Buffer.from('png-bytes').toString('base64') };
     return { ok: true };
@@ -144,6 +151,14 @@ class FakeBrowserWindow {
   getContentSize() { return [1000, 800]; }
 
   showInactive() { this.shown = true; }
+
+  show() { this.shown = true; this.focused = true; }
+
+  focus() { this.focused = true; }
+
+  isMinimized() { return false; }
+
+  restore() {}
 
   isDestroyed() { return this.destroyed; }
 
@@ -311,4 +326,165 @@ test('maps an already-attached debugger to browser_debugger_unavailable', async 
 test('exposes the fixed toolbar and partition facts', () => {
   assert.equal(TOOLBAR_HEIGHT, 48);
   assert.equal(PARTITION, 'persist:tinadec-agent-browser');
+});
+
+test('isolates parallel TaskSpaces keyed by (sessionId / taskSpace) without focus theft', async (t) => {
+  const { manager } = createManager(t);
+  const spaceA = await manager.openTab('sess-1', 'https://example.com/a', { taskSpace: 'research' });
+  const spaceB = await manager.openTab('sess-1', 'https://example.com/b', { taskSpace: 'checkout' });
+
+  assert.equal(FakeBrowserWindow.created.length, 2);
+  assert.equal(FakeBrowserWindow.created[0].focused, undefined);
+  assert.equal(FakeBrowserWindow.created[1].focused, undefined);
+
+  manager.handOff('sess-1', { taskSpace: 'research', reason: '2fa' });
+  assert.equal(manager._stateFor('sess-1::research').control, 'user');
+  assert.equal(manager._stateFor('sess-1::checkout').control, 'agent');
+
+  await assert.rejects(
+    () => manager.cdp('sess-1::research', spaceA.tab.id, 'Page.reload', {}),
+    (err) => err.code === 'browser_user_in_control',
+  );
+  const okB = await manager.cdp('sess-1::checkout', spaceB.tab.id, 'Page.reload', {});
+  assert.equal(okB.ok, true);
+
+  const spaces = manager.listSpaces();
+  assert.equal(spaces.length, 2);
+  assert.deepEqual(spaces.map((s) => s.task_space).sort(), ['checkout', 'research']);
+});
+
+test('enforces handOff <-> takeOver and terminal finished state with keep tab cleanup', async (t) => {
+  const { manager } = createManager(t);
+  const tab1 = await manager.openTab('s1', 'https://example.com/1');
+  const tab2 = await manager.openTab('s1', 'https://example.com/2');
+
+  const handed = manager.handOff('s1', { reason: 'login' });
+  assert.equal(handed.control, 'user');
+  assert.equal(handed.handoff_reason, 'login');
+
+  const resumed = manager.takeOver('s1');
+  assert.equal(resumed.control, 'agent');
+  assert.equal(resumed.handoff_reason, null);
+
+  const finished = manager.finish('s1', { keep: [tab1.tab.id] });
+  assert.equal(finished.finished, true);
+  assert.equal(finished.control, 'finished');
+  assert.deepEqual(finished.kept_tabs, [tab1.tab.id]);
+  assert.deepEqual(finished.closed_tabs, [tab2.tab.id]);
+  assert.equal(FakeBrowserWindow.created[0].destroyed, false);
+  assert.equal(manager._stateFor('s1').tabs.length, 1);
+
+  assert.throws(() => manager.takeOver('s1'), (err) => err.code === 'browser_task_space_finished');
+  assert.throws(() => manager.handOff('s1'), (err) => err.code === 'browser_task_space_finished');
+  await assert.rejects(
+    () => manager.cdp('s1', tab1.tab.id, 'Page.reload', {}),
+    (err) => err.code === 'browser_task_space_finished',
+  );
+  await assert.rejects(
+    () => manager.openTab('s1', 'https://example.com/3'),
+    (err) => err.code === 'browser_task_space_finished',
+  );
+});
+
+test('finish({ keep: [] }) closes the window and retains terminal tombstone', async (t) => {
+  const { manager } = createManager(t);
+  await manager.openTab('s-term', 'https://example.com/1');
+  const finished = manager.finish('s-term', { keep: [] });
+  assert.equal(finished.kept_tabs.length, 0);
+  assert.equal(finished.closed_tabs.length, 1);
+  assert.equal(FakeBrowserWindow.created[0].destroyed, true);
+  assert.equal(manager._stateFor('s-term').control, 'finished');
+  assert.throws(() => manager.takeOver('s-term'), (err) => err.code === 'browser_task_space_finished');
+});
+
+test('allows DIALOG_SAFE_METHOD while dialog is open and aborts inflight renderer CDP', async (t) => {
+  assert.equal(isDialogSafeMethod('Page.handleJavaScriptDialog'), true);
+  assert.equal(isDialogSafeMethod('Target.getTargets'), true);
+  assert.equal(isDialogSafeMethod('Page.setDownloadBehavior'), true);
+  assert.equal(isDialogSafeMethod('Page.getFrameTree'), false);
+  assert.equal(isDialogSafeMethod('DOM.getDocument'), false);
+  assert.equal(isDialogSafeMethod('Accessibility.getFullAXTree'), false);
+
+  const { manager } = createManager(t);
+  const opened = await manager.openTab('s1', 'https://example.com/a');
+  const view = FakeWebContentsView.created[0];
+
+  // Simulate an inflight renderer CDP call hanging when a JS alert opens.
+  view.webContents.debugger.customSend = (method) => {
+    if (method === 'DOM.getDocument') return new Promise(() => {});
+    return { ok: true };
+  };
+  const inflight = manager.cdp('s1', opened.tab.id, 'DOM.getDocument', {});
+  view.webContents.debugger.emitMessage('Page.javascriptDialogOpening', {
+    type: 'confirm',
+    message: 'Are you sure?',
+    url: 'https://example.com/a',
+  });
+  await assert.rejects(() => inflight, (err) => err.code === 'browser_dialog_open');
+
+  // Target.* remains allowed while dialog is open.
+  const targets = await manager.cdp('s1', opened.tab.id, 'Target.getTargets', {});
+  assert.equal(targets.ok, true);
+
+  // Page.javascriptDialogClosed clears dialog state.
+  view.webContents.debugger.emitMessage('Page.javascriptDialogClosed', { result: true });
+  assert.equal(manager._stateFor('s1').dialog, null);
+});
+
+test('ring-buffers console_errors from console-message, Runtime.exceptionThrown, and console.error', async (t) => {
+  const { manager } = createManager(t);
+  await manager.openTab('s1', 'https://example.com/a');
+  const view = FakeWebContentsView.created[0];
+
+  view.webContents.emit('console-message', {}, 3, 'Boom error', 42, 'https://example.com/app.js');
+  view.webContents.debugger.emitMessage('Runtime.exceptionThrown', {
+    exceptionDetails: {
+      text: 'Uncaught',
+      lineNumber: 12,
+      url: 'https://example.com/app.js',
+      exception: { description: 'TypeError: x is not a function' },
+    },
+  });
+  for (let i = 0; i < MAX_CONSOLE_ERRORS + 10; i += 1) {
+    view.webContents.debugger.emitMessage('Runtime.consoleAPICalled', {
+      type: 'error',
+      args: [{ value: `err-${i}` }],
+    });
+  }
+
+  const state = manager._stateFor('s1');
+  assert.equal(state.console_error_seq, MAX_CONSOLE_ERRORS + 12);
+  assert.equal(state.console_errors.length, 20);
+  assert.equal(state.console_errors[state.console_errors.length - 1].message, `err-${MAX_CONSOLE_ERRORS + 9}`);
+});
+
+test('captures live mirror preview even under user control and focuses window via openWindow', async (t) => {
+  const { manager } = createManager(t);
+  const events = [];
+  const off = manager.onStateChange((payload) => events.push(payload));
+  t.after(off);
+
+  const opened = await manager.openTab('s1', 'https://example.com/a');
+  const view = FakeWebContentsView.created[0];
+  view.webContents.capturePage = async () => ({
+    toDataURL: () => 'data:image/png;base64,ZmFrZQ==',
+  });
+  manager.handOff('s1', { reason: 'captcha' });
+
+  const preview = await manager.capturePreview('s1');
+  assert.equal(preview.control, 'user');
+  assert.equal(preview.tab_id, opened.tab.id);
+  assert.equal(preview.data_url, 'data:image/png;base64,ZmFrZQ==');
+
+  manager.openWindow('s1');
+  assert.equal(FakeBrowserWindow.created[0].focused, true);
+  assert.ok(events.length > 0);
+});
+
+test('forwards optional cdpSessionId to debugger.sendCommand for OOPIF child targets', async (t) => {
+  const { manager } = createManager(t);
+  const opened = await manager.openTab('s1', 'https://example.com/a');
+  await manager.cdp('s1', opened.tab.id, 'DOM.getDocument', {}, { cdpSessionId: 'child-session-42' });
+  const last = FakeWebContentsView.created[0].webContents.debugger.sent.at(-1);
+  assert.deepEqual(last, ['DOM.getDocument', {}, 'child-session-42']);
 });

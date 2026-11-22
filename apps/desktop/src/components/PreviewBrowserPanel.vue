@@ -1,11 +1,118 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Globe, RefreshCw, ExternalLink, Home as HomeIcon } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Bot,
+  ExternalLink,
+  Globe,
+  Hand,
+  Home as HomeIcon,
+  Layers,
+  Monitor,
+  Play,
+  Plus,
+  RefreshCw,
+  Smartphone,
+  Tablet,
+  X,
+} from '@lucide/vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from '@/composables/useNotifications'
 
-const { t } = useI18n()
+type ViewportPreset = 'desktop' | 'tablet' | 'mobile'
+type PanelMode = 'tabs' | 'mirror'
+type ControlState = 'agent' | 'user' | 'finished'
+
+interface BrowserTab {
+  id: string
+  urlInput: string
+  currentUrl: string
+  history: string[]
+  historyIndex: number
+  loading: boolean
+  iframeKey: number
+}
+
+interface AgentConsoleError {
+  seq?: number
+  at?: string
+  level?: string
+  source?: string
+  message: string
+  url?: string
+  line?: number
+}
+
+interface AgentDialogInfo {
+  type?: string
+  message?: string
+  url?: string
+  tabId?: string
+}
+
+interface AgentSpaceSummary {
+  space_id: string
+  session_id: string
+  base_session_id?: string
+  task_space?: string
+  control: ControlState
+  handoff_reason?: string | null
+  finished?: boolean
+  active_tab: string | null
+  url: string
+  title: string
+  loading: boolean
+  tab_count: number
+  dialog: AgentDialogInfo | null
+  console_error_count?: number
+  console_errors?: AgentConsoleError[]
+}
+
+interface AgentPreviewFrame {
+  space_id: string
+  session_id: string
+  control: ControlState
+  tab_id: string | null
+  url: string
+  title: string
+  loading: boolean
+  dialog: AgentDialogInfo | null
+  data_url: string | null
+  captured_at: string
+  console_errors?: AgentConsoleError[]
+}
+
+interface AgentBrowserActionResult {
+  ok: boolean
+  code?: string
+  message?: string
+  state?: AgentSpaceSummary
+}
+
+interface AgentBrowserMirrorBridge {
+  listSpaces: () => Promise<AgentSpaceSummary[]>
+  capturePreview: (sessionId: string) => Promise<AgentPreviewFrame | null>
+  openWindow: (sessionId: string) => Promise<AgentBrowserActionResult>
+  handOff: (sessionId: string, reason?: string) => Promise<AgentBrowserActionResult>
+  takeOver: (sessionId: string) => Promise<AgentBrowserActionResult>
+  onStateChanged: (callback: (payload: { space?: AgentSpaceSummary; spaces?: AgentSpaceSummary[] }) => void) => () => void
+}
+
+function getAgentBrowserBridge(): AgentBrowserMirrorBridge | null {
+  const host = (window as unknown as { tinadec?: { agentBrowser?: AgentBrowserMirrorBridge } }).tinadec
+  const bridge = host?.agentBrowser
+  if (!bridge || typeof bridge.listSpaces !== 'function') return null
+  return bridge
+}
+
+const { t, te } = useI18n()
 const { notify } = useNotifications()
+
+function label(key: string, fallback: string): string {
+  return te(key) ? String(t(key)) : fallback
+}
 
 const props = defineProps<{
   initialUrl?: string
@@ -15,23 +122,43 @@ const emit = defineEmits<{
   'update:url': [url: string]
 }>()
 
-const gatewayDocsUrl = (window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730') + '/docs'
+const gatewayBase = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
+const gatewayDocsUrl = `${gatewayBase}/docs`
 const VITE_DEV_URL = 'http://localhost:5173'
 
-const urlInput = ref(props.initialUrl ?? '')
-const currentUrl = ref(props.initialUrl ?? '')
-const history = ref<string[]>([])
-const historyIndex = ref(-1)
-const loading = ref(false)
-const iframeKey = ref(0)
+const panelMode = ref<PanelMode>('tabs')
 
-const canGoBack = computed(() => historyIndex.value > 0)
-const canGoForward = computed(() => historyIndex.value < history.value.length - 1)
+let tabCounter = 1
+function createTab(initial = ''): BrowserTab {
+  const normalized = initial ? normalizeUrl(initial) : ''
+  return {
+    id: `tab-${tabCounter++}`,
+    urlInput: normalized,
+    currentUrl: normalized,
+    history: normalized ? [normalized] : [],
+    historyIndex: normalized ? 0 : -1,
+    loading: Boolean(normalized),
+    iframeKey: 0,
+  }
+}
+
+const tabs = ref<BrowserTab[]>([createTab(props.initialUrl ?? '')])
+const activeTabId = ref(tabs.value[0].id)
+const viewport = ref<ViewportPreset>('desktop')
+
+const activeTab = computed<BrowserTab>(
+  () => tabs.value.find((tab) => tab.id === activeTabId.value) ?? tabs.value[0],
+)
+
+const canGoBack = computed(() => activeTab.value.historyIndex > 0)
+const canGoForward = computed(() => activeTab.value.historyIndex < activeTab.value.history.length - 1)
 
 const quickLinks = computed(() => [
-  { label: t('context.previewGatewayApi'), url: gatewayDocsUrl },
-  { label: t('context.previewGatewayHealth'), url: (window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730') + '/api/v1/health' },
-  { label: t('context.previewDevServer'), url: VITE_DEV_URL },
+  { label: label('context.previewGatewayApi', 'Gateway API'), url: gatewayDocsUrl },
+  { label: label('context.previewGatewayHealth', 'Gateway Health'), url: `${gatewayBase}/api/v1/health` },
+  { label: label('context.previewDevServer', 'Dev Server'), url: VITE_DEV_URL },
+  { label: 'Local App :3000', url: 'http://localhost:3000' },
+  { label: 'Local App :8080', url: 'http://localhost:8080' },
 ])
 
 function normalizeUrl(input: string): string {
@@ -43,185 +170,658 @@ function normalizeUrl(input: string): string {
   return `https://${trimmed}`
 }
 
-function navigate(url?: string) {
-  const target = normalizeUrl(url ?? urlInput.value)
+function tabTitle(tab: BrowserTab): string {
+  if (!tab.currentUrl) return label('context.previewStartTitle', 'New Tab')
+  try {
+    const parsed = new URL(tab.currentUrl)
+    return parsed.pathname && parsed.pathname !== '/' ? `${parsed.host}${parsed.pathname}` : parsed.host
+  } catch {
+    return tab.currentUrl
+  }
+}
+
+function addTab(url = ''): void {
+  const next = createTab(url)
+  tabs.value = [...tabs.value, next]
+  activeTabId.value = next.id
+  if (next.currentUrl) emit('update:url', next.currentUrl)
+}
+
+function closeTab(tabId: string): void {
+  if (tabs.value.length <= 1) {
+    goHome()
+    return
+  }
+  const idx = tabs.value.findIndex((item) => item.id === tabId)
+  tabs.value = tabs.value.filter((item) => item.id !== tabId)
+  if (activeTabId.value === tabId) {
+    const fallback = tabs.value[Math.max(0, idx - 1)] ?? tabs.value[0]
+    activeTabId.value = fallback.id
+    emit('update:url', fallback.currentUrl)
+  }
+}
+
+function navigate(url?: string): void {
+  const tab = activeTab.value
+  const target = normalizeUrl(url ?? tab.urlInput)
   if (!target) return
 
-  // Push to history
-  if (historyIndex.value < history.value.length - 1) {
-    history.value = history.value.slice(0, historyIndex.value + 1)
+  if (tab.historyIndex < tab.history.length - 1) {
+    tab.history = tab.history.slice(0, tab.historyIndex + 1)
   }
-  history.value.push(target)
-  historyIndex.value = history.value.length - 1
+  tab.history.push(target)
+  tab.historyIndex = tab.history.length - 1
 
-  currentUrl.value = target
-  urlInput.value = target
-  loading.value = true
-  iframeKey.value++
+  tab.currentUrl = target
+  tab.urlInput = target
+  tab.loading = true
+  tab.iframeKey++
   emit('update:url', target)
 }
 
-function goBack() {
+function goBack(): void {
+  const tab = activeTab.value
   if (!canGoBack.value) return
-  historyIndex.value--
-  const url = history.value[historyIndex.value]
-  currentUrl.value = url
-  urlInput.value = url
-  loading.value = true
-  iframeKey.value++
+  tab.historyIndex--
+  const url = tab.history[tab.historyIndex]
+  tab.currentUrl = url
+  tab.urlInput = url
+  tab.loading = true
+  tab.iframeKey++
   emit('update:url', url)
 }
 
-function goForward() {
+function goForward(): void {
+  const tab = activeTab.value
   if (!canGoForward.value) return
-  historyIndex.value++
-  const url = history.value[historyIndex.value]
-  currentUrl.value = url
-  urlInput.value = url
-  loading.value = true
-  iframeKey.value++
+  tab.historyIndex++
+  const url = tab.history[tab.historyIndex]
+  tab.currentUrl = url
+  tab.urlInput = url
+  tab.loading = true
+  tab.iframeKey++
   emit('update:url', url)
 }
 
-function refresh() {
-  if (!currentUrl.value) return
-  loading.value = true
-  iframeKey.value++
+function refresh(): void {
+  const tab = activeTab.value
+  if (!tab.currentUrl) return
+  tab.loading = true
+  tab.iframeKey++
 }
 
-function onLoad() {
-  loading.value = false
+function onLoad(tab: BrowserTab): void {
+  tab.loading = false
 }
 
-function onError() {
-  loading.value = false
-  notify.error(t('context.previewLoadError'), { source: 'preview' })
+function onError(tab: BrowserTab): void {
+  tab.loading = false
+  notify.error(label('context.previewLoadError', 'Failed to load preview page'), { source: 'preview' })
 }
 
-function openExternal() {
-  if (!currentUrl.value) return
-  window.open(currentUrl.value, '_blank', 'noopener')
+function openExternal(): void {
+  if (!activeTab.value.currentUrl) return
+  window.open(activeTab.value.currentUrl, '_blank', 'noopener')
 }
 
-function goHome() {
-  urlInput.value = ''
-  currentUrl.value = ''
-  loading.value = false
+function goHome(): void {
+  const tab = activeTab.value
+  tab.urlInput = ''
+  tab.currentUrl = ''
+  tab.loading = false
 }
 
-function onKeydown(event: KeyboardEvent) {
+function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter') {
     event.preventDefault()
     navigate()
   }
 }
 
-// Initialize with default URL if provided
 watch(
   () => props.initialUrl,
   (url) => {
-    if (url && !currentUrl.value) {
+    if (url && !activeTab.value.currentUrl) {
       navigate(url)
     }
   },
   { immediate: true },
 )
+
+// --- Agent Browser Live Mirror state ---
+const mirrorBridge = getAgentBrowserBridge()
+const isElectronMirrorAvailable = Boolean(mirrorBridge)
+const spaces = ref<AgentSpaceSummary[]>([])
+const selectedSpaceId = ref<string | null>(null)
+const previewFrame = ref<AgentPreviewFrame | null>(null)
+const mirrorLoading = ref(false)
+const mirrorBusy = ref(false)
+const showConsoleErrors = ref(false)
+
+let unsubscribeMirrorState: (() => void) | null = null
+let mirrorTimer: number | null = null
+
+const selectedSpace = computed<AgentSpaceSummary | null>(() => {
+  if (spaces.value.length === 0) return null
+  return spaces.value.find((item) => item.space_id === selectedSpaceId.value) ?? spaces.value[0]
+})
+
+const activeConsoleErrors = computed<AgentConsoleError[]>(() => {
+  if (previewFrame.value?.console_errors?.length) return previewFrame.value.console_errors
+  return selectedSpace.value?.console_errors ?? []
+})
+
+function formatSpaceLabel(space: AgentSpaceSummary): string {
+  if (space.task_space && space.task_space !== 'default') {
+    return space.task_space
+  }
+  const id = space.space_id || space.session_id
+  return id.length > 18 ? `${id.slice(0, 18)}…` : id
+}
+
+function controlBadgeText(control: ControlState): string {
+  if (control === 'user') return label('context.previewMirrorWaitingUser', '等待人工接管')
+  if (control === 'finished') return label('context.previewMirrorFinished', '任务已结束')
+  return label('context.previewMirrorAgentControl', 'Agent 控制中')
+}
+
+function formatCapturedTime(iso?: string): string {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleTimeString()
+  } catch {
+    return ''
+  }
+}
+
+function syncSelectedSpace(list: AgentSpaceSummary[]): void {
+  spaces.value = Array.isArray(list) ? list : []
+  if (spaces.value.length === 0) {
+    selectedSpaceId.value = null
+    previewFrame.value = null
+    return
+  }
+  if (!selectedSpaceId.value || !spaces.value.some((item) => item.space_id === selectedSpaceId.value)) {
+    selectedSpaceId.value = spaces.value[0].space_id
+  }
+}
+
+async function refreshSpaces(): Promise<void> {
+  if (!mirrorBridge) return
+  try {
+    const list = await mirrorBridge.listSpaces()
+    syncSelectedSpace(list)
+  } catch {
+    // Graceful degradation when host bridge is unavailable.
+  }
+}
+
+async function refreshMirrorPreview(): Promise<void> {
+  if (!mirrorBridge || !selectedSpace.value) {
+    previewFrame.value = null
+    return
+  }
+  const targetId = selectedSpace.value.space_id
+  mirrorLoading.value = true
+  try {
+    const frame = await mirrorBridge.capturePreview(targetId)
+    if (selectedSpace.value?.space_id === targetId) {
+      previewFrame.value = frame
+    }
+  } catch {
+    // Ignore transient capture errors if window closed mid-capture.
+  } finally {
+    mirrorLoading.value = false
+  }
+}
+
+async function refreshMirrorAll(): Promise<void> {
+  await refreshSpaces()
+  await refreshMirrorPreview()
+}
+
+function startMirrorPolling(): void {
+  if (!mirrorBridge || mirrorTimer !== null) return
+  mirrorTimer = window.setInterval(() => {
+    if (panelMode.value === 'mirror' && selectedSpace.value) {
+      void refreshMirrorPreview()
+    }
+  }, 1500)
+}
+
+function stopMirrorPolling(): void {
+  if (mirrorTimer !== null) {
+    window.clearInterval(mirrorTimer)
+    mirrorTimer = null
+  }
+}
+
+async function handleOpenSpaceWindow(): Promise<void> {
+  if (!mirrorBridge || !selectedSpace.value) return
+  mirrorBusy.value = true
+  try {
+    const result = await mirrorBridge.openWindow(selectedSpace.value.space_id)
+    if (!result?.ok) {
+      notify.error(result?.message || label('context.previewMirrorWindowError', '无法打开独立浏览器窗口'), { source: 'preview' })
+    }
+  } catch {
+    notify.error(label('context.previewMirrorWindowError', '无法打开独立浏览器窗口'), { source: 'preview' })
+  } finally {
+    mirrorBusy.value = false
+  }
+}
+
+async function handleHandOff(): Promise<void> {
+  if (!mirrorBridge || !selectedSpace.value) return
+  mirrorBusy.value = true
+  try {
+    const result = await mirrorBridge.handOff(selectedSpace.value.space_id, 'manual_takeover')
+    if (!result?.ok) {
+      notify.error(result?.message || label('context.previewMirrorHandoffError', '接管控制失败'), { source: 'preview' })
+    }
+    await refreshMirrorAll()
+  } catch {
+    notify.error(label('context.previewMirrorHandoffError', '接管控制失败'), { source: 'preview' })
+  } finally {
+    mirrorBusy.value = false
+  }
+}
+
+async function handleTakeOver(): Promise<void> {
+  if (!mirrorBridge || !selectedSpace.value) return
+  mirrorBusy.value = true
+  try {
+    const result = await mirrorBridge.takeOver(selectedSpace.value.space_id)
+    if (!result?.ok) {
+      notify.error(result?.message || label('context.previewMirrorTakeoverError', '交回智能体失败'), { source: 'preview' })
+    }
+    await refreshMirrorAll()
+  } catch {
+    notify.error(label('context.previewMirrorTakeoverError', '交回智能体失败'), { source: 'preview' })
+  } finally {
+    mirrorBusy.value = false
+  }
+}
+
+watch(panelMode, (mode) => {
+  if (mode === 'mirror') {
+    void refreshMirrorAll()
+    startMirrorPolling()
+  } else {
+    stopMirrorPolling()
+  }
+})
+
+watch(selectedSpaceId, () => {
+  if (panelMode.value === 'mirror') {
+    void refreshMirrorPreview()
+  }
+})
+
+onMounted(() => {
+  if (!mirrorBridge) return
+  void refreshSpaces()
+  try {
+    unsubscribeMirrorState = mirrorBridge.onStateChanged((payload) => {
+      if (Array.isArray(payload?.spaces)) {
+        syncSelectedSpace(payload.spaces)
+      } else {
+        void refreshSpaces()
+      }
+      if (panelMode.value === 'mirror' && selectedSpace.value) {
+        void refreshMirrorPreview()
+      }
+    })
+  } catch {
+    unsubscribeMirrorState = null
+  }
+})
+
+onBeforeUnmount(() => {
+  stopMirrorPolling()
+  try {
+    unsubscribeMirrorState?.()
+  } catch {
+    // Best effort cleanup.
+  }
+  unsubscribeMirrorState = null
+})
 </script>
 
 <template>
-  <section class="panel preview-browser-panel">
-    <!-- Toolbar -->
-    <div class="preview-toolbar">
-      <button
-        class="preview-nav-btn"
-        :disabled="!canGoBack"
-        :title="t('context.previewBack')"
-        @click="goBack"
-      >
-        <ArrowLeft :size="15" />
-      </button>
-      <button
-        class="preview-nav-btn preview-nav-secondary"
-        :disabled="!canGoForward"
-        :title="t('context.previewForward')"
-        @click="goForward"
-      >
-        <ArrowRight :size="15" />
-      </button>
-      <button
-        class="preview-nav-btn"
-        :title="t('context.previewRefresh')"
-        @click="refresh"
-      >
-        <RefreshCw :size="15" :class="{ spinning: loading }" />
-      </button>
-      <button
-        class="preview-nav-btn preview-nav-secondary"
-        :title="t('context.previewHome')"
-        @click="goHome"
-      >
-        <HomeIcon :size="15" />
-      </button>
-
-      <div class="preview-url-bar">
-        <Globe :size="13" class="preview-url-icon" />
-        <input
-          v-model="urlInput"
-          class="preview-url-input"
-          :placeholder="t('context.previewUrlPlaceholder')"
-          @keydown="onKeydown"
-        />
+  <section class="panel preview-browser-panel" data-testid="preview-browser-panel">
+    <!-- Top mode switch bar -->
+    <div class="preview-mode-bar">
+      <div class="preview-mode-segmented" role="tablist" :aria-label="label('context.previewModeToggle', 'Preview mode')">
+        <button
+          type="button"
+          role="tab"
+          class="preview-mode-btn"
+          :class="{ active: panelMode === 'tabs' }"
+          :aria-selected="panelMode === 'tabs'"
+          data-testid="preview-mode-tabs"
+          @click="panelMode = 'tabs'"
+        >
+          <Layers :size="13" aria-hidden="true" />
+          <span>{{ label('context.previewTabMode', '预览标签页') }}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="preview-mode-btn"
+          :class="{ active: panelMode === 'mirror' }"
+          :aria-selected="panelMode === 'mirror'"
+          data-testid="preview-mode-mirror"
+          @click="panelMode = 'mirror'"
+        >
+          <Bot :size="13" aria-hidden="true" />
+          <span>{{ label('context.previewMirrorMode', 'Agent 实况镜像') }}</span>
+          <span v-if="spaces.length > 0" class="preview-mode-count">{{ spaces.length }}</span>
+        </button>
       </div>
-
-      <button
-        class="preview-nav-btn"
-        :title="t('context.previewOpenExternal')"
-        @click="openExternal"
-      >
-        <ExternalLink :size="15" />
-      </button>
     </div>
 
-    <!-- Content area -->
-    <div class="preview-content">
-      <!-- Start page / quick links -->
-      <div v-if="!currentUrl" class="preview-start">
-        <Globe :size="40" class="preview-start-icon" />
-        <h3>{{ t('context.previewStartTitle') }}</h3>
-        <p>{{ t('context.previewStartHint') }}</p>
-        <div class="preview-quick-links">
+    <!-- Mode 1: Multi-tab Preview Browser -->
+    <template v-if="panelMode === 'tabs'">
+      <!-- Multi-tab bar -->
+      <div class="preview-tabbar" role="tablist">
+        <div
+          v-for="tab in tabs"
+          :key="tab.id"
+          class="preview-tab"
+          :class="{ active: tab.id === activeTab.id }"
+          role="tab"
+          :aria-selected="tab.id === activeTab.id"
+          @click="activeTabId = tab.id"
+        >
+          <Globe :size="12" class="preview-tab-icon" aria-hidden="true" />
+          <span class="preview-tab-title" :title="tab.currentUrl || tabTitle(tab)">{{ tabTitle(tab) }}</span>
           <button
-            v-for="link in quickLinks"
-            :key="link.url"
             type="button"
-            class="preview-quick-link"
-            :title="link.url"
-            @click="navigate(link.url)"
+            class="preview-tab-close"
+            :aria-label="label('context.previewCloseTab', 'Close tab')"
+            @click.stop="closeTab(tab.id)"
           >
-            <Globe :size="14" />
-            <span>{{ link.label }}</span>
-            <small>{{ link.url }}</small>
+            <X :size="11" aria-hidden="true" />
           </button>
         </div>
+        <button
+          type="button"
+          class="preview-tab-add"
+          :title="label('context.previewNewTab', 'New tab')"
+          :aria-label="label('context.previewNewTab', 'New tab')"
+          data-testid="preview-add-tab"
+          @click="addTab()"
+        >
+          <Plus :size="13" aria-hidden="true" />
+        </button>
       </div>
 
-      <!-- Loading overlay -->
-      <div v-if="loading && currentUrl" class="preview-loading">
-        <RefreshCw :size="20" class="spinning" />
-        <span>{{ t('context.previewLoading') }}</span>
+      <!-- Navigation & viewport toolbar -->
+      <div class="preview-toolbar">
+        <button class="preview-nav-btn" :disabled="!canGoBack" :title="label('context.previewBack', 'Back')" @click="goBack">
+          <ArrowLeft :size="15" />
+        </button>
+        <button class="preview-nav-btn preview-nav-secondary" :disabled="!canGoForward" :title="label('context.previewForward', 'Forward')" @click="goForward">
+          <ArrowRight :size="15" />
+        </button>
+        <button class="preview-nav-btn" :title="label('context.previewRefresh', 'Refresh')" @click="refresh">
+          <RefreshCw :size="15" :class="{ spinning: activeTab.loading }" />
+        </button>
+        <button class="preview-nav-btn preview-nav-secondary" :title="label('context.previewHome', 'Home')" @click="goHome">
+          <HomeIcon :size="15" />
+        </button>
+
+        <div class="preview-url-bar">
+          <Globe :size="13" class="preview-url-icon" />
+          <input
+            v-model="activeTab.urlInput"
+            class="preview-url-input"
+            :placeholder="label('context.previewUrlPlaceholder', 'Enter URL...')"
+            @keydown="onKeydown"
+          />
+        </div>
+
+        <div class="preview-viewport-group" role="group">
+          <button
+            type="button"
+            class="preview-nav-btn"
+            :class="{ active: viewport === 'desktop' }"
+            :title="label('context.previewViewportDesktop', 'Desktop')"
+            data-testid="preview-viewport-desktop"
+            @click="viewport = 'desktop'"
+          >
+            <Monitor :size="14" />
+          </button>
+          <button
+            type="button"
+            class="preview-nav-btn"
+            :class="{ active: viewport === 'tablet' }"
+            :title="label('context.previewViewportTablet', 'Tablet')"
+            data-testid="preview-viewport-tablet"
+            @click="viewport = 'tablet'"
+          >
+            <Tablet :size="14" />
+          </button>
+          <button
+            type="button"
+            class="preview-nav-btn"
+            :class="{ active: viewport === 'mobile' }"
+            :title="label('context.previewViewportMobile', 'Mobile')"
+            data-testid="preview-viewport-mobile"
+            @click="viewport = 'mobile'"
+          >
+            <Smartphone :size="14" />
+          </button>
+        </div>
+
+        <button class="preview-nav-btn" :title="label('context.previewOpenExternal', 'Open external')" @click="openExternal">
+          <ExternalLink :size="15" />
+        </button>
       </div>
 
-      <!-- Iframe -->
-      <iframe
-        v-if="currentUrl"
-        :key="iframeKey"
-        :src="currentUrl"
-        class="preview-iframe"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        referrerpolicy="no-referrer"
-        @load="onLoad"
-        @error="onError"
-      />
+      <!-- Content area -->
+      <div class="preview-content" :class="`viewport-${viewport}`">
+        <div v-if="!activeTab.currentUrl" class="preview-start">
+          <Globe :size="36" class="preview-start-icon" />
+          <h3>{{ label('context.previewStartTitle', 'Preview Browser') }}</h3>
+          <p>{{ label('context.previewStartHint', 'Enter a local or web address to preview.') }}</p>
+          <div class="preview-quick-links">
+            <button
+              v-for="link in quickLinks"
+              :key="link.url"
+              type="button"
+              class="preview-quick-link"
+              :title="link.url"
+              @click="navigate(link.url)"
+            >
+              <Globe :size="14" />
+              <span>{{ link.label }}</span>
+              <small>{{ link.url }}</small>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="activeTab.loading && activeTab.currentUrl" class="preview-loading">
+          <RefreshCw :size="20" class="spinning" />
+          <span>{{ label('context.previewLoading', 'Loading…') }}</span>
+        </div>
+
+        <div v-if="activeTab.currentUrl" class="preview-frame-shell" :class="`is-${viewport}`">
+          <iframe
+            :key="`${activeTab.id}-${activeTab.iframeKey}`"
+            :src="activeTab.currentUrl"
+            class="preview-iframe"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            referrerpolicy="no-referrer"
+            @load="onLoad(activeTab)"
+            @error="onError(activeTab)"
+          />
+        </div>
+      </div>
+    </template>
+
+    <!-- Mode 2: Agent Browser Live Mirror -->
+    <div v-else class="mirror-workspace" data-testid="agent-browser-mirror">
+      <!-- Standalone Web-mode graceful fallback -->
+      <div v-if="!isElectronMirrorAvailable" class="mirror-empty-card" data-testid="mirror-web-fallback">
+        <div class="mirror-empty-icon">
+          <Monitor :size="24" aria-hidden="true" />
+        </div>
+        <h3>{{ label('context.previewMirrorWebTitle', 'Agent 实况镜像仅在桌面客户端可用') }}</h3>
+        <p>{{ label('context.previewMirrorWebDesc', '当前运行于独立 Web 模式，未检测到 Electron 浏览器宿主。请使用 TinadecOffice 桌面客户端查看智能体实时画面并一键接管控制，或切换回预览标签页继续浏览。') }}</p>
+        <button type="button" class="mirror-action-btn" @click="panelMode = 'tabs'">
+          <Layers :size="13" aria-hidden="true" />
+          <span>{{ label('context.previewBackToTabs', '返回预览标签页') }}</span>
+        </button>
+      </div>
+
+      <!-- Electron active, no TaskSpaces running yet -->
+      <div v-else-if="!selectedSpace" class="mirror-empty-card" data-testid="mirror-empty-state">
+        <div class="mirror-empty-icon">
+          <Bot :size="24" aria-hidden="true" />
+        </div>
+        <h3>{{ label('context.previewMirrorEmptyTitle', '暂无运行中的 Agent 任务空间') }}</h3>
+        <p>{{ label('context.previewMirrorEmptyDesc', '当智能体启动浏览器任务时，这里会自动显示每个隔离 TaskSpace 的实时画面、URL 状态与人工接管控制入口。') }}</p>
+        <button type="button" class="mirror-action-btn" @click="refreshMirrorAll">
+          <RefreshCw :size="13" :class="{ spinning: mirrorLoading }" aria-hidden="true" />
+          <span>{{ label('context.previewMirrorRefresh', '刷新列表') }}</span>
+        </button>
+      </div>
+
+      <!-- Active Electron TaskSpaces mirror view -->
+      <template v-else>
+        <!-- TaskSpace selector bar -->
+        <div class="mirror-space-strip" role="tablist">
+          <button
+            v-for="space in spaces"
+            :key="space.space_id"
+            type="button"
+            role="tab"
+            class="mirror-space-pill"
+            :class="{ active: space.space_id === selectedSpace.space_id }"
+            :aria-selected="space.space_id === selectedSpace.space_id"
+            :title="space.space_id"
+            @click="selectedSpaceId = space.space_id"
+          >
+            <span class="mirror-dot" :class="`is-${space.control}`" aria-hidden="true" />
+            <span class="mirror-space-name">{{ formatSpaceLabel(space) }}</span>
+            <span class="mirror-space-tabs">{{ space.tab_count }}</span>
+          </button>
+        </div>
+
+        <!-- Active space info & control bar -->
+        <div class="mirror-header-card">
+          <div class="mirror-meta-row">
+            <span class="mirror-control-badge" :class="`is-${selectedSpace.control}`" data-testid="mirror-control-badge">
+              {{ controlBadgeText(selectedSpace.control) }}
+            </span>
+            <div class="mirror-title-block">
+              <strong class="mirror-page-title" :title="selectedSpace.title || selectedSpace.url">
+                {{ selectedSpace.title || label('context.previewMirrorUntitled', '未命名页面') }}
+              </strong>
+              <span class="mirror-page-url" :title="selectedSpace.url">
+                {{ selectedSpace.url || 'about:blank' }}
+              </span>
+            </div>
+            <button
+              type="button"
+              class="preview-nav-btn"
+              :title="label('context.previewMirrorRefresh', '刷新画面')"
+              @click="refreshMirrorAll"
+            >
+              <RefreshCw :size="14" :class="{ spinning: mirrorLoading }" />
+            </button>
+          </div>
+
+          <div class="mirror-actions-row">
+            <button
+              type="button"
+              class="mirror-action-btn"
+              :disabled="mirrorBusy"
+              data-testid="mirror-open-window"
+              @click="handleOpenSpaceWindow"
+            >
+              <ExternalLink :size="13" aria-hidden="true" />
+              <span>{{ label('context.previewMirrorOpenWindow', '打开独立窗口') }}</span>
+            </button>
+
+            <button
+              v-if="selectedSpace.control === 'agent'"
+              type="button"
+              class="mirror-action-btn is-handoff"
+              :disabled="mirrorBusy"
+              data-testid="mirror-handoff-btn"
+              @click="handleHandOff"
+            >
+              <Hand :size="13" aria-hidden="true" />
+              <span>{{ label('context.previewMirrorHandOff', '接管控制 (Hand Off)') }}</span>
+            </button>
+
+            <button
+              v-if="selectedSpace.control === 'user'"
+              type="button"
+              class="mirror-action-btn is-takeover"
+              :disabled="mirrorBusy"
+              data-testid="mirror-takeover-btn"
+              @click="handleTakeOver"
+            >
+              <Play :size="13" aria-hidden="true" />
+              <span>{{ label('context.previewMirrorTakeOver', '交回智能体 (Take Over)') }}</span>
+            </button>
+
+            <span v-if="selectedSpace.control === 'finished'" class="mirror-finished-hint">
+              {{ label('context.previewMirrorFinishedHint', '任务空间已终结，不可恢复') }}
+            </span>
+
+            <button
+              v-if="activeConsoleErrors.length > 0"
+              type="button"
+              class="mirror-error-pill"
+              @click="showConsoleErrors = !showConsoleErrors"
+            >
+              <AlertTriangle :size="12" aria-hidden="true" />
+              <span>{{ activeConsoleErrors.length }} {{ label('context.previewMirrorConsoleErrors', '控制台错误') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Open JS Dialog notice banner -->
+        <div v-if="selectedSpace.dialog" class="mirror-dialog-banner" role="status">
+          <AlertTriangle :size="14" aria-hidden="true" />
+          <span>
+            {{ label('context.previewMirrorDialogBanner', '页面弹出对话框，已自动拦截阻塞型 CDP 调用') }}
+            <template v-if="selectedSpace.dialog.message">：{{ selectedSpace.dialog.message }}</template>
+          </span>
+        </div>
+
+        <!-- Optional console errors diagnostics drawer -->
+        <div v-if="showConsoleErrors && activeConsoleErrors.length > 0" class="mirror-errors-card">
+          <div v-for="(err, idx) in activeConsoleErrors" :key="err.seq ?? idx" class="mirror-error-line">
+            <span class="mirror-error-src">{{ err.source || err.level || 'error' }}</span>
+            <span class="mirror-error-msg">{{ err.message }}</span>
+          </div>
+        </div>
+
+        <!-- Live screenshot / frame surface -->
+        <div class="mirror-stage">
+          <img
+            v-if="previewFrame?.data_url"
+            :src="previewFrame.data_url"
+            :alt="selectedSpace.title || selectedSpace.url || 'Agent Browser Mirror'"
+            class="mirror-image"
+          />
+          <div v-else class="mirror-stage-placeholder">
+            <RefreshCw v-if="mirrorLoading" :size="18" class="spinning" aria-hidden="true" />
+            <Globe v-else :size="22" aria-hidden="true" />
+            <span>{{ mirrorLoading ? label('context.previewLoading', '正在捕获实况画面…') : label('context.previewMirrorNoFrame', '等待页面首帧画面') }}</span>
+          </div>
+          <div v-if="previewFrame?.captured_at" class="mirror-stage-footer">
+            <span>{{ selectedSpace.space_id }}</span>
+            <span>{{ formatCapturedTime(previewFrame.captured_at) }}</span>
+          </div>
+        </div>
+      </template>
     </div>
   </section>
 </template>
@@ -235,6 +835,113 @@ watch(
   overflow: hidden;
 }
 
+.preview-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-muted);
+  flex-shrink: 0;
+}
+
+.preview-mode-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-primary);
+}
+
+.preview-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.preview-mode-btn:hover {
+  color: var(--text-primary);
+}
+
+.preview-mode-btn.active {
+  background: var(--bg-secondary);
+  border-color: var(--border-muted);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.preview-mode-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  color: var(--accent-primary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.preview-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 6px 0;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-muted);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.preview-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 170px;
+  padding: 5px 8px;
+  border-radius: 10px 10px 0 0;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.preview-tab.active {
+  background: var(--bg-secondary);
+  border-color: var(--border-muted);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.preview-tab-icon { flex-shrink: 0; color: var(--text-muted); }
+.preview-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-tab-close {
+  display: grid; place-items: center; width: 16px; height: 16px;
+  border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.preview-tab-close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.preview-tab-add {
+  display: grid; place-items: center; width: 24px; height: 24px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; flex-shrink: 0;
+}
+.preview-tab-add:hover { background: var(--surface-hover); color: var(--text-primary); }
+
 .preview-toolbar {
   display: flex;
   align-items: center;
@@ -243,13 +950,14 @@ watch(
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-muted);
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .preview-nav-btn {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   color: var(--text-secondary);
   background: transparent;
   border: none;
@@ -259,162 +967,454 @@ watch(
   flex-shrink: 0;
 }
 
-.preview-nav-btn:hover:not(:disabled) {
+.preview-nav-btn:hover:not(:disabled),
+.preview-nav-btn.active {
+  background: var(--surface-hover);
   color: var(--text-primary);
-  background: var(--bg-hover);
 }
-
-.preview-nav-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
+.preview-nav-btn.active { color: var(--accent-primary); }
+.preview-nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .preview-url-bar {
-  flex: 1;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
-  height: 28px;
-  background: var(--bg-tertiary);
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 10px;
   border: 1px solid var(--border-muted);
-  border-radius: 14px;
-  min-width: 0;
+  background: var(--surface-input);
 }
 
-.preview-url-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
+.preview-url-icon { color: var(--text-muted); flex-shrink: 0; }
 .preview-url-input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
+  border: 0;
   background: transparent;
-  border: none;
-  outline: none;
-  font-size: 12px;
   color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
 }
 
-.preview-url-input::placeholder {
-  color: var(--text-muted);
+.preview-viewport-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  border-left: 1px solid var(--border-muted);
+  border-right: 1px solid var(--border-muted);
 }
 
 .preview-content {
-  flex: 1;
   position: relative;
-  min-width: 0;
+  flex: 1;
   min-height: 0;
+  display: flex;
+  justify-content: center;
   background: var(--bg-primary);
-  overflow: hidden;
+  overflow: auto;
+}
+
+.preview-frame-shell {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+.preview-frame-shell.is-tablet {
+  width: min(768px, 100%);
+  border-left: 1px solid var(--border-muted);
+  border-right: 1px solid var(--border-muted);
+  box-shadow: var(--shadow-panel);
+}
+.preview-frame-shell.is-mobile {
+  width: min(390px, 100%);
+  border-left: 1px solid var(--border-muted);
+  border-right: 1px solid var(--border-muted);
+  box-shadow: var(--shadow-panel);
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
 }
 
 .preview-start {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 32px 20px;
-  height: 100%;
-  overflow-y: auto;
-}
-
-.preview-start-icon {
-  color: var(--text-muted);
-  opacity: 0.5;
-}
-
-.preview-start h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.preview-start p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted);
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
   text-align: center;
+  max-width: 420px;
+  margin: auto;
 }
-
+.preview-start-icon { color: var(--text-muted); opacity: 0.7; }
+.preview-start h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
+.preview-start p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 .preview-quick-links {
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
-  min-width: 0;
-  max-width: 280px;
   margin-top: 8px;
 }
-
 .preview-quick-link {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  gap: 4px 8px;
-  min-width: 0;
-  padding: 10px 12px;
-  background: var(--bg-tertiary);
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
   border: 1px solid var(--border-muted);
-  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 12px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
   text-align: left;
 }
-
-.preview-quick-link:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent-primary);
-}
-
-.preview-quick-link span {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.preview-quick-link small {
-  grid-column: 2;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
+.preview-quick-link:hover { background: var(--surface-hover); border-color: var(--accent-primary); }
+.preview-quick-link small { margin-left: auto; color: var(--text-muted); font-family: var(--font-mono); font-size: 10.5px; }
 
 .preview-loading {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 8px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-muted);
-  font-size: 12px;
+  background: color-mix(in srgb, var(--bg-primary) 75%, transparent);
   color: var(--text-secondary);
-  z-index: 5;
+  font-size: 12px;
 }
 
-.preview-iframe {
+/* --- Agent Browser Live Mirror --- */
+.mirror-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-primary);
+  overflow: auto;
+}
+
+.mirror-empty-card {
+  margin: auto;
+  max-width: 380px;
+  padding: 22px 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.mirror-empty-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+}
+
+.mirror-empty-card h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.mirror-empty-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.mirror-space-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.mirror-space-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mirror-space-pill.active {
+  background: var(--bg-secondary);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.mirror-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.mirror-dot.is-user {
+  background: #d29922;
+}
+
+.mirror-dot.is-finished {
+  background: var(--text-muted);
+}
+
+.mirror-space-tabs {
+  padding: 0 5px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.mirror-header-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  flex-shrink: 0;
+}
+
+.mirror-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mirror-control-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mirror-control-badge.is-agent {
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-primary);
+}
+
+.mirror-control-badge.is-user {
+  border-color: color-mix(in srgb, #d29922 50%, var(--border-muted));
+  background: color-mix(in srgb, #d29922 14%, transparent);
+  color: #d29922;
+}
+
+.mirror-control-badge.is-finished {
+  border-color: var(--border-muted);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.mirror-title-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.mirror-page-title {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirror-page-url {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirror-actions-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mirror-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.mirror-action-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-primary);
+}
+
+.mirror-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mirror-action-btn.is-handoff {
+  border-color: color-mix(in srgb, #d29922 45%, var(--border-muted));
+  color: #d29922;
+}
+
+.mirror-action-btn.is-takeover {
+  border-color: color-mix(in srgb, var(--accent-primary) 50%, var(--border-muted));
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color: var(--accent-primary);
+}
+
+.mirror-finished-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mirror-error-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, #f85149 45%, var(--border-muted));
+  background: color-mix(in srgb, #f85149 12%, transparent);
+  color: #f85149;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mirror-dialog-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, #d29922 45%, var(--border-muted));
+  background: color-mix(in srgb, #d29922 10%, transparent);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.mirror-errors-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.mirror-error-line {
+  display: flex;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.mirror-error-src {
+  color: #f85149;
+  flex-shrink: 0;
+}
+
+.mirror-error-msg {
+  overflow-wrap: anywhere;
+}
+
+.mirror-stage {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  border-radius: 12px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mirror-image {
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
-  border: none;
-  background: #fff;
+  object-fit: contain;
+  background: #111015;
 }
 
-.spinning {
-  animation: spin 0.8s linear infinite;
+.mirror-stage-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.mirror-stage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  border-top: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
 }
+
+.spinning { animation: preview-spin 1s linear infinite; }
+@keyframes preview-spin { to { transform: rotate(360deg); } }
 </style>

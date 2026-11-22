@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('tinadecBrowser', {
   getState: () => ipcRenderer.invoke('browserShell:state'),
   command: (payload) => ipcRenderer.invoke('browserShell:command', payload),
   onState: (callback) => {
+    if (typeof callback !== 'function') return () => {};
     const handler = (_event, state) => callback(state);
     ipcRenderer.on('browserShell:state-changed', handler);
     return () => ipcRenderer.removeListener('browserShell:state-changed', handler);

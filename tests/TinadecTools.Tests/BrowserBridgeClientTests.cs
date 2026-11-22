@@ -201,4 +201,43 @@ public sealed class BrowserBridgeClientTests
         Assert.Equal("browser_timeout", response.Code);
         Assert.False(response.Permanent);
     }
+
+    [Fact]
+    public async Task SerializesV2BridgeFieldsAndParsesPendingDialogReceipt()
+    {
+        var (home, _) = CreateHome(BridgeJson());
+        string? body = null;
+        var handler = new FakeHandler(async (request, cancellationToken) =>
+        {
+            body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return Json(
+                HttpStatusCode.OK,
+                """{"ok":false,"code":"browser_dialog_open","permanent":true,"message":"dialog open","pending_dialog":{"type":"confirm","message":"Delete item?","url":"https://example.com/"}}""");
+        });
+        var client = new BrowserBridgeClient(handler, () => home, null);
+
+        var response = await client.SendAsync(
+            new BrowserBridgeCall(
+                Op: "finish",
+                SessionId: "s1",
+                TabId: "t1",
+                TaskSpace: "checkout",
+                Reason: "done",
+                Keep: ["t1"],
+                CdpSessionId: "oopif-1"),
+            TimeSpan.FromSeconds(2),
+            CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(body!);
+        Assert.Equal("finish", doc.RootElement.GetProperty("op").GetString());
+        Assert.Equal("checkout", doc.RootElement.GetProperty("task_space").GetString());
+        Assert.Equal("oopif-1", doc.RootElement.GetProperty("cdp_session_id").GetString());
+        Assert.Equal("t1", doc.RootElement.GetProperty("keep")[0].GetString());
+
+        Assert.False(response.Ok);
+        Assert.Equal("browser_dialog_open", response.Code);
+        Assert.NotNull(response.PendingDialog);
+        Assert.Equal("confirm", response.PendingDialog!.Type);
+        Assert.Equal("Delete item?", response.PendingDialog.Message);
+    }
 }

@@ -1,13 +1,12 @@
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using TinadecTools.Runtime;
+using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tools.Browser;
 
 /// <summary>
-/// Action half of the browser runtime: ref → element → real input. The rules are the ego-lite
-/// ones that matter: resolve the ref against the current document, scroll, hit-test through open
-/// shadow roots, dispatch a real event, and never replay an input that was already dispatched.
+/// Action, lifecycle, file-transfer, and declarative workflow half of <see cref="BrowserToolRuntime"/>.
 /// </summary>
 internal sealed partial class BrowserToolRuntime
 {
@@ -50,6 +49,114 @@ internal sealed partial class BrowserToolRuntime
         "return this.value;" +
         "}";
 
+    private const string SelectOptionFunction =
+        "function(spec){" +
+        "const el=this;" +
+        "if(!el||el.tagName!=='SELECT')return {ok:false,reason:'not_select'};" +
+        "const opts=Array.from(el.options||[]);" +
+        "let matched=false;" +
+        "if(Array.isArray(spec.values)){" +
+        "const wanted=new Set(spec.values);" +
+        "for(const o of opts){const hit=wanted.has(o.value)||wanted.has((o.label||o.text||'').trim());o.selected=hit;if(hit)matched=true;}" +
+        "}else if(typeof spec.index==='number'){" +
+        "if(spec.index>=0&&spec.index<opts.length){el.selectedIndex=spec.index;matched=true;}" +
+        "}else if(typeof spec.label==='string'){" +
+        "const idx=opts.findIndex(o=>(o.label||o.text||'').trim()===spec.label);if(idx>=0){el.selectedIndex=idx;matched=true;}" +
+        "}else if(typeof spec.value==='string'){" +
+        "let idx=opts.findIndex(o=>o.value===spec.value);" +
+        "if(idx<0)idx=opts.findIndex(o=>(o.label||o.text||'').trim()===spec.value);" +
+        "if(idx>=0){el.selectedIndex=idx;matched=true;}" +
+        "}" +
+        "if(!matched)return {ok:false,reason:'option_not_found'};" +
+        "el.dispatchEvent(new Event('input',{bubbles:true}));" +
+        "el.dispatchEvent(new Event('change',{bubbles:true}));" +
+        "return {ok:true,value:el.value||''};" +
+        "}";
+
+    private const string FindElementFunction =
+        "function(spec){" +
+        "function norm(s){return (s||'').replace(/\\s+/g,' ').trim();}" +
+        "function accName(el){" +
+        "const al=el.getAttribute&&el.getAttribute('aria-label');if(al)return norm(al);" +
+        "const lb=el.getAttribute&&el.getAttribute('aria-labelledby');" +
+        "if(lb){const parts=lb.split(/\\s+/).map(id=>{const n=document.getElementById(id);return n?norm(n.textContent):'';}).filter(Boolean);if(parts.length)return parts.join(' ');}" +
+        "if(el.labels&&el.labels.length){return norm(Array.from(el.labels).map(l=>l.textContent).join(' '));}" +
+        "const ph=el.getAttribute&&el.getAttribute('placeholder');" +
+        "const tag=(el.tagName||'').toLowerCase();" +
+        "if(tag==='input'||tag==='textarea')return norm(ph||el.value||'');" +
+        "return norm(el.innerText||el.textContent||el.getAttribute('title')||el.getAttribute('alt')||'');" +
+        "}" +
+        "function roleOf(el){" +
+        "const r=el.getAttribute&&el.getAttribute('role');if(r)return r.toLowerCase();" +
+        "const tag=(el.tagName||'').toLowerCase();" +
+        "const type=((el.getAttribute&&el.getAttribute('type'))||'').toLowerCase();" +
+        "if(tag==='button'||(tag==='input'&&(type==='button'||type==='submit'||type==='reset')))return 'button';" +
+        "if(tag==='a'&&el.hasAttribute('href'))return 'link';" +
+        "if(tag==='textarea')return 'textbox';" +
+        "if(tag==='input'){if(type==='checkbox')return 'checkbox';if(type==='radio')return 'radio';if(type==='search')return 'searchbox';return 'textbox';}" +
+        "if(tag==='select')return 'combobox';" +
+        "if(tag==='option')return 'option';" +
+        "return tag;" +
+        "}" +
+        "let list=[];" +
+        "if(spec.kind==='css'){list=Array.from(document.querySelectorAll(spec.query));}" +
+        "else if(spec.kind==='href'){list=Array.from(document.querySelectorAll('a[href]')).filter(a=>(a.getAttribute('href')||'').indexOf(spec.query)>=0||a.href.indexOf(spec.query)>=0);}" +
+        "else if(spec.kind==='text'){" +
+        "const all=Array.from(document.querySelectorAll('button,a,label,input,textarea,select,[role],h1,h2,h3,h4,p,span,div,li,td'));" +
+        "const q=spec.exact?spec.query:norm(spec.query).toLowerCase();" +
+        "list=all.filter(el=>{const t=spec.exact?(el.innerText||el.textContent||'').trim():norm(el.innerText||el.textContent||'').toLowerCase();return spec.exact?t===q:t.indexOf(q)>=0;});" +
+        "if(list.length>1){const leaf=list.filter(el=>!list.some(other=>other!==el&&el.contains(other)));if(leaf.length===1)list=leaf;}" +
+        "}else if(spec.kind==='role'){" +
+        "const all=Array.from(document.querySelectorAll('*'));" +
+        "list=all.filter(el=>{if(roleOf(el)!==spec.role)return false;if(!spec.name)return true;const n=accName(el);return spec.substring?n.toLowerCase().indexOf(spec.name.toLowerCase())>=0:n===spec.name;});" +
+        "}" +
+        "if(list.length!==1)return null;" +
+        "return list[0];" +
+        "}";
+
+    private const string WaitSelectorStateFunction =
+        "async function(css,state,timeoutMs){" +
+        "const deadline=Date.now()+timeoutMs;" +
+        "function isVisible(el){if(!el||!el.isConnected)return false;const r=el.getBoundingClientRect();if(r.width<1||r.height<1)return false;const s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden';}" +
+        "while(Date.now()<deadline){" +
+        "let el=null;try{el=document.querySelector(css);}catch(e){return {ok:false,reason:'invalid_selector'};}" +
+        "if(state==='attached'&&el)return {ok:true,reason:'attached'};" +
+        "if(state==='visible'&&isVisible(el))return {ok:true,reason:'visible'};" +
+        "if(state==='detached'&&!el)return {ok:true,reason:'detached'};" +
+        "if(state==='hidden'&&(!el||!isVisible(el)))return {ok:true,reason:'hidden'};" +
+        "await new Promise(function(r){setTimeout(r,100);});" +
+        "}" +
+        "return {ok:false,reason:'timeout'};" +
+        "}";
+
+    private const string ExtractFunction =
+        "function(spec){" +
+        "let nodes=[];" +
+        "try{nodes=Array.from(document.querySelectorAll(spec.selector));}catch(e){return {ok:false,reason:'invalid_selector'};}" +
+        "function readAttr(el,attr){" +
+        "if(!attr||attr==='text'||attr==='textContent')return (el.textContent||'').trim();" +
+        "if(attr==='innerText')return (el.innerText||el.textContent||'').trim();" +
+        "if(attr==='value')return el.value!==undefined?String(el.value):'';" +
+        "if(attr==='href'&&el.href)return String(el.href);" +
+        "return (el.getAttribute&&el.getAttribute(attr))||'';" +
+        "}" +
+        "if(!spec.multiple){" +
+        "if(nodes.length===0)return {ok:true,value:null};" +
+        "return {ok:true,value:readAttr(nodes[0],spec.attribute)};" +
+        "}" +
+        "const capped=nodes.slice(0,spec.limit||20).map(n=>readAttr(n,spec.attribute));" +
+        "return {ok:true,values:capped};" +
+        "}";
+
+    private const string FindFileInputFunction =
+        "function(){" +
+        "const el=this;" +
+        "if(!el)return null;" +
+        "if(el.tagName==='INPUT'&&String(el.type||'').toLowerCase()==='file')return el;" +
+        "const list=el.querySelectorAll?Array.from(el.querySelectorAll('input[type=\"file\"]')):[];" +
+        "return list.length===1?list[0]:null;" +
+        "}";
+
     private static readonly HashSet<string> BatchTools = new(StringComparer.Ordinal)
     {
         "browser_click",
@@ -58,11 +165,33 @@ internal sealed partial class BrowserToolRuntime
         "browser_scroll",
     };
 
+    private static readonly HashSet<string> RunStepActions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "goto",
+        "fill",
+        "click",
+        "select_option",
+        "press",
+        "scroll",
+        "wait_for_selector",
+        "wait_for_url",
+        "wait_for_text",
+        "handle_dialog",
+        "extract",
+    };
+
+    private static readonly HashSet<string> SafeExtractAttributes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "", "text", "textcontent", "innertext", "value", "href", "src", "title", "alt",
+        "aria-label", "placeholder", "name", "id", "role", "type",
+    };
+
     private readonly record struct TargetResult(
         BrowserRef? Ref,
         double X,
         double Y,
         string? ObjectId,
+        string? CdpSessionId,
         BrowserToolResult? Failure,
         BrowserNoticeInfo[] Notices);
 
@@ -88,9 +217,9 @@ internal sealed partial class BrowserToolRuntime
 
     private async Task<BrowserToolResult> ClickLockedAsync(SessionState session, BrowserClickArgs args, CancellationToken cancellationToken)
     {
-        if (args.Ref is not { } refId || refId <= 0)
+        if ((args.Ref is null || args.Ref <= 0) && string.IsNullOrWhiteSpace(args.Selector))
         {
-            return Fail("browser_ref_required", "A ref from browser_snapshot is required.", permanent: true);
+            return Fail("browser_ref_required", "A ref from browser_snapshot (or a selector) is required.", permanent: true);
         }
         var button = (args.Button ?? "left").Trim().ToLowerInvariant();
         if (button is not ("left" or "right" or "middle"))
@@ -104,24 +233,30 @@ internal sealed partial class BrowserToolRuntime
         var missing = RequireActiveTab(session, out var tab);
         if (missing is not null) return WithNotices(missing, refresh.Notices);
 
-        var target = await PrepareTargetAsync(session, tab, refId, cancellationToken).ConfigureAwait(false);
-        if (target.Failure is not null) return WithNotices(target.Failure, target.Notices);
+        var beforeTabs = SnapshotTabIds(session);
+        var consoleBaseline = session.ConsoleErrorCount;
+
+        var target = await PrepareTargetOrSelectorAsync(session, tab, args.Ref, args.Selector, cancellationToken).ConfigureAwait(false);
+        if (target.Failure is not null) return AttachReceipt(session, WithNotices(target.Failure, target.Notices), beforeTabs, consoleBaseline);
 
         var dispatch = await DispatchMouseAsync(session, tab, target.X, target.Y, button, clickCount, cancellationToken).ConfigureAwait(false);
         var notices = MergeNotices(MergeNotices(refresh.Notices, target.Notices), dispatch.Notices);
-        if (dispatch.Failure is not null) return WithNotices(dispatch.Failure, notices);
+        if (dispatch.Failure is not null) return AttachReceipt(session, WithNotices(dispatch.Failure, notices), beforeTabs, consoleBaseline);
 
-        return WithNotices(new BrowserToolResult
+        await InspectPostActionStateAsync(session, cancellationToken).ConfigureAwait(false);
+        return AttachReceipt(session, WithNotices(new BrowserToolResult
         {
             Ok = true,
+            SpaceId = session.Id,
+            Control = ControlName(session.Control),
             TabId = tab.Id,
             Url = tab.Url,
             Title = tab.Title,
-            Ref = refId,
-        }, notices);
+            Ref = target.Ref?.Ref ?? args.Ref,
+        }, notices), beforeTabs, consoleBaseline);
     }
 
-    // ------------------------------------------------------------------ type
+    // ------------------------------------------------------------------ type / fill
 
     public async Task<BrowserToolResult> TypeAsync(string? sessionId, BrowserTypeArgs args, CancellationToken cancellationToken)
     {
@@ -141,9 +276,9 @@ internal sealed partial class BrowserToolRuntime
 
     private async Task<BrowserToolResult> TypeLockedAsync(SessionState session, BrowserTypeArgs args, CancellationToken cancellationToken)
     {
-        if (args.Ref is not { } refId || refId <= 0)
+        if ((args.Ref is null || args.Ref <= 0) && string.IsNullOrWhiteSpace(args.Selector))
         {
-            return Fail("browser_ref_required", "A ref from browser_snapshot is required.", permanent: true);
+            return Fail("browser_ref_required", "A ref from browser_snapshot (or a selector) is required.", permanent: true);
         }
         var text = args.Text ?? string.Empty;
         if (text.Length > 32_000)
@@ -156,42 +291,48 @@ internal sealed partial class BrowserToolRuntime
         var missing = RequireActiveTab(session, out var tab);
         if (missing is not null) return WithNotices(missing, refresh.Notices);
 
-        var target = await PrepareTargetAsync(session, tab, refId, cancellationToken).ConfigureAwait(false);
-        if (target.Failure is not null) return WithNotices(target.Failure, target.Notices);
+        var beforeTabs = SnapshotTabIds(session);
+        var consoleBaseline = session.ConsoleErrorCount;
+
+        var target = await PrepareTargetOrSelectorAsync(session, tab, args.Ref, args.Selector, cancellationToken).ConfigureAwait(false);
+        if (target.Failure is not null) return AttachReceipt(session, WithNotices(target.Failure, target.Notices), beforeTabs, consoleBaseline);
         var notices = MergeNotices(refresh.Notices, target.Notices);
 
-        var focus = await CdpAsync(session, tab, "DOM.focus",
-            WriteObject(writer => writer.WriteNumber("backendNodeId", target.Ref!.BackendNodeId)),
-            ActionTimeout, cancellationToken).ConfigureAwait(false);
-        if (focus.Failure is not null) return WithNotices(focus.Failure, MergeNotices(notices, focus.Notices));
+        var focusParams = target.Ref is { BackendNodeId: > 0 } bRef
+            ? WriteObject(writer => writer.WriteNumber("backendNodeId", bRef.BackendNodeId))
+            : WriteObject(writer => writer.WriteString("objectId", target.ObjectId!));
+        var focus = await CdpAsync(
+            session, tab, "DOM.focus", focusParams, ActionTimeout, cancellationToken, cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
+        if (focus.Failure is not null) return AttachReceipt(session, WithNotices(focus.Failure, MergeNotices(notices, focus.Notices)), beforeTabs, consoleBaseline);
         notices = MergeNotices(notices, focus.Notices);
 
-        var selected = await CallFunctionValueAsync(session, tab, target.ObjectId!, SelectFunction, null, cancellationToken).ConfigureAwait(false);
-        if (selected.Failure is not null) return WithNotices(selected.Failure, MergeNotices(notices, selected.Notices));
+        var selected = await CallFunctionValueAsync(
+            session, tab, target.ObjectId!, SelectFunction, null, cancellationToken, cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
+        if (selected.Failure is not null) return AttachReceipt(session, WithNotices(selected.Failure, MergeNotices(notices, selected.Notices)), beforeTabs, consoleBaseline);
         notices = MergeNotices(notices, selected.Notices);
 
         var insert = await CdpAsync(session, tab, "Input.insertText",
             WriteObject(writer => writer.WriteString("text", text)),
             ActionTimeout, cancellationToken).ConfigureAwait(false);
-        if (insert.Failure is not null) return WithNotices(insert.Failure, MergeNotices(notices, insert.Notices));
+        if (insert.Failure is not null) return AttachReceipt(session, WithNotices(insert.Failure, MergeNotices(notices, insert.Notices)), beforeTabs, consoleBaseline);
         notices = MergeNotices(notices, insert.Notices);
 
-        var actual = await ReadValueAsync(session, tab, target.ObjectId!, cancellationToken).ConfigureAwait(false);
+        var actual = await ReadValueAsync(session, tab, target.ObjectId!, cancellationToken, cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
         if (actual.Value is not null || actual.Failure is null)
         {
             notices = MergeNotices(notices, actual.Notices);
         }
-        if (actual.Failure is not null) return WithNotices(actual.Failure, notices);
+        if (actual.Failure is not null) return AttachReceipt(session, WithNotices(actual.Failure, notices), beforeTabs, consoleBaseline);
 
         if (!string.Equals(actual.Value, text, StringComparison.Ordinal))
         {
             var fallback = await CallFunctionValueAsync(
-                session, tab, target.ObjectId!, SetValueFunction, JsonString(text), cancellationToken).ConfigureAwait(false);
+                session, tab, target.ObjectId!, SetValueFunction, JsonString(text), cancellationToken, cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
             notices = MergeNotices(notices, fallback.Notices);
-            if (fallback.Failure is not null) return WithNotices(fallback.Failure, notices);
-            var reread = await ReadValueAsync(session, tab, target.ObjectId!, cancellationToken).ConfigureAwait(false);
+            if (fallback.Failure is not null) return AttachReceipt(session, WithNotices(fallback.Failure, notices), beforeTabs, consoleBaseline);
+            var reread = await ReadValueAsync(session, tab, target.ObjectId!, cancellationToken, cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
             notices = MergeNotices(notices, reread.Notices);
-            if (reread.Failure is not null) return WithNotices(reread.Failure, notices);
+            if (reread.Failure is not null) return AttachReceipt(session, WithNotices(reread.Failure, notices), beforeTabs, consoleBaseline);
             actual = reread;
         }
 
@@ -199,19 +340,22 @@ internal sealed partial class BrowserToolRuntime
         {
             var submit = await DispatchKeyAsync(session, tab, ParseKey("Enter")!.Value, cancellationToken).ConfigureAwait(false);
             notices = MergeNotices(notices, submit.Notices);
-            if (submit.Failure is not null) return WithNotices(submit.Failure, notices);
+            if (submit.Failure is not null) return AttachReceipt(session, WithNotices(submit.Failure, notices), beforeTabs, consoleBaseline);
         }
 
-        return WithNotices(new BrowserToolResult
+        await InspectPostActionStateAsync(session, cancellationToken).ConfigureAwait(false);
+        return AttachReceipt(session, WithNotices(new BrowserToolResult
         {
             Ok = true,
+            SpaceId = session.Id,
+            Control = ControlName(session.Control),
             TabId = tab.Id,
             Url = tab.Url,
             Title = tab.Title,
-            Ref = refId,
+            Ref = target.Ref?.Ref ?? args.Ref,
             Value = actual.Value,
             Verified = string.Equals(actual.Value, text, StringComparison.Ordinal),
-        }, notices);
+        }, notices), beforeTabs, consoleBaseline);
     }
 
     // ------------------------------------------------------------------ press
@@ -246,30 +390,38 @@ internal sealed partial class BrowserToolRuntime
         if (missing is not null) return WithNotices(missing, refresh.Notices);
         var notices = refresh.Notices;
 
-        if (args.Ref is int refId && refId > 0)
+        var beforeTabs = SnapshotTabIds(session);
+        var consoleBaseline = session.ConsoleErrorCount;
+
+        if ((args.Ref is > 0) || !string.IsNullOrWhiteSpace(args.Selector))
         {
-            var target = await PrepareTargetAsync(session, tab, refId, cancellationToken).ConfigureAwait(false);
-            if (target.Failure is not null) return WithNotices(target.Failure, target.Notices);
+            var target = await PrepareTargetOrSelectorAsync(session, tab, args.Ref, args.Selector, cancellationToken).ConfigureAwait(false);
+            if (target.Failure is not null) return AttachReceipt(session, WithNotices(target.Failure, target.Notices), beforeTabs, consoleBaseline);
             notices = MergeNotices(notices, target.Notices);
-            var focus = await CdpAsync(session, tab, "DOM.focus",
-                WriteObject(writer => writer.WriteNumber("backendNodeId", target.Ref!.BackendNodeId)),
-                ActionTimeout, cancellationToken).ConfigureAwait(false);
-            if (focus.Failure is not null) return WithNotices(focus.Failure, MergeNotices(notices, focus.Notices));
+            var focusParams = target.Ref is { BackendNodeId: > 0 } bRef
+                ? WriteObject(writer => writer.WriteNumber("backendNodeId", bRef.BackendNodeId))
+                : WriteObject(writer => writer.WriteString("objectId", target.ObjectId!));
+            var focus = await CdpAsync(
+                session, tab, "DOM.focus", focusParams, ActionTimeout, cancellationToken, cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
+            if (focus.Failure is not null) return AttachReceipt(session, WithNotices(focus.Failure, MergeNotices(notices, focus.Notices)), beforeTabs, consoleBaseline);
             notices = MergeNotices(notices, focus.Notices);
         }
 
         var dispatch = await DispatchKeyAsync(session, tab, stroke.Value, cancellationToken).ConfigureAwait(false);
         notices = MergeNotices(notices, dispatch.Notices);
-        if (dispatch.Failure is not null) return WithNotices(dispatch.Failure, notices);
+        if (dispatch.Failure is not null) return AttachReceipt(session, WithNotices(dispatch.Failure, notices), beforeTabs, consoleBaseline);
 
-        return WithNotices(new BrowserToolResult
+        await InspectPostActionStateAsync(session, cancellationToken).ConfigureAwait(false);
+        return AttachReceipt(session, WithNotices(new BrowserToolResult
         {
             Ok = true,
+            SpaceId = session.Id,
+            Control = ControlName(session.Control),
             TabId = tab.Id,
             Url = tab.Url,
             Title = tab.Title,
             Ref = args.Ref,
-        }, notices);
+        }, notices), beforeTabs, consoleBaseline);
     }
 
     // ------------------------------------------------------------------ scroll
@@ -305,12 +457,15 @@ internal sealed partial class BrowserToolRuntime
         if (missing is not null) return WithNotices(missing, refresh.Notices);
         var notices = refresh.Notices;
 
+        var beforeTabs = SnapshotTabIds(session);
+        var consoleBaseline = session.ConsoleErrorCount;
+
         double x;
         double y;
-        if (args.Ref is int refId && refId > 0)
+        if ((args.Ref is > 0) || !string.IsNullOrWhiteSpace(args.Selector))
         {
-            var target = await PrepareTargetAsync(session, tab, refId, cancellationToken).ConfigureAwait(false);
-            if (target.Failure is not null) return WithNotices(target.Failure, target.Notices);
+            var target = await PrepareTargetOrSelectorAsync(session, tab, args.Ref, args.Selector, cancellationToken).ConfigureAwait(false);
+            if (target.Failure is not null) return AttachReceipt(session, WithNotices(target.Failure, target.Notices), beforeTabs, consoleBaseline);
             notices = MergeNotices(notices, target.Notices);
             x = target.X;
             y = target.Y;
@@ -324,7 +479,7 @@ internal sealed partial class BrowserToolRuntime
                     writer.WriteBoolean("returnByValue", true);
                 }),
                 ActionTimeout, cancellationToken).ConfigureAwait(false);
-            if (metrics.Failure is not null) return WithNotices(metrics.Failure, MergeNotices(notices, metrics.Notices));
+            if (metrics.Failure is not null) return AttachReceipt(session, WithNotices(metrics.Failure, MergeNotices(notices, metrics.Notices)), beforeTabs, consoleBaseline);
             notices = MergeNotices(notices, metrics.Notices);
             var value = GetByValue(metrics.Root);
             var width = value is { ValueKind: JsonValueKind.Object } v && v.TryGetProperty("w", out var w) && w.TryGetDouble(out var wd) ? wd : 800;
@@ -344,16 +499,18 @@ internal sealed partial class BrowserToolRuntime
             }),
             ActionTimeout, cancellationToken).ConfigureAwait(false);
         notices = MergeNotices(notices, wheel.Notices);
-        if (wheel.Failure is not null) return WithNotices(wheel.Failure, notices);
+        if (wheel.Failure is not null) return AttachReceipt(session, WithNotices(wheel.Failure, notices), beforeTabs, consoleBaseline);
 
-        return WithNotices(new BrowserToolResult
+        return AttachReceipt(session, WithNotices(new BrowserToolResult
         {
             Ok = true,
+            SpaceId = session.Id,
+            Control = ControlName(session.Control),
             TabId = tab.Id,
             Url = tab.Url,
             Title = tab.Title,
             Ref = args.Ref,
-        }, notices);
+        }, notices), beforeTabs, consoleBaseline);
     }
 
     // ------------------------------------------------------------------ history
@@ -378,6 +535,9 @@ internal sealed partial class BrowserToolRuntime
             if (missing is not null) return WithNotices(missing, refresh.Notices);
             var notices = refresh.Notices;
 
+            var beforeTabs = SnapshotTabIds(session);
+            var consoleBaseline = session.ConsoleErrorCount;
+
             CdpResult navigation;
             if (action == "reload")
             {
@@ -388,7 +548,7 @@ internal sealed partial class BrowserToolRuntime
             {
                 var history = await CdpAsync(session, tab, "Page.getNavigationHistory", EmptyObject,
                     ActionTimeout, cancellationToken).ConfigureAwait(false);
-                if (history.Failure is not null) return WithNotices(history.Failure, MergeNotices(notices, history.Notices));
+                if (history.Failure is not null) return AttachReceipt(session, WithNotices(history.Failure, MergeNotices(notices, history.Notices)), beforeTabs, consoleBaseline);
                 notices = MergeNotices(notices, history.Notices);
                 var entries = history.Root.TryGetProperty("entries", out var entriesElement) && entriesElement.ValueKind == JsonValueKind.Array
                     ? entriesElement
@@ -399,7 +559,7 @@ internal sealed partial class BrowserToolRuntime
                 var targetIndex = action == "back" ? current - 1 : current + 1;
                 if (entries.ValueKind != JsonValueKind.Array || targetIndex < 0 || targetIndex >= entries.GetArrayLength())
                 {
-                    return WithNotices(Fail("browser_history_unavailable", $"There is no {action} entry.", permanent: false), notices);
+                    return AttachReceipt(session, WithNotices(Fail("browser_history_unavailable", $"There is no {action} entry.", permanent: false), notices), beforeTabs, consoleBaseline);
                 }
                 var entry = entries.EnumerateArray().ElementAt(targetIndex);
                 var entryId = entry.TryGetProperty("id", out var idElement) && idElement.TryGetInt32(out var entryNumber)
@@ -407,7 +567,7 @@ internal sealed partial class BrowserToolRuntime
                     : -1;
                 if (entryId < 0)
                 {
-                    return WithNotices(Fail("browser_history_unavailable", "The history entry has no id.", permanent: false), notices);
+                    return AttachReceipt(session, WithNotices(Fail("browser_history_unavailable", "The history entry has no id.", permanent: false), notices), beforeTabs, consoleBaseline);
                 }
                 navigation = await CdpAsync(session, tab, "Page.navigateToHistoryEntry",
                     WriteObject(writer => writer.WriteNumber("entryId", entryId)),
@@ -415,18 +575,20 @@ internal sealed partial class BrowserToolRuntime
             }
 
             notices = MergeNotices(notices, navigation.Notices);
-            if (navigation.Failure is not null) return WithNotices(navigation.Failure, notices);
+            if (navigation.Failure is not null) return AttachReceipt(session, WithNotices(navigation.Failure, notices), beforeTabs, consoleBaseline);
             tab.Refs.Clear();
             tab.NextRef = 1;
             tab.LoaderId = null;
 
-            return WithNotices(new BrowserToolResult
+            return AttachReceipt(session, WithNotices(new BrowserToolResult
             {
                 Ok = true,
+                SpaceId = session.Id,
+                Control = ControlName(session.Control),
                 TabId = tab.Id,
                 Url = tab.Url,
                 Title = tab.Title,
-            }, notices);
+            }, notices), beforeTabs, consoleBaseline);
         }
         finally
         {
@@ -456,21 +618,27 @@ internal sealed partial class BrowserToolRuntime
         {
             var refresh = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
             if (refresh.Failure is not null) return refresh.Failure;
+            var beforeTabs = SnapshotTabIds(session);
+            var consoleBaseline = session.ConsoleErrorCount;
+
             var opened = await _bridge.SendAsync(
                 new BrowserBridgeCall("tabs/open", session.Id, Url: url?.ToString()),
                 TimeSpan.FromSeconds(30),
                 cancellationToken).ConfigureAwait(false);
-            if (!opened.Ok) return FromBridge(opened);
+            if (!opened.Ok) return FromBridge(session, opened);
+            RecordConsoleErrors(session, opened.Data);
             var notices = MergeNotices(refresh.Notices, CollectNewNotices(session, opened.Data ?? EmptyObject));
-            var after = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
-            if (after.Failure is not null) return WithNotices(after.Failure, MergeNotices(notices, after.Notices));
+            var after = await RefreshAsync(session, cancellationToken, allowOpenDialog: true).ConfigureAwait(false);
+            if (after.Failure is not null) return AttachReceipt(session, WithNotices(after.Failure, MergeNotices(notices, after.Notices)), beforeTabs, consoleBaseline);
             notices = MergeNotices(notices, after.Notices);
-            return WithNotices(new BrowserToolResult
+            return AttachReceipt(session, WithNotices(new BrowserToolResult
             {
                 Ok = true,
+                SpaceId = session.Id,
+                Control = ControlName(session.Control),
                 TabId = session.ActiveTabId,
                 Tabs = TabInfos(session),
-            }, notices);
+            }, notices), beforeTabs, consoleBaseline);
         }
         finally
         {
@@ -495,13 +663,15 @@ internal sealed partial class BrowserToolRuntime
                 new BrowserBridgeCall("tabs/select", session.Id, TabId: tabId),
                 ActionTimeout,
                 cancellationToken).ConfigureAwait(false);
-            if (!selected.Ok) return FromBridge(selected);
+            if (!selected.Ok) return FromBridge(session, selected);
             var notices = MergeNotices(refresh.Notices, CollectNewNotices(session, selected.Data ?? EmptyObject));
             var after = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
             if (after.Failure is not null) return WithNotices(after.Failure, MergeNotices(notices, after.Notices));
             return WithNotices(new BrowserToolResult
             {
                 Ok = true,
+                SpaceId = session.Id,
+                Control = ControlName(session.Control),
                 TabId = session.ActiveTabId,
                 Tabs = TabInfos(session),
             }, MergeNotices(notices, after.Notices));
@@ -529,13 +699,15 @@ internal sealed partial class BrowserToolRuntime
                 new BrowserBridgeCall("tabs/close", session.Id, TabId: tabId),
                 ActionTimeout,
                 cancellationToken).ConfigureAwait(false);
-            if (!closed.Ok) return FromBridge(closed);
+            if (!closed.Ok) return FromBridge(session, closed);
             var notices = MergeNotices(refresh.Notices, CollectNewNotices(session, closed.Data ?? EmptyObject));
             var after = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
             if (after.Failure is not null) return WithNotices(after.Failure, MergeNotices(notices, after.Notices));
             return WithNotices(new BrowserToolResult
             {
                 Ok = true,
+                SpaceId = session.Id,
+                Control = ControlName(session.Control),
                 TabId = session.ActiveTabId,
                 Tabs = TabInfos(session),
             }, MergeNotices(notices, after.Notices));
@@ -544,6 +716,961 @@ internal sealed partial class BrowserToolRuntime
         {
             session.Gate.Release();
         }
+    }
+
+    // ------------------------------------------------------------------ handoff / takeover / finish / dialog
+
+    public async Task<BrowserToolResult> HandOffAsync(string? sessionId, BrowserHandoffArgs args, CancellationToken cancellationToken)
+    {
+        var id = NormalizeSessionId(sessionId);
+        if (id is null) return Fail("browser_session_invalid", "A session id is required.", permanent: true);
+
+        var session = GetSession(id);
+        await session.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (session.Control == TaskSpaceControlState.Finished)
+            {
+                return FailTaskSpaceFinished(session.Id);
+            }
+
+            var reason = string.IsNullOrWhiteSpace(args.Reason) ? "manual_takeover" : args.Reason.Trim();
+            var response = await _bridge.SendAsync(
+                new BrowserBridgeCall("handoff", session.Id, Reason: reason),
+                ActionTimeout,
+                cancellationToken).ConfigureAwait(false);
+            if (!response.Ok && !string.Equals(response.Code, "browser_bridge_bad_op", StringComparison.Ordinal))
+            {
+                return FromBridge(session, response);
+            }
+
+            session.Control = TaskSpaceControlState.User;
+            var userNote = string.IsNullOrWhiteSpace(args.Message)
+                ? "Browser control handed off to the user. Wait for the user to confirm completion before calling browser_takeover."
+                : args.Message.Trim();
+
+            return new BrowserToolResult
+            {
+                Ok = true,
+                Code = "browser_handoff_requested",
+                Message = userNote,
+                SpaceId = session.Id,
+                Control = "user",
+                Reason = reason,
+                TabId = session.ActiveTabId,
+                Tabs = TabInfos(session),
+            };
+        }
+        finally
+        {
+            session.Gate.Release();
+        }
+    }
+
+    public async Task<BrowserToolResult> TakeOverAsync(string? sessionId, BrowserTakeoverArgs args, CancellationToken cancellationToken)
+    {
+        var id = NormalizeSessionId(sessionId);
+        if (id is null) return Fail("browser_session_invalid", "A session id is required.", permanent: true);
+
+        var session = GetSession(id);
+        await session.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Refuse resuming a finished/ended task space cleanly per ego-errors.ts (EGO_TASK_SPACE_INACTIVE).
+            if (session.Control == TaskSpaceControlState.Finished)
+            {
+                return FailTaskSpaceFinished(session.Id);
+            }
+
+            var response = await _bridge.SendAsync(
+                new BrowserBridgeCall("takeover", session.Id),
+                ActionTimeout,
+                cancellationToken).ConfigureAwait(false);
+            if (!response.Ok && !string.Equals(response.Code, "browser_bridge_bad_op", StringComparison.Ordinal))
+            {
+                return FromBridge(session, response);
+            }
+
+            session.Control = TaskSpaceControlState.Agent;
+            foreach (var tab in session.Tabs.Values)
+            {
+                tab.Refs.Clear();
+                tab.NextRef = 1;
+                tab.LoaderId = null;
+            }
+
+            await InspectPostActionStateAsync(session, cancellationToken).ConfigureAwait(false);
+            var active = session.ActiveTabId is { } activeId && session.Tabs.TryGetValue(activeId, out var t) ? t : null;
+            return new BrowserToolResult
+            {
+                Ok = true,
+                Code = "browser_control_resumed",
+                Message = "Agent control resumed. Take a fresh browser_snapshot before acting on page elements.",
+                SpaceId = session.Id,
+                Control = "agent",
+                TabId = active?.Id,
+                Url = active?.Url,
+                Title = active?.Title,
+                Tabs = TabInfos(session),
+                PendingDialog = session.PendingDialog,
+            };
+        }
+        finally
+        {
+            session.Gate.Release();
+        }
+    }
+
+    public async Task<BrowserToolResult> FinishAsync(string? sessionId, BrowserFinishArgs args, CancellationToken cancellationToken)
+    {
+        var id = NormalizeSessionId(sessionId);
+        if (id is null) return Fail("browser_session_invalid", "A session id is required.", permanent: true);
+
+        var session = GetSession(id);
+        await session.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var guard = CheckLocalControlBoundary(session);
+            if (guard is not null) return guard;
+
+            var keepSet = new HashSet<string>(
+                (args.Keep ?? Array.Empty<string>())
+                    .Where(k => !string.IsNullOrWhiteSpace(k))
+                    .Select(k => k.Trim()),
+                StringComparer.Ordinal);
+
+            var response = await _bridge.SendAsync(
+                new BrowserBridgeCall("finish", session.Id, Keep: keepSet.ToArray()),
+                ActionTimeout,
+                cancellationToken).ConfigureAwait(false);
+
+            string[] keptTabs;
+            string[] closedTabs;
+            if (response.Ok && response.Data is { ValueKind: JsonValueKind.Object } data)
+            {
+                keptTabs = ReadStringArray(data, "kept_tabs");
+                closedTabs = ReadStringArray(data, "closed_tabs");
+                SyncTabs(session, ParseTabs(data), GetString(data, "active_tab"));
+            }
+            else if (string.Equals(response.Code, "browser_bridge_bad_op", StringComparison.Ordinal))
+            {
+                // Fallback for minimal mock bridges that only implement tabs/list & tabs/close.
+                await InspectPostActionStateAsync(session, cancellationToken).ConfigureAwait(false);
+                var existingIds = session.Tabs.Keys.ToArray();
+                var closed = new List<string>();
+                var kept = new List<string>();
+                foreach (var tabId in existingIds)
+                {
+                    if (keepSet.Contains(tabId))
+                    {
+                        kept.Add(tabId);
+                    }
+                    else
+                    {
+                        var closeResp = await _bridge.SendAsync(
+                            new BrowserBridgeCall("tabs/close", session.Id, TabId: tabId),
+                            ActionTimeout,
+                            cancellationToken).ConfigureAwait(false);
+                        if (closeResp.Ok)
+                        {
+                            closed.Add(tabId);
+                            session.Tabs.Remove(tabId);
+                        }
+                    }
+                }
+                keptTabs = kept.ToArray();
+                closedTabs = closed.ToArray();
+            }
+            else
+            {
+                return FromBridge(session, response);
+            }
+
+            foreach (var tab in session.Tabs.Values)
+            {
+                tab.Refs.Clear();
+                tab.NextRef = 1;
+                tab.LoaderId = null;
+            }
+            session.Control = TaskSpaceControlState.Finished;
+
+            return new BrowserToolResult
+            {
+                Ok = true,
+                Code = "browser_task_space_completed",
+                Message = keptTabs.Length > 0
+                    ? $"Task space finished; kept {keptTabs.Length} tab(s) open for the user."
+                    : "Task space finished and intermediate tabs closed.",
+                SpaceId = session.Id,
+                Control = "finished",
+                KeptTabs = keptTabs,
+                ClosedTabs = closedTabs,
+            };
+        }
+        finally
+        {
+            session.Gate.Release();
+        }
+    }
+
+    public async Task<BrowserToolResult> DialogAsync(string? sessionId, BrowserDialogArgs args, CancellationToken cancellationToken)
+    {
+        var id = NormalizeSessionId(sessionId);
+        if (id is null) return Fail("browser_session_invalid", "A session id is required.", permanent: true);
+        if (args.Accept is not { } accept)
+        {
+            return Fail("browser_dialog_invalid", "accept (true or false) is required.", permanent: true);
+        }
+        if (args.PromptText is { Length: > 4096 })
+        {
+            return Fail("browser_dialog_invalid", "prompt_text exceeds 4096 characters.", permanent: true);
+        }
+
+        var session = GetSession(id);
+        await session.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await DialogLockedAsync(session, accept, args.PromptText, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            session.Gate.Release();
+        }
+    }
+
+    private async Task<BrowserToolResult> DialogLockedAsync(
+        SessionState session,
+        bool accept,
+        string? promptText,
+        CancellationToken cancellationToken)
+    {
+        var guard = CheckLocalControlBoundary(session);
+        if (guard is not null) return guard;
+
+        var response = await _bridge.SendAsync(
+            new BrowserBridgeCall("dialog", session.Id, Accept: accept, PromptText: promptText),
+            ActionTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (!response.Ok) return FromBridge(session, response);
+
+        session.PendingDialog = null;
+        if (response.Data is { ValueKind: JsonValueKind.Object } data)
+        {
+            RecordConsoleErrors(session, data);
+            SyncTabs(session, ParseTabs(data), GetString(data, "active_tab"));
+        }
+
+        var active = session.ActiveTabId is { } activeId && session.Tabs.TryGetValue(activeId, out var t) ? t : null;
+        return new BrowserToolResult
+        {
+            Ok = true,
+            SpaceId = session.Id,
+            Control = ControlName(session.Control),
+            TabId = active?.Id,
+            Url = active?.Url,
+            Title = active?.Title,
+        };
+    }
+
+    // ------------------------------------------------------------------ upload & download_save
+
+    public async Task<BrowserToolResult> UploadAsync(string? sessionId, BrowserUploadArgs args, CancellationToken cancellationToken)
+    {
+        var id = NormalizeSessionId(sessionId);
+        if (id is null) return Fail("browser_session_invalid", "A session id is required.", permanent: true);
+
+        var rawPaths = new List<string>();
+        if (!string.IsNullOrWhiteSpace(args.Path)) rawPaths.Add(args.Path);
+        if (args.Paths is { Length: > 0 })
+        {
+            rawPaths.AddRange(args.Paths.Where(p => !string.IsNullOrWhiteSpace(p)));
+        }
+        if (rawPaths.Count == 0)
+        {
+            return Fail("browser_upload_invalid", "Provide path or paths inside the allowed workspace.", permanent: true);
+        }
+
+        var resolvedPaths = new List<string>(rawPaths.Count);
+        foreach (var raw in rawPaths)
+        {
+            string resolved;
+            try
+            {
+                resolved = WorkspacePathResolver.ResolvePath(raw, allowFinalLink: false, writable: false);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or ArgumentException)
+            {
+                return Fail("browser_path_denied", ex.Message, permanent: true);
+            }
+
+            if (!File.Exists(resolved))
+            {
+                return Fail("browser_file_not_found", $"Upload file '{raw}' does not exist.", permanent: true);
+            }
+            resolvedPaths.Add(resolved);
+        }
+
+        var session = GetSession(id);
+        await session.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var refresh = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
+            if (refresh.Failure is not null) return refresh.Failure;
+            var missing = RequireActiveTab(session, out var tab);
+            if (missing is not null) return WithNotices(missing, refresh.Notices);
+
+            var beforeTabs = SnapshotTabIds(session);
+            var consoleBaseline = session.ConsoleErrorCount;
+
+            var selector = string.IsNullOrWhiteSpace(args.Selector) && (args.Ref is null || args.Ref <= 0)
+                ? "input[type=\"file\"]"
+                : args.Selector;
+
+            var resolvedNode = await ResolveTargetObjectAsync(session, tab, args.Ref, selector, cancellationToken).ConfigureAwait(false);
+            if (resolvedNode.Failure is not null)
+            {
+                return AttachReceipt(session, WithNotices(resolvedNode.Failure, MergeNotices(refresh.Notices, resolvedNode.Notices)), beforeTabs, consoleBaseline);
+            }
+            var notices = MergeNotices(refresh.Notices, resolvedNode.Notices);
+
+            // Ensure target is (or uniquely wraps) an <input type="file">.
+            var fileInputObj = await CdpAsync(
+                session,
+                tab,
+                "Runtime.callFunctionOn",
+                WriteObject(w =>
+                {
+                    w.WriteString("objectId", resolvedNode.ObjectId!);
+                    w.WriteString("functionDeclaration", FindFileInputFunction);
+                    w.WriteBoolean("returnByValue", false);
+                }),
+                ActionTimeout,
+                cancellationToken,
+                cdpSessionId: resolvedNode.CdpSessionId).ConfigureAwait(false);
+            notices = MergeNotices(notices, fileInputObj.Notices);
+            var effectiveObjectId = GetObjectId(fileInputObj.Root) ?? resolvedNode.ObjectId!;
+
+            var setFiles = await CdpAsync(
+                session,
+                tab,
+                "DOM.setFileInputFiles",
+                WriteObject(w =>
+                {
+                    w.WriteString("objectId", effectiveObjectId);
+                    w.WritePropertyName("files");
+                    w.WriteStartArray();
+                    foreach (var file in resolvedPaths) w.WriteStringValue(file);
+                    w.WriteEndArray();
+                }),
+                TimeSpan.FromSeconds(20),
+                cancellationToken,
+                cdpSessionId: resolvedNode.CdpSessionId).ConfigureAwait(false);
+            notices = MergeNotices(notices, setFiles.Notices);
+            if (setFiles.Failure is not null)
+            {
+                return AttachReceipt(session, WithNotices(setFiles.Failure, notices), beforeTabs, consoleBaseline);
+            }
+
+            await InspectPostActionStateAsync(session, cancellationToken).ConfigureAwait(false);
+            return AttachReceipt(session, WithNotices(new BrowserToolResult
+            {
+                Ok = true,
+                SpaceId = session.Id,
+                Control = ControlName(session.Control),
+                TabId = tab.Id,
+                Url = tab.Url,
+                Title = tab.Title,
+                Ref = resolvedNode.Ref?.Ref ?? args.Ref,
+                Path = resolvedPaths[0],
+            }, notices), beforeTabs, consoleBaseline);
+        }
+        finally
+        {
+            session.Gate.Release();
+        }
+    }
+
+    public async Task<BrowserToolResult> DownloadSaveAsync(string? sessionId, BrowserDownloadSaveArgs args, CancellationToken cancellationToken)
+    {
+        var id = NormalizeSessionId(sessionId);
+        if (id is null) return Fail("browser_session_invalid", "A session id is required.", permanent: true);
+        if (string.IsNullOrWhiteSpace(args.SavePath))
+        {
+            return Fail("browser_download_invalid", "save_path inside the writable workspace is required.", permanent: true);
+        }
+
+        string resolvedSavePath;
+        try
+        {
+            resolvedSavePath = WorkspacePathResolver.ResolvePath(args.SavePath, allowFinalLink: false, writable: true);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or ArgumentException)
+        {
+            return Fail("browser_path_denied", ex.Message, permanent: true);
+        }
+
+        Uri? triggerUrl = null;
+        if (!string.IsNullOrWhiteSpace(args.Url))
+        {
+            if (!CurrentNavigationPolicy().TryNormalize(args.Url, out var normalizedUrl, out var navError))
+            {
+                return Fail("browser_navigation_blocked", navError, permanent: true);
+            }
+            triggerUrl = normalizedUrl;
+        }
+
+        if (triggerUrl is null && (args.Ref is null || args.Ref <= 0) && string.IsNullOrWhiteSpace(args.Selector))
+        {
+            return Fail("browser_download_invalid", "Provide url, ref, or selector to trigger the download.", permanent: true);
+        }
+
+        var timeoutMs = Math.Clamp(args.TimeoutMs ?? 30_000, 500, 120_000);
+        var session = GetSession(id);
+        await session.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var refresh = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
+            if (refresh.Failure is not null) return refresh.Failure;
+
+            if (session.ActiveTabId is null && triggerUrl is not null)
+            {
+                var opened = await _bridge.SendAsync(
+                    new BrowserBridgeCall("tabs/open", session.Id),
+                    TimeSpan.FromSeconds(30),
+                    cancellationToken).ConfigureAwait(false);
+                if (!opened.Ok) return FromBridge(session, opened);
+                refresh = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
+                if (refresh.Failure is not null) return refresh.Failure;
+            }
+
+            var missing = RequireActiveTab(session, out var tab);
+            if (missing is not null) return WithNotices(missing, refresh.Notices);
+
+            var beforeTabs = SnapshotTabIds(session);
+            var consoleBaseline = session.ConsoleErrorCount;
+            var stagingDir = Path.Combine(Path.GetTempPath(), "tinadec-browser-dl-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stagingDir);
+
+            try
+            {
+                var arm = await CdpAsync(
+                    session,
+                    tab,
+                    "Page.setDownloadBehavior",
+                    WriteObject(w =>
+                    {
+                        w.WriteString("behavior", "allowAndName");
+                        w.WriteString("downloadPath", stagingDir);
+                    }),
+                    ActionTimeout,
+                    cancellationToken).ConfigureAwait(false);
+                if (arm.Failure is not null) return AttachReceipt(session, WithNotices(arm.Failure, MergeNotices(refresh.Notices, arm.Notices)), beforeTabs, consoleBaseline);
+
+                if (triggerUrl is not null)
+                {
+                    var nav = await CdpAsync(
+                        session,
+                        tab,
+                        "Page.navigate",
+                        WriteObject(w => w.WriteString("url", triggerUrl.ToString())),
+                        TimeSpan.FromSeconds(30),
+                        cancellationToken).ConfigureAwait(false);
+                    if (nav.Failure is not null) return AttachReceipt(session, WithNotices(nav.Failure, MergeNotices(refresh.Notices, nav.Notices)), beforeTabs, consoleBaseline);
+                }
+                else
+                {
+                    var clickOutcome = await ClickLockedAsync(
+                        session,
+                        new BrowserClickArgs { Ref = args.Ref, Selector = args.Selector },
+                        cancellationToken).ConfigureAwait(false);
+                    if (!clickOutcome.Ok) return clickOutcome;
+                }
+
+                var completedFile = await WaitForDownloadedFileAsync(stagingDir, timeoutMs, cancellationToken).ConfigureAwait(false);
+                if (completedFile is null)
+                {
+                    return AttachReceipt(
+                        session,
+                        Fail("browser_download_timeout", $"No completed download appeared within {timeoutMs} ms.", permanent: false),
+                        beforeTabs,
+                        consoleBaseline);
+                }
+
+                var fileInfo = new FileInfo(completedFile);
+                ToolExecutionContext.CheckFileSize("write", fileInfo.Length);
+                var targetDir = Path.GetDirectoryName(resolvedSavePath);
+                if (!string.IsNullOrEmpty(targetDir)) Directory.CreateDirectory(targetDir);
+                File.Copy(completedFile, resolvedSavePath, overwrite: true);
+
+                await InspectPostActionStateAsync(session, cancellationToken).ConfigureAwait(false);
+                return AttachReceipt(session, new BrowserToolResult
+                {
+                    Ok = true,
+                    SpaceId = session.Id,
+                    Control = ControlName(session.Control),
+                    TabId = tab.Id,
+                    Url = tab.Url,
+                    Title = tab.Title,
+                    Path = resolvedSavePath,
+                    Bytes = fileInfo.Length,
+                    SuggestedFilename = Path.GetFileName(completedFile),
+                }, beforeTabs, consoleBaseline);
+            }
+            finally
+            {
+                _ = await CdpAsync(
+                    session,
+                    tab,
+                    "Page.setDownloadBehavior",
+                    WriteObject(w => w.WriteString("behavior", "default")),
+                    TimeSpan.FromSeconds(2),
+                    CancellationToken.None).ConfigureAwait(false);
+                try { Directory.Delete(stagingDir, recursive: true); } catch { /* best effort */ }
+            }
+        }
+        finally
+        {
+            session.Gate.Release();
+        }
+    }
+
+    private static async Task<string?> WaitForDownloadedFileAsync(string stagingDir, int timeoutMs, CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Directory.Exists(stagingDir))
+            {
+                var files = Directory.GetFiles(stagingDir);
+                var finished = files.FirstOrDefault(f =>
+                    !f.EndsWith(".crdownload", StringComparison.OrdinalIgnoreCase)
+                    && !f.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+                    && !f.EndsWith(".part", StringComparison.OrdinalIgnoreCase));
+                if (finished is not null) return finished;
+            }
+            await Task.Delay(75, cancellationToken).ConfigureAwait(false);
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------ browser_run (governed workflow)
+
+    public async Task<BrowserToolResult> RunAsync(string? sessionId, BrowserRunArgs args, CancellationToken cancellationToken)
+    {
+        var id = NormalizeSessionId(sessionId);
+        if (id is null) return Fail("browser_session_invalid", "A session id is required.", permanent: true);
+        if (args.Steps is not { Length: > 0 and <= 30 })
+        {
+            return Fail("browser_run_invalid", "steps must contain between 1 and 30 workflow steps.", permanent: true);
+        }
+
+        // Pre-validate every step AND enforce BrowserNavigationPolicy on every `goto` step BEFORE executing anything!
+        var policy = CurrentNavigationPolicy();
+        var normalizedGotoUris = new Uri?[args.Steps.Length];
+        for (var i = 0; i < args.Steps.Length; i++)
+        {
+            var step = args.Steps[i];
+            var action = step.Action?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(action) || !RunStepActions.Contains(action))
+            {
+                return Fail("browser_run_invalid", $"Step {i} has unsupported action '{step.Action}'.", permanent: true);
+            }
+
+            if (action == "goto")
+            {
+                if (!policy.TryNormalize(step.Url, out var uri, out var navError))
+                {
+                    return Fail("browser_navigation_blocked", $"Step {i} (goto): {navError}", permanent: true);
+                }
+                normalizedGotoUris[i] = uri;
+            }
+            else if (action == "extract")
+            {
+                if (string.IsNullOrWhiteSpace(step.Selector))
+                {
+                    return Fail("browser_run_invalid", $"Step {i} (extract) requires selector.", permanent: true);
+                }
+                if (!IsAllowedExtractAttribute(step.Attribute))
+                {
+                    return Fail("browser_run_invalid", $"Step {i} (extract) attribute '{step.Attribute}' is not permitted.", permanent: true);
+                }
+            }
+            else if (action == "handle_dialog" && step.Accept is null)
+            {
+                return Fail("browser_run_invalid", $"Step {i} (handle_dialog) requires accept (boolean).", permanent: true);
+            }
+        }
+
+        var session = GetSession(id);
+        await session.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var guard = CheckLocalControlBoundary(session);
+            if (guard is not null) return guard;
+
+            var beforeTabs = SnapshotTabIds(session);
+            var consoleBaseline = session.ConsoleErrorCount;
+            var stepResults = new List<BrowserRunStepResult>(args.Steps.Length);
+            var extractions = new List<BrowserExtractionResult>();
+            var notices = Array.Empty<BrowserNoticeInfo>();
+            BrowserToolResult? failure = null;
+
+            for (var i = 0; i < args.Steps.Length; i++)
+            {
+                var step = args.Steps[i];
+                var action = step.Action!.Trim().ToLowerInvariant();
+
+                // If the previous step opened a JS dialog and this step is NOT handle_dialog, stop immediately with receipt.
+                if (session.PendingDialog is { } openDialog && action != "handle_dialog")
+                {
+                    failure = FailDialogOpen(session, openDialog, notices);
+                    stepResults.Add(new BrowserRunStepResult
+                    {
+                        Index = i,
+                        Action = action,
+                        Ok = false,
+                        Code = failure.Code,
+                        Message = failure.Message,
+                    });
+                    break;
+                }
+
+                var outcome = await ExecuteRunStepLockedAsync(session, step, action, normalizedGotoUris[i], extractions, cancellationToken)
+                    .ConfigureAwait(false);
+                notices = MergeNotices(notices, outcome.Notices ?? Array.Empty<BrowserNoticeInfo>());
+
+                // If this step opened a JS dialog AND the very next step is `handle_dialog`, let `handle_dialog` handle it!
+                var nextIsDialogHandler = i + 1 < args.Steps.Length
+                    && string.Equals(args.Steps[i + 1].Action?.Trim(), "handle_dialog", StringComparison.OrdinalIgnoreCase);
+                if (!outcome.Ok && string.Equals(outcome.Code, "browser_dialog_open", StringComparison.Ordinal) && nextIsDialogHandler)
+                {
+                    stepResults.Add(new BrowserRunStepResult
+                    {
+                        Index = i,
+                        Action = action,
+                        Ok = true,
+                        Code = "browser_dialog_opened",
+                        Message = outcome.Message,
+                    });
+                    continue;
+                }
+
+                stepResults.Add(new BrowserRunStepResult
+                {
+                    Index = i,
+                    Action = action,
+                    Ok = outcome.Ok,
+                    Code = outcome.Code,
+                    Message = outcome.Message,
+                    Url = outcome.Url,
+                    Value = outcome.Value,
+                });
+
+                if (!outcome.Ok)
+                {
+                    failure = outcome;
+                    break;
+                }
+            }
+
+            BrowserToolResult? finalSnapshot = null;
+            if (args.IncludeSnapshot != false
+                && session.Control == TaskSpaceControlState.Agent
+                && session.PendingDialog is null
+                && session.ActiveTabId is not null)
+            {
+                finalSnapshot = await SnapshotLockedAsync(
+                    session,
+                    new BrowserSnapshotArgs
+                    {
+                        Scope = args.SnapshotScope ?? "viewport",
+                        MaxChars = args.MaxSnapshotChars,
+                    },
+                    cancellationToken).ConfigureAwait(false);
+                // If mock bridge does not implement Page.getLayoutMetrics for viewport scope, fall back to full_page cleanly.
+                if (!finalSnapshot.Ok && string.IsNullOrEmpty(args.SnapshotScope))
+                {
+                    finalSnapshot = await SnapshotLockedAsync(
+                        session,
+                        new BrowserSnapshotArgs { Scope = "full_page", MaxChars = args.MaxSnapshotChars },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                notices = MergeNotices(notices, finalSnapshot.Notices ?? Array.Empty<BrowserNoticeInfo>());
+                if (!finalSnapshot.Ok) failure ??= finalSnapshot;
+            }
+
+            BrowserToolResult? finalShot = null;
+            if (args.IncludeScreenshot == true
+                && failure is null
+                && session.Control == TaskSpaceControlState.Agent
+                && session.PendingDialog is null
+                && session.ActiveTabId is not null)
+            {
+                finalShot = await ScreenshotLockedAsync(
+                    session,
+                    new BrowserScreenshotArgs { FullPage = args.FullPageScreenshot == true },
+                    cancellationToken).ConfigureAwait(false);
+                notices = MergeNotices(notices, finalShot.Notices ?? Array.Empty<BrowserNoticeInfo>());
+                if (!finalShot.Ok) failure ??= finalShot;
+            }
+
+            var activeTab = session.ActiveTabId is { } activeId && session.Tabs.TryGetValue(activeId, out var t) ? t : null;
+            var combined = new BrowserToolResult
+            {
+                Ok = failure is null,
+                Code = failure?.Code,
+                Message = failure?.Message,
+                Permanent = failure?.Permanent,
+                SpaceId = session.Id,
+                Control = ControlName(session.Control),
+                TabId = activeTab?.Id,
+                Url = activeTab?.Url,
+                Title = activeTab?.Title,
+                RunSteps = stepResults.ToArray(),
+                Extractions = extractions.Count > 0 ? extractions.ToArray() : null,
+                Snapshot = finalSnapshot is { Ok: true } ? finalSnapshot.Snapshot : null,
+                Truncated = finalSnapshot is { Ok: true } ? finalSnapshot.Truncated : null,
+                RefCount = finalSnapshot is { Ok: true } ? finalSnapshot.RefCount : null,
+                Path = finalShot is { Ok: true } ? finalShot.Path : null,
+                ScreenshotPath = finalShot is { Ok: true } ? finalShot.ScreenshotPath : null,
+                Bytes = finalShot is { Ok: true } ? finalShot.Bytes : null,
+                SiteLearningPath = TryFindSiteLearningPath(activeTab?.Url),
+                Notices = notices.Length > 0 ? notices : null,
+                PendingDialog = failure?.PendingDialog ?? session.PendingDialog,
+            };
+            return AttachReceipt(session, combined, beforeTabs, consoleBaseline);
+        }
+        finally
+        {
+            session.Gate.Release();
+        }
+    }
+
+    private async Task<BrowserToolResult> ExecuteRunStepLockedAsync(
+        SessionState session,
+        BrowserRunStep step,
+        string action,
+        Uri? gotoUri,
+        List<BrowserExtractionResult> extractions,
+        CancellationToken cancellationToken)
+    {
+        return action switch
+        {
+            "goto" => await NavigateLockedAsync(session, gotoUri!, step.WaitMs, cancellationToken).ConfigureAwait(false),
+            "fill" => await TypeLockedAsync(
+                session,
+                new BrowserTypeArgs { Ref = step.Ref, Selector = step.Selector, Text = step.Text, Submit = step.Submit },
+                cancellationToken).ConfigureAwait(false),
+            "click" => await ClickLockedAsync(
+                session,
+                new BrowserClickArgs { Ref = step.Ref, Selector = step.Selector, Button = step.Button, ClickCount = step.ClickCount },
+                cancellationToken).ConfigureAwait(false),
+            "select_option" => await SelectOptionLockedAsync(session, step, cancellationToken).ConfigureAwait(false),
+            "press" => await PressLockedAsync(
+                session,
+                new BrowserPressArgs { Key = step.Key, Ref = step.Ref, Selector = step.Selector },
+                cancellationToken).ConfigureAwait(false),
+            "scroll" => await ScrollLockedAsync(
+                session,
+                new BrowserScrollArgs { Ref = step.Ref, Selector = step.Selector, DeltaX = step.DeltaX, DeltaY = step.DeltaY },
+                cancellationToken).ConfigureAwait(false),
+            "wait_for_selector" => await WaitForSelectorLockedAsync(session, step, cancellationToken).ConfigureAwait(false),
+            "wait_for_url" => await WaitLockedAsync(
+                session,
+                new BrowserWaitArgs { UrlContains = step.UrlContains ?? step.Url, TimeoutMs = step.TimeoutMs },
+                cancellationToken).ConfigureAwait(false),
+            "wait_for_text" => await WaitLockedAsync(
+                session,
+                new BrowserWaitArgs { Text = step.Text, TimeoutMs = step.TimeoutMs },
+                cancellationToken).ConfigureAwait(false),
+            "handle_dialog" => await DialogLockedAsync(session, step.Accept == true, step.PromptText, cancellationToken).ConfigureAwait(false),
+            "extract" => await ExtractLockedAsync(session, step, extractions, cancellationToken).ConfigureAwait(false),
+            _ => Fail("browser_run_invalid", $"Unsupported step action '{action}'.", permanent: true),
+        };
+    }
+
+    private async Task<BrowserToolResult> SelectOptionLockedAsync(
+        SessionState session,
+        BrowserRunStep step,
+        CancellationToken cancellationToken)
+    {
+        var refresh = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
+        if (refresh.Failure is not null) return refresh.Failure;
+        var missing = RequireActiveTab(session, out var tab);
+        if (missing is not null) return WithNotices(missing, refresh.Notices);
+
+        var target = await ResolveTargetObjectAsync(session, tab, step.Ref, step.Selector, cancellationToken).ConfigureAwait(false);
+        if (target.Failure is not null) return WithNotices(target.Failure, MergeNotices(refresh.Notices, target.Notices));
+
+        var arg = WriteObject(w =>
+        {
+            if (step.Values is { Length: > 0 })
+            {
+                w.WritePropertyName("values");
+                w.WriteStartArray();
+                foreach (var v in step.Values) w.WriteStringValue(v);
+                w.WriteEndArray();
+            }
+            if (step.Index is { } idx) w.WriteNumber("index", idx);
+            if (step.Label is not null) w.WriteString("label", step.Label);
+            if (step.Value is not null) w.WriteString("value", step.Value);
+        });
+
+        var call = await CallFunctionValueAsync(
+            session, tab, target.ObjectId!, SelectOptionFunction, arg, cancellationToken, cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
+        var notices = MergeNotices(MergeNotices(refresh.Notices, target.Notices), call.Notices);
+        if (call.Failure is not null) return WithNotices(call.Failure, notices);
+
+        var val = call.Value;
+        var ok = val is { ValueKind: JsonValueKind.Object } o
+            && o.TryGetProperty("ok", out var okEl)
+            && okEl.ValueKind == JsonValueKind.True;
+        if (!ok)
+        {
+            var reason = val is { ValueKind: JsonValueKind.Object } o2 ? GetString(o2, "reason") : null;
+            return WithNotices(
+                Fail("browser_select_failed", $"Could not select option ({reason ?? "unknown"}).", permanent: false),
+                notices);
+        }
+
+        var selectedValue = val is { ValueKind: JsonValueKind.Object } o3 ? GetString(o3, "value") : null;
+        return WithNotices(new BrowserToolResult { Ok = true, TabId = tab.Id, Value = selectedValue }, notices);
+    }
+
+    private async Task<BrowserToolResult> WaitForSelectorLockedAsync(
+        SessionState session,
+        BrowserRunStep step,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(step.Selector))
+        {
+            return Fail("browser_wait_invalid", "wait_for_selector requires selector.", permanent: true);
+        }
+
+        var state = (step.State ?? "visible").Trim().ToLowerInvariant();
+        if (state is not ("attached" or "visible" or "hidden" or "detached"))
+        {
+            return Fail("browser_wait_invalid", "state must be attached, visible, hidden, or detached.", permanent: true);
+        }
+
+        var css = StripCssLocatorPrefix(step.Selector) ?? step.Selector;
+        var timeoutMs = Math.Clamp(step.TimeoutMs ?? 15_000, 100, 60_000);
+        var refresh = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
+        if (refresh.Failure is not null) return refresh.Failure;
+        var missing = RequireActiveTab(session, out var tab);
+        if (missing is not null) return WithNotices(missing, refresh.Notices);
+
+        var window = await GetWindowObjectIdAsync(session, tab, cancellationToken).ConfigureAwait(false);
+        if (window.Failure is not null) return WithNotices(window.Failure, MergeNotices(refresh.Notices, window.Notices));
+        if (window.ObjectId is null) return Fail("browser_wait_failed", "Could not reach page execution context.", permanent: false);
+
+        var call = await CdpAsync(
+            session,
+            tab,
+            "Runtime.callFunctionOn",
+            WriteObject(w =>
+            {
+                w.WriteString("objectId", window.ObjectId);
+                w.WriteString("functionDeclaration", WaitSelectorStateFunction);
+                w.WriteBoolean("awaitPromise", true);
+                w.WriteBoolean("returnByValue", true);
+                w.WritePropertyName("arguments");
+                w.WriteStartArray();
+                WriteRemoteString(w, css);
+                WriteRemoteString(w, state);
+                w.WriteStartObject();
+                w.WriteNumber("value", timeoutMs);
+                w.WriteEndObject();
+                w.WriteEndArray();
+            }),
+            TimeSpan.FromMilliseconds(timeoutMs + 15_000),
+            cancellationToken).ConfigureAwait(false);
+        var notices = MergeNotices(MergeNotices(refresh.Notices, window.Notices), call.Notices);
+        if (call.Failure is not null) return WithNotices(call.Failure, notices);
+
+        var val = GetByValue(call.Root);
+        var ok = val is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
+        var reason = val is { ValueKind: JsonValueKind.Object } o2 ? GetString(o2, "reason") : null;
+        if (!ok && string.Equals(reason, "invalid_selector", StringComparison.Ordinal))
+        {
+            return WithNotices(Fail("browser_selector_invalid", $"Invalid CSS selector '{css}'.", permanent: true), notices);
+        }
+
+        return ok
+            ? WithNotices(new BrowserToolResult { Ok = true, TabId = tab.Id, Reason = reason }, notices)
+            : WithNotices(Fail("browser_wait_timeout", $"Selector '{css}' did not reach state '{state}' within {timeoutMs} ms.", permanent: false), notices);
+    }
+
+    private async Task<BrowserToolResult> ExtractLockedAsync(
+        SessionState session,
+        BrowserRunStep step,
+        List<BrowserExtractionResult> extractions,
+        CancellationToken cancellationToken)
+    {
+        var css = StripCssLocatorPrefix(step.Selector!) ?? step.Selector!;
+        var refresh = await RefreshAsync(session, cancellationToken).ConfigureAwait(false);
+        if (refresh.Failure is not null) return refresh.Failure;
+        var missing = RequireActiveTab(session, out var tab);
+        if (missing is not null) return WithNotices(missing, refresh.Notices);
+
+        var window = await GetWindowObjectIdAsync(session, tab, cancellationToken).ConfigureAwait(false);
+        if (window.Failure is not null) return WithNotices(window.Failure, MergeNotices(refresh.Notices, window.Notices));
+        if (window.ObjectId is null) return Fail("browser_extract_failed", "Could not reach page execution context.", permanent: false);
+
+        var spec = WriteObject(w =>
+        {
+            w.WriteString("selector", css);
+            if (!string.IsNullOrWhiteSpace(step.Attribute)) w.WriteString("attribute", step.Attribute.Trim());
+            w.WriteBoolean("multiple", step.Multiple == true);
+            w.WriteNumber("limit", Math.Clamp(step.Limit ?? 20, 1, 100));
+        });
+
+        var call = await CallFunctionValueAsync(session, tab, window.ObjectId, ExtractFunction, spec, cancellationToken).ConfigureAwait(false);
+        var notices = MergeNotices(MergeNotices(refresh.Notices, window.Notices), call.Notices);
+        if (call.Failure is not null) return WithNotices(call.Failure, notices);
+
+        var val = call.Value;
+        var ok = val is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
+        if (!ok)
+        {
+            return WithNotices(Fail("browser_selector_invalid", $"Invalid extract selector '{css}'.", permanent: true), notices);
+        }
+
+        var singleVal = val is { ValueKind: JsonValueKind.Object } o2 ? GetString(o2, "value") : null;
+        string[]? multiVals = null;
+        if (val is { ValueKind: JsonValueKind.Object } o3
+            && o3.TryGetProperty("values", out var arr)
+            && arr.ValueKind == JsonValueKind.Array)
+        {
+            multiVals = arr.EnumerateArray()
+                .Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() ?? string.Empty : x.ToString())
+                .ToArray();
+        }
+
+        extractions.Add(new BrowserExtractionResult
+        {
+            Name = string.IsNullOrWhiteSpace(step.Name) ? $"step_{extractions.Count}" : step.Name.Trim(),
+            Selector = css,
+            Value = singleVal,
+            Values = multiVals,
+        });
+
+        return WithNotices(new BrowserToolResult
+        {
+            Ok = true,
+            TabId = tab.Id,
+            Value = singleVal,
+        }, notices);
+    }
+
+    private static bool IsAllowedExtractAttribute(string? attr)
+    {
+        if (string.IsNullOrWhiteSpace(attr)) return true;
+        var trimmed = attr.Trim();
+        return SafeExtractAttributes.Contains(trimmed)
+            || trimmed.StartsWith("data-", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("aria-", StringComparison.OrdinalIgnoreCase);
     }
 
     // ------------------------------------------------------------------ batch
@@ -573,6 +1700,9 @@ internal sealed partial class BrowserToolRuntime
             if (refresh.Failure is not null) return refresh.Failure;
             var missing = RequireActiveTab(session, out _);
             if (missing is not null) return WithNotices(missing, refresh.Notices);
+
+            var beforeTabs = SnapshotTabIds(session);
+            var consoleBaseline = session.ConsoleErrorCount;
             var notices = refresh.Notices;
             var results = new List<BrowserBatchStepResult>(args.Steps.Length);
             BrowserToolResult? failure = null;
@@ -604,17 +1734,21 @@ internal sealed partial class BrowserToolRuntime
                 }
             }
 
-            var final = await SnapshotLockedAsync(session, new BrowserSnapshotArgs(), cancellationToken).ConfigureAwait(false);
+            var final = session.PendingDialog is null
+                ? await SnapshotLockedAsync(session, new BrowserSnapshotArgs(), cancellationToken).ConfigureAwait(false)
+                : FailDialogOpen(session, session.PendingDialog, notices);
             notices = MergeNotices(notices, final.Notices ?? Array.Empty<BrowserNoticeInfo>());
             if (!final.Ok) failure ??= final;
 
             var active = session.ActiveTabId is { } activeId && session.Tabs.TryGetValue(activeId, out var tab) ? tab : null;
-            return new BrowserToolResult
+            return AttachReceipt(session, new BrowserToolResult
             {
                 Ok = failure is null,
                 Code = failure?.Code ?? final.Code,
                 Message = failure?.Message ?? final.Message,
                 Permanent = failure?.Permanent ?? final.Permanent,
+                SpaceId = session.Id,
+                Control = ControlName(session.Control),
                 TabId = active?.Id,
                 Url = active?.Url,
                 Title = active?.Title,
@@ -623,7 +1757,7 @@ internal sealed partial class BrowserToolRuntime
                 Truncated = final.Ok ? final.Truncated : null,
                 RefCount = final.Ok ? final.RefCount : null,
                 Notices = notices.Length > 0 ? notices : null,
-            };
+            }, beforeTabs, consoleBaseline);
         }
         finally
         {
@@ -631,13 +1765,295 @@ internal sealed partial class BrowserToolRuntime
         }
     }
 
-    // ------------------------------------------------------------------ target + input helpers
+    // ------------------------------------------------------------------ target + selector + input helpers
+
+    private async Task<TargetResult> PrepareTargetOrSelectorAsync(
+        SessionState session,
+        TabState tab,
+        int? refId,
+        string? selector,
+        CancellationToken cancellationToken)
+    {
+        if (refId is > 0)
+        {
+            return await PrepareTargetAsync(session, tab, refId.Value, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (TryParseInlineRef(selector, out var parsedRef))
+        {
+            return await PrepareTargetAsync(session, tab, parsedRef, cancellationToken).ConfigureAwait(false);
+        }
+
+        var resolved = await ResolveSelectorObjectIdAsync(session, tab, selector!, cancellationToken).ConfigureAwait(false);
+        if (resolved.Failure is not null) return resolved;
+
+        var notices = resolved.Notices;
+        var scroll = await CdpAsync(
+            session,
+            tab,
+            "DOM.scrollIntoViewIfNeeded",
+            WriteObject(w => w.WriteString("objectId", resolved.ObjectId!)),
+            ActionTimeout,
+            cancellationToken,
+            cdpSessionId: resolved.CdpSessionId).ConfigureAwait(false);
+        notices = MergeNotices(notices, scroll.Notices);
+        if (scroll.Failure is not null) return new TargetResult(null, 0, 0, null, null, MapCdpFailure(scroll.Failure, notices), notices);
+
+        var box = await CdpAsync(
+            session,
+            tab,
+            "DOM.getBoxModel",
+            WriteObject(w => w.WriteString("objectId", resolved.ObjectId!)),
+            ActionTimeout,
+            cancellationToken,
+            cdpSessionId: resolved.CdpSessionId).ConfigureAwait(false);
+        notices = MergeNotices(notices, box.Notices);
+        if (box.Failure is not null) return new TargetResult(null, 0, 0, null, null, MapCdpFailure(box.Failure, notices), notices);
+
+        if (!TryGetContentCenter(box.Root, out var x, out var y))
+        {
+            return new TargetResult(null, 0, 0, null, null,
+                Fail("browser_element_not_actionable", "The element has no visible box.", permanent: false, notices),
+                notices);
+        }
+
+        var hit = await CdpAsync(
+            session,
+            tab,
+            "Runtime.callFunctionOn",
+            CallFunctionParams(resolved.ObjectId!, HitTestFunction),
+            ActionTimeout,
+            cancellationToken,
+            cdpSessionId: resolved.CdpSessionId).ConfigureAwait(false);
+        notices = MergeNotices(notices, hit.Notices);
+        if (hit.Failure is not null) return new TargetResult(null, 0, 0, null, null, WithNotices(hit.Failure, notices), notices);
+
+        var hitValue = GetByValue(hit.Root);
+        var hitOk = hitValue is { ValueKind: JsonValueKind.Object } hv
+            && hv.TryGetProperty("ok", out var okEl)
+            && okEl.ValueKind == JsonValueKind.True;
+        if (!hitOk)
+        {
+            var reason = hitValue is { ValueKind: JsonValueKind.Object } hv2 ? GetString(hv2, "reason") : null;
+            return new TargetResult(null, 0, 0, null, null,
+                Fail("browser_element_not_actionable",
+                    $"The element cannot be acted on ({reason ?? "unknown"}); wait or scroll first.",
+                    permanent: false,
+                    notices),
+                notices);
+        }
+
+        return new TargetResult(null, x, y, resolved.ObjectId, resolved.CdpSessionId, null, notices);
+    }
+
+    private async Task<TargetResult> ResolveTargetObjectAsync(
+        SessionState session,
+        TabState tab,
+        int? refId,
+        string? selector,
+        CancellationToken cancellationToken)
+    {
+        if (refId is > 0 || TryParseInlineRef(selector, out _))
+        {
+            var effectiveRef = refId is > 0 ? refId.Value : (TryParseInlineRef(selector, out var r) ? r : 0);
+            if (!tab.Refs.TryGetValue(effectiveRef, out var target))
+            {
+                return new TargetResult(null, 0, 0, null, null,
+                    Fail("browser_ref_unknown", $"Unknown ref {effectiveRef}; take a new snapshot.", permanent: true),
+                    Array.Empty<BrowserNoticeInfo>());
+            }
+
+            var resolved = await CdpAsync(
+                session,
+                tab,
+                "DOM.resolveNode",
+                WriteObject(w => w.WriteNumber("backendNodeId", target.BackendNodeId)),
+                ActionTimeout,
+                cancellationToken,
+                cdpSessionId: target.CdpSessionId).ConfigureAwait(false);
+            if (resolved.Failure is not null)
+            {
+                return new TargetResult(null, 0, 0, null, null, MapCdpFailure(resolved.Failure, resolved.Notices), resolved.Notices);
+            }
+            var objectId = GetResolvedObjectId(resolved.Root);
+            if (objectId is null)
+            {
+                return new TargetResult(null, 0, 0, null, null,
+                    Fail("browser_ref_stale", "The element is gone; take a new snapshot.", permanent: true, resolved.Notices),
+                    resolved.Notices);
+            }
+            return new TargetResult(target, 0, 0, objectId, target.CdpSessionId, null, resolved.Notices);
+        }
+
+        return await ResolveSelectorObjectIdAsync(session, tab, selector ?? string.Empty, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<TargetResult> ResolveSelectorObjectIdAsync(
+        SessionState session,
+        TabState tab,
+        string rawSelector,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(rawSelector))
+        {
+            return new TargetResult(null, 0, 0, null, null,
+                Fail("browser_selector_invalid", "A non-empty selector is required.", permanent: true),
+                Array.Empty<BrowserNoticeInfo>());
+        }
+
+        var spec = ParseSelectorSpec(rawSelector);
+        if (spec is null)
+        {
+            return new TargetResult(null, 0, 0, null, null,
+                Fail("browser_selector_invalid", $"Unsupported selector '{rawSelector}'.", permanent: true),
+                Array.Empty<BrowserNoticeInfo>());
+        }
+
+        var window = await GetWindowObjectIdAsync(session, tab, cancellationToken).ConfigureAwait(false);
+        if (window.Failure is not null) return new TargetResult(null, 0, 0, null, null, window.Failure, window.Notices);
+        if (window.ObjectId is null)
+        {
+            return new TargetResult(null, 0, 0, null, null,
+                Fail("browser_element_not_found", $"Element not found for '{rawSelector}'.", permanent: false, window.Notices),
+                window.Notices);
+        }
+
+        var found = await CdpAsync(
+            session,
+            tab,
+            "Runtime.callFunctionOn",
+            WriteObject(w =>
+            {
+                w.WriteString("objectId", window.ObjectId);
+                w.WriteString("functionDeclaration", FindElementFunction);
+                w.WriteBoolean("returnByValue", false);
+                w.WritePropertyName("arguments");
+                w.WriteStartArray();
+                w.WriteStartObject();
+                w.WritePropertyName("value");
+                spec.Value.WriteTo(w);
+                w.WriteEndObject();
+                w.WriteEndArray();
+            }),
+            ActionTimeout,
+            cancellationToken).ConfigureAwait(false);
+        var notices = MergeNotices(window.Notices, found.Notices);
+        if (found.Failure is not null) return new TargetResult(null, 0, 0, null, null, found.Failure, notices);
+
+        var objId = GetObjectId(found.Root);
+        if (objId is null)
+        {
+            return new TargetResult(null, 0, 0, null, null,
+                Fail("browser_element_not_found", $"Selector '{rawSelector}' did not match a unique element.", permanent: false, notices),
+                notices);
+        }
+
+        return new TargetResult(null, 0, 0, objId, null, null, notices);
+    }
+
+    private static bool TryParseInlineRef(string? selector, out int refId)
+    {
+        refId = 0;
+        if (string.IsNullOrWhiteSpace(selector)) return false;
+        var trimmed = selector.Trim();
+        if (trimmed.StartsWith('@') && int.TryParse(trimmed[1..], out refId) && refId > 0) return true;
+        if (trimmed.StartsWith("ref=", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(trimmed[4..], out refId)
+            && refId > 0)
+        {
+            return true;
+        }
+        return false;
+    }
+
+    private static JsonElement? ParseSelectorSpec(string raw)
+    {
+        var trimmed = raw.Trim();
+        if (trimmed.StartsWith("loc=role:", StringComparison.OrdinalIgnoreCase))
+        {
+            var body = trimmed["loc=role:".Length..].Trim();
+            var bracketIdx = body.IndexOf('[');
+            var role = (bracketIdx >= 0 ? body[..bracketIdx] : body).Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(role)) return null;
+            string? name = null;
+            var substring = false;
+            if (bracketIdx >= 0 && body.EndsWith(']'))
+            {
+                var inside = body[(bracketIdx + 1)..^1].Trim();
+                if (inside.StartsWith("name*=", StringComparison.OrdinalIgnoreCase))
+                {
+                    substring = true;
+                    name = UnquoteSelectorValue(inside["name*=".Length..]);
+                }
+                else if (inside.StartsWith("name=", StringComparison.OrdinalIgnoreCase))
+                {
+                    name = UnquoteSelectorValue(inside["name=".Length..]);
+                }
+            }
+            return WriteObject(w =>
+            {
+                w.WriteString("kind", "role");
+                w.WriteString("role", role);
+                if (name is not null) w.WriteString("name", name);
+                w.WriteBoolean("substring", substring);
+            });
+        }
+
+        if (trimmed.StartsWith("loc=href:", StringComparison.OrdinalIgnoreCase))
+        {
+            var href = trimmed["loc=href:".Length..].Trim();
+            return string.IsNullOrEmpty(href)
+                ? null
+                : WriteObject(w =>
+                {
+                    w.WriteString("kind", "href");
+                    w.WriteString("query", href);
+                });
+        }
+
+        if (trimmed.StartsWith("text=", StringComparison.OrdinalIgnoreCase))
+        {
+            var textBody = trimmed["text=".Length..].Trim();
+            var exact = (textBody.StartsWith('"') && textBody.EndsWith('"') && textBody.Length >= 2)
+                || (textBody.StartsWith('\'') && textBody.EndsWith('\'') && textBody.Length >= 2);
+            var query = exact ? UnquoteSelectorValue(textBody) : textBody;
+            return string.IsNullOrEmpty(query)
+                ? null
+                : WriteObject(w =>
+                {
+                    w.WriteString("kind", "text");
+                    w.WriteString("query", query);
+                    w.WriteBoolean("exact", exact);
+                });
+        }
+
+        var css = StripCssLocatorPrefix(trimmed) ?? trimmed;
+        return string.IsNullOrEmpty(css)
+            ? null
+            : WriteObject(w =>
+            {
+                w.WriteString("kind", "css");
+                w.WriteString("query", css);
+            });
+    }
+
+    private static string UnquoteSelectorValue(string raw)
+    {
+        var s = raw.Trim();
+        if (s.Length >= 2 && ((s[0] == '"' && s[^1] == '"') || (s[0] == '\'' && s[^1] == '\'')))
+        {
+            s = s[1..^1];
+        }
+        return s.Replace("\\\"", "\"", StringComparison.Ordinal)
+            .Replace("\\'", "'", StringComparison.Ordinal)
+            .Replace("\\\\", "\\", StringComparison.Ordinal);
+    }
 
     private async Task<TargetResult> PrepareTargetAsync(SessionState session, TabState tab, int refId, CancellationToken cancellationToken)
     {
         var notices = Array.Empty<BrowserNoticeInfo>();
         var frame = await CdpAsync(session, tab, "Page.getFrameTree", EmptyObject, ActionTimeout, cancellationToken).ConfigureAwait(false);
-        if (frame.Failure is not null) return new TargetResult(null, 0, 0, null, MapCdpFailure(frame.Failure, frame.Notices), frame.Notices);
+        if (frame.Failure is not null) return new TargetResult(null, 0, 0, null, null, MapCdpFailure(frame.Failure, frame.Notices), frame.Notices);
         notices = frame.Notices;
 
         var loaderId = GetFrameLoaderId(frame.Root);
@@ -648,55 +2064,79 @@ internal sealed partial class BrowserToolRuntime
             tab.Refs.Clear();
             tab.NextRef = 1;
             tab.LoaderId = loaderId;
-            return new TargetResult(null, 0, 0, null,
+            return new TargetResult(null, 0, 0, null, null,
                 Fail("browser_ref_stale", "The page changed; take a new snapshot before acting.", permanent: true, notices),
                 notices);
         }
         if (tab.LoaderId is null) tab.LoaderId = loaderId;
 
-        var target = tab.Refs.Values.FirstOrDefault(item => item.Ref == refId);
+        var target = tab.Refs.TryGetValue(refId, out var direct)
+            ? direct
+            : tab.Refs.Values.FirstOrDefault(item => item.Ref == refId);
         if (target is null)
         {
-            return new TargetResult(null, 0, 0, null,
+            return new TargetResult(null, 0, 0, null, null,
                 Fail("browser_ref_unknown", $"Unknown ref {refId}; take a new snapshot.", permanent: true, notices),
                 notices);
         }
 
+        var cdpSessionId = target.CdpSessionId;
         var scroll = await CdpAsync(session, tab, "DOM.scrollIntoViewIfNeeded",
             WriteObject(writer => writer.WriteNumber("backendNodeId", target.BackendNodeId)),
-            ActionTimeout, cancellationToken).ConfigureAwait(false);
-        if (scroll.Failure is not null) return new TargetResult(null, 0, 0, null, MapCdpFailure(scroll.Failure, MergeNotices(notices, scroll.Notices)), MergeNotices(notices, scroll.Notices));
+            ActionTimeout, cancellationToken, cdpSessionId: cdpSessionId).ConfigureAwait(false);
+        if (scroll.Failure is not null) return new TargetResult(null, 0, 0, null, null, MapCdpFailure(scroll.Failure, MergeNotices(notices, scroll.Notices)), MergeNotices(notices, scroll.Notices));
         notices = MergeNotices(notices, scroll.Notices);
 
         var box = await CdpAsync(session, tab, "DOM.getBoxModel",
             WriteObject(writer => writer.WriteNumber("backendNodeId", target.BackendNodeId)),
-            ActionTimeout, cancellationToken).ConfigureAwait(false);
-        if (box.Failure is not null) return new TargetResult(null, 0, 0, null, MapCdpFailure(box.Failure, MergeNotices(notices, box.Notices)), MergeNotices(notices, box.Notices));
+            ActionTimeout, cancellationToken, cdpSessionId: cdpSessionId).ConfigureAwait(false);
+        if (box.Failure is not null) return new TargetResult(null, 0, 0, null, null, MapCdpFailure(box.Failure, MergeNotices(notices, box.Notices)), MergeNotices(notices, box.Notices));
         notices = MergeNotices(notices, box.Notices);
         if (!TryGetContentCenter(box.Root, out var x, out var y))
         {
-            return new TargetResult(null, 0, 0, null,
+            return new TargetResult(null, 0, 0, null, null,
                 Fail("browser_element_not_actionable", "The element has no visible box; take a new snapshot.", permanent: false, notices),
                 notices);
         }
 
+        // Translate OOPIF-local coordinates into top-level page coordinates via owning iframe box when needed.
+        if (!string.IsNullOrEmpty(cdpSessionId) && !string.IsNullOrEmpty(target.FrameId))
+        {
+            var ownerBackend = await TryGetFrameOwnerBackendIdAsync(session, tab, target.FrameId, cancellationToken).ConfigureAwait(false);
+            if (ownerBackend is > 0 and var ownerId)
+            {
+                var ownerBox = await CdpAsync(
+                    session,
+                    tab,
+                    "DOM.getBoxModel",
+                    WriteObject(w => w.WriteNumber("backendNodeId", ownerId)),
+                    TimeSpan.FromSeconds(3),
+                    cancellationToken).ConfigureAwait(false);
+                if (ownerBox.Failure is null && TryGetBoxBounds(ownerBox.Root, out var ox, out var oy, out _, out _))
+                {
+                    x += ox;
+                    y += oy;
+                }
+            }
+        }
+
         var resolved = await CdpAsync(session, tab, "DOM.resolveNode",
             WriteObject(writer => writer.WriteNumber("backendNodeId", target.BackendNodeId)),
-            ActionTimeout, cancellationToken).ConfigureAwait(false);
-        if (resolved.Failure is not null) return new TargetResult(null, 0, 0, null, MapCdpFailure(resolved.Failure, MergeNotices(notices, resolved.Notices)), MergeNotices(notices, resolved.Notices));
+            ActionTimeout, cancellationToken, cdpSessionId: cdpSessionId).ConfigureAwait(false);
+        if (resolved.Failure is not null) return new TargetResult(null, 0, 0, null, null, MapCdpFailure(resolved.Failure, MergeNotices(notices, resolved.Notices)), MergeNotices(notices, resolved.Notices));
         notices = MergeNotices(notices, resolved.Notices);
         var objectId = GetResolvedObjectId(resolved.Root);
         if (objectId is null)
         {
-            return new TargetResult(null, 0, 0, null,
+            return new TargetResult(null, 0, 0, null, null,
                 Fail("browser_ref_stale", "The element is gone; take a new snapshot.", permanent: true, notices),
                 notices);
         }
 
         var hit = await CdpAsync(session, tab, "Runtime.callFunctionOn",
             CallFunctionParams(objectId, HitTestFunction),
-            ActionTimeout, cancellationToken).ConfigureAwait(false);
-        if (hit.Failure is not null) return new TargetResult(null, 0, 0, null, WithNotices(hit.Failure, MergeNotices(notices, hit.Notices)), MergeNotices(notices, hit.Notices));
+            ActionTimeout, cancellationToken, cdpSessionId: cdpSessionId).ConfigureAwait(false);
+        if (hit.Failure is not null) return new TargetResult(null, 0, 0, null, null, WithNotices(hit.Failure, MergeNotices(notices, hit.Notices)), MergeNotices(notices, hit.Notices));
         notices = MergeNotices(notices, hit.Notices);
         var hitValue = GetByValue(hit.Root);
         var hitOk = hitValue is { ValueKind: JsonValueKind.Object } value
@@ -708,7 +2148,7 @@ internal sealed partial class BrowserToolRuntime
                          && value2.TryGetProperty("reason", out var reasonElement)
                 ? reasonElement.GetString()
                 : null;
-            return new TargetResult(null, 0, 0, null,
+            return new TargetResult(null, 0, 0, null, null,
                 Fail("browser_element_not_actionable",
                     $"The element cannot be clicked ({reason ?? "unknown"}); wait, scroll, or take a new snapshot.",
                     permanent: false,
@@ -716,7 +2156,7 @@ internal sealed partial class BrowserToolRuntime
                 notices);
         }
 
-        return new TargetResult(target, x, y, objectId, null, notices);
+        return new TargetResult(target, x, y, objectId, cdpSessionId, null, notices);
     }
 
     private async Task<(BrowserToolResult? Failure, BrowserNoticeInfo[] Notices)> DispatchMouseAsync(
@@ -755,8 +2195,6 @@ internal sealed partial class BrowserToolRuntime
         notices = MergeNotices(notices, pressed.Notices);
         if (pressed.Failure is not null) return (pressed.Failure, notices);
 
-        // Once the press is dispatched the input has happened; a failed release is reported, never
-        // replayed as a second click.
         var released = await CdpAsync(session, tab, "Input.dispatchMouseEvent",
             WriteObject(writer =>
             {
@@ -806,9 +2244,14 @@ internal sealed partial class BrowserToolRuntime
     }
 
     private async Task<(string? Value, BrowserToolResult? Failure, BrowserNoticeInfo[] Notices)> ReadValueAsync(
-        SessionState session, TabState tab, string objectId, CancellationToken cancellationToken)
+        SessionState session,
+        TabState tab,
+        string objectId,
+        CancellationToken cancellationToken,
+        string? cdpSessionId = null)
     {
-        var call = await CallFunctionValueAsync(session, tab, objectId, ReadValueFunction, null, cancellationToken).ConfigureAwait(false);
+        var call = await CallFunctionValueAsync(
+            session, tab, objectId, ReadValueFunction, null, cancellationToken, cdpSessionId: cdpSessionId).ConfigureAwait(false);
         if (call.Failure is not null) return (null, call.Failure, call.Notices);
         var value = call.Value is { ValueKind: JsonValueKind.String } text ? text.GetString() : call.Value?.ToString();
         return (value, null, call.Notices);
@@ -820,11 +2263,12 @@ internal sealed partial class BrowserToolRuntime
         string objectId,
         string function,
         JsonElement? argument,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? cdpSessionId = null)
     {
         var call = await CdpAsync(session, tab, "Runtime.callFunctionOn",
             CallFunctionParams(objectId, function, argument),
-            TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+            TimeSpan.FromSeconds(15), cancellationToken, cdpSessionId: cdpSessionId).ConfigureAwait(false);
         if (call.Failure is not null) return (null, call.Failure, call.Notices);
         return (GetByValue(call.Root), null, call.Notices);
     }
@@ -867,7 +2311,8 @@ internal sealed partial class BrowserToolRuntime
             : null;
     }
 
-    private static bool TryGetContentCenter(JsonElement root, out double x, out double y)    {
+    private static bool TryGetContentCenter(JsonElement root, out double x, out double y)
+    {
         x = 0;
         y = 0;
         if (!root.TryGetProperty("model", out var model) || model.ValueKind != JsonValueKind.Object) return false;
@@ -969,6 +2414,20 @@ internal sealed partial class BrowserToolRuntime
             Title = tab.Title,
             Active = tab.Id == session.ActiveTabId,
         }).ToArray();
+
+    private static string[] ReadStringArray(JsonElement element, string property)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(property, out var arr)
+            || arr.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+        return arr.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(item.GetString()))
+            .Select(item => item.GetString()!)
+            .ToArray();
+    }
 
     private static string? NormalizeTabId(string? tabId)
     {

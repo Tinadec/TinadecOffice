@@ -67,7 +67,6 @@ initializeTrustedHostRequests({
   isManagedHost: () => trustedHostReady && Boolean(canonicalLocalGatewayUrl(process.env.TINADEC_RESOLVED_GATEWAY_URL)),
 });
 const layoutStore = require('./layoutStore.cjs');
-const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
 const { configureAuth, openLogin, logout, getAuthState, updateProfile } = require('./auth.cjs');
 // Before any auth call: restoreSession is lazy (getAuthState triggers it), so nothing has run yet.
 configureAuth({ hostControlToken: hostControl.serviceToken });
@@ -451,30 +450,6 @@ ipcMain.on('tinadec:close', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close();
 });
 
-// --- Agent Debug Studio IPC ---
-ipcMain.handle('tinadec:debug-studio-enabled-save', (event, enabled) => {
-  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) {
-    throw new Error('Debug Studio changes require the trusted main host page.');
-  }
-  saveDebugStudioEnabled(appConfigFile(), enabled);
-  const config = appConfigSnapshot();
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-      win.webContents.send('tinadec:debug-studio-enabled-changed');
-    }
-  }
-  if (!config.debug_studio_enabled) {
-    const debugWin = getDebugStudioWindow();
-    if (debugWin && !debugWin.isDestroyed()) debugWin.close();
-  }
-  return config;
-});
-ipcMain.handle('tinadec:open-debug-studio', async (event) => {
-  if (getMainWindow()?.webContents !== event.sender || !isTrustedHostSender(event)) return false;
-  if (!loadAppConfig(appConfigFile()).debug_studio_enabled) return false;
-  return Boolean(await createDebugStudioWindow());
-});
-
 // --- Window and tray preferences ---
 // Same authority as the other desktop preferences: only the trusted main page may change this, and
 // the tray rebroadcasts the stored value so the Settings switch and the tray checkbox never disagree.
@@ -609,6 +584,71 @@ ipcMain.on('tinadec:interface-locale', (event, locale) => {
 // panel or the main renderer cannot drive another session's browser through this surface.
 ipcMain.handle('browserShell:state', (event) => agentBrowserManager.shellState(event.sender));
 ipcMain.handle('browserShell:command', (event, payload) => agentBrowserManager.shellCommand(event.sender, payload));
+
+// --- Agent Browser Live Mirror & Control IPC (trusted host / panel windows only) ---
+function isAgentBrowserMirrorSender(event) {
+  if (isTrustedHostDocumentSender(event)) return true;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed() || (!win._isTinadecMain && !win._isTinadecPanel)) return false;
+  const mainFrame = event.sender?.mainFrame;
+  const frame = event.senderFrame;
+  return Boolean(frame && mainFrame && !frame.parent && frame.routingId === mainFrame.routingId);
+}
+
+agentBrowserManager.onStateChange((payload) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed() && (win._isTinadecMain || win._isTinadecPanel)) {
+      win.webContents.send('tinadec:agent-browser-state-changed', payload);
+    }
+  }
+});
+
+ipcMain.handle('tinadec:agent-browser-list-spaces', (event) => {
+  if (!isAgentBrowserMirrorSender(event)) return [];
+  return agentBrowserManager.listSpaces();
+});
+
+ipcMain.handle('tinadec:agent-browser-capture-preview', async (event, sessionId) => {
+  if (!isAgentBrowserMirrorSender(event) || typeof sessionId !== 'string' || !sessionId.trim()) return null;
+  try {
+    return await agentBrowserManager.capturePreview(sessionId.trim());
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('tinadec:agent-browser-open-window', (event, sessionId) => {
+  if (!isAgentBrowserMirrorSender(event) || typeof sessionId !== 'string' || !sessionId.trim()) {
+    return { ok: false, code: 'browser_session_invalid' };
+  }
+  try {
+    return { ok: true, state: agentBrowserManager.openWindow(sessionId.trim()) };
+  } catch (error) {
+    return { ok: false, code: error?.code ?? 'browser_window_failed', message: error?.message };
+  }
+});
+
+ipcMain.handle('tinadec:agent-browser-handoff', (event, sessionId, reason) => {
+  if (!isAgentBrowserMirrorSender(event) || typeof sessionId !== 'string' || !sessionId.trim()) {
+    return { ok: false, code: 'browser_session_invalid' };
+  }
+  try {
+    return { ok: true, state: agentBrowserManager.handOff(sessionId.trim(), { reason }) };
+  } catch (error) {
+    return { ok: false, code: error?.code ?? 'browser_handoff_failed', message: error?.message };
+  }
+});
+
+ipcMain.handle('tinadec:agent-browser-takeover', (event, sessionId) => {
+  if (!isAgentBrowserMirrorSender(event) || typeof sessionId !== 'string' || !sessionId.trim()) {
+    return { ok: false, code: 'browser_session_invalid' };
+  }
+  try {
+    return { ok: true, state: agentBrowserManager.takeOver(sessionId.trim()) };
+  } catch (error) {
+    return { ok: false, code: error?.code ?? 'browser_takeover_failed', message: error?.message };
+  }
+});
 
 // --- TinadecUIE layout persistence IPC ---
 // The renderer owns layout semantics; the main process is a thin validated store.
@@ -897,12 +937,6 @@ ipcMain.on('tinadec:broadcast-status-notification', (event, payload) => {
   const mainWin = getMainWindow();
   if (mainWin && !mainWin.isDestroyed() && mainWin.webContents.id !== senderId) {
     mainWin.webContents.send(channel, payload);
-  }
-
-  // Forward to Debug Studio window (exclude sender)
-  const debugWin = getDebugStudioWindow();
-  if (debugWin && !debugWin.isDestroyed() && debugWin.webContents.id !== senderId) {
-    debugWin.webContents.send(channel, payload);
   }
 
   // Forward to all detached panel windows (exclude sender via BrowserWindow.fromId)

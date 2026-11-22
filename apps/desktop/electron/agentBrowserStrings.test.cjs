@@ -33,3 +33,11 @@ test('stringsForLocale returns the resolved bundle', () => {
   assert.equal(stringsForLocale('ja-JP'), AGENT_BROWSER_STRINGS.ja);
   assert.equal(stringsForLocale('nope'), AGENT_BROWSER_STRINGS['zh-CN']);
 });
+
+test('includes TaskSpace handoff and terminal finished strings across all 5 locales', () => {
+  for (const [locale, strings] of Object.entries(AGENT_BROWSER_STRINGS)) {
+    for (const key of ['handoffWaiting', 'taskFinished', 'noticeHandoff', 'noticeFinished']) {
+      assert.ok(typeof strings[key] === 'string' && strings[key].length > 0, `${locale}.${key} is non-empty`);
+    }
+  }
+});

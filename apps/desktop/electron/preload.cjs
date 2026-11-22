@@ -33,18 +33,11 @@ contextBridge.exposeInMainWorld('tinadec', {
   minimizeWindow: () => ipcRenderer.send('tinadec:minimize'),
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),
   closeWindow: () => ipcRenderer.send('tinadec:close'),
-  openDebugStudio: () => ipcRenderer.invoke('tinadec:open-debug-studio'),
-  saveDebugStudioEnabled: (enabled) => ipcRenderer.invoke('tinadec:debug-studio-enabled-save', enabled),
   // --- Logto OIDC login ---
   openLogin: () => ipcRenderer.invoke('tinadec:open-login'),
   logout: () => ipcRenderer.invoke('tinadec:logout'),
   getAuthState: () => ipcRenderer.invoke('tinadec:get-auth-state'),
   updateProfile: (patch) => ipcRenderer.invoke('tinadec:update-profile', patch),
-  onDebugStudioEnabledChanged: (callback) => {
-    const handler = () => callback();
-    ipcRenderer.on('tinadec:debug-studio-enabled-changed', handler);
-    return () => ipcRenderer.removeListener('tinadec:debug-studio-enabled-changed', handler);
-  },
 
   // --- Window and tray preferences ---
   saveCloseToTray: (enabled) => ipcRenderer.invoke('tinadec:close-to-tray-save', enabled),
@@ -87,6 +80,21 @@ contextBridge.exposeInMainWorld('tinadec', {
       const handler = (_event, state) => callback(state);
       ipcRenderer.on('tinadec:companion-state-changed', handler);
       return () => ipcRenderer.removeListener('tinadec:companion-state-changed', handler);
+    },
+  },
+
+  // --- Agent Browser Live Mirror & Control API ---
+  agentBrowser: {
+    listSpaces: () => ipcRenderer.invoke('tinadec:agent-browser-list-spaces'),
+    capturePreview: (sessionId) => ipcRenderer.invoke('tinadec:agent-browser-capture-preview', sessionId),
+    openWindow: (sessionId) => ipcRenderer.invoke('tinadec:agent-browser-open-window', sessionId),
+    handOff: (sessionId, reason) => ipcRenderer.invoke('tinadec:agent-browser-handoff', sessionId, reason),
+    takeOver: (sessionId) => ipcRenderer.invoke('tinadec:agent-browser-takeover', sessionId),
+    onStateChanged: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('tinadec:agent-browser-state-changed', handler);
+      return () => ipcRenderer.removeListener('tinadec:agent-browser-state-changed', handler);
     },
   },
 

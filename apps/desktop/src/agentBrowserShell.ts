@@ -16,11 +16,17 @@ type ShellNotice = {
 
 type ShellState = {
   session_id: string;
-  control: 'agent' | 'user';
+  space_id?: string;
+  base_session_id?: string;
+  task_space?: string;
+  control: 'agent' | 'user' | 'finished';
+  handoff_reason?: string | null;
+  finished?: boolean;
   tabs: ShellTab[];
   active_tab: string | null;
   dialog: { type?: string; message?: string } | null;
   notices: ShellNotice[];
+  console_errors?: Array<{ seq?: number; message?: string; level?: string; url?: string }>;
   labels: Record<string, string>;
 };
 
@@ -68,6 +74,8 @@ const NOTICE_KEYS: Record<string, string> = {
   browser_file_chooser_opened: 'noticeFileChooser',
   browser_renderer_gone: 'noticeRenderer',
   browser_navigation_blocked: 'noticeNavigation',
+  browser_handoff_requested: 'noticeHandoff',
+  browser_task_finished: 'noticeFinished',
 };
 
 function label(state: ShellState, key: string): string {
@@ -120,15 +128,20 @@ function renderShell(state: ShellState): void {
   tabsSelect.disabled = state.tabs.length === 0;
   tabsSelect.title = label(state, 'tabs');
 
-  const badge = state.dialog
-    ? { text: label(state, 'dialogOpen'), className: 'dialog' }
-    : state.control === 'user'
-      ? { text: label(state, 'userControl'), className: 'user' }
-      : { text: label(state, 'agentControl'), className: 'agent' };
+  const badge = state.control === 'finished'
+    ? { text: label(state, 'taskFinished'), className: 'finished' }
+    : state.dialog
+      ? { text: label(state, 'dialogOpen'), className: 'dialog' }
+      : state.control === 'user'
+        ? {
+            text: state.handoff_reason ? label(state, 'handoffWaiting') : label(state, 'userControl'),
+            className: 'user',
+          }
+        : { text: label(state, 'agentControl'), className: 'agent' };
   stateLabel.textContent = tab?.loading ? `${badge.text} · ${label(state, 'loading')}` : badge.text;
   stateLabel.className = badge.className;
 
-  takeOver.hidden = state.control === 'user';
+  takeOver.hidden = state.control !== 'agent';
   handBack.hidden = state.control !== 'user';
 
   const last = state.notices?.[state.notices.length - 1];
@@ -142,7 +155,11 @@ function renderShell(state: ShellState): void {
     noticeEl.textContent = '';
   }
 
-  document.title = tab?.title ? `${tab.title} — ${label(state, 'title')}` : label(state, 'title');
+  const spaceSuffix = state.task_space && state.task_space !== 'default'
+    ? ` [${state.task_space}]`
+    : '';
+  const baseTitle = `${label(state, 'title')}${spaceSuffix}`;
+  document.title = tab?.title ? `${tab.title} — ${baseTitle}` : baseTitle;
 }
 
 async function send(payload: Record<string, unknown>): Promise<void> {

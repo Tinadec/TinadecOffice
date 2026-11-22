@@ -301,7 +301,7 @@ public sealed class BrowserActionTests
             "s1", new BrowserTabOpenArgs { Url = "https://example.com/docs" }, CancellationToken.None);
 
         Assert.True(result.Ok, result.Message);
-        var open = Assert.Single(harness.Bridge.Calls.Where(call => call.Op == "tabs/open"));
+        var open = Assert.Single(harness.Bridge.Calls, call => call.Op == "tabs/open");
         Assert.Equal("https://example.com/docs", open.Url);
         Assert.Single(result.Tabs!);
     }
@@ -329,7 +329,70 @@ public sealed class BrowserActionTests
         Assert.True(result.Steps[0].Ok);
         Assert.False(result.Steps[1].Ok);
         Assert.Contains("[ref=1]", result.Snapshot);
-        Assert.Single(harness.InputCalls("Input.dispatchMouseEvent").Where(call => call.Parameters!.Value.GetProperty("type").GetString() == "mouseReleased"));
+        Assert.Single(harness.InputCalls("Input.dispatchMouseEvent"), call => call.Parameters!.Value.GetProperty("type").GetString() == "mouseReleased");
+    }
+
+    [Fact]
+    public async Task Click_InsideCrossOriginOopif_ForwardsCdpSessionIdAndTranslatesCoordinates()
+    {
+        var bridge = new FakeBridge();
+        bridge.Handler = call =>
+        {
+            if (call.Op == "state")
+            {
+                using var sDoc = JsonDocument.Parse("""{"control":"agent","tabs":[{"id":"t1","url":"https://top.test/","title":"Top","active":true}],"active_tab":"t1","dialog":null,"notices":[],"notice_seq":0}""");
+                return new BrowserBridgeResponse { Ok = true, Data = sDoc.RootElement.Clone() };
+            }
+            if (call.Op != "cdp") return BrowserBridgeResponse.Failure("browser_bridge_error", "unexpected");
+
+            string resultJson = call.Method switch
+            {
+                "Page.getFrameTree" => """{"frameTree":{"frame":{"id":"main-f","loaderId":"L1"},"childFrames":[{"frame":{"id":"oopif-target-1","parentId":"main-f","url":"https://pay.test/embed"}}]}}""",
+                "Target.getTargets" => """{"targetInfos":[{"targetId":"oopif-target-1","type":"iframe","url":"https://pay.test/embed"}]}""",
+                "Target.attachToTarget" => """{"sessionId":"oopif-sess-1"}""",
+                "DOM.enable" or "Accessibility.enable" => "{}",
+                "DOM.getFrameOwner" => """{"backendNodeId":50}""",
+                "Accessibility.getFullAXTree" when call.CdpSessionId == "oopif-sess-1" =>
+                    """{"nodes":[{"nodeId":"1","role":{"value":"RootWebArea"},"name":{"value":"Pay"},"childIds":["2"]},{"nodeId":"2","role":{"value":"button"},"name":{"value":"Pay Now"},"backendDOMNodeId":6,"childIds":[]}]}""",
+                "Accessibility.getFullAXTree" =>
+                    """{"nodes":[{"nodeId":"1","role":{"value":"RootWebArea"},"name":{"value":"Top"},"childIds":["2"]},{"nodeId":"2","role":{"value":"Iframe"},"name":{"value":"Checkout"},"backendDOMNodeId":50,"childIds":[]}]}""",
+                "DOM.scrollIntoViewIfNeeded" when call.CdpSessionId == "oopif-sess-1" => "{}",
+                "DOM.getBoxModel" when call.CdpSessionId == "oopif-sess-1" =>
+                    """{"model":{"content":[10,10,30,10,30,30,10,30]}}""",
+                "DOM.getBoxModel" => // Owning iframe at (100, 200)
+                    """{"model":{"content":[100,200,400,200,400,500,100,500]}}""",
+                "DOM.resolveNode" when call.CdpSessionId == "oopif-sess-1" =>
+                    """{"object":{"objectId":"oopif-btn"}}""",
+                "Runtime.callFunctionOn" when call.CdpSessionId == "oopif-sess-1" =>
+                    """{"result":{"value":{"ok":true}}}""",
+                "Input.dispatchMouseEvent" => "{}",
+                _ => "",
+            };
+
+            if (string.IsNullOrEmpty(resultJson)) return BrowserBridgeResponse.Failure("browser_bridge_error", call.Method);
+            using var doc = JsonDocument.Parse("{\"result\":" + resultJson + ",\"notices\":[],\"notice_seq\":0}");
+            return new BrowserBridgeResponse { Ok = true, Data = doc.RootElement.Clone() };
+        };
+
+        var runtime = new BrowserToolRuntime(bridge, new BrowserNavigationPolicy(allowPrivate: true));
+        var snap = await runtime.SnapshotAsync("s-oopif", new BrowserSnapshotArgs(), CancellationToken.None);
+        Assert.True(snap.Ok, snap.Message);
+        Assert.Contains("button \"Pay Now\" [ref=2]", snap.Snapshot);
+
+        // Subtree snapshot on iframe ref=1
+        var subtree = await runtime.SnapshotAsync("s-oopif", new BrowserSnapshotArgs { Scope = "subtree", RootRef = 1 }, CancellationToken.None);
+        Assert.True(subtree.Ok, subtree.Message);
+        Assert.Contains("button \"Pay Now\" [ref=2]", subtree.Snapshot);
+
+        var clicked = await runtime.ClickAsync("s-oopif", new BrowserClickArgs { Ref = 2 }, CancellationToken.None);
+        Assert.True(clicked.Ok, clicked.Message);
+
+        var pressCall = Assert.Single(
+            bridge.Calls,
+            c => c.Method == "Input.dispatchMouseEvent" && c.Parameters!.Value.GetProperty("type").GetString() == "mousePressed");
+        Assert.Null(pressCall.CdpSessionId); // Input goes to top-level page session
+        Assert.Equal(120, pressCall.Parameters!.Value.GetProperty("x").GetDouble()); // 20 + 100 iframe offset
+        Assert.Equal(220, pressCall.Parameters!.Value.GetProperty("y").GetDouble()); // 20 + 200 iframe offset
     }
 
     [Fact]
