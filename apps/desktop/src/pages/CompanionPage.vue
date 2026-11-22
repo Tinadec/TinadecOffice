@@ -1,27 +1,35 @@
 <script setup lang="ts">
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Ellipsis,
-  Maximize2,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  Globe,
+  Loader2,
+  MessageSquare,
   Minimize2,
   Pause,
   PawPrint,
+  Play,
   Send,
+  ShieldAlert,
+  Sparkles,
+  Square,
   UserPlus,
+  Users,
+  X,
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  COMPANION_ACTIVITY_EVENT,
   COMPANION_DELTA_EVENT,
   COMPANION_RUN_EVENT,
   COMPANION_SETTINGS_EVENT,
   COMPANION_STAGE_CUE_EVENT,
+  COMPANION_WORK_SESSION_EVENT,
   type CompanionEventNotice,
 } from '@/events/companionEventTypes'
-import { ApiError } from '@/lib/apiError'
+import { ApiError, apiErrorMessage } from '@/lib/apiError'
 import { formatClock } from '@/lib/conversation/format'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import CompanionStage from '@/components/pets/CompanionStage.vue'
@@ -35,81 +43,166 @@ import {
   type CompanionSettings,
   type CompanionSummary,
 } from '@/lib/companionApi'
+import {
+  normalizeConnectedWorkSession,
+  parseWorkSessionPlanProgress,
+  type CompanionConnectedWorkSession,
+  type CompanionWorkSessionPendingApproval,
+} from '@/lib/companionWorkSession'
 
 /**
- * Satellite Companion Capsule & Drawer Shell:
- * Renders the Electron main-process window shape (`capsule` | `panel` | `immersive`) and
- * consumes live `companion.*` SSE frames relayed over BroadcastChannel (zero polling timers).
+ * Floating Companion Capsule & Island Panel:
+ * Pure 2-state widget (`capsule` <-> `panel`) with free 2D multi-display drag + magnetic edge snap,
+ * unified top-bar identity popover, live `#37` work-session approval/cancel/jump strip, and
+ * BroadcastChannel-relayed SSE updates (zero polling timers).
  */
+
+interface CompanionMainSurfacePayload {
+  target: 'companion-center' | 'session'
+  companionId?: string
+  sessionId?: string
+}
+
+type CompanionHostBridge = Partial<CompanionApi> & {
+  dragMove?: (screenX: number, screenY: number) => Promise<unknown>
+  dragEnd?: (screenX: number, screenY: number) => Promise<unknown>
+  openMainSurface?: (payload: CompanionMainSurfacePayload) => Promise<unknown>
+}
+
+function companionHost(): CompanionHostBridge | undefined {
+  if (typeof window === 'undefined') return undefined
+  return window.tinadec?.companion as CompanionHostBridge | undefined
+}
+
 const { t, locale } = useI18n()
 const state = ref<CompanionState | null>(null)
 const dragging = ref(false)
-const mode = computed<'capsule' | 'panel' | 'immersive'>(() => {
-  if (state.value?.mode) return state.value.mode
+const panelRef = ref<HTMLElement | null>(null)
+const popoverWrapRef = ref<HTMLElement | null>(null)
+
+// Pure 2-state footprint: coerce any legacy `'immersive'` snapshot cleanly into `'panel'`.
+const mode = computed<'capsule' | 'panel'>(() => {
+  const raw = state.value?.mode
+  if (raw === 'panel' || raw === 'immersive') return 'panel'
+  if (raw === 'capsule') return 'capsule'
   return state.value?.expanded === true ? 'panel' : 'capsule'
 })
-const expanded = computed(() => mode.value !== 'capsule')
+const expanded = computed(() => mode.value === 'panel')
 const side = computed<'left' | 'right'>(() => state.value?.side ?? 'right')
-const capsuleStyle = computed<'peek' | 'grip'>(() => state.value?.capsuleStyle ?? 'peek')
 
-const SWIPE_EXPAND_PX = 26
-const AXIS_LOCK_PX = 4
+const DRAG_THRESHOLD_PX = 5
 const CLICK_SUPPRESS_MS = 350
 const NOTICE_DEBOUNCE_MS = 120
 const SELECTED_COMPANION_KEY = 'tinadec.companion.selected'
 
-interface DragStart {
+interface PointerDragSession {
   pointerId: number
-  pointerX: number
-  pointerY: number
+  startX: number
+  startY: number
+  offsetX: number
+  offsetY: number
   windowTop: number
-  axis: 'x' | 'y' | null
+  moved: boolean
 }
 
-let capsuleDrag: DragStart | null = null
-let panelDrag: DragStart | null = null
+let capsuleDrag: PointerDragSession | null = null
+let panelDrag: PointerDragSession | null = null
 let suppressClickUntil = 0
 let disposeState: (() => void) | undefined
 
-function applyState(next: CompanionState | null | undefined): void {
-  if (next) state.value = next
+function isCompanionState(value: unknown): value is CompanionState {
+  return Boolean(value && typeof value === 'object' && 'open' in value)
 }
 
-function command(action: () => Promise<CompanionState>, label: string): void {
-  action()
+function applyState(next: unknown): void {
+  if (isCompanionState(next)) state.value = next
+}
+
+function command(action: () => Promise<unknown> | undefined, label: string): void {
+  const promise = action()
+  if (!promise) return
+  promise
     .then(applyState)
     .catch((error) => console.warn(`[companion] ${label} failed:`, error))
 }
 
-const expand = () => command(() => window.tinadec.companion.expand(), 'expand')
-const collapse = () => command(() => window.tinadec.companion.collapse(), 'collapse')
-const setMode = (next: 'capsule' | 'panel' | 'immersive') => command(() => window.tinadec.companion.setMode(next), 'setMode')
-const dock = (next: 'left' | 'right') => {
-  if (side.value !== next) command(() => window.tinadec.companion.setSide(next), 'setSide')
+const expand = () => command(() => companionHost()?.expand?.(), 'expand')
+const collapse = () => {
+  menuOpen.value = false
+  inviteOpen.value = false
+  command(() => companionHost()?.collapse?.(), 'collapse')
 }
 
-function trackPointer(event: PointerEvent, windowTop: number, axis: DragStart['axis']): DragStart {
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-  dragging.value = true
-  return { pointerId: event.pointerId, pointerX: event.screenX, pointerY: event.screenY, windowTop, axis }
+function sendDragMove(screenX: number, screenY: number, fallbackTop: number): void {
+  const host = companionHost()
+  if (typeof host?.dragMove === 'function') {
+    host.dragMove(screenX, screenY).catch((error) => console.warn('[companion] dragMove failed:', error))
+    return
+  }
+  host?.moveTo?.(fallbackTop).catch((error) => console.warn('[companion] moveTo failed:', error))
+}
+
+function sendDragEnd(screenX: number, screenY: number): void {
+  const host = companionHost()
+  if (typeof host?.dragEnd === 'function') {
+    host.dragEnd(screenX, screenY)
+      .then(applyState)
+      .catch((error) => console.warn('[companion] dragEnd failed:', error))
+  }
+}
+
+function centerOffsetFor(element: HTMLElement | null, event: PointerEvent): { offsetX: number; offsetY: number } {
+  const rect = element?.getBoundingClientRect?.()
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return { offsetX: 0, offsetY: 0 }
+  }
+  return {
+    offsetX: (rect.left + rect.width / 2) - event.clientX,
+    offsetY: (rect.top + rect.height / 2) - event.clientY,
+  }
+}
+
+function capturePointerSafe(target: EventTarget | null, pointerId: number): void {
+  try {
+    ;(target as HTMLElement | null)?.setPointerCapture?.(pointerId)
+  } catch { /* synthetic events may not register an active pointer id */ }
+}
+
+function releasePointerSafe(target: EventTarget | null, pointerId: number): void {
+  try {
+    ;(target as HTMLElement | null)?.releasePointerCapture?.(pointerId)
+  } catch { /* ignore */ }
 }
 
 function beginCapsuleDrag(event: PointerEvent): void {
-  if (event.button === 0) capsuleDrag = trackPointer(event, window.screenY, null)
+  if (event.button !== 0) return
+  const target = event.currentTarget as HTMLElement | null
+  capturePointerSafe(target, event.pointerId)
+  const { offsetX, offsetY } = centerOffsetFor(target, event)
+  capsuleDrag = {
+    pointerId: event.pointerId,
+    startX: event.screenX,
+    startY: event.screenY,
+    offsetX,
+    offsetY,
+    windowTop: window.screenY,
+    moved: false,
+  }
 }
 
 function moveCapsuleDrag(event: PointerEvent): void {
   const drag = capsuleDrag
   if (!drag || drag.pointerId !== event.pointerId) return
-  const dx = event.screenX - drag.pointerX
-  const dy = event.screenY - drag.pointerY
-  if (!drag.axis) {
-    if (Math.abs(dx) < AXIS_LOCK_PX && Math.abs(dy) < AXIS_LOCK_PX) return
-    drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
-  }
-  if (drag.axis === 'y') {
-    window.tinadec.companion.moveTo(drag.windowTop + dy).catch((error) => console.warn('[companion] moveTo failed:', error))
-  }
+  const dx = event.screenX - drag.startX
+  const dy = event.screenY - drag.startY
+  if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return
+  drag.moved = true
+  dragging.value = true
+  sendDragMove(
+    Math.round(event.screenX + drag.offsetX),
+    Math.round(event.screenY + drag.offsetY),
+    drag.windowTop + dy,
+  )
 }
 
 function endCapsuleDrag(event: PointerEvent): void {
@@ -117,46 +210,100 @@ function endCapsuleDrag(event: PointerEvent): void {
   if (!drag || drag.pointerId !== event.pointerId) return
   capsuleDrag = null
   dragging.value = false
-  if (!drag.axis) return
-  suppressClickUntil = performance.now() + CLICK_SUPPRESS_MS
-  if (drag.axis !== 'x') return
-  const inward = side.value === 'left' ? event.screenX - drag.pointerX : drag.pointerX - event.screenX
-  if (inward >= SWIPE_EXPAND_PX) expand()
+  releasePointerSafe(event.currentTarget, event.pointerId)
+
+  const dx = event.screenX - drag.startX
+  const dy = event.screenY - drag.startY
+  const wasDrag = drag.moved || Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX
+
+  if (wasDrag) {
+    suppressClickUntil = performance.now() + CLICK_SUPPRESS_MS
+    sendDragEnd(
+      Math.round(event.screenX + drag.offsetX),
+      Math.round(event.screenY + drag.offsetY),
+    )
+    return
+  }
+
+  if (event.type === 'pointerup') {
+    suppressClickUntil = performance.now() + CLICK_SUPPRESS_MS
+    expand()
+  }
 }
 
 function onCapsuleClick(event: MouseEvent): void {
+  // Keyboard activation always reports detail === 0 and must expand regardless of drag suppression.
   if (event.detail !== 0 && performance.now() < suppressClickUntil) return
   expand()
 }
 
 function beginPanelDrag(event: PointerEvent): void {
-  if (event.button === 0) panelDrag = trackPointer(event, window.screenY, 'y')
+  if (event.button !== 0) return
+  const target = event.currentTarget as HTMLElement | null
+  capturePointerSafe(target, event.pointerId)
+  const { offsetX, offsetY } = centerOffsetFor(panelRef.value, event)
+  panelDrag = {
+    pointerId: event.pointerId,
+    startX: event.screenX,
+    startY: event.screenY,
+    offsetX,
+    offsetY,
+    windowTop: window.screenY,
+    moved: false,
+  }
 }
 
 function movePanelDrag(event: PointerEvent): void {
   const drag = panelDrag
   if (!drag || drag.pointerId !== event.pointerId) return
-  window.tinadec.companion.moveTo(drag.windowTop + event.screenY - drag.pointerY).catch((error) => console.warn('[companion] moveTo failed:', error))
+  const dx = event.screenX - drag.startX
+  const dy = event.screenY - drag.startY
+  if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return
+  if (!drag.moved) menuOpen.value = false
+  drag.moved = true
+  dragging.value = true
+  sendDragMove(
+    Math.round(event.screenX + drag.offsetX),
+    Math.round(event.screenY + drag.offsetY),
+    drag.windowTop + dy,
+  )
 }
 
 function endPanelDrag(event: PointerEvent): void {
-  if (!panelDrag || panelDrag.pointerId !== event.pointerId) return
+  const drag = panelDrag
+  if (!drag || drag.pointerId !== event.pointerId) return
   panelDrag = null
   dragging.value = false
+  releasePointerSafe(event.currentTarget, event.pointerId)
+  if (!drag.moved) return
+  sendDragEnd(
+    Math.round(event.screenX + drag.offsetX),
+    Math.round(event.screenY + drag.offsetY),
+  )
 }
 
 function onKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Escape' || mode.value === 'capsule') return
   event.preventDefault()
-  if (mode.value === 'immersive') setMode('panel')
-  else collapse()
+  if (inviteOpen.value) {
+    inviteOpen.value = false
+    return
+  }
+  if (menuOpen.value) {
+    menuOpen.value = false
+    return
+  }
+  collapse()
 }
 
-watch(mode, (next, previous) => {
-  if (next === 'panel' && previous === 'immersive') scrollToBottom()
-})
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!menuOpen.value) return
+  const target = event.target as Node | null
+  if (popoverWrapRef.value && target && popoverWrapRef.value.contains(target)) return
+  menuOpen.value = false
+}
 
-// ── Satellite chat & SSE relay state (zero polling timers) ────────────
+// ── Satellite chat, work-session supervision & SSE relay state ────────
 
 const companions = ref<CompanionSummary[]>([])
 const selectedCompanionId = ref<string | null>(null)
@@ -169,6 +316,13 @@ const liveDeltaBodies = ref<Record<string, string>>({})
 const liveStageSpeaking = ref(false)
 const liveEmotion = ref<string | null>(null)
 const drafts = reactive<Record<string, string>>({})
+const unreadCount = ref(0)
+
+// #37 Connected work sessions hydrated via companion proxy + live BroadcastChannel notices.
+const workSessions = ref<CompanionConnectedWorkSession[]>([])
+const decidingApprovalIds = ref<Record<string, boolean>>({})
+const cancellingRunIds = ref<Record<string, boolean>>({})
+const workSessionError = ref('')
 
 const booting = ref(true)
 const loadError = ref('')
@@ -188,6 +342,8 @@ const composerRef = ref<HTMLTextAreaElement | null>(null)
 
 let lastSeq = 0
 let loadToken = 0
+let workSessionToken = 0
+const liveWorkSessionIds = new Set<string>()
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
 let unsubscribeRelay: (() => void) | null = null
 const speakReplies = ref(false)
@@ -213,22 +369,107 @@ const failures = computed(() => trackedRunIds.value
   .filter((run): run is CompanionRun => run != null && run.status === 'failed'))
 const companionPetSlug = computed(() => activeCompanion.value?.avatar ?? '')
 
-const capsuleMood = computed<'idle' | 'thinking' | 'failed' | 'paused'>(() => {
-  if (failures.value.length > 0) return 'failed'
-  if (thinking.value) return 'thinking'
-  if (paused.value) return 'paused'
-  return 'idle'
+// ── #37 Work-session classification ───────────────────────────────────
+
+const ACTIVE_WORK_STATUSES = new Set([
+  'running',
+  'queued',
+  'pending',
+  'starting',
+  'in_progress',
+  'thinking',
+  'planning',
+  'executing',
+])
+
+function workSessionStatus(session: CompanionConnectedWorkSession): string {
+  return (session.latest_run_status ?? 'idle').toLowerCase()
+}
+
+function workSessionNeedsApproval(session: CompanionConnectedWorkSession): boolean {
+  return session.pending_approvals.length > 0 || workSessionStatus(session) === 'awaiting_approval'
+}
+
+function workSessionIsHandoff(session: CompanionConnectedWorkSession): boolean {
+  return workSessionStatus(session) === 'browser_handoff'
+}
+
+function workSessionIsActive(session: CompanionConnectedWorkSession): boolean {
+  return ACTIVE_WORK_STATUSES.has(workSessionStatus(session))
+}
+
+const featuredWorkSession = computed<CompanionConnectedWorkSession | null>(() => {
+  const list = workSessions.value
+  if (!list.length) return null
+  return list.find(workSessionNeedsApproval)
+    ?? list.find(workSessionIsHandoff)
+    ?? list.find(workSessionIsActive)
+    ?? null
 })
+
+const featuredApproval = computed<CompanionWorkSessionPendingApproval | null>(() =>
+  featuredWorkSession.value?.pending_approvals[0] ?? null)
+
+const featuredExtraApprovals = computed(() =>
+  Math.max(0, (featuredWorkSession.value?.pending_approvals.length ?? 0) - 1))
+
+const featuredWorkTone = computed<'warning' | 'running'>(() => {
+  const ws = featuredWorkSession.value
+  if (!ws) return 'running'
+  return workSessionNeedsApproval(ws) || workSessionIsHandoff(ws) ? 'warning' : 'running'
+})
+
+const featuredWorkStatusLabel = computed(() => {
+  const ws = featuredWorkSession.value
+  if (!ws) return ''
+  if (workSessionNeedsApproval(ws)) return t('companionCenter.workSession.statusAwaitingApproval')
+  if (workSessionIsHandoff(ws)) return t('companionCenter.workSession.statusBrowserHandoff')
+  const status = workSessionStatus(ws)
+  if (status === 'queued' || status === 'pending') return t('companionCenter.workSession.statusQueued')
+  return t('companionCenter.workSession.statusRunning')
+})
+
+const featuredWorkDetail = computed(() => {
+  const ws = featuredWorkSession.value
+  if (!ws) return ''
+  if (workSessionIsHandoff(ws)) {
+    return ws.browser_handoff_reason || ws.browser_url || t('companionCenter.workSession.browserHandoffTitle')
+  }
+  const progress = ws.plan_progress ?? parseWorkSessionPlanProgress(ws.plan_summary)
+  if (progress?.current_step) {
+    return progress.total > 0 ? `${progress.done}/${progress.total} · ${progress.current_step}` : progress.current_step
+  }
+  return ws.latest_run_summary || ''
+})
+
+const canCancelFeaturedWorkRun = computed(() => {
+  const ws = featuredWorkSession.value
+  if (!ws || !ws.latest_run_id) return false
+  return workSessionNeedsApproval(ws) || workSessionIsHandoff(ws) || workSessionIsActive(ws)
+})
+
+// Status dot on capsule appears ONLY for active / attention / error states (never when idle).
+type CapsuleAlertState = 'awaiting_approval' | 'browser_handoff' | 'failed' | 'thinking' | null
+
+const capsuleAlertState = computed<CapsuleAlertState>(() => {
+  const ws = featuredWorkSession.value
+  if (ws && workSessionNeedsApproval(ws)) return 'awaiting_approval'
+  if (ws && workSessionIsHandoff(ws)) return 'browser_handoff'
+  if (failures.value.length > 0) return 'failed'
+  if (thinking.value || (ws && workSessionIsActive(ws))) return 'thinking'
+  return null
+})
+
+const unreadDisplay = computed(() => (unreadCount.value > 9 ? '9+' : String(unreadCount.value)))
 
 const observedStageState = computed<PetState>(() => {
   if (liveStageSpeaking.value) return 'running'
-  if (capsuleMood.value === 'thinking') return 'waiting'
-  if (capsuleMood.value === 'failed') return 'failed'
+  if (capsuleAlertState.value === 'thinking') return 'waiting'
+  if (capsuleAlertState.value === 'failed') return 'failed'
   return 'idle'
 })
 
 const impulse = ref<PetState | null>(null)
-const greeting = ref(false)
 const patNote = ref('')
 let impulseTimer: ReturnType<typeof setTimeout> | undefined
 const stageState = computed<PetState>(() => impulse.value ?? observedStageState.value)
@@ -236,45 +477,19 @@ const stageState = computed<PetState>(() => impulse.value ?? observedStageState.
 function playImpulse(next: PetState, note = ''): void {
   impulse.value = next
   patNote.value = note
-  greeting.value = next === 'waving'
   clearTimeout(impulseTimer)
   impulseTimer = setTimeout(() => {
     impulse.value = null
-    greeting.value = false
     patNote.value = ''
   }, PET_STATES[next].durationMs)
 }
 
-function greet(): void {
-  playImpulse('waving')
-  if (selectedCompanionId.value) void companionBridge.recordEmote(selectedCompanionId.value, 'wave').catch(() => {})
-}
-
 function pat(event: MouseEvent): void {
   const target = event.target as HTMLElement | null
-  if (target?.closest('.companion-msg, button, a, input, textarea, select, .companion-invite')) return
+  if (target?.closest('.companion-msg, button, a, input, textarea, .companion-invite, .companion-popover, .companion-ws-strip')) return
   playImpulse('jumping', t('companion.pat'))
   if (selectedCompanionId.value) void companionBridge.recordEmote(selectedCompanionId.value, 'pat').catch(() => {})
 }
-
-const viewportHeight = ref(typeof window === 'undefined' ? 0 : window.innerHeight)
-const callStageHeight = computed(() => Math.min(500, Math.max(180, Math.round(viewportHeight.value * 0.6))))
-const onViewportResize = () => { viewportHeight.value = window.innerHeight }
-
-const callLines = computed(() => messages.value.filter((message) => message.author_kind !== 'system').slice(-2))
-
-const headerSubtitle = computed(() => {
-  if (failures.value.length > 0) return t('companion.stateFailed')
-  if (thinking.value) return t('companion.stateThinking')
-  if (paused.value) return t('companion.statePaused')
-  const conversation = activeConversation.value
-  if (!conversation) return activeCompanion.value?.tagline ?? t('companion.subtitle')
-  if (conversation.kind === 'group') {
-    const members = conversation.members.filter((m) => m.status === 'active').map((m) => m.display_name).join(' · ')
-    return t('companion.chat.groupSubtitle', { title: conversation.title || t('companion.chat.groupLabel'), members })
-  }
-  return t('companion.chat.privateSubtitle', { name: activeCompanion.value?.name ?? '' })
-})
 
 const inviteCandidates = computed(() => {
   const memberIds = new Set(
@@ -335,6 +550,179 @@ const clock = (iso: string | undefined) => (iso ? formatClock(iso, locale.value)
 const conversationLabel = (c: CompanionConversation) =>
   (c.kind === 'group' ? c.title || t('companion.chat.groupLabel') : t('companion.chat.privateLabel'))
 
+// ── Companion proxy helpers for #37 work sessions ─────────────────────
+
+async function proxyCall<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
+  const invoke = companionHost()?.api
+  if (typeof invoke !== 'function') {
+    throw new ApiError(t('companion.chat.desktopHostRequired'), 403, { code: 'desktop_host_required' })
+  }
+  const result = await invoke(method, path, body)
+  if (result.status < 200 || result.status >= 300) {
+    throw new ApiError(apiErrorMessage(result.body, `Companion request failed (${result.status})`), result.status, result.body)
+  }
+  return result.body as T
+}
+
+async function hydrateWorkSessions(companionId: string | null): Promise<void> {
+  if (!companionId) {
+    workSessions.value = []
+    return
+  }
+  const invoke = companionHost()?.api
+  if (typeof invoke !== 'function') return
+  const token = ++workSessionToken
+  try {
+    const raw = await proxyCall<unknown>('GET', `/api/v1/companions/${encodeURIComponent(companionId)}/work-sessions`)
+    if (token !== workSessionToken || selectedCompanionId.value !== companionId) return
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as { sessions?: unknown } | null)?.sessions)
+        ? (raw as { sessions: unknown[] }).sessions
+        : Array.isArray((raw as { items?: unknown } | null)?.items)
+          ? (raw as { items: unknown[] }).items
+          : []
+    const fetched = list
+      .map(normalizeConnectedWorkSession)
+      .filter((item): item is CompanionConnectedWorkSession => item !== null)
+    const merged = new Map(fetched.map((item) => [item.session_id, item]))
+    for (const existing of workSessions.value) {
+      if (liveWorkSessionIds.has(existing.session_id) && !merged.has(existing.session_id)) {
+        merged.set(existing.session_id, existing)
+      }
+    }
+    workSessions.value = [...merged.values()]
+    workSessionError.value = ''
+  } catch {
+    // Work-session supervision is progressive enhancement; never block chat on 404/unreachable.
+  }
+}
+
+function mergeWorkSessionNotice(notice: CompanionEventNotice): void {
+  const ws = notice.workSession
+  if (!ws) {
+    if (selectedCompanionId.value) void hydrateWorkSessions(selectedCompanionId.value)
+    return
+  }
+  const existing = workSessions.value.find((item) => item.session_id === ws.sessionId)
+  const normalized: CompanionConnectedWorkSession = {
+    session_id: ws.sessionId,
+    title: ws.sessionTitle || existing?.title || ws.sessionId.slice(0, 8),
+    project_id: ws.projectId ?? existing?.project_id ?? null,
+    project_name: ws.projectName ?? existing?.project_name ?? null,
+    mode_name: ws.modeName ?? existing?.mode_name ?? null,
+    view_mode: ws.viewMode ?? existing?.view_mode ?? null,
+    latest_run_id: ws.runId ?? existing?.latest_run_id ?? null,
+    latest_run_status: ws.status ?? existing?.latest_run_status ?? null,
+    latest_run_summary: ws.summary ?? existing?.latest_run_summary ?? null,
+    plan_summary: ws.planSummary ?? existing?.plan_summary ?? null,
+    plan_progress: parseWorkSessionPlanProgress(ws.planSummary ?? existing?.plan_summary) ?? existing?.plan_progress ?? null,
+    pending_approvals: ws.pendingApprovals,
+    browser_space_id: ws.browserSpaceId ?? existing?.browser_space_id ?? null,
+    browser_url: ws.browserUrl ?? existing?.browser_url ?? null,
+    browser_driver: ws.browserDriver ?? existing?.browser_driver ?? null,
+    browser_handoff_reason: ws.browserHandoffReason ?? existing?.browser_handoff_reason ?? null,
+    updated_at: ws.updatedAt ?? existing?.updated_at ?? null,
+    latest_run: (ws.runId ?? existing?.latest_run_id)
+      ? {
+          id: (ws.runId ?? existing?.latest_run_id)!,
+          status: ws.status ?? existing?.latest_run_status ?? 'running',
+          summary: ws.summary ?? existing?.latest_run_summary ?? null,
+        }
+      : null,
+  }
+  const index = workSessions.value.findIndex((item) => item.session_id === ws.sessionId)
+  liveWorkSessionIds.add(ws.sessionId)
+  if (index >= 0) {
+    const next = [...workSessions.value]
+    next[index] = normalized
+    workSessions.value = next
+  } else {
+    workSessions.value = [normalized, ...workSessions.value]
+  }
+}
+
+async function decideWorkApproval(item: CompanionWorkSessionPendingApproval, approved: boolean): Promise<void> {
+  const ws = featuredWorkSession.value
+  if (!ws || decidingApprovalIds.value[item.approval_id]) return
+  decidingApprovalIds.value = { ...decidingApprovalIds.value, [item.approval_id]: true }
+  workSessionError.value = ''
+  try {
+    await proxyCall<unknown>('POST', `/api/v1/approvals/${encodeURIComponent(item.approval_id)}/decision`, {
+      decision: approved ? 'approved' : 'rejected',
+    })
+    workSessions.value = workSessions.value.map((entry) => {
+      if (entry.session_id !== ws.session_id) return entry
+      const remaining = entry.pending_approvals.filter((a) => a.approval_id !== item.approval_id)
+      const nextStatus = remaining.length > 0
+        ? 'awaiting_approval'
+        : (approved ? 'running' : 'cancelled')
+      return {
+        ...entry,
+        pending_approvals: remaining,
+        latest_run_status: nextStatus,
+        latest_run: entry.latest_run ? { ...entry.latest_run, status: nextStatus } : null,
+      }
+    })
+  } catch (error) {
+    workSessionError.value = errorText(error)
+  } finally {
+    const next = { ...decidingApprovalIds.value }
+    delete next[item.approval_id]
+    decidingApprovalIds.value = next
+  }
+}
+
+async function cancelWorkRun(): Promise<void> {
+  const ws = featuredWorkSession.value
+  const runId = ws?.latest_run_id
+  if (!ws || !runId || cancellingRunIds.value[runId]) return
+  cancellingRunIds.value = { ...cancellingRunIds.value, [runId]: true }
+  workSessionError.value = ''
+  const clientControlId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? `companion-cancel-${crypto.randomUUID()}`
+    : `companion-cancel-${Date.now()}`
+  try {
+    await proxyCall<unknown>('POST', `/api/v1/runs/${encodeURIComponent(runId)}/control`, {
+      action: 'cancel',
+      client_control_id: clientControlId,
+    })
+    workSessions.value = workSessions.value.map((entry) => {
+      if (entry.session_id !== ws.session_id) return entry
+      return {
+        ...entry,
+        pending_approvals: [],
+        latest_run_status: 'cancelled',
+        latest_run: entry.latest_run ? { ...entry.latest_run, status: 'cancelled' } : null,
+      }
+    })
+  } catch (error) {
+    workSessionError.value = errorText(error)
+  } finally {
+    const next = { ...cancellingRunIds.value }
+    delete next[runId]
+    cancellingRunIds.value = next
+  }
+}
+
+function openCompanionCenter(): void {
+  menuOpen.value = false
+  const payload: CompanionMainSurfacePayload = selectedCompanionId.value
+    ? { target: 'companion-center', companionId: selectedCompanionId.value }
+    : { target: 'companion-center' }
+  void companionHost()?.openMainSurface?.(payload)?.catch((error) => {
+    console.warn('[companion] openMainSurface(companion-center) failed:', error)
+  })
+}
+
+function openWorkSessionInWorkbench(sessionId: string): void {
+  void companionHost()?.openMainSurface?.({ target: 'session', sessionId })?.catch((error) => {
+    console.warn('[companion] openMainSurface(session) failed:', error)
+  })
+}
+
+// ── Chat messaging & SSE relay ────────────────────────────────────────
+
 function speakFresh(fresh: CompanionMessage[]): void {
   if (!speakReplies.value || typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') return
   const body = fresh.filter((m) => m.author_kind === 'companion').at(-1)?.body?.trim()
@@ -345,7 +733,7 @@ function speakFresh(fresh: CompanionMessage[]): void {
   } catch { /* speech synthesis optional */ }
 }
 
-function mergeMessages(incoming: CompanionMessage[], speak = true): void {
+function mergeMessages(incoming: CompanionMessage[], speak = true, countUnread = false): void {
   if (!incoming.length) return
   const ordered = new Map(messages.value.map((m) => [m.id, m]))
   const fresh: CompanionMessage[] = []
@@ -355,6 +743,10 @@ function mergeMessages(incoming: CompanionMessage[], speak = true): void {
     lastSeq = Math.max(lastSeq, m.seq)
   }
   messages.value = [...ordered.values()].sort((a, b) => a.seq - b.seq)
+  if (countUnread && mode.value === 'capsule') {
+    const companionFresh = fresh.filter((m) => m.author_kind === 'companion').length
+    if (companionFresh > 0) unreadCount.value += companionFresh
+  }
   if (speak) speakFresh(fresh)
 }
 
@@ -364,6 +756,17 @@ function scrollToBottom(): void {
     if (element) element.scrollTop = element.scrollHeight
   })
 }
+
+watch(mode, (next) => {
+  if (next === 'panel') {
+    unreadCount.value = 0
+    if (selectedCompanionId.value) void hydrateWorkSessions(selectedCompanionId.value)
+    scrollToBottom()
+  } else {
+    menuOpen.value = false
+    inviteOpen.value = false
+  }
+})
 
 async function loadMessagesFor(conversationId: string, token: number): Promise<void> {
   chatLoading.value = true
@@ -385,6 +788,7 @@ async function loadMessagesFor(conversationId: string, token: number): Promise<v
 async function selectCompanion(id: string): Promise<void> {
   const token = ++loadToken
   selectedCompanionId.value = id
+  menuOpen.value = false
   try { localStorage.setItem(SELECTED_COMPANION_KEY, id) } catch { /* ignore */ }
   activeConversation.value = null
   conversations.value = []
@@ -392,9 +796,13 @@ async function selectCompanion(id: string): Promise<void> {
   runs.value = {}
   trackedRunIds.value = []
   liveDeltaBodies.value = {}
+  workSessions.value = []
+  liveWorkSessionIds.clear()
+  workSessionError.value = ''
   lastSeq = 0
   chatError.value = ''
   sendError.value = ''
+  void hydrateWorkSessions(id)
   try {
     const conversation = await companionBridge.ensurePrivateConversation(id)
     if (token !== loadToken) return
@@ -410,6 +818,7 @@ async function selectCompanion(id: string): Promise<void> {
 
 async function adoptConversation(conversation: CompanionConversation): Promise<void> {
   const token = ++loadToken
+  menuOpen.value = false
   activeConversation.value = conversation
   messages.value = []
   runs.value = {}
@@ -451,15 +860,14 @@ const retryChat = () => {
   else void boot()
 }
 
-const onCompanionSelect = (event: Event) => {
-  const id = (event.target as HTMLSelectElement).value
+function pickCompanionFromMenu(id: string): void {
+  menuOpen.value = false
   if (id && id !== selectedCompanionId.value) void selectCompanion(id)
 }
 
-const onConversationSelect = (event: Event) => {
-  const id = (event.target as HTMLSelectElement).value
-  const conv = conversations.value.find((item) => item.id === id)
-  if (conv && conv.id !== activeConversation.value?.id) void adoptConversation(conv)
+function pickConversationFromMenu(conversation: CompanionConversation): void {
+  menuOpen.value = false
+  if (conversation.id !== activeConversation.value?.id) void adoptConversation(conversation)
 }
 
 watch(draft, () => {
@@ -511,7 +919,7 @@ async function catchUp(conversationId: string): Promise<void> {
   try {
     const incoming = await companionBridge.listMessages(conversationId, lastSeq)
     if (activeConversation.value?.id !== conversationId) return
-    mergeMessages(incoming ?? [])
+    mergeMessages(incoming ?? [], true, true)
     await Promise.all(trackedRunIds.value.map(async (id) => {
       try { runs.value = { ...runs.value, [id]: await companionBridge.getRun(id) } } catch { /* ignore */ }
     }))
@@ -522,6 +930,12 @@ async function catchUp(conversationId: string): Promise<void> {
 }
 
 function onCompanionNotice(notice: CompanionEventNotice): void {
+  if (notice.type === COMPANION_WORK_SESSION_EVENT) {
+    if (!notice.companionId || notice.companionId === selectedCompanionId.value) {
+      mergeWorkSessionNotice(notice)
+    }
+    return
+  }
   if (notice.type === COMPANION_STAGE_CUE_EVENT && notice.companionId === selectedCompanionId.value) {
     if (typeof notice.speaking === 'boolean') liveStageSpeaking.value = notice.speaking
     if (notice.emotion !== undefined) liveEmotion.value = notice.emotion ?? null
@@ -548,6 +962,15 @@ function onCompanionNotice(notice: CompanionEventNotice): void {
       liveDeltaBodies.value = next
     }
     liveStageSpeaking.value = false
+  }
+  if (
+    notice.type === COMPANION_ACTIVITY_EVENT
+    && notice.kind === 'message_sent'
+    && mode.value === 'capsule'
+    && (!notice.companionId || notice.companionId === selectedCompanionId.value)
+    && (!notice.conversationId || notice.conversationId !== activeConversation.value?.id)
+  ) {
+    unreadCount.value += 1
   }
   if (notice.conversationId && notice.conversationId !== activeConversation.value?.id) return
   if (isHidden()) return
@@ -578,6 +1001,7 @@ async function togglePause(): Promise<void> {
 }
 
 function openInvite(): void {
+  menuOpen.value = false
   inviteOpen.value = true
   inviteError.value = ''
   inviteShareHistory.value = false
@@ -608,16 +1032,16 @@ async function confirmInvite(): Promise<void> {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
-  window.addEventListener('resize', onViewportResize)
+  document.addEventListener('pointerdown', onDocumentPointerDown)
   document.addEventListener('visibilitychange', onVisibilityChange)
-  disposeState = window.tinadec.companion.onStateChanged(applyState)
+  disposeState = companionHost()?.onStateChanged?.(applyState)
   unsubscribeRelay = subscribeCompanionEventRelay(onCompanionNotice)
-  void window.tinadec.getAppConfig?.().then((config) => { speakReplies.value = config.companion_speak_replies === true }).catch(() => {})
-  disposeSpeakSetting = window.tinadec.onCompanionSpeakRepliesChanged?.(({ speak_replies }) => {
+  void window.tinadec?.getAppConfig?.().then((config) => { speakReplies.value = config.companion_speak_replies === true }).catch(() => {})
+  disposeSpeakSetting = window.tinadec?.onCompanionSpeakRepliesChanged?.(({ speak_replies }) => {
     speakReplies.value = speak_replies === true
   })
   try {
-    const initial = await window.tinadec.companion.getState()
+    const initial = await companionHost()?.getState?.()
     if (!state.value) applyState(initial)
   } catch (error) {
     console.warn('[companion] state read failed:', error)
@@ -627,7 +1051,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('resize', onViewportResize)
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   clearTimeout(impulseTimer)
   if (noticeTimer) clearTimeout(noticeTimer)
@@ -653,240 +1077,287 @@ onBeforeUnmount(() => {
     <button
       v-if="mode === 'capsule'"
       class="companion-capsule"
-      :class="[`companion-capsule--${capsuleStyle}`, `companion-capsule--${side}`]"
+      :class="`companion-capsule--${side}`"
       type="button"
       :title="t('companion.expand')"
       :aria-label="t('companion.expand')"
       :aria-expanded="false"
+      data-testid="companion-capsule"
       @pointerdown="beginCapsuleDrag"
       @pointermove="moveCapsuleDrag"
       @pointerup="endCapsuleDrag"
       @pointercancel="endCapsuleDrag"
       @click="onCapsuleClick"
     >
-      <span v-if="capsuleStyle === 'peek'" class="companion-capsule-stage" aria-hidden="true">
-        <span class="companion-capsule-tilt">
-          <CompanionStage
-            v-if="companionPetSlug"
-            class="companion-peek-pet"
-            :pet-slug="companionPetSlug"
-            :state="stageState"
-            :height="92"
-            :alt="activeCompanion?.name ?? ''"
-          />
-          <span v-else class="companion-capsule-glyph"><PawPrint :size="22" /></span>
-        </span>
-      </span>
-      <span v-else class="companion-capsule-grip" aria-hidden="true"><span /></span>
-      <span class="companion-capsule-status" :class="`is-${capsuleMood}`" />
-      <span class="companion-capsule-chevron" aria-hidden="true">
-        <ChevronLeft v-if="side === 'right'" :size="15" />
-        <ChevronRight v-else :size="15" />
+      <span class="companion-capsule-pill" aria-hidden="true">
+        <CompanionStage
+          v-if="companionPetSlug"
+          class="companion-capsule-avatar"
+          :pet-slug="companionPetSlug"
+          :state="stageState"
+          :speaking="liveStageSpeaking"
+          :emotion="liveEmotion"
+          :height="42"
+          :alt="activeCompanion?.name ?? ''"
+        />
+        <span v-else class="companion-capsule-glyph"><PawPrint :size="22" /></span>
+        <span
+          v-if="capsuleAlertState"
+          class="companion-capsule-status"
+          :class="`is-${capsuleAlertState}`"
+          data-testid="companion-capsule-status"
+        />
+        <span
+          v-if="unreadCount > 0"
+          class="companion-capsule-unread"
+          :aria-label="t('companion.unreadBadge', { count: unreadCount })"
+          data-testid="companion-capsule-unread"
+        >{{ unreadDisplay }}</span>
       </span>
     </button>
 
     <section
       v-else
+      ref="panelRef"
       class="companion-panel"
-      :class="`companion-panel--${mode}`"
       role="region"
       :aria-label="t('companion.title')"
-      :title="t('companion.dragHint')"
-      @pointerdown="beginPanelDrag"
-      @pointermove="movePanelDrag"
-      @pointerup="endPanelDrag"
-      @pointercancel="endPanelDrag"
+      data-testid="companion-panel"
     >
-      <header class="companion-header">
-        <button
-          v-if="companionPetSlug"
-          class="companion-header-face"
-          :class="{ 'is-greeting': greeting }"
-          type="button"
-          :title="t('companion.greet')"
-          :aria-label="t('companion.greet')"
-          data-testid="companion-greet"
-          @pointerdown.stop
-          @click="greet"
-        >
-          <AgentPetAvatar :pet-slug="companionPetSlug" :alt="headerTitle" :size="30" />
-        </button>
-        <span v-else class="companion-header-glyph" aria-hidden="true"><PawPrint :size="16" /></span>
-        <div class="companion-heading">
-          <p class="companion-title">{{ headerTitle }}</p>
-          <p class="companion-subtitle">{{ headerSubtitle }}</p>
-        </div>
-        <div class="companion-actions">
+      <header
+        class="companion-topbar"
+        :title="t('companion.dragHint')"
+        data-testid="companion-topbar"
+        @pointerdown="beginPanelDrag"
+        @pointermove="movePanelDrag"
+        @pointerup="endPanelDrag"
+        @pointercancel="endPanelDrag"
+      >
+        <div ref="popoverWrapRef" class="companion-identity-wrap" @pointerdown.stop>
           <button
-            v-if="mode !== 'immersive'"
-            class="companion-action"
+            class="companion-identity-pill"
             type="button"
-            :title="t('companion.chat.invite')"
-            :aria-label="t('companion.chat.invite')"
-            :disabled="!activeConversation || inviteCandidates.length === 0"
-            @pointerdown.stop
-            @click="openInvite"
+            :title="t('companion.switchMenu')"
+            :aria-label="t('companion.switchMenu')"
+            :aria-expanded="menuOpen"
+            aria-haspopup="menu"
+            data-testid="companion-identity-trigger"
+            @click="menuOpen = !menuOpen"
           >
-            <UserPlus :size="15" />
+            <AgentPetAvatar
+              v-if="companionPetSlug"
+              class="companion-identity-avatar"
+              :pet-slug="companionPetSlug"
+              :size="24"
+              :alt="headerTitle"
+            />
+            <span v-else class="companion-header-glyph" aria-hidden="true"><PawPrint :size="14" /></span>
+            <span class="companion-title">{{ headerTitle }}</span>
+            <span
+              v-if="capsuleAlertState"
+              class="companion-identity-dot"
+              :class="`is-${capsuleAlertState}`"
+              aria-hidden="true"
+            />
+            <ChevronDown class="companion-identity-caret" :class="{ 'is-open': menuOpen }" :size="13" aria-hidden="true" />
           </button>
-          <div class="companion-menu-wrap" @pointerdown.stop>
-            <button
-              class="companion-action"
-              type="button"
-              :title="t('companion.chat.options')"
-              :aria-label="t('companion.chat.options')"
-              :aria-expanded="menuOpen"
-              aria-haspopup="menu"
-              @click="menuOpen = !menuOpen"
-            >
-              <Ellipsis :size="15" />
-            </button>
-            <div v-if="menuOpen" class="companion-menu" role="menu">
+
+          <div
+            v-if="menuOpen"
+            class="companion-popover"
+            role="menu"
+            data-testid="companion-popover"
+          >
+            <div v-if="companions.length > 0" class="companion-popover-section">
+              <p class="companion-popover-heading">{{ t('companion.chat.companionPicker') }}</p>
+              <button
+                v-for="item in companions"
+                :key="item.id"
+                class="companion-menu-item"
+                :class="{ 'is-active': item.id === selectedCompanionId }"
+                type="button"
+                role="menuitem"
+                :data-testid="`companion-menu-pick-${item.id}`"
+                @click="pickCompanionFromMenu(item.id)"
+              >
+                <AgentPetAvatar
+                  v-if="item.avatar"
+                  :pet-slug="item.avatar"
+                  :size="18"
+                  :alt="item.name"
+                />
+                <span v-else class="companion-menu-glyph" aria-hidden="true"><PawPrint :size="12" /></span>
+                <span class="companion-menu-label">{{ item.name }}</span>
+                <Check v-if="item.id === selectedCompanionId" :size="13" class="companion-menu-check" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div v-if="conversations.length > 0" class="companion-popover-section">
+              <p class="companion-popover-heading">{{ t('companion.chat.conversationPicker') }}</p>
+              <button
+                v-for="conv in conversations"
+                :key="conv.id"
+                class="companion-menu-item"
+                :class="{ 'is-active': conv.id === activeConversation?.id }"
+                type="button"
+                role="menuitem"
+                :data-testid="`companion-menu-thread-${conv.id}`"
+                @click="pickConversationFromMenu(conv)"
+              >
+                <Users v-if="conv.kind === 'group'" :size="13" class="companion-menu-icon" aria-hidden="true" />
+                <MessageSquare v-else :size="13" class="companion-menu-icon" aria-hidden="true" />
+                <span class="companion-menu-label">{{ conversationLabel(conv) }}</span>
+                <Check v-if="conv.id === activeConversation?.id" :size="13" class="companion-menu-check" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div class="companion-popover-section">
+              <p class="companion-popover-heading">{{ t('companion.actionsSection') }}</p>
               <button
                 class="companion-menu-item"
                 type="button"
                 role="menuitem"
                 :disabled="!activeConversation || pauseBusy"
+                data-testid="companion-menu-pause"
                 @click="menuOpen = false; togglePause()"
               >
-                {{ paused ? t('companion.chat.resume') : t('companion.chat.pause') }}
+                <Play v-if="paused" :size="13" class="companion-menu-icon" aria-hidden="true" />
+                <Pause v-else :size="13" class="companion-menu-icon" aria-hidden="true" />
+                <span class="companion-menu-label">{{ paused ? t('companion.chat.resume') : t('companion.chat.pause') }}</span>
+              </button>
+
+              <button
+                class="companion-menu-item"
+                type="button"
+                role="menuitem"
+                :disabled="!activeConversation || inviteCandidates.length === 0"
+                data-testid="companion-menu-invite"
+                @click="openInvite"
+              >
+                <UserPlus :size="13" class="companion-menu-icon" aria-hidden="true" />
+                <span class="companion-menu-label">{{ t('companion.chat.invite') }}</span>
+              </button>
+
+              <button
+                class="companion-menu-item companion-menu-item--accent"
+                type="button"
+                role="menuitem"
+                data-testid="companion-menu-open-center"
+                @click="openCompanionCenter"
+              >
+                <Sparkles :size="13" class="companion-menu-icon" aria-hidden="true" />
+                <span class="companion-menu-label">{{ t('companion.openCenter') }}</span>
+                <ExternalLink :size="12" class="companion-menu-ext" aria-hidden="true" />
               </button>
             </div>
           </div>
-          <button
-            v-if="mode !== 'immersive'"
-            class="companion-action"
-            type="button"
-            :title="t(side === 'right' ? 'companion.dockLeft' : 'companion.dockRight')"
-            :aria-label="t(side === 'right' ? 'companion.dockLeft' : 'companion.dockRight')"
-            @pointerdown.stop
-            @click="dock(side === 'right' ? 'left' : 'right')"
-          >
-            <ChevronsLeft v-if="side === 'right'" :size="15" />
-            <ChevronsRight v-else :size="15" />
-          </button>
-          <button
-            class="companion-action"
-            type="button"
-            :title="mode === 'immersive' ? t('companion.exitImmersive') : t('companion.immersive')"
-            :aria-label="mode === 'immersive' ? t('companion.exitImmersive') : t('companion.immersive')"
-            :aria-pressed="mode === 'immersive'"
-            data-testid="companion-immersive-toggle"
-            @pointerdown.stop
-            @click="setMode(mode === 'immersive' ? 'panel' : 'immersive')"
-          >
-            <Minimize2 v-if="mode === 'immersive'" :size="15" />
-            <Maximize2 v-else :size="15" />
-          </button>
-          <button
-            class="companion-action"
-            type="button"
-            :title="t('companion.collapse')"
-            :aria-label="t('companion.collapse')"
-            @pointerdown.stop
-            @click="collapse"
-          >
-            <ChevronsRight v-if="side === 'right'" :size="15" />
-            <ChevronsLeft v-else :size="15" />
-          </button>
         </div>
+
+        <button
+          class="companion-collapse-btn"
+          type="button"
+          :title="t('companion.collapse')"
+          :aria-label="t('companion.collapse')"
+          data-testid="companion-collapse-btn"
+          @pointerdown.stop
+          @click="collapse"
+        >
+          <Minimize2 :size="14" aria-hidden="true" />
+        </button>
       </header>
 
-      <button
-        v-if="mode === 'panel' && companionPetSlug"
-        class="companion-stage-button"
-        type="button"
-        :title="t('companion.immersive')"
-        :aria-label="t('companion.immersive')"
-        data-testid="companion-stage-expand"
+      <section
+        v-if="featuredWorkSession"
+        class="companion-ws-strip"
+        :class="`is-${featuredWorkTone}`"
+        :aria-label="t('companion.workSessionStrip')"
+        data-testid="companion-work-session-strip"
         @pointerdown.stop
-        @click="setMode('immersive')"
       >
-        <CompanionStage
-          class="companion-panel-stage"
-          :pet-slug="companionPetSlug"
-          :state="stageState"
-          :speaking="liveStageSpeaking"
-          :emotion="liveEmotion"
-          :height="88"
-          :alt="headerTitle"
-        />
-      </button>
-
-      <div v-if="mode === 'immersive'" class="companion-call" @dblclick="pat">
-        <CompanionStage
-          v-if="companionPetSlug"
-          class="companion-call-stage"
-          :pet-slug="companionPetSlug"
-          :state="stageState"
-          :speaking="liveStageSpeaking"
-          :emotion="liveEmotion"
-          :height="callStageHeight"
-          :alt="headerTitle"
-        />
-        <span v-else class="companion-call-glyph" aria-hidden="true"><PawPrint :size="30" /></span>
-        <div class="companion-call-subtitles" aria-live="polite">
-          <p v-if="booting || chatLoading" class="companion-call-note">{{ t('companion.chat.loading') }}</p>
-          <p v-else-if="loadError" class="companion-call-note companion-call-note--error">
-            {{ loadError }}
-            <button class="companion-retry" type="button" @click="boot">{{ t('companion.chat.retry') }}</button>
-          </p>
-          <p v-else-if="companions.length === 0" class="companion-call-note">{{ t('companion.chat.noCompanionsBody') }}</p>
-          <template v-else>
-            <p v-if="callLines.length === 0 && !activeStreamingText" class="companion-call-note">{{ t('companion.chat.noMessages') }}</p>
-            <p
-              v-for="(line, index) in callLines"
-              :key="line.id"
-              class="companion-call-line"
-              :class="{ 'is-past': index < callLines.length - 1 }"
-            >
-              <span class="companion-call-author">{{ authorLabel(line) }}</span>
-              <span class="companion-call-body">{{ line.body }}</span>
-            </p>
-            <p v-if="activeStreamingText" class="companion-call-line">
-              <span class="companion-call-author">{{ headerTitle }}</span>
-              <span class="companion-call-body">{{ activeStreamingText }}</span>
-            </p>
-            <p v-if="paused" class="companion-call-status">{{ t('companion.chat.pausedBadge') }}</p>
-            <p v-if="thinking && !activeStreamingText" class="companion-call-status">{{ t('companion.chat.thinking') }}</p>
-            <p v-for="failure in failures" :key="failure.id" class="companion-call-status companion-call-status--failed">{{ runFailureText(failure) }}</p>
-            <p v-if="chatError" class="companion-call-status companion-call-status--failed">
-              {{ chatError }}
-              <button class="companion-retry" type="button" @click="retryChat">{{ t('companion.chat.retry') }}</button>
-            </p>
-            <p v-if="sendError" class="companion-call-status companion-call-status--failed">{{ sendError }}</p>
-          </template>
+        <div class="companion-ws-head">
+          <span class="companion-ws-status" :class="`is-${featuredWorkTone}`">
+            <ShieldAlert v-if="workSessionNeedsApproval(featuredWorkSession)" :size="12" aria-hidden="true" />
+            <Globe v-else-if="workSessionIsHandoff(featuredWorkSession)" :size="12" aria-hidden="true" />
+            <Loader2 v-else :size="12" class="companion-ws-spin" aria-hidden="true" />
+            <span>{{ featuredWorkStatusLabel }}</span>
+          </span>
+          <span class="companion-ws-title" :title="featuredWorkSession.title">{{ featuredWorkSession.title }}</span>
+          <button
+            class="companion-ws-open"
+            type="button"
+            :title="t('companion.openInWorkbench')"
+            :aria-label="t('companion.openInWorkbench')"
+            data-testid="companion-ws-open"
+            @click="openWorkSessionInWorkbench(featuredWorkSession.session_id)"
+          >
+            <ExternalLink :size="12" aria-hidden="true" />
+          </button>
         </div>
-      </div>
+
+        <div v-if="featuredApproval" class="companion-ws-approval">
+          <div class="companion-ws-approval-info">
+            <code class="companion-ws-tool">{{ featuredApproval.tool_id }}</code>
+            <span v-if="featuredExtraApprovals > 0" class="companion-ws-more">
+              {{ t('companion.moreApprovals', { count: featuredExtraApprovals }) }}
+            </span>
+            <p v-if="featuredApproval.summary" class="companion-ws-summary">{{ featuredApproval.summary }}</p>
+          </div>
+          <div class="companion-ws-actions">
+            <button
+              class="companion-ws-btn companion-ws-btn--approve"
+              type="button"
+              :disabled="Boolean(decidingApprovalIds[featuredApproval.approval_id])"
+              data-testid="companion-ws-approve"
+              @click="decideWorkApproval(featuredApproval, true)"
+            >
+              <Check :size="12" aria-hidden="true" />
+              <span>{{ t('companionCenter.chat.approve') }}</span>
+            </button>
+            <button
+              class="companion-ws-btn companion-ws-btn--reject"
+              type="button"
+              :disabled="Boolean(decidingApprovalIds[featuredApproval.approval_id])"
+              data-testid="companion-ws-reject"
+              @click="decideWorkApproval(featuredApproval, false)"
+            >
+              <X :size="12" aria-hidden="true" />
+              <span>{{ t('companionCenter.chat.deny') }}</span>
+            </button>
+            <button
+              v-if="canCancelFeaturedWorkRun"
+              class="companion-ws-btn companion-ws-btn--cancel"
+              type="button"
+              :disabled="Boolean(featuredWorkSession.latest_run_id && cancellingRunIds[featuredWorkSession.latest_run_id])"
+              data-testid="companion-ws-cancel"
+              @click="cancelWorkRun"
+            >
+              <Square :size="10" aria-hidden="true" />
+              <span>{{ t('companionCenter.workSession.cancelRun') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-else class="companion-ws-footer">
+          <p v-if="featuredWorkDetail" class="companion-ws-detail">{{ featuredWorkDetail }}</p>
+          <button
+            v-if="canCancelFeaturedWorkRun"
+            class="companion-ws-btn companion-ws-btn--cancel"
+            type="button"
+            :disabled="Boolean(featuredWorkSession.latest_run_id && cancellingRunIds[featuredWorkSession.latest_run_id])"
+            data-testid="companion-ws-cancel"
+            @click="cancelWorkRun"
+          >
+            <Square :size="10" aria-hidden="true" />
+            <span>{{ t('companionCenter.workSession.cancelRun') }}</span>
+          </button>
+        </div>
+
+        <p v-if="workSessionError" class="companion-ws-error">{{ workSessionError }}</p>
+      </section>
 
       <p v-if="patNote" class="companion-pat-note" aria-live="polite">{{ patNote }}</p>
 
-      <div v-if="companions.length && mode !== 'immersive'" class="companion-pickers" @pointerdown.stop>
-        <span v-if="companionPetSlug" class="companion-picker-face" aria-hidden="true">
-          <AgentPetAvatar :pet-slug="companionPetSlug" :size="22" :alt="headerTitle" />
-        </span>
-        <select
-          class="companion-select companion-companion-select"
-          :value="selectedCompanionId ?? ''"
-          :title="t('companion.chat.companionPicker')"
-          :aria-label="t('companion.chat.companionPicker')"
-          @change="onCompanionSelect"
-        >
-          <option v-for="item in companions" :key="item.id" :value="item.id">{{ item.name }}</option>
-        </select>
-        <select
-          class="companion-select companion-conversation-select"
-          :value="activeConversation?.id ?? ''"
-          :title="t('companion.chat.conversationPicker')"
-          :aria-label="t('companion.chat.conversationPicker')"
-          :disabled="conversations.length === 0"
-          @change="onConversationSelect"
-        >
-          <option v-for="item in conversations" :key="item.id" :value="item.id">{{ conversationLabel(item) }}</option>
-        </select>
-      </div>
-
-      <div v-show="mode !== 'immersive'" class="companion-chat" @pointerdown.stop @dblclick="pat">
+      <div class="companion-chat" @pointerdown.stop @dblclick="pat">
         <p v-if="booting" class="companion-chat-state">{{ t('companion.chat.loading') }}</p>
         <div v-else-if="loadError" class="companion-chat-state companion-chat-state--error">
           <p class="companion-chat-state-body">{{ loadError }}</p>
@@ -909,7 +1380,12 @@ onBeforeUnmount(() => {
                 :size="24"
                 :alt="authorLabel(message)"
               />
-              <span v-else class="companion-msg-avatar" :style="{ backgroundColor: authorTone(message) }" aria-hidden="true">{{ authorInitial(message) }}</span>
+              <span
+                v-else-if="message.author_kind === 'user'"
+                class="companion-msg-avatar companion-msg-avatar--user"
+                :style="{ backgroundColor: authorTone(message) }"
+                aria-hidden="true"
+              >{{ authorInitial(message) }}</span>
               <div class="companion-msg-main">
                 <div class="companion-msg-meta">
                   <span class="companion-msg-author">{{ authorLabel(message) }}</span>
@@ -983,8 +1459,8 @@ onBeforeUnmount(() => {
           :disabled="thinking ? pauseBusy || !activeConversation : !canSend"
           @click="onComposerAction"
         >
-          <Pause v-if="thinking" :size="14" />
-          <Send v-else :size="15" />
+          <Pause v-if="thinking" :size="14" aria-hidden="true" />
+          <Send v-else :size="14" aria-hidden="true" />
         </button>
       </form>
     </section>
@@ -992,67 +1468,882 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-:global(html), :global(body), :global(#app) { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent !important; }
-.companion { width: 100%; height: 100%; overflow: hidden; color: var(--text-primary); background: transparent; user-select: none; -webkit-user-select: none; }
-.companion-capsule { position: relative; display: block; width: 100%; height: 100%; padding: 0; overflow: hidden; border: 0; color: var(--text-muted); background: transparent; cursor: grab; touch-action: none; }
-.companion-capsule-stage { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; pointer-events: none; }
-.companion-capsule-tilt { display: block; transform-origin: center center; transition: transform 180ms ease; }
-.companion-capsule--right .companion-capsule-tilt { transform: translateX(18px) rotate(-22deg); }
-.companion-capsule--left .companion-capsule-tilt { transform: translateX(-18px) rotate(22deg) scaleX(-1); }
-.companion-capsule-grip { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
-.companion-capsule-grip span { width: 4px; height: 28px; border-radius: 999px; background: currentColor; opacity: 0.6; }
-.companion-capsule-status { position: absolute; left: 50%; bottom: 8px; width: 8px; height: 8px; transform: translateX(-50%); border-radius: 999px; background: var(--accent-success, #22c55e); }
-.companion-capsule-status.is-thinking { background: var(--accent-primary, #58a6ff); }
-.companion-capsule-status.is-failed { background: var(--accent-danger, #ef4444); }
-.companion-capsule-status.is-paused { background: var(--accent-warning, #eab308); }
-.companion-capsule-chevron { position: absolute; inset-inline: 0; top: 8px; display: flex; justify-content: center; opacity: 0.7; }
-.companion-panel {
-  display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden;
-  border-radius: 16px; border: 1px solid var(--border-muted); background: var(--surface-section);
-  box-shadow: var(--shadow-panel); user-select: text; -webkit-user-select: text;
+:global(html),
+:global(body),
+:global(#app) {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent !important;
 }
-.companion-header { display: flex; align-items: center; gap: 8px; padding: 10px 10px 8px; border-bottom: 1px solid var(--border-muted); cursor: grab; }
-.companion-header-face { padding: 0; border: 0; background: transparent; border-radius: 999px; cursor: pointer; }
-.companion-header-face.is-greeting { transform: scale(1.08); }
-.companion-header-glyph { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 999px; background: var(--surface-raised); }
-.companion-heading { flex: 1; min-width: 0; }
-.companion-title { margin: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.companion-subtitle { margin: 1px 0 0; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.companion-actions { display: flex; align-items: center; gap: 2px; position: relative; }
-.companion-action { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
-.companion-action:hover:not(:disabled) { background: var(--surface-raised); color: var(--text-primary); }
-.companion-action:disabled { opacity: 0.4; cursor: default; }
-.companion-menu-wrap { position: relative; }
-.companion-menu { position: absolute; right: 0; top: 100%; z-index: 10; min-width: 150px; padding: 4px; border-radius: 8px; border: 1px solid var(--border-muted); background: var(--surface-section); box-shadow: var(--shadow-panel); }
-.companion-menu-item { width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-primary); font-size: 12px; text-align: left; cursor: pointer; }
-.companion-menu-item:hover:not(:disabled) { background: var(--surface-raised); }
-.companion-stage-button { display: flex; justify-content: center; width: 100%; padding: 6px 10px 0; border: 0; background: transparent; cursor: pointer; }
-.companion-call { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 12px; gap: 10px; overflow-y: auto; }
-.companion-call-subtitles { width: 100%; display: flex; flex-direction: column; gap: 6px; text-align: center; }
-.companion-call-line, .companion-call-note, .companion-call-status { margin: 0; font-size: 12px; }
-.companion-call-line.is-past { opacity: 0.65; }
-.companion-call-author { font-weight: 600; margin-right: 6px; }
-.companion-call-status--failed, .companion-call-note--error { color: var(--accent-danger, #ef4444); }
-.companion-pat-note { margin: 4px 12px 0; font-size: 11px; text-align: center; color: var(--accent-primary); }
-.companion-pickers { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border-muted); }
-.companion-select { flex: 1; min-width: 0; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border-muted); background: var(--surface-raised); color: var(--text-primary); font-size: 12px; }
-.companion-chat { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.companion-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.companion-log-empty, .companion-chat-state, .companion-run, .companion-chat-error { margin: 6px 10px; font-size: 12px; color: var(--text-muted); }
-.companion-chat-error, .companion-run--failed { color: var(--accent-danger, #ef4444); }
-.companion-msg { display: flex; align-items: flex-start; gap: 8px; }
-.companion-msg-avatar { width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center; color: #fff; font-size: 11px; flex-shrink: 0; }
-.companion-msg-main { min-width: 0; flex: 1; }
-.companion-msg-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
-.companion-msg-body { margin: 2px 0 0; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.companion-invite { position: absolute; inset: 8px; z-index: 8; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--border-card); background: var(--surface-section); box-shadow: var(--shadow-panel); overflow-y: auto; }
-.companion-invite-title { margin: 0; font-size: 13px; font-weight: 600; }
-.companion-invite-option, .companion-invite-share { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.companion-invite-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: auto; }
-.companion-secondary, .companion-primary, .companion-retry { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-muted); background: var(--surface-raised); color: var(--text-primary); font-size: 12px; cursor: pointer; }
-.companion-primary { background: var(--accent-primary); border-color: transparent; color: #fff; }
-.companion-composer { display: flex; align-items: flex-end; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border-muted); }
-.companion-input { flex: 1; min-width: 0; resize: none; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border-muted); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: 12px; }
-.companion-send { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--accent-primary); color: #fff; cursor: pointer; }
-.companion-send:disabled { opacity: 0.45; cursor: default; }
+
+.companion {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text-primary);
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.companion--expanded {
+  padding: 6px;
+}
+
+.companion--dragging {
+  cursor: grabbing;
+}
+
+/* ── Collapsed Floating Capsule ─────────────────────────────────────── */
+
+.companion-capsule {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: grab;
+  touch-action: none;
+}
+
+.companion--dragging .companion-capsule {
+  cursor: grabbing;
+}
+
+.companion-capsule-pill {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 20px;
+  border: 1px solid var(--border-subtle, var(--border-muted));
+  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 86%, transparent);
+  backdrop-filter: blur(20px) saturate(1.18);
+  -webkit-backdrop-filter: blur(20px) saturate(1.18);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 22%), 0 2px 6px rgb(0 0 0 / 10%);
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1), box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.companion-capsule--right .companion-capsule-pill {
+  transform: translateX(3px);
+}
+
+.companion-capsule--left .companion-capsule-pill {
+  transform: translateX(-3px);
+}
+
+.companion-capsule:hover .companion-capsule-pill {
+  transform: translateX(0) scale(1.04);
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--border-subtle, var(--border-muted)));
+  box-shadow: 0 10px 26px rgb(0 0 0 / 26%), 0 2px 8px rgb(0 0 0 / 12%);
+}
+
+.companion-capsule:focus-visible {
+  outline: none;
+}
+
+.companion-capsule:focus-visible .companion-capsule-pill {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.companion-capsule-avatar {
+  pointer-events: none;
+}
+
+.companion-capsule-glyph {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.companion-capsule-status {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  border: 1.5px solid var(--surface-section, var(--bg-secondary));
+  background: var(--accent-primary, #58a6ff);
+  animation: companion-breathe 1.8s ease-in-out infinite;
+}
+
+.companion-capsule-status.is-awaiting_approval,
+.companion-capsule-status.is-browser_handoff {
+  background: var(--accent-warning, #f59e0b);
+}
+
+.companion-capsule-status.is-failed {
+  background: var(--accent-danger, #ef4444);
+  animation: none;
+}
+
+.companion-capsule-unread {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 24%);
+}
+
+@keyframes companion-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.52; transform: scale(0.86); }
+}
+
+/* ── Expanded Frosted Island Panel ──────────────────────────────────── */
+
+.companion-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--border-subtle, var(--border-muted));
+  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 86%, transparent);
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  box-shadow: 0 14px 36px rgb(0 0 0 / 24%), 0 2px 8px rgb(0 0 0 / 12%);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ── 40px Draggable Top Bar ─────────────────────────────────────────── */
+
+.companion-topbar {
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 8px;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.companion--dragging .companion-topbar {
+  cursor: grabbing;
+}
+
+.companion-identity-wrap {
+  position: relative;
+  min-width: 0;
+  max-width: calc(100% - 38px);
+}
+
+.companion-identity-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 10px 0 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.companion-identity-pill:hover,
+.companion-identity-pill[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--surface-raised, var(--bg-tertiary)) 76%, transparent);
+  border-color: var(--border-subtle, var(--border-muted));
+}
+
+.companion-identity-pill:focus-visible,
+.companion-collapse-btn:focus-visible,
+.companion-ws-open:focus-visible,
+.companion-ws-btn:focus-visible,
+.companion-send:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.companion-identity-avatar {
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+
+.companion-header-glyph {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-raised, var(--bg-tertiary));
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.companion-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.companion-identity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--accent-primary);
+}
+
+.companion-identity-dot.is-awaiting_approval,
+.companion-identity-dot.is-browser_handoff {
+  background: var(--accent-warning, #f59e0b);
+}
+
+.companion-identity-dot.is-failed {
+  background: var(--accent-danger, #ef4444);
+}
+
+.companion-identity-caret {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 140ms ease;
+}
+
+.companion-identity-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.companion-collapse-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.companion-collapse-btn:hover {
+  background: color-mix(in srgb, var(--surface-raised, var(--bg-tertiary)) 78%, transparent);
+  color: var(--text-primary);
+}
+
+/* ── Unified Floating Identity Popover ──────────────────────────────── */
+
+.companion-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  width: 236px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle, var(--border-muted));
+  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 96%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 26%), 0 2px 8px rgb(0 0 0 / 12%);
+}
+
+.companion-popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.companion-popover-heading {
+  margin: 0;
+  padding: 2px 8px 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.companion-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.companion-menu-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-raised, var(--bg-tertiary)) 82%, transparent);
+}
+
+.companion-menu-item.is-active {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.companion-menu-item--accent {
+  color: var(--accent-primary);
+  font-weight: 500;
+}
+
+.companion-menu-item:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.companion-menu-glyph {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-raised, var(--bg-tertiary));
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.companion-menu-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.companion-menu-item--accent .companion-menu-icon,
+.companion-menu-ext {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.companion-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.companion-menu-check {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+/* ── #37 Compact Work-Session Approval / Cancel / Jump Strip ────────── */
+
+.companion-ws-strip {
+  flex-shrink: 0;
+  margin: 2px 10px 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 24%, var(--border-subtle, var(--border-muted)));
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--surface-raised, var(--bg-tertiary)));
+}
+
+.companion-ws-strip.is-warning {
+  border-color: color-mix(in srgb, var(--accent-warning, #d97706) 34%, var(--border-subtle, var(--border-muted)));
+  background: color-mix(in srgb, var(--accent-warning, #d97706) 8%, var(--surface-raised, var(--bg-tertiary)));
+}
+
+.companion-ws-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.companion-ws-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+}
+
+.companion-ws-status.is-warning {
+  color: var(--accent-warning, #d97706);
+  background: color-mix(in srgb, var(--accent-warning, #d97706) 16%, transparent);
+}
+
+.companion-ws-spin {
+  animation: companion-ws-spin 1.1s linear infinite;
+}
+
+@keyframes companion-ws-spin {
+  to { transform: rotate(360deg); }
+}
+
+.companion-ws-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.companion-ws-open {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.companion-ws-open:hover {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.companion-ws-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.companion-ws-approval-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.companion-ws-tool {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.companion-ws-more {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent-warning, #d97706);
+}
+
+.companion-ws-summary,
+.companion-ws-detail {
+  margin: 0;
+  flex: 1 1 100%;
+  font-size: 11.5px;
+  line-height: 1.38;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.companion-ws-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.companion-ws-footer .companion-ws-detail {
+  flex: 1 1 auto;
+}
+
+.companion-ws-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.companion-ws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle, var(--border-muted));
+  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 85%, transparent);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.companion-ws-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.companion-ws-btn--approve {
+  border-color: transparent;
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.companion-ws-btn--cancel {
+  color: var(--accent-danger, #ef4444);
+  border-color: color-mix(in srgb, var(--accent-danger, #ef4444) 30%, var(--border-subtle, var(--border-muted)));
+}
+
+.companion-ws-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--accent-danger, #ef4444);
+}
+
+/* ── Message Feed ───────────────────────────────────────────────────── */
+
+.companion-pat-note {
+  margin: 0 12px 4px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--accent-primary);
+}
+
+.companion-chat {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.companion-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.companion-log-empty,
+.companion-chat-state,
+.companion-run,
+.companion-chat-error {
+  margin: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.companion-chat-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 6px;
+}
+
+.companion-chat-state-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.companion-chat-state-body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.companion-chat-error,
+.companion-run--failed {
+  color: var(--accent-danger, #ef4444);
+}
+
+.companion-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.companion-msg--user {
+  flex-direction: row-reverse;
+}
+
+.companion-msg--system {
+  justify-content: center;
+}
+
+.companion-msg--system .companion-msg-main {
+  flex: 0 1 auto;
+  text-align: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-raised, var(--bg-tertiary)) 64%, transparent);
+}
+
+.companion-msg--system .companion-msg-meta {
+  justify-content: center;
+}
+
+.companion-msg-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.companion-msg-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.companion-msg--user .companion-msg-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.companion-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.companion-msg--user .companion-msg-meta {
+  flex-direction: row-reverse;
+}
+
+.companion-msg-body {
+  margin: 3px 0 0;
+  padding: 7px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-raised, var(--bg-tertiary)) 72%, transparent);
+  font-size: 12.5px;
+  line-height: 1.48;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.companion-msg--user .companion-msg-body {
+  background: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-raised, var(--bg-tertiary)));
+}
+
+.companion-msg--system .companion-msg-body {
+  padding: 2px 0 0;
+  background: transparent;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.companion-run-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.companion-run-dots > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.45;
+  animation: companion-dot 1.2s ease-in-out infinite;
+}
+
+.companion-run-dots > span:nth-child(2) { animation-delay: 0.16s; }
+.companion-run-dots > span:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes companion-dot {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* ── Invite Sheet ───────────────────────────────────────────────────── */
+
+.companion-invite {
+  position: absolute;
+  inset: 8px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle, var(--border-muted));
+  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 96%, transparent);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 24%);
+  overflow-y: auto;
+}
+
+.companion-invite-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.companion-invite-option,
+.companion-invite-share {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.companion-invite-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.companion-secondary,
+.companion-primary,
+.companion-retry {
+  padding: 5px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, var(--border-muted));
+  background: var(--surface-raised, var(--bg-tertiary));
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.companion-primary {
+  background: var(--accent-primary);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* ── Bottom Floating Input Pill (Zero Hard Dividers) ────────────────── */
+
+.companion-composer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 4px 10px 10px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle, var(--border-muted));
+  background: color-mix(in srgb, var(--surface-raised, var(--bg-tertiary)) 78%, transparent);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.companion-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent-primary) 52%, var(--border-subtle, var(--border-muted)));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.companion-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  outline: none;
+}
+
+.companion-input::placeholder {
+  color: var(--text-muted);
+}
+
+.companion-send {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.companion-send:hover:not(:disabled) {
+  transform: scale(1.04);
+}
+
+.companion-send:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .companion-capsule-pill,
+  .companion-capsule-status,
+  .companion-ws-spin,
+  .companion-run-dots > span {
+    animation: none;
+    transition: none;
+  }
+}
 </style>

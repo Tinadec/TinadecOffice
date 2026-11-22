@@ -47,6 +47,10 @@ const routes = [
   { method: 'GET', pattern: `^/api/v1/companion-avatars$` },
   { method: 'POST', pattern: `^/api/v1/companion-avatars/import$` },
   { method: 'DELETE', pattern: `^/api/v1/companion-avatars/${GUID}$` },
+  // #37 Work-session supervision, approval decision, and run cancel routes for the floating panel.
+  { method: 'GET', pattern: `^/api/v1/companions/${GUID}/work-sessions$` },
+  { method: 'POST', pattern: `^/api/v1/approvals/${GUID}/decision$` },
+  { method: 'POST', pattern: `^/api/v1/runs/${GUID}/control$` },
 ].map(route => ({ method: route.method, pattern: new RegExp(route.pattern, 'i') }));
 
 const allowedQueryKeys = new Set(['limit', 'after_seq', 'include_archived', 'q']);

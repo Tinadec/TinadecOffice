@@ -1,14 +1,13 @@
-// companionWindow.cjs — the docked companion: one window, two shapes.
+// companionWindow.cjs — the floating companion widget: one frameless window, two states.
 //
-// Collapsed, it is a narrow capsule flush with the left or right edge of a display's work area;
-// expanded, the same window grows inward into a panel. Keeping one window means the panel and the
-// capsule can never disagree about which display they are on, and collapsing is a resize rather
-// than a hand-off between two windows.
+// Collapsed, it is a sleek 76x76 floating avatar capsule docked magnetically to the left or right
+// edge of whichever display the user placed it on. Expanded, the same window opens inward into a
+// 348x540 frosted-glass island panel. Both shapes support free 2D multi-display dragging and snap
+// onto the nearest display edge on release.
 //
-// Authority split: the renderer owns the look and the gestures (click, inward drag, header drag),
-// this module owns screen geometry, docking side, and when an expanded panel closes. It never
-// loads remote content and takes no business IPC; every handler below accepts only the companion
-// window's own webContents.
+// Authority split: the renderer owns the visuals and pointer gestures; this module owns screen
+// geometry, multi-display magnetic snapping, persistence, and blur auto-collapse. The window is
+// strictly frameless (`frame: false`) on ALL platforms (win32, darwin, linux).
 
 const { BrowserWindow, screen } = require('electron');
 const path = require('node:path');
@@ -28,23 +27,52 @@ let win = null;
 let side = 'right';
 let centerY = null;
 let displayId = null;
-/**
- * One of `capsule` / `panel` / `immersive`. Only two of them have a size: immersive is the panel's
- * call layout, so it shares the panel's bounds. The shape is authoritative here, never in the page.
- */
+/** Pure 2-state footprint: `'capsule'` | `'panel'`. Legacy `'immersive'` coerces to `'panel'`. */
 let mode = 'capsule';
-/** `peek` or `grip`; it decides the collapsed window's width (see `collapsedWidth`). */
+/** Retained safely for `main.cjs` / `appConfig` IPC compatibility. */
 let capsuleStyle = geometry.DEFAULT_CAPSULE_STYLE;
-/** Percent of the peeking figure that stays on screen; the grip ignores it. */
 let capsuleReveal = geometry.DEFAULT_CAPSULE_REVEAL;
+let isDragging = false;
 let saveTimer = null;
 let blurTimer = null;
+let pendingPersist = Promise.resolve();
 let displayListenersAttached = false;
 
 function companionWindowUrl() {
   const hash = '/companion';
   if (isDev) return `${process.env.VITE_DEV_SERVER_URL}?splash=0#${hash}`;
   return appBundleUrl({ hash, query: { splash: '0' } });
+}
+
+function buildCompanionWindowOptions(bounds, platform = process.platform) {
+  const options = {
+    ...bounds,
+    title: 'Tinadec Companion',
+    // Strictly frameless floating widget on ALL OSes — never enable titleBarStyle or traffic lights.
+    frame: false,
+    transparent: !noTransparency,
+    backgroundColor: noTransparency ? '#1e1e2e' : '#00000000',
+    hasShadow: false,
+    thickFrame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  };
+  if (platform !== 'darwin') {
+    options.icon = path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico');
+  }
+  return options;
 }
 
 function displayFor() {
@@ -55,40 +83,24 @@ function displayFor() {
   return screen.getPrimaryDisplay();
 }
 
-/**
- * How wide the collapsed window is, and how much of it stays on screen.
- *
- * The width is never a preference: the peek is exactly the leaning figure's box. The *reveal* is
- * — it parks the same box further out or further in, so 10% shows a sliver and 100% shows the whole
- * pet. A grip has nothing to reveal, so it sits entirely on screen at its own small width.
- */
-function collapsedWidth() {
-  return capsuleStyle === 'grip' ? geometry.GRIP_WIDTH : geometry.PEEK_WIDTH;
-}
-
-function collapsedReveal() {
-  return capsuleStyle === 'grip' ? 1 : capsuleReveal / 100;
-}
-
 function currentBounds() {
   const area = displayFor().workArea;
   const anchor = centerY ?? area.height / 2;
-  // Capsule and open shapes are the only two sizes. `immersive` is the panel's call layout, so it
-  // resolves to the panel's rect — the window must not take the screen over when it opens.
   if (mode === 'capsule') {
-    return geometry.collapsedBounds(area, side, anchor, collapsedWidth(), collapsedReveal());
+    return geometry.collapsedBounds(area, side, anchor);
   }
   return geometry.panelBounds(area, side, anchor);
 }
 
-// `expanded` is kept as a derived field: existing renderers and tests read it, and the two open
-// shapes are still "the panel is showing" from their point of view.
+// `expanded` is kept as a derived field alongside `mode` for renderer and test compatibility.
 function snapshot() {
   return {
     open: Boolean(win && !win.isDestroyed()),
     mode,
     expanded: mode !== 'capsule',
     side,
+    displayId,
+    centerY,
     capsuleStyle,
     capsuleReveal,
   };
@@ -100,15 +112,40 @@ function broadcastState() {
   }
 }
 
+function queuePersist(fn) {
+  const run = () => Promise.resolve().then(fn);
+  pendingPersist = pendingPersist.then(run, run);
+  return pendingPersist;
+}
+
+/** Wait for all queued layout persistence writes/renames to settle cleanly. */
+function flushPersistence() {
+  return pendingPersist;
+}
+
+/** Persist the current `{ displayId, side, centerY }` anchor immediately (serialized). */
+function saveAnchor(anchor = { side, centerY, displayId: displayFor().id }) {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const payload = {
+    side: geometry.normalizeSide(anchor.side),
+    centerY: Number.isFinite(anchor.centerY) ? anchor.centerY : null,
+    displayId: Number.isInteger(anchor.displayId) ? anchor.displayId : displayFor().id,
+  };
+  return queuePersist(() =>
+    layoutStore.save(payload).catch((error) => {
+      console.warn('[companion] failed to persist layout:', error.message);
+    }),
+  );
+}
+
 function schedulePersist() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
     const current = win;
     if (!current || current.isDestroyed()) return;
-    layoutStore.save({ side, centerY, displayId: displayFor().id }).catch((error) => {
-      console.warn('[companion] failed to persist layout:', error.message);
-    });
+    void saveAnchor();
   }, PERSIST_DELAY_MS);
 }
 
@@ -120,9 +157,12 @@ function inWorkArea() {
   return displayFor().workArea;
 }
 
+function currentShapeHeight(area) {
+  return mode === 'capsule' ? geometry.CAPSULE_HEIGHT : geometry.panelSize(area).height;
+}
+
 /**
- * Move the companion so its window top sits at `top` in screen coordinates. The dragged shape is
- * whichever one is open, so the anchor follows the pointer for both the capsule and the panel.
+ * Legacy vertical-only move fallback: places window top at `top` in screen coordinates.
  */
 function moveTo(top) {
   if (!Number.isFinite(top)) return snapshot();
@@ -134,45 +174,73 @@ function moveTo(top) {
   return snapshot();
 }
 
-/** The dragged shape's height, so a drag converts back to the same anchor it was reported from. */
-function currentShapeHeight(area) {
-  return mode === 'capsule' ? geometry.CAPSULE_HEIGHT : geometry.panelSize(area).height;
+/**
+ * Free 2D X+Y drag across all displays for either `'capsule'` or `'panel'`.
+ */
+function dragMove(screenX, screenY) {
+  if (!win || win.isDestroyed() || !Number.isFinite(screenX) || !Number.isFinite(screenY)) {
+    return snapshot();
+  }
+  isDragging = true;
+  clearTimeout(blurTimer);
+  blurTimer = null;
+  const displays = screen.getAllDisplays();
+  const nextBounds = geometry.dragBounds(screenX, screenY, displays, mode);
+  if (nextBounds) win.setBounds(nextBounds);
+  return snapshot();
 }
 
 /**
- * Switch the collapsed capsule between the pet peeking out and a bare grip.
- *
- * The two styles are different widths, so a live capsule has to be resized; an open panel is left
- * alone and the style is simply remembered for the next collapse.
+ * Finish a 2D drag: magnetically snap to the nearest left/right edge on the containing/nearest
+ * display, persist `{ displayId, side, centerY }` via `saveAnchor`, and broadcast state.
+ */
+function dragEnd(screenX, screenY) {
+  isDragging = false;
+  if (!win || win.isDestroyed()) return snapshot();
+  const displays = screen.getAllDisplays();
+  let targetX = screenX;
+  let targetY = screenY;
+  if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+    const current = win.getBounds();
+    targetX = current.x + current.width / 2;
+    targetY = current.y + current.height / 2;
+  }
+  const snapped = geometry.snapToNearestEdge(targetX, targetY, displays);
+  displayId = snapped.displayId;
+  side = snapped.side;
+  centerY = snapped.centerY;
+  applyBounds();
+  void saveAnchor({ displayId, side, centerY });
+  broadcastState();
+  return snapshot();
+}
+
+/**
+ * Compatibility no-op setter kept for `main.cjs` / `appConfig` IPC channels.
+ * The redesigned floating capsule uses a unified 76x76 floating avatar footprint.
  */
 function setCapsuleStyle(next) {
   const normalized = geometry.normalizeCapsuleStyle(next);
   if (normalized === capsuleStyle) return snapshot();
   capsuleStyle = normalized;
-  if (mode === 'capsule') applyBounds();
   broadcastState();
   return snapshot();
 }
 
 /**
- * Park more or less of the peeking figure past the screen edge.
- *
- * Only the position changes — the window keeps the figure's full box — so a live capsule just moves
- * sideways and the pet is never cropped. The grip ignores the value, but it is remembered for the
- * next peek.
+ * Compatibility no-op setter kept for `main.cjs` / `appConfig` IPC channels.
  */
 function setCapsuleReveal(next) {
   const normalized = geometry.normalizeCapsuleReveal(next);
   if (normalized === capsuleReveal) return snapshot();
   capsuleReveal = normalized;
-  if (mode === 'capsule' && capsuleStyle === 'peek') applyBounds();
   broadcastState();
   return snapshot();
 }
 
 /**
- * Switch shapes. The vertical anchor survives every transition, so growing from the capsule to the
- * immersive column keeps the companion at the height the user dragged it to.
+ * Switch strictly between `'capsule'` and `'panel'`. Legacy `'immersive'` coerces to `'panel'`.
+ * The vertical anchor survives every transition.
  */
 function setMode(next) {
   const normalized = geometry.normalizeMode(next);
@@ -196,25 +264,17 @@ function setSide(nextSide) {
 }
 
 function setExpanded(next) {
-  // Already open: opening again must not demote an immersive column back to the panel.
-  if (next && mode !== 'capsule') return snapshot();
   return setMode(next ? 'panel' : 'capsule');
 }
 
 /**
- * Collapse an open panel once focus has left every TinadecOffice window.
- *
- * Exported because the companion's own `blur` is not sufficient: when focus moves from the
- * companion to the main window and then to another application, the companion never blurs
- * again. `main.cjs` calls this from the app-level `browser-window-blur`, which does fire.
+ * Collapse an open panel once focus has left every TinadecOffice window (unless dragging).
  */
 function scheduleCollapseCheck() {
   clearTimeout(blurTimer);
   blurTimer = setTimeout(() => {
     blurTimer = null;
-    if (mode === 'capsule' || !win || win.isDestroyed()) return;
-    // Focus inside any TinadecOffice window keeps the panel open — the user asked for that
-    // explicitly — while null means another application (or the desktop) took focus.
+    if (isDragging || mode === 'capsule' || !win || win.isDestroyed()) return;
     if (BrowserWindow.getFocusedWindow()) return;
     setExpanded(false);
   }, BLUR_SETTLE_MS);
@@ -247,32 +307,10 @@ async function createCompanionWindow() {
   centerY = Number.isFinite(stored?.centerY) ? stored.centerY : null;
   displayId = Number.isInteger(stored?.displayId) ? stored.displayId : null;
   mode = 'capsule';
+  isDragging = false;
   attachDisplayListeners();
 
-  const created = new BrowserWindow({
-    ...currentBounds(),
-    title: 'Tinadec Companion',
-    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico'),
-    frame: false,
-    transparent: !noTransparency,
-    backgroundColor: noTransparency ? '#1e1e2e' : '#00000000',
-    hasShadow: false,
-    thickFrame: false,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    show: false,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
+  const created = new BrowserWindow(buildCompanionWindowOptions(currentBounds(), process.platform));
   win = created;
   created.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');
   if (process.platform === 'darwin') created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -283,6 +321,7 @@ async function createCompanionWindow() {
     clearTimeout(saveTimer);
     blurTimer = null;
     saveTimer = null;
+    isDragging = false;
     if (win === created) win = null;
   });
   created.once('ready-to-show', () => {
@@ -299,6 +338,7 @@ function closeCompanionWindow() {
   clearTimeout(saveTimer);
   blurTimer = null;
   saveTimer = null;
+  isDragging = false;
   mode = 'capsule';
   if (win && !win.isDestroyed()) win.close();
   win = null;
@@ -325,12 +365,17 @@ function collapseCompanionWindow() {
 
 module.exports = {
   applyCompanionMode,
+  buildCompanionWindowOptions,
   closeCompanionWindow,
   collapseCompanionWindow,
   createCompanionWindow,
+  dragEnd,
+  dragMove,
   expandCompanionWindow,
+  flushPersistence,
   isCompanionWindowSender,
   moveTo,
+  saveAnchor,
   scheduleCollapseCheck,
   setCapsuleReveal,
   setCapsuleStyle,

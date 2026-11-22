@@ -210,3 +210,47 @@ test('maps transport failures and timeouts to 502 without leaking the credential
   assert.deepEqual(timeout, { status: 502, body: { code: 'gateway_unreachable' } });
   assert.equal(JSON.stringify(timeout).includes(TOKEN), false);
 });
+
+test('allows the #37 work-session, approval decision, and run control routes while refusing adjacent paths', async () => {
+  const { bridge, calls } = makeBridge();
+  const approvalId = '33333333-3333-4333-8333-333333333333';
+  const runId = '44444444-4444-4444-8444-444444444444';
+
+  const sessions = await bridge({ sender: COMPANION }, {
+    method: 'GET',
+    path: `/api/v1/companions/${COMPANION_ID}/work-sessions`,
+  });
+  assert.equal(sessions.status, 200);
+
+  const decided = await bridge({ sender: COMPANION }, {
+    method: 'POST',
+    path: `/api/v1/approvals/${approvalId}/decision`,
+    body: { decision: 'approved' },
+  });
+  assert.equal(decided.status, 200);
+  assert.equal(calls[1].init.body, '{"decision":"approved"}');
+
+  const cancelled = await bridge({ sender: COMPANION }, {
+    method: 'POST',
+    path: `/api/v1/runs/${runId}/control`,
+    body: { action: 'cancel', client_control_id: 'companion-cancel-1' },
+  });
+  assert.equal(cancelled.status, 200);
+  assert.equal(calls[2].init.body, '{"action":"cancel","client_control_id":"companion-cancel-1"}');
+  assert.equal(calls.length, 3);
+
+  // Adjacent or wrong-method paths must stay strictly refused.
+  for (const payload of [
+    { method: 'POST', path: `/api/v1/companions/${COMPANION_ID}/work-sessions`, body: {} },
+    { method: 'GET', path: `/api/v1/approvals/${approvalId}/decision` },
+    { method: 'POST', path: '/api/v1/approvals/not-a-guid/decision', body: { decision: 'approved' } },
+    { method: 'GET', path: `/api/v1/runs/${runId}/control` },
+    { method: 'DELETE', path: `/api/v1/runs/${runId}/control` },
+    { method: 'POST', path: '/api/v1/runs/not-a-guid/control', body: { action: 'cancel' } },
+  ]) {
+    const result = await bridge({ sender: COMPANION }, payload);
+    assert.equal(result.status, 400, `${payload.method} ${payload.path} must be refused`);
+    assert.equal(result.body.code, 'invalid_request');
+  }
+  assert.equal(calls.length, 3);
+});

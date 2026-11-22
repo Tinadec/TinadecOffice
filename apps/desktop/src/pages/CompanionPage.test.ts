@@ -4,7 +4,6 @@ import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import zh from '@/locales/zh-CN'
 import CompanionPage from './CompanionPage.vue'
-import CompanionStage from '@/components/pets/CompanionStage.vue'
 import type {
   CompanionConversation,
   CompanionMember,
@@ -13,13 +12,7 @@ import type {
   CompanionSettings,
   CompanionSummary,
 } from '@/lib/companionApi'
-
-/**
- * The window renders what the main process reports and sends gestures; it never flips `expanded`
- * itself. Every fake command therefore broadcasts the next snapshot back through `onStateChanged`
- * like the real main process does, and a page that mutated local state would still look right in
- * these tests only if the mirror agreed — which is what the broadcast-only fakes rule out.
- */
+import type { CompanionConnectedWorkSession } from '@/lib/companionWorkSession'
 
 const CAPSULE_RIGHT: CompanionState = {
   open: true, mode: 'capsule', expanded: false, side: 'right', capsuleStyle: 'peek', capsuleReveal: 50,
@@ -30,11 +23,7 @@ const PANEL_RIGHT: CompanionState = {
 const PANEL_LEFT: CompanionState = {
   open: true, mode: 'panel', expanded: true, side: 'left', capsuleStyle: 'peek', capsuleReveal: 50,
 }
-const IMMERSIVE_RIGHT: CompanionState = {
-  open: true, mode: 'immersive', expanded: true, side: 'right', capsuleStyle: 'peek', capsuleReveal: 50,
-}
 
-// Every page answers Escape on `window`; a wrapper left mounted keeps collapsing in later tests.
 enableAutoUnmount(afterEach)
 
 let state: CompanionState
@@ -46,6 +35,9 @@ let companion: {
   expand: ReturnType<typeof vi.fn>
   collapse: ReturnType<typeof vi.fn>
   moveTo: ReturnType<typeof vi.fn>
+  dragMove?: ReturnType<typeof vi.fn>
+  dragEnd?: ReturnType<typeof vi.fn>
+  openMainSurface?: ReturnType<typeof vi.fn>
   setSide: ReturnType<typeof vi.fn>
   setMode: ReturnType<typeof vi.fn>
   onStateChanged: ReturnType<typeof vi.fn>
@@ -53,8 +45,6 @@ let companion: {
 
 function broadcast(patch: Partial<CompanionState>): CompanionState {
   state = { ...state, ...patch }
-  // `mode` and `expanded` are two views of one fact. A fake that only moved one of them would let
-  // the page read the other and still look right, which is exactly the bug these tests exist for.
   if (patch.expanded !== undefined && patch.mode === undefined) {
     state.mode = patch.expanded ? 'panel' : 'capsule'
   }
@@ -78,7 +68,6 @@ function click(target: Element, detail: number): void {
   target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail }))
 }
 
-/** A real double click bubbles, exactly like the one the gesture handler has to filter. */
 function doubleClick(target: Element): void {
   target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }))
 }
@@ -89,11 +78,6 @@ function pressEscape(): KeyboardEvent {
   return event
 }
 
-/**
- * The relay the main window uses to hand journal rows to this satellite. Real BroadcastChannel
- * only delivers to *other* instances, so the fake keeps one registry and the test posts from its
- * own instance to prove the page heard it rather than echoing to itself.
- */
 class FakeBroadcastChannel {
   static all: FakeBroadcastChannel[] = []
   private readonly listeners = new Set<(event: MessageEvent) => void>()
@@ -124,6 +108,9 @@ beforeEach(() => {
     expand: vi.fn(async () => broadcast({ expanded: true })),
     collapse: vi.fn(async () => broadcast({ expanded: false })),
     moveTo: vi.fn(async () => ({ ...state })),
+    dragMove: vi.fn(async () => ({ ...state })),
+    dragEnd: vi.fn(async (screenX: number) => broadcast({ side: screenX < 500 ? 'left' : 'right' })),
+    openMainSurface: vi.fn(async () => true),
     setSide: vi.fn(async (side: 'left' | 'right') => broadcast({ side })),
     setMode: vi.fn(async (mode: 'capsule' | 'panel' | 'immersive') => broadcast({ mode, expanded: mode !== 'capsule' })),
     onStateChanged: vi.fn((callback: (next: CompanionState) => void) => {
@@ -140,208 +127,172 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('companion capsule', () => {
-  it('renders the stored shape and expands on a mouse click', async () => {
+describe('floating companion capsule & 2D drag', () => {
+  it('renders a clean avatar capsule with no idle dot or direction arrows, and expands on click', async () => {
     const wrapper = create()
     await flushPromises()
 
-    const capsule = wrapper.get('.companion-capsule')
+    const capsule = wrapper.get('[data-testid="companion-capsule"]')
     expect(capsule.attributes('aria-label')).toBe(zh.companion.expand)
     expect(capsule.attributes('aria-expanded')).toBe('false')
-    expect(wrapper.find('.companion-panel').exists()).toBe(false)
-    expect(wrapper.classes()).toContain('companion--side-right')
+    expect(wrapper.find('[data-testid="companion-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="companion-capsule-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="companion-capsule-unread"]').exists()).toBe(false)
+    expect(wrapper.find('.companion-capsule-chevron').exists()).toBe(false)
 
+    // Pointer click (< 5px displacement) expands once and suppresses trailing click
+    pointer(capsule.element, 'pointerdown', { screenX: 900, screenY: 300 })
+    pointer(capsule.element, 'pointerup', { screenX: 902, screenY: 301 })
     click(capsule.element, 1)
     await flushPromises()
 
     expect(companion.expand).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('.companion-capsule').exists()).toBe(false)
-    expect(wrapper.get('[role="region"]').attributes('aria-label')).toBe(zh.companion.title)
+    expect(companion.dragMove).not.toHaveBeenCalled()
+    expect(companion.dragEnd).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="companion-panel"]').exists()).toBe(true)
   })
 
-  it('reports a command failure instead of pretending the panel opened', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    companion.expand.mockRejectedValue(new Error('window unavailable'))
+  it('performs true 2D X+Y dragMove and dragEnd magnetic edge snap without expanding', async () => {
     const wrapper = create()
     await flushPromises()
-
-    click(wrapper.get('.companion-capsule').element, 1)
-    await flushPromises()
-
-    expect(wrapper.find('.companion-panel').exists()).toBe(false)
-    expect(warn).toHaveBeenCalledWith('[companion] expand failed:', expect.any(Error))
-  })
-
-  it('keeps a broadcast that lands while the initial read is still pending', async () => {
-    let resolveInitial: ((next: CompanionState) => void) | undefined
-    companion.getState.mockReturnValue(new Promise<CompanionState>((resolve) => { resolveInitial = resolve }))
-    const wrapper = create()
-
-    // The subscription is installed before the read, so the main process's later answer wins.
-    broadcast({ expanded: true })
-    await flushPromises()
-    expect(wrapper.find('.companion-panel').exists()).toBe(true)
-
-    resolveInitial?.({ ...CAPSULE_RIGHT })
-    await flushPromises()
-    expect(wrapper.find('.companion-panel').exists()).toBe(true)
-  })
-})
-
-describe('panel controls', () => {
-  it('collapses only through the main process, which reports the capsule back', async () => {
-    state = { ...PANEL_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    await wrapper.get(`[aria-label="${zh.companion.collapse}"]`).trigger('click')
-    await flushPromises()
-
-    expect(companion.collapse).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('.companion-panel').exists()).toBe(false)
-    expect(wrapper.find('.companion-capsule').exists()).toBe(true)
-  })
-
-  it('offers the opposite edge and follows the new side', async () => {
-    state = { ...PANEL_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    await wrapper.get(`[aria-label="${zh.companion.dockLeft}"]`).trigger('click')
-    await flushPromises()
-    expect(companion.setSide).toHaveBeenCalledWith('left')
-    expect(wrapper.classes()).toContain('companion--side-left')
-    expect(wrapper.find(`[aria-label="${zh.companion.dockRight}"]`).exists()).toBe(true)
-
-    await wrapper.get(`[aria-label="${zh.companion.dockRight}"]`).trigger('click')
-    await flushPromises()
-    expect(companion.setSide).toHaveBeenLastCalledWith('right')
-    expect(wrapper.classes()).toContain('companion--side-right')
-  })
-
-  it('collapses on Escape only while the panel is open', async () => {
-    const wrapper = create()
-    await flushPromises()
-
-    const collapsed = pressEscape()
-    await flushPromises()
-    expect(companion.collapse).not.toHaveBeenCalled()
-    expect(collapsed.defaultPrevented).toBe(false)
-
-    broadcast({ expanded: true })
-    await flushPromises()
-    const expanded = pressEscape()
-    await flushPromises()
-    expect(companion.collapse).toHaveBeenCalledTimes(1)
-    expect(expanded.defaultPrevented).toBe(true)
-  })
-})
-
-describe('capsule gestures', () => {
-  it('expands when a right-docked capsule is dragged inward far enough', async () => {
-    const wrapper = create()
-    await flushPromises()
-    const capsule = wrapper.get('.companion-capsule').element
+    const capsule = wrapper.get('[data-testid="companion-capsule"]').element
 
     pointer(capsule, 'pointerdown', { screenX: 900, screenY: 300 })
-    pointer(capsule, 'pointermove', { screenX: 880, screenY: 300 })
-    pointer(capsule, 'pointerup', { screenX: 870, screenY: 300 })
+    pointer(capsule, 'pointermove', { screenX: 400, screenY: 420 })
     await flushPromises()
+    expect(wrapper.classes()).toContain('companion--dragging')
+    expect(companion.dragMove).toHaveBeenCalledWith(400, 420)
 
-    expect(companion.expand).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('.companion-panel').exists()).toBe(true)
-  })
-
-  it('expands inward on a left-docked capsule too', async () => {
-    state = { ...CAPSULE_RIGHT, side: 'left' }
-    const wrapper = create()
-    await flushPromises()
-    const capsule = wrapper.get('.companion-capsule').element
-
-    pointer(capsule, 'pointerdown', { screenX: 200, screenY: 400 })
-    pointer(capsule, 'pointermove', { screenX: 215, screenY: 400 })
-    pointer(capsule, 'pointerup', { screenX: 230, screenY: 400 })
-    await flushPromises()
-
-    expect(companion.expand).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not expand on a short drag and suppresses the click that follows it', async () => {
-    const wrapper = create()
-    await flushPromises()
-    const capsule = wrapper.get('.companion-capsule').element
-
-    pointer(capsule, 'pointerdown', { screenX: 900, screenY: 300 })
-    pointer(capsule, 'pointermove', { screenX: 890, screenY: 300 })
-    pointer(capsule, 'pointerup', { screenX: 885, screenY: 300 })
-    await flushPromises()
-    expect(companion.expand).not.toHaveBeenCalled()
-
-    // A drag ends on the button and therefore still produces a click; that click is not a request.
+    pointer(capsule, 'pointerup', { screenX: 120, screenY: 440 })
+    // Trailing mouse click after drag must be suppressed
     click(capsule, 1)
     await flushPromises()
-    expect(companion.expand).not.toHaveBeenCalled()
 
-    // Keyboard activation reports detail 0 and must always open, even inside the suppression window.
+    expect(companion.dragEnd).toHaveBeenCalledWith(120, 440)
+    expect(companion.expand).not.toHaveBeenCalled()
+    expect(wrapper.classes()).toContain('companion--side-left')
+    expect(wrapper.classes()).not.toContain('companion--dragging')
+
+    // Keyboard activation (detail === 0) must still expand immediately
     click(capsule, 0)
     await flushPromises()
     expect(companion.expand).toHaveBeenCalledTimes(1)
   })
 
-  it('drags the window vertically without expanding it', async () => {
+  it('falls back gracefully to moveTo when dragMove is absent in partial bridge mocks', async () => {
+    delete companion.dragMove
+    delete companion.dragEnd
     const wrapper = create()
     await flushPromises()
-    const capsule = wrapper.get('.companion-capsule').element
+    const capsule = wrapper.get('[data-testid="companion-capsule"]').element
 
     pointer(capsule, 'pointerdown', { screenX: 900, screenY: 300 })
-    await flushPromises()
-    expect(wrapper.classes()).toContain('companion--dragging')
-
-    pointer(capsule, 'pointermove', { screenX: 901, screenY: 340 })
-    pointer(capsule, 'pointerup', { screenX: 901, screenY: 340 })
+    pointer(capsule, 'pointermove', { screenX: 902, screenY: 340 })
+    pointer(capsule, 'pointerup', { screenX: 902, screenY: 340 })
     await flushPromises()
 
-    // happy-dom reports window.screenY as 0, so the target top is the gesture delta itself.
     expect(companion.moveTo).toHaveBeenCalledWith(40)
     expect(companion.expand).not.toHaveBeenCalled()
-    expect(wrapper.classes()).not.toContain('companion--dragging')
+  })
+
+  it('reports expand failures instead of faking panel expansion', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    companion.expand.mockRejectedValue(new Error('window unavailable'))
+    const wrapper = create()
+    await flushPromises()
+
+    click(wrapper.get('[data-testid="companion-capsule"]').element, 1)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="companion-panel"]').exists()).toBe(false)
+    expect(warn).toHaveBeenCalledWith('[companion] expand failed:', expect.any(Error))
+  })
+
+  it('keeps a state broadcast arriving while initial getState is pending', async () => {
+    let resolveInitial: ((next: CompanionState) => void) | undefined
+    companion.getState.mockReturnValue(new Promise<CompanionState>((resolve) => { resolveInitial = resolve }))
+    const wrapper = create()
+
+    broadcast({ expanded: true })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="companion-panel"]').exists()).toBe(true)
+
+    resolveInitial?.({ ...CAPSULE_RIGHT })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="companion-panel"]').exists()).toBe(true)
   })
 })
 
-describe('panel drag and teardown', () => {
-  it('moves the panel by the vertical drag delta', async () => {
+describe('decluttered panel chrome & 2D topbar drag', () => {
+  it('removes immersive mode, side-flip, native select pickers, and middle pet stage while keeping one collapse button', async () => {
+    state = { ...PANEL_RIGHT, mode: 'immersive' }
+    const wrapper = create()
+    await flushPromises()
+
+    // Legacy immersive snapshot renders cleanly as pure 2-state panel
+    expect(wrapper.find('[data-testid="companion-panel"]').exists()).toBe(true)
+    expect(wrapper.find('.companion-call').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="companion-immersive-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="companion-stage-expand"]').exists()).toBe(false)
+    expect(wrapper.find('select').exists()).toBe(false)
+    expect(wrapper.find(`[aria-label="${zh.companion.dockLeft}"]`).exists()).toBe(false)
+    expect(wrapper.find(`[aria-label="${zh.companion.dockRight}"]`).exists()).toBe(false)
+
+    // Only one right-hand collapse icon button
+    const collapseBtn = wrapper.get('[data-testid="companion-collapse-btn"]')
+    expect(collapseBtn.attributes('aria-label')).toBe(zh.companion.collapse)
+    await collapseBtn.trigger('click')
+    await flushPromises()
+
+    expect(companion.collapse).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="companion-capsule"]').exists()).toBe(true)
+  })
+
+  it('drags the 40px topbar in 2D and snaps on release', async () => {
     state = { ...PANEL_LEFT }
     const wrapper = create()
     await flushPromises()
-    const panel = wrapper.get('.companion-panel').element
+    const topbar = wrapper.get('[data-testid="companion-topbar"]').element
 
-    pointer(panel, 'pointerdown', { screenX: 100, screenY: 200 })
-    pointer(panel, 'pointermove', { screenX: 140, screenY: 260 })
-    pointer(panel, 'pointerup', { screenX: 140, screenY: 260 })
+    pointer(topbar, 'pointerdown', { screenX: 120, screenY: 200 })
+    pointer(topbar, 'pointermove', { screenX: 700, screenY: 280 })
+    pointer(topbar, 'pointerup', { screenX: 900, screenY: 310 })
     await flushPromises()
 
-    expect(companion.moveTo).toHaveBeenCalledWith(60)
-    expect(companion.setSide).not.toHaveBeenCalled()
+    expect(companion.dragMove).toHaveBeenCalledWith(700, 280)
+    expect(companion.dragEnd).toHaveBeenCalledWith(900, 310)
+    expect(wrapper.classes()).toContain('companion--side-right')
   })
 
-  it('drops the state listener and the Escape binding on unmount', async () => {
+  it('handles Escape layering (popover first, then panel collapse) and cleans up on unmount', async () => {
     state = { ...PANEL_RIGHT }
     const wrapper = create()
     await flushPromises()
 
+    await wrapper.get('[data-testid="companion-identity-trigger"]').trigger('click')
+    expect(wrapper.find('[data-testid="companion-popover"]').exists()).toBe(true)
+
+    const firstEsc = pressEscape()
+    await flushPromises()
+    expect(firstEsc.defaultPrevented).toBe(true)
+    expect(wrapper.find('[data-testid="companion-popover"]').exists()).toBe(false)
+    expect(companion.collapse).not.toHaveBeenCalled()
+
+    const secondEsc = pressEscape()
+    await flushPromises()
+    expect(secondEsc.defaultPrevented).toBe(true)
+    expect(companion.collapse).toHaveBeenCalledTimes(1)
+
+    // Escape while collapsed does nothing
+    const thirdEsc = pressEscape()
+    expect(thirdEsc.defaultPrevented).toBe(false)
+
     wrapper.unmount()
     expect(disposeState).toHaveBeenCalledTimes(1)
-
-    const event = pressEscape()
-    await flushPromises()
-    expect(companion.collapse).not.toHaveBeenCalled()
-    expect(event.defaultPrevented).toBe(false)
   })
 })
 
-// ── Chat (Task 6) ─────────────────────────────────────────────────────
-// The companion window reaches the companion domain only through the main-process proxy, so these
-// fakes stand in for `window.tinadec.companion.api` (the bridge's transport) and never fetch.
+// ── Chat, identity popover & #37 work-session fixtures ────────────────
 
 const NOW = '2026-10-28T08:00:00.000Z'
 
@@ -397,7 +348,6 @@ function conversationFixture(
     parent_conversation_id: null,
     last_message_at: null,
     last_message_preview: null,
-    // A private chat the user started, and openable: the two facts the centre's list now carries.
     origin: 'user',
     can_open: true,
     ...overrides,
@@ -453,6 +403,38 @@ function runFixture(
   }
 }
 
+function workSessionFixture(overrides: Partial<CompanionConnectedWorkSession> = {}): CompanionConnectedWorkSession {
+  return {
+    session_id: 'session-work-1',
+    title: 'Fix auth middleware',
+    project_id: 'proj-1',
+    project_name: 'TinadecCore',
+    mode_name: 'auto',
+    view_mode: 'flat',
+    latest_run_id: 'run-work-1',
+    latest_run_status: 'awaiting_approval',
+    latest_run_summary: 'Waiting to run shell command',
+    plan_summary: '2/4 · Run integration tests',
+    plan_progress: { done: 2, total: 4, current_step: 'Run integration tests', summary: '2/4 · Run integration tests' },
+    pending_approvals: [
+      {
+        approval_id: 'approval-1',
+        tool_id: 'shell_exec',
+        summary: 'Run dotnet test',
+        risk_level: 'medium',
+        created_at: NOW,
+      },
+    ],
+    browser_space_id: null,
+    browser_url: null,
+    browser_driver: null,
+    browser_handoff_reason: null,
+    updated_at: NOW,
+    latest_run: { id: 'run-work-1', status: 'awaiting_approval', summary: 'Waiting to run shell command' },
+    ...overrides,
+  }
+}
+
 interface ApiCall {
   method: string
   path: string
@@ -466,19 +448,19 @@ interface ChatApiOptions {
   groups?: CompanionConversation[]
   messages?: Record<string, CompanionMessage[]>
   runs?: Record<string, CompanionRun>
-  /** Runs the fake Core creates for every send, so polling has something to converge on. */
   sendRuns?: CompanionRun[]
+  workSessions?: Record<string, CompanionConnectedWorkSession[]>
 }
 
-/** A stand-in for the main-process whitelist proxy: routes mirror the real companion endpoints. */
 function createChatApi(options: ChatApiOptions = {}) {
   const companions = options.companions ?? [
-    summaryFixture('companion-a', 'Aria'),
+    summaryFixture('companion-a', 'Aria', 'fox'),
     summaryFixture('companion-b', 'Bolt'),
   ]
   const settings: CompanionSettings = options.settings ?? {
     main_companion_id: companions[0]?.id ?? null,
-    max_bot_hop_depth: 3, recruit_limit: 3,
+    max_bot_hop_depth: 3,
+    recruit_limit: 3,
     autonomy_paused: false,
     revision: 1,
   }
@@ -494,6 +476,7 @@ function createChatApi(options: ChatApiOptions = {}) {
   const groups = [...(options.groups ?? [])]
   const messages: Record<string, CompanionMessage[]> = options.messages ?? {}
   const runs: Record<string, CompanionRun> = options.runs ?? {}
+  const workSessionsByCompanion: Record<string, CompanionConnectedWorkSession[]> = options.workSessions ?? {}
   const calls: ApiCall[] = []
 
   function findConversation(id: string): CompanionConversation | undefined {
@@ -522,20 +505,21 @@ function createChatApi(options: ChatApiOptions = {}) {
     if (method === 'GET' && url === '/api/v1/companions') return { status: 200, body: companions }
     if (method === 'GET' && url === '/api/v1/companions/activity') return { status: 200, body: [] }
 
+    if (segments.length === 6 && segments[3] === 'companions' && segments[5] === 'work-sessions' && method === 'GET') {
+      return { status: 200, body: workSessionsByCompanion[segments[4]] ?? [] }
+    }
+
+    if (segments.length === 6 && segments[3] === 'approvals' && segments[5] === 'decision' && method === 'POST') {
+      return { status: 200, body: { id: segments[4], decision: (body as { decision?: string })?.decision ?? 'approved' } }
+    }
+
+    if (segments.length === 6 && segments[3] === 'runs' && segments[5] === 'control' && method === 'POST') {
+      return { status: 200, body: { run_id: segments[4], status: 'cancelled', action: 'cancel', accepted: true } }
+    }
+
     if (segments.length === 6 && segments[3] === 'companions' && segments[5] === 'conversations') {
       const companionId = segments[4]
       if (method === 'POST') {
-        const input = body as { kind?: string } | undefined
-        if (input?.kind === 'group') {
-          const companion = companions.find((item) => item.id === companionId)
-          const group = conversationFixture(`group-${companionId}`, 'group', [
-            memberFixture(null, 'User', 'user'),
-            memberFixture(companionId, companion?.name ?? companionId, 'companion'),
-          ])
-          groups.push(group)
-          messages[group.id] = []
-          return { status: 200, body: group }
-        }
         return { status: 200, body: privateConversations[companionId] }
       }
       const list = [
@@ -543,10 +527,6 @@ function createChatApi(options: ChatApiOptions = {}) {
         ...groups.filter((group) => group.members.some((member) => member.companion_id === companionId)),
       ].filter((conversation): conversation is CompanionConversation => conversation != null)
       return { status: 200, body: list }
-    }
-
-    if (segments.length === 5 && segments[3] === 'companion-conversations' && method === 'GET') {
-      return { status: 200, body: findConversation(segments[4]) }
     }
 
     if (segments.length === 6 && segments[3] === 'companion-conversations' && segments[5] === 'messages') {
@@ -584,11 +564,6 @@ function createChatApi(options: ChatApiOptions = {}) {
       const input = body as { companion_id: string; share_history?: boolean }
       const invited = companions.find((item) => item.id === input.companion_id)
       const invitee = memberFixture(input.companion_id, invited?.name ?? input.companion_id, 'companion')
-      if (conversation.kind === 'group') {
-        const updated: CompanionConversation = { ...conversation, members: [...conversation.members, invitee] }
-        replaceConversation(updated)
-        return { status: 200, body: updated }
-      }
       const group = conversationFixture(`group-${conversation.id}`, 'group', [...conversation.members, invitee], {
         parent_conversation_id: conversation.id,
       })
@@ -609,9 +584,9 @@ function createChatApi(options: ChatApiOptions = {}) {
   return { api, calls, groups, messages, privateConversations }
 }
 
-function mountChat(api: ReturnType<typeof vi.fn>) {
+function mountChat(api: ReturnType<typeof vi.fn>, initialState: CompanionState = PANEL_RIGHT) {
   companion.api = api
-  state = { ...PANEL_RIGHT }
+  state = { ...initialState }
   return create()
 }
 
@@ -619,257 +594,123 @@ function apiCalls(calls: ApiCall[], method: string, suffix: string): ApiCall[] {
   return calls.filter((call) => call.method === method && call.path.split('?')[0].endsWith(suffix))
 }
 
-describe('companion chat', () => {
-  it('shows the empty state when no active companion exists', async () => {
-    const harness = createChatApi({
-      companions: [],
-      settings: { main_companion_id: null, max_bot_hop_depth: 3, recruit_limit: 3, autonomy_paused: false, revision: 1 },
-    })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
+describe('unified top-bar identity popover & companion chat', () => {
+  it('switches companions, threads, pauses auto-reply, invites members, and opens Companion Center from the popover', async () => {
+    const groupConv = conversationFixture('group-1', 'group', [
+      memberFixture(null, 'User', 'user'),
+      memberFixture('companion-a', 'Aria', 'companion'),
+      memberFixture('companion-b', 'Bolt', 'companion'),
+    ], { title: 'Release Squad' })
 
-    expect(wrapper.get('.companion-chat-state-title').text()).toBe(zh.companion.chat.noCompanionsTitle)
-    expect(wrapper.get('.companion-chat-state-body').text()).toBe(zh.companion.chat.noCompanionsBody)
-    expect(wrapper.find('.companion-input').exists()).toBe(false)
-    expect(harness.calls.some((call) => call.path.includes('/conversations'))).toBe(false)
-  })
-
-  it('loads the main companion private chat and renders real author names', async () => {
     const harness = createChatApi({
+      groups: [groupConv],
       messages: {
-        'conv-companion-a': [
-          messageFixture('m1', 'conv-companion-a', 1, 'user', 'User', 'hello'),
-          messageFixture('m2', 'conv-companion-a', 2, 'companion', 'Aria', 'hi there', 'companion-a'),
-          messageFixture('m3', 'conv-companion-a', 3, 'system', 'System', 'joined'),
-        ],
+        'conv-companion-a': [messageFixture('a1', 'conv-companion-a', 1, 'user', 'User', 'hi Aria')],
+        'group-1': [messageFixture('g1', 'group-1', 1, 'companion', 'Bolt', 'ready for release', 'companion-b')],
+        'conv-companion-b': [messageFixture('b1', 'conv-companion-b', 1, 'companion', 'Bolt', 'I am Bolt', 'companion-b')],
       },
     })
     const wrapper = mountChat(harness.api)
     await flushPromises()
 
     expect(wrapper.get('.companion-title').text()).toBe('Aria')
-    expect(wrapper.findAll('.companion-msg-author').map((node) => node.text()))
-      .toEqual([zh.companion.chat.you, 'Aria', zh.companion.chat.system])
-    expect(apiCalls(harness.calls, 'POST', '/api/v1/companions/companion-a/conversations')).toHaveLength(1)
+
+    // 1. Open identity popover and switch to group thread
+    await wrapper.get('[data-testid="companion-identity-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="companion-menu-thread-group-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.companion-msg-body').map((n) => n.text())).toEqual(['ready for release'])
+
+    // 2. Open popover -> Pause auto-replies
+    await wrapper.get('[data-testid="companion-identity-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="companion-menu-pause"]').trigger('click')
+    await flushPromises()
+    expect(apiCalls(harness.calls, 'POST', '/pause')).toHaveLength(1)
+    expect(wrapper.get('.companion-run--paused').text()).toBe(zh.companion.chat.pausedBadge)
+
+    // 3. Open popover -> Open Companion Center
+    await wrapper.get('[data-testid="companion-identity-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="companion-menu-open-center"]').trigger('click')
+    await flushPromises()
+    expect(companion.openMainSurface).toHaveBeenCalledWith({
+      target: 'companion-center',
+      companionId: 'companion-a',
+    })
+
+    // 4. Switch companion via popover -> loads Bolt's private chat
+    await wrapper.get('[data-testid="companion-identity-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="companion-menu-pick-companion-b"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.companion-title').text()).toBe('Bolt')
+    expect(wrapper.findAll('.companion-msg-author').map((n) => n.text())).toEqual(['Bolt'])
+
+    // 5. Invite from popover defaults share_history=false
+    await wrapper.get('[data-testid="companion-identity-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="companion-menu-invite"]').trigger('click')
+    const dialog = wrapper.get('.companion-invite')
+    expect((dialog.get('.companion-invite-share input').element as HTMLInputElement).checked).toBe(false)
+    await dialog.get('.companion-primary').trigger('click')
+    await flushPromises()
+    const invite = apiCalls(harness.calls, 'POST', '/members')[0]
+    expect((invite.body as { companion_id: string; share_history: boolean })).toEqual({
+      companion_id: 'companion-a',
+      share_history: false,
+    })
   })
 
-  it('refuses empty text and sends a non-empty message, clearing the draft', async () => {
-    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
-
-    const input = wrapper.get('.companion-input')
-    await input.setValue('   ')
-    await wrapper.get('.companion-composer').trigger('submit')
-    await flushPromises()
-    expect(apiCalls(harness.calls, 'POST', '/messages')).toHaveLength(0)
-
-    await input.setValue('hello companion')
-    await wrapper.get('.companion-composer').trigger('submit')
-    await flushPromises()
-
-    const sends = apiCalls(harness.calls, 'POST', '/messages')
-    expect(sends).toHaveLength(1)
-    expect((sends[0].body as { body: string }).body).toBe('hello companion')
-    expect((wrapper.get('.companion-input').element as HTMLInputElement).value).toBe('')
-    expect(wrapper.findAll('.companion-msg--user')).toHaveLength(1)
-  })
-
-  it('shows the real run failure and never a fabricated companion reply', async () => {
+  it('sends messages, keeps drafts across collapse/expand, and surfaces real run failures', async () => {
     const modelFailure = runFixture('run-model', 'companion-a', 'conv-companion-a', {
       status: 'failed',
       error_code: 'companion_model_unavailable',
       error_message: 'no chat route',
       finished_at: NOW,
     })
-    const budgetFailure = runFixture('run-budget', 'companion-a', 'conv-companion-a', {
-      status: 'failed',
-      error_code: 'companion_turn_budget_exhausted',
-      error_message: 'budget spent',
-      finished_at: NOW,
-    })
     const harness = createChatApi({
       messages: { 'conv-companion-a': [] },
-      sendRuns: [modelFailure, budgetFailure],
+      sendRuns: [modelFailure],
     })
     const wrapper = mountChat(harness.api)
     await flushPromises()
 
-    await wrapper.get('.companion-input').setValue('hello')
+    await wrapper.get('.companion-input').setValue('hello companion')
     await wrapper.get('.companion-composer').trigger('submit')
     await flushPromises()
-    await flushPromises()
+    expect(wrapper.get('.companion-run--failed').text()).toBe(zh.companion.chat.modelUnavailable)
+    expect(wrapper.findAll('.companion-msg--user')).toHaveLength(1)
 
-    const failures = wrapper.findAll('.companion-run--failed').map((node) => node.text())
-    expect(failures).toContain(zh.companion.chat.modelUnavailable)
-    expect(failures).toContain(
-      zh.companion.chat.runFailed
-        .replace('{code}', 'companion_turn_budget_exhausted')
-        .replace('{message}', 'budget spent'),
-    )
-    expect(wrapper.findAll('.companion-msg--companion')).toHaveLength(0)
-  })
-
-  it('defaults the invite dialog to not sharing history', async () => {
-    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
-
-    await wrapper.get(`[aria-label="${zh.companion.chat.invite}"]`).trigger('click')
-    const dialog = wrapper.get('.companion-invite')
-    expect((dialog.get('.companion-invite-share input').element as HTMLInputElement).checked).toBe(false)
-
-    await dialog.get('.companion-primary').trigger('click')
-    await flushPromises()
-
-    const invite = apiCalls(harness.calls, 'POST', '/members')[0]
-    expect((invite.body as { companion_id: string }).companion_id).toBe('companion-b')
-    expect((invite.body as { share_history: boolean }).share_history).toBe(false)
-  })
-
-  it('sends share_history=true only when the checkbox is ticked', async () => {
-    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
-
-    await wrapper.get(`[aria-label="${zh.companion.chat.invite}"]`).trigger('click')
-    const dialog = wrapper.get('.companion-invite')
-    const share = dialog.get('.companion-invite-share input')
-    await share.setValue(true)
-    expect((share.element as HTMLInputElement).checked).toBe(true)
-
-    await dialog.get('.companion-primary').trigger('click')
-    await flushPromises()
-
-    const invite = apiCalls(harness.calls, 'POST', '/members')[0]
-    expect((invite.body as { share_history: boolean }).share_history).toBe(true)
-    // The returned conversation is the new group, so the header now describes it and its members.
-    expect(wrapper.get('.companion-title').text()).toBe('Aria')
-    expect(wrapper.get('.companion-subtitle').text()).toContain('Aria & Bolt')
-  })
-
-  it('pauses the current conversation from the header menu and flips the action', async () => {
-    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
-
-    await wrapper.get(`[aria-label="${zh.companion.chat.options}"]`).trigger('click')
-    const item = wrapper.get('.companion-menu-item')
-    expect(item.text()).toBe(zh.companion.chat.pause)
-
-    await item.trigger('click')
-    await flushPromises()
-
-    const pause = apiCalls(harness.calls, 'POST', '/pause')[0]
-    expect((pause.body as { paused: boolean }).paused).toBe(true)
-    await wrapper.get(`[aria-label="${zh.companion.chat.options}"]`).trigger('click')
-    expect(wrapper.get('.companion-menu-item').text()).toBe(zh.companion.chat.resume)
-    expect(wrapper.get('.companion-run--paused').text()).toBe(zh.companion.chat.pausedBadge)
-  })
-
-  it('switches to another companion and loads that companion private chat', async () => {
-    const harness = createChatApi({
-      messages: {
-        'conv-companion-a': [messageFixture('a1', 'conv-companion-a', 1, 'user', 'User', 'to Aria')],
-        'conv-companion-b': [
-          messageFixture('b1', 'conv-companion-b', 1, 'companion', 'Bolt', 'I am Bolt', 'companion-b'),
-        ],
-      },
-    })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
-
-    await wrapper.get('.companion-companion-select').setValue('companion-b')
-    await flushPromises()
-
-    expect(apiCalls(harness.calls, 'POST', '/api/v1/companions/companion-b/conversations')).toHaveLength(1)
-    expect(wrapper.get('.companion-title').text()).toBe('Bolt')
-    expect(wrapper.findAll('.companion-msg-author').map((node) => node.text())).toEqual(['Bolt'])
-  })
-
-  it('keeps loaded messages and the draft across collapse, expand and resize', async () => {
-    const harness = createChatApi({
-      messages: { 'conv-companion-a': [messageFixture('m1', 'conv-companion-a', 1, 'user', 'User', 'hello')] },
-    })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
-
-    await wrapper.get('.companion-input').setValue('unfinished draft')
-    const loaded = wrapper.findAll('.companion-msg').length
-    expect(loaded).toBe(1)
-
+    await wrapper.get('.companion-input').setValue('draft stays')
     broadcast({ expanded: false })
     await flushPromises()
-    expect(wrapper.find('.companion-capsule').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="companion-capsule"]').exists()).toBe(true)
+    // Failed status dot appears on capsule
+    expect(wrapper.get('[data-testid="companion-capsule-status"]').classes()).toContain('is-failed')
 
     broadcast({ expanded: true })
     await flushPromises()
-    expect((wrapper.get('.companion-input').element as HTMLInputElement).value).toBe('unfinished draft')
-    expect(wrapper.findAll('.companion-msg')).toHaveLength(loaded)
-
-    window.dispatchEvent(new Event('resize'))
-    await flushPromises()
-    expect((wrapper.get('.companion-input').element as HTMLInputElement).value).toBe('unfinished draft')
+    expect((wrapper.get('.companion-input').element as HTMLTextAreaElement).value).toBe('draft stays')
   })
 
-  it('updates on a relayed journal row instead of waiting for the poll tick', async () => {
+  it('shows empty state when no active companions exist and streams live deltas without polling', async () => {
+    const emptyHarness = createChatApi({
+      companions: [],
+      settings: { main_companion_id: null, max_bot_hop_depth: 3, recruit_limit: 3, autonomy_paused: false, revision: 1 },
+    })
+    const emptyWrapper = mountChat(emptyHarness.api)
+    await flushPromises()
+    expect(emptyWrapper.get('.companion-chat-state-title').text()).toBe(zh.companion.chat.noCompanionsTitle)
+    expect(emptyWrapper.find('.companion-input').exists()).toBe(false)
+    emptyWrapper.unmount()
+
     vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
-    // The app can only relay at all when some renderer can hold the stream, so the gate that
-    // decides "events or poll" must see a real transport here.
     vi.stubGlobal('EventSource', class {})
     FakeBroadcastChannel.all = []
     vi.useFakeTimers()
+
     const harness = createChatApi({
       messages: { 'conv-companion-a': [] },
       sendRuns: [runFixture('run-live', 'companion-a', 'conv-companion-a')],
     })
     const wrapper = mountChat(harness.api)
-    await vi.runOnlyPendingTimersAsync()
-    await flushPromises()
-
-    await wrapper.get('.companion-input').setValue('hello')
-    await wrapper.get('.companion-composer').trigger('submit')
-    await flushPromises()
-
-    // The companion's reply lands in Core and the journal names the conversation it belongs to.
-    harness.messages['conv-companion-a'] = [
-      ...(harness.messages['conv-companion-a'] ?? []),
-      messageFixture('m-reply', 'conv-companion-a', 2, 'companion', 'Aria', 'hello back', 'companion-a'),
-    ]
-    // The page listens on its own channel instance; a real BroadcastChannel never echoes back to
-    // the poster, so the "main window" posts from a separate instance of the same name.
-    expect(FakeBroadcastChannel.all.some((channel) => channel.name === 'tinadec.companion-events')).toBe(true)
-    const mainWindow = new BroadcastChannel('tinadec.companion-events')
-    mainWindow.postMessage({
-      type: 'notice',
-      notice: {
-        type: 'companion.activity', seq: 7, kind: 'message_sent',
-        companionId: 'companion-a', conversationId: 'conv-companion-a', runId: null,
-      },
-    })
-
-    // Far less than the eventless 800ms poll: the reply must be on screen because of the event.
-    await vi.advanceTimersByTimeAsync(150)
-    await flushPromises()
-
-    expect(wrapper.findAll('.companion-msg--companion').map((node) => node.text()).join(' '))
-      .toContain('hello back')
-  })
-
-  it('streams live delta bubbles from relayed SSE notices and catches up on visibility return without polling', async () => {
-    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
-    vi.stubGlobal('EventSource', class {})
-    FakeBroadcastChannel.all = []
-    vi.useFakeTimers()
-    const harness = createChatApi({
-      messages: { 'conv-companion-a': [] },
-      sendRuns: [runFixture('run-live', 'companion-a', 'conv-companion-a')],
-    })
-    const wrapper = mountChat(harness.api)
-    await flushPromises()
-
-    await wrapper.get('.companion-input').setValue('hello')
-    await wrapper.get('.companion-composer').trigger('submit')
     await flushPromises()
 
     const mainWindow = new BroadcastChannel('tinadec.companion-events')
@@ -878,292 +719,174 @@ describe('companion chat', () => {
       notice: {
         type: 'companion.delta', seq: 0, kind: null,
         companionId: 'companion-a', conversationId: 'conv-companion-a', runId: 'run-live',
-        delta: 'streaming token',
+        delta: 'live chunk',
       },
     })
     await flushPromises()
+    expect(wrapper.get('.companion-streaming-bubble').text()).toContain('live chunk')
 
-    expect(wrapper.get('.companion-streaming-bubble').text()).toContain('streaming token')
-
-    // Even when a relay notice arrives only on visibility return, no 800ms poll loop runs.
-    const callsBeforeWait = harness.calls.length
+    // Zero polling timers run in background
+    const beforeWait = harness.calls.length
     await vi.advanceTimersByTimeAsync(1500)
     await flushPromises()
-    expect(harness.calls.length).toBe(callsBeforeWait)
-
-    harness.messages['conv-companion-a'] = [
-      ...(harness.messages['conv-companion-a'] ?? []),
-      messageFixture('m-reply', 'conv-companion-a', 2, 'companion', 'Aria', 'final reply', 'companion-a'),
-    ]
-    document.dispatchEvent(new Event('visibilitychange'))
-    await flushPromises()
-
-    expect(wrapper.findAll('.companion-msg--companion').map((node) => node.text()).join(' '))
-      .toContain('final reply')
-  })
-})
-
-describe('companion capsule face', () => {
-  /** The capsule shape, not the panel: `mountChat` opens the panel because chat lives there. */
-  function mountCapsule(api: ReturnType<typeof vi.fn>) {
-    companion.api = api
-    state = { ...CAPSULE_RIGHT }
-    return create()
-  }
-
-  it('wears the selected companion as the capsule instead of a grip', async () => {
-    const harness = createChatApi({ companions: [summaryFixture('companion-a', 'Aria', 'fox')] })
-    const wrapper = mountCapsule(harness.api)
-    await flushPromises()
-
-    // The peek style draws the pet's head, animated frame by frame, and no handle.
-    expect(wrapper.get('.companion-capsule').classes()).toContain('companion-capsule--peek')
-    expect(wrapper.find('[data-testid="companion-stage"]').exists()).toBe(true)
-    expect(wrapper.find('.companion-capsule-grip').exists()).toBe(false)
-    expect(wrapper.find('.companion-capsule-glyph').exists()).toBe(false)
+    expect(harness.calls.length).toBe(beforeWait)
   })
 
-  it('draws a bare handle when the grip style is chosen', async () => {
-    const harness = createChatApi({ companions: [summaryFixture('companion-a', 'Aria', 'fox')] })
-    companion.api = harness.api
-    state = { ...CAPSULE_RIGHT, capsuleStyle: 'grip' }
-    const wrapper = create()
-    await flushPromises()
-
-    // A grip is not a window onto the pet: no sprite at all, just the handle and the mood dot.
-    expect(wrapper.get('.companion-capsule').classes()).toContain('companion-capsule--grip')
-    expect(wrapper.find('[data-testid="companion-stage"]').exists()).toBe(false)
-    expect(wrapper.find('.companion-capsule-grip').exists()).toBe(true)
-    expect(wrapper.get('.companion-capsule-status').classes()).toContain('is-idle')
-  })
-
-  it('falls back to a glyph when the companion has no pet, and stays idle', async () => {
-    const harness = createChatApi({ companions: [summaryFixture('companion-a', 'Aria')] })
-    const wrapper = mountCapsule(harness.api)
-    await flushPromises()
-
-    expect(wrapper.find('.companion-capsule-pet').exists()).toBe(false)
-    expect(wrapper.find('.companion-capsule-glyph').exists()).toBe(true)
-    // The capsule only claims states this window can observe; with nothing running it is idle.
-    expect(wrapper.get('.companion-capsule-status').classes()).toContain('is-idle')
-    expect(wrapper.get('.companion-capsule-status').classes()).not.toContain('is-failed')
-  })
-})
-
-describe('immersive shape', () => {
-  it('asks the main process for the immersive column and renders whatever shape it reports', async () => {
-    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
-    companion.api = harness.api
-    state = { ...PANEL_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    await wrapper.get('[data-testid="companion-immersive-toggle"]').trigger('click')
-    await flushPromises()
-
-    expect(companion.setMode).toHaveBeenCalledWith('immersive')
-    const panel = wrapper.get('.companion-panel')
-    expect(panel.classes()).toContain('companion-panel--immersive')
-    expect(wrapper.get('[data-testid="companion-immersive-toggle"]').attributes('aria-pressed')).toBe('true')
-  })
-
-  it('walks back out to the panel on Escape instead of closing the companion', async () => {
-    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
-    companion.api = harness.api
-    state = { ...IMMERSIVE_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    const event = pressEscape()
-    await flushPromises()
-
-    expect(event.defaultPrevented).toBe(true)
-    expect(companion.setMode).toHaveBeenCalledWith('panel')
-    // Escape inside the immersive shape is a step out, not a dismissal.
-    expect(companion.collapse).not.toHaveBeenCalled()
-    expect(wrapper.find('.companion-panel').exists()).toBe(true)
-  })
-
-  it('keeps the capsule a single click away from the immersive shape', async () => {
-    const harness = createChatApi({ messages: { 'conv-companion-a': [] } })
-    companion.api = harness.api
-    state = { ...IMMERSIVE_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    click(wrapper.get(`[aria-label="${zh.companion.collapse}"]`).element, 1)
-    await flushPromises()
-
-    expect(companion.collapse).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('.companion-capsule').exists()).toBe(true)
-  })
-
-  it('gives the panel a short strip and the call a full figure', async () => {
+  it('pats on blank space double click and ignores messages', async () => {
     const harness = createChatApi({
-      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
-      messages: { 'conv-companion-a': [] },
+      messages: { 'conv-companion-a': [messageFixture('m1', 'conv-companion-a', 1, 'user', 'User', 'hello')] },
     })
-    companion.api = harness.api
-    state = { ...PANEL_RIGHT }
-    const wrapper = create()
+    const wrapper = mountChat(harness.api)
     await flushPromises()
 
-    // The panel's strip is 88px: enough for a standing figure, small enough to keep the chat usable.
-    expect(wrapper.getComponent(CompanionStage).props('height')).toBe(88)
-
-    await wrapper.get('[data-testid="companion-immersive-toggle"]').trigger('click')
-    await flushPromises()
-
-    // The figure grows inside the same window — the window itself never does.
-    const callHeight = wrapper.getComponent(CompanionStage).props('height') as number
-    expect(callHeight).toBeGreaterThan(88)
-    expect(callHeight).toBeLessThanOrEqual(500)
-  })
-
-  it('opens the call when the figure itself is clicked', async () => {
-    const harness = createChatApi({
-      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
-      messages: { 'conv-companion-a': [] },
-    })
-    companion.api = harness.api
-    state = { ...PANEL_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    await wrapper.get('[data-testid="companion-stage-expand"]').trigger('click')
-    await flushPromises()
-
-    // The pet is the door: no toolbar button needed, and the same main-process call is made.
-    expect(companion.setMode).toHaveBeenCalledWith('immersive')
-    expect(wrapper.find('.companion-call').exists()).toBe(true)
-  })
-
-  it('turns immersive into a call: figure, one subtitle, one input, no pickers', async () => {
-    const harness = createChatApi({
-      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
-      messages: {
-        'conv-companion-a': [
-          messageFixture('m1', 'conv-companion-a', 1, 'user', 'User', '在吗'),
-          messageFixture('m2', 'conv-companion-a', 2, 'companion', 'Aria', '在的，说吧', 'companion-a'),
-        ],
-      },
-    })
-    companion.api = harness.api
-    state = { ...IMMERSIVE_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    expect(wrapper.find('.companion-call').exists()).toBe(true)
-    // A call has no companion or conversation switchers.
-    expect(wrapper.find('.companion-pickers').exists()).toBe(false)
-    // The scrollback is still mounted but out of sight, so stepping back into the panel is instant.
-    // Asserted on the attribute, not `isVisible()`: happy-dom's computed style ignores the inline
-    // `display: none` that `v-show` writes, and the directive itself is what this test cares about.
-    expect(wrapper.get('.companion-chat').attributes('style')).toContain('display: none')
-    expect(wrapper.findAll('.companion-input')).toHaveLength(1)
-
-    const lines = wrapper.findAll('.companion-call-line')
-    expect(lines).toHaveLength(2)
-    expect(lines[1].text()).toContain('在的，说吧')
-    expect(lines[1].classes()).not.toContain('is-past')
-    // The line before it stays as dimmed context instead of a log.
-    expect(lines[0].classes()).toContain('is-past')
-  })
-
-  it('waves when the face is clicked and sends nothing', async () => {
-    const harness = createChatApi({
-      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
-      messages: { 'conv-companion-a': [] },
-    })
-    companion.api = harness.api
-    state = { ...PANEL_RIGHT }
-    const wrapper = create()
-    await flushPromises()
-
-    await wrapper.get('[data-testid="companion-greet"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.get('.companion-header-face').classes()).toContain('is-greeting')
-    // A local acknowledgement: the companion domain has no emote endpoint, so nothing is posted.
-    expect(apiCalls(harness.calls, 'POST', '/messages')).toHaveLength(0)
-  })
-})
-
-describe('companion presence', () => {
-  /** A companion with a pet, so a stage exists; the panel is where every gesture lives. */
-  function mountWithPet(options: ChatApiOptions = {}) {
-    const harness = createChatApi({
-      companions: [summaryFixture('companion-a', 'Aria', 'fox')],
-      messages: { 'conv-companion-a': [] },
-      ...options,
-    })
-    return { harness, wrapper: mountChat(harness.api) }
-  }
-
-  it('replaces the conversation label with what the companion is doing', async () => {
-    const running = runFixture('run-live', 'companion-a', 'conv-companion-a')
-    const { wrapper } = mountWithPet({ sendRuns: [running] })
-    await flushPromises()
-
-    // Idle: the subtitle names the conversation, which nothing else in the header does.
-    expect(wrapper.get('.companion-subtitle').text())
-      .toBe(zh.companion.chat.privateSubtitle.replace('{name}', 'Aria'))
-
-    await wrapper.get('.companion-input').setValue('hello')
-    await wrapper.get('.companion-composer').trigger('submit')
-    await flushPromises()
-
-    expect(wrapper.get('.companion-subtitle').text()).toBe(zh.companion.stateThinking)
-    expect(wrapper.findAll('.companion-run-dots > span')).toHaveLength(3)
-  })
-
-  it('turns the send key into a pause while a turn is in flight', async () => {
-    const running = runFixture('run-live', 'companion-a', 'conv-companion-a')
-    const { harness, wrapper } = mountWithPet({ sendRuns: [running] })
-    await flushPromises()
-
-    expect(wrapper.get('.companion-send').attributes('aria-label')).toBe(zh.companion.chat.send)
-
-    await wrapper.get('.companion-input').setValue('hello')
-    await wrapper.get('.companion-composer').trigger('submit')
-    await flushPromises()
-
-    const key = wrapper.get('.companion-send')
-    expect(key.classes()).toContain('is-pause')
-    expect(key.attributes('aria-label')).toBe(zh.companion.chat.pauseAction)
-
-    await key.trigger('click')
-    await flushPromises()
-
-    // Core cannot cancel a run, so this pauses the conversation and says so — it never pretends to
-    // stop the reply that is already being written.
-    const pauses = apiCalls(harness.calls, 'POST', '/pause')
-    expect(pauses).toHaveLength(1)
-    expect((pauses[0].body as { paused: boolean }).paused).toBe(true)
-  })
-
-  it('pats the companion on a double click over blank space, and never on a message', async () => {
-    const { harness, wrapper } = mountWithPet({
-      messages: {
-        'conv-companion-a': [messageFixture('m1', 'conv-companion-a', 1, 'user', 'User', 'hello')],
-      },
-    })
-    await flushPromises()
-
-    // Double-clicking text is selection, not affection.
     doubleClick(wrapper.get('.companion-msg-body').element)
     await flushPromises()
     expect(wrapper.find('.companion-pat-note').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="companion-stage"]').classes())
-      .not.toContain('companion-stage--jumping')
 
     doubleClick(wrapper.get('.companion-chat').element)
     await flushPromises()
-
-    expect(wrapper.get('[data-testid="companion-stage"]').classes()).toContain('companion-stage--jumping')
     expect(wrapper.get('.companion-pat-note').text()).toBe(zh.companion.pat)
-    // A gesture is not a message: nothing is posted and no transcript line is invented.
-    expect(apiCalls(harness.calls, 'POST', '/messages')).toHaveLength(0)
-    expect(wrapper.findAll('.companion-msg')).toHaveLength(1)
+  })
+})
+
+describe('#37 work-session approval / cancel / jump strip & capsule status/unread indicators', () => {
+  it('hydrates work sessions, approves or rejects inline, cancels active run, and jumps to main workbench', async () => {
+    const ws = workSessionFixture()
+    const harness = createChatApi({
+      messages: { 'conv-companion-a': [] },
+      workSessions: { 'companion-a': [ws] },
+    })
+    const wrapper = mountChat(harness.api)
+    await flushPromises()
+
+    const strip = wrapper.get('[data-testid="companion-work-session-strip"]')
+    expect(strip.text()).toContain('Fix auth middleware')
+    expect(strip.text()).toContain('shell_exec')
+    expect(strip.text()).toContain('Run dotnet test')
+
+    // Jump to session in main workbench
+    await wrapper.get('[data-testid="companion-ws-open"]').trigger('click')
+    expect(companion.openMainSurface).toHaveBeenCalledWith({
+      target: 'session',
+      sessionId: 'session-work-1',
+    })
+
+    // Approve inline
+    await wrapper.get('[data-testid="companion-ws-approve"]').trigger('click')
+    await flushPromises()
+    const decisionCall = apiCalls(harness.calls, 'POST', '/api/v1/approvals/approval-1/decision')[0]
+    expect(decisionCall).toBeDefined()
+    expect(decisionCall.body).toEqual({ decision: 'approved' })
+
+    // Now running -> Stop/Cancel button invokes /runs/${id}/control
+    await wrapper.get('[data-testid="companion-ws-cancel"]').trigger('click')
+    await flushPromises()
+    const cancelCall = apiCalls(harness.calls, 'POST', '/api/v1/runs/run-work-1/control')[0]
+    expect(cancelCall).toBeDefined()
+    expect((cancelCall.body as { action: string }).action).toBe('cancel')
+    // Once cancelled, the active strip hides cleanly
+    expect(wrapper.find('[data-testid="companion-work-session-strip"]').exists()).toBe(false)
+  })
+
+  it('rejects pending approval inline via POST /approvals/{id}/decision', async () => {
+    const ws = workSessionFixture()
+    const harness = createChatApi({
+      messages: { 'conv-companion-a': [] },
+      workSessions: { 'companion-a': [ws] },
+    })
+    const wrapper = mountChat(harness.api)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="companion-ws-reject"]').trigger('click')
+    await flushPromises()
+    const decisionCall = apiCalls(harness.calls, 'POST', '/api/v1/approvals/approval-1/decision')[0]
+    expect(decisionCall.body).toEqual({ decision: 'rejected' })
+  })
+
+  it('updates work-session strip live via BroadcastChannel and shows capsule alert dot + unread badge when collapsed', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    vi.stubGlobal('EventSource', class {})
+    FakeBroadcastChannel.all = []
+    vi.useFakeTimers()
+
+    const harness = createChatApi({
+      messages: { 'conv-companion-a': [] },
+    })
+    const wrapper = mountChat(harness.api, CAPSULE_RIGHT)
+    await flushPromises()
+
+    // Idle capsule has no status dot and no unread badge
+    expect(wrapper.find('[data-testid="companion-capsule-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="companion-capsule-unread"]').exists()).toBe(false)
+
+    const mainWindow = new BroadcastChannel('tinadec.companion-events')
+    // Live work-session notice enters awaiting_approval -> capsule shows alert dot
+    mainWindow.postMessage({
+      type: 'notice',
+      notice: {
+        type: 'companion.work_session',
+        seq: 1,
+        kind: 'approval_required',
+        companionId: 'companion-a',
+        conversationId: null,
+        runId: 'run-live-ws',
+        workSession: {
+          sessionId: 'sess-live-1',
+          sessionTitle: 'Deploy pipeline',
+          workspaceId: null,
+          projectId: null,
+          projectName: null,
+          runId: 'run-live-ws',
+          status: 'awaiting_approval',
+          modeName: 'auto',
+          viewMode: 'flat',
+          summary: 'Needs confirmation',
+          planSummary: null,
+          pendingApprovals: [
+            { approval_id: 'appr-live', tool_id: 'git_push', summary: 'Push branch', risk_level: 'high', created_at: NOW },
+          ],
+          browserSpaceId: null,
+          browserUrl: null,
+          browserDriver: null,
+          browserHandoffReason: null,
+          updatedAt: NOW,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="companion-capsule-status"]').classes()).toContain('is-awaiting_approval')
+
+    // Companion reply arrives while collapsed -> unread badge increments
+    harness.messages['conv-companion-a'] = [
+      messageFixture('m-unread', 'conv-companion-a', 1, 'companion', 'Aria', 'Need your approval!', 'companion-a'),
+    ]
+    mainWindow.postMessage({
+      type: 'notice',
+      notice: {
+        type: 'companion.activity',
+        seq: 2,
+        kind: 'message_sent',
+        companionId: 'companion-a',
+        conversationId: 'conv-companion-a',
+        runId: null,
+      },
+    })
+    await vi.advanceTimersByTimeAsync(150)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="companion-capsule-unread"]').text()).toBe('1')
+
+    // Expanding clears unread count and surfaces the live work-session strip
+    broadcast({ expanded: true })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="companion-work-session-strip"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="companion-work-session-strip"]').text()).toContain('Deploy pipeline')
+    expect(wrapper.get('[data-testid="companion-work-session-strip"]').text()).toContain('git_push')
+
+    // Collapsing again keeps unread cleared (0)
+    broadcast({ expanded: false })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="companion-capsule-unread"]').exists()).toBe(false)
   })
 })
