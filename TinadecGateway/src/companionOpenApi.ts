@@ -24,7 +24,7 @@ const companionIdentityProperties = {
   tagline: nullableString,
   avatar: nullableString,
   status: { type: 'string', enum: ['active', 'archived', 'paused'] },
-  role: { type: 'string', enum: ['autonomous', 'buddy'] },
+  role: { type: 'string', enum: ['autonomous', 'session_partner'] },
   model_purpose: { type: 'string' },
   // The pinned provider model; null means "resolve the tenant's route purpose". `model` is the
   // model name on that provider instance (itself may be null for CLI runtimes that pick their own).
@@ -203,6 +203,8 @@ const companionRun = {
     trigger_message_id: nullableUuid,
     status: { type: 'string', enum: ['queued', 'running', 'completed', 'failed'] },
     depth: { type: 'integer' },
+    hop_depth: { type: 'integer' },
+    channel_kind: { type: 'string' },
     config_revision: { type: 'integer' },
     loaded_memory_ids: uuidArray,
     loaded_skill_binding_ids: uuidArray,
@@ -282,12 +284,12 @@ const companionSettings = {
   additionalProperties: true,
   properties: {
     main_companion_id: nullableUuid,
-    buddy_companion_id: nullableUuid,
     recruit_limit: { type: 'integer' },
+    max_bot_hop_depth: { type: 'integer' },
     autonomy_paused: { type: 'boolean' },
     revision: { type: 'integer' },
   },
-  required: ['main_companion_id', 'buddy_companion_id', 'recruit_limit', 'autonomy_paused', 'revision'],
+  required: ['main_companion_id', 'recruit_limit', 'max_bot_hop_depth', 'autonomy_paused', 'revision'],
 };
 
 const companionSendMessageResult = {
@@ -369,16 +371,112 @@ const companionAvatar = {
     name: { type: 'string' },
     kind: { type: 'string', enum: ['live2d'] },
     source_path: { type: 'string' },
+    entry_model_json: nullableString,
     capabilities: ref('CompanionCapabilities'),
     created_at: timestamp,
   },
   required: ['id', 'name', 'kind', 'source_path', 'capabilities', 'created_at'],
 };
 
+const companionLive2dSdkStatus = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    ready: { type: 'boolean' },
+    installed: { type: 'boolean' },
+    file_name: nullableString,
+    sha256: nullableString,
+    size_bytes: { type: 'integer' },
+    has_wasm: { type: 'boolean' },
+    script_url: nullableString,
+    wasm_url: nullableString,
+    updated_at: nullableTimestamp,
+  },
+  required: ['ready', 'installed', 'has_wasm'],
+};
+
+const companionSchedule = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    companion_id: uuid,
+    title: { type: 'string' },
+    prompt: { type: 'string' },
+    cron_expression: nullableString,
+    run_at: nullableTimestamp,
+    next_run_at: nullableTimestamp,
+    last_run_at: nullableTimestamp,
+    target_conversation_id: nullableUuid,
+    one_shot: { type: 'boolean' },
+    enabled: { type: 'boolean' },
+    status: { type: 'string' },
+    revision: { type: 'integer' },
+    created_at: timestamp,
+    updated_at: timestamp,
+  },
+  required: ['id', 'companion_id', 'title', 'prompt', 'one_shot', 'enabled', 'status', 'revision'],
+};
+
+const companionScheduleTriggerResult = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    schedule: ref('CompanionSchedule'),
+    run_ids: uuidArray,
+    conversation_id: uuid,
+  },
+  required: ['schedule', 'run_ids', 'conversation_id'],
+};
+
+const companionPlan = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    companion_id: uuid,
+    title: { type: 'string' },
+    summary: nullableString,
+    status: { type: 'string', enum: ['active', 'completed', 'paused', 'archived'] },
+    steps: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    revision: { type: 'integer' },
+    created_at: timestamp,
+    updated_at: timestamp,
+  },
+  required: ['id', 'companion_id', 'title', 'status', 'steps', 'revision'],
+};
+
+const companionTodo = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: uuid,
+    companion_id: uuid,
+    title: { type: 'string' },
+    note: nullableString,
+    priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+    status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'cancelled'] },
+    due_at: nullableTimestamp,
+    plan_id: nullableUuid,
+    revision: { type: 'integer' },
+    created_at: timestamp,
+    updated_at: timestamp,
+  },
+  required: ['id', 'companion_id', 'title', 'priority', 'status', 'revision'],
+};
+
 export const companionOpenApiSchemas = {
   CompanionCapabilities: companionCapabilities,
   CompanionAvatar: companionAvatar,
   CompanionAvatarList: { type: 'array', items: ref('CompanionAvatar') },
+  CompanionLive2dSdkStatus: companionLive2dSdkStatus,
+  CompanionSchedule: companionSchedule,
+  CompanionScheduleList: { type: 'array', items: ref('CompanionSchedule') },
+  CompanionScheduleTriggerResult: companionScheduleTriggerResult,
+  CompanionPlan: companionPlan,
+  CompanionPlanList: { type: 'array', items: ref('CompanionPlan') },
+  CompanionTodo: companionTodo,
+  CompanionTodoList: { type: 'array', items: ref('CompanionTodo') },
   CompanionSummary: companionSummary,
   CompanionDetail: companionDetail,
   CompanionAutonomy: companionAutonomy,

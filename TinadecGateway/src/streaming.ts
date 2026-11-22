@@ -55,7 +55,88 @@ export function setStreamHeaders(
   if (contentType) {
     set.headers['content-type'] = contentType;
   }
-  set.headers['cache-control'] = 'no-cache';
+  set.headers['cache-control'] = 'no-cache, no-transform';
   set.headers['connection'] = 'keep-alive';
   set.headers['x-accel-buffering'] = 'no';
+}
+
+const SSE_KEEPALIVE_CHUNK = new TextEncoder().encode(': keepalive\n\n');
+
+/**
+ * Emit a `: keepalive\n\n` SSE comment whenever an upstream SSE stream stays silent
+ * for `intervalMs` (default 15s, safely below Cloudflare's 100s idle HTTP timeout).
+ */
+export function wrapSseWithKeepalive(
+  body: ReadableStream<Uint8Array> | null,
+  intervalMs = 15_000,
+  signal?: AbortSignal,
+): ReadableStream<Uint8Array> | null {
+  if (!body) return null;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let lastActivityAt = Date.now();
+  let closed = false;
+
+  const cleanup = () => {
+    closed = true;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    try {
+      void reader?.cancel();
+    } catch {
+      // ignore
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      reader = body.getReader();
+      if (signal) {
+        if (signal.aborted) {
+          cleanup();
+          try { controller.close(); } catch { /* ignore */ }
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          cleanup();
+          try { controller.close(); } catch { /* ignore */ }
+        }, { once: true });
+      }
+
+      timer = setInterval(() => {
+        if (closed) return;
+        if (Date.now() - lastActivityAt >= intervalMs) {
+          try {
+            controller.enqueue(SSE_KEEPALIVE_CHUNK);
+            lastActivityAt = Date.now();
+          } catch {
+            cleanup();
+          }
+        }
+      }, Math.min(intervalMs, 5_000));
+
+      void (async () => {
+        try {
+          while (!closed) {
+            const { done, value } = await reader!.read();
+            if (done) break;
+            if (value && value.length > 0) {
+              lastActivityAt = Date.now();
+              controller.enqueue(value);
+            }
+          }
+          cleanup();
+          try { controller.close(); } catch { /* ignore */ }
+        } catch (err) {
+          cleanup();
+          try { controller.error(err); } catch { /* ignore */ }
+        }
+      })();
+    },
+    cancel() {
+      cleanup();
+    },
+  });
 }

@@ -1,5 +1,6 @@
 import type { AnyElysia } from 'elysia';
 import { proxyRaw, proxySse } from './coreClient.js';
+import { wrapSseWithKeepalive } from './streaming.js';
 import { externalJsonResponse } from './externalDtoOpenApi.js';
 
 /**
@@ -37,8 +38,14 @@ const companionRoutes: CompanionRoute[] = [
   // other static companion paths and before any `/companions/:companionId` route. `import` is
   // listed before the id route even though the methods differ, so a future GET id route cannot
   // shadow it by registration order.
+  { method: 'GET', path: '/api/v1/companion-avatars/sdk', summary: 'Read BYO Cubism Core SDK status', response: 'CompanionLive2dSdkStatus' },
+  { method: 'POST', path: '/api/v1/companion-avatars/sdk', summary: 'Import BYO Cubism Core SDK', response: 'CompanionLive2dSdkStatus' },
+  { method: 'POST', path: '/api/v1/companion-avatars/sdk/import', summary: 'Import BYO Cubism Core SDK (alias)', response: 'CompanionLive2dSdkStatus' },
+  { method: 'DELETE', path: '/api/v1/companion-avatars/sdk', summary: 'Delete BYO Cubism Core SDK', status: 204 },
+  { method: 'GET', path: '/api/v1/companion-avatars/sdk/:asset', summary: 'Serve BYO Cubism Core SDK script or wasm binary' },
   { method: 'GET', path: '/api/v1/companion-avatars', summary: 'List imported Live2D models', response: 'CompanionAvatarList' },
   { method: 'POST', path: '/api/v1/companion-avatars/import', summary: 'Import a model directory (Core copies it into its own storage root)', response: 'CompanionAvatar' },
+  { method: 'GET', path: '/api/v1/companion-avatars/:avatarId/assets/*', summary: 'Serve non-script Live2D model asset bytes' },
   { method: 'DELETE', path: '/api/v1/companion-avatars/:avatarId', summary: 'Delete an imported model and its copied directory', status: 204 },
   // Static companion paths first — see the ordering note above.
   { method: 'GET', path: '/api/v1/companions/activity', summary: 'Companion activity feed', response: 'CompanionActivityList' },
@@ -65,6 +72,19 @@ const companionRoutes: CompanionRoute[] = [
   { method: 'POST', path: '/api/v1/companions/:companionId/connections', summary: 'Bind a connection to a companion', response: 'CompanionConnection' },
   { method: 'PATCH', path: '/api/v1/companions/:companionId/connections/:bindingId', summary: 'Update a connection binding (If-Match revision)', response: 'CompanionConnection' },
   { method: 'DELETE', path: '/api/v1/companions/:companionId/connections/:bindingId', summary: 'Delete a connection binding (If-Match revision)', status: 204 },
+  { method: 'GET', path: '/api/v1/companions/:companionId/schedules', summary: 'List companion schedules', response: 'CompanionScheduleList' },
+  { method: 'POST', path: '/api/v1/companions/:companionId/schedules', summary: 'Create companion schedule', response: 'CompanionSchedule' },
+  { method: 'PATCH', path: '/api/v1/companions/:companionId/schedules/:scheduleId', summary: 'Update companion schedule', response: 'CompanionSchedule' },
+  { method: 'DELETE', path: '/api/v1/companions/:companionId/schedules/:scheduleId', summary: 'Delete companion schedule', status: 204 },
+  { method: 'POST', path: '/api/v1/companions/:companionId/schedules/:scheduleId/trigger', summary: 'Trigger a companion schedule immediately', response: 'CompanionScheduleTriggerResult' },
+  { method: 'GET', path: '/api/v1/companions/:companionId/plans', summary: 'List companion plans', response: 'CompanionPlanList' },
+  { method: 'POST', path: '/api/v1/companions/:companionId/plans', summary: 'Create companion plan', response: 'CompanionPlan' },
+  { method: 'PATCH', path: '/api/v1/companions/:companionId/plans/:planId', summary: 'Update companion plan', response: 'CompanionPlan' },
+  { method: 'DELETE', path: '/api/v1/companions/:companionId/plans/:planId', summary: 'Delete companion plan', status: 204 },
+  { method: 'GET', path: '/api/v1/companions/:companionId/todos', summary: 'List companion todos', response: 'CompanionTodoList' },
+  { method: 'POST', path: '/api/v1/companions/:companionId/todos', summary: 'Create companion todo', response: 'CompanionTodo' },
+  { method: 'PATCH', path: '/api/v1/companions/:companionId/todos/:todoId', summary: 'Update companion todo', response: 'CompanionTodo' },
+  { method: 'DELETE', path: '/api/v1/companions/:companionId/todos/:todoId', summary: 'Delete companion todo', status: 204 },
   { method: 'GET', path: '/api/v1/companions/:companionId/conversations', summary: 'List conversations for a companion', response: 'CompanionConversationList' },
   { method: 'POST', path: '/api/v1/companions/:companionId/conversations', summary: 'Ensure a private chat or create a group', response: 'CompanionConversation' },
   { method: 'GET', path: '/api/v1/companion-conversations/:conversationId', summary: 'Read one companion conversation with members', response: 'CompanionConversation' },
@@ -101,9 +121,12 @@ export function registerCompanionRoutes(app: AnyElysia, forwardHeaders: (request
         });
         const set = context.set as { headers: Record<string, string | number> };
         set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
-        set.headers['cache-control'] = 'no-cache';
+        set.headers['cache-control'] = 'no-cache, no-transform';
         set.headers['x-accel-buffering'] = 'no';
-        return new Response(response.body, { status: response.status, headers: response.headers });
+        const sseHeaders = new Headers(response.headers);
+        sseHeaders.set('cache-control', 'no-cache, no-transform');
+        sseHeaders.set('x-accel-buffering', 'no');
+        return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), { status: response.status, headers: sseHeaders });
       }
       const body: unknown = context.body;
       return proxyRaw(url.pathname + url.search, {

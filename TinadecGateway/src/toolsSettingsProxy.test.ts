@@ -39,3 +39,42 @@ test('tools proxy preserves Core validation and concurrency failure details', as
   const response = await app.handle(new Request('http://gateway.local/api/v1/tools/settings/defaults', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ settings: {} }) }));
   assert.equal(response.status, 412); assert.equal(response.headers.get('content-type'), 'application/problem+json'); assert.equal((await response.json() as { code: string }).code, 'tool_settings_conflict');
 });
+test('new MCP CRUD, Skill install/toggle/reload, External CLI discovery, and SessionPlan routes proxy verbatim', async () => {
+  const calls: { url: string; method: string }[] = [];
+  globalThis.fetch = (async (input, init) => {
+    calls.push({ url: String(input), method: init?.method ?? 'GET' });
+    if ((init?.method ?? 'GET') === 'DELETE') return new Response(null, { status: 204 });
+    return Response.json({ ok: true }, { headers: { etag: '"2"' } });
+  }) as typeof fetch;
+
+  const cases: Array<[string, string, unknown?]> = [
+    ['GET', '/api/v1/mcp/servers/configured?project_id=p1'],
+    ['POST', '/api/v1/mcp/servers', { id: 'gh', transport: 'stdio', command: 'npx' }],
+    ['POST', '/api/v1/mcp/servers/import-json', { json: '{"mcpServers":{}}' }],
+    ['PUT', '/api/v1/mcp/servers/gh', { id: 'gh', transport: 'http', url: 'https://example.com/mcp' }],
+    ['PATCH', '/api/v1/mcp/servers/gh/enabled', { enabled: false }],
+    ['POST', '/api/v1/mcp/servers/gh/test'],
+    ['DELETE', '/api/v1/mcp/servers/gh'],
+    ['POST', '/api/v1/tools/mcp/servers/import-json', { json: '{}' }],
+    ['PATCH', '/api/v1/tools/mcp/servers/r1/enabled', { enabled: true }],
+    ['POST', '/api/v1/tools/skills/install', { source_type: 'inline', name: 'my-skill', content: '---\nname: my-skill\n---' }],
+    ['PATCH', '/api/v1/tools/skills/r1/enabled', { enabled: true }],
+    ['POST', '/api/v1/tools/skills/reload'],
+    ['GET', '/api/v1/tools/external-cli/discover?ecosystems=claude_code,codex'],
+    ['GET', '/api/v1/sessions/s1/plan'],
+    ['PUT', '/api/v1/sessions/s1/plan', { title: 'Plan', phases: [] }],
+    ['PATCH', '/api/v1/sessions/s1/plan', { status: 'active' }],
+    ['POST', '/api/v1/sessions/s1/plan/approve', {}],
+    ['GET', '/api/v1/fs/browse?path=__roots__'],
+  ];
+
+  for (const [method, path, body] of cases) {
+    const res = await app.handle(new Request(`http://gateway.local${path}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    }));
+    assert.equal(res.status, method === 'DELETE' ? 204 : 200, `${method} ${path}`);
+    assert.deepEqual(calls.at(-1), { url: `http://127.0.0.1:48731${path}`, method });
+  }
+});

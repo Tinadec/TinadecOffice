@@ -294,9 +294,63 @@ const preAuthorization = t.Object({
  * rows where the key is simply absent — and "absent" is the one thing this page needs
  * to say: it means the provider reported no usage, not that the call cost nothing.
  */
+const modelInvocationItem = t.Object({
+  id: t.String({ format: 'uuid' }),
+  call_id: t.String({ format: 'uuid' }),
+  attempt: t.Integer({ minimum: 0 }),
+  session_id: t.String({ format: 'uuid' }),
+  run_id: t.String({ format: 'uuid' }),
+  turn_id: t.Optional(t.String({ format: 'uuid' })),
+  agent_instance_id: t.Optional(t.String({ format: 'uuid' })),
+  agent_definition_id: t.String({ format: 'uuid' }),
+  agent_version_id: t.String({ format: 'uuid' }),
+  mode_version_id: t.String({ format: 'uuid' }),
+  strategy_source: t.String(),
+  route_id: t.Optional(t.String({ format: 'uuid' })),
+  route_version_id: t.Optional(t.String({ format: 'uuid' })),
+  provider_instance_id: t.String({ format: 'uuid' }),
+  provider_version_id: t.String({ format: 'uuid' }),
+  model: t.Optional(t.String()),
+  protocol: t.String(),
+  fallback_position: t.Integer({ minimum: 0 }),
+  status: t.String(),
+  error_category: t.Optional(t.String()),
+  safe_error_message: t.Optional(t.String()),
+  input_tokens: t.Optional(t.Number()),
+  output_tokens: t.Optional(t.Number()),
+  total_tokens: t.Optional(t.Number()),
+  started_at: t.String({ format: 'date-time' }),
+  completed_at: t.Optional(t.String({ format: 'date-time' })),
+}, { additionalProperties: true });
+
 const modelInvocationPage = t.Object({
-  items: t.Array(t.Unknown()),
+  items: t.Array(modelInvocationItem),
   next_cursor: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+const lifecycleHookEntry = t.Object({
+  id: t.String(),
+  name: t.Optional(t.String()),
+  event: t.String(),
+  matcher: t.Optional(t.String()),
+  command: t.String(),
+  timeout_ms: t.Integer({ minimum: 100 }),
+  blocking: t.Boolean(),
+  enabled: t.Boolean(),
+}, { additionalProperties: true });
+
+const lifecycleHooksDocument = t.Object({
+  scope: t.String(),
+  workspace_root: t.Optional(t.String()),
+  hooks: t.Array(lifecycleHookEntry),
+  revision: t.Integer({ minimum: 0 }),
+}, { additionalProperties: true });
+
+const lifecycleHooksWriteRequest = t.Object({
+  scope: t.Optional(t.String()),
+  workspace_root: t.Optional(t.String()),
+  hooks: t.Array(lifecycleHookEntry),
+  expected_revision: t.Optional(t.Integer({ minimum: 0 })),
 }, { additionalProperties: true });
 
 /**
@@ -324,158 +378,57 @@ const mcpServerTools = t.Object({
   server: t.Optional(t.Unknown()),
 }, { additionalProperties: true });
 
-/**
- * The market source list. Typed at the envelope because `supported_kinds` is the field a picker
- * must read: the kinds an install can be pointed at are decided by which adapters this build has,
- * and a client that guesses gets a 400 it cannot predict.
- */
-const marketSourceList = t.Object({
-  sources: t.Array(t.Unknown()),
-  supported_kinds: t.Array(t.String()),
+const sessionPlanArtifact = t.Object({
+  kind: t.Union([t.Literal('file'), t.Literal('worktree'), t.Literal('summary'), t.Literal('attachment')]),
+  label: t.String(),
+  path: t.Optional(nullableString()),
+  ref_id: t.Optional(nullableString()),
 }, { additionalProperties: true });
 
-const marketSource = t.Object({
+const sessionPlanStep = t.Object({
   id: t.String(),
-  name: t.String(),
-  kind: t.String(),
-  location: t.String(),
-  enabled: t.Boolean(),
-  revision: t.Number(),
-  last_refreshed_at: t.Optional(t.String()),
-  last_error: t.Optional(t.String()),
-  entry_count: t.Number(),
+  title: t.String(),
+  description: t.Optional(nullableString()),
+  status: t.Union([t.Literal('pending'), t.Literal('in_progress'), t.Literal('completed'), t.Literal('blocked'), t.Literal('failed'), t.Literal('skipped')]),
+  depends_on: t.Array(t.String()),
+  bound_task_key: t.Optional(nullableString()),
+  assigned_agent_slug: t.Optional(nullableString()),
+  verification_criteria: t.Array(t.String()),
+  artifacts: t.Array(componentRef('SessionPlanArtifact')),
+  summary: t.Optional(nullableString()),
+  updated_at: t.Optional(nullableString()),
 }, { additionalProperties: true });
 
-/**
- * One refresh's answer. `outcome` is the whole point: fetched / blocked / unavailable are three
- * facts about the same unchanged-looking catalog, and only the first one entitles a reader to
- * treat an entry count as the state of the market.
- */
-const marketRefresh = t.Object({
-  source_id: t.String(),
-  outcome: t.String(),
-  fetched_rows: t.Number(),
-  refused_rows: t.Number(),
-  removed_rows: t.Number(),
-  // A row an installation still references is kept and aged rather than deleted, and this is the
-  // only way the two counts add up: without it a listing that dropped a row shows neither a
-  // removal nor a reason.
-  retained_rows: t.Number(),
-  pages_fetched: t.Number(),
-  truncated_pages: t.Boolean(),
-  reason: t.Optional(t.String()),
-  refreshed_at: t.Optional(t.String()),
-}, { additionalProperties: true });
-
-/** Rows stay opaque per the standing convention; the paging and freshness keys do not. */
-const marketCatalogPage = t.Object({
-  items: t.Array(t.Unknown()),
-  total_available: t.Number(),
-  has_more: t.Boolean(),
-  as_of: t.Optional(t.String()),
-}, { additionalProperties: true });
-
-/**
- * One catalog row, typed on purpose: `manifest_hash` and `version` are what a later install must
- * be pinned to, so the field names have to be part of the contract rather than a client's guess
- * at Core's DTO.
- */
-const marketCatalogEntry = t.Object({
-  catalog_id: t.String(),
-  source_id: t.String(),
-  source_name: t.String(),
-  extension_id: t.String(),
-  kind: t.String(),
-  version: t.String(),
-  display_name: t.String(),
-  description: t.Optional(t.String()),
-  homepage: t.Optional(t.String()),
-  registry_type: t.Optional(t.String()),
-  transports: t.Array(t.String()),
-  manifest_hash: t.String(),
-  refreshed_at: t.String(),
-  expires_at: t.String(),
-  installable: t.Boolean(),
-  install_blocker: t.Optional(t.String()),
-  install_blocker_code: t.Optional(t.String()),
-  install_blocker_data: t.Optional(t.Unsafe({ type: 'object', additionalProperties: { type: 'string' } })),
-}, { additionalProperties: true });
-
-/**
- * The frozen review surface: what a person is being asked to approve, before anything is written.
- * Typed field by field rather than opaque, because the whole safety claim of the two-step install
- * is that these exact values are what get written — a client that has to guess the key names
- * cannot show them, and a person who is not shown them is not approving anything.
- */
-const marketInstallEnvironmentRequest = t.Object({
-  name: t.String(),
-  required: t.Boolean(),
-  secret: t.Boolean(),
-  description: t.Optional(t.String()),
-}, { additionalProperties: false });
-
-const marketPackageFile = t.Object({
-  path: t.String(), content_hash: t.String(), size_bytes: t.Integer(),
-}, { additionalProperties: false });
-
-const marketInstallProposal = t.Object({
+const sessionPlanPhase = t.Object({
   id: t.String(),
-  action: t.String(),
-  project_id: t.Optional(nullableString()),
-  catalog_id: t.Optional(t.String()),
-  installation_id: t.Optional(t.String()),
-  source_name: t.String(),
-  extension_id: t.String(),
-  kind: t.String(),
-  version: t.String(),
-  server_id: t.String(),
-  replaces_command: t.Optional(t.String()),
-  command: t.Optional(t.String()),
-  args: t.Array(t.String()),
-  environment: t.Array(marketInstallEnvironmentRequest),
-  target_path: t.String(),
-  content: t.String(),
-  expected_file_hash: t.Optional(t.String()),
-  digest: t.String(),
-  expires_at: t.String(),
-  warnings: t.Array(t.String()),
-  scope: t.Optional(t.Union([t.Literal('shared'), t.Literal('project')])),
-  resource_id: t.Optional(nullableString()),
-  package_hash: t.Optional(nullableString()),
-  package_files: t.Optional(t.Array(marketPackageFile)),
-  availability: t.Optional(nullableString()),
+  title: t.String(),
+  description: t.Optional(nullableString()),
+  order: t.Integer(),
+  status: t.Union([t.Literal('pending'), t.Literal('in_progress'), t.Literal('completed'), t.Literal('blocked'), t.Literal('failed'), t.Literal('skipped')]),
+  steps: t.Array(componentRef('SessionPlanStep')),
 }, { additionalProperties: true });
 
-/**
- * One approved install and the action that carries it. `action_status` is read live from the user
- * tool action rather than copied, so a refused or failed approval can never be displayed as an
- * installed server.
- */
-const marketInstallation = t.Object({
+const sessionPlanProgress = t.Object({
+  total_steps: t.Integer(),
+  completed_steps: t.Integer(),
+  in_progress_steps: t.Integer(),
+  blocked_steps: t.Integer(),
+  failed_steps: t.Integer(),
+  pending_steps: t.Integer(),
+}, { additionalProperties: true });
+
+const sessionPlan = t.Object({
   id: t.String(),
-  project_id: t.Optional(nullableString()),
-  catalog_id: t.String(),
-  source_name: t.String(),
-  extension_id: t.String(),
-  kind: t.String(),
-  version: t.String(),
-  server_id: t.String(),
-  config_path: t.String(),
-  state: t.String(),
-  install_action_id: t.String(),
-  uninstall_action_id: t.Optional(t.String()),
-  action_status: t.Optional(t.String()),
-  created_at: t.String(),
+  session_id: t.String(),
+  title: t.String(),
+  goal: t.Optional(nullableString()),
+  status: t.Union([t.Literal('draft'), t.Literal('approved'), t.Literal('active'), t.Literal('completed'), t.Literal('blocked')]),
+  revision: t.Integer(),
+  approved_at: t.Optional(nullableString()),
+  last_run_id: t.Optional(nullableString()),
   updated_at: t.String(),
-  scope: t.Optional(t.Union([t.Literal('shared'), t.Literal('project')])),
-  resource_id: t.Optional(nullableString()),
-  package_hash: t.Optional(nullableString()),
-  package_files: t.Optional(t.Array(marketPackageFile)),
-  availability: t.Optional(nullableString()),
-}, { additionalProperties: true });
-
-const marketInstallationList = t.Object({
-  installations: t.Array(componentRef('MarketInstallation')),
+  phases: t.Array(componentRef('SessionPlanPhase')),
+  progress: componentRef('SessionPlanProgress'),
 }, { additionalProperties: true });
 
 /**
@@ -554,17 +507,18 @@ export const externalDtoSchemas = {
   ContextVersionList: t.Array(componentRef('ContextVersion')),
   Assignment: assignment,
   OrchestrationSnapshot: orchestrationSnapshot,
+  ModelInvocationItem: modelInvocationItem,
   ModelInvocationPage: modelInvocationPage,
+  LifecycleHookEntry: lifecycleHookEntry,
+  LifecycleHooksDocument: lifecycleHooksDocument,
+  LifecycleHooksWriteRequest: lifecycleHooksWriteRequest,
   McpInventory: mcpInventory,
   McpServerTools: mcpServerTools,
-  MarketSourceList: marketSourceList,
-  MarketSource: marketSource,
-  MarketRefresh: marketRefresh,
-  MarketCatalogPage: marketCatalogPage,
-  MarketCatalogEntry: marketCatalogEntry,
-  MarketInstallProposal: marketInstallProposal,
-  MarketInstallation: marketInstallation,
-  MarketInstallationList: marketInstallationList,
+  SessionPlanArtifact: sessionPlanArtifact,
+  SessionPlanStep: sessionPlanStep,
+  SessionPlanPhase: sessionPlanPhase,
+  SessionPlanProgress: sessionPlanProgress,
+  SessionPlan: sessionPlan,
   Health: health,
   PreAuthorization: preAuthorization,
   ToolPreviewLine: toolPreviewLine,

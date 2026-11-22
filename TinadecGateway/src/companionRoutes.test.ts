@@ -24,9 +24,15 @@ const routes: RouteCase[] = [
   { method: 'GET', template: '/api/v1/companion-settings', status: 200 },
   { method: 'PATCH', template: '/api/v1/companion-settings', body: { main_companion_id: id, autonomy_paused: true, expected_revision: 3 }, status: 200 },
   { method: 'GET', template: '/api/v1/companion-connections', status: 200 },
-  // BYO Live2D registry: static prefix, import before the id route.
+  // BYO Live2D registry: static prefix, sdk & import before the id route.
+  { method: 'GET', template: '/api/v1/companion-avatars/sdk', status: 200 },
+  { method: 'POST', template: '/api/v1/companion-avatars/sdk', body: { file_name: 'live2dcubismcore.min.js', content_base64: 'Ly8=' }, status: 200 },
+  { method: 'POST', template: '/api/v1/companion-avatars/sdk/import', body: { file_name: 'live2dcubismcore.min.js', content_base64: 'Ly8=' }, status: 200 },
+  { method: 'DELETE', template: '/api/v1/companion-avatars/sdk', status: 204 },
+  { method: 'GET', template: '/api/v1/companion-avatars/sdk/{asset}', status: 200 },
   { method: 'GET', template: '/api/v1/companion-avatars', status: 200 },
   { method: 'POST', template: '/api/v1/companion-avatars/import', body: { path: 'C:/models/nova' }, status: 200 },
+  { method: 'GET', template: '/api/v1/companion-avatars/{avatarId}/assets/*', status: 200 },
   { method: 'DELETE', template: '/api/v1/companion-avatars/{avatarId}', status: 204 },
   // Static companion path, deliberately before the companion-id routes in the implementation.
   { method: 'GET', template: '/api/v1/companions/activity', query: 'limit=5', status: 200 },
@@ -53,6 +59,19 @@ const routes: RouteCase[] = [
   { method: 'POST', template: '/api/v1/companions/{companionId}/connections', body: { kind: 'mcp', name: 'Local MCP', endpoint: 'stdio://x', authorization: 'configured' }, status: 200 },
   { method: 'PATCH', template: '/api/v1/companions/{companionId}/connections/{bindingId}', body: { authorization: 'revoked', enabled: false }, status: 200 },
   { method: 'DELETE', template: '/api/v1/companions/{companionId}/connections/{bindingId}', status: 204 },
+  { method: 'GET', template: '/api/v1/companions/{companionId}/schedules', status: 200 },
+  { method: 'POST', template: '/api/v1/companions/{companionId}/schedules', body: { title: 'Daily check', prompt: 'Summarize' }, status: 200 },
+  { method: 'PATCH', template: '/api/v1/companions/{companionId}/schedules/{scheduleId}', body: { enabled: false }, status: 200 },
+  { method: 'DELETE', template: '/api/v1/companions/{companionId}/schedules/{scheduleId}', status: 204 },
+  { method: 'POST', template: '/api/v1/companions/{companionId}/schedules/{scheduleId}/trigger', status: 200 },
+  { method: 'GET', template: '/api/v1/companions/{companionId}/plans', status: 200 },
+  { method: 'POST', template: '/api/v1/companions/{companionId}/plans', body: { title: 'Q1 Roadmap' }, status: 200 },
+  { method: 'PATCH', template: '/api/v1/companions/{companionId}/plans/{planId}', body: { status: 'completed' }, status: 200 },
+  { method: 'DELETE', template: '/api/v1/companions/{companionId}/plans/{planId}', status: 204 },
+  { method: 'GET', template: '/api/v1/companions/{companionId}/todos', status: 200 },
+  { method: 'POST', template: '/api/v1/companions/{companionId}/todos', body: { title: 'Review PR' }, status: 200 },
+  { method: 'PATCH', template: '/api/v1/companions/{companionId}/todos/{todoId}', body: { status: 'done' }, status: 200 },
+  { method: 'DELETE', template: '/api/v1/companions/{companionId}/todos/{todoId}', status: 204 },
   { method: 'GET', template: '/api/v1/companions/{companionId}/conversations', query: 'include_groups=false', status: 200 },
   { method: 'POST', template: '/api/v1/companions/{companionId}/conversations', body: { kind: 'private' }, status: 200 },
   { method: 'GET', template: '/api/v1/companion-conversations/{conversationId}', status: 200 },
@@ -68,7 +87,10 @@ const routes: RouteCase[] = [
 ];
 
 function materialize(route: RouteCase): string {
-  const path = route.template.replace(/\{[^}]+\}/g, id);
+  const path = route.template
+    .replace('{asset}', 'live2dcubismcore.min.js')
+    .replace('/*', '/textures/texture_00.png')
+    .replace(/\{[^}]+\}/g, id);
   return route.query ? `${path}?${route.query}` : path;
 }
 
@@ -102,9 +124,9 @@ test('every companion operation forwards the exact path, query, JSON body and st
     assert.equal(call.body, body, `${route.method} ${url} rewrote the body`);
   }
   assert.equal(calls.length, routes.length);
-  // A contract-size pin: 30 paths / 41 operations. Shrinking the proxied surface fails here.
-  assert.equal(new Set(routes.map((route) => route.template)).size, 30);
-  assert.equal(routes.length, 41);
+  // A contract-size pin: 41 paths / 60 operations. Shrinking the proxied surface fails here.
+  assert.equal(new Set(routes.map((route) => route.template)).size, 41);
+  assert.equal(routes.length, 60);
 });
 
 test('If-Match and Idempotency-Key reach Core unchanged', { concurrency: false }, async () => {
@@ -187,10 +209,12 @@ test('companion paths and schemas are documented in the external contract', { co
     components: { schemas: Record<string, unknown> };
   };
   const documented = Object.keys(doc.paths).filter((path) => path.startsWith('/api/v1/companion')).sort();
-  const expected = [...new Set(routes.map((route) => route.template))].sort();
+  // Elysia Swagger skips raw `*` wildcard catch-all routes from OpenAPI paths; runtime forwarding is pinned above.
+  const expected = [...new Set(routes.map((route) => route.template).filter((p) => !p.endsWith('/*')))].sort();
   // Deep equality, not a floor: a route Core does not serve must not appear as a ghost entry.
   assert.deepEqual(documented, expected);
   for (const route of routes) {
+    if (route.template.endsWith('/*')) continue;
     assert.ok(doc.paths[route.template]?.[route.method.toLowerCase()], `Missing ${route.method} ${route.template}`);
   }
   assert.ok(doc.tags.some((tag) => tag.name === 'Companions'));

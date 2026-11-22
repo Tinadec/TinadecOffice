@@ -363,9 +363,17 @@ test('POST /api/v1/mcp/tinadec blocks non-loopback forwarding headers and proxie
   assert.equal(blockedRealIp.status, 403);
   assert.equal(upstreamCalls.length, 0);
 
-  const okLoopback = await app.handle(new Request('http://gateway.local/api/v1/mcp/tinadec', {
+  const blockedProxyLoopback = await app.handle(new Request('http://gateway.local/api/v1/mcp/tinadec', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-forwarded-for': '127.0.0.1, ::1', 'x-real-ip': '::ffff:127.0.0.1' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list' }),
+  }));
+  assert.equal(blockedProxyLoopback.status, 403);
+  assert.equal(upstreamCalls.length, 0);
+
+  const okLoopback = await app.handle(new Request('http://127.0.0.1:48730/api/v1/mcp/tinadec', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', host: '127.0.0.1:48730' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list' }),
   }));
   assert.equal(okLoopback.status, 200);
@@ -379,4 +387,32 @@ test('POST /api/v1/mcp/tinadec blocks non-loopback forwarding headers and proxie
   }));
   assert.equal(okNotify.status, 202);
   assert.equal(upstreamCalls.length, 2);
+});
+
+test('GET and PUT /api/v1/lifecycle-hooks thin proxy preserves query, If-Match, and ETag', async () => {
+  const calls: Array<{ url: string; method: string; ifMatch: string | null; body: unknown }> = [];
+  mockFetch((input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const headers = new Headers(init?.headers as HeadersInit | undefined);
+    const body = typeof init?.body === 'string' && init.body.length > 0 ? JSON.parse(init.body) : null;
+    calls.push({ url, method: init?.method ?? 'GET', ifMatch: headers.get('if-match'), body });
+    return new Response(JSON.stringify({ scope: 'workspace', hooks: [], revision: 2 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', etag: '"2"' },
+    });
+  });
+
+  const getRes = await app.handle(new Request('http://gateway.local/api/v1/lifecycle-hooks?scope=workspace&workspace_root=C%3A%2Frepo'));
+  assert.equal(getRes.status, 200);
+  assert.equal(getRes.headers.get('etag'), '"2"');
+  assert.equal(calls[0].url, 'http://127.0.0.1:48731/api/v1/lifecycle-hooks?scope=workspace&workspace_root=C%3A%2Frepo');
+
+  const putRes = await app.handle(new Request('http://gateway.local/api/v1/lifecycle-hooks', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'if-match': '"1"' },
+    body: JSON.stringify({ scope: 'global', hooks: [{ id: 'h1', event: 'PreToolUse', command: 'echo ok', timeout_ms: 2000, blocking: true, enabled: true }] }),
+  }));
+  assert.equal(putRes.status, 200);
+  assert.equal(calls[1].method, 'PUT');
+  assert.equal(calls[1].ifMatch, '"1"');
 });

@@ -16,6 +16,7 @@
  */
 
 export type DeployMode = 'local' | 'cloud';
+export type TrustProxyMode = 'false' | 'true' | 'cloudflare';
 
 export interface GatewayConfig {
   /** 部署模式 */
@@ -38,6 +39,8 @@ export interface GatewayConfig {
   perfSampleRate: number;
   /** 是否信任反向代理头 */
   trustProxy: boolean;
+  /** 反向代理信任模式：false | true | cloudflare */
+  trustProxyMode: TrustProxyMode;
 }
 
 export interface AuthConfig {
@@ -102,6 +105,14 @@ export function loadConfig(): GatewayConfig {
     }
   }
 
+  const rawTrustProxy = (process.env.TINADEC_TRUST_PROXY ?? '').trim().toLowerCase();
+  const trustProxyMode: TrustProxyMode =
+    rawTrustProxy === 'cloudflare'
+      ? 'cloudflare'
+      : rawTrustProxy === 'true' || rawTrustProxy === '1' || isCloud
+        ? 'true'
+        : 'false';
+
   return {
     mode,
     port,
@@ -116,7 +127,8 @@ export function loadConfig(): GatewayConfig {
     // streaming proxies (they are meant to stay open) — that is a behaviour change of its own,
     // not a bug fix, so it stays a separate item rather than riding along silently.
     requestTimeoutMs: getEnvNumber('TINADEC_GATEWAY_TIMEOUT_MS', 120_000),
-    trustProxy: isCloud,
+    trustProxy: trustProxyMode !== 'false',
+    trustProxyMode,
     // 默认 0：观测不能以日志 IO 为代价。排查性能时再显式打开（0.05 = 5%）。
     perfSampleRate: clampRate(getEnvNumber('TINADEC_GATEWAY_PERF_SAMPLE', 0)),
   };

@@ -100,7 +100,7 @@ test('the phantom MCP control surface is gone from the gateway itself', async ()
   assert.equal(forwarded, 0, 'a route the gateway does not have must not reach Core either');
 });
 
-test('the external contract declares only the MCP reads Core implements', async () => {
+test('the external contract declares the canonical MCP surface Core implements', async () => {
   const response = await app.handle(new Request('http://gateway.local/docs/json'));
   assert.equal(response.status, 200);
   const doc = (await response.json()) as { paths: Record<string, Record<string, unknown>> };
@@ -108,12 +108,17 @@ test('the external contract declares only the MCP reads Core implements', async 
 
   assert.deepEqual(mcpPaths, [
     '/api/v1/mcp/servers',
+    '/api/v1/mcp/servers/configured',
+    '/api/v1/mcp/servers/import-json',
+    '/api/v1/mcp/servers/{serverId}',
+    '/api/v1/mcp/servers/{serverId}/enabled',
+    '/api/v1/mcp/servers/{serverId}/test',
     '/api/v1/mcp/servers/{serverId}/tools',
     '/api/v1/mcp/tinadec',
   ]);
-  // Both read routes and the loopback self-config MCP endpoint keep a typed 200 in the external contract.
   for (const path of mcpPaths) {
-    const op = (doc.paths[path]!.get ?? doc.paths[path]!.post) as { responses?: Record<string, { content?: unknown }> };
+    const pathObj = doc.paths[path]!;
+    const op = (pathObj.get ?? pathObj.post ?? pathObj.put ?? pathObj.patch) as { responses?: Record<string, { content?: unknown }> };
     assert.ok(op?.responses?.['200']?.content, `${path} must keep a typed 200 in the external contract`);
   }
 });

@@ -16,8 +16,17 @@ import {
   type AuthContext,
 } from './auth.js';
 import { findWsRoute, buildTargetWsUrl } from './websocket.js';
-import { proxyStream, setStreamHeaders } from './streaming.js';
+import { proxyStream, setStreamHeaders, wrapSseWithKeepalive } from './streaming.js';
 import { ensureRequestId, PRINCIPAL_VALUE } from './headers.js';
+import {
+  buildCorePrincipalForwardHeaders,
+  createWebAuthRuntime,
+  evaluateWebAdmission,
+  isStrictLoopbackRequest,
+  type AuthenticatedPrincipal,
+  type ServerLike,
+} from './webAuth.js';
+import { isWebPublicApiPath, registerWebServerPlugin } from './webServerPlugin.js';
 import { validateInteractionBody } from './mappers/interactionsMapper.js';
 import { mapProjects } from './mappers/projectMapper.js';
 import { mapSessions } from './mappers/sessionMapper.js';
@@ -44,6 +53,7 @@ import { registerTinaChatRoutes, tinaChatSchemas } from './tinaChatRoutes.js';
 import { registerOrganizationRoutes, organizationSchemas } from './organizationRoutes.js';
 import { registerToolsSettingsRoutes, toolsSettingsSchemas } from './toolsSettingsRoutes.js';
 import { registerStorageRoutes, storageSchemas } from './storageRoutes.js';
+import { contextMemorySchemas, registerContextMemoryRoutes } from './contextMemoryRoutes.js';
 import {
   finalizeRequestTiming,
   logRequestTiming,
@@ -56,6 +66,8 @@ import { resolveRunSessionId } from './runSessionLookup.js';
 
 const config = getConfig();
 const requestAuthContexts = new WeakMap<Request, AuthContext>();
+const requestPrincipals = new WeakMap<Request, AuthenticatedPrincipal>();
+const webAuthRuntime = createWebAuthRuntime();
 
 function setStatus(set: { status?: number | string }, status: number) {
   set.status = status;
@@ -117,7 +129,8 @@ function forwardHeaders(request: Request): Record<string, string> {
     const value = request.headers.get(name);
     if (value) existing[name] = value;
   }
-  return buildForwardHeaders(requestAuthContexts.get(request), existing);
+  const base = buildForwardHeaders(requestAuthContexts.get(request), existing);
+  return buildCorePrincipalForwardHeaders(base, requestPrincipals.get(request));
 }
 
 function setProxyResponseHeaders(
@@ -164,48 +177,11 @@ function setToolTransportResponseHeaders(
   if (contentType) set.headers['content-type'] = contentType;
 }
 
-function isLoopbackIpAddress(raw: string): boolean {
-  const trimmed = raw.trim().toLowerCase();
-  if (!trimmed) return false;
-  let host = trimmed;
-  if (host.startsWith('[')) {
-    const close = host.indexOf(']');
-    if (close <= 1) return false;
-    host = host.slice(1, close);
-  } else {
-    const firstColon = host.indexOf(':');
-    const lastColon = host.lastIndexOf(':');
-    if (firstColon !== -1 && firstColon === lastColon) {
-      host = host.slice(0, firstColon);
-    }
-  }
-
-  if (host.startsWith('::ffff:')) {
-    host = host.slice('::ffff:'.length);
-  }
-  if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true;
-  const ipv4Match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!ipv4Match) return false;
-  return Number(ipv4Match[1]) <= 255 && Number(ipv4Match[2]) <= 255 && Number(ipv4Match[3]) <= 255;
-}
-
 function isLoopbackMcpRequest(
   request: Request,
   server?: { requestIP?(req: Request): { address?: string } | null } | null,
 ): boolean {
-  const remoteIp = server?.requestIP?.(request)?.address;
-  if (remoteIp && !isLoopbackIpAddress(remoteIp)) return false;
-
-  for (const headerName of ['x-forwarded-for', 'x-real-ip']) {
-    const headerVal = request.headers.get(headerName);
-    if (headerVal === null) continue;
-    const segments = headerVal.split(',');
-    if (segments.length === 0) return false;
-    for (const seg of segments) {
-      if (!isLoopbackIpAddress(seg)) return false;
-    }
-  }
-  return true;
+  return isStrictLoopbackRequest(request, server);
 }
 
 const app = new Elysia()
@@ -219,7 +195,7 @@ const app = new Elysia()
       ],
       // TypeBox emits valid OpenAPI schemas, but its union types are not structurally
       // assignable to openapi-types' narrower SchemaObject declaration.
-      components: { securitySchemes: { TinadecHostControl: { type: 'apiKey', in: 'header', name: 'X-Tinadec-Host-Control', description: 'Private trusted host credential required by scope-enabled Core. Never expose it to Agent, renderer JavaScript, TOML, or a public frontend. Gateway only forwards a supplied credential and never signs anonymous local requests.' } }, schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...companionOpenApiSchemas, ...tinaChatSchemas, ...organizationSchemas, ...toolsSettingsSchemas, ...storageSchemas } as never },
+      components: { securitySchemes: { TinadecHostControl: { type: 'apiKey', in: 'header', name: 'X-Tinadec-Host-Control', description: 'Private trusted host credential required by scope-enabled Core. Never expose it to Agent, renderer JavaScript, TOML, or a public frontend. Gateway only forwards a supplied credential and never signs anonymous local requests.' } }, schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...companionOpenApiSchemas, ...tinaChatSchemas, ...organizationSchemas, ...toolsSettingsSchemas, ...storageSchemas, ...contextMemorySchemas } as never },
     }
   }))
   .onError(({ code, error, set, request }) => {
@@ -282,18 +258,30 @@ const app = new Elysia()
     set.headers['x-request-id'] = rid;
     set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
   })
-  .onRequest(async ({ request, set }) => {
-    if (config.mode === 'local') return;
+  .onRequest(async ({ request, set, server }) => {
     const path = new URL(request.url).pathname;
-    if (isPublicPath(path)) return;
-    const authResult = await authenticate(request.headers, config.auth);
-    if (!authResult.ok) {
-      setStatus(set, 401);
+    if (isPublicPath(path) || isWebPublicApiPath(path)) return;
+    if (path === '/api/v1/mcp/tinadec' && !isLoopbackMcpRequest(request, server as ServerLike | null)) {
+      setStatus(set, 403);
       set.headers['content-type'] = 'application/problem+json';
       emitServerTiming(request, set);
-      return toProblemDetails(401, authResult.error?.code ?? 'forbidden', authResult.error?.message ?? 'Authentication failed.', path);
+      return toProblemDetails(403, 'external_network_forbidden', 'The Tinadec self-configuration MCP endpoint only accepts loopback requests.', path);
     }
-    if (authResult.context) requestAuthContexts.set(request, authResult.context);
+    const admission = await evaluateWebAdmission({
+      request,
+      server: server as ServerLike | null,
+      runtime: webAuthRuntime,
+      mode: config.mode,
+      authConfig: config.auth,
+      trustProxy: config.trustProxyMode,
+    });
+    if (!admission.admitted) {
+      setStatus(set, admission.status);
+      set.headers['content-type'] = 'application/problem+json';
+      emitServerTiming(request, set);
+      return toProblemDetails(admission.status, admission.code, admission.message, path);
+    }
+    requestPrincipals.set(request, admission.principal);
   })
   // 只写响应头；不等待、不缓冲 body，SSE 与流式响应走同一条路。
   .onAfterHandle(({ request, set }) => {
@@ -928,14 +916,15 @@ const app = new Elysia()
     }
     setStatus(set, response.status);
     set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
-    set.headers['cache-control'] = 'no-cache';
+    set.headers['cache-control'] = 'no-cache, no-transform';
     set.headers['connection'] = 'keep-alive';
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    // Preserve the upstream Response so client cancellation closes the stream through
-    // Fetch's normal response lifecycle instead of making Elysia release an already
-    // cancelled reader (ERR_STREAM_RELEASE_LOCK).
-    return new Response(response.body, { status: response.status, headers: response.headers });
+    // Preserve the upstream Response while ensuring 15s keepalives (< Cloudflare 100s timeout).
+    const sseHeaders = new Headers(response.headers);
+    sseHeaders.set('cache-control', 'no-cache, no-transform');
+    sseHeaders.set('x-accel-buffering', 'no');
+    return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), { status: response.status, headers: sseHeaders });
   }, { detail: { summary: 'Run stream (SSE)', tags: ['Runs'], description: 'Durable SSE with id=seq and event=kind, Last-Event-ID / ?cursor= & ?after_seq resume. Kinds: ack/queued/assigned/steering/context_conflict/control/ephemeral_agent/delta/done/error. occurred_at is the durable journal timestamp; idle keep-alive is an SSE comment ": heartbeat" that never advances the cursor' } })
   .get('/api/v1/runs/:runId/task-nodes', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
@@ -1079,6 +1068,18 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapTaskNodes(result.data);
   }, { detail: { summary: 'Session task nodes', tags: ['Runs'], responses: { 200: externalJsonResponse('TaskNodeList', 'Task nodes across the session runs.') } } })
+  .get('/api/v1/sessions/:sessionId/plan', ({ params, request }) =>
+    proxyRaw(`/api/v1/sessions/${params.sessionId}/plan`, { headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Get session structured plan', tags: ['Sessions'], responses: { 200: externalJsonResponse('SessionPlan', 'Persistent session-scoped phased plan.') } } })
+  .put('/api/v1/sessions/:sessionId/plan', ({ params, body, request }) =>
+    proxyRaw(`/api/v1/sessions/${params.sessionId}/plan`, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body), headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Replace session structured plan', tags: ['Sessions'], responses: { 200: externalJsonResponse('SessionPlan', 'Saved session plan with updated revision.') } } })
+  .patch('/api/v1/sessions/:sessionId/plan', ({ params, body, request }) =>
+    proxyRaw(`/api/v1/sessions/${params.sessionId}/plan`, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body), headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Patch session structured plan', tags: ['Sessions'], responses: { 200: externalJsonResponse('SessionPlan', 'Updated session plan.') } } })
+  .post('/api/v1/sessions/:sessionId/plan/approve', ({ params, body, request }) =>
+    proxyRaw(`/api/v1/sessions/${params.sessionId}/plan/approve`, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body), headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Approve session structured plan', tags: ['Sessions'], responses: { 200: externalJsonResponse('SessionPlan', 'Approved session plan.') } } })
   .get('/api/v1/sessions/:sessionId/context-packs', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/context-packs`, { headers });
@@ -1117,10 +1118,13 @@ const app = new Elysia()
     if (cursor) params.set('cursor', String(cursor));
     const response = await proxySse(`/api/v1/events?${params.toString()}`, { headers: { ...headers, ...(cursor ? { 'last-event-id': String(cursor) } : {}) }, signal: request.signal });
     set.headers['content-type'] = 'text/event-stream';
-    set.headers['cache-control'] = 'no-cache';
+    set.headers['cache-control'] = 'no-cache, no-transform';
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return new Response(response.body, { status: response.status, headers: response.headers });
+    const sseHeaders = new Headers(response.headers);
+    sseHeaders.set('cache-control', 'no-cache, no-transform');
+    sseHeaders.set('x-accel-buffering', 'no');
+    return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), { status: response.status, headers: sseHeaders });
   }, { detail: { summary: 'Session events SSE', tags: ['System'], description: 'Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume' } })
   .get('/api/v1/approvals', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
@@ -1655,108 +1659,24 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Update model settings', tags: ['ModelCenter'] } })
-  .get('/api/v1/market/sources', async ({ set, request }) => {
+  .get('/api/v1/lifecycle-hooks', async ({ set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/market/sources', { headers });
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/lifecycle-hooks${search}`, { headers });
     setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/sources'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/lifecycle-hooks'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'List market sources', tags: ['System'], responses: { 200: externalJsonResponse('MarketSourceList', 'Durable sources plus the kinds this build has an adapter for; an empty list here really does mean nothing is configured, because these are Core rows.') } } })
-  .post('/api/v1/market/sources', async ({ body, set, request }) => {
+  }, { detail: { summary: 'Get workspace or global lifecycle hooks', tags: ['System'], responses: { 200: externalJsonResponse('LifecycleHooksDocument', 'Lifecycle hook definitions and optimistic revision.') } } })
+  .put('/api/v1/lifecycle-hooks', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/market/sources', { method: 'POST', body: body as Record<string, unknown>, headers });
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/lifecycle-hooks${search}`, { method: 'PUT', body: (body as Record<string, unknown> | undefined) ?? {}, headers });
     setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/sources'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/lifecycle-hooks'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Create market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketSource', 'The stored source. Core builds the request from kind+location; a url, command, or path in this body is not read.') } } })
-  .patch('/api/v1/market/sources/:sourceId', async ({ params, body, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}`, { method: 'PATCH', body: body as Record<string, unknown>, headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Enable or disable a market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketSource', 'The only editable field is enabled; name, kind, and location are not, so a source cannot be re-pointed under existing rows.') } } })
-  .delete('/api/v1/market/sources/:sourceId', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}`, { method: 'DELETE', headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Delete a market source', tags: ['System'] } })
-  .post('/api/v1/market/sources/:sourceId/refresh', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}/refresh`, { method: 'POST', headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}/refresh`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Refresh market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketRefresh', '`outcome` separates a completed read from a blocked or unreachable one; only the first changed the catalog.') } } })
-  .get('/api/v1/market/catalog', async ({ query, set, request }) => {
-    const headers = forwardHeaders(request);
-    // Names as Core reads them. This proxy used to send `query` and `sourceId`, which Core has
-    // never looked at, so a search box and a source filter both answered "the whole catalog"
-    // through the gateway while every unit test mocked the request and passed.
-    const params = new URLSearchParams();
-    const q = query as Record<string,unknown>;
-    if (q.kind) params.set('kind', String(q.kind));
-    if (q.q) params.set('q', String(q.q));
-    if (q.source_id) params.set('source_id', String(q.source_id));
-    if (q.limit) params.set('limit', String(q.limit));
-    if (q.offset) params.set('offset', String(q.offset));
-    const suffix = params.toString();
-    const result = await proxyJson(`/api/v1/market/catalog${suffix ? `?${suffix}` : ''}`, { headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/catalog'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Get market catalog', tags: ['System'], responses: { 200: externalJsonResponse('MarketCatalogPage', 'A page of stored claims, with total_available and as_of so a short page cannot be read as a small market.') } } })
-  .get('/api/v1/market/catalog/:catalogId', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/market/catalog/${params.catalogId}`, { headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/catalog/${params.catalogId}`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Get catalog item', tags: ['System'], responses: { 200: externalJsonResponse('MarketCatalogEntry', 'One entry as its source described it, including the metadata digest Core computed over that description.') } } })
-  .post('/api/v1/market/catalog/:catalogId/install-preview', async ({ params, body, set, request }) => {
-    const headers = forwardHeaders(request);
-    const path = `/api/v1/market/catalog/${params.catalogId}/install-preview`;
-    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Preview a market install', tags: ['System'], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { scope: { type: 'string', enum: ['shared', 'project'], default: 'shared', description: 'Skills default to shared. A shared skill does not require project_id.' }, project_id: { type: 'string', format: 'uuid', description: 'Required for project Skills and MCP installation.' } }, additionalProperties: false } } } }, responses: { 200: externalJsonResponse('MarketInstallProposal', 'Frozen scope, stable resource ID, complete package files and digest or pinned MCP command. Nothing was written by asking.') } } })
-  .post('/api/v1/market/installations/:installationId/uninstall-preview', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const path = `/api/v1/market/installations/${params.installationId}/uninstall-preview`;
-    const result = await proxyJson(path, { method: 'POST', headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Preview removing an installed market entry', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallProposal', 'The same config file with this one entry taken back out; downloaded package bytes are not touched.') } } })
-  .post('/api/v1/market/install-proposals/:proposalId/apply', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const path = `/api/v1/market/install-proposals/${params.proposalId}/apply`;
-    const result = await proxyJson(path, { method: 'POST', headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Queue an approved market write', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallation', 'The installation and the user tool action awaiting a human. The write happens when that action is approved, never here.') } } })
-  .get('/api/v1/market/installations', async ({ set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/market/installations', { headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/installations'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'List installed market entries', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallationList', 'What this workspace approved, with the live status of the action that writes it.') } } })
+  }, { detail: { summary: 'Save workspace or global lifecycle hooks', tags: ['System'], requestBody: externalJsonRequest('LifecycleHooksWriteRequest'), responses: { 200: externalJsonResponse('LifecycleHooksDocument', 'Saved lifecycle hook definitions and updated revision.') } } })
   .post('/api/v1/extensions/install-preview', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/extensions/install-preview', { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -1813,14 +1733,39 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Delete extension', tags: ['System'] } })
+  .get('/api/v1/mcp/servers/configured', ({ request }) => {
+    const url = new URL(request.url);
+    return proxyRaw(`/api/v1/mcp/servers/configured${url.search}`, { headers: forwardHeaders(request), signal: request.signal });
+  }, { detail: { summary: 'List configured MCP server resources (secrets masked)', tags: ['Tools'], responses: { 200: externalJsonResponse('ToolMcpResourceList', 'Configured MCP server registrations with masked secrets.') } } })
+  .post('/api/v1/mcp/servers/import-json', ({ body, request }) =>
+    proxyRaw('/api/v1/mcp/servers/import-json', { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body), headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Import MCP servers from .mcp.json / Codex / Claude JSON', tags: ['Tools'], requestBody: externalJsonRequest('McpImportJsonRequest'), responses: { 200: externalJsonResponse('McpImportJsonResult', 'Imported and skipped MCP server registrations.') } } })
   .get('/api/v1/mcp/servers', async ({ set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/mcp/servers', { headers });
+    const url = new URL(request.url);
+    const result = await proxyJson(`/api/v1/mcp/servers${url.search}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/mcp/servers'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List MCP servers (Core-owned)', tags: ['System'], responses: { 200: externalJsonResponse('McpInventory', 'Inventory read through the Tool Provider; `source` says whether the empty list means "nothing configured" or "could not look".') } } })
+  .post('/api/v1/mcp/servers', ({ body, request }) =>
+    proxyRaw('/api/v1/mcp/servers', { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body), headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Create MCP server configuration', tags: ['Tools'], responses: { 200: externalJsonResponse('ToolMcpResource', 'Created MCP server configuration with masked secrets.') } } })
+  .put('/api/v1/mcp/servers/:serverId', ({ params, body, request }) =>
+    proxyRaw(`/api/v1/mcp/servers/${params.serverId}`, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body), headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Update MCP server configuration', tags: ['Tools'], responses: { 200: externalJsonResponse('ToolMcpResource', 'Updated MCP server configuration with masked secrets.') } } })
+  .patch('/api/v1/mcp/servers/:serverId/enabled', ({ params, body, request }) =>
+    proxyRaw(`/api/v1/mcp/servers/${params.serverId}/enabled`, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body), headers: forwardHeaders(request), signal: request.signal }),
+    { detail: { summary: 'Toggle MCP server enabled state', tags: ['Tools'], requestBody: externalJsonRequest('McpServerEnabledRequest'), responses: { 200: externalJsonResponse('ToolMcpResource', 'Updated MCP server configuration.') } } })
+  .post('/api/v1/mcp/servers/:serverId/test', ({ params, request }) => {
+    const url = new URL(request.url);
+    return proxyRaw(`/api/v1/mcp/servers/${params.serverId}/test${url.search}`, { method: 'POST', headers: forwardHeaders(request), signal: request.signal });
+  }, { detail: { summary: 'Test MCP server connectivity and list discovered tools', tags: ['Tools'], responses: { 200: externalJsonResponse('McpServerTestResult', 'Live handshake probe outcome and discovered tools.') } } })
+  .delete('/api/v1/mcp/servers/:serverId', ({ params, request }) => {
+    const url = new URL(request.url);
+    return proxyRaw(`/api/v1/mcp/servers/${params.serverId}${url.search}`, { method: 'DELETE', headers: forwardHeaders(request), signal: request.signal });
+  }, { detail: { summary: 'Delete MCP server configuration', tags: ['Tools'], responses: { 204: { description: 'Deleted; Core returned no content.' } } } })
   .get('/api/v1/mcp/servers/:serverId/tools', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/mcp/servers/${params.serverId}/tools`, { headers });
@@ -1829,6 +1774,10 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List MCP server tools', tags: ['System'], responses: { 200: externalJsonResponse('McpServerTools', 'One named server with its tools and schemas; 404 mcp_server_not_found only after Core actually read the inventory.') } } })
+  .get('/api/v1/fs/browse', ({ request }) => {
+    const url = new URL(request.url);
+    return proxyRaw(`/api/v1/fs/browse${url.search}`, { headers: forwardHeaders(request), signal: request.signal });
+  }, { detail: { summary: 'Browse host filesystem directories (authenticated Web/Electron picker)', tags: ['System'] } })
   .post('/api/v1/mcp/tinadec', async ({ body, set, request, server }) => {
     if (!isLoopbackMcpRequest(request, server)) {
       setStatus(set, 403);
@@ -2643,22 +2592,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Spawn run agent (temporary/persistent/profile)', tags: ['Agents'] } })
-  .ws('/ws/terminal', {
-    open(ws) {
-      const route = findWsRoute('/ws/terminal');
-      if (route) {
-        const targetUrl = buildTargetWsUrl(route);
-        ws.subscribe('terminal-proxy');
-        void targetUrl;
-      }
-    },
-    message(ws, message) {
-      ws.publish('terminal-proxy', message);
-    },
-    close(ws) {
-      ws.unsubscribe('terminal-proxy');
-    },
-  })
   .ws('/ws/debug', {
     open(ws) {
       const route = findWsRoute('/ws/debug');
@@ -2872,6 +2805,15 @@ registerTinaChatRoutes(app, forwardHeaders);
 registerOrganizationRoutes(app, forwardHeaders);
 registerToolsSettingsRoutes(app, forwardHeaders);
 registerStorageRoutes(app, forwardHeaders);
+registerContextMemoryRoutes(app, forwardHeaders);
+registerWebServerPlugin(app, {
+  runtime: webAuthRuntime,
+  getPrincipal: (request) => requestPrincipals.get(request),
+  forwardHeaders,
+  mode: config.mode,
+  authConfig: config.auth,
+  trustProxy: config.trustProxyMode,
+});
 
 /** A long-lived stream: no idle cut-off for this request (see GATEWAY_IDLE_TIMEOUT_SECONDS). */
 function keepStreamOpen(server: { timeout(request: Request, seconds: number): void } | null | undefined, request: Request) {

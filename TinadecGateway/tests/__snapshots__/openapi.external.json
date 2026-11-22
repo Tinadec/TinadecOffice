@@ -1135,6 +1135,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "entry_model_json": {
+            "nullable": true,
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -1521,7 +1525,7 @@
           "role": {
             "enum": [
               "autonomous",
-              "buddy"
+              "session_partner"
             ],
             "type": "string"
           },
@@ -1574,6 +1578,50 @@
           "$ref": "#/components/schemas/CompanionSummary"
         },
         "type": "array"
+      },
+      "CompanionLive2dSdkStatus": {
+        "additionalProperties": true,
+        "properties": {
+          "file_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "has_wasm": {
+            "type": "boolean"
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "script_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "sha256": {
+            "nullable": true,
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "wasm_url": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "ready",
+          "installed",
+          "has_wasm"
+        ],
+        "type": "object"
       },
       "CompanionMandate": {
         "additionalProperties": true,
@@ -1801,6 +1849,68 @@
         },
         "type": "array"
       },
+      "CompanionPlan": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "completed",
+              "paused",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "title",
+          "status",
+          "steps",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CompanionPlanList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionPlan"
+        },
+        "type": "array"
+      },
       "CompanionRecruitment": {
         "additionalProperties": true,
         "properties": {
@@ -1873,6 +1983,9 @@
       "CompanionRun": {
         "additionalProperties": true,
         "properties": {
+          "channel_kind": {
+            "type": "string"
+          },
           "companion_id": {
             "format": "uuid",
             "type": "string"
@@ -1903,6 +2016,9 @@
             "format": "date-time",
             "nullable": true,
             "type": "string"
+          },
+          "hop_depth": {
+            "type": "integer"
           },
           "id": {
             "format": "uuid",
@@ -1963,6 +2079,111 @@
         ],
         "type": "object"
       },
+      "CompanionSchedule": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cron_expression": {
+            "nullable": true,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_run_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "next_run_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "one_shot": {
+            "type": "boolean"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "run_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_conversation_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "title",
+          "prompt",
+          "one_shot",
+          "enabled",
+          "status",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CompanionScheduleList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionSchedule"
+        },
+        "type": "array"
+      },
+      "CompanionScheduleTriggerResult": {
+        "additionalProperties": true,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/CompanionSchedule"
+          }
+        },
+        "required": [
+          "schedule",
+          "run_ids",
+          "conversation_id"
+        ],
+        "type": "object"
+      },
       "CompanionSendMessageResult": {
         "additionalProperties": true,
         "properties": {
@@ -2013,15 +2234,13 @@
           "autonomy_paused": {
             "type": "boolean"
           },
-          "buddy_companion_id": {
-            "format": "uuid",
-            "nullable": true,
-            "type": "string"
-          },
           "main_companion_id": {
             "format": "uuid",
             "nullable": true,
             "type": "string"
+          },
+          "max_bot_hop_depth": {
+            "type": "integer"
           },
           "recruit_limit": {
             "type": "integer"
@@ -2032,8 +2251,8 @@
         },
         "required": [
           "main_companion_id",
-          "buddy_companion_id",
           "recruit_limit",
+          "max_bot_hop_depth",
           "autonomy_paused",
           "revision"
         ],
@@ -2163,7 +2382,7 @@
           "role": {
             "enum": [
               "autonomous",
-              "buddy"
+              "session_partner"
             ],
             "type": "string"
           },
@@ -2209,6 +2428,79 @@
           "current_activity"
         ],
         "type": "object"
+      },
+      "CompanionTodo": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "due_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "note": {
+            "nullable": true,
+            "type": "string"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "in_progress",
+              "done",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "companion_id",
+          "title",
+          "priority",
+          "status",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CompanionTodoList": {
+        "items": {
+          "$ref": "#/components/schemas/CompanionTodo"
+        },
+        "type": "array"
       },
       "ConfigurationDocument": {
         "properties": {
@@ -2275,6 +2567,121 @@
         ],
         "type": "object"
       },
+      "ContextMemoryPolicy": {
+        "properties": {
+          "allow_cross_session_recall": {
+            "type": "boolean"
+          },
+          "allowed_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "allowed_scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "always_on_primitives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "candidate_only": {
+            "type": "boolean"
+          },
+          "compaction_trigger_ratio": {
+            "type": "number"
+          },
+          "companion_can_write_project_memory": {
+            "type": "boolean"
+          },
+          "content_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "core_markdown_max_tokens": {
+            "type": "integer"
+          },
+          "default_token_budget": {
+            "type": "integer"
+          },
+          "evolution_mode": {
+            "enum": [
+              "auto_evolve",
+              "candidate_review",
+              "frozen"
+            ],
+            "type": "string"
+          },
+          "micro_compact_stale_tool_outputs": {
+            "type": "boolean"
+          },
+          "offload_large_tool_payload_bytes": {
+            "type": "integer"
+          },
+          "project_markdown_projection": {
+            "type": "boolean"
+          },
+          "project_memory_path": {
+            "type": "string"
+          },
+          "recall_fidelity": {
+            "enum": [
+              "summary_only",
+              "balanced",
+              "verbatim_first"
+            ],
+            "type": "string"
+          },
+          "recent_message_limit": {
+            "type": "integer"
+          },
+          "retrieval_limit": {
+            "type": "integer"
+          },
+          "source_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "strategy": {
+            "enum": [
+              "direct",
+              "managed",
+              "deep_curator"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "strategy",
+          "recall_fidelity",
+          "compaction_trigger_ratio",
+          "recent_message_limit",
+          "default_token_budget",
+          "allow_cross_session_recall",
+          "micro_compact_stale_tool_outputs",
+          "offload_large_tool_payload_bytes",
+          "evolution_mode",
+          "candidate_only",
+          "retrieval_limit",
+          "core_markdown_max_tokens",
+          "project_markdown_projection",
+          "project_memory_path",
+          "companion_can_write_project_memory",
+          "allowed_scopes",
+          "allowed_kinds",
+          "always_on_primitives",
+          "version"
+        ],
+        "type": "object"
+      },
       "ContextVersion": {
         "additionalProperties": true,
         "properties": {
@@ -2324,6 +2731,81 @@
           "$ref": "#/components/schemas/ContextVersion"
         },
         "type": "array"
+      },
+      "ConversationRecallRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "cross_session": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "fidelity": {
+            "nullable": true,
+            "type": "string"
+          },
+          "limit": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "ConversationRecallResult": {
+        "properties": {
+          "cross_session_allowed": {
+            "type": "boolean"
+          },
+          "cross_session_used": {
+            "type": "boolean"
+          },
+          "fidelity": {
+            "type": "string"
+          },
+          "note": {
+            "nullable": true,
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "searched_sessions": {
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "total_matches": {
+            "type": "integer"
+          },
+          "verbatim_snippets": {
+            "items": {
+              "$ref": "#/components/schemas/RecallVerbatimSnippet"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "session_id",
+          "query",
+          "fidelity",
+          "cross_session_allowed",
+          "cross_session_used",
+          "summary",
+          "verbatim_snippets",
+          "searched_sessions",
+          "total_matches"
+        ],
+        "type": "object"
       },
       "CreateSessionRequest": {
         "additionalProperties": false,
@@ -2704,6 +3186,184 @@
         ],
         "type": "object"
       },
+      "ExternalCliDiscoveredItem": {
+        "properties": {
+          "already_imported": {
+            "type": "boolean"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "command": {
+            "nullable": true,
+            "type": "string"
+          },
+          "content_preview": {
+            "nullable": true,
+            "type": "string"
+          },
+          "default_enabled": {
+            "type": "boolean"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "ecosystem": {
+            "type": "string"
+          },
+          "env_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "has_secrets": {
+            "type": "boolean"
+          },
+          "header_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "item_id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "mcp-server",
+              "skill",
+              "command"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "transport": {
+            "nullable": true,
+            "type": "string"
+          },
+          "url": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "ecosystem",
+          "kind",
+          "name",
+          "display_name",
+          "source_path",
+          "args",
+          "env_keys",
+          "header_keys",
+          "has_secrets",
+          "default_enabled",
+          "already_imported"
+        ],
+        "type": "object"
+      },
+      "ExternalCliDiscovery": {
+        "properties": {
+          "ecosystems": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalCliEcosystemStatus"
+            },
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalCliDiscoveredItem"
+            },
+            "type": "array"
+          },
+          "user_home": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_home",
+          "ecosystems",
+          "items"
+        ],
+        "type": "object"
+      },
+      "ExternalCliEcosystemStatus": {
+        "properties": {
+          "detected": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "paths_scanned": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "detected",
+          "paths_scanned"
+        ],
+        "type": "object"
+      },
+      "ExternalCliImportedCommand": {
+        "properties": {
+          "ecosystem": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "ecosystem"
+        ],
+        "type": "object"
+      },
+      "ExternalCliSkippedItem": {
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "reason"
+        ],
+        "type": "object"
+      },
       "Health": {
         "additionalProperties": true,
         "description": "Gateway health fingerprint with forwarded Core health fields.",
@@ -2806,6 +3466,219 @@
         ],
         "type": "object"
       },
+      "LifecycleHookEntry": {
+        "additionalProperties": true,
+        "properties": {
+          "blocking": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "event": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "matcher": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "minimum": 100,
+                "type": "integer"
+              }
+            ],
+            "minimum": 100
+          }
+        },
+        "required": [
+          "id",
+          "event",
+          "command",
+          "timeout_ms",
+          "blocking",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "LifecycleHooksDocument": {
+        "additionalProperties": true,
+        "properties": {
+          "hooks": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "blocking": {
+                  "type": "boolean"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "event": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "matcher": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "timeout_ms": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "minimum": 100,
+                      "type": "integer"
+                    }
+                  ],
+                  "minimum": 100
+                }
+              },
+              "required": [
+                "id",
+                "event",
+                "command",
+                "timeout_ms",
+                "blocking",
+                "enabled"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "minimum": 0
+          },
+          "scope": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "hooks",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "LifecycleHooksWriteRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "minimum": 0
+          },
+          "hooks": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "blocking": {
+                  "type": "boolean"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "event": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "matcher": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "timeout_ms": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "minimum": 100,
+                      "type": "integer"
+                    }
+                  ],
+                  "minimum": 100
+                }
+              },
+              "required": [
+                "id",
+                "event",
+                "command",
+                "timeout_ms",
+                "blocking",
+                "enabled"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hooks"
+        ],
+        "type": "object"
+      },
       "ManagedMcpProgramPreview": {
         "additionalProperties": true,
         "properties": {
@@ -2864,520 +3737,78 @@
         ],
         "type": "object"
       },
-      "MarketCatalogEntry": {
+      "McpImportJsonRequest": {
         "additionalProperties": true,
         "properties": {
-          "catalog_id": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "display_name": {
-            "type": "string"
-          },
-          "expires_at": {
-            "type": "string"
-          },
-          "extension_id": {
-            "type": "string"
-          },
-          "homepage": {
-            "type": "string"
-          },
-          "install_blocker": {
-            "type": "string"
-          },
-          "install_blocker_code": {
-            "type": "string"
-          },
-          "install_blocker_data": {
-            "additionalProperties": {
-              "type": "string"
-            },
+          "config": {
+            "additionalProperties": true,
+            "nullable": true,
             "type": "object"
           },
-          "installable": {
+          "default_enabled": {
+            "nullable": true,
             "type": "boolean"
           },
-          "kind": {
+          "import_source": {
+            "nullable": true,
             "type": "string"
           },
-          "manifest_hash": {
+          "json": {
+            "nullable": true,
             "type": "string"
           },
-          "refreshed_at": {
-            "type": "string"
-          },
-          "registry_type": {
-            "type": "string"
-          },
-          "source_id": {
-            "type": "string"
-          },
-          "source_name": {
-            "type": "string"
-          },
-          "transports": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "version": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "catalog_id",
-          "source_id",
-          "source_name",
-          "extension_id",
-          "kind",
-          "version",
-          "display_name",
-          "transports",
-          "manifest_hash",
-          "refreshed_at",
-          "expires_at",
-          "installable"
-        ],
-        "type": "object"
-      },
-      "MarketCatalogPage": {
-        "additionalProperties": true,
-        "properties": {
-          "as_of": {
-            "type": "string"
-          },
-          "has_more": {
+          "overwrite": {
             "type": "boolean"
           },
-          "items": {
-            "items": {},
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "McpImportJsonResult": {
+        "properties": {
+          "imported": {
+            "items": {
+              "$ref": "#/components/schemas/ToolMcpResource"
+            },
             "type": "array"
           },
-          "total_available": {
-            "type": "number"
+          "imported_count": {
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/McpImportJsonSkipped"
+            },
+            "type": "array"
+          },
+          "skipped_count": {
+            "type": "integer"
           }
         },
         "required": [
-          "items",
-          "total_available",
-          "has_more"
+          "imported",
+          "skipped",
+          "imported_count",
+          "skipped_count"
         ],
         "type": "object"
       },
-      "MarketInstallProposal": {
-        "additionalProperties": true,
+      "McpImportJsonSkipped": {
         "properties": {
-          "action": {
-            "type": "string"
-          },
-          "args": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "availability": {
-            "nullable": true,
-            "type": "string"
-          },
-          "catalog_id": {
-            "type": "string"
-          },
-          "command": {
-            "type": "string"
-          },
-          "content": {
-            "type": "string"
-          },
-          "digest": {
-            "type": "string"
-          },
-          "environment": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "required": {
-                  "type": "boolean"
-                },
-                "secret": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "name",
-                "required",
-                "secret"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "expected_file_hash": {
-            "type": "string"
-          },
-          "expires_at": {
-            "type": "string"
-          },
-          "extension_id": {
-            "type": "string"
-          },
           "id": {
             "type": "string"
-          },
-          "installation_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "package_files": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "content_hash": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                },
-                "size_bytes": {
-                  "anyOf": [
-                    {
-                      "default": 0,
-                      "format": "integer",
-                      "type": "string"
-                    },
-                    {
-                      "type": "integer"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "path",
-                "content_hash",
-                "size_bytes"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "package_hash": {
-            "nullable": true,
-            "type": "string"
-          },
-          "project_id": {
-            "nullable": true,
-            "type": "string"
-          },
-          "replaces_command": {
-            "type": "string"
-          },
-          "resource_id": {
-            "nullable": true,
-            "type": "string"
-          },
-          "scope": {
-            "anyOf": [
-              {
-                "const": "shared",
-                "type": "string"
-              },
-              {
-                "const": "project",
-                "type": "string"
-              }
-            ]
-          },
-          "server_id": {
-            "type": "string"
-          },
-          "source_name": {
-            "type": "string"
-          },
-          "target_path": {
-            "type": "string"
-          },
-          "version": {
-            "type": "string"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "action",
-          "source_name",
-          "extension_id",
-          "kind",
-          "version",
-          "server_id",
-          "args",
-          "environment",
-          "target_path",
-          "content",
-          "digest",
-          "expires_at",
-          "warnings"
-        ],
-        "type": "object"
-      },
-      "MarketInstallation": {
-        "additionalProperties": true,
-        "properties": {
-          "action_status": {
-            "type": "string"
-          },
-          "availability": {
-            "nullable": true,
-            "type": "string"
-          },
-          "catalog_id": {
-            "type": "string"
-          },
-          "config_path": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "extension_id": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "install_action_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "package_files": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "content_hash": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                },
-                "size_bytes": {
-                  "anyOf": [
-                    {
-                      "default": 0,
-                      "format": "integer",
-                      "type": "string"
-                    },
-                    {
-                      "type": "integer"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "path",
-                "content_hash",
-                "size_bytes"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "package_hash": {
-            "nullable": true,
-            "type": "string"
-          },
-          "project_id": {
-            "nullable": true,
-            "type": "string"
-          },
-          "resource_id": {
-            "nullable": true,
-            "type": "string"
-          },
-          "scope": {
-            "anyOf": [
-              {
-                "const": "shared",
-                "type": "string"
-              },
-              {
-                "const": "project",
-                "type": "string"
-              }
-            ]
-          },
-          "server_id": {
-            "type": "string"
-          },
-          "source_name": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string"
-          },
-          "uninstall_action_id": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
-          },
-          "version": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "catalog_id",
-          "source_name",
-          "extension_id",
-          "kind",
-          "version",
-          "server_id",
-          "config_path",
-          "state",
-          "install_action_id",
-          "created_at",
-          "updated_at"
-        ],
-        "type": "object"
-      },
-      "MarketInstallationList": {
-        "additionalProperties": true,
-        "properties": {
-          "installations": {
-            "items": {
-              "$ref": "#/components/schemas/MarketInstallation"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "installations"
-        ],
-        "type": "object"
-      },
-      "MarketRefresh": {
-        "additionalProperties": true,
-        "properties": {
-          "fetched_rows": {
-            "type": "number"
-          },
-          "outcome": {
-            "type": "string"
-          },
-          "pages_fetched": {
-            "type": "number"
           },
           "reason": {
             "type": "string"
-          },
-          "refreshed_at": {
-            "type": "string"
-          },
-          "refused_rows": {
-            "type": "number"
-          },
-          "removed_rows": {
-            "type": "number"
-          },
-          "retained_rows": {
-            "type": "number"
-          },
-          "source_id": {
-            "type": "string"
-          },
-          "truncated_pages": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "source_id",
-          "outcome",
-          "fetched_rows",
-          "refused_rows",
-          "removed_rows",
-          "retained_rows",
-          "pages_fetched",
-          "truncated_pages"
-        ],
-        "type": "object"
-      },
-      "MarketSource": {
-        "additionalProperties": true,
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "entry_count": {
-            "type": "number"
-          },
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "last_error": {
-            "type": "string"
-          },
-          "last_refreshed_at": {
-            "type": "string"
-          },
-          "location": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "number"
           }
         },
         "required": [
           "id",
-          "name",
-          "kind",
-          "location",
-          "enabled",
-          "revision",
-          "entry_count"
-        ],
-        "type": "object"
-      },
-      "MarketSourceList": {
-        "additionalProperties": true,
-        "properties": {
-          "sources": {
-            "items": {},
-            "type": "array"
-          },
-          "supported_kinds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "sources",
-          "supported_kinds"
+          "reason"
         ],
         "type": "object"
       },
@@ -3407,6 +3838,65 @@
         "required": [
           "source",
           "servers"
+        ],
+        "type": "object"
+      },
+      "McpServerEnabledRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "McpServerTestResult": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tool_count": {
+            "type": "integer"
+          },
+          "tools": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "resource_id",
+          "id",
+          "name",
+          "enabled",
+          "status",
+          "tool_count",
+          "tools"
         ],
         "type": "object"
       },
@@ -3450,6 +3940,297 @@
         "required": [
           "provider_instance_id",
           "model"
+        ],
+        "type": "object"
+      },
+      "MemoryDocument": {
+        "properties": {
+          "active_hot_count": {
+            "type": "integer"
+          },
+          "active_item_count": {
+            "type": "integer"
+          },
+          "cold_archive_count": {
+            "type": "integer"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "core_markdown_max_tokens": {
+            "type": "integer"
+          },
+          "estimated_tokens": {
+            "type": "integer"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItemLedger"
+            },
+            "type": "array"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryDocumentSection"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "file_path",
+          "markdown",
+          "estimated_tokens",
+          "core_markdown_max_tokens",
+          "active_hot_count",
+          "active_item_count",
+          "cold_archive_count",
+          "content_hash",
+          "updated_at",
+          "sections",
+          "items"
+        ],
+        "type": "object"
+      },
+      "MemoryDocumentSection": {
+        "properties": {
+          "estimated_tokens": {
+            "type": "integer"
+          },
+          "heading": {
+            "type": "string"
+          },
+          "item_count": {
+            "type": "integer"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "heading",
+          "key",
+          "item_count",
+          "estimated_tokens"
+        ],
+        "type": "object"
+      },
+      "MemoryItemLedger": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "applicability": {
+            "nullable": true,
+            "type": "string"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current_version": {
+            "type": "integer"
+          },
+          "estimated_tokens": {
+            "type": "integer"
+          },
+          "expiry_condition": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "in_hot_markdown": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "previous_content": {
+            "nullable": true,
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "revocation_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "section": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_message_seq": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "source_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "source_session_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "superseded_by_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryVersionLedger"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "kind",
+          "status",
+          "current_version",
+          "content",
+          "action",
+          "estimated_tokens",
+          "in_hot_markdown",
+          "created_at",
+          "updated_at",
+          "versions"
+        ],
+        "type": "object"
+      },
+      "MemoryItemListResult": {
+        "properties": {
+          "active_count": {
+            "type": "integer"
+          },
+          "cold_count": {
+            "type": "integer"
+          },
+          "hot_count": {
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItemLedger"
+            },
+            "type": "array"
+          },
+          "total_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_count",
+          "active_count",
+          "hot_count",
+          "cold_count"
+        ],
+        "type": "object"
+      },
+      "MemoryVersionLedger": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "previous_content": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_message_seq": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "source_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "source_session_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "action",
+          "content",
+          "created_at"
         ],
         "type": "object"
       },
@@ -3647,11 +4428,286 @@
         },
         "type": "array"
       },
+      "ModelInvocationItem": {
+        "additionalProperties": true,
+        "properties": {
+          "agent_definition_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "agent_instance_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "agent_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "minimum": 0
+          },
+          "call_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error_category": {
+            "type": "string"
+          },
+          "fallback_position": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "minimum": 0
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "input_tokens": {
+            "type": "number"
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "type": "number"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "provider_instance_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "route_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "route_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "safe_error_message": {
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "strategy_source": {
+            "type": "string"
+          },
+          "total_tokens": {
+            "type": "number"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "call_id",
+          "attempt",
+          "session_id",
+          "run_id",
+          "agent_definition_id",
+          "agent_version_id",
+          "mode_version_id",
+          "strategy_source",
+          "provider_instance_id",
+          "provider_version_id",
+          "protocol",
+          "fallback_position",
+          "status",
+          "started_at"
+        ],
+        "type": "object"
+      },
       "ModelInvocationPage": {
         "additionalProperties": true,
         "properties": {
           "items": {
-            "items": {},
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "agent_definition_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "agent_instance_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "agent_version_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "attempt": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  ],
+                  "minimum": 0
+                },
+                "call_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "completed_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "error_category": {
+                  "type": "string"
+                },
+                "fallback_position": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  ],
+                  "minimum": 0
+                },
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "input_tokens": {
+                  "type": "number"
+                },
+                "mode_version_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "output_tokens": {
+                  "type": "number"
+                },
+                "protocol": {
+                  "type": "string"
+                },
+                "provider_instance_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "provider_version_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "route_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "route_version_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "run_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "safe_error_message": {
+                  "type": "string"
+                },
+                "session_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "started_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "strategy_source": {
+                  "type": "string"
+                },
+                "total_tokens": {
+                  "type": "number"
+                },
+                "turn_id": {
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "call_id",
+                "attempt",
+                "session_id",
+                "run_id",
+                "agent_definition_id",
+                "agent_version_id",
+                "mode_version_id",
+                "strategy_source",
+                "provider_instance_id",
+                "provider_version_id",
+                "protocol",
+                "fallback_position",
+                "status",
+                "started_at"
+              ],
+              "type": "object"
+            },
             "type": "array"
           },
           "next_cursor": {
@@ -4574,6 +5630,57 @@
         },
         "type": "array"
       },
+      "RecallVerbatimSnippet": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "message_seq": {
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "session_title": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "message_seq",
+          "role",
+          "created_at",
+          "excerpt",
+          "score"
+        ],
+        "type": "object"
+      },
+      "RevertMemoryItemRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "target_version": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "Run": {
         "additionalProperties": true,
         "properties": {
@@ -4877,6 +5984,373 @@
           "$ref": "#/components/schemas/Session"
         },
         "type": "array"
+      },
+      "SessionPlan": {
+        "additionalProperties": true,
+        "properties": {
+          "approved_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "goal": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_run_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/SessionPlanPhase"
+            },
+            "type": "array"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/SessionPlanProgress"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "draft",
+                "type": "string"
+              },
+              {
+                "const": "approved",
+                "type": "string"
+              },
+              {
+                "const": "active",
+                "type": "string"
+              },
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "const": "blocked",
+                "type": "string"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "title",
+          "status",
+          "revision",
+          "updated_at",
+          "phases",
+          "progress"
+        ],
+        "type": "object"
+      },
+      "SessionPlanArtifact": {
+        "additionalProperties": true,
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "const": "file",
+                "type": "string"
+              },
+              {
+                "const": "worktree",
+                "type": "string"
+              },
+              {
+                "const": "summary",
+                "type": "string"
+              },
+              {
+                "const": "attachment",
+                "type": "string"
+              }
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ref_id": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "type": "object"
+      },
+      "SessionPlanPhase": {
+        "additionalProperties": true,
+        "properties": {
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "pending",
+                "type": "string"
+              },
+              {
+                "const": "in_progress",
+                "type": "string"
+              },
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "const": "blocked",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "skipped",
+                "type": "string"
+              }
+            ]
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/SessionPlanStep"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "order",
+          "status",
+          "steps"
+        ],
+        "type": "object"
+      },
+      "SessionPlanProgress": {
+        "additionalProperties": true,
+        "properties": {
+          "blocked_steps": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "completed_steps": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "failed_steps": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "in_progress_steps": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "pending_steps": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "total_steps": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "total_steps",
+          "completed_steps",
+          "in_progress_steps",
+          "blocked_steps",
+          "failed_steps",
+          "pending_steps"
+        ],
+        "type": "object"
+      },
+      "SessionPlanStep": {
+        "additionalProperties": true,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/SessionPlanArtifact"
+            },
+            "type": "array"
+          },
+          "assigned_agent_slug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "bound_task_key": {
+            "nullable": true,
+            "type": "string"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "pending",
+                "type": "string"
+              },
+              {
+                "const": "in_progress",
+                "type": "string"
+              },
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "const": "blocked",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "skipped",
+                "type": "string"
+              }
+            ]
+          },
+          "summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "verification_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "depends_on",
+          "verification_criteria",
+          "artifacts"
+        ],
+        "type": "object"
       },
       "SessionTopologyDto": {
         "properties": {
@@ -7701,6 +9175,22 @@
         ],
         "type": "object"
       },
+      "ToolSkillEnabledRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
       "ToolSkillFile": {
         "properties": {
           "base64": {
@@ -7725,6 +9215,130 @@
           "path",
           "content_hash",
           "size_bytes"
+        ],
+        "type": "object"
+      },
+      "ToolSkillInstallRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "content": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ecosystems": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "enable_stdio_mcp": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "enabled": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "object"
+          },
+          "git_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "governed": {
+            "type": "boolean"
+          },
+          "item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "local_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "overwrite": {
+            "type": "boolean"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "shared",
+              "project"
+            ],
+            "type": "string"
+          },
+          "source_type": {
+            "enum": [
+              "inline",
+              "local_dir",
+              "git_url",
+              "external_cli_import"
+            ],
+            "type": "string"
+          },
+          "subpath": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_type"
+        ],
+        "type": "object"
+      },
+      "ToolSkillInstallResult": {
+        "properties": {
+          "installed_commands": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalCliImportedCommand"
+            },
+            "type": "array"
+          },
+          "installed_mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/ToolMcpResource"
+            },
+            "type": "array"
+          },
+          "installed_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ToolSkillResource"
+            },
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalCliSkippedItem"
+            },
+            "type": "array"
+          },
+          "source_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_type",
+          "installed_skills",
+          "installed_mcp_servers",
+          "installed_commands",
+          "skipped"
         ],
         "type": "object"
       },
@@ -7852,6 +9466,126 @@
         ],
         "type": "object"
       },
+      "UpdateContextMemoryPolicyRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "allow_cross_session_recall": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "candidate_only": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "compaction_trigger_ratio": {
+            "nullable": true,
+            "type": "number"
+          },
+          "companion_can_write_project_memory": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "core_markdown_max_tokens": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "default_token_budget": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "evolution_mode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "expected_content_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "expected_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "offload_large_tool_payload_bytes": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "project_markdown_projection": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "project_memory_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "recall_fidelity": {
+            "nullable": true,
+            "type": "string"
+          },
+          "recent_message_limit": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "retrieval_limit": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "strategy": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateMemoryDocumentRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "expected_content_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "expected_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "is_companion_writer": {
+            "type": "boolean"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_message_seq": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "source_session_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "workspace_root": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "markdown"
+        ],
+        "type": "object"
+      },
       "UpdateSessionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -7906,6 +9640,86 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "UpsertMemoryItemRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "applicability": {
+            "nullable": true,
+            "type": "string"
+          },
+          "companion_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "expiry_condition": {
+            "nullable": true,
+            "type": "string"
+          },
+          "is_companion_writer": {
+            "type": "boolean"
+          },
+          "kind": {
+            "nullable": true,
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "respect_evolution_mode": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "section": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_message_seq": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "source_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "source_session_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "supersede_item_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "supersedes_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "workspace_root": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "content"
+        ],
         "type": "object"
       },
       "WorkspaceDefinition": {
@@ -9621,6 +11435,103 @@
         ]
       }
     },
+    "/api/v1/companion-avatars/sdk": {
+      "delete": {
+        "operationId": "deleteApiV1Companion-avatarsSdk",
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete BYO Cubism Core SDK",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "get": {
+        "operationId": "getApiV1Companion-avatarsSdk",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionLive2dSdkStatus"
+                }
+              }
+            },
+            "description": "Read BYO Cubism Core SDK status"
+          }
+        },
+        "summary": "Read BYO Cubism Core SDK status",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Companion-avatarsSdk",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionLive2dSdkStatus"
+                }
+              }
+            },
+            "description": "Import BYO Cubism Core SDK"
+          }
+        },
+        "summary": "Import BYO Cubism Core SDK",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/sdk/import": {
+      "post": {
+        "operationId": "postApiV1Companion-avatarsSdkImport",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionLive2dSdkStatus"
+                }
+              }
+            },
+            "description": "Import BYO Cubism Core SDK (alias)"
+          }
+        },
+        "summary": "Import BYO Cubism Core SDK (alias)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companion-avatars/sdk/{asset}": {
+      "get": {
+        "operationId": "getApiV1Companion-avatarsSdkByAsset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Serve BYO Cubism Core SDK script or wasm binary",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
     "/api/v1/companion-avatars/{avatarId}": {
       "delete": {
         "operationId": "deleteApiV1Companion-avatarsByAvatarId",
@@ -10625,6 +12536,303 @@
         ]
       }
     },
+    "/api/v1/companions/{companionId}/plans": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdPlans",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionPlanList"
+                }
+              }
+            },
+            "description": "List companion plans"
+          }
+        },
+        "summary": "List companion plans",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdPlans",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionPlan"
+                }
+              }
+            },
+            "description": "Create companion plan"
+          }
+        },
+        "summary": "Create companion plan",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/plans/{planId}": {
+      "delete": {
+        "operationId": "deleteApiV1CompanionsByCompanionIdPlansByPlanId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "planId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete companion plan",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1CompanionsByCompanionIdPlansByPlanId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "planId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionPlan"
+                }
+              }
+            },
+            "description": "Update companion plan"
+          }
+        },
+        "summary": "Update companion plan",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/schedules": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdSchedules",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionScheduleList"
+                }
+              }
+            },
+            "description": "List companion schedules"
+          }
+        },
+        "summary": "List companion schedules",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdSchedules",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSchedule"
+                }
+              }
+            },
+            "description": "Create companion schedule"
+          }
+        },
+        "summary": "Create companion schedule",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/schedules/{scheduleId}": {
+      "delete": {
+        "operationId": "deleteApiV1CompanionsByCompanionIdSchedulesByScheduleId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete companion schedule",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1CompanionsByCompanionIdSchedulesByScheduleId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSchedule"
+                }
+              }
+            },
+            "description": "Update companion schedule"
+          }
+        },
+        "summary": "Update companion schedule",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/schedules/{scheduleId}/trigger": {
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdSchedulesByScheduleIdTrigger",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionScheduleTriggerResult"
+                }
+              }
+            },
+            "description": "Trigger a companion schedule immediately"
+          }
+        },
+        "summary": "Trigger a companion schedule immediately",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
     "/api/v1/companions/{companionId}/skills": {
       "get": {
         "operationId": "getApiV1CompanionsByCompanionIdSkills",
@@ -10749,6 +12957,135 @@
           }
         },
         "summary": "Update a skill binding (If-Match revision)",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/todos": {
+      "get": {
+        "operationId": "getApiV1CompanionsByCompanionIdTodos",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionTodoList"
+                }
+              }
+            },
+            "description": "List companion todos"
+          }
+        },
+        "summary": "List companion todos",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1CompanionsByCompanionIdTodos",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionTodo"
+                }
+              }
+            },
+            "description": "Create companion todo"
+          }
+        },
+        "summary": "Create companion todo",
+        "tags": [
+          "Companions"
+        ]
+      }
+    },
+    "/api/v1/companions/{companionId}/todos/{todoId}": {
+      "delete": {
+        "operationId": "deleteApiV1CompanionsByCompanionIdTodosByTodoId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "todoId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete companion todo",
+        "tags": [
+          "Companions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1CompanionsByCompanionIdTodosByTodoId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "todoId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionTodo"
+                }
+              }
+            },
+            "description": "Update companion todo"
+          }
+        },
+        "summary": "Update companion todo",
         "tags": [
           "Companions"
         ]
@@ -10954,6 +13291,56 @@
         "summary": "POST /api/v1/configuration/documents/:documentId/validate",
         "tags": [
           "Storage"
+        ]
+      }
+    },
+    "/api/v1/context-memory/policy": {
+      "get": {
+        "operationId": "getApiV1Context-memoryPolicy",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextMemoryPolicy"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "GET /api/v1/context-memory/policy",
+        "tags": [
+          "ContextMemory"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1Context-memoryPolicy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateContextMemoryPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextMemoryPolicy"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "PUT /api/v1/context-memory/policy",
+        "tags": [
+          "ContextMemory"
         ]
       }
     },
@@ -11406,6 +13793,18 @@
         ]
       }
     },
+    "/api/v1/fs/browse": {
+      "get": {
+        "operationId": "getApiV1FsBrowse",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Browse host filesystem directories (authenticated Web/Electron picker)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
     "/api/v1/governance/approval-delegations": {
       "post": {
         "operationId": "postApiV1GovernanceApproval-delegations",
@@ -11713,93 +14112,33 @@
         ]
       }
     },
-    "/api/v1/market/catalog": {
+    "/api/v1/lifecycle-hooks": {
       "get": {
-        "operationId": "getApiV1MarketCatalog",
+        "operationId": "getApiV1Lifecycle-hooks",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MarketCatalogPage"
+                  "$ref": "#/components/schemas/LifecycleHooksDocument"
                 }
               }
             },
-            "description": "A page of stored claims, with total_available and as_of so a short page cannot be read as a small market."
+            "description": "Lifecycle hook definitions and optimistic revision."
           }
         },
-        "summary": "Get market catalog",
+        "summary": "Get workspace or global lifecycle hooks",
         "tags": [
           "System"
         ]
-      }
-    },
-    "/api/v1/market/catalog/{catalogId}": {
-      "get": {
-        "operationId": "getApiV1MarketCatalogByCatalogId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "catalogId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketCatalogEntry"
-                }
-              }
-            },
-            "description": "One entry as its source described it, including the metadata digest Core computed over that description."
-          }
-        },
-        "summary": "Get catalog item",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/market/catalog/{catalogId}/install-preview": {
-      "post": {
-        "operationId": "postApiV1MarketCatalogByCatalogIdInstall-preview",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "catalogId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+      },
+      "put": {
+        "operationId": "putApiV1Lifecycle-hooks",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "project_id": {
-                    "description": "Required for project Skills and MCP installation.",
-                    "format": "uuid",
-                    "type": "string"
-                  },
-                  "scope": {
-                    "default": "shared",
-                    "description": "Skills default to shared. A shared skill does not require project_id.",
-                    "enum": [
-                      "shared",
-                      "project"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "type": "object"
+                "$ref": "#/components/schemas/LifecycleHooksWriteRequest"
               }
             }
           },
@@ -11810,219 +14149,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MarketInstallProposal"
+                  "$ref": "#/components/schemas/LifecycleHooksDocument"
                 }
               }
             },
-            "description": "Frozen scope, stable resource ID, complete package files and digest or pinned MCP command. Nothing was written by asking."
+            "description": "Saved lifecycle hook definitions and updated revision."
           }
         },
-        "summary": "Preview a market install",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/market/install-proposals/{proposalId}/apply": {
-      "post": {
-        "operationId": "postApiV1MarketInstall-proposalsByProposalIdApply",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "proposalId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketInstallation"
-                }
-              }
-            },
-            "description": "The installation and the user tool action awaiting a human. The write happens when that action is approved, never here."
-          }
-        },
-        "summary": "Queue an approved market write",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/market/installations": {
-      "get": {
-        "operationId": "getApiV1MarketInstallations",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketInstallationList"
-                }
-              }
-            },
-            "description": "What this workspace approved, with the live status of the action that writes it."
-          }
-        },
-        "summary": "List installed market entries",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/market/installations/{installationId}/uninstall-preview": {
-      "post": {
-        "operationId": "postApiV1MarketInstallationsByInstallationIdUninstall-preview",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "installationId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketInstallProposal"
-                }
-              }
-            },
-            "description": "The same config file with this one entry taken back out; downloaded package bytes are not touched."
-          }
-        },
-        "summary": "Preview removing an installed market entry",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/market/sources": {
-      "get": {
-        "operationId": "getApiV1MarketSources",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketSourceList"
-                }
-              }
-            },
-            "description": "Durable sources plus the kinds this build has an adapter for; an empty list here really does mean nothing is configured, because these are Core rows."
-          }
-        },
-        "summary": "List market sources",
-        "tags": [
-          "System"
-        ]
-      },
-      "post": {
-        "operationId": "postApiV1MarketSources",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketSource"
-                }
-              }
-            },
-            "description": "The stored source. Core builds the request from kind+location; a url, command, or path in this body is not read."
-          }
-        },
-        "summary": "Create market source",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/market/sources/{sourceId}": {
-      "delete": {
-        "operationId": "deleteApiV1MarketSourcesBySourceId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sourceId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "Delete a market source",
-        "tags": [
-          "System"
-        ]
-      },
-      "patch": {
-        "operationId": "patchApiV1MarketSourcesBySourceId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sourceId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketSource"
-                }
-              }
-            },
-            "description": "The only editable field is enabled; name, kind, and location are not, so a source cannot be re-pointed under existing rows."
-          }
-        },
-        "summary": "Enable or disable a market source",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/market/sources/{sourceId}/refresh": {
-      "post": {
-        "operationId": "postApiV1MarketSourcesBySourceIdRefresh",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sourceId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarketRefresh"
-                }
-              }
-            },
-            "description": "`outcome` separates a completed read from a blocked or unreachable one; only the first changed the catalog."
-          }
-        },
-        "summary": "Refresh market source",
+        "summary": "Save workspace or global lifecycle hooks",
         "tags": [
           "System"
         ]
@@ -12046,6 +14180,202 @@
         "summary": "List MCP servers (Core-owned)",
         "tags": [
           "System"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1McpServers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolMcpResource"
+                }
+              }
+            },
+            "description": "Created MCP server configuration with masked secrets."
+          }
+        },
+        "summary": "Create MCP server configuration",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/configured": {
+      "get": {
+        "operationId": "getApiV1McpServersConfigured",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolMcpResourceList"
+                }
+              }
+            },
+            "description": "Configured MCP server registrations with masked secrets."
+          }
+        },
+        "summary": "List configured MCP server resources (secrets masked)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/import-json": {
+      "post": {
+        "operationId": "postApiV1McpServersImport-json",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpImportJsonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpImportJsonResult"
+                }
+              }
+            },
+            "description": "Imported and skipped MCP server registrations."
+          }
+        },
+        "summary": "Import MCP servers from .mcp.json / Codex / Claude JSON",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}": {
+      "delete": {
+        "operationId": "deleteApiV1McpServersByServerId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; Core returned no content."
+          }
+        },
+        "summary": "Delete MCP server configuration",
+        "tags": [
+          "Tools"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1McpServersByServerId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolMcpResource"
+                }
+              }
+            },
+            "description": "Updated MCP server configuration with masked secrets."
+          }
+        },
+        "summary": "Update MCP server configuration",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/enabled": {
+      "patch": {
+        "operationId": "patchApiV1McpServersByServerIdEnabled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerEnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolMcpResource"
+                }
+              }
+            },
+            "description": "Updated MCP server configuration."
+          }
+        },
+        "summary": "Toggle MCP server enabled state",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/test": {
+      "post": {
+        "operationId": "postApiV1McpServersByServerIdTest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerTestResult"
+                }
+              }
+            },
+            "description": "Live handshake probe outcome and discovered tools."
+          }
+        },
+        "summary": "Test MCP server connectivity and list discovered tools",
+        "tags": [
+          "Tools"
         ]
       }
     },
@@ -12111,6 +14441,198 @@
         "summary": "Loopback MCP JSON-RPC 2.0 server for Tinadec self-configuration",
         "tags": [
           "System"
+        ]
+      }
+    },
+    "/api/v1/memories/documents/{scope}": {
+      "get": {
+        "operationId": "getApiV1MemoriesDocumentsByScope",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDocument"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "GET /api/v1/memories/documents/:scope",
+        "tags": [
+          "ContextMemory"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1MemoriesDocumentsByScope",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoryDocumentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDocument"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "PUT /api/v1/memories/documents/:scope",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/memories/items": {
+      "get": {
+        "operationId": "getApiV1MemoriesItems",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemListResult"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "GET /api/v1/memories/items",
+        "tags": [
+          "ContextMemory"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1MemoriesItems",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertMemoryItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemLedger"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "POST /api/v1/memories/items",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/memories/items/{id}": {
+      "delete": {
+        "operationId": "deleteApiV1MemoriesItemsById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemLedger"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "DELETE /api/v1/memories/items/:id",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/memories/items/{id}/revert": {
+      "post": {
+        "operationId": "postApiV1MemoriesItemsByIdRevert",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevertMemoryItemRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemLedger"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "POST /api/v1/memories/items/:id/revert",
+        "tags": [
+          "ContextMemory"
         ]
       }
     },
@@ -14684,6 +17206,167 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/plan": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPlan"
+                }
+              }
+            },
+            "description": "Persistent session-scoped phased plan."
+          }
+        },
+        "summary": "Get session structured plan",
+        "tags": [
+          "Sessions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1SessionsBySessionIdPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPlan"
+                }
+              }
+            },
+            "description": "Updated session plan."
+          }
+        },
+        "summary": "Patch session structured plan",
+        "tags": [
+          "Sessions"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1SessionsBySessionIdPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPlan"
+                }
+              }
+            },
+            "description": "Saved session plan with updated revision."
+          }
+        },
+        "summary": "Replace session structured plan",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/plan/approve": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdPlanApprove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPlan"
+                }
+              }
+            },
+            "description": "Approved session plan."
+          }
+        },
+        "summary": "Approve session structured plan",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/recall": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdRecall",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationRecallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRecallResult"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "POST /api/v1/sessions/:sessionId/recall",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/restore": {
       "post": {
         "operationId": "postApiV1SessionsBySessionIdRestore",
@@ -17131,9 +19814,41 @@
         ]
       }
     },
+    "/api/v1/tools/external-cli/discover": {
+      "get": {
+        "operationId": "getApiV1ToolsExternal-cliDiscover",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalCliDiscovery"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "GET external-cli/discover",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tools/mcp/servers": {
       "get": {
         "operationId": "getApiV1ToolsMcpServers",
+        "parameters": [
+          {
+            "description": "Quoted revision returned by Core",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -17177,6 +19892,37 @@
           }
         },
         "summary": "POST mcp/servers",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/mcp/servers/import-json": {
+      "post": {
+        "operationId": "postApiV1ToolsMcpServersImport-json",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpImportJsonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpImportJsonResult"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST mcp/servers/import-json",
         "tags": [
           "Tools"
         ]
@@ -17253,6 +19999,47 @@
         ]
       }
     },
+    "/api/v1/tools/mcp/servers/{resourceId}/enabled": {
+      "patch": {
+        "operationId": "patchApiV1ToolsMcpServersByResourceIdEnabled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerEnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolMcpResource"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "PATCH mcp/servers/:resourceId/enabled",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tools/mcp/servers/{resourceId}/install": {
       "post": {
         "operationId": "postApiV1ToolsMcpServersByResourceIdInstall",
@@ -17323,6 +20110,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerTestResult"
+                }
+              }
+            },
             "description": "Core-owned configuration and resource result"
           }
         },
@@ -17671,6 +20465,58 @@
         ]
       }
     },
+    "/api/v1/tools/skills/install": {
+      "post": {
+        "operationId": "postApiV1ToolsSkillsInstall",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolSkillInstallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillInstallResult"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST skills/install",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/skills/reload": {
+      "post": {
+        "operationId": "postApiV1ToolsSkillsReload",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillCatalog"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "POST skills/reload",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/tools/skills/{resourceId}": {
       "delete": {
         "operationId": "deleteApiV1ToolsSkillsByResourceId",
@@ -17804,6 +20650,47 @@
           }
         },
         "summary": "POST skills/:resourceId/copy-to-project",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/skills/{resourceId}/enabled": {
+      "patch": {
+        "operationId": "patchApiV1ToolsSkillsByResourceIdEnabled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolSkillEnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolSkillResource"
+                }
+              }
+            },
+            "description": "Core-owned configuration and resource result"
+          }
+        },
+        "summary": "PATCH skills/:resourceId/enabled",
         "tags": [
           "Tools"
         ]
@@ -17965,6 +20852,294 @@
         "summary": "Override failed user action snapshot",
         "tags": [
           "Tools"
+        ]
+      }
+    },
+    "/api/v1/web-auth/login": {
+      "post": {
+        "operationId": "postApiV1Web-authLogin",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "security": [],
+        "summary": "Authenticate web browser session with owner credentials",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/web-auth/logout": {
+      "post": {
+        "operationId": "postApiV1Web-authLogout",
+        "responses": {
+          "200": {}
+        },
+        "security": [],
+        "summary": "Clear the current web browser session",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/web-auth/oidc/callback": {
+      "get": {
+        "operationId": "getApiV1Web-authOidcCallback",
+        "responses": {
+          "200": {}
+        },
+        "security": [],
+        "summary": "Complete OIDC login callback and establish BFF session cookie",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/web-auth/oidc/login": {
+      "get": {
+        "operationId": "getApiV1Web-authOidcLogin",
+        "responses": {
+          "200": {}
+        },
+        "security": [],
+        "summary": "Initiate OIDC login redirect for web browser sessions",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/web-auth/settings": {
+      "get": {
+        "operationId": "getApiV1Web-authSettings",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Read web access & authentication settings (owner only)",
+        "tags": [
+          "System"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1Web-authSettings",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "allow_loopback_auto_login": {
+                    "type": "boolean"
+                  },
+                  "allowed_emails": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "allowed_subjects": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "clear_password": {
+                    "type": "boolean"
+                  },
+                  "cloudflare_access_aud": {
+                    "type": "string"
+                  },
+                  "cloudflare_access_enabled": {
+                    "type": "boolean"
+                  },
+                  "cloudflare_access_team_domain": {
+                    "type": "string"
+                  },
+                  "new_password": {
+                    "type": "string"
+                  },
+                  "oidc_enabled": {
+                    "type": "boolean"
+                  },
+                  "revoke_existing_sessions": {
+                    "type": "boolean"
+                  },
+                  "session_ttl_seconds": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "allow_loopback_auto_login": {
+                    "type": "boolean"
+                  },
+                  "allowed_emails": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "allowed_subjects": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "clear_password": {
+                    "type": "boolean"
+                  },
+                  "cloudflare_access_aud": {
+                    "type": "string"
+                  },
+                  "cloudflare_access_enabled": {
+                    "type": "boolean"
+                  },
+                  "cloudflare_access_team_domain": {
+                    "type": "string"
+                  },
+                  "new_password": {
+                    "type": "string"
+                  },
+                  "oidc_enabled": {
+                    "type": "boolean"
+                  },
+                  "revoke_existing_sessions": {
+                    "type": "boolean"
+                  },
+                  "session_ttl_seconds": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "properties": {
+                  "allow_loopback_auto_login": {
+                    "type": "boolean"
+                  },
+                  "allowed_emails": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "allowed_subjects": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "clear_password": {
+                    "type": "boolean"
+                  },
+                  "cloudflare_access_aud": {
+                    "type": "string"
+                  },
+                  "cloudflare_access_enabled": {
+                    "type": "boolean"
+                  },
+                  "cloudflare_access_team_domain": {
+                    "type": "string"
+                  },
+                  "new_password": {
+                    "type": "string"
+                  },
+                  "oidc_enabled": {
+                    "type": "boolean"
+                  },
+                  "revoke_existing_sessions": {
+                    "type": "boolean"
+                  },
+                  "session_ttl_seconds": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update web access & authentication settings (owner only)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/web-auth/status": {
+      "get": {
+        "operationId": "getApiV1Web-authStatus",
+        "responses": {
+          "200": {}
+        },
+        "security": [],
+        "summary": "Inspect web admission status and available authentication providers",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/web-terminal/shells": {
+      "get": {
+        "operationId": "getApiV1Web-terminalShells",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List host shell profiles available to the web terminal",
+        "tags": [
+          "System"
         ]
       }
     },
