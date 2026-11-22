@@ -1760,6 +1760,23 @@
         },
         "type": "object"
       },
+      "ChapterToolCallDto": {
+        "properties": {
+          "compact_summary": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tool_call_id": {
+            "type": "string"
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "CleanupApplyRequest": {
         "properties": {
           "preview_id": {
@@ -1780,6 +1797,42 @@
         "required": [
           "category"
         ],
+        "type": "object"
+      },
+      "CompactionPointDto": {
+        "properties": {
+          "after_tokens": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "before_tokens": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "CompanionAutonomyRequest": {
@@ -2696,6 +2749,49 @@
           },
           "version": {
             "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextWaterlineDto": {
+        "properties": {
+          "compaction_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "compaction_points": {
+            "items": {
+              "$ref": "#/components/schemas/CompactionPointDto"
+            },
+            "type": "array"
+          },
+          "max_tokens": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "usage_percent": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?(?:[eE][\u002B-]?\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ]
+          },
+          "used_tokens": {
+            "format": "int32",
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
               "integer",
@@ -4299,6 +4395,33 @@
         },
         "type": "object"
       },
+      "GovernanceSignalDto": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "subject_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "GrantCapabilityRequestDto": {
         "properties": {
           "action": {
@@ -4657,6 +4780,197 @@
               "null",
               "string"
             ]
+          }
+        },
+        "type": "object"
+      },
+      "LiveDigestChapterDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "index": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "narrative": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "raw_thought_excerpt": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "scout_note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/ChapterToolCallDto"
+            },
+            "type": "array"
+          },
+          "touched_files": {
+            "items": {
+              "$ref": "#/components/schemas/TouchedFileStatDto"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "LiveDigestSettingsDto": {
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resolved_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resolved_provider_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resolved_source": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "route_purpose": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "LiveDigestSnapshotDto": {
+        "properties": {
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/LiveDigestChapterDto"
+            },
+            "type": "array"
+          },
+          "context_waterline": {
+            "$ref": "#/components/schemas/ContextWaterlineDto"
+          },
+          "current_phase": {
+            "type": "string"
+          },
+          "explainer_active": {
+            "type": "boolean"
+          },
+          "explainer_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "governance_signals": {
+            "items": {
+              "$ref": "#/components/schemas/GovernanceSignalDto"
+            },
+            "type": "array"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sentinel_alerts": {
+            "items": {
+              "$ref": "#/components/schemas/SentinelAlertDto"
+            },
+            "type": "array"
+          },
+          "seq": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "teammate_thoughts": {
+            "items": {
+              "$ref": "#/components/schemas/TeammateThoughtDto"
+            },
+            "type": "array"
+          },
+          "touched_files": {
+            "items": {
+              "$ref": "#/components/schemas/TouchedFileStatDto"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
           }
         },
         "type": "object"
@@ -7260,6 +7574,39 @@
         },
         "type": "object"
       },
+      "SentinelAlertDto": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "suggested_steer_prompt": {
+            "type": "string"
+          },
+          "teammate_handle": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "SessionPlanAddStepDto": {
         "properties": {
           "assigned_agent_slug": {
@@ -7269,6 +7616,12 @@
             ]
           },
           "bound_task_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "claimed_by": {
             "type": [
               "null",
               "string"
@@ -7615,6 +7968,19 @@
               "string"
             ]
           },
+          "claimed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "claimed_by": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "depends_on": {
             "items": {
               "type": "string"
@@ -7676,6 +8042,12 @@
             ]
           },
           "bound_task_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "claimed_by": {
             "type": [
               "null",
               "string"
@@ -8714,6 +9086,239 @@
         "required": [
           "allow_storage_write"
         ],
+        "type": "object"
+      },
+      "TeammateControlReceiptDto": {
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "action": {
+            "type": "string"
+          },
+          "current_task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "handle": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "TeammateListResponseDto": {
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_status": {
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "teammates": {
+            "items": {
+              "$ref": "#/components/schemas/TeammateSnapshotDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TeammateSnapshotDto": {
+        "properties": {
+          "agent_slug": {
+            "type": "string"
+          },
+          "awaiting_approval": {
+            "type": "boolean"
+          },
+          "branch_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "claimed_step_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "current_task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "current_task_title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "handle": {
+            "type": "string"
+          },
+          "latest_summary": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mode": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "pending_steer_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "relay_depth": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "runtime_badge": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "worktree_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "write_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TeammateSteerReceiptDto": {
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "board_seq": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "delivered_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "delivery_mode": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "pending_steer_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "urgent": {
+            "type": "boolean"
+          },
+          "woken": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "TeammateThoughtDto": {
+        "properties": {
+          "current_task": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "thought": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "TerminalStdinRequest": {
@@ -11167,6 +11772,30 @@
         },
         "type": "object"
       },
+      "TouchedFileStatDto": {
+        "properties": {
+          "added_lines": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "removed_lines": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateContextMemoryPolicyRequest": {
         "properties": {
           "allow_cross_session_recall": {
@@ -11278,6 +11907,33 @@
             ]
           },
           "strategy": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateLiveDigestSettingsRequestDto": {
+        "properties": {
+          "clear_model_binding": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider_instance_id": {
+            "format": "uuid",
             "type": [
               "null",
               "string"
@@ -17433,6 +18089,58 @@
         ]
       }
     },
+    "/api/v1/live-digest/settings": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveDigestSettingsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "LiveExplainerEndpoints"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UpdateLiveDigestSettingsRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveDigestSettingsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "LiveExplainerEndpoints"
+        ]
+      }
+    },
     "/api/v1/mcp/servers": {
       "get": {
         "parameters": [
@@ -19801,6 +20509,69 @@
         ]
       }
     },
+    "/api/v1/runs/{runId}/live-digest": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveDigestSnapshotDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "LiveExplainerEndpoints"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/live-digest/stream": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "LiveExplainerEndpoints"
+        ]
+      }
+    },
     "/api/v1/runs/{runId}/orchestration": {
       "get": {
         "parameters": [
@@ -19907,6 +20678,256 @@
         "responses": {
           "200": {
             "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateListResponseDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates/{handle}/pause": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateControlReceiptDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates/{handle}/resume": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateControlReceiptDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates/{handle}/steer": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateSteerReceiptDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [
@@ -25751,6 +26772,9 @@
     },
     {
       "name": "InteractionsEndpoints"
+    },
+    {
+      "name": "LiveExplainerEndpoints"
     },
     {
       "name": "ModelAgentControlEndpoints"

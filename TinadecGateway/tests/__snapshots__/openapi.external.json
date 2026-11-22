@@ -979,6 +979,62 @@
         ],
         "type": "object"
       },
+      "ChapterToolCall": {
+        "properties": {
+          "compact_summary": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "tool_call_id": {
+            "type": "string"
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_call_id",
+          "tool_name",
+          "status",
+          "compact_summary"
+        ],
+        "type": "object"
+      },
+      "CompactionPoint": {
+        "properties": {
+          "after_tokens": {
+            "type": "integer"
+          },
+          "before_tokens": {
+            "type": "integer"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "before_tokens",
+          "after_tokens",
+          "occurred_at",
+          "summary"
+        ],
+        "type": "object"
+      },
       "CompanionActivity": {
         "additionalProperties": true,
         "properties": {
@@ -2732,6 +2788,36 @@
         },
         "type": "array"
       },
+      "ContextWaterline": {
+        "properties": {
+          "compaction_count": {
+            "type": "integer"
+          },
+          "compaction_points": {
+            "items": {
+              "$ref": "#/components/schemas/CompactionPoint"
+            },
+            "type": "array"
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "usage_percent": {
+            "type": "number"
+          },
+          "used_tokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used_tokens",
+          "max_tokens",
+          "usage_percent",
+          "compaction_count",
+          "compaction_points"
+        ],
+        "type": "object"
+      },
       "ConversationRecallRequest": {
         "additionalProperties": true,
         "properties": {
@@ -3364,6 +3450,52 @@
         ],
         "type": "object"
       },
+      "GovernanceSignal": {
+        "properties": {
+          "code": {
+            "enum": [
+              "APPROVAL_REJECTED",
+              "FS_STALE_VERSION",
+              "SAME_ARGS_RETRY",
+              "TIMEOUT",
+              "WORKTREE_GUARD",
+              "LOOP_DETECTED",
+              "CONTEXT_PRESSURE"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "subject_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "severity",
+          "summary",
+          "occurred_at"
+        ],
+        "type": "object"
+      },
       "Health": {
         "additionalProperties": true,
         "description": "Gateway health fingerprint with forwarded Core health fields.",
@@ -3676,6 +3808,235 @@
         },
         "required": [
           "hooks"
+        ],
+        "type": "object"
+      },
+      "LiveDigestChapter": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "narrative": {
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "hypothesis",
+              "verification",
+              "conclusion"
+            ],
+            "type": "string"
+          },
+          "raw_thought_excerpt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "scout_note": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "l0_structural",
+              "l1_narrator",
+              "l2_scout"
+            ],
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/ChapterToolCall"
+            },
+            "type": "array"
+          },
+          "touched_files": {
+            "items": {
+              "$ref": "#/components/schemas/TouchedFileStat"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "index",
+          "phase",
+          "title",
+          "narrative",
+          "source",
+          "tool_calls",
+          "touched_files",
+          "started_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "LiveDigestSettings": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "off",
+              "auto",
+              "always"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "provider_instance_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "resolved_model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "resolved_provider_instance_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "resolved_source": {
+            "enum": [
+              "explicit_route",
+              "auto_fast_model",
+              "chat_fallback",
+              "unconfigured"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "route_purpose": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "route_purpose",
+          "resolved_source",
+          "revision",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "LiveDigestSnapshot": {
+        "properties": {
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/LiveDigestChapter"
+            },
+            "type": "array"
+          },
+          "context_waterline": {
+            "$ref": "#/components/schemas/ContextWaterline"
+          },
+          "current_phase": {
+            "enum": [
+              "hypothesis",
+              "verification",
+              "conclusion"
+            ],
+            "type": "string"
+          },
+          "explainer_active": {
+            "type": "boolean"
+          },
+          "explainer_model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "governance_signals": {
+            "items": {
+              "$ref": "#/components/schemas/GovernanceSignal"
+            },
+            "type": "array"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "off",
+              "auto",
+              "always"
+            ],
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sentinel_alerts": {
+            "items": {
+              "$ref": "#/components/schemas/SentinelAlert"
+            },
+            "type": "array"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "teammate_thoughts": {
+            "items": {
+              "$ref": "#/components/schemas/TeammateThought"
+            },
+            "type": "array"
+          },
+          "touched_files": {
+            "items": {
+              "$ref": "#/components/schemas/TouchedFileStat"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "session_id",
+          "status",
+          "mode",
+          "explainer_active",
+          "seq",
+          "headline",
+          "current_phase",
+          "context_waterline",
+          "governance_signals",
+          "teammate_thoughts",
+          "chapters",
+          "touched_files",
+          "sentinel_alerts",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -5748,6 +6109,50 @@
         },
         "type": "array"
       },
+      "SentinelAlert": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "warning",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "suggested_steer_prompt": {
+            "type": "string"
+          },
+          "teammate_handle": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "severity",
+          "title",
+          "message",
+          "suggested_steer_prompt",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "Session": {
         "additionalProperties": true,
         "properties": {
@@ -7307,6 +7712,296 @@
           "$ref": "#/components/schemas/TaskNode"
         },
         "type": "array"
+      },
+      "TeammateControlReceipt": {
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "action": {
+            "enum": [
+              "pause",
+              "resume"
+            ],
+            "type": "string"
+          },
+          "current_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted",
+          "run_id",
+          "handle",
+          "action",
+          "status",
+          "paused",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "TeammateListResponse": {
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_status": {
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "teammates": {
+            "items": {
+              "$ref": "#/components/schemas/TeammateSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "session_id",
+          "run_status",
+          "teammates"
+        ],
+        "type": "object"
+      },
+      "TeammatePauseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "TeammateSnapshot": {
+        "properties": {
+          "agent_slug": {
+            "type": "string"
+          },
+          "awaiting_approval": {
+            "type": "boolean"
+          },
+          "branch_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "claimed_step_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "current_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "current_task_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "latest_summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "teammate",
+              "ephemeral"
+            ],
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "pending_steer_count": {
+            "type": "integer"
+          },
+          "relay_depth": {
+            "type": "integer"
+          },
+          "runtime_badge": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "working",
+              "waiting",
+              "paused",
+              "awaiting_approval",
+              "terminated"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "worktree_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "write_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "handle",
+          "agent_slug",
+          "mode",
+          "status",
+          "paused",
+          "awaiting_approval",
+          "write_scope",
+          "relay_depth",
+          "pending_steer_count",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "TeammateSteerReceipt": {
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "board_seq": {
+            "type": "integer"
+          },
+          "delivered_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "delivery_mode": {
+            "enum": [
+              "injected_next_turn",
+              "woken",
+              "queued_while_paused"
+            ],
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "pending_steer_count": {
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "urgent": {
+            "type": "boolean"
+          },
+          "woken": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted",
+          "run_id",
+          "handle",
+          "status",
+          "paused",
+          "urgent",
+          "woken",
+          "delivery_mode",
+          "board_seq",
+          "pending_steer_count",
+          "delivered_at"
+        ],
+        "type": "object"
+      },
+      "TeammateSteerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_control_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "urgent": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "TeammateThought": {
+        "properties": {
+          "current_task": {
+            "nullable": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "thought": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "handle",
+          "display_name",
+          "status",
+          "thought",
+          "updated_at"
+        ],
+        "type": "object"
       },
       "TinaChatConversationDto": {
         "properties": {
@@ -9466,6 +10161,25 @@
         ],
         "type": "object"
       },
+      "TouchedFileStat": {
+        "properties": {
+          "added_lines": {
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "removed_lines": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "added_lines",
+          "removed_lines"
+        ],
+        "type": "object"
+      },
       "UpdateContextMemoryPolicyRequest": {
         "additionalProperties": true,
         "properties": {
@@ -9530,6 +10244,34 @@
             "type": "integer"
           },
           "strategy": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateLiveDigestSettingsRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "clear_model_binding": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "off",
+              "auto",
+              "always"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "provider_instance_id": {
+            "format": "uuid",
             "nullable": true,
             "type": "string"
           }
@@ -14186,6 +14928,56 @@
         ]
       }
     },
+    "/api/v1/live-digest/settings": {
+      "get": {
+        "operationId": "getApiV1Live-digestSettings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveDigestSettings"
+                }
+              }
+            },
+            "description": "Live Digest 3-tier mode and live_explainer route slot resolution"
+          }
+        },
+        "summary": "GET /api/v1/live-digest/settings",
+        "tags": [
+          "ModelCenter"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1Live-digestSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLiveDigestSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveDigestSettings"
+                }
+              }
+            },
+            "description": "Updated Live Digest settings"
+          }
+        },
+        "summary": "PUT /api/v1/live-digest/settings",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
     "/api/v1/mcp/servers": {
       "get": {
         "operationId": "getApiV1McpServers",
@@ -16106,6 +16898,69 @@
         ]
       }
     },
+    "/api/v1/runs/{runId}/live-digest": {
+      "get": {
+        "operationId": "getApiV1RunsByRunIdLive-digest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveDigestSnapshot"
+                }
+              }
+            },
+            "description": "Durable Live Digest snapshot for live view or post-run replay"
+          }
+        },
+        "summary": "GET /api/v1/runs/{runId}/live-digest",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/live-digest/stream": {
+      "get": {
+        "description": "Unbuffered SSE stream for Live Digest (snapshot, l0_delta, l1_narration, done) with Last-Event-ID / ?after_seq resume.",
+        "operationId": "getApiV1RunsByRunIdLive-digestStream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Live Digest SSE event stream"
+          }
+        },
+        "summary": "GET /api/v1/runs/{runId}/live-digest/stream",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
     "/api/v1/runs/{runId}/orchestration": {
       "get": {
         "operationId": "getApiV1RunsByRunIdOrchestration",
@@ -16177,6 +17032,174 @@
           "200": {}
         },
         "summary": "Run task nodes",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates": {
+      "get": {
+        "operationId": "getApiV1RunsByRunIdTeammates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateListResponse"
+                }
+              }
+            },
+            "description": "Core-owned teammate control response"
+          }
+        },
+        "summary": "GET /api/v1/runs/:runId/teammates",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates/{handle}/pause": {
+      "post": {
+        "operationId": "postApiV1RunsByRunIdTeammatesByHandlePause",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeammatePauseRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateControlReceipt"
+                }
+              }
+            },
+            "description": "Core-owned teammate control response"
+          }
+        },
+        "summary": "POST /api/v1/runs/:runId/teammates/:handle/pause",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates/{handle}/resume": {
+      "post": {
+        "operationId": "postApiV1RunsByRunIdTeammatesByHandleResume",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateControlReceipt"
+                }
+              }
+            },
+            "description": "Core-owned teammate control response"
+          }
+        },
+        "summary": "POST /api/v1/runs/:runId/teammates/:handle/resume",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/teammates/{handle}/steer": {
+      "post": {
+        "operationId": "postApiV1RunsByRunIdTeammatesByHandleSteer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeammateSteerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeammateSteerReceipt"
+                }
+              }
+            },
+            "description": "Core-owned teammate control response"
+          }
+        },
+        "summary": "POST /api/v1/runs/:runId/teammates/:handle/steer",
         "tags": [
           "Runs"
         ]

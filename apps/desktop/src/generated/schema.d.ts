@@ -529,6 +529,14 @@ export interface paths {
     /** Browse host filesystem directories (authenticated Web/Electron picker) */
     get: operations["getApiV1FsBrowse"];
   };
+  "/api/v1/fs/media": {
+    /** Stream user-selected background image/video media safely */
+    get: operations["getApiV1FsMedia"];
+  };
+  "/api/v1/fs/mkdir": {
+    /** Create a directory on the host filesystem (authenticated Web/Electron picker) */
+    post: operations["postApiV1FsMkdir"];
+  };
   "/api/v1/governance/approval-delegations": {
     /** Create approval delegation */
     post: operations["postApiV1GovernanceApproval-delegations"];
@@ -590,6 +598,12 @@ export interface paths {
     get: operations["getApiV1Lifecycle-hooks"];
     /** Save workspace or global lifecycle hooks */
     put: operations["putApiV1Lifecycle-hooks"];
+  };
+  "/api/v1/live-digest/settings": {
+    /** GET /api/v1/live-digest/settings */
+    get: operations["getApiV1Live-digestSettings"];
+    /** PUT /api/v1/live-digest/settings */
+    put: operations["putApiV1Live-digestSettings"];
   };
   "/api/v1/mcp/servers": {
     /** List MCP servers (Core-owned) */
@@ -889,6 +903,17 @@ export interface paths {
     /** Answer a correction question */
     post: operations["postApiV1RunsByRunIdCorrectionQuestionsByQuestionIdAnswer"];
   };
+  "/api/v1/runs/{runId}/live-digest": {
+    /** GET /api/v1/runs/{runId}/live-digest */
+    get: operations["getApiV1RunsByRunIdLive-digest"];
+  };
+  "/api/v1/runs/{runId}/live-digest/stream": {
+    /**
+     * GET /api/v1/runs/{runId}/live-digest/stream
+     * @description Unbuffered SSE stream for Live Digest (snapshot, l0_delta, l1_narration, done) with Last-Event-ID / ?after_seq resume.
+     */
+    get: operations["getApiV1RunsByRunIdLive-digestStream"];
+  };
   "/api/v1/runs/{runId}/orchestration": {
     /** Run orchestration */
     get: operations["getApiV1RunsByRunIdOrchestration"];
@@ -903,6 +928,22 @@ export interface paths {
   "/api/v1/runs/{runId}/task-nodes": {
     /** Run task nodes */
     get: operations["getApiV1RunsByRunIdTask-nodes"];
+  };
+  "/api/v1/runs/{runId}/teammates": {
+    /** GET /api/v1/runs/:runId/teammates */
+    get: operations["getApiV1RunsByRunIdTeammates"];
+  };
+  "/api/v1/runs/{runId}/teammates/{handle}/pause": {
+    /** POST /api/v1/runs/:runId/teammates/:handle/pause */
+    post: operations["postApiV1RunsByRunIdTeammatesByHandlePause"];
+  };
+  "/api/v1/runs/{runId}/teammates/{handle}/resume": {
+    /** POST /api/v1/runs/:runId/teammates/:handle/resume */
+    post: operations["postApiV1RunsByRunIdTeammatesByHandleResume"];
+  };
+  "/api/v1/runs/{runId}/teammates/{handle}/steer": {
+    /** POST /api/v1/runs/:runId/teammates/:handle/steer */
+    post: operations["postApiV1RunsByRunIdTeammatesByHandleSteer"];
   };
   "/api/v1/runs/{runId}/tools/{toolId}/execute": {
     /** Run-scoped tool execution (Core-owned) */
@@ -1025,6 +1066,28 @@ export interface paths {
   "/api/v1/sessions/{sessionId}/runs": {
     /** List session runs */
     get: operations["getApiV1SessionsBySessionIdRuns"];
+  };
+  "/api/v1/sessions/{sessionId}/spatial-board": {
+    /** Get multiplayer spatial board snapshot */
+    get: operations["getApiV1SessionsBySessionIdSpatial-board"];
+  };
+  "/api/v1/sessions/{sessionId}/spatial-board/comments": {
+    /** Create spatial board comment pin */
+    post: operations["postApiV1SessionsBySessionIdSpatial-boardComments"];
+  };
+  "/api/v1/sessions/{sessionId}/spatial-board/comments/{pinId}": {
+    /** Delete a spatial board comment pin */
+    delete: operations["deleteApiV1SessionsBySessionIdSpatial-boardCommentsByPinId"];
+    /** Update or resolve a spatial board comment pin */
+    patch: operations["patchApiV1SessionsBySessionIdSpatial-boardCommentsByPinId"];
+  };
+  "/api/v1/sessions/{sessionId}/spatial-board/comments/{pinId}/replies": {
+    /** Reply to a spatial board comment pin */
+    post: operations["postApiV1SessionsBySessionIdSpatial-boardCommentsByPinIdReplies"];
+  };
+  "/api/v1/sessions/{sessionId}/spatial-board/ops": {
+    /** Apply property-level LWW spatial board operations */
+    post: operations["postApiV1SessionsBySessionIdSpatial-boardOps"];
   };
   "/api/v1/sessions/{sessionId}/supervision-findings": {
     /** Supervision findings */
@@ -1709,6 +1772,21 @@ export interface components {
       task_node_id: string;
       [key: string]: unknown;
     };
+    ChapterToolCall: {
+      compact_summary: string;
+      /** @enum {string} */
+      status: "running" | "succeeded" | "failed";
+      tool_call_id: string;
+      tool_name: string;
+    };
+    CompactionPoint: {
+      after_tokens: number;
+      before_tokens: number;
+      /** Format: date-time */
+      occurred_at: string;
+      seq: number;
+      summary: string;
+    };
     CompanionActivity: {
       /** Format: uuid */
       companion_id?: string | null;
@@ -2221,6 +2299,13 @@ export interface components {
       [key: string]: unknown;
     };
     ContextVersionList: components["schemas"]["ContextVersion"][];
+    ContextWaterline: {
+      compaction_count: number;
+      compaction_points: components["schemas"]["CompactionPoint"][];
+      max_tokens: number;
+      usage_percent: number;
+      used_tokens: number;
+    };
     ConversationRecallRequest: {
       cross_session?: boolean | null;
       fidelity?: string | null;
@@ -2365,6 +2450,17 @@ export interface components {
       item_id: string;
       reason: string;
     };
+    GovernanceSignal: {
+      /** @enum {string} */
+      code: "APPROVAL_REJECTED" | "FS_STALE_VERSION" | "SAME_ARGS_RETRY" | "TIMEOUT" | "WORKTREE_GUARD" | "LOOP_DETECTED" | "CONTEXT_PRESSURE";
+      id: string;
+      /** Format: date-time */
+      occurred_at: string;
+      /** @enum {string} */
+      severity: "info" | "warning" | "critical";
+      subject_id?: string | null;
+      summary: string;
+    };
     /** @description Gateway health fingerprint with forwarded Core health fields. */
     Health: {
       /** @enum {string} */
@@ -2436,6 +2532,63 @@ export interface components {
       scope?: string;
       workspace_root?: string;
       [key: string]: unknown;
+    };
+    LiveDigestChapter: {
+      id: string;
+      index: number;
+      narrative: string;
+      /** @enum {string} */
+      phase: "hypothesis" | "verification" | "conclusion";
+      raw_thought_excerpt?: string | null;
+      scout_note?: string | null;
+      /** @enum {string} */
+      source: "l0_structural" | "l1_narrator" | "l2_scout";
+      /** Format: date-time */
+      started_at: string;
+      title: string;
+      tool_calls: components["schemas"]["ChapterToolCall"][];
+      touched_files: components["schemas"]["TouchedFileStat"][];
+      /** Format: date-time */
+      updated_at: string;
+    };
+    LiveDigestSettings: {
+      /** @enum {string} */
+      mode: "off" | "auto" | "always";
+      model?: string | null;
+      /** Format: uuid */
+      provider_instance_id?: string | null;
+      resolved_model?: string | null;
+      /** Format: uuid */
+      resolved_provider_instance_id?: string | null;
+      /** @enum {string} */
+      resolved_source: "explicit_route" | "auto_fast_model" | "chat_fallback" | "unconfigured";
+      revision: number;
+      route_purpose: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    LiveDigestSnapshot: {
+      chapters: components["schemas"]["LiveDigestChapter"][];
+      context_waterline: components["schemas"]["ContextWaterline"];
+      /** @enum {string} */
+      current_phase: "hypothesis" | "verification" | "conclusion";
+      explainer_active: boolean;
+      explainer_model?: string | null;
+      governance_signals: components["schemas"]["GovernanceSignal"][];
+      headline: string;
+      /** @enum {string} */
+      mode: "off" | "auto" | "always";
+      /** Format: uuid */
+      run_id: string;
+      sentinel_alerts: components["schemas"]["SentinelAlert"][];
+      seq: number;
+      /** Format: uuid */
+      session_id: string;
+      status: string;
+      teammate_thoughts: components["schemas"]["TeammateThought"][];
+      touched_files: components["schemas"]["TouchedFileStat"][];
+      /** Format: date-time */
+      updated_at: string;
     };
     ManagedMcpProgramPreview: {
       action: string;
@@ -2987,6 +3140,18 @@ export interface components {
       [key: string]: unknown;
     };
     RunList: components["schemas"]["Run"][];
+    SentinelAlert: {
+      code: string;
+      /** Format: date-time */
+      created_at: string;
+      id: string;
+      message: string;
+      /** @enum {string} */
+      severity: "warning" | "critical";
+      suggested_steer_prompt: string;
+      teammate_handle?: string | null;
+      title: string;
+    };
     Session: {
       created_at: string | null;
       history_revision: number | null;
@@ -3337,6 +3502,86 @@ export interface components {
       [key: string]: unknown;
     };
     TaskNodeList: components["schemas"]["TaskNode"][];
+    TeammateControlReceipt: {
+      accepted: boolean;
+      /** @enum {string} */
+      action: "pause" | "resume";
+      /** Format: uuid */
+      current_task_id?: string | null;
+      handle: string;
+      paused: boolean;
+      /** Format: uuid */
+      run_id: string;
+      status: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    TeammateListResponse: {
+      /** Format: uuid */
+      run_id: string;
+      run_status: string;
+      /** Format: uuid */
+      session_id: string;
+      teammates: components["schemas"]["TeammateSnapshot"][];
+    };
+    TeammatePauseRequest: {
+      reason?: string | null;
+    };
+    TeammateSnapshot: {
+      agent_slug: string;
+      awaiting_approval: boolean;
+      branch_name?: string | null;
+      claimed_step_id?: string | null;
+      /** Format: uuid */
+      current_task_id?: string | null;
+      current_task_title?: string | null;
+      handle: string;
+      latest_summary?: string | null;
+      /** @enum {string} */
+      mode: "teammate" | "ephemeral";
+      paused: boolean;
+      pending_steer_count: number;
+      relay_depth: number;
+      runtime_badge?: string | null;
+      /** @enum {string} */
+      status: "working" | "waiting" | "paused" | "awaiting_approval" | "terminated";
+      /** Format: date-time */
+      updated_at: string;
+      worktree_path?: string | null;
+      write_scope: string[];
+    };
+    TeammateSteerReceipt: {
+      accepted: boolean;
+      board_seq: number;
+      /** Format: date-time */
+      delivered_at: string;
+      /** @enum {string} */
+      delivery_mode: "injected_next_turn" | "woken" | "queued_while_paused";
+      handle: string;
+      paused: boolean;
+      pending_steer_count: number;
+      /** Format: uuid */
+      run_id: string;
+      status: string;
+      /** Format: uuid */
+      task_id?: string | null;
+      urgent: boolean;
+      woken: boolean;
+    };
+    TeammateSteerRequest: {
+      client_control_id?: string | null;
+      message: string;
+      urgent?: boolean | null;
+    };
+    TeammateThought: {
+      current_task?: string | null;
+      display_name: string;
+      handle: string;
+      status: string;
+      thought: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
     TinaChatConversationDto: {
       /** Format: uuid */
       accepted_intent_id: string | null;
@@ -3870,6 +4115,11 @@ export interface components {
       version?: string | null;
       [key: string]: unknown;
     };
+    TouchedFileStat: {
+      added_lines: number;
+      path: string;
+      removed_lines: number;
+    };
     UpdateContextMemoryPolicyRequest: {
       allow_cross_session_recall?: boolean | null;
       candidate_only?: boolean | null;
@@ -3887,6 +4137,15 @@ export interface components {
       recent_message_limit?: number | null;
       retrieval_limit?: number | null;
       strategy?: string | null;
+      [key: string]: unknown;
+    };
+    UpdateLiveDigestSettingsRequest: {
+      clear_model_binding?: boolean | null;
+      /** @enum {string|null} */
+      mode?: "off" | "auto" | "always" | null;
+      model?: string | null;
+      /** Format: uuid */
+      provider_instance_id?: string | null;
       [key: string]: unknown;
     };
     UpdateMemoryDocumentRequest: {
@@ -6139,6 +6398,22 @@ export interface operations {
       };
     };
   };
+  /** Stream user-selected background image/video media safely */
+  getApiV1FsMedia: {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Create a directory on the host filesystem (authenticated Web/Electron picker) */
+  postApiV1FsMkdir: {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
   /** Create approval delegation */
   "postApiV1GovernanceApproval-delegations": {
     responses: {
@@ -6339,6 +6614,33 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["LifecycleHooksDocument"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/live-digest/settings */
+  "getApiV1Live-digestSettings": {
+    responses: {
+      /** @description Live Digest 3-tier mode and live_explainer route slot resolution */
+      200: {
+        content: {
+          "application/json": components["schemas"]["LiveDigestSettings"];
+        };
+      };
+    };
+  };
+  /** PUT /api/v1/live-digest/settings */
+  "putApiV1Live-digestSettings": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateLiveDigestSettingsRequest"];
+      };
+    };
+    responses: {
+      /** @description Updated Live Digest settings */
+      200: {
+        content: {
+          "application/json": components["schemas"]["LiveDigestSettings"];
         };
       };
     };
@@ -7408,6 +7710,41 @@ export interface operations {
       };
     };
   };
+  /** GET /api/v1/runs/{runId}/live-digest */
+  "getApiV1RunsByRunIdLive-digest": {
+    parameters: {
+      path: {
+        runId: string;
+      };
+    };
+    responses: {
+      /** @description Durable Live Digest snapshot for live view or post-run replay */
+      200: {
+        content: {
+          "application/json": components["schemas"]["LiveDigestSnapshot"];
+        };
+      };
+    };
+  };
+  /**
+   * GET /api/v1/runs/{runId}/live-digest/stream
+   * @description Unbuffered SSE stream for Live Digest (snapshot, l0_delta, l1_narration, done) with Last-Event-ID / ?after_seq resume.
+   */
+  "getApiV1RunsByRunIdLive-digestStream": {
+    parameters: {
+      path: {
+        runId: string;
+      };
+    };
+    responses: {
+      /** @description Live Digest SSE event stream */
+      200: {
+        content: {
+          "text/event-stream": string;
+        };
+      };
+    };
+  };
   /** Run orchestration */
   getApiV1RunsByRunIdOrchestration: {
     parameters: {
@@ -7450,6 +7787,83 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** GET /api/v1/runs/:runId/teammates */
+  getApiV1RunsByRunIdTeammates: {
+    parameters: {
+      path: {
+        runId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned teammate control response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TeammateListResponse"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/runs/:runId/teammates/:handle/pause */
+  postApiV1RunsByRunIdTeammatesByHandlePause: {
+    parameters: {
+      path: {
+        runId: string;
+        handle: string;
+      };
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["TeammatePauseRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned teammate control response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TeammateControlReceipt"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/runs/:runId/teammates/:handle/resume */
+  postApiV1RunsByRunIdTeammatesByHandleResume: {
+    parameters: {
+      path: {
+        runId: string;
+        handle: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned teammate control response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TeammateControlReceipt"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/runs/:runId/teammates/:handle/steer */
+  postApiV1RunsByRunIdTeammatesByHandleSteer: {
+    parameters: {
+      path: {
+        runId: string;
+        handle: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TeammateSteerRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned teammate control response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TeammateSteerReceipt"];
+        };
       };
     };
   };
@@ -8040,6 +8454,87 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["RunList"];
         };
+      };
+    };
+  };
+  /** Get multiplayer spatial board snapshot */
+  "getApiV1SessionsBySessionIdSpatial-board": {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Create spatial board comment pin */
+  "postApiV1SessionsBySessionIdSpatial-boardComments": {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Delete a spatial board comment pin */
+  "deleteApiV1SessionsBySessionIdSpatial-boardCommentsByPinId": {
+    parameters: {
+      path: {
+        sessionId: string;
+        pinId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Update or resolve a spatial board comment pin */
+  "patchApiV1SessionsBySessionIdSpatial-boardCommentsByPinId": {
+    parameters: {
+      path: {
+        sessionId: string;
+        pinId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Reply to a spatial board comment pin */
+  "postApiV1SessionsBySessionIdSpatial-boardCommentsByPinIdReplies": {
+    parameters: {
+      path: {
+        sessionId: string;
+        pinId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Apply property-level LWW spatial board operations */
+  "postApiV1SessionsBySessionIdSpatial-boardOps": {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
       };
     };
   };
