@@ -7,6 +7,7 @@ import BrandLogo from '@/components/BrandLogo.vue'
 import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import AgentPetAvatar from '@/components/pets/AgentPetAvatar.vue'
 import { useNotifications } from '@/composables/useNotifications'
+import { usePlatform } from '@/composables/usePlatform'
 import {
   companionApi,
   type CompanionConversation,
@@ -39,6 +40,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { notify } = useNotifications()
+const { isElectronMac, isFullScreen } = usePlatform()
 
 const filter = ref<'all' | 'bots' | 'groups'>('all')
 const groupComposerOpen = ref(false)
@@ -114,8 +116,16 @@ async function submitGroup() {
 
 <template>
   <aside class="companion-rail" data-testid="companion-contacts-rail">
-    <div class="companion-rail-top">
-      <div class="companion-rail-brand">
+    <div
+      class="companion-rail-top"
+      :class="{
+        'companion-rail-top--mac': isElectronMac,
+        'companion-rail-top--mac-lights': isElectronMac && !isFullScreen,
+        'companion-rail-top--mac-fullscreen': isElectronMac && isFullScreen,
+      }"
+      data-testid="companion-rail-top"
+    >
+      <div v-if="!isElectronMac" class="companion-rail-brand">
         <BrandLogo :size="14" />
         <TinadecCalligraphy :size="14" />
       </div>
@@ -263,6 +273,17 @@ async function submitGroup() {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 12px 12px 8px; min-width: 0;
   -webkit-app-region: drag;
+}
+.companion-rail-top--mac-lights {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 12px 0 76px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+.companion-rail-top--mac-fullscreen {
+  padding: 10px 12px 6px;
+  justify-content: flex-start;
 }
 .companion-rail-top :deep(button),
 .companion-rail-top :deep(a),

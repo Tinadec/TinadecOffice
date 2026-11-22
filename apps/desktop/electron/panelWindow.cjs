@@ -131,6 +131,178 @@ function tagMainWindow(win) {
 }
 
 /**
+ * Resolve the BrowserWindow icon path when appropriate for the host OS.
+ * macOS uses the .app bundle / Dock icon rather than a Windows .ico container.
+ */
+function resolveWindowIcon({ electronDir = __dirname, isDev: dev = isDev, platform = process.platform } = {}) {
+  if (platform === 'darwin') return undefined;
+  return path.join(electronDir, '..', dev ? 'public' : 'dist', 'tinadec.ico');
+}
+
+/**
+ * Pure option builder for the main TinadecOffice BrowserWindow.
+ */
+function buildMainWindowOptions(platform = process.platform, { electronDir = __dirname, isDev: dev = isDev } = {}) {
+  const isDarwin = platform === 'darwin';
+  const icon = resolveWindowIcon({ electronDir, isDev: dev, platform });
+  return {
+    width: 1440,
+    height: 920,
+    minWidth: 1120,
+    minHeight: 720,
+    backgroundColor: '#1e1e2e',
+    title: 'TinadecOffice',
+    ...(icon ? { icon } : {}),
+    titleBarStyle: 'hidden',
+    ...(isDarwin ? { trafficLightPosition: { x: 20, y: 20 } } : { autoHideMenuBar: true }),
+    show: false,
+    webPreferences: {
+      preload: path.join(electronDir, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  };
+}
+
+/**
+ * Pure option builder for detached panel BrowserWindows.
+ * On macOS, `titleBarStyle: 'hidden'` + `trafficLightPosition` replaces `frame: false`
+ * so native traffic lights, rounded window corners, and window shadows remain active.
+ */
+function buildPanelWindowOptions({
+  width = 600,
+  height = 640,
+  x,
+  y,
+  title = 'Panel',
+  platform = process.platform,
+  electronDir = __dirname,
+  isDev: dev = isDev,
+} = {}) {
+  const isDarwin = platform === 'darwin';
+  const icon = resolveWindowIcon({ electronDir, isDev: dev, platform });
+  return {
+    width,
+    height,
+    minWidth: 300,
+    minHeight: 400,
+    x,
+    y,
+    backgroundColor: '#0d1117',
+    title: title || 'Panel',
+    ...(icon ? { icon } : {}),
+    ...(isDarwin
+      ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 14, y: 12 } }
+      : { frame: false, autoHideMenuBar: true }),
+    show: false,
+    resizable: true,
+    webPreferences: {
+      preload: path.join(electronDir, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  };
+}
+
+/**
+ * Forward native full-screen transitions (`enter-full-screen` / `leave-full-screen`)
+ * to the window's renderer over `tinadec:fullscreen-changed`.
+ * @param {BrowserWindow} win
+ */
+function attachWindowFullScreenEvents(win) {
+  if (!win || typeof win.on !== 'function') return;
+  const emitFullScreen = (fullScreen) => {
+    if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+      win.webContents.send('tinadec:fullscreen-changed', Boolean(fullScreen));
+    }
+  };
+  win.on('enter-full-screen', () => emitFullScreen(true));
+  win.on('leave-full-screen', () => emitFullScreen(false));
+}
+
+/**
+ * Pure macOS application menu template providing standard App, Edit (Cmd+C/V/X/A/Z),
+ * View (zoom + full-screen), and Window roles.
+ */
+function buildDarwinApplicationMenuTemplate({ appName = 'TinadecOffice', isDev: dev = isDev } = {}) {
+  return [
+    {
+      role: 'appMenu',
+      label: appName,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      role: 'editMenu',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      role: 'viewMenu',
+      submenu: [
+        ...(dev
+          ? [
+              { role: 'reload' },
+              { role: 'forceReload' },
+              { role: 'toggleDevTools' },
+              { type: 'separator' },
+            ]
+          : []),
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      role: 'windowMenu',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' },
+        { type: 'separator' },
+        { role: 'close' },
+      ],
+    },
+  ];
+}
+
+const WIDE_PANEL_TYPES = new Set(['git', 'codeEditor', 'browser', 'orchestration']);
+const MEDIUM_PANEL_TYPES = new Set(['approval', 'events', 'doctor', 'organization']);
+
+/**
+ * Comfortable type-aware default dimensions when no saved user bounds exist.
+ */
+function defaultPanelDimensions(type) {
+  const normalized = typeof type === 'string' ? type.trim() : '';
+  if (WIDE_PANEL_TYPES.has(normalized)) return { width: 760, height: 680 };
+  if (MEDIUM_PANEL_TYPES.has(normalized)) return { width: 560, height: 640 };
+  return { width: 600, height: 640 };
+}
+
+/**
  * Create a detached panel window.
  *
  * @param {string} tabId - Unique tab identifier
@@ -148,14 +320,18 @@ function tagMainWindow(win) {
  */
 async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
   const cursor = screen.getCursorScreenPoint();
-  const width = options.width ?? 440;
-  const height = options.height ?? 640;
+  const persisted = options.width == null || options.height == null
+    ? loadPersistedLayout().find((item) => item && item.tabId === tabId)?.bounds
+    : null;
+  const defaults = defaultPanelDimensions(type);
+  let width = options.width ?? persisted?.width ?? defaults.width;
+  let height = options.height ?? persisted?.height ?? defaults.height;
 
   // Clamp position to visible screen bounds
-  let x = options.x ?? Math.round(cursor.x - width / 2);
-  let y = options.y ?? Math.round(cursor.y - 30);
+  let x = options.x ?? persisted?.x ?? Math.round(cursor.x - width / 2);
+  let y = options.y ?? persisted?.y ?? Math.round(cursor.y - 30);
 
-  // Ensure window appears within a visible display
+  // Ensure window appears within a visible display and fits comfortably inside workArea
   const displays = screen.getAllDisplays();
   const visibleDisplay = displays.find((d) => {
     const wa = d.workArea;
@@ -165,34 +341,28 @@ async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
 
   if (visibleDisplay) {
     const wa = visibleDisplay.workArea;
+    width = Math.min(width, Math.max(300, wa.width - 20));
+    height = Math.min(height, Math.max(400, wa.height - 20));
     x = Math.max(wa.x + 10, Math.min(x, wa.x + wa.width - width - 10));
     y = Math.max(wa.y + 10, Math.min(y, wa.y + wa.height - height - 10));
   }
 
-  const win = new BrowserWindow({
-    width,
-    height,
-    minWidth: 300,
-    minHeight: 400,
-    x,
-    y,
-    backgroundColor: '#0d1117',
-    title: title || 'Panel',
-    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico'),
-    frame: false,
-    autoHideMenuBar: true,
-    show: false,
-    resizable: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
+  const win = new BrowserWindow(
+    buildPanelWindowOptions({
+      width,
+      height,
+      x,
+      y,
+      title,
+      platform: process.platform,
+      electronDir: __dirname,
+      isDev,
+    }),
+  );
 
   registerTrustedHostWindow(win);
   attachExternalLinkGuards(win.webContents);
+  attachWindowFullScreenEvents(win);
   // Mirrors tagMainWindow(): lets the terminal output router recognise a window that
   // can host a terminal view without consulting the panel tracking Map.
   win._isTinadecPanel = true;
@@ -237,7 +407,7 @@ async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
       hasShown = true;
       win.show();
     }
-  }, 5000);
+  }, 5000).unref?.();
 
   // Build hash route with query params for the detached panel
   const query = new URLSearchParams({
@@ -421,4 +591,10 @@ module.exports = {
   getMainWindow,
   loadPersistedLayout,
   savePersistedLayout,
+  resolveWindowIcon,
+  defaultPanelDimensions,
+  buildMainWindowOptions,
+  buildPanelWindowOptions,
+  attachWindowFullScreenEvents,
+  buildDarwinApplicationMenuTemplate,
 };

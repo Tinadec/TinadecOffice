@@ -3,12 +3,16 @@ import { Copy, Minus, Square, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { UiButton } from '@/components/ui'
+import BrandLogo from '@/components/BrandLogo.vue'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
+import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
+import { usePlatform } from '@/composables/usePlatform'
 import { useHostAccess } from '@/lib/hostAccess'
 
 const { t } = useI18n()
 const hostAccess = useHostAccess()
 const isElectron = computed(() => hostAccess.isElectron?.value ?? true)
+const { isMac, isElectronMac } = usePlatform()
 withDefaults(defineProps<{ showSearch?: boolean }>(), { showSearch: true })
 
 // There is no main-process maximize event today, so the icon follows the window's
@@ -53,7 +57,16 @@ function closeWindow() {
         Snapshots have their own bars and mount `CommandPaletteButton` themselves.
       -->
       <CommandPaletteButton v-if="showSearch" />
-      <template v-if="isElectron">
+      <div
+        v-if="isElectronMac"
+        class="brand topbar-brand"
+        data-testid="macos-topbar-brand"
+        aria-hidden="true"
+      >
+        <BrandLogo :size="14" class="brand-logo-icon" />
+        <TinadecCalligraphy :size="14" class="brand-calligraphy" />
+      </div>
+      <template v-if="isElectron && !isMac">
       <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" :aria-label="t('app.minimize')" @click="minimizeWindow">
         <Minus :size="14" aria-hidden="true" />
       </UiButton>

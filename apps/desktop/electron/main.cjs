@@ -82,6 +82,9 @@ const {
   broadcastToPanels,
   getMainWindow,
   tagMainWindow,
+  buildMainWindowOptions,
+  attachWindowFullScreenEvents,
+  buildDarwinApplicationMenuTemplate,
 } = require('./panelWindow.cjs');
 const {
   registerTerminalIpc,
@@ -279,28 +282,10 @@ async function showMainWindow() {
 }
 
 async function createWindow() {
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 920,
-    minWidth: 1120,
-    minHeight: 720,
-    backgroundColor: '#1e1e2e',
-    title: 'TinadecOffice',
-    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico'),
-    titleBarStyle: 'hidden',
-    autoHideMenuBar: true,
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      // Same-origin policy stays on. The packaged bundle is served from `app://bundle`
-      // instead of `file://` (see appBundle.cjs), which is what used to force this off:
-      // without it any page the preview panel embeds could reach this window's
-      // contextBridge surface, including the terminal IPC that spawns processes.
-    }
-  });
+  // Same-origin policy stays on inside buildMainWindowOptions (app://bundle replaces file://).
+  const win = new BrowserWindow(
+    buildMainWindowOptions(process.platform, { electronDir: __dirname, isDev }),
+  );
 
   // Tag this window as the main TinadecOffice window so panelWindow.cjs
   // can reliably distinguish it from the Debug Studio window.
@@ -308,6 +293,7 @@ async function createWindow() {
   registerTrustedHostWindow(win);
 
   attachExternalLinkGuards(win.webContents);
+  attachWindowFullScreenEvents(win);
 
   mainWindow = win;
 
@@ -450,6 +436,8 @@ ipcMain.on('tinadec:close', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close();
 });
 
+ipcMain.handle('tinadec:window-is-fullscreen', (event) => BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false);
+
 // --- Window and tray preferences ---
 // Same authority as the other desktop preferences: only the trusted main page may change this, and
 // the tray rebroadcasts the stored value so the Settings switch and the tray checkbox never disagree.
@@ -506,7 +494,7 @@ ipcMain.handle('tinadec:companion-capsule-style-save', (event, style) => {
   }
   // saveCompanionCapsuleStyle validates the known styles before anything is persisted.
   const saved = saveCompanionCapsuleStyle(appConfigFile(), style);
-  companionWindow.setCapsuleStyle(saved.companion_capsule_style);
+  companionWindow.setCapsuleStyle?.(saved.companion_capsule_style);
   return appConfigSnapshot();
 });
 
@@ -517,7 +505,7 @@ ipcMain.handle('tinadec:companion-capsule-reveal-save', (event, reveal) => {
     throw new Error('Companion capsule reveal requires the trusted main host page.');
   }
   const saved = saveCompanionCapsuleReveal(appConfigFile(), reveal);
-  companionWindow.setCapsuleReveal(saved.companion_capsule_reveal);
+  companionWindow.setCapsuleReveal?.(saved.companion_capsule_reveal);
   return appConfigSnapshot();
 });
 
@@ -553,6 +541,28 @@ ipcMain.handle('tinadec:companion-side', (event, nextSide) => {
 ipcMain.handle('tinadec:companion-mode', (event, nextMode) => {
   requireCompanionSender(event);
   return companionWindow.setMode(nextMode);
+});
+ipcMain.handle('tinadec:companion-drag-move', (event, screenX, screenY) => {
+  requireCompanionSender(event);
+  return companionWindow.dragMove?.(screenX, screenY);
+});
+ipcMain.handle('tinadec:companion-drag-end', (event, screenX, screenY) => {
+  requireCompanionSender(event);
+  return companionWindow.dragEnd?.(screenX, screenY);
+});
+ipcMain.handle('tinadec:companion-open-main', async (event, payload) => {
+  requireCompanionSender(event);
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : await showMainWindow();
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    if (!win.webContents.isDestroyed()) {
+      win.webContents.send('tinadec:navigate-surface', payload || {});
+    }
+    return true;
+  }
+  return false;
 });
 
 // The companion window's companion-domain traffic. It cannot act as a trusted host, so this is the
@@ -595,7 +605,7 @@ function isAgentBrowserMirrorSender(event) {
   return Boolean(frame && mainFrame && !frame.parent && frame.routingId === mainFrame.routingId);
 }
 
-agentBrowserManager.onStateChange((payload) => {
+agentBrowserManager.onStateChange?.((payload) => {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isDestroyed() && (win._isTinadecMain || win._isTinadecPanel)) {
       win.webContents.send('tinadec:agent-browser-state-changed', payload);
@@ -1092,6 +1102,19 @@ app.whenReady().then(async () => {
     }
   });
 
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate(buildDarwinApplicationMenuTemplate({ appName: app.name || 'TinadecOffice', isDev })),
+    );
+    if (isDev) {
+      try {
+        app.dock?.setIcon?.(path.join(__dirname, '..', 'public', 'tinadec-logo.png'));
+      } catch {
+        // Non-fatal when Dock APIs are unavailable in headless runs.
+      }
+    }
+  }
+
   await createWindow();
 
   // The tray exists only while the preference asks for it: a user who turned it off gets no stray
@@ -1149,8 +1172,8 @@ app.whenReady().then(async () => {
   if (storedCompanionMode) {
     // Set before creating: the window's first bounds must already use the stored style (it decides
     // the width) and reveal (it decides how much of that width is on screen).
-    companionWindow.setCapsuleStyle(storedCapsuleStyle);
-    companionWindow.setCapsuleReveal(storedCapsuleReveal);
+    companionWindow.setCapsuleStyle?.(storedCapsuleStyle);
+    companionWindow.setCapsuleReveal?.(storedCapsuleReveal);
     await companionWindow.createCompanionWindow().catch((error) => {
       console.error('[tinadec] companion window failed to open:', error?.message ?? error);
     });

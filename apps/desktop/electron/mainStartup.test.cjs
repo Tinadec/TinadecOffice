@@ -37,3 +37,23 @@ test('startup never blocks the first paint on host verification', () => {
   assert.match(source, /function publishHostStatus\(snapshot\)\s*{\s*trustedHostReady = snapshot\.managed && snapshot\.state === 'ready';/,
     'business authority still follows verified host state, not window existence');
 });
+
+test('main window chrome delegates to platform-aware option builder and wires fullscreen IPC + darwin menu', () => {
+  assert.match(source, /buildMainWindowOptions\(process\.platform/,
+    'createWindow uses buildMainWindowOptions so darwin gets trafficLightPosition without .ico');
+  assert.match(source, /attachWindowFullScreenEvents\(win\)/,
+    'main window forwards enter-full-screen and leave-full-screen to renderer');
+  assert.match(
+    source,
+    /ipcMain\.handle\('tinadec:window-is-fullscreen',\s*\(event\)\s*=>\s*BrowserWindow\.fromWebContents\(event\.sender\)\?\.isFullScreen\(\)\s*\?\?\s*false\)/,
+    'tinadec:window-is-fullscreen IPC handler queries sender BrowserWindow fullscreen state',
+  );
+  assert.match(source, /if\s*\(process\.platform\s*===\s*'darwin'\)\s*{[\s\S]*?Menu\.setApplicationMenu\(/,
+    'darwin sets native application menu with standard Edit/View/Window roles');
+  assert.match(source, /ipcMain\.handle\('tinadec:companion-drag-move'/,
+    'companion 2D drag-move IPC glue is registered');
+  assert.match(source, /ipcMain\.handle\('tinadec:companion-drag-end'/,
+    'companion 2D drag-end IPC glue is registered');
+  assert.match(source, /ipcMain\.handle\('tinadec:companion-open-main'[\s\S]*?tinadec:navigate-surface/,
+    'companion openMainSurface IPC glue restores main window and emits tinadec:navigate-surface');
+});

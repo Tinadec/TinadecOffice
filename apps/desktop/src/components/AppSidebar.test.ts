@@ -6,6 +6,7 @@ import AppSidebar from './AppSidebar.vue'
 import sidebarSource from './AppSidebar.vue?raw'
 import type { ProjectDto, SessionDto } from '../api'
 import { freeWorkspaceKey, workspaceListStorageKey } from '@/composables/useWorkspaceList'
+import { __resetPlatformForTests } from '@/composables/usePlatform'
 import { auth } from '@/lib/auth'
 import { setNickname } from '@/lib/userProfile'
 
@@ -858,6 +859,54 @@ describe('AppSidebar activity view', () => {
       'sidebar.allActivity',
       'sidebar.projectActivity',
     ])
+    wrapper.unmount()
+  })
+})
+
+describe('AppSidebar macOS 3-state left-island adaptation', () => {
+  const originalHref = window.location.href
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    window.history.replaceState({}, '', originalHref)
+    __resetPlatformForTests()
+  })
+
+  it('keeps sidebar-topbar BrandLogo + TinadecCalligraphy on win32 and pure web', () => {
+    vi.stubGlobal('tinadec', { platform: 'win32', minimizeWindow: vi.fn() })
+    const wrapper = factory()
+
+    expect(wrapper.find('.sidebar-topbar .brand').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sidebar-mac-lights-spacer"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('hides duplicate brand and reserves 38px traffic-light drag spacer on darwin expanded non-fullscreen', () => {
+    vi.stubGlobal('tinadec', { platform: 'darwin', minimizeWindow: vi.fn() })
+    const wrapper = factory({ collapsed: false })
+
+    expect(wrapper.find('.sidebar-topbar').exists()).toBe(false)
+    expect(wrapper.find('.brand').exists()).toBe(false)
+    const spacer = wrapper.get('[data-testid="sidebar-mac-lights-spacer"]')
+    expect(spacer.classes()).not.toContain('sidebar-mac-lights-spacer--collapsed')
+    wrapper.unmount()
+  })
+
+  it('collapses sidebar-mac-lights-spacer when collapsed rail is active on darwin', () => {
+    vi.stubGlobal('tinadec', { platform: 'darwin', minimizeWindow: vi.fn() })
+    const wrapper = factory({ collapsed: true })
+
+    const spacer = wrapper.get('[data-testid="sidebar-mac-lights-spacer"]')
+    expect(spacer.classes()).toContain('sidebar-mac-lights-spacer--collapsed')
+    wrapper.unmount()
+  })
+
+  it('collapses sidebar-mac-lights-spacer when fullscreen is active on darwin', () => {
+    window.history.replaceState({}, '', '/?platform=darwin&fullscreen=true')
+    const wrapper = factory({ collapsed: false })
+
+    const spacer = wrapper.get('[data-testid="sidebar-mac-lights-spacer"]')
+    expect(spacer.classes()).toContain('sidebar-mac-lights-spacer--collapsed')
     wrapper.unmount()
   })
 })

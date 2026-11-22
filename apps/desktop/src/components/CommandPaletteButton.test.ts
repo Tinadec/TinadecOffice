@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import CommandPaletteButton from './CommandPaletteButton.vue'
 import { closePalette, paletteIsOpen } from '@/composables/useCommandPalette'
+import { __resetPlatformForTests } from '@/composables/usePlatform'
 import { PALETTE_COMBO, formatCombo } from '@/lib/keybindings'
 
 vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()),
@@ -15,7 +16,11 @@ vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof
 }))
 
 describe('CommandPaletteButton', () => {
-  afterEach(() => closePalette())
+  afterEach(() => {
+    closePalette()
+    vi.unstubAllGlobals()
+    __resetPlatformForTests()
+  })
 
   it('names itself after the palette and announces the real binding', () => {
     const button = mount(CommandPaletteButton).get('[data-testid="command-palette-button"]')
@@ -50,6 +55,19 @@ describe('CommandPaletteButton', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.get('[data-testid="command-palette-button"]').attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('input').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('announces ⌘K on darwin via usePlatform()', () => {
+    vi.stubGlobal('tinadec', {
+      platform: 'darwin',
+      minimizeWindow: vi.fn(),
+    })
+    const wrapper = mount(CommandPaletteButton)
+    const button = wrapper.get('[data-testid="command-palette-button"]')
+
+    expect(button.attributes('aria-keyshortcuts')).toBe('⌘K')
+    expect(button.attributes('title')).toBe('palette.openWithShortcut:⌘K')
     wrapper.unmount()
   })
 

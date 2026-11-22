@@ -245,6 +245,12 @@ declare global {
     setSide: (side: 'left' | 'right') => Promise<CompanionState>;
     /** Switch between the capsule, the panel and the immersive column. */
     setMode: (mode: 'capsule' | 'panel' | 'immersive') => Promise<CompanionState>;
+    /** Smooth 2D capsule/panel drag move in screen coordinates. */
+    dragMove: (screenX: number, screenY: number) => Promise<unknown>;
+    /** Commit 2D drag release and edge-snap in screen coordinates. */
+    dragEnd: (screenX: number, screenY: number) => Promise<unknown>;
+    /** Focus/restore the main window and navigate to Companion Center or a work session. */
+    openMainSurface: (payload: { target: 'companion-center' | 'session'; companionId?: string; sessionId?: string }) => Promise<unknown>;
     onStateChanged: (callback: (state: CompanionState) => void) => () => void;
   }
 
@@ -283,6 +289,8 @@ declare global {
       saveCompanionCapsuleReveal: (reveal: number) => Promise<{ companion_capsule_reveal: number }>;
       /** The companion window's own geometry gestures; other windows are rejected by the main process. */
       companion: CompanionApi;
+      /** Listen for main-window surface navigation requests originating from satellite windows (e.g. companion). */
+      onNavigateSurface?: (callback: (payload: { target?: string; companionId?: string; sessionId?: string }) => void) => () => void;
       saveGatewayUrl: (gatewayUrl: string) => Promise<{ gateway_url: string; source: 'user'; managed: false }>;
       resetGatewayUrl: () => Promise<{ gateway_url: string; source: 'default' | 'environment'; managed: boolean }>;
       discoverServices: () => Promise<DiscoveredService[]>;
@@ -300,6 +308,12 @@ declare global {
       minimizeWindow: () => void;
       maximizeWindow: () => void;
       closeWindow: () => void;
+      /** Host OS platform reported synchronously by preload (`'darwin' | 'win32' | 'linux' | ...`). */
+      platform?: string;
+      /** Query whether the current Electron BrowserWindow is in native full-screen mode. */
+      isFullScreen?: () => Promise<boolean>;
+      /** Subscribe to native full-screen transitions (`enter-full-screen` / `leave-full-screen`). */
+      onFullScreenChanged?: (callback: (fullScreen: boolean) => void) => () => void;
       /** Open the Logto login flow in the system browser; resolves with the synced identity or null. */
       openLogin: () => Promise<LoginIdentity | null>;
       /** Revoke the current login session. */

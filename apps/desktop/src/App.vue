@@ -9,6 +9,7 @@ import {
   retryConnection,
 } from '@/composables/useConnection'
 import { useNotifications, startStatusSync } from '@/composables/useNotifications'
+import { initPlatform } from '@/composables/usePlatform'
 import { setHostAccessStatus, useHostAccess } from '@/lib/hostAccess'
 import { ensureGraphSeedPack, setGraphSeedPackTranslator } from '@/agentPacks/graphSeedPackBootstrap'
 import { evaluateOobeAdmission } from '@/composables/useOobe'
@@ -24,6 +25,7 @@ import RecoveryCheckDialog from '@/components/governance/RecoveryCheckDialog.vue
 import WebLoginPage from '@/components/web/WebLoginPage.vue'
 import ServerDirectoryPickerModal from '@/components/web/ServerDirectoryPickerModal.vue'
 import { installPaletteKeybinding } from '@/composables/useCommandPalette'
+import { selectCompanion } from '@/lib/companionStore'
 import { homeController } from '@/controllers/HomeController'
 
 // ---- Background layer (global, outside page transitions) ----
@@ -71,6 +73,8 @@ const { status, dismissByKey } = useNotifications()
 let unsubscribeStatusSync: (() => void) | undefined
 let uninstallPaletteKeys: (() => void) | undefined
 let unsubscribeFocusSession: (() => void) | undefined
+let unsubscribeNavigateSurface: (() => void) | undefined
+const disposePlatform = initPlatform()
 const route = useRoute()
 const router = useRouter()
 // Startup happens once. Retrying a lost backend must preserve the live page.
@@ -197,14 +201,37 @@ onMounted(() => {
       void homeController.setSelectedSession(sessionId)
       void router.push('/')
     })
+    unsubscribeNavigateSurface = window.tinadec?.onNavigateSurface?.((payload) => {
+      if (payload?.target === 'companion-center') {
+        if (payload.companionId) {
+          selectCompanion(payload.companionId)
+        }
+        void router.push({
+          path: '/companion-center',
+          ...(payload.companionId ? { query: { companionId: payload.companionId } } : {}),
+        })
+        return
+      }
+      if (payload?.target === 'session' && payload.sessionId) {
+        try {
+          sessionStorage.setItem('tinadec.pendingConversationId', payload.sessionId)
+        } catch {
+          // Ignore storage quota errors in restricted webviews.
+        }
+        void homeController.setSelectedSession(payload.sessionId)
+        void router.push('/')
+      }
+    })
     window.addEventListener('tinadec:open-recovery-check', onOpenRecoveryCheck)
   }
 })
 
 onBeforeUnmount(() => {
+  disposePlatform()
   unsubscribeStatusSync?.()
   uninstallPaletteKeys?.()
   unsubscribeFocusSession?.()
+  unsubscribeNavigateSurface?.()
   window.removeEventListener('tinadec:open-recovery-check', onOpenRecoveryCheck)
 })
 </script>
@@ -301,8 +328,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-:root[data-tinadec-platform='web'] .window-btn,
-:root[data-tinadec-platform='web'] .detached-titlebar-btn {
+:root[data-tinadec-platform='web'] .window-btn:not(.commands),
+:root[data-tinadec-platform='web'] .detached-titlebar-btn:not(.reattach-btn) {
   display: none !important;
 }
 </style>

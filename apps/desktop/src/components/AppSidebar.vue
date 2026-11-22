@@ -41,6 +41,7 @@ import InlineRenameInput from '@/components/InlineRenameInput.vue'
 import RowContextMenu, { type RowMenuItem } from '@/components/RowContextMenu.vue'
 import { UiButton, UiCheckbox, UiSelectField } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { usePlatform } from '@/composables/usePlatform'
 import { errorCodeMessage } from '@/lib/apiError'
 import { userProfile } from '@/lib/userProfile'
 import { profileNameFits } from '@/lib/profileNameFit'
@@ -48,6 +49,7 @@ import { auth } from '@/lib/auth'
 
 const { t, te, locale } = useI18n()
 const { confirm } = useNotifications()
+const { isElectronMac, isFullScreen } = usePlatform()
 
 function openGovernanceDrawer() {
   window.dispatchEvent(new CustomEvent('tinadec:open-governance-drawer', { detail: { tab: 'decisions' } }))
@@ -598,8 +600,10 @@ const footerEl = ref<HTMLElement | null>(null)
 const footerActionsEl = ref<HTMLElement | null>(null)
 const profileNameProbe = ref<HTMLElement | null>(null)
 const profileNameShown = ref(false)
+const visualNarrow = ref(false)
 /** Natural name width, handed to CSS as the end of the reveal (see `.sidebar-profile-name`). */
 const profileNameMax = ref(0)
+const macSpacerCollapsed = computed(() => Boolean(props.collapsed) || visualNarrow.value || isFullScreen.value)
 
 function px(value: string | null | undefined): number {
   const parsed = Number.parseFloat(value ?? '')
@@ -609,6 +613,7 @@ function px(value: string | null | undefined): number {
 function measureProfileName() {
   const footer = footerEl.value
   const probe = profileNameProbe.value
+  visualNarrow.value = Boolean(footer && footer.clientWidth > 0 && footer.clientWidth <= 60)
   // The collapsed rail is one icon wide and animates; measuring mid-transition
   // would flash the name in and out, so it simply stays off there.
   if (!footer || !probe || props.collapsed) { profileNameShown.value = false; return }
@@ -677,7 +682,14 @@ watch([displayName, () => props.collapsed], async () => {
 
 <template>
   <aside class="sidebar" :class="{ 'sidebar-collapsed': collapsed, 'sidebar-companion': companionDomain }" :style="panelStyle" v-bind="panelDataAttrs">
-    <div class="sidebar-topbar">
+    <div
+      v-if="isElectronMac"
+      class="sidebar-mac-lights-spacer"
+      :class="{ 'sidebar-mac-lights-spacer--collapsed': macSpacerCollapsed }"
+      data-testid="sidebar-mac-lights-spacer"
+      aria-hidden="true"
+    />
+    <div v-else class="sidebar-topbar">
       <div class="brand">
         <BrandLogo :size="14" class="sidebar-icon brand-logo-icon" />
         <TinadecCalligraphy :size="14" class="sidebar-label brand-calligraphy" />

@@ -3,7 +3,7 @@ import { createCommandBus, type CommandBus } from '../engine/commandBus'
 import type { CardRegistry } from '../engine/registry'
 import { buildPreset, PRESET_REVISIONS } from '../engine/presets'
 import { repairLayout, type RepairContext } from '../engine/repair'
-import { computeGeometry } from '../engine/constraints'
+import { computeGeometry, type ComputeGeometryOptions } from '../engine/constraints'
 import { emptySpace } from '../engine/spatial'
 import { PROJECT_SCOPED_PAGES, writeScopeFor } from '../engine/scope'
 import { createInstancePool, type InstancePool } from '../engine/instancePool'
@@ -83,6 +83,17 @@ export interface UieStoreOptions {
 }
 
 let instanceCounter = 0
+const activeEnvObservers = new Set<MutationObserver>()
+
+function readDocumentGeometryOptions(): ComputeGeometryOptions {
+  if (typeof document === 'undefined' || !document.documentElement) return {}
+  const { platform, fullscreen } = document.documentElement.dataset
+  return {
+    platform: platform || undefined,
+    fullScreen: fullscreen === 'true',
+  }
+}
+
 export function createUieInstanceId(): string {
   return `uie-${++instanceCounter}-${Math.random().toString(36).slice(2, 7)}`
 }
@@ -104,9 +115,29 @@ export function createUie(options: UieStoreOptions): UieStore {
 
   const snapshot = shallowRef<UieLayoutSnapshot>(initial)
   const containerSize = ref<UieContainerSize>({ width: 1440, height: 920 })
+  let currentGeometryOptions = readDocumentGeometryOptions()
   const geometry = shallowRef<UieGeometry>(
-    computeGeometry(containerSize.value, initial),
+    computeGeometry(containerSize.value, initial, currentGeometryOptions),
   )
+
+  if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.documentElement) {
+    const observer = new MutationObserver(() => {
+      const nextOptions = readDocumentGeometryOptions()
+      if (
+        nextOptions.platform === currentGeometryOptions.platform &&
+        nextOptions.fullScreen === currentGeometryOptions.fullScreen
+      ) {
+        return
+      }
+      currentGeometryOptions = nextOptions
+      geometry.value = computeGeometry(containerSize.value, snapshot.value, currentGeometryOptions)
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-platform', 'data-fullscreen'],
+    })
+    activeEnvObservers.add(observer)
+  }
 
   const canUndoRef = ref(false)
   const canRedoRef = ref(false)
@@ -117,7 +148,8 @@ export function createUie(options: UieStoreOptions): UieStore {
     lockedSlots: options.lockedSlots,
     onChanged: (next, { persist }) => {
       snapshot.value = next
-      geometry.value = computeGeometry(containerSize.value, next)
+      currentGeometryOptions = readDocumentGeometryOptions()
+      geometry.value = computeGeometry(containerSize.value, next, currentGeometryOptions)
       canUndoRef.value = bus.canUndo()
       canRedoRef.value = bus.canRedo()
       // Auto-save edits to the current write scope (per project on project-scoped
@@ -225,7 +257,8 @@ export function createUie(options: UieStoreOptions): UieStore {
       if (prev.width === width && prev.height === height) return
       const next = { width, height }
       containerSize.value = next
-      geometry.value = computeGeometry(next, snapshot.value)
+      currentGeometryOptions = readDocumentGeometryOptions()
+      geometry.value = computeGeometry(next, snapshot.value, currentGeometryOptions)
     },
     undo() {
       const ok = bus.undo()
@@ -268,5 +301,7 @@ export function initUie(options: UieStoreOptions): UieStore {
 }
 
 export function __resetUieForTests(): void {
+  for (const observer of activeEnvObservers) observer.disconnect()
+  activeEnvObservers.clear()
   store = null
 }

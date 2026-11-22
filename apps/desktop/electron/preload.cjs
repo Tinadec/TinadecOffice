@@ -33,6 +33,15 @@ contextBridge.exposeInMainWorld('tinadec', {
   minimizeWindow: () => ipcRenderer.send('tinadec:minimize'),
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),
   closeWindow: () => ipcRenderer.send('tinadec:close'),
+  platform: process.platform,
+  isFullScreen: () => ipcRenderer.invoke('tinadec:window-is-fullscreen'),
+  onFullScreenChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const handler = (_event, fullScreen) =>
+      callback(typeof fullScreen === 'boolean' ? fullScreen : Boolean(fullScreen?.fullScreen));
+    ipcRenderer.on('tinadec:fullscreen-changed', handler);
+    return () => ipcRenderer.removeListener('tinadec:fullscreen-changed', handler);
+  },
   // --- Logto OIDC login ---
   openLogin: () => ipcRenderer.invoke('tinadec:open-login'),
   logout: () => ipcRenderer.invoke('tinadec:logout'),
@@ -76,11 +85,20 @@ contextBridge.exposeInMainWorld('tinadec', {
     moveTo: (top) => ipcRenderer.invoke('tinadec:companion-move', top),
     setSide: (side) => ipcRenderer.invoke('tinadec:companion-side', side),
     setMode: (mode) => ipcRenderer.invoke('tinadec:companion-mode', mode),
+    dragMove: (screenX, screenY) => ipcRenderer.invoke('tinadec:companion-drag-move', screenX, screenY),
+    dragEnd: (screenX, screenY) => ipcRenderer.invoke('tinadec:companion-drag-end', screenX, screenY),
+    openMainSurface: (payload) => ipcRenderer.invoke('tinadec:companion-open-main', payload),
     onStateChanged: (callback) => {
       const handler = (_event, state) => callback(state);
       ipcRenderer.on('tinadec:companion-state-changed', handler);
       return () => ipcRenderer.removeListener('tinadec:companion-state-changed', handler);
     },
+  },
+  onNavigateSurface: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const handler = (_event, payload) => callback(payload ?? {});
+    ipcRenderer.on('tinadec:navigate-surface', handler);
+    return () => ipcRenderer.removeListener('tinadec:navigate-surface', handler);
   },
 
   // --- Agent Browser Live Mirror & Control API ---

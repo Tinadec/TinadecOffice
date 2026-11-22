@@ -54,7 +54,9 @@ import {
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import { manifestTools } from '../toolCatalog'
+import BrandLogo from '@/components/BrandLogo.vue'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
+import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import { UiButton } from '@/components/ui'
 import AgentCenterSection, { type AgentCenterTabKey } from '@/settings/agentCenter/AgentCenterSection.vue'
 import AgentsDirectoryPanel from '@/settings/agentCenter/AgentsDirectoryPanel.vue'
@@ -74,6 +76,7 @@ import {
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { usePageTransition } from '@/composables/usePageTransition'
 import { useNotifications } from '@/composables/useNotifications'
+import { usePlatform } from '@/composables/usePlatform'
 import { useHostAccess } from '@/lib/hostAccess'
 import { useRecoverableRead, type ReadContext } from '@/composables/useRecoverableRead'
 import { useModelCenter } from '@/composables/useModelCenter'
@@ -143,6 +146,7 @@ function refreshAgentCenterTab(tab: AgentCenterTab = agentCenterTab.value) {
 
 const { t } = useI18n()
 const { canAccessBackend, isElectron } = useHostAccess()
+const { isMac, isElectronMac, isFullScreen } = usePlatform()
 const router = useRouter()
 const { notify, status, dismissByKey } = useNotifications()
 
@@ -631,7 +635,16 @@ import '../settings/settings.css'
 <div class="top-drag-bar" />
 <div class="settings-window-controls">
       <CommandPaletteButton />
-      <template v-if="isElectron">
+      <div
+        v-if="isElectronMac"
+        class="brand topbar-brand"
+        data-testid="macos-settings-brand"
+        aria-hidden="true"
+      >
+        <BrandLogo :size="14" class="brand-logo-icon" />
+        <TinadecCalligraphy :size="14" class="brand-calligraphy" />
+      </div>
+      <template v-if="isElectron && !isMac">
         <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" :aria-label="t('app.minimize')" @click="minimizeWindow">
           <Minus :size="14" aria-hidden="true" />
         </UiButton>
@@ -644,7 +657,22 @@ import '../settings/settings.css'
       </template>
     </div>
     <div class="settings-shell">
-      <nav class="settings-nav" :style="settingsNavStyle" v-bind="settingsNavDataAttrs">
+      <nav
+        class="settings-nav"
+        :class="{
+          'settings-nav--mac-lights': isElectronMac && !isFullScreen,
+          'settings-nav--mac-fullscreen': isElectronMac && isFullScreen,
+        }"
+        :style="settingsNavStyle"
+        v-bind="settingsNavDataAttrs"
+      >
+        <div
+          v-if="isElectronMac"
+          class="settings-mac-lights-spacer"
+          :class="{ 'settings-mac-lights-spacer--collapsed': isFullScreen }"
+          data-testid="settings-mac-lights-spacer"
+          aria-hidden="true"
+        />
         <div class="settings-nav-header">
           <UiButton variant="ghost" size="icon" :title="t('settings.back')" @click="router.push('/')">
             <ArrowLeft :size="16" />

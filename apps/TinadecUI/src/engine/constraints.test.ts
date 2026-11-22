@@ -312,3 +312,68 @@ describe('maxOverlayColumnWidth', () => {
     expect(maxOverlayColumnWidth({ width: 2560, height: 920 }, snapshot)).toBe(1040)
   })
 })
+
+describe('darwin left-column traffic-light topInset adaptation', () => {
+  it('keeps left.topInset = 8 on darwin when expanded and non-fullscreen', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot, {
+      platform: 'darwin',
+      fullScreen: false,
+    })
+    expect(g.columns.left.topInset).toBe(8)
+    expect(g.columns.left.y).toBe(8)
+    expect(g.columns.left.height).toBe(920 - 8 - 8)
+  })
+
+  it('drops left.topInset from 8 to 48 on darwin when left column is collapsed and non-fullscreen', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    snapshot.columns.left.collapsed = true
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot, {
+      platform: 'darwin',
+      fullScreen: false,
+    })
+    expect(g.columns.left.width).toBe(44)
+    expect(g.columns.left.topInset).toBe(48)
+    expect(g.columns.left.y).toBe(48)
+    expect(g.columns.left.height).toBe(920 - 48 - 8)
+  })
+
+  it('drops left.topInset from 8 to 48 on darwin when left column is visually collapsed under space pressure', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    // At 460px width: right collapses to 44, then 320 + 8 + 260 + 44 > 444 -> left visually collapses too.
+    const g = computeGeometry({ width: 460, height: 920 }, snapshot, {
+      platform: 'darwin',
+      fullScreen: false,
+    })
+    expect(g.degraded.collapsedLeft).toBe(true)
+    expect(g.columns.left.width).toBe(44)
+    expect(g.columns.left.topInset).toBe(48)
+    expect(g.columns.left.y).toBe(48)
+  })
+
+  it('keeps left.topInset = 8 on darwin in fullscreen even when left column is collapsed', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    snapshot.columns.left.collapsed = true
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot, {
+      platform: 'darwin',
+      fullScreen: true,
+    })
+    expect(g.columns.left.width).toBe(44)
+    expect(g.columns.left.topInset).toBe(8)
+    expect(g.columns.left.y).toBe(8)
+    expect(g.columns.left.height).toBe(920 - 8 - 8)
+  })
+
+  it('keeps left.topInset = 8 on win32 when left column is collapsed', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    snapshot.columns.left.collapsed = true
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot, {
+      platform: 'win32',
+      fullScreen: false,
+    })
+    expect(g.columns.left.width).toBe(44)
+    expect(g.columns.left.topInset).toBe(8)
+    expect(g.columns.left.y).toBe(8)
+    expect(g.columns.left.height).toBe(920 - 8 - 8)
+  })
+})

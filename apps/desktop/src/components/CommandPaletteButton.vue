@@ -1,11 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Search } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { UiButton } from '@/components/ui'
 import { openPalette, useCommandPalette } from '@/composables/useCommandPalette'
+import { usePlatform } from '@/composables/usePlatform'
+import { PALETTE_COMBO, formatCombo } from '@/lib/keybindings'
 
 const { t } = useI18n()
-const { open, comboLabel } = useCommandPalette()
+const { open } = useCommandPalette()
+const { isMac } = usePlatform()
+const comboLabel = computed(() => formatCombo(PALETTE_COMBO, isMac.value))
 </script>
 
 <template>

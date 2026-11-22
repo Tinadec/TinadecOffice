@@ -88,6 +88,11 @@ z-index: 1;
   -webkit-app-region: drag;
 }
 
+:root[data-platform='darwin'] .settings-window-controls {
+  gap: 4px;
+  padding: 0 14px 0 8px;
+}
+
 .settings-window-controls button {
   -webkit-app-region: no-drag;
 }
@@ -160,6 +165,38 @@ overflow: hidden;
   animation: settings-nav-enter var(--motion-enter-duration, 280ms) var(--motion-enter-ease, cubic-bezier(0.2, 0, 0, 1)) both;
   animation-delay: 0ms;
   will-change: transform, opacity;
+}
+
+.settings-nav--mac-lights {
+  padding-top: 0;
+}
+
+.settings-nav--mac-fullscreen {
+  padding-top: 12px;
+}
+
+.settings-mac-lights-spacer {
+  height: 38px;
+  min-height: 38px;
+  margin: 0 -12px 4px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  transition:
+    height 0.22s cubic-bezier(0.2, 0, 0, 1),
+    min-height 0.22s cubic-bezier(0.2, 0, 0, 1),
+    margin 0.22s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.settings-mac-lights-spacer--collapsed,
+:root[data-fullscreen='true'] .settings-mac-lights-spacer {
+  height: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.settings-nav-header button {
+  -webkit-app-region: no-drag;
 }
 
 .settings-nav-header {

@@ -8,7 +8,9 @@ import { setSelectedStorage, registerSessionStorage, scopedApi } from '@/lib/sto
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
+import { useHostAccess } from '@/lib/hostAccess'
 import { useNotifications } from '@/composables/useNotifications'
+import { usePlatform } from '@/composables/usePlatform'
 import GitPanel from '@/components/GitPanel.vue'
 import ApprovalTab from '@/components/ApprovalTab.vue'
 import EventsTab from '@/components/EventsTab.vue'
@@ -24,6 +26,8 @@ import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userTo
 const route = useRoute()
 const { t } = useI18n()
 const { notify, status, dismissByKey } = useNotifications()
+const { isElectron } = useHostAccess()
+const { isMac, isElectronMac, isFullScreen } = usePlatform()
 
 // ---- Parse query params ----
 const tabId = computed(() => (route.query.tabId as string) ?? '')
@@ -247,28 +251,41 @@ watch(sessionId, () => {
 <template>
   <main class="detached-panel-shell">
     <!-- Custom title bar (frameless window) -->
-    <header class="detached-titlebar">
+    <header
+      class="detached-titlebar"
+      :class="{
+        'detached-titlebar--mac': isElectronMac,
+        'detached-titlebar--mac-lights': isElectronMac && !isFullScreen,
+      }"
+      data-testid="detached-titlebar"
+    >
       <div class="detached-titlebar-drag" />
       <div class="detached-titlebar-title">
         <span class="detached-titlebar-label">{{ tabTitle || t('context.detachedPanel') }}</span>
       </div>
       <div class="detached-titlebar-actions">
         <button
+          type="button"
           class="detached-titlebar-btn reattach-btn"
+          data-testid="detached-reattach-btn"
           :title="t('context.reattachTab')"
+          :aria-label="t('context.reattachTab')"
           @click="reattach"
         >
-          <PanelRightOpen :size="14" />
+          <PanelRightOpen :size="13" aria-hidden="true" />
+          <span class="reattach-btn-label">{{ t('context.reattachTab') }}</span>
         </button>
-        <button class="detached-titlebar-btn" :title="t('app.minimize')" @click="minimizeWindow">
-          <Minus :size="14" />
-        </button>
-        <button class="detached-titlebar-btn" :title="t('app.maximize')" @click="maximizeWindow">
-          <Square :size="12" />
-        </button>
-        <button class="detached-titlebar-btn close" :title="t('app.close')" @click="closeWindow">
-          <X :size="14" />
-        </button>
+        <template v-if="isElectron && !isMac">
+          <button class="detached-titlebar-btn" :title="t('app.minimize')" @click="minimizeWindow">
+            <Minus :size="14" />
+          </button>
+          <button class="detached-titlebar-btn" :title="t('app.maximize')" @click="maximizeWindow">
+            <Square :size="12" />
+          </button>
+          <button class="detached-titlebar-btn close" :title="t('app.close')" @click="closeWindow">
+            <X :size="14" />
+          </button>
+        </template>
       </div>
     </header>
 
@@ -369,11 +386,29 @@ watch(sessionId, () => {
 .detached-titlebar {
   display: flex;
   align-items: center;
-  height: 36px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-muted);
+  height: 38px;
+  background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: none;
   flex-shrink: 0;
   position: relative;
+}
+
+.detached-titlebar--mac-lights {
+  padding-left: 78px;
+}
+
+.detached-titlebar--mac-lights .detached-titlebar-title {
+  padding-left: 0;
+}
+
+.detached-titlebar--mac:not(.detached-titlebar--mac-lights) {
+  padding-left: 12px;
+}
+
+.detached-titlebar--mac:not(.detached-titlebar--mac-lights) .detached-titlebar-title {
+  padding-left: 0;
 }
 
 .detached-titlebar-drag {
@@ -390,6 +425,7 @@ watch(sessionId, () => {
   align-items: center;
   gap: 6px;
   padding-left: 12px;
+  min-width: 0;
   z-index: 1;
   pointer-events: none;
 }
@@ -406,9 +442,9 @@ watch(sessionId, () => {
 .detached-titlebar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   margin-left: auto;
-  padding-right: 4px;
+  padding-right: 8px;
   z-index: 2;
 }
 
@@ -422,7 +458,7 @@ watch(sessionId, () => {
   color: var(--text-secondary);
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
   -webkit-app-region: no-drag;
 }
 
@@ -436,8 +472,30 @@ watch(sessionId, () => {
   color: #fff;
 }
 
+.detached-titlebar-btn.reattach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--surface-raised, var(--bg-secondary)) 72%, transparent);
+  border: 1px solid var(--border-card, var(--border-muted));
+  color: var(--text-secondary);
+}
+
+.reattach-btn-label {
+  line-height: 1;
+}
+
 .detached-titlebar-btn.reattach-btn:hover {
   background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 32%, transparent);
   color: var(--accent-primary);
 }
 

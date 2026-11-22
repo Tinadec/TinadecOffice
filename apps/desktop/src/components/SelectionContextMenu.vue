@@ -21,6 +21,7 @@ import {
   ArrowUpRight, Check, ClipboardPaste, Copy, Eraser, Link2, Scissors, TextSelect,
 } from '@lucide/vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
+import { usePlatform } from '@/composables/usePlatform'
 import { useTerminal } from '@/composables/useTerminal'
 import { useNotifications } from '@/composables/useNotifications'
 import { detectLink, resolveSelectionContext, buildSelectionMenuActions, type SelectionMenuAction } from '@/lib/selectionContext'
@@ -67,17 +68,16 @@ const LABEL_KEYS: Record<SelectionMenuAction['key'], string> = {
   clearTerminal: 'contextMenu.clearTerminal',
 }
 
-const isMac = computed(() => /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent))
-const mod = computed(() => (isMac.value ? '⌘' : 'Ctrl+'))
-const SHORTCUTS: Partial<Record<SelectionMenuAction['key'], string>> = {
-  copy: `${mod.value}C`,
-  cut: `${mod.value}X`,
-  paste: `${mod.value}V`,
-  selectAll: `${mod.value}A`,
-}
+const { modKey } = usePlatform()
 
 function shortcutFor(key: SelectionMenuAction['key']): string {
-  return SHORTCUTS[key] ?? ''
+  switch (key) {
+    case 'copy': return `${modKey.value}C`
+    case 'cut': return `${modKey.value}X`
+    case 'paste': return `${modKey.value}V`
+    case 'selectAll': return `${modKey.value}A`
+    default: return ''
+  }
 }
 
 function close() {

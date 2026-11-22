@@ -217,9 +217,15 @@ export function flattenDock(
   return out
 }
 
+export interface ComputeGeometryOptions {
+  platform?: string
+  fullScreen?: boolean
+}
+
 export function computeGeometry(
   container: UieContainerSize,
   snapshot: UieLayoutSnapshot,
+  options?: ComputeGeometryOptions,
 ): UieGeometry {
   const columns: Record<UieSlotId, ColumnGeometry> = {} as Record<UieSlotId, ColumnGeometry>
   const splits: Record<string, SplitGeometry> = {}
@@ -324,8 +330,14 @@ export function computeGeometry(
       }
     }
 
-    const height = container.height - col.topInset - BOTTOM_INSET
-    const y = col.topInset
+    const isLeftCollapsedOnMac =
+      slotId === 'left' &&
+      options?.platform === 'darwin' &&
+      !options?.fullScreen &&
+      (col.collapsed || isCollapsedVisual)
+    const effectiveTopInset = isLeftCollapsedOnMac ? Math.max(col.topInset, 48) : col.topInset
+    const height = container.height - effectiveTopInset - BOTTOM_INSET
+    const y = effectiveTopInset
     const geom: ColumnGeometry = {
       slotId,
       x: cursorX,
@@ -333,7 +345,7 @@ export function computeGeometry(
       width,
       height,
       effectiveWidth: width,
-      topInset: col.topInset,
+      topInset: effectiveTopInset,
     }
     if (slotId === 'right' && overlayRight) {
       // Float over the chat, flush to the window's right edge.
