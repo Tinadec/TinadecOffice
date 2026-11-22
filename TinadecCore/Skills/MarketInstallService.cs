@@ -575,6 +575,10 @@ public sealed class MarketInstallService : IMarketInstallService
                     UninstallActionId = dto.UninstallActionId, ActionStatus = dto.ActionStatus, CreatedAt = dto.CreatedAt, UpdatedAt = dto.UpdatedAt,
                     Scope = row.Scope, ResourceId = resource?.ResourceId ?? row.ResourceId, PackageHash = resource?.PackageHash ?? row.PackageHash,
                     PackageFiles = resource?.PackageFiles ?? dto.PackageFiles,
+                    Commit = resource?.Commit ?? dto.Commit,
+                    ContentHash = resource?.ContentHash ?? dto.ContentHash,
+                    HasHiddenUnicode = resource?.HasHiddenUnicode ?? dto.HasHiddenUnicode,
+                    SecurityWarnings = resource is { SecurityWarnings.Count: > 0 } ? resource.SecurityWarnings : dto.SecurityWarnings,
                     Availability = resource is { Valid: true, Enabled: true, Content: not null } ? "available" : resource?.Enabled == false ? "disabled" : "unavailable",
                 };
             }
@@ -1286,6 +1290,15 @@ public sealed class MarketInstallService : IMarketInstallService
                 + "is there after all, the write will be refused rather than overwrite it.");
         }
 
+        var packageFiles = ParsePackageFiles(proposal.PackageFilesJson);
+        var unicodeScan = ScanPackageOrContent(proposal.Content, proposal.PackageFilesJson);
+        foreach (var secWarn in unicodeScan.Warnings)
+            warnings.Add(secWarn);
+
+        var commit = IsFortyCharHex(proposal.Version) ? proposal.Version.ToLowerInvariant() : ExtractCommitFromGitLocation(subject.SourceLocation);
+        var contentHash = packageFiles.FirstOrDefault(f => string.Equals(f.Path, "SKILL.md", StringComparison.OrdinalIgnoreCase))?.ContentHash
+            ?? (string.IsNullOrEmpty(proposal.Content) ? null : UnicodeSafetyScanner.Sha256Hex(proposal.Content));
+
         return new MarketInstallProposalDto
         {
             Id = proposal.Id.ToString("N"),
@@ -1293,7 +1306,7 @@ public sealed class MarketInstallService : IMarketInstallService
             Scope = proposal.Scope,
             ResourceId = proposal.ResourceId,
             PackageHash = proposal.PackageHash,
-            PackageFiles = ParsePackageFiles(proposal.PackageFilesJson),
+            PackageFiles = packageFiles,
             ProjectId = proposal.ProjectId.ToString("N"),
             CatalogId = proposal.CatalogId?.ToString("N"),
             InstallationId = proposal.InstallationId?.ToString("N"),
@@ -1312,7 +1325,42 @@ public sealed class MarketInstallService : IMarketInstallService
             Digest = proposal.Digest,
             ExpiresAt = proposal.ExpiresAt,
             Warnings = warnings,
+            Commit = commit,
+            ContentHash = contentHash,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+            SecurityWarnings = unicodeScan.Warnings,
         };
+    }
+
+    private static UnicodeScanResult ScanPackageOrContent(string? content, string? packageFilesJson)
+    {
+        if (!string.IsNullOrWhiteSpace(packageFilesJson))
+        {
+            try
+            {
+                var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(packageFilesJson);
+                if (dict is { Count: > 0 })
+                    return UnicodeSafetyScanner.ScanBase64Package(content, dict);
+            }
+            catch (JsonException)
+            {
+                // Fall back to direct content scan.
+            }
+        }
+        return UnicodeSafetyScanner.ScanText(content);
+    }
+
+    private static bool IsFortyCharHex(string? candidate) =>
+        candidate is { Length: 40 } && candidate.All(Uri.IsHexDigit);
+
+    private static string? ExtractCommitFromGitLocation(string? location)
+    {
+        if (string.IsNullOrWhiteSpace(location) || !Uri.TryCreate(location, UriKind.Absolute, out var uri))
+            return null;
+        var parts = uri.AbsolutePath.Trim('/').Split('/');
+        if (parts.Length >= 4 && string.Equals(parts[2], "tree", StringComparison.OrdinalIgnoreCase) && IsFortyCharHex(parts[3]))
+            return parts[3].ToLowerInvariant();
+        return null;
     }
 
     private static Dictionary<string,string>? AssetsOnly(string? json)
@@ -1359,7 +1407,15 @@ public sealed class MarketInstallService : IMarketInstallService
     private static MarketInstallationDto ToInstallationDto(
         MarketInstallationRecord row,
         string sourceName,
-        string? actionStatus) => new()
+        string? actionStatus)
+    {
+        var packageFiles = ParsePackageFiles(row.PackageFilesJson);
+        var unicodeScan = ScanPackageOrContent(null, row.PackageFilesJson);
+        var commit = IsFortyCharHex(row.Version) ? row.Version.ToLowerInvariant() : null;
+        var contentHash = packageFiles.FirstOrDefault(f => string.Equals(f.Path, "SKILL.md", StringComparison.OrdinalIgnoreCase))?.ContentHash
+            ?? row.PackageHash;
+
+        return new MarketInstallationDto
         {
             Id = row.Id.ToString("N"),
             ProjectId = row.ProjectId.ToString("N"),
@@ -1370,7 +1426,11 @@ public sealed class MarketInstallService : IMarketInstallService
             Version = row.Version,
             ServerId = row.ServerId,
             ConfigPath = row.ConfigPath,
-            Scope = row.Scope, ResourceId = row.ResourceId, PackageHash = row.PackageHash, PackageFiles = ParsePackageFiles(row.PackageFilesJson),
+            Scope = row.Scope, ResourceId = row.ResourceId, PackageHash = row.PackageHash, PackageFiles = packageFiles,
+            Commit = commit,
+            ContentHash = contentHash,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+            SecurityWarnings = unicodeScan.Warnings,
             Availability = actionStatus == "completed" ? "available" : actionStatus is "failed" or "blocked" ? "unavailable" : "pending",
             State = row.State,
             InstallActionId = row.InstallActionId.ToString("N"),
@@ -1379,6 +1439,7 @@ public sealed class MarketInstallService : IMarketInstallService
             CreatedAt = row.CreatedAt,
             UpdatedAt = row.UpdatedAt,
         };
+    }
 
     /// <summary>
     /// Everything one preview is about, from whichever row it started. The two subjects of a

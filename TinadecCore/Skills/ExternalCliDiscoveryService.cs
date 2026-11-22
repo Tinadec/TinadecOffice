@@ -71,7 +71,12 @@ public sealed partial class ExternalCliDiscoveryService(
         var installedSkills = new List<ToolSkillResourceDto>();
         var installedMcps = new List<McpResourceDto>();
         var installedCommands = new List<ExternalCliImportedCommandDto>();
+        var importedAgents = new List<ExternalCliImportedAgentDto>();
         var skipped = new List<ExternalCliSkippedItemDto>();
+        var secretPlaceholders = new List<string>();
+        var seenPlaceholders = new HashSet<string>(StringComparer.Ordinal);
+        var securityWarnings = new List<string>();
+        var hasHiddenUnicode = false;
 
         var existingMcps = await mcpServers.ListConfiguredAsync(request.ProjectId, cancellationToken).ConfigureAwait(false);
         var mcpByServerId = existingMcps
@@ -89,6 +94,17 @@ public sealed partial class ExternalCliDiscoveryService(
             {
                 skipped.Add(new ExternalCliSkippedItemDto { ItemId = itemId, Reason = "Discovered item not found." });
                 continue;
+            }
+
+            if (item.Dto.HasHiddenUnicode)
+            {
+                hasHiddenUnicode = true;
+                securityWarnings.AddRange(item.Dto.SecurityWarnings);
+            }
+            foreach (var ph in item.Dto.SecretPlaceholders)
+            {
+                if (seenPlaceholders.Add(ph))
+                    secretPlaceholders.Add(ph);
             }
 
             try
@@ -115,6 +131,7 @@ public sealed partial class ExternalCliDiscoveryService(
                             Headers = write.Headers,
                             Cwd = write.Cwd,
                             ImportSource = item.Dto.Ecosystem,
+                            SecretValues = request.SecretValues,
                         };
 
                         if (mcpByServerId.TryGetValue(prepared.Id, out var existing))
@@ -171,6 +188,8 @@ public sealed partial class ExternalCliDiscoveryService(
                                 ReplaceFiles = true,
                                 ExpectedFileHash = existing?.FileHash,
                                 Source = item.Dto.Ecosystem,
+                                Version = item.Dto.Version,
+                                Commit = item.Dto.Commit,
                             },
                             existing?.Revision ?? 0,
                             cancellationToken).ConfigureAwait(false);
@@ -203,6 +222,22 @@ public sealed partial class ExternalCliDiscoveryService(
                         });
                         break;
                     }
+                    case "agent":
+                    {
+                        if (request.CustomAgentImporter is null)
+                        {
+                            skipped.Add(new ExternalCliSkippedItemDto
+                            {
+                                ItemId = itemId,
+                                Reason = "Custom agent import requires the Agent Configuration host endpoint.",
+                            });
+                            continue;
+                        }
+
+                        var importedAgent = await request.CustomAgentImporter(item.Dto, request.Overwrite, cancellationToken).ConfigureAwait(false);
+                        importedAgents.Add(importedAgent);
+                        break;
+                    }
                 }
             }
             catch (Exception ex) when (ex is ToolSettingsException or IOException or UnauthorizedAccessException)
@@ -216,7 +251,11 @@ public sealed partial class ExternalCliDiscoveryService(
             InstalledSkills = installedSkills,
             InstalledMcpServers = installedMcps,
             InstalledCommands = installedCommands,
+            ImportedAgents = importedAgents,
             Skipped = skipped,
+            SecretPlaceholders = secretPlaceholders,
+            HasHiddenUnicode = hasHiddenUnicode,
+            SecurityWarnings = securityWarnings.Distinct(StringComparer.Ordinal).ToArray(),
         };
     }
 
@@ -413,6 +452,21 @@ public sealed partial class ExternalCliDiscoveryService(
             homeCmds: [Path.Combine(userHome, ".qwen", "commands")],
             wsCmds: workspaceRoot is null ? [] : [Path.Combine(workspaceRoot, ".qwen", "commands")]);
 
+        // 9. Microsoft APM (microsoft/apm pure-file workspace & ~/.apm adapter)
+        if (filter is null || filter.Contains("apm"))
+        {
+            var scanned = new List<string>();
+            var before = items.Count;
+            ScanApmEcosystem(userHome, workspaceRoot, storage.Locations.Root, scanned, existingMcpIds, existingSkillNames, AddItem);
+            statuses.Add(new ExternalCliEcosystemStatusDto
+            {
+                Id = "apm",
+                Label = "Microsoft APM",
+                Detected = items.Count > before || scanned.Count > 0,
+                PathsScanned = scanned,
+            });
+        }
+
         return (userHome, workspaceRoot, items, statuses);
 
         void ScanEcosystem(
@@ -502,11 +556,19 @@ public sealed partial class ExternalCliDiscoveryService(
     {
         var envKeys = (entry.Env?.Keys ?? Enumerable.Empty<string>()).OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var headerKeys = (entry.Headers?.Keys ?? Enumerable.Empty<string>()).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+        var placeholders = McpConfigParser.ExtractSecretPlaceholders(entry);
         var redactedArgs = entry.Args.Select(RedactInlineSecrets).ToArray();
         var redactedUrl = entry.Url is null ? null : RedactUrlSecrets(entry.Url);
-        var hasSecrets = envKeys.Length > 0 || headerKeys.Length > 0 || redactedArgs.Any(a => a.Contains("********", StringComparison.Ordinal))
+        var hasSecrets = envKeys.Length > 0 || headerKeys.Length > 0 || placeholders.Count > 0
+            || redactedArgs.Any(a => a.Contains("********", StringComparison.Ordinal))
             || (redactedUrl?.Contains("********", StringComparison.Ordinal) == true);
         var isStdio = string.Equals(entry.Transport, "stdio", StringComparison.OrdinalIgnoreCase);
+
+        var combinedConfigText = string.Join('\n',
+            entry.Command ?? string.Empty,
+            entry.Url ?? string.Empty,
+            string.Join('\n', entry.Args));
+        var unicodeScan = UnicodeSafetyScanner.ScanText(combinedConfigText, Path.GetFileName(sourcePath));
 
         var dto = new ExternalCliDiscoveredItemDto
         {
@@ -525,11 +587,14 @@ public sealed partial class ExternalCliDiscoveryService(
             Url = redactedUrl,
             EnvKeys = envKeys,
             HeaderKeys = headerKeys,
+            SecretPlaceholders = placeholders,
             HasSecrets = hasSecrets,
             // Untrusted stdio MCP commands default to disabled on discovery/import until explicitly enabled.
             DefaultEnabled = !isStdio,
             AlreadyImported = alreadyImported,
             ContentPreview = null,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+            SecurityWarnings = unicodeScan.Warnings,
         };
 
         var write = new McpResourceWriteDto
@@ -555,14 +620,16 @@ public sealed partial class ExternalCliDiscoveryService(
         string skillsRoot,
         List<string> scanned,
         HashSet<string> existingSkillNames,
-        Action<InternalDiscoveredItem> add)
+        Action<InternalDiscoveredItem> add,
+        string? commit = null,
+        string? version = null)
     {
         if (!Directory.Exists(skillsRoot)) return;
         if ((File.GetAttributes(skillsRoot) & FileAttributes.ReparsePoint) != 0) return;
         scanned.Add(skillsRoot);
 
         var count = 0;
-        foreach (var dir in Directory.EnumerateDirectories(skillsRoot))
+        foreach (var dir in Directory.EnumerateDirectories(skillsRoot).OrderBy(Path.GetFileName, StringComparer.Ordinal))
         {
             if (count >= MaxSkillsPerRoot) break;
             if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) continue;
@@ -570,31 +637,339 @@ public sealed partial class ExternalCliDiscoveryService(
             if (!File.Exists(skillFile)) continue;
             count++;
 
+            if (TryBuildSkillItem(ecosystem, dir, skillFile, existingSkillNames, commit, version, includeAssets: true) is { } item)
+                add(item);
+        }
+    }
+
+    private static InternalDiscoveredItem? TryBuildSkillItem(
+        string ecosystem,
+        string? skillDir,
+        string skillFile,
+        HashSet<string> existingSkillNames,
+        string? commit,
+        string? version,
+        bool includeAssets,
+        string? fallbackName = null)
+    {
+        try
+        {
+            if ((File.GetAttributes(skillFile) & FileAttributes.ReparsePoint) != 0)
+                return null;
+
+            var content = File.ReadAllText(skillFile, Encoding.UTF8);
+            var parsedDoc = ApmPackageParser.ParseMarkdownDocument(content);
+            var rawDirName = skillDir is not null ? Path.GetFileName(skillDir) : (parsedDoc.Name ?? fallbackName ?? "skill");
+            var candidateName = !string.IsNullOrWhiteSpace(parsedDoc.Name) ? parsedDoc.Name! : rawDirName;
+            var normalizedName = NormalizeSkillName(candidateName);
+            var description = ExtractSkillDescription(content) ?? $"Imported from {ecosystem} ({rawDirName})";
+
+            Dictionary<string, string>? assets = null;
+            if (includeAssets && skillDir is not null)
+            {
+                try { assets = ReadSkillAssets(skillDir); }
+                catch { assets = null; }
+            }
+
+            var contentHash = UnicodeSafetyScanner.Sha256Hex(content);
+            var packageHash = UnicodeSafetyScanner.ComputePackageHash(content, assets);
+            var unicodeScan = UnicodeSafetyScanner.ScanBase64Package(content, assets);
+
+            var dto = new ExternalCliDiscoveredItemDto
+            {
+                ItemId = $"{ecosystem}:skill:{normalizedName}",
+                Ecosystem = ecosystem,
+                Kind = "skill",
+                Name = normalizedName,
+                DisplayName = rawDirName,
+                Description = description,
+                SourcePath = skillFile,
+                HasSecrets = false,
+                DefaultEnabled = true,
+                AlreadyImported = existingSkillNames.Contains(normalizedName),
+                ContentPreview = BoundText(content, MaxPreviewChars),
+                Commit = commit,
+                Version = version,
+                ContentHash = contentHash,
+                PackageHash = packageHash,
+                HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                SecurityWarnings = unicodeScan.Warnings,
+            };
+            return new InternalDiscoveredItem(dto, null, includeAssets ? skillDir : null, content, null);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void ScanApmEcosystem(
+        string userHome,
+        string? workspaceRoot,
+        string storageRoot,
+        List<string> scanned,
+        HashSet<string> existingMcpIds,
+        HashSet<string> existingSkillNames,
+        Action<InternalDiscoveredItem> add)
+    {
+        // User-level ~/.apm directories (if present)
+        ScanSkillsDirectory("apm", Path.Combine(userHome, ".apm", "skills"), scanned, existingSkillNames, add);
+        ScanApmPromptsDirectory("apm", Path.Combine(userHome, ".apm", "prompts"), workspaceRoot, storageRoot, scanned, add);
+        ScanApmAgentsDirectory("apm", Path.Combine(userHome, ".apm", "agents"), scanned, add);
+
+        if (workspaceRoot is null)
+            return;
+
+        var lockfile = ApmLockfile.Empty;
+        foreach (var lockCandidate in new[] { "apm.lock.yaml", "apm.lock.yml", "apm.lock" })
+        {
+            var lockPath = Path.Combine(workspaceRoot, lockCandidate);
+            if (!File.Exists(lockPath)) continue;
             try
             {
-                var content = File.ReadAllText(skillFile, Encoding.UTF8);
-                var rawDirName = Path.GetFileName(dir);
-                var normalizedName = NormalizeSkillName(rawDirName);
-                var description = ExtractSkillDescription(content) ?? $"Imported from {ecosystem} ({rawDirName})";
-                var dto = new ExternalCliDiscoveredItemDto
-                {
-                    ItemId = $"{ecosystem}:skill:{normalizedName}",
-                    Ecosystem = ecosystem,
-                    Kind = "skill",
-                    Name = normalizedName,
-                    DisplayName = rawDirName,
-                    Description = description,
-                    SourcePath = skillFile,
-                    HasSecrets = false,
-                    DefaultEnabled = true,
-                    AlreadyImported = existingSkillNames.Contains(normalizedName),
-                    ContentPreview = BoundText(content, MaxPreviewChars),
-                };
-                add(new InternalDiscoveredItem(dto, null, dir, content, null));
+                if ((File.GetAttributes(lockPath) & FileAttributes.ReparsePoint) != 0) continue;
+                scanned.Add(lockPath);
+                lockfile = ApmPackageParser.ParseLockfile(File.ReadAllText(lockPath, Encoding.UTF8));
+                break;
             }
             catch
             {
-                // Skip unreadable skill files cleanly.
+                // Tolerant lockfile parse.
+            }
+        }
+
+        ApmManifest? manifest = null;
+        foreach (var manifestCandidate in new[] { "apm.yml", "apm.yaml" })
+        {
+            var manifestPath = Path.Combine(workspaceRoot, manifestCandidate);
+            if (!File.Exists(manifestPath)) continue;
+            try
+            {
+                if ((File.GetAttributes(manifestPath) & FileAttributes.ReparsePoint) != 0) continue;
+                scanned.Add(manifestPath);
+                manifest = ApmPackageParser.ParseManifest(File.ReadAllText(manifestPath, Encoding.UTF8));
+                foreach (var mcpEntry in manifest.McpDependencies)
+                {
+                    if (string.IsNullOrWhiteSpace(mcpEntry.Id)) continue;
+                    add(BuildMcpItem("apm", manifestPath, mcpEntry, existingMcpIds.Contains(mcpEntry.Id)));
+                }
+                break;
+            }
+            catch
+            {
+                // Tolerant manifest parse.
+            }
+        }
+
+        // Root SKILL.md (when present in workspace root)
+        var rootSkillPath = Path.Combine(workspaceRoot, "SKILL.md");
+        if (File.Exists(rootSkillPath))
+        {
+            scanned.Add(rootSkillPath);
+            var fallbackName = manifest?.Name ?? Path.GetFileName(workspaceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (TryBuildSkillItem("apm", null, rootSkillPath, existingSkillNames, commit: null, version: manifest?.Version, includeAssets: false, fallbackName: fallbackName) is { } rootSkill)
+                add(rootSkill);
+        }
+
+        // .apm/skills, .apm/prompts, .apm/agents
+        var dotApm = Path.Combine(workspaceRoot, ".apm");
+        if (Directory.Exists(dotApm) && (File.GetAttributes(dotApm) & FileAttributes.ReparsePoint) == 0)
+        {
+            ScanSkillsDirectory("apm", Path.Combine(dotApm, "skills"), scanned, existingSkillNames, add, commit: null, version: manifest?.Version);
+            ScanApmPromptsDirectory("apm", Path.Combine(dotApm, "prompts"), workspaceRoot, storageRoot, scanned, add);
+            ScanApmAgentsDirectory("apm", Path.Combine(dotApm, "agents"), scanned, add, commit: null);
+        }
+
+        // apm_modules/**/SKILL.md (+ nested .apm/prompts & .apm/agents inside installed APM packages)
+        var apmModules = Path.Combine(workspaceRoot, "apm_modules");
+        if (Directory.Exists(apmModules) && (File.GetAttributes(apmModules) & FileAttributes.ReparsePoint) == 0)
+        {
+            scanned.Add(apmModules);
+            ScanApmModulesDirectory(apmModules, lockfile, workspaceRoot, storageRoot, existingSkillNames, add);
+        }
+    }
+
+    private static void ScanApmModulesDirectory(
+        string apmModulesRoot,
+        ApmLockfile lockfile,
+        string workspaceRoot,
+        string storageRoot,
+        HashSet<string> existingSkillNames,
+        Action<InternalDiscoveredItem> add)
+    {
+        var skillCount = 0;
+        var pending = new Stack<(string Dir, int Depth)>();
+        pending.Push((apmModulesRoot, 0));
+
+        while (pending.Count > 0 && skillCount < MaxSkillsPerRoot)
+        {
+            var (dir, depth) = pending.Pop();
+            if (depth > 6) continue;
+
+            FileAttributes attrs;
+            try { attrs = File.GetAttributes(dir); }
+            catch { continue; }
+            if ((attrs & FileAttributes.ReparsePoint) != 0) continue;
+            if (!WorkspaceSkillDiscovery.IsContained(apmModulesRoot, dir)) continue;
+
+            if (depth > 0)
+            {
+                var relativeModulePath = Path.GetRelativePath(apmModulesRoot, dir).Replace('\\', '/');
+                var locked = lockfile.ResolveForModulePath(relativeModulePath);
+
+                var nestedDotApm = Path.Combine(dir, ".apm");
+                if (Directory.Exists(nestedDotApm) && (File.GetAttributes(nestedDotApm) & FileAttributes.ReparsePoint) == 0)
+                {
+                    var dummyScanned = new List<string>();
+                    ScanSkillsDirectory("apm", Path.Combine(nestedDotApm, "skills"), dummyScanned, existingSkillNames, add, locked?.Commit, locked?.Version);
+                    ScanApmPromptsDirectory("apm", Path.Combine(nestedDotApm, "prompts"), workspaceRoot, storageRoot, dummyScanned, add, locked?.Commit, locked?.Version);
+                    ScanApmAgentsDirectory("apm", Path.Combine(nestedDotApm, "agents"), dummyScanned, add, locked?.Commit);
+                }
+
+                var skillFile = Path.Combine(dir, "SKILL.md");
+                if (File.Exists(skillFile))
+                {
+                    skillCount++;
+                    if (TryBuildSkillItem("apm", dir, skillFile, existingSkillNames, locked?.Commit, locked?.Version, includeAssets: true) is { } skillItem)
+                        add(skillItem);
+                    // Do not descend into a skill package's own references/ or assets/ subdirectories.
+                    continue;
+                }
+            }
+
+            IEnumerable<string> children;
+            try { children = Directory.EnumerateDirectories(dir).OrderByDescending(Path.GetFileName, StringComparer.Ordinal).ToArray(); }
+            catch { continue; }
+
+            foreach (var sub in children)
+            {
+                var subName = Path.GetFileName(sub);
+                if (subName is ".git" or "node_modules" or ".apm") continue;
+                pending.Push((sub, depth + 1));
+            }
+        }
+    }
+
+    private static void ScanApmPromptsDirectory(
+        string ecosystem,
+        string promptsRoot,
+        string? workspaceRoot,
+        string storageRoot,
+        List<string> scanned,
+        Action<InternalDiscoveredItem> add,
+        string? commit = null,
+        string? version = null)
+    {
+        if (!Directory.Exists(promptsRoot)) return;
+        if ((File.GetAttributes(promptsRoot) & FileAttributes.ReparsePoint) != 0) return;
+        scanned.Add(promptsRoot);
+
+        var targetRoot = !string.IsNullOrWhiteSpace(workspaceRoot) ? workspaceRoot : storageRoot;
+        var tinadecCommandsDir = Path.Combine(targetRoot, ".tinadec", "commands");
+        var count = 0;
+
+        foreach (var file in Directory.EnumerateFiles(promptsRoot, "*.prompt.md").OrderBy(Path.GetFileName, StringComparer.Ordinal))
+        {
+            if (count >= MaxCommandsPerRoot) break;
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
+            count++;
+
+            try
+            {
+                var content = File.ReadAllText(file, Encoding.UTF8);
+                var normalized = ApmPackageParser.StripPromptName(file);
+                var parsed = ApmPackageParser.ParseMarkdownDocument(content);
+                var description = !string.IsNullOrWhiteSpace(parsed.Description)
+                    ? BoundText(parsed.Description!, 240)
+                    : ExtractSkillDescription(parsed.Body) ?? $"APM prompt /{normalized}";
+                var alreadyImported = File.Exists(Path.Combine(tinadecCommandsDir, normalized + ".md"));
+                var contentHash = UnicodeSafetyScanner.Sha256Hex(content);
+                var unicodeScan = UnicodeSafetyScanner.ScanText(content, file);
+
+                var dto = new ExternalCliDiscoveredItemDto
+                {
+                    ItemId = $"{ecosystem}:command:{normalized}",
+                    Ecosystem = ecosystem,
+                    Kind = "command",
+                    Name = normalized,
+                    DisplayName = $"/{normalized}",
+                    Description = description,
+                    SourcePath = file,
+                    HasSecrets = false,
+                    DefaultEnabled = true,
+                    AlreadyImported = alreadyImported,
+                    ContentPreview = BoundText(content, MaxPreviewChars),
+                    Commit = commit,
+                    Version = version,
+                    ContentHash = contentHash,
+                    HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                    SecurityWarnings = unicodeScan.Warnings,
+                };
+                add(new InternalDiscoveredItem(dto, null, null, null, content));
+            }
+            catch
+            {
+                // Skip unreadable prompt files cleanly.
+            }
+        }
+    }
+
+    private static void ScanApmAgentsDirectory(
+        string ecosystem,
+        string agentsRoot,
+        List<string> scanned,
+        Action<InternalDiscoveredItem> add,
+        string? commit = null)
+    {
+        if (!Directory.Exists(agentsRoot)) return;
+        if ((File.GetAttributes(agentsRoot) & FileAttributes.ReparsePoint) != 0) return;
+        scanned.Add(agentsRoot);
+
+        var count = 0;
+        foreach (var file in Directory.EnumerateFiles(agentsRoot, "*.agent.md").OrderBy(Path.GetFileName, StringComparer.Ordinal))
+        {
+            if (count >= MaxSkillsPerRoot) break;
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
+            count++;
+
+            try
+            {
+                var content = File.ReadAllText(file, Encoding.UTF8);
+                var slug = ApmPackageParser.StripAgentSlug(file);
+                var parsed = ApmPackageParser.ParseMarkdownDocument(content);
+                var displayName = !string.IsNullOrWhiteSpace(parsed.Name) ? parsed.Name!.Trim() : slug;
+                var description = !string.IsNullOrWhiteSpace(parsed.Description)
+                    ? BoundText(parsed.Description!, 240)
+                    : ExtractSkillDescription(parsed.Body) ?? $"Custom agent {displayName} imported from Microsoft APM";
+                var systemPrompt = parsed.Body.Length > 0 ? parsed.Body : content.Trim();
+                var contentHash = UnicodeSafetyScanner.Sha256Hex(content);
+                var unicodeScan = UnicodeSafetyScanner.ScanText(content, file);
+
+                var dto = new ExternalCliDiscoveredItemDto
+                {
+                    ItemId = $"{ecosystem}:agent:{slug}",
+                    Ecosystem = ecosystem,
+                    Kind = "agent",
+                    Name = slug,
+                    DisplayName = displayName,
+                    Description = description,
+                    SourcePath = file,
+                    HasSecrets = false,
+                    DefaultEnabled = true,
+                    AlreadyImported = false,
+                    ContentPreview = BoundText(content, MaxPreviewChars),
+                    Commit = commit,
+                    ContentHash = contentHash,
+                    HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                    SecurityWarnings = unicodeScan.Warnings,
+                    Role = parsed.Role,
+                    SystemPrompt = systemPrompt,
+                };
+                add(new InternalDiscoveredItem(dto, null, null, null, null));
+            }
+            catch
+            {
+                // Skip unreadable agent files cleanly.
             }
         }
     }
@@ -628,6 +1003,8 @@ public sealed partial class ExternalCliDiscoveryService(
                 var normalized = NormalizeCommandFileName(rawName);
                 var description = ExtractSkillDescription(content) ?? $"Slash command /{normalized} from {ecosystem}";
                 var alreadyImported = File.Exists(Path.Combine(tinadecCommandsDir, normalized + ".md"));
+                var contentHash = UnicodeSafetyScanner.Sha256Hex(content);
+                var unicodeScan = UnicodeSafetyScanner.ScanText(content, file);
 
                 var dto = new ExternalCliDiscoveredItemDto
                 {
@@ -642,6 +1019,9 @@ public sealed partial class ExternalCliDiscoveryService(
                     DefaultEnabled = true,
                     AlreadyImported = alreadyImported,
                     ContentPreview = BoundText(content, MaxPreviewChars),
+                    ContentHash = contentHash,
+                    HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                    SecurityWarnings = unicodeScan.Warnings,
                 };
                 add(new InternalDiscoveredItem(dto, null, null, null, content));
             }
@@ -695,7 +1075,7 @@ public sealed partial class ExternalCliDiscoveryService(
         return files;
     }
 
-    internal static string NormalizeSkillName(string raw)
+    public static string NormalizeSkillName(string raw)
     {
         var cleaned = Regex.Replace((raw ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9\-]+", "-").Trim('-');
         if (cleaned.Length == 0) cleaned = "imported-skill";
@@ -703,7 +1083,7 @@ public sealed partial class ExternalCliDiscoveryService(
         return cleaned;
     }
 
-    internal static string NormalizeCommandFileName(string raw)
+    public static string NormalizeCommandFileName(string raw)
     {
         var cleaned = Regex.Replace((raw ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9\-_]+", "-").Trim('-', '_');
         if (cleaned.Length == 0) cleaned = "imported-command";

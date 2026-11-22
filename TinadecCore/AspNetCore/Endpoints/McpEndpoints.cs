@@ -75,6 +75,22 @@ public static class McpEndpoints
             .Produces<McpImportJsonResultDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest);
 
+        app.MapGet("/api/v1/mcp/servers/export", async (
+            Guid? project_id,
+            string? format,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+            Results.Ok(await mcpService.ExportAsync(project_id, format ?? "json", ct).ConfigureAwait(false)))
+            .Produces<McpExportResultDto>(StatusCodes.Status200OK);
+
+        app.MapGet("/api/v1/tools/mcp/servers/export", async (
+            Guid? project_id,
+            string? format,
+            IMcpServerService mcpService,
+            CancellationToken ct) =>
+            Results.Ok(await mcpService.ExportAsync(project_id, format ?? "json", ct).ConfigureAwait(false)))
+            .Produces<McpExportResultDto>(StatusCodes.Status200OK);
+
         app.MapPut("/api/v1/mcp/servers/{serverId}", async (
             string serverId,
             McpResourceWriteDto input,

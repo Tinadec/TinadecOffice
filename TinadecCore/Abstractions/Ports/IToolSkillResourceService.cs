@@ -18,5 +18,11 @@ public interface IToolSkillResourceService
     Task<ToolSkillResourceDto> RequestDeleteAsync(Guid resourceId, Guid? projectId, long expectedRevision, CancellationToken cancellationToken = default);
     /// <summary>Copies an embedded built-in skill into a project's canonical skills root as a governed file action.</summary>
     Task<ToolSkillResourceDto> RequestCopyToProjectAsync(Guid resourceId, Guid projectId, CancellationToken cancellationToken = default);
+    Task<ToolSkillInstallResultDto> InstallAsync(ToolSkillInstallRequestDto request, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("InstallAsync is not implemented by this skill resource provider.");
+    Task<ToolSkillResourceDto> SetEnabledAsync(Guid resourceId, bool enabled, Guid? projectId = null, long? expectedRevision = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("SetEnabledAsync is not implemented by this skill resource provider.");
+    Task<ToolSkillListDto> ReloadAsync(Guid? projectId = null, CancellationToken cancellationToken = default) =>
+        ListAsync(projectId, includeBuiltins: true, cancellationToken);
 }
 

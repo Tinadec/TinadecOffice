@@ -49,6 +49,15 @@ public static class WorkspaceInstructionPolicy
     /// </summary>
     public const long MaxFileBytes = 512 * 1024;
 
+    /// <summary>Relative directory under the workspace root holding Microsoft APM modular instructions.</summary>
+    public const string ApmInstructionsDirectory = ".apm/instructions";
+
+    /// <summary>File suffix matched inside <see cref="ApmInstructionsDirectory"/>.</summary>
+    public const string ApmInstructionSuffix = ".instructions.md";
+
+    /// <summary>Combined result of reading the winning root instruction file plus any <c>.apm/instructions/*.instructions.md</c> files.</summary>
+    public sealed record WorkspaceInstructionsRead(string? Text, string? FileName, IReadOnlyList<string> Files);
+
     /// <summary>Returns the winning candidate name for a directory listing, or null for none.</summary>
     public static string? Select(IReadOnlyCollection<string> fileNames)
     {
@@ -134,5 +143,153 @@ public static class WorkspaceInstructionPolicy
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// What the model sees when an additional instruction file cannot fit in the shared inline budget.
+    /// </summary>
+    public static string BudgetDeferred(string relativePath, int charLimit) =>
+        $"[Skipped {relativePath}: shared inline instruction budget of {charLimit} characters is exhausted. Open {relativePath} with a file tool and follow it.]";
+
+    /// <summary>
+    /// Reads the workspace's primary instruction file (<c>AGENTS.override.md &gt; AGENTS.md &gt; CLAUDE.md &gt; CONTEXT.md</c>)
+    /// and any <c>.apm/instructions/*.instructions.md</c> files under <paramref name="rootPath"/> in lexicographical order,
+    /// enforcing <see cref="IsInsideRoot"/>, <see cref="MaxFileBytes"/>, and a shared <paramref name="charLimit"/> ceiling.
+    /// </summary>
+    public static WorkspaceInstructionsRead ReadWorkspaceInstructions(string rootPath, int charLimit)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath) || charLimit <= 0)
+            return new WorkspaceInstructionsRead(null, null, []);
+
+        IReadOnlyCollection<string> present;
+        try
+        {
+            present = Directory.GetFiles(rootPath).Select(Path.GetFileName).OfType<string>().ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return new WorkspaceInstructionsRead(null, null, []);
+        }
+
+        var blocks = new List<string>();
+        var files = new List<string>();
+        var remaining = charLimit;
+
+        if (Select(present) is { } primaryName)
+        {
+            var primaryPath = Path.Combine(rootPath, primaryName);
+            if (TryReadInstructionBlock(rootPath, primaryName, primaryPath, charLimit, ref remaining, out var primaryBlock))
+            {
+                blocks.Add(primaryBlock);
+                files.Add(primaryName);
+            }
+        }
+
+        try
+        {
+            var apmDir = Path.Combine(rootPath, ".apm");
+            var apmInstructionsDir = Path.Combine(apmDir, "instructions");
+            if (Directory.Exists(apmInstructionsDir))
+            {
+                if (!IsDirectoryLinkInsideRoot(rootPath, apmDir) || !IsDirectoryLinkInsideRoot(rootPath, apmInstructionsDir))
+                {
+                    blocks.Add(EscapesRoot(ApmInstructionsDirectory));
+                    files.Add(ApmInstructionsDirectory);
+                }
+                else
+                {
+                    var apmFiles = Directory.GetFiles(apmInstructionsDir)
+                        .Where(f => Path.GetFileName(f).EndsWith(ApmInstructionSuffix, StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(f => Path.GetFileName(f), StringComparer.Ordinal)
+                        .ToArray();
+
+                    foreach (var apmFile in apmFiles)
+                    {
+                        var relPath = ApmInstructionsDirectory + "/" + Path.GetFileName(apmFile);
+                        if (TryReadInstructionBlock(rootPath, relPath, apmFile, charLimit, ref remaining, out var apmBlock))
+                        {
+                            blocks.Add(apmBlock);
+                            files.Add(relPath);
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // Unreadable .apm/instructions never suppresses primary root instructions.
+        }
+
+        if (blocks.Count == 0)
+            return new WorkspaceInstructionsRead(null, null, []);
+
+        var combined = string.Join("\n\n", blocks);
+        var label = files.Count == 1 ? files[0] : string.Join(", ", files);
+        return new WorkspaceInstructionsRead(combined, label, files);
+    }
+
+    private static bool IsDirectoryLinkInsideRoot(string rootPath, string directoryPath)
+    {
+        var dirInfo = new DirectoryInfo(directoryPath);
+        if (dirInfo.ResolveLinkTarget(returnFinalTarget: true) is not { } target)
+            return true;
+        return IsTargetInsideRoot(rootPath, target.FullName);
+    }
+
+    private static bool IsTargetInsideRoot(string rootPath, string targetFullName)
+    {
+        if (IsInsideRoot(rootPath, targetFullName))
+            return true;
+        try
+        {
+            return IsInsideRoot(WorkspacePathSpelling.Canonical(rootPath), WorkspacePathSpelling.Canonical(targetFullName));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadInstructionBlock(
+        string rootPath,
+        string relativePath,
+        string fullPath,
+        int totalCharLimit,
+        ref int remainingChars,
+        out string block)
+    {
+        block = string.Empty;
+        try
+        {
+            var info = new FileInfo(fullPath);
+            if (info.ResolveLinkTarget(returnFinalTarget: true) is { } target
+                && !IsTargetInsideRoot(rootPath, target.FullName))
+            {
+                block = EscapesRoot(relativePath);
+                return true;
+            }
+
+            if (info.Length > MaxFileBytes)
+            {
+                block = Deferred(relativePath, info.Length);
+                return true;
+            }
+
+            if (remainingChars <= 0)
+            {
+                block = BudgetDeferred(relativePath, totalCharLimit);
+                return true;
+            }
+
+            var raw = File.ReadAllText(fullPath);
+            var trimmedLength = raw.Trim().Length;
+            block = Frame(relativePath, raw, remainingChars);
+            remainingChars = Math.Max(0, remainingChars - Math.Min(trimmedLength, remainingChars));
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 }

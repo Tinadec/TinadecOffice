@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TinadecCore.Contracts.Dtos;
 
 public sealed record ToolSkillResourceDto
@@ -23,6 +25,8 @@ public sealed record ToolSkillResourceDto
     public string Source { get; init; } = "manual";
     public string? Version { get; init; }
     public string? Commit { get; init; }
+    public bool HasHiddenUnicode { get; init; }
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
     public string Availability { get; init; } = "available";
     /// <summary>Which loader root produced this entry: <c>builtin</c>, <c>user</c>, <c>project</c>,
     /// <c>compat</c> or <c>scope</c>. <see cref="Scope"/> stays the write-model scope (shared/project)
@@ -131,6 +135,9 @@ public sealed class ToolSkillInstallRequestDto
     public bool? EnableStdioMcp { get; init; }
     public bool Overwrite { get; init; }
     public bool Governed { get; init; }
+    public IReadOnlyDictionary<string, string>? SecretValues { get; init; }
+    [JsonIgnore]
+    public Func<ExternalCliDiscoveredItemDto, bool, CancellationToken, Task<ExternalCliImportedAgentDto>>? CustomAgentImporter { get; init; }
 }
 
 public sealed class ToolSkillInstallResultDto
@@ -139,7 +146,14 @@ public sealed class ToolSkillInstallResultDto
     public IReadOnlyList<ToolSkillResourceDto> InstalledSkills { get; init; } = [];
     public IReadOnlyList<McpResourceDto> InstalledMcpServers { get; init; } = [];
     public IReadOnlyList<ExternalCliImportedCommandDto> InstalledCommands { get; init; } = [];
+    public IReadOnlyList<ExternalCliImportedAgentDto> ImportedAgents { get; init; } = [];
     public IReadOnlyList<ExternalCliSkippedItemDto> Skipped { get; init; } = [];
+    public string? Commit { get; init; }
+    public string? ContentHash { get; init; }
+    public string? PackageHash { get; init; }
+    public bool HasHiddenUnicode { get; init; }
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
+    public IReadOnlyList<string> SecretPlaceholders { get; init; } = [];
 }
 
 public sealed class ExternalCliEcosystemStatusDto
@@ -165,10 +179,19 @@ public sealed class ExternalCliDiscoveredItemDto
     public string? Url { get; init; }
     public IReadOnlyList<string> EnvKeys { get; init; } = [];
     public IReadOnlyList<string> HeaderKeys { get; init; } = [];
+    public IReadOnlyList<string> SecretPlaceholders { get; init; } = [];
     public bool HasSecrets { get; init; }
     public bool DefaultEnabled { get; init; }
     public bool AlreadyImported { get; init; }
     public string? ContentPreview { get; init; }
+    public string? Commit { get; init; }
+    public string? Version { get; init; }
+    public string? ContentHash { get; init; }
+    public string? PackageHash { get; init; }
+    public bool HasHiddenUnicode { get; init; }
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
+    public string? Role { get; init; }
+    public string? SystemPrompt { get; init; }
 }
 
 public sealed class ExternalCliDiscoveryDto
@@ -186,6 +209,9 @@ public sealed class ExternalCliImportRequestDto
     public string Scope { get; init; } = "shared";
     public bool EnableStdioMcp { get; init; }
     public bool Overwrite { get; init; }
+    public IReadOnlyDictionary<string, string>? SecretValues { get; init; }
+    [JsonIgnore]
+    public Func<ExternalCliDiscoveredItemDto, bool, CancellationToken, Task<ExternalCliImportedAgentDto>>? CustomAgentImporter { get; init; }
 }
 
 public sealed class ExternalCliImportedCommandDto
@@ -193,6 +219,24 @@ public sealed class ExternalCliImportedCommandDto
     public string Name { get; init; } = string.Empty;
     public string Path { get; init; } = string.Empty;
     public string Ecosystem { get; init; } = string.Empty;
+}
+
+public sealed class ExternalCliImportedAgentDto
+{
+    public Guid Id { get; init; }
+    public string Slug { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public string? Description { get; init; }
+    public string SourceKind { get; init; } = "custom";
+    public string Status { get; init; } = "published";
+    public int Version { get; init; } = 1;
+    public string SourcePath { get; init; } = string.Empty;
+    public string Ecosystem { get; init; } = "apm";
+    public string? Commit { get; init; }
+    public string? ContentHash { get; init; }
+    public bool HasHiddenUnicode { get; init; }
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
 }
 
 public sealed class ExternalCliSkippedItemDto
@@ -206,7 +250,11 @@ public sealed class ExternalCliImportResultDto
     public IReadOnlyList<ToolSkillResourceDto> InstalledSkills { get; init; } = [];
     public IReadOnlyList<McpResourceDto> InstalledMcpServers { get; init; } = [];
     public IReadOnlyList<ExternalCliImportedCommandDto> InstalledCommands { get; init; } = [];
+    public IReadOnlyList<ExternalCliImportedAgentDto> ImportedAgents { get; init; } = [];
     public IReadOnlyList<ExternalCliSkippedItemDto> Skipped { get; init; } = [];
+    public IReadOnlyList<string> SecretPlaceholders { get; init; } = [];
+    public bool HasHiddenUnicode { get; init; }
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
 }
 
 

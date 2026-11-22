@@ -46,11 +46,16 @@ internal static partial class SkillGitRepositorySource
             var name = root.Length == 0 ? ReadName(text) : root[(root.LastIndexOf('/') + 1)..];
             if (name is null || !WorkspaceSkillPolicy.ValidateName(name, out _) || !names.Add(name)) { refused++; continue; }
             if (!WorkspaceSkillPolicy.TryRead(text, name, "SKILL.md", out var skill, out _)) { refused++; continue; }
+            var unicodeScan = UnicodeSafetyScanner.ScanText(text, "SKILL.md");
+            var contentHash = UnicodeSafetyScanner.Sha256Hex(body.Bytes!);
             var detail = JsonSerializer.Serialize(new
             {
                 homepage = source.Homepage + (root.Length == 0 ? "" : "/" + root),
                 commit = source.Commit,
-                install = new { name, package_path = root, commit = source.Commit },
+                content_hash = contentHash,
+                has_hidden_unicode = unicodeScan.HasHiddenUnicode,
+                security_warnings = unicodeScan.Warnings,
+                install = new { name, package_path = root, commit = source.Commit, content_hash = contentHash },
             });
             entries.Add(new(name, source.Commit, MarketEntryKinds.Skill, name, skill!.Description, detail, ManifestHash(files)));
         }

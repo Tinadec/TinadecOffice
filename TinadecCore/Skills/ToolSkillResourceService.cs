@@ -112,9 +112,10 @@ public sealed class ToolSkillResourceService(
         var packageRoot = Path.GetDirectoryName(resource.Path)!;
         var packageFiles = PackageFiles(packageRoot);
         var packageHash = ActualPackageHash(packageRoot);
+        var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         if (resource.Scope == "shared" && !string.Equals(packageHash, resource.ContentHash, StringComparison.Ordinal))
-            return resource with { Valid = false, Availability = "invalid", Reason = "Skill package bytes changed outside Core; reinstall the reviewed package.", ReasonCode = "package_changed", ReasonData = null, Content = entry.Content, FileHash = hash, PackageHash = packageHash, PackageFiles = packageFiles };
-        return resource with { Content = entry.Content, FileHash = hash, PackageHash = packageHash, PackageFiles = packageFiles };
+            return resource with { Valid = false, Availability = "invalid", Reason = "Skill package bytes changed outside Core; reinstall the reviewed package.", ReasonCode = "package_changed", ReasonData = null, Content = entry.Content, FileHash = hash, PackageHash = packageHash, PackageFiles = packageFiles, HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings };
+        return resource with { Content = entry.Content, FileHash = hash, PackageHash = packageHash, PackageFiles = packageFiles, HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings };
     }
 
     public async Task<ToolSkillFileDto?> GetFileAsync(Guid resourceId, Guid? projectId, string relativePath, CancellationToken cancellationToken = default)
@@ -293,12 +294,14 @@ public sealed class ToolSkillResourceService(
         var action = await services.GetRequiredService<IUserToolActionService>().CreateAsync(new UserToolActionRequest(
             Guid.Empty, "skill_resource_update", JsonSerializer.Serialize(parameters, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }),
             IdempotencyKey: $"skill-request:{resourceIdForReview:N}:{expectedRevision}:{hash}"), cancellationToken);
+        var unicodeScan = UnicodeSafetyScanner.ScanPackage(files);
         return new ToolSkillResourceDto
         {
             ResourceId = resourceIdForReview, Scope = "shared", Name = name, Description = skill!.Description,
             Enabled = input.Enabled ?? true, Valid = false, Reason = "pending governed approval", ReasonCode = "pending_approval",
             Revision = expectedRevision, ContentHash = hash, PackageHash = hash, Availability = "pending",
             Source = NormalizeSource(input.Source), Version = input.Version, Commit = input.Commit,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings,
             PackageFiles = files.Select(x => new ToolSkillPackageFileDto
             {
                 Path = x.Key, ContentHash = Convert.ToHexStringLower(SHA256.HashData(x.Value)), SizeBytes = x.Value.LongLength,
@@ -551,6 +554,7 @@ public sealed class ToolSkillResourceService(
         var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(seed)).AsSpan(0, 16));
         var root = Path.GetDirectoryName(entry.FullPath)!;
         var hash = entry.Valid ? ActualPackageHash(root) : entry.ContentHash;
+        var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new()
         {
             ResourceId = id, Scope = "shared", Name = entry.Name, Description = entry.Description,
@@ -558,6 +562,7 @@ public sealed class ToolSkillResourceService(
             ReasonData = entry.ReasonData, Path = entry.FullPath, Revision = Revision(hash), ContentHash = hash,
             PackageHash = hash, Availability = entry.Valid ? entry.Enabled ? "available" : "disabled" : "invalid",
             Source = sourceKind, SourceKind = sourceKind, Rank = rank, ReadOnly = readOnly,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings,
             PackageFiles = entry.Valid ? PackageFiles(root) : [],
         };
     }
@@ -568,11 +573,13 @@ public sealed class ToolSkillResourceService(
         var entry = WorkspaceSkillDiscovery.Read(root, Path.Combine(root, "SKILL.md"));
         var packageFiles = PackageFiles(root);
         var actualHash = Directory.Exists(root) ? ActualPackageHash(root) : "";
+        var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new() { ResourceId = row.Id, Scope = "shared", Name = row.Name, Description = entry.Description ?? row.Description,
             Enabled = row.Enabled && entry.Enabled, Valid = entry.Valid, Reason = entry.Valid ? row.Enabled ? entry.Reason : "disabled in Core" : entry.Reason,
             ReasonCode = entry.Valid && !row.Enabled ? "disabled" : entry.ReasonCode, ReasonData = entry.Valid && !row.Enabled ? null : entry.ReasonData,
             Path = entry.FullPath, Revision = string.Equals(actualHash, row.ContentHash, StringComparison.Ordinal) ? row.Revision : Revision(actualHash), ContentHash = actualHash, PackageHash = actualHash,
             PackageReference = row.PackageReference, Source = row.Source, Version = row.Version, Commit = row.Commit,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings,
             SourceKind = "scope", Rank = 200, Availability = entry.Valid ? row.Enabled ? "available" : "disabled" : "invalid", PackageFiles = packageFiles };
     }
 
@@ -582,9 +589,11 @@ public sealed class ToolSkillResourceService(
         var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(seed)).AsSpan(0, 16));
         var root = Path.GetDirectoryName(entry.FullPath)!;
         var hash = entry.Valid ? ActualPackageHash(root) : entry.ContentHash;
+        var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new() { ResourceId = id, Scope = "shared", Name = entry.Name, Description = entry.Description,
             Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData, Path = entry.FullPath,
             Revision = Revision(hash), ContentHash = hash, PackageHash = hash,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings,
             Availability = entry.Valid ? entry.Enabled ? "available" : "disabled" : "invalid", Source = "source",
             SourceKind = "scope", Rank = 200,
             PackageFiles = entry.Valid ? PackageFiles(root) : [] };
@@ -627,11 +636,13 @@ public sealed class ToolSkillResourceService(
         var packageRoot = Path.GetDirectoryName(entry.FullPath)!;
         var packageFiles = entry.Valid ? PackageFiles(packageRoot) : [];
         var packageHash = entry.Valid ? ActualPackageHash(packageRoot) : entry.ContentHash;
+        var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new()
         {
             ResourceId = ProjectId(project, entry.RelativePath), ProjectId = project.ProjectId, Scope = "project", Name = entry.Name,
             Description = entry.Description, Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData,
             Path = entry.FullPath, ContentHash = entry.ContentHash, Revision = Revision(packageHash), PackageHash = packageHash, PackageFiles = packageFiles,
+            HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings,
             Availability = !entry.Valid ? "invalid" : entry.Enabled ? "available" : "disabled", Source = "project",
             SourceKind = "project", Rank = 100,
         };
@@ -738,6 +749,9 @@ public sealed class ToolSkillResourceService(
                         .FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Scope, scope, StringComparison.OrdinalIgnoreCase))
                     : null;
                 var content = ExternalCliDiscoveryService.EnsureSkillFrontmatter(request.Content, name, null);
+                var unicodeScan = UnicodeSafetyScanner.ScanBase64Package(content, request.Files);
+                var contentHash = UnicodeSafetyScanner.Sha256Hex(content);
+                var packageHash = UnicodeSafetyScanner.ComputePackageHash(content, request.Files);
                 var write = new ToolSkillWriteDto
                 {
                     Scope = scope,
@@ -753,10 +767,15 @@ public sealed class ToolSkillResourceService(
                 var saved = request.Governed
                     ? await RequestSaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken)
                     : await SaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken);
+                saved = saved with { HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings };
                 return new ToolSkillInstallResultDto
                 {
                     SourceType = sourceType,
                     InstalledSkills = [saved],
+                    ContentHash = contentHash,
+                    PackageHash = packageHash,
+                    HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                    SecurityWarnings = unicodeScan.Warnings,
                 };
             }
             case "local_dir":
@@ -782,6 +801,9 @@ public sealed class ToolSkillResourceService(
                 var rawContent = await File.ReadAllTextAsync(skillMdPath, Encoding.UTF8, cancellationToken);
                 var content = ExternalCliDiscoveryService.EnsureSkillFrontmatter(rawContent, name, null);
                 var files = ExternalCliDiscoveryService.ReadSkillAssets(localPath);
+                var unicodeScan = UnicodeSafetyScanner.ScanBase64Package(content, files);
+                var contentHash = UnicodeSafetyScanner.Sha256Hex(content);
+                var packageHash = UnicodeSafetyScanner.ComputePackageHash(content, files);
                 var write = new ToolSkillWriteDto
                 {
                     Scope = scope,
@@ -797,10 +819,15 @@ public sealed class ToolSkillResourceService(
                 var saved = request.Governed
                     ? await RequestSaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken)
                     : await SaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken);
+                saved = saved with { HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings };
                 return new ToolSkillInstallResultDto
                 {
                     SourceType = sourceType,
                     InstalledSkills = [saved],
+                    ContentHash = contentHash,
+                    PackageHash = packageHash,
+                    HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                    SecurityWarnings = unicodeScan.Warnings,
                 };
             }
             case "git_url":
@@ -818,6 +845,9 @@ public sealed class ToolSkillResourceService(
                 var content = ExternalCliDiscoveryService.EnsureSkillFrontmatter(rawContent, name, null);
                 var assets = packageFiles.Where(x => !string.Equals(x.Key, "SKILL.md", StringComparison.Ordinal))
                     .ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal);
+                var unicodeScan = UnicodeSafetyScanner.ScanBase64Package(rawContent, assets);
+                var contentHash = UnicodeSafetyScanner.Sha256Hex(rawContent);
+                var packageHash = UnicodeSafetyScanner.ComputePackageHash(content, assets);
                 var existing = request.Overwrite
                     ? (await ListAsync(request.ProjectId, includeBuiltins: false, cancellationToken)).Skills
                         .FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Scope, scope, StringComparison.OrdinalIgnoreCase))
@@ -838,10 +868,21 @@ public sealed class ToolSkillResourceService(
                 var saved = request.Governed
                     ? await RequestSaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken)
                     : await SaveAsync(existing?.ResourceId, request.ProjectId, write, existing?.Revision ?? 0, cancellationToken);
+                saved = saved with
+                {
+                    Commit = commit ?? saved.Commit,
+                    HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                    SecurityWarnings = unicodeScan.Warnings,
+                };
                 return new ToolSkillInstallResultDto
                 {
                     SourceType = sourceType,
                     InstalledSkills = [saved],
+                    Commit = commit,
+                    ContentHash = contentHash,
+                    PackageHash = packageHash,
+                    HasHiddenUnicode = unicodeScan.HasHiddenUnicode,
+                    SecurityWarnings = unicodeScan.Warnings,
                 };
             }
             case "external_cli_import":
@@ -864,6 +905,8 @@ public sealed class ToolSkillResourceService(
                     Scope = scope,
                     EnableStdioMcp = request.EnableStdioMcp ?? false,
                     Overwrite = request.Overwrite,
+                    SecretValues = request.SecretValues,
+                    CustomAgentImporter = request.CustomAgentImporter,
                 }, cancellationToken);
                 return new ToolSkillInstallResultDto
                 {
@@ -871,7 +914,11 @@ public sealed class ToolSkillResourceService(
                     InstalledSkills = imported.InstalledSkills,
                     InstalledMcpServers = imported.InstalledMcpServers,
                     InstalledCommands = imported.InstalledCommands,
+                    ImportedAgents = imported.ImportedAgents,
                     Skipped = imported.Skipped,
+                    HasHiddenUnicode = imported.HasHiddenUnicode,
+                    SecurityWarnings = imported.SecurityWarnings,
+                    SecretPlaceholders = imported.SecretPlaceholders,
                 };
             }
             default:

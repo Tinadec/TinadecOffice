@@ -43,9 +43,9 @@ public sealed class McpResourceRegistry(IDbContextFactory<ToolsSettingsDbContext
         if (row is not null && row.ProjectId != input.ProjectId) throw new ToolSettingsException("invalid_mcp_scope", "Resource scope is immutable. Create a resource in the other scope.");
         if (await db.McpResources.AnyAsync(x => x.TenantId == actor.TenantId && x.WorkspaceId == actor.WorkspaceId && x.ScopeKey == scope && x.ServerId == input.Id && x.Id != (resourceId ?? Guid.Empty) && x.DeletedAt == null, cancellationToken)) throw new ToolSettingsException("mcp_id_conflict", "A server with this id already exists in this scope.", 409);
         var references = row is null ? new Dictionary<string, string>() : ParseReferences(row.SecretReferencesJson);
+        var nextReferences = new Dictionary<string, string>(StringComparer.Ordinal);
         if (input.Env is not null)
         {
-            var next = new Dictionary<string, string>();
             foreach (var pair in input.Env)
             {
                 if (string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 128 || pair.Key.Contains('=') || pair.Key.Contains('\0') || pair.Value?.Length > 32768) throw new ToolSettingsException("invalid_mcp_environment", "Invalid environment name or value.");
@@ -53,13 +53,66 @@ public sealed class McpResourceRegistry(IDbContextFactory<ToolsSettingsDbContext
                 if (pair.Value == Mask)
                 {
                     if (!references.TryGetValue(pair.Key, out var existing)) throw new ToolSettingsException("missing_mcp_secret", "A masked environment value needs an existing secret.");
-                    next[pair.Key] = existing;
+                    if (TryExtractPlaceholderVarsFromRef(existing, out var existingVars)
+                        && existingVars.Count == 1
+                        && McpConfigParser.TryLookupSecretValue(input.SecretValues, existingVars[0], out var updatedSecret))
+                    {
+                        var resolvedRef = BuildPlaceholderRef("mcp-phr", existingVars);
+                        nextReferences[pair.Key] = await secrets.PutAsync(resolvedRef, updatedSecret, cancellationToken);
+                    }
+                    else
+                    {
+                        nextReferences[pair.Key] = existing;
+                    }
                 }
-                else next[pair.Key] = await secrets.PutAsync("mcp-" + Guid.NewGuid().ToString("N"), pair.Value, cancellationToken);
+                else
+                {
+                    var substituted = McpConfigParser.SubstituteSecretPlaceholders(
+                        pair.Value,
+                        input.SecretValues,
+                        out var allVars,
+                        out var unresolvedVars);
+
+                    if (allVars.Count > 0)
+                    {
+                        var prefix = unresolvedVars.Count > 0 ? "mcp-phu" : "mcp-phr";
+                        var refKey = BuildPlaceholderRef(prefix, allVars);
+                        var storedSecret = unresolvedVars.Count > 0 ? string.Empty : substituted;
+                        nextReferences[pair.Key] = await secrets.PutAsync(refKey, storedSecret, cancellationToken);
+                    }
+                    else
+                    {
+                        nextReferences[pair.Key] = await secrets.PutAsync("mcp-" + Guid.NewGuid().ToString("N"), pair.Value, cancellationToken);
+                    }
+                }
             }
-            references = next;
+            references = nextReferences;
         }
-        var headerReferences = row is null ? new Dictionary<string, string>() : ParseReferences(row.HeaderReferencesJson);
+        else if (input.SecretValues is { Count: > 0 } && references.Count > 0)
+        {
+            foreach (var pair in references.ToArray())
+            {
+                if (TryExtractPlaceholderVarsFromRef(pair.Value, out var existingVars)
+                    && existingVars.Count == 1
+                    && McpConfigParser.TryLookupSecretValue(input.SecretValues, existingVars[0], out var resolvedVal))
+                {
+                    references[pair.Key] = await secrets.PutAsync(BuildPlaceholderRef("mcp-phr", existingVars), resolvedVal, cancellationToken);
+                }
+            }
+        }
+
+        // Route any ${VAR} secrets referenced in args or url directly into ISecretStore without storing plaintext in ArgsJson/Url.
+        foreach (var inlineVar in McpConfigParser.ExtractSecretPlaceholders(input.Url, input.Args, null, null))
+        {
+            if (McpConfigParser.TryLookupSecretValue(input.SecretValues, inlineVar, out var inlineSecret)
+                && !references.ContainsKey(inlineVar)
+                && inlineVar.Length <= 128)
+            {
+                references[inlineVar] = await secrets.PutAsync(BuildPlaceholderRef("mcp-phr", [inlineVar]), inlineSecret, cancellationToken);
+            }
+        }
+
+        var headerReferences = row is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : ParseReferencesCaseInsensitive(row.HeaderReferencesJson);
         if (input.Headers is not null)
         {
             var next = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -69,9 +122,43 @@ public sealed class McpResourceRegistry(IDbContextFactory<ToolsSettingsDbContext
                 if (pair.Value == Mask)
                 {
                     if (!headerReferences.TryGetValue(pair.Key, out var existing)) throw new ToolSettingsException("missing_mcp_secret", "A masked header value needs an existing secret.");
-                    next[pair.Key] = existing;
+                    if (TryExtractPlaceholderVarsFromRef(existing, out var existingVars)
+                        && existingVars.Count == 1
+                        && McpConfigParser.TryLookupSecretValue(input.SecretValues, existingVars[0], out var updatedHeaderSecret))
+                    {
+                        var isBearer = existing.StartsWith("mcp-hdb", StringComparison.Ordinal);
+                        var resolvedValue = isBearer ? "Bearer " + updatedHeaderSecret : updatedHeaderSecret;
+                        var resolvedRef = BuildPlaceholderRef(isBearer ? "mcp-hdbr" : "mcp-hdr", existingVars);
+                        next[pair.Key] = await secrets.PutAsync(resolvedRef, resolvedValue, cancellationToken);
+                    }
+                    else
+                    {
+                        next[pair.Key] = existing;
+                    }
                 }
-                else next[pair.Key] = await secrets.PutAsync("mcp-header-" + Guid.NewGuid().ToString("N"), pair.Value, cancellationToken);
+                else
+                {
+                    var substituted = McpConfigParser.SubstituteSecretPlaceholders(
+                        pair.Value,
+                        input.SecretValues,
+                        out var allVars,
+                        out var unresolvedVars);
+
+                    if (allVars.Count > 0)
+                    {
+                        var isBearer = pair.Value.TrimStart().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase);
+                        var prefix = unresolvedVars.Count > 0
+                            ? (isBearer ? "mcp-hdbu" : "mcp-hdu")
+                            : (isBearer ? "mcp-hdbr" : "mcp-hdr");
+                        var refKey = BuildPlaceholderRef(prefix, allVars);
+                        var storedSecret = unresolvedVars.Count > 0 ? string.Empty : substituted;
+                        next[pair.Key] = await secrets.PutAsync(refKey, storedSecret, cancellationToken);
+                    }
+                    else
+                    {
+                        next[pair.Key] = await secrets.PutAsync("mcp-header-" + Guid.NewGuid().ToString("N"), pair.Value, cancellationToken);
+                    }
+                }
             }
             headerReferences = next;
         }
@@ -162,6 +249,106 @@ public sealed class McpResourceRegistry(IDbContextFactory<ToolsSettingsDbContext
         _ => throw new ToolSettingsException("invalid_mcp_transport", "MCP transport must be stdio, http or sse."),
     };
     private static Dictionary<string,string> ParseReferences(string json) => JsonSerializer.Deserialize<Dictionary<string,string>>(json) ?? [];
+    private static Dictionary<string,string> ParseReferencesCaseInsensitive(string json)
+    {
+        var parsed = ParseReferences(json);
+        return new Dictionary<string, string>(parsed, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string BuildPlaceholderRef(string prefix, IReadOnlyList<string> vars)
+    {
+        var sanitized = vars
+            .Select(v => new string(v.Where(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-').ToArray()))
+            .Where(v => v.Length > 0)
+            .ToArray();
+        var joined = string.Join(".", sanitized);
+        if (joined.Length > 64)
+            joined = joined[..64].TrimEnd('.');
+        return string.IsNullOrEmpty(joined)
+            ? $"{prefix}.{Guid.NewGuid():N}"
+            : $"{prefix}.{joined}.{Guid.NewGuid():N}";
+    }
+
+    internal static bool TryExtractPlaceholderVarsFromRef(string secretRef, out IReadOnlyList<string> vars)
+    {
+        vars = [];
+        if (string.IsNullOrWhiteSpace(secretRef)) return false;
+        string? matchedPrefix = null;
+        foreach (var candidate in new[] { "mcp-phu.", "mcp-phr.", "mcp-hdbu.", "mcp-hdbr.", "mcp-hdu.", "mcp-hdr." })
+        {
+            if (secretRef.StartsWith(candidate, StringComparison.Ordinal))
+            {
+                matchedPrefix = candidate;
+                break;
+            }
+        }
+        if (matchedPrefix is null) return false;
+        var rest = secretRef[matchedPrefix.Length..];
+        var lastDot = rest.LastIndexOf('.');
+        if (lastDot <= 0) return false;
+        var middle = rest[..lastDot];
+        var parts = middle.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return false;
+        vars = parts;
+        return true;
+    }
+
+    private static IReadOnlyList<string> CollectRowPlaceholders(
+        string? url,
+        IReadOnlyList<string> args,
+        Dictionary<string, string> envRefs,
+        Dictionary<string, string> headerRefs)
+    {
+        var list = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var r in envRefs.Values)
+        {
+            if (TryExtractPlaceholderVarsFromRef(r, out var vars))
+                foreach (var v in vars) if (seen.Add(v)) list.Add(v);
+        }
+        foreach (var r in headerRefs.Values)
+        {
+            if (TryExtractPlaceholderVarsFromRef(r, out var vars))
+                foreach (var v in vars) if (seen.Add(v)) list.Add(v);
+        }
+        foreach (var v in McpConfigParser.ExtractSecretPlaceholders(url, args, null, null))
+        {
+            if (seen.Add(v)) list.Add(v);
+        }
+        return list;
+    }
+
     private static ToolMcpServerSnapshotDto ToSnapshot(McpResourceRecord row) => new() { ResourceId = row.Id, Id = row.ServerId, Name = row.Name, Transport = row.Transport, Url = row.Url, Command = row.Command, Args = JsonSerializer.Deserialize<string[]>(row.ArgsJson) ?? [], SecretReferences = ParseReferences(row.SecretReferencesJson), HeaderSecretReferences = ParseReferences(row.HeaderReferencesJson), Cwd = row.Cwd, Revision = row.Revision, ConfigurationHash = row.ConfigurationHash };
-    private static McpResourceDto ToDto(McpResourceRecord row) => new() { ResourceId = row.Id, ProjectId = row.ProjectId, Id = row.ServerId, Name = row.Name, Enabled = row.Enabled, Transport = row.Transport, Url = row.Url, Command = row.Command, Args = JsonSerializer.Deserialize<string[]>(row.ArgsJson) ?? [], Env = ParseReferences(row.SecretReferencesJson).ToDictionary(x => x.Key, _ => (string?)Mask), Headers = ParseReferences(row.HeaderReferencesJson).ToDictionary(x => x.Key, _ => (string?)Mask), Cwd = row.Cwd, Revision = row.Revision, ConfigurationHash = row.ConfigurationHash, UpdatedAt = row.UpdatedAt, ImportSource = row.ImportSource };
+    private static McpResourceDto ToDto(McpResourceRecord row)
+    {
+        var args = JsonSerializer.Deserialize<string[]>(row.ArgsJson) ?? [];
+        var envRefs = ParseReferences(row.SecretReferencesJson);
+        var headerRefs = ParseReferences(row.HeaderReferencesJson);
+        var (hasUnicode, unicodeWarnings) = McpConfigParser.ScanHiddenUnicode(
+            string.Join('\n', row.Command, row.Url ?? string.Empty, string.Join('\n', args)),
+            $"MCP '{row.ServerId}'");
+        return new()
+        {
+            ResourceId = row.Id,
+            ProjectId = row.ProjectId,
+            Id = row.ServerId,
+            Name = row.Name,
+            Enabled = row.Enabled,
+            Transport = row.Transport,
+            Url = row.Url,
+            Command = row.Command,
+            Args = args,
+            Env = envRefs.ToDictionary(x => x.Key, _ => (string?)Mask),
+            Headers = headerRefs.ToDictionary(x => x.Key, _ => (string?)Mask),
+            SecretPlaceholders = CollectRowPlaceholders(row.Url, args, envRefs, headerRefs),
+            HasHiddenUnicode = hasUnicode,
+            SecurityWarnings = unicodeWarnings,
+            Cwd = row.Cwd,
+            Revision = row.Revision,
+            ConfigurationHash = row.ConfigurationHash,
+            UpdatedAt = row.UpdatedAt,
+            ImportSource = row.ImportSource,
+        };
+    }
 }

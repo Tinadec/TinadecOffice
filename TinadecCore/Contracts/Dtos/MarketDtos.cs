@@ -326,6 +326,18 @@ public sealed class MarketInstallProposalDto
     /// <summary>What this phase cannot guarantee, stated for the reader of the approval.</summary>
     [JsonPropertyName("warnings")]
     public IReadOnlyList<string> Warnings { get; init; } = [];
+
+    [JsonPropertyName("commit")]
+    public string? Commit { get; init; }
+
+    [JsonPropertyName("content_hash")]
+    public string? ContentHash { get; init; }
+
+    [JsonPropertyName("has_hidden_unicode")]
+    public bool HasHiddenUnicode { get; init; }
+
+    [JsonPropertyName("security_warnings")]
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
 }
 
 /// <summary>One environment variable a package asks for. Values are never part of this shape.</summary>
@@ -412,6 +424,18 @@ public sealed class MarketInstallationDto
 
     [JsonPropertyName("updated_at")]
     public DateTimeOffset UpdatedAt { get; init; }
+
+    [JsonPropertyName("commit")]
+    public string? Commit { get; init; }
+
+    [JsonPropertyName("content_hash")]
+    public string? ContentHash { get; init; }
+
+    [JsonPropertyName("has_hidden_unicode")]
+    public bool HasHiddenUnicode { get; init; }
+
+    [JsonPropertyName("security_warnings")]
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
 }
 
 /// <summary>

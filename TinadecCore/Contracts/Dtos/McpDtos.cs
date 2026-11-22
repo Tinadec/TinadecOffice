@@ -145,6 +145,9 @@ public sealed class McpImportJsonRequestDto
 
     [JsonPropertyName("import_source")]
     public string? ImportSource { get; init; }
+
+    [JsonPropertyName("secret_values")]
+    public IReadOnlyDictionary<string, string>? SecretValues { get; init; }
 }
 
 public sealed class McpImportJsonSkippedDto
@@ -169,6 +172,24 @@ public sealed class McpImportJsonResultDto
 
     [JsonPropertyName("skipped_count")]
     public int SkippedCount { get; init; }
+
+    [JsonPropertyName("secret_placeholders")]
+    public IReadOnlyList<string> SecretPlaceholders { get; init; } = [];
+}
+
+public sealed class McpExportResultDto
+{
+    [JsonPropertyName("format")]
+    public string Format { get; init; } = "json";
+
+    [JsonPropertyName("content")]
+    public string Content { get; init; } = string.Empty;
+
+    [JsonPropertyName("secret_placeholders")]
+    public IReadOnlyList<string> SecretPlaceholders { get; init; } = [];
+
+    [JsonPropertyName("server_count")]
+    public int ServerCount { get; init; }
 }
 
 public sealed class McpServerEnabledRequestDto

@@ -62,6 +62,7 @@ public sealed class McpResourceWriteDto
     public IReadOnlyDictionary<string, string?>? Headers { get; init; }
     public string? Cwd { get; init; }
     public string? ImportSource { get; init; }
+    public IReadOnlyDictionary<string, string>? SecretValues { get; init; }
 }
 
 public sealed class McpResourceDto
@@ -77,6 +78,9 @@ public sealed class McpResourceDto
     public IReadOnlyList<string> Args { get; init; } = [];
     public IReadOnlyDictionary<string, string?>? Env { get; init; }
     public IReadOnlyDictionary<string, string?>? Headers { get; init; }
+    public IReadOnlyList<string> SecretPlaceholders { get; init; } = [];
+    public bool HasHiddenUnicode { get; init; }
+    public IReadOnlyList<string> SecurityWarnings { get; init; } = [];
     public string? Cwd { get; init; }
     public long Revision { get; init; }
     public string ConfigurationHash { get; init; } = string.Empty;

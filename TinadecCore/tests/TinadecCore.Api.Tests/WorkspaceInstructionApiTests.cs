@@ -313,6 +313,33 @@ public sealed class WorkspaceInstructionApiTests : IAsyncLifetime
         Assert.Null(WorkspaceInstructionPolicy.Select(["README.md", "AGENTS.txt"]));
     }
 
+    [Fact]
+    public async Task ApmInstructionsDirectory_AppendsLexicographicallyUnderWorkspaceRules_AndHonorsCharBudget()
+    {
+        var (workspaceRoot, sessionId, projectId) = await OpenWorkspaceAsync("apm-rules",
+            ("AGENTS.md", "ROOT-AGENTS-CHARTER"));
+        var apmDir = Path.Combine(workspaceRoot, ".apm", "instructions");
+        Directory.CreateDirectory(apmDir);
+        File.WriteAllText(Path.Combine(apmDir, "02-testing.instructions.md"), "APM-RULE-SECOND-TESTING");
+        File.WriteAllText(Path.Combine(apmDir, "01-typescript.instructions.md"), "APM-RULE-FIRST-TYPESCRIPT");
+        File.WriteAllText(Path.Combine(apmDir, "ignored.md"), "NOT-AN-INSTRUCTIONS-MD-FILE");
+
+        var evidence = await InstructionEvidenceAsync(sessionId, BindingOf(projectId, workspaceRoot));
+        Assert.NotNull(evidence);
+        var content = evidence!.Content;
+        Assert.Contains("ROOT-AGENTS-CHARTER", content, StringComparison.Ordinal);
+        var firstIdx = content.IndexOf("APM-RULE-FIRST-TYPESCRIPT", StringComparison.Ordinal);
+        var secondIdx = content.IndexOf("APM-RULE-SECOND-TESTING", StringComparison.Ordinal);
+        Assert.True(firstIdx > 0 && secondIdx > firstIdx, "Expected .apm/instructions/*.instructions.md sorted lexicographically after AGENTS.md.");
+        Assert.DoesNotContain("NOT-AN-INSTRUCTIONS-MD-FILE", content, StringComparison.Ordinal);
+
+        // Shared char budget clips/defers cleanly without throwing.
+        var tightRead = WorkspaceInstructionPolicy.ReadWorkspaceInstructions(workspaceRoot, charLimit: 20);
+        Assert.NotNull(tightRead.Text);
+        Assert.Contains("Skipped .apm/instructions/", tightRead.Text, StringComparison.Ordinal);
+        Assert.Equal(3, tightRead.Files.Count);
+    }
+
     private sealed class InstructionFactory : IsolatedApiFactory
     {
         private readonly string _root;
